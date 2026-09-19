@@ -91,6 +91,9 @@ making architecture, review, or domain judgments.
  Cosmos3-Super vLLM-Omni primary sweep on one eight-GPU B200 or H200 node across the
  1x8, 2x4, 4x2, and 8x1 arrangements with strict MP4 validity and shared-window
  throughput accounting.
+- `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official
+ SeedVR2-3B restoration of robot observation video, its S3 workflow, and
+ objective/visual evidence without treating generated detail as sensor truth.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with
  torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator

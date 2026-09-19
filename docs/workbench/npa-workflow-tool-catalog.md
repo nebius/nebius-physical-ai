@@ -25,6 +25,10 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.curobo.plan` | `npa workbench curobo plan` | Franka start/goal/cuboid manifest | real trajectories and metrics | no |
 | `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
 | `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
+| `workbench.seedvr2.probe` | `npa workbench seedvr2 probe` | exact low-resolution S3 MP4 | fully decoded media metadata and source hash | no |
+| `workbench.seedvr2.restore` | `npa workbench seedvr2 restore` | exact low-resolution S3 MP4, output dimensions, seed | official SeedVR2-3B restored MP4, upstream log, model/source/runtime provenance | no (real pinned upstream one-step GPU inference) |
+| `workbench.seedvr2.verify` | `npa workbench seedvr2 verify` | SeedVR2 `result.json` and restored MP4 | independent S3 readback hash and complete decode verification | no |
+| `workbench.seedvr2.review` | `npa workbench seedvr2 review` | verified source/result pair | non-blended bicubic-left/candidate-right MP4, contact sheet, JSON, HTML | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
 | `workbench.isaac_arena.evaluate` | `npa workbench isaac-arena evaluate` | environment, zero/replay/RSL-RL policy, optional input, episode/env counts, seed | scored episode JSONL, upstream HTML report, log, and hashed `result.json` under `config.output_uri` | no (real upstream policy runner on GPU) |
 | `workbench.isaac_arena.evaluate_video` | `npa workbench isaac-arena evaluate --record-video` | same evaluation inputs; RTX-class resource | same evaluation artifacts plus a required viewport MP4 | no (real upstream policy runner and viewport recorder on an RT-core GPU) |

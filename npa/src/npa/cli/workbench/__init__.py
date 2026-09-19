@@ -73,6 +73,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.openarm import app as openarm_app
     from npa.cli.workbench.robocasa import app as robocasa_app
     from npa.cli.workbench.scenario_gen import app as scenario_gen_app
+    from npa.cli.workbench.seedvr2 import app as seedvr2_app
     from npa.cli.workbench.sim2real import app as sim2real_app
     from npa.cli.workbench.sim2real_envgen import app as sim2real_envgen_app
     from npa.cli.workbench.sonic import app as sonic_app
@@ -117,6 +118,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
     full.add_typer(curobo_app, name="curobo")
+    full.add_typer(seedvr2_app, name="seedvr2")
     full.add_typer(lancedb_app, name="lancedb")
     full.add_typer(detection_training_app, name="detection-training")
     full.add_typer(scenario_gen_app, name="scenario-gen")
@@ -199,6 +201,14 @@ if _LIGHT_IMPORT:
             name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
         )
         light.add_typer(openarm_app, name="openarm")
+        app = light
+    elif _LIGHT_TOOL == "seedvr2":
+        from npa.cli.workbench.seedvr2 import app as seedvr2_app
+
+        light = typer.Typer(
+            name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
+        )
+        light.add_typer(seedvr2_app, name="seedvr2")
         app = light
     else:
         from npa.cli.workbench.cosmos2 import app

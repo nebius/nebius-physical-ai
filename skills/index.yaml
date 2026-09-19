@@ -66,6 +66,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/curobo-benchmark.yaml
+  - name: seedvr2
+    category: tools
+    when_to_use: "Package, run, validate or review official SeedVR2-3B restoration of robot observation video, its S3 workflow, or objective and visual evidence."
+    path: skills/tools/seedvr2/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "seedvr2", "restore", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/seedvr2-video-restoration.yaml
   - name: access-approval
     category: atomic
     when_to_use: "Prepare, verify, or resume operator-owned Hugging Face and NVIDIA NGC access for exact dependencies, including human-bound upstream approvals and consent-gated official pages; treat a successful payload probe as operationally Ready and reuse one bounded run-scoped use declaration without duplicate NPA acceptance prompts."

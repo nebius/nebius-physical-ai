@@ -1,0 +1,538 @@
+"""Run pinned SeedVR2 inference with verified S3 input and output artifacts."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from fractions import Fraction
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+from typing import Any, Callable
+from uuid import uuid4
+
+from npa.clients.storage import StorageClient
+from npa.workbench.storage_scope import authorize_uri
+
+from .schemas import (
+    MODEL_FILES,
+    MODEL_REPOSITORY,
+    MODEL_REVISION,
+    RESULT_SCHEMA,
+    SOURCE_REPOSITORY,
+    SOURCE_REVISION,
+    RestoreRequest,
+)
+
+
+class SeedVR2Error(RuntimeError):
+    """Raised when a SeedVR2 request, execution, or artifact is invalid."""
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _canonical_json(document: dict[str, Any]) -> bytes:
+    return (
+        json.dumps(document, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    ).encode()
+
+
+def _validate_request(request: RestoreRequest) -> None:
+    source = authorize_uri(request.input_path, operation="read SeedVR2 input")
+    destination = authorize_uri(request.output_path, operation="write SeedVR2 output")
+    if source.kind != "s3" or not source.key.lower().endswith(".mp4"):
+        raise SeedVR2Error("input_path must be one exact s3:// MP4 object")
+    if destination.kind != "s3" or not destination.key:
+        raise SeedVR2Error("output_path must be an s3:// bucket prefix")
+
+
+def _stable_run_name(run_id: str) -> str:
+    readable = re.sub(r"[^A-Za-z0-9_.-]+", "-", run_id).strip(".-") or "run"
+    digest = hashlib.sha256(run_id.encode()).hexdigest()[:12]
+    return f"{readable[:48]}-{digest}"
+
+
+def _safe_run_name(run_id: str) -> str:
+    return f"{_stable_run_name(run_id)}-{uuid4().hex[:8]}"
+
+
+def _create_work_directory(run_id: str) -> Path:
+    root = Path(os.environ.get("NPA_SEEDVR2_WORK_DIR", "/workspace/seedvr2-runs"))
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    directory = root / _safe_run_name(run_id)
+    directory.mkdir(mode=0o700)
+    return directory
+
+
+def _probe_video(path: Path) -> dict[str, Any]:
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-count_frames",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name,width,height,avg_frame_rate,nb_read_frames",
+        "-show_entries",
+        "format=duration,size",
+        "-of",
+        "json",
+        str(path),
+    ]
+    try:
+        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    except OSError as exc:
+        raise SeedVR2Error("ffprobe is unavailable") from exc
+    if completed.returncode != 0:
+        raise SeedVR2Error("ffprobe could not decode the video artifact")
+    try:
+        payload = json.loads(completed.stdout)
+        stream = payload["streams"][0]
+        frames = int(stream["nb_read_frames"])
+        fps = str(stream["avg_frame_rate"])
+        result = {
+            "codec": str(stream["codec_name"]),
+            "width": int(stream["width"]),
+            "height": int(stream["height"]),
+            "frames": frames,
+            "fps": fps,
+            "duration_seconds": float(payload["format"]["duration"]),
+            "bytes": int(payload["format"]["size"]),
+        }
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise SeedVR2Error("ffprobe returned incomplete video metadata") from exc
+    if frames < 1 or result["width"] < 1 or result["height"] < 1:
+        raise SeedVR2Error("video contains no decodable positive-size frames")
+    return result
+
+
+def _decoded_frame_hashes(path: Path) -> list[str]:
+    completed = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-f", "framemd5", "-"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SeedVR2Error("ffmpeg could not decode every output frame")
+    return [
+        line.rsplit(",", 1)[-1].strip()
+        for line in completed.stdout.splitlines()
+        if line and not line.startswith("#")
+    ]
+
+
+def _seedvr_python() -> str:
+    return os.environ.get("SEEDVR2_PYTHON", "/opt/seedvr2-venv/bin/python")
+
+
+def _resolve_model_files() -> dict[str, Path]:
+    allow_patterns = sorted(MODEL_FILES)
+    code = (
+        "from huggingface_hub import snapshot_download; "
+        "import os; "
+        f"path=snapshot_download(repo_id={MODEL_REPOSITORY!r}, "
+        f"revision={MODEL_REVISION!r}, allow_patterns={allow_patterns!r}, "
+        "token=True if os.environ.get('HF_TOKEN') else None); "
+        "print('NPA_SEEDVR2_SNAPSHOT=' + path)"
+    )
+    completed = subprocess.run(
+        [_seedvr_python(), "-c", code],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise SeedVR2Error("the pinned public SeedVR2 model download failed")
+    marker = "NPA_SEEDVR2_SNAPSHOT="
+    snapshot_value = next(
+        (
+            line.removeprefix(marker)
+            for line in reversed((completed.stdout or "").splitlines())
+            if line.startswith(marker)
+        ),
+        "",
+    )
+    snapshot = Path(snapshot_value)
+    if not snapshot.is_dir():
+        raise SeedVR2Error("Hugging Face did not return a model snapshot")
+    return _verify_model_files(snapshot)
+
+
+def _verify_model_files(snapshot: Path) -> dict[str, Path]:
+    resolved: dict[str, Path] = {}
+    for name, (expected_size, expected_hash) in MODEL_FILES.items():
+        path = snapshot / name
+        if not path.is_file() or path.stat().st_size != expected_size:
+            raise SeedVR2Error(f"pinned model payload size mismatch: {name}")
+        if _sha256(path) != expected_hash:
+            raise SeedVR2Error(f"pinned model payload hash mismatch: {name}")
+        resolved[name] = path
+    return resolved
+
+
+def _prepare_upstream_workspace(directory: Path, model_files: dict[str, Path]) -> Path:
+    source = Path(os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2"))
+    required = source / "projects" / "inference_seedvr2_3b.py"
+    if not required.is_file():
+        raise SeedVR2Error("the pinned SeedVR2 source tree is unavailable")
+    workspace = directory / "upstream"
+    workspace.mkdir()
+    for name in ("configs_3b", "projects"):
+        (workspace / name).symlink_to(source / name, target_is_directory=True)
+    checkpoints = workspace / "ckpts"
+    checkpoints.mkdir()
+    for name, path in model_files.items():
+        (checkpoints / name).symlink_to(path)
+    for name in ("pos_emb.pt", "neg_emb.pt"):
+        (workspace / name).symlink_to(model_files[name])
+    return workspace
+
+
+def build_restore_argv(request: RestoreRequest, workspace: Path) -> list[str]:
+    """Build the genuine upstream one-GPU SeedVR2 inference command."""
+
+    source = Path(os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2"))
+    return [
+        str(Path(_seedvr_python()).with_name("torchrun")),
+        "--standalone",
+        "--nproc-per-node=1",
+        str(source / "projects" / "inference_seedvr2_3b.py"),
+        "--video_path",
+        str(workspace.parent / "input"),
+        "--output_dir",
+        str(workspace.parent / "generated"),
+        "--seed",
+        str(request.seed),
+        "--res_h",
+        str(request.output_height),
+        "--res_w",
+        str(request.output_width),
+        "--sp_size",
+        "1",
+    ]
+
+
+def _inference_environment() -> dict[str, str]:
+    source = os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2")
+    environment = dict(os.environ)
+    python_path = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = source + (
+        os.pathsep + python_path if python_path else ""
+    )
+    for secret in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+        "SEEDVR2_TOKEN",
+    ):
+        environment.pop(secret, None)
+    return environment
+
+
+def _execute_upstream(
+    argv: list[str],
+    workspace: Path,
+    log_path: Path,
+    runner: Callable[..., subprocess.CompletedProcess[Any]],
+) -> None:
+    with log_path.open("wb") as log:
+        completed = runner(
+            argv,
+            cwd=workspace,
+            env=_inference_environment(),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    if completed.returncode != 0:
+        raise SeedVR2Error(
+            f"official SeedVR2 inference exited {completed.returncode}; "
+            f"retained log: {log_path}"
+        )
+
+
+def _validate_output(
+    output: Path,
+    source_probe: dict[str, Any],
+    request: RestoreRequest,
+) -> tuple[dict[str, Any], int]:
+    probe = _probe_video(output)
+    if (probe["height"], probe["width"]) != (
+        request.output_height,
+        request.output_width,
+    ):
+        raise SeedVR2Error("SeedVR2 output dimensions differ from the request")
+    if probe["frames"] != source_probe["frames"]:
+        raise SeedVR2Error("SeedVR2 output frame count differs from the input")
+    if Fraction(probe["fps"]) != Fraction(source_probe["fps"]):
+        raise SeedVR2Error("SeedVR2 output frame rate differs from the input")
+    period = 1.0 / float(Fraction(source_probe["fps"]))
+    if abs(probe["duration_seconds"] - source_probe["duration_seconds"]) > period:
+        raise SeedVR2Error("SeedVR2 output duration differs by more than one frame")
+    frame_hashes = _decoded_frame_hashes(output)
+    if len(frame_hashes) != probe["frames"]:
+        raise SeedVR2Error("decoded output frame count is inconsistent")
+    if len(frame_hashes) > 1 and len(set(frame_hashes)) == 1:
+        raise SeedVR2Error("SeedVR2 output repeats one identical frame")
+    return probe, len(set(frame_hashes))
+
+
+def _gpu_inventory() -> dict[str, str]:
+    command = [
+        "nvidia-smi",
+        "--query-gpu=name,memory.total,driver_version,compute_cap",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    except OSError:
+        return {"status": "unavailable"}
+    if completed.returncode != 0:
+        return {"status": "unavailable"}
+    lines = completed.stdout.splitlines()
+    if not lines:
+        return {"status": "unavailable"}
+    fields = [item.strip() for item in lines[0].split(",")]
+    if len(fields) != 4:
+        return {"status": "unavailable"}
+    return {
+        "status": "available",
+        "name": fields[0],
+        "memory_mib": fields[1],
+        "driver_version": fields[2],
+        "compute_capability": fields[3],
+    }
+
+
+def _artifact_uri(prefix: str, name: str) -> str:
+    return prefix.rstrip("/") + "/" + name
+
+
+def _ensure_artifacts_absent(storage: Any, uris: list[str]) -> None:
+    for uri in uris:
+        if storage.read_bytes_with_etag(uri) is not None:
+            raise SeedVR2Error(f"output artifact already exists: {uri}")
+
+
+def _publish_verified(storage: Any, source: Path, uri: str, readback_root: Path) -> str:
+    expected = _sha256(source)
+    storage.upload_file(str(source), uri)
+    readback = readback_root / source.name
+    storage.download_file(uri, str(readback))
+    if _sha256(readback) != expected:
+        raise SeedVR2Error(f"uploaded artifact readback hash mismatch: {uri}")
+    return expected
+
+
+def _planned_result(request: RestoreRequest) -> dict[str, Any]:
+    workspace = (
+        Path("/workspace/seedvr2-runs") / f"{_stable_run_name(request.run_id)}-dry-run"
+    )
+    return {
+        "schema": RESULT_SCHEMA,
+        "status": "dry_run",
+        "request": request.model_dump(),
+        "source": {"repository": SOURCE_REPOSITORY, "revision": SOURCE_REVISION},
+        "model": {"repository": MODEL_REPOSITORY, "revision": MODEL_REVISION},
+        "argv": build_restore_argv(request, workspace / "upstream"),
+        "artifacts": {},
+    }
+
+
+def _result_document(
+    request: RestoreRequest,
+    argv: list[str],
+    source_probe: dict[str, Any],
+    output_probe: dict[str, Any],
+    *,
+    started_at: str,
+    input_hash: str,
+    output_hash: str,
+    unique_frames: int,
+    artifacts: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "schema": RESULT_SCHEMA,
+        "status": "ok",
+        "run_id": request.run_id,
+        "started_at": started_at,
+        "finished_at": _utc_now(),
+        "source": {"repository": SOURCE_REPOSITORY, "revision": SOURCE_REVISION},
+        "model": {
+            "repository": MODEL_REPOSITORY,
+            "revision": MODEL_REVISION,
+            "files": {
+                name: {"bytes": size, "sha256": digest}
+                for name, (size, digest) in MODEL_FILES.items()
+            },
+            "weights_baked": False,
+        },
+        "input": {
+            "uri": request.input_path,
+            "sha256": input_hash,
+            "media": source_probe,
+        },
+        "output": {
+            "sha256": output_hash,
+            "media": output_probe,
+            "unique_decoded_frames": unique_frames,
+            "derived_sensor_truth": False,
+        },
+        "request": request.model_dump(exclude={"dry_run"}),
+        "runtime": {
+            "image": os.environ.get("NPA_TASK_IMAGE", ""),
+            "gpu": _gpu_inventory(),
+            "sequence_parallel_size": 1,
+            "color_fix": False,
+        },
+        "argv": argv,
+        "artifacts": artifacts,
+        "limitations": [
+            "Generated detail is a review aid, not observed sensor truth.",
+            "Heavy degradation and large motion can fail or create unpleasant detail.",
+            "Light degradation and small inputs can be oversharpened.",
+        ],
+    }
+
+
+def restore(
+    request: RestoreRequest,
+    *,
+    storage_factory: Callable[[], Any] = StorageClient.from_environment,
+    inference_runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+    model_resolver: Callable[[], dict[str, Path]] = _resolve_model_files,
+) -> dict[str, Any]:
+    """Run official SeedVR2-3B and publish readback-verified artifacts.
+
+    Args:
+        request: Immutable S3 input, output, and inference controls.
+        storage_factory: Build the request-scoped object-storage client.
+        inference_runner: Execute the upstream ``torchrun`` command.
+        model_resolver: Fetch and verify the exact public model payloads.
+    Returns:
+        Complete run provenance and artifact URIs.
+    Raises:
+        SeedVR2Error: Validation, inference, decoding, or readback fails.
+        OSError: A private run-evidence directory cannot be created or written.
+    """
+
+    _validate_request(request)
+    if request.dry_run:
+        return _planned_result(request)
+    started_at = _utc_now()
+    directory = _create_work_directory(request.run_id)
+    try:
+        return _restore_in_directory(
+            request,
+            directory,
+            started_at,
+            storage_factory(),
+            inference_runner,
+            model_resolver,
+        )
+    except Exception as exc:
+        failure = {"status": "failed", "at": _utc_now(), "error": type(exc).__name__}
+        (directory / "failure.json").write_bytes(_canonical_json(failure))
+        if isinstance(exc, SeedVR2Error):
+            raise
+        raise SeedVR2Error(
+            f"SeedVR2 failed; private evidence retained at {directory}"
+        ) from exc
+
+
+def _restore_in_directory(
+    request: RestoreRequest,
+    directory: Path,
+    started_at: str,
+    storage: Any,
+    runner: Callable[..., subprocess.CompletedProcess[Any]],
+    model_resolver: Callable[[], dict[str, Path]],
+) -> dict[str, Any]:
+    input_dir = directory / "input"
+    generated_dir = directory / "generated"
+    readback_dir = directory / "readback"
+    for path in (input_dir, generated_dir, readback_dir):
+        path.mkdir()
+    source = input_dir / "input.mp4"
+    storage.download_file(request.input_path, str(source))
+    source_probe = _probe_video(source)
+    input_hash = _sha256(source)
+    workspace = _prepare_upstream_workspace(directory, model_resolver())
+    argv = build_restore_argv(request, workspace)
+    log_path = directory / "upstream.log"
+    _execute_upstream(argv, workspace, log_path, runner)
+    output = generated_dir / source.name
+    output_probe, unique_frames = _validate_output(output, source_probe, request)
+    return _publish_result(
+        request,
+        directory,
+        started_at,
+        storage,
+        argv,
+        source_probe,
+        output_probe,
+        input_hash,
+        output,
+        unique_frames,
+        log_path,
+    )
+
+
+def _publish_result(
+    request: RestoreRequest,
+    directory: Path,
+    started_at: str,
+    storage: Any,
+    argv: list[str],
+    source_probe: dict[str, Any],
+    output_probe: dict[str, Any],
+    input_hash: str,
+    output: Path,
+    unique_frames: int,
+    log_path: Path,
+) -> dict[str, Any]:
+    uris = {
+        "restored_video": _artifact_uri(request.output_path, "restored.mp4"),
+        "upstream_log": _artifact_uri(request.output_path, "upstream.log"),
+        "result": _artifact_uri(request.output_path, "result.json"),
+    }
+    _ensure_artifacts_absent(storage, list(uris.values()))
+    readback = directory / "readback"
+    output_hash = _publish_verified(storage, output, uris["restored_video"], readback)
+    _publish_verified(storage, log_path, uris["upstream_log"], readback)
+    result = _result_document(
+        request,
+        argv,
+        source_probe,
+        output_probe,
+        started_at=started_at,
+        input_hash=input_hash,
+        output_hash=output_hash,
+        unique_frames=unique_frames,
+        artifacts=uris,
+    )
+    result_path = directory / "result.json"
+    result_path.write_bytes(_canonical_json(result))
+    _publish_verified(storage, result_path, uris["result"], readback)
+    shutil.rmtree(directory)
+    return result
+
+
+__all__ = ["SeedVR2Error", "build_restore_argv", "restore"]

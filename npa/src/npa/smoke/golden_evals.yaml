@@ -1109,6 +1109,35 @@ containers:
       timeout_seconds: 600
       status: gpu-gated
 
+  seedvr2:
+    image: npa-seedvr2
+    dockerfile: npa/docker/workbench/seedvr2/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Restores low-resolution robot observation video into provenance-bound
+        review media for human state inspection and annotation, while retaining
+        the source and declaring generated detail as non-observed.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04 (digest pinned)
+      network: runtime public Hugging Face model fetch, pinned real-input fetch, and S3 artifact transfer
+      external_fetch: [huggingface-public-seedvr2-model, huggingface-public-robopro-golden-input, s3]
+      notes: >-
+        Bakes immutable Apache-2.0 SeedVR source plus a hash-locked inference
+        closure. Model weights, sensor video, credentials, generated media, and
+        populated caches remain runtime-only. Publication is quarantined until
+        built-byte scans and real objective/VLM evidence pass.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_seedvr2_functional
+      command: python -m npa.smoke.test_seedvr2_functional
+      artifact: /workspace/seedvr2-golden-eval/seedvr2.json
+      serverless_gpu: h100
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
   alpamayo2-super:
     image: npa-alpamayo2-super
     dockerfile: npa/docker/workbench/alpamayo2-super/Dockerfile

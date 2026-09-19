@@ -46,10 +46,10 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **42 packaging entries** (40 redistribution-eligible
-and two restricted) and **43 mapped tools**: 37 public-release members, two
-restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
-`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+The current source inventory has **43 packaging entries** (41 redistribution-eligible
+and two restricted) and **44 mapped tools**: 37 public-release members, two
+restricted tools, and five quarantined tools (`curobo`, `ncore`, `openpi`,
+`robocasa`, and `seedvr2`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
 they do not constitute acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
@@ -142,6 +142,19 @@ it redistribution-eligible but quarantined from public publication until its
 exact-image scans and real capability evidence are accepted. There is no
 accepted public release row or verified anonymous pull claim for this image.
 Select development bytes only with an explicit immutable image digest.
+
+## Pending SeedVR2 restoration image
+
+`npa-seedvr2` is a zero-weight, zero-input public-image candidate for official
+SeedVR2-3B video restoration. It bakes pinned Apache-2.0 source and a
+hash-locked CUDA/PyTorch inference closure; the public Apache-2.0 model
+payloads, sensor clips, outputs, credentials, and populated caches remain
+runtime-only. Repository packaging marks it redistribution-eligible but
+publication-quarantined until complete built-byte scans, anonymous digest
+verification, real H100 workflow execution, objective preservation metrics,
+calibrated VLM review, and independent review are accepted for the same commit
+and digest. There is no accepted public release row or verified anonymous pull
+claim for this image.
 The existing NRE GPU consumer remains separately licensed. The new full
 COLMAP-to-reconstruction workflow is **not yet live validated**.
 

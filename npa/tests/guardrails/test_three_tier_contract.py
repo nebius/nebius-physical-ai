@@ -61,6 +61,9 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "seedvr2/restore": {
+        "dry_run": "boolean",
+    },
     "cosmos3/super-benchmark": {
         "dry_run": "boolean",
     },
@@ -158,6 +161,25 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="seedvr2/restore",
+        cli_module="npa.cli.workbench.seedvr2",
+        cli_callback="restore_cmd",
+        sdk_module="npa.sdk.workbench.seedvr2",
+        sdk_attr="restore",
+        spec_path=SPECS / "seedvr2-video-restoration.yaml",
+        tool_ref="workbench.seedvr2.restore",
+        spec_gap=("dry_run",),
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("output_height", "output_height", "--output-height"),
+            _p("output_width", "output_width", "--output-width"),
+            _p("seed", "seed", "--seed"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
     CapabilityContract(
         name="curobo/benchmark",
         cli_module="npa.cli.workbench.curobo",

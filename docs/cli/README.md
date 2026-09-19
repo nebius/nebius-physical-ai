@@ -49,6 +49,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench sonic retargeting](retargeting.md)
 - [npa workbench robocasa](robocasa.md)
 - [npa workbench scenario-gen](scenario-gen.md)
+- [npa workbench seedvr2](seedvr2.md)
 - [npa storage service-account](service-account.md)
 - [npa skypilot](skypilot.md)
 - [npa workbench sonic](sonic.md)

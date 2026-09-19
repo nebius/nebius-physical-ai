@@ -29,7 +29,7 @@ Python and HTTP access follow each tool's documented contract.
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
-| Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
+| Video restoration and generation | [SeedVR2](seedvr2.md) · [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
 
 ## Robotics and simulation
 

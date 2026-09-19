@@ -123,6 +123,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
 | [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
+| [`seedvr2-video-restoration.yaml`](testing/seedvr2-video-restoration.yaml) | Pinned official SeedVR2-3B restoration on one H100 → independent S3 readback verification → non-blended bicubic/candidate review package; image remains publication-quarantined pending live objective and VLM evidence ([guide](../docs/workbench/seedvr2.md)) |
 
 #### Robot learning and simulation
 
