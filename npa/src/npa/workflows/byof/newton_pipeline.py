@@ -148,7 +148,7 @@ def generate_demos(
     raise NewtonPipelineError(_NOT_IMPLEMENTED)
 
 
-def eval(
+def evaluate(
     *,
     checkpoint_uri: str,
     dataset_uri: str,
@@ -194,7 +194,7 @@ def _run_stage(args: argparse.Namespace) -> int:
             num_demos=args.num_demos,
             seed=args.seed,
         ),
-        "eval": lambda: eval(
+        "eval": lambda: evaluate(
             checkpoint_uri=args.checkpoint_uri,
             dataset_uri=args.dataset_uri,
             output_uri=args.output_uri,

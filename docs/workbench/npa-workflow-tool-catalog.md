@@ -154,6 +154,9 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session | yes |
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` (real FiftyOne Brain keep/drop report) | no |
 | `workbench.fiftyone.review_augmented` | `npa workbench fiftyone review-augmented` | canonical run + quality disposition | portable real FiftyOneDataset for every accepted/rejected terminal candidate, with non-promoting rejected fields | no |
+| `workbench.newton.train_teacher` | `python3 -m npa.workflows.byof.newton_pipeline train-teacher` | `config.dataset_uri`, `config.training_uri` | validated config plus a plan-only stub manifest under `config.training_uri` | yes (plan-only: validates config, writes stub manifest, then raises; training not implemented) |
+| `workbench.newton.generate_demos` | `python3 -m npa.workflows.byof.newton_pipeline generate-demos` | `config.trained_checkpoint_uri`, `config.demos_uri` | validated config plus a plan-only stub manifest under `config.demos_uri` | yes (plan-only: validates config, writes stub manifest, then raises; demo generation not implemented) |
+| `workbench.newton.eval` | `python3 -m npa.workflows.byof.newton_pipeline eval` | `config.trained_checkpoint_uri`, `config.dataset_uri`, `config.evaluation_uri` | validated config plus a plan-only stub manifest under `config.evaluation_uri` | yes (plan-only: validates config, writes stub manifest, then raises; evaluation not implemented) |
 
 Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
 

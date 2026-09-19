@@ -776,6 +776,11 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # npa/tests/workbench/test_nurec_access.py::
         # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
         # argv flag against the real Typer options.
+        # Newton toolRefs are config-validation / plan-only stubs: train and eval
+        # raise NewtonPipelineError (not implemented), so there is no service
+        # tier to keep coherent with a YAML env block. CLI <-> catalog argv
+        # coherence is enforced by test_module_toolref_argv.py instead.
+        "newton",
         "nurec",
         "scenario-gen",
         "sim2real",

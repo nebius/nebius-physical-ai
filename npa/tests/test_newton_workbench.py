@@ -3,7 +3,7 @@
 Covers:
 - workbench CLI wrappers import correctly via ``npa._sdk.make_cli_wrapper``
 - the ``npa.cli.newton`` Typer app registers the three stub commands
-- the workflow module exposes ``train_teacher`` / ``generate_demos`` / ``eval``
+- the workflow module exposes ``train_teacher`` / ``generate_demos`` / ``evaluate``
   with argument validation, stub-manifest plumbing, and clear
   not-yet-implemented errors
 - real validation: a double-pendulum XPBD simulation on CPU using the
@@ -85,7 +85,7 @@ def test_cli_stubs_exit_not_implemented():
 def test_workflow_module_functions_exist():
     from npa.workflows.byof import newton_pipeline as pipe
 
-    for name in ("train_teacher", "generate_demos", "eval"):
+    for name in ("train_teacher", "generate_demos", "evaluate"):
         assert callable(getattr(pipe, name)), f"missing {name}"
     assert issubclass(pipe.NewtonPipelineError, RuntimeError)
     assert pipe.newton_version() == "1.2.1"
@@ -143,7 +143,7 @@ def test_workflow_eval_stub(tmp_path):
     manifest = _expect_stub(
         tmp_path,
         pipe.STUB_SCHEMA_EVAL,
-        pipe.eval,
+        pipe.evaluate,
         checkpoint_uri="file:///tmp/ckpt",
         dataset_uri="file:///tmp/ds",
         num_episodes=2,
