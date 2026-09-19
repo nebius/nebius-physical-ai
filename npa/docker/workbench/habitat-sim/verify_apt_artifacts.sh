@@ -23,23 +23,59 @@ emit_direct_package_records() {
 verify_direct_debs() {
   local records="$1"
   local archive_dir="$2"
-  local expected="$archive_dir/.expected"
-  local observed="$archive_dir/.observed"
-  local archive package version architecture digest
-  LC_ALL=C sort -t '|' -k 1,1 "$records" > "$expected"
-  : > "$observed"
-  for archive in "$archive_dir"/*.deb; do
-    [[ -f "$archive" ]]
-    package="$(dpkg-deb -f "$archive" Package)"
-    version="$(dpkg-deb -f "$archive" Version)"
-    architecture="$(dpkg-deb -f "$archive" Architecture)"
-    [[ "$architecture" == "amd64" || "$architecture" == "all" ]]
-    digest="$(sha256sum "$archive" | cut -d ' ' -f 1)"
-    printf '%s|%s|%s\n' "$package" "$version" "$digest" >> "$observed"
-  done
-  LC_ALL=C sort -t '|' -k 1,1 -o "$observed" "$observed"
-  cmp "$expected" "$observed"
-  rm -f "$expected" "$observed"
+  local scratch expected observed archive package version architecture digest
+  local status=0 cleanup_status=0 archive_found=0
+  scratch="$(mktemp -d "${TMPDIR:-/tmp}/npa-habitat-apt.XXXXXX")" || return $?
+  chmod 700 "$scratch" || status=$?
+  expected="$scratch/expected"
+  observed="$scratch/observed"
+  if (( status == 0 )); then
+    LC_ALL=C sort -t '|' -k 1,1 "$records" > "$expected" || status=$?
+  fi
+  if (( status == 0 )); then
+    : > "$observed" || status=$?
+  fi
+  if (( status == 0 )); then
+    for archive in "$archive_dir"/*.deb; do
+      [[ -f "$archive" ]] || continue
+      archive_found=1
+      package="$(dpkg-deb -f "$archive" Package)" || status=$?
+      version="$(dpkg-deb -f "$archive" Version)" || status=$?
+      architecture="$(dpkg-deb -f "$archive" Architecture)" || status=$?
+      if [[ "$architecture" != "amd64" && "$architecture" != "all" ]]; then
+        status=1
+      fi
+      digest="$(sha256sum "$archive" | cut -d ' ' -f 1)" || status=$?
+      printf '%s|%s|%s\n' "$package" "$version" "$digest" >> "$observed" || status=$?
+      (( status == 0 )) || break
+    done
+    (( archive_found == 1 )) || status=1
+  fi
+  if (( status == 0 )); then
+    LC_ALL=C sort -t '|' -k 1,1 -o "$observed" "$observed" || status=$?
+  fi
+  if (( status == 0 )); then
+    cmp "$expected" "$observed" || status=$?
+  fi
+  cleanup_verify_direct_scratch "$scratch" || cleanup_status=$?
+  if (( status != 0 )); then
+    if (( cleanup_status != 0 )); then
+      printf 'verify-direct scratch cleanup failed after status %d\n' "$status" >&2
+    fi
+    return "$status"
+  fi
+  if (( cleanup_status != 0 )); then
+    printf 'verify-direct scratch cleanup failed\n' >&2
+    return "$cleanup_status"
+  fi
+}
+
+cleanup_verify_direct_scratch() {
+  local scratch="$1"
+  local status=0
+  rm -f -- "$scratch/expected" "$scratch/observed" || status=$?
+  rmdir -- "$scratch" || status=$?
+  return "$status"
 }
 
 emit_signed_source_index_record() {

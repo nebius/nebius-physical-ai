@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import ast
 import lzma
+import os
 from pathlib import Path
 import re
 import runpy
@@ -26,12 +27,15 @@ def _lock(name: str) -> dict[str, object]:
     return yaml.safe_load((PACKAGE / name).read_text(encoding="utf-8"))
 
 
-def _run_apt_verifier(command: str, *args: object) -> subprocess.CompletedProcess[str]:
+def _run_apt_verifier(
+    command: str, *args: object, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", str(APT_VERIFIER), command, *(str(arg) for arg in args)],
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -227,6 +231,39 @@ def test_direct_package_verifier_rejects_a_lock_hash_mutation(tmp_path: Path) ->
     assert hostile_emitted.returncode == 0
     rejected = _run_apt_verifier("verify-direct", records, archives)
     assert rejected.returncode != 0
+
+
+def test_direct_verifier_uses_private_scratch_and_preserves_caller_names(
+    tmp_path: Path,
+) -> None:
+    archives = tmp_path / "archives"
+    archives.mkdir()
+    archive = _build_fixture_deb(archives, "private-package", "1.0-1")
+    rows = [("private-package", "1.0-1", hashlib.sha256(archive.read_bytes()).hexdigest())]
+    lock = tmp_path / "apt.lock"
+    records = tmp_path / "records"
+    _write_direct_lock(lock, rows)
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_bytes(b"must remain unchanged")
+    (archives / ".expected").symlink_to(sentinel)
+    (archives / ".observed").write_bytes(b"caller-owned bytes")
+    private_tmp = tmp_path / "private-tmp"
+    private_tmp.mkdir()
+    environment = {**os.environ, "TMPDIR": str(private_tmp)}
+
+    emitted = _run_apt_verifier("direct-records", lock, records, env=environment)
+    assert emitted.returncode == 0, emitted.stdout + emitted.stderr
+    accepted = _run_apt_verifier("verify-direct", records, archives, env=environment)
+    assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+    assert sentinel.read_bytes() == b"must remain unchanged"
+    assert (archives / ".observed").read_bytes() == b"caller-owned bytes"
+    assert not list(private_tmp.iterdir())
+
+    records.write_text(records.read_text().replace(rows[0][2], "0" * 64))
+    rejected = _run_apt_verifier("verify-direct", records, archives, env=environment)
+    assert rejected.returncode != 0
+    assert sentinel.read_bytes() == b"must remain unchanged"
+    assert not list(private_tmp.iterdir())
 
 
 def test_signed_source_index_verifier_rejects_hash_and_size_mutations(

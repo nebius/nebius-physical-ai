@@ -347,6 +347,28 @@ def _provenance_directory_set(expected: dict[str, str]) -> set[str]:
     return directories
 
 
+def _provenance_relative_path(member, prefix: str) -> str | None:
+    """Return a normalized provenance-relative member path when in scope."""
+    path = W.safe_name(member.name)
+    if not path.startswith(prefix):
+        return None
+    relative = path.removeprefix(prefix)
+    return relative or None
+
+
+def _record_provenance_directory(
+    relative: str, expected_directories: set[str], findings: list[dict[str, object]]
+) -> None:
+    """Reject directories not required by the attested provenance files."""
+    if relative not in expected_directories:
+        findings.append({"code": "source_provenance_unexpected_directory", "path": relative})
+
+
+def _is_provenance_whiteout(relative: str) -> bool:
+    """Identify OCI whiteouts inside the source-provenance namespace."""
+    return "/.wh." in f"/{relative}" or relative.startswith(".wh.")
+
+
 def _inspect_provenance_layer(
     fd,
     layer,
@@ -361,22 +383,13 @@ def _inspect_provenance_layer(
     prefix = PROVENANCE_ROOT + "/"
     with tarfile.open(fileobj=H._decoded(fd, layer), mode="r|") as archive:
         for member in archive:
-            path = W.safe_name(member.name)
-            if not path.startswith(prefix):
-                continue
-            relative = path.removeprefix(prefix)
-            if not relative:
+            relative = _provenance_relative_path(member, prefix)
+            if relative is None:
                 continue
             if member.isdir():
-                if relative not in expected_directories:
-                    findings.append(
-                        {
-                            "code": "source_provenance_unexpected_directory",
-                            "path": relative,
-                        }
-                    )
+                _record_provenance_directory(relative, expected_directories, findings)
                 continue
-            if "/.wh." in f"/{relative}" or relative.startswith(".wh."):
+            if _is_provenance_whiteout(relative):
                 findings.append(
                     {"code": "source_provenance_whiteout", "layer": layer_index}
                 )
@@ -399,6 +412,33 @@ def _expected_provenance_files(
     }
 
 
+def _scan_provenance_layers(
+    fd, graph, expected, expected_directories, expected_sizes, observed, findings
+) -> None:
+    """Inspect every image layer using the shared provenance policy."""
+    for layer_index, layer in enumerate(graph["layers"]):
+        _inspect_provenance_layer(
+            fd,
+            layer,
+            layer_index,
+            expected,
+            expected_directories,
+            expected_sizes,
+            observed,
+            findings,
+        )
+
+
+def _missing_provenance_findings(
+    expected: dict[str, str], observed: dict[str, str]
+) -> list[dict[str, object]]:
+    """Report attested provenance files absent from all scanned layers."""
+    return [
+        {"code": "source_provenance_path_missing", "path": path}
+        for path in sorted(set(expected) - set(observed))
+    ]
+
+
 def _source_provenance_findings(
     fd: int,
     length: int,
@@ -416,19 +456,10 @@ def _source_provenance_findings(
     findings: list[dict[str, object]] = []
     expected_directories = _provenance_directory_set(expected)
     graph = H.inspect(fd, length, expected_image_id)
-    for layer_index, layer in enumerate(graph["layers"]):
-        _inspect_provenance_layer(
-            fd,
-            layer,
-            layer_index,
-            expected,
-            expected_directories,
-            expected_sizes,
-            observed,
-            findings,
-        )
-    for path in sorted(set(expected) - set(observed)):
-        findings.append({"code": "source_provenance_path_missing", "path": path})
+    _scan_provenance_layers(
+        fd, graph, expected, expected_directories, expected_sizes, observed, findings
+    )
+    findings.extend(_missing_provenance_findings(expected, observed))
     if observed.get("npa-source-manifest.sha256") == manifest_sha256:
         # Binding the bytes here is independent of trusting the OCI label.
         W.require(
