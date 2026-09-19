@@ -628,7 +628,7 @@ Then use the `make` targets from the repo root:
 
 ```bash
 make check-env        # fails fast if $PYTHON would import npa from another checkout
-make test-prereqs     # non-blocking: reports full-suite/CI-parity gaps (ffmpeg, kubectl, ...) and temp-disk headroom
+make test-prereqs     # non-blocking: reports missing optional tools and temp-disk observations
 make check            # local subset: lint, docs-check, unit tests
 make test             # full unit suite, live/GPU markers deselected
 make test-smoke       # quickest: onboarding CLI smoke tests only
@@ -639,20 +639,25 @@ make docs-check       # the docs/cli/ drift gate
 make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
 ```
 
-Run `make test-prereqs` once per environment before trusting a green `make
-test` for full parity with CI: missing optional tools (ffmpeg/ffprobe, a CPU
-checkpoint runtime, kubectl, Docker, tmux, Node) make the affected tests
-self-skip rather than fail, so local coverage can quietly be lower than CI's.
-The same command also reports free space and stale run directories under the
-temp root pytest will use. That root (`$TMPDIR/pytest-of-<user>` by default)
-is shared by every process you run, not scoped to one checkout, so concurrent
-work across worktrees on one machine competes for the same disk; a large
-suite in one checkout can exhaust space for a test in another with no
-per-checkout attribution. Point a large or parallel run at a directory you
-own instead of the shared default — `pytest --basetemp=<owned-dir> ...` — and
-clean up only that directory yourself when done. Never delete another
-`pytest-of-<user>/pytest-N` directory by hand without first confirming it is
-not `pytest-current` for a run still in progress.
+Run `make test-prereqs` once per environment before trusting `make test`'s
+result: it distinguishes two different consequences of a missing optional
+tool, verified against the specific test files that check for each, not
+assumed. The `adapter` extra's `pyarrow` is not optional in the usual sense —
+without it, 45+ files that import it unconditionally fail to collect at all,
+so `make test` exits non-zero outright rather than passing with less
+coverage. Missing ffmpeg/ffprobe, a CPU checkpoint runtime, tmux, or Node
+instead let the specific tests that check for them self-skip, so `make test`
+can still exit 0 while covering less than CI. The same command also reports
+free space and any retained `pytest-of-<user>/pytest-N` directories under the
+temp root pytest will use, purely for awareness — it recommends no deletion.
+That root (`$TMPDIR/pytest-of-<user>` by default) is shared by every process
+you run, not scoped to one checkout, so concurrent work across worktrees on
+one machine competes for the same disk. Point a large or parallel run at a
+directory you own instead — `pytest --basetemp=<owned-dir> ...` — and clean
+up only that directory yourself. A directory not currently the
+`pytest-current` target is not thereby proven idle: another process may hold
+a different `--basetemp` entirely, or a live lock file under this same root.
+Do not delete another process's temp directory based on age alone.
 
 `docs/cli/` is generated from live `npa --help` and drift-gated in CI, so
 `make docs` and a commit of its output are part of any change to a command, flag,

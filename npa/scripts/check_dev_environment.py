@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shlex
 import sys
 
 
@@ -12,18 +13,42 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+def _new_venv_recipe(npa_dir: Path) -> str:
+    """One shell-safe, self-aborting recipe: never touches a path that already exists.
+
+    Args:
+        npa_dir: The checkout's `npa/` directory.
+    Returns:
+        A single `&&`-chained command line. `test ! -e` and `test ! -L` both
+        have to pass before anything is created, so a name collision (a real
+        directory, a file, or a symlink already at that path) aborts the
+        whole line with no side effect, rather than reinitializing or
+        following whatever is already there.
+    Raises:
+        None.
+    """
+    venv = shlex.quote(str(npa_dir / ".venv-local"))
+    pip = shlex.quote(str(npa_dir / ".venv-local" / "bin" / "pip"))
+    target = shlex.quote(f"{npa_dir}[dev,adapter]")
+    return f"test ! -e {venv} && test ! -L {venv} && python3 -m venv {venv} && {pip} install -e {target}"
+
+
 def _missing_install_message(expected_src: Path, npa_dir: Path, error: BaseException) -> str:
+    src = shlex.quote(str(expected_src))
     return (
         f"error: `import npa` failed under {sys.executable}: {error}\n"
-        "Install this checkout's package into that interpreter's environment:\n"
-        f'  {sys.executable} -m pip install -e "{npa_dir}[dev]"\n'
-        "or, without installing, point PYTHONPATH at this checkout's source:\n"
-        f'  export PYTHONPATH="{expected_src}"'
+        "This interpreter cannot import this checkout's package. Point PYTHONPATH at\n"
+        "this checkout's source instead of installing into an interpreter whose\n"
+        "provenance this check cannot confirm:\n"
+        f"  export PYTHONPATH={src}\n"
+        "or create a new virtualenv owned by this checkout (aborts safely instead of\n"
+        "touching anything that already exists at that path):\n"
+        f"  {_new_venv_recipe(npa_dir)}"
     )
 
 
 def _drift_message(expected_src: Path, resolved_src: Path, npa_dir: Path) -> str:
-    venv_python = npa_dir / ".venv" / "bin" / "python"
+    src = shlex.quote(str(expected_src))
     return (
         f"error: {sys.executable} imports `npa` from:\n"
         f"  {resolved_src}\n"
@@ -36,11 +61,10 @@ def _drift_message(expected_src: Path, resolved_src: Path, npa_dir: Path) -> str
         "files but exercises a DIFFERENT checkout's production code, with no error\n"
         "or non-zero exit to flag it. Fix one of:\n"
         "\n"
-        "  1. Point PYTHONPATH at this checkout's source before running tests/lint/docs:\n"
-        f'       export PYTHONPATH="{expected_src}"\n'
-        "  2. Give this checkout its own virtualenv instead of sharing one:\n"
-        f'       python3 -m venv "{npa_dir / ".venv"}"\n'
-        f'       "{venv_python}" -m pip install -e "{npa_dir}[dev]"'
+        "  1. Point PYTHONPATH at this checkout's source (safe, no side effects):\n"
+        f"       export PYTHONPATH={src}\n"
+        "  2. Give this checkout a new virtualenv, without touching npa/.venv itself:\n"
+        f"       {_new_venv_recipe(npa_dir)}"
     )
 
 

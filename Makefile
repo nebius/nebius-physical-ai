@@ -65,9 +65,10 @@ install-dev:
 check-env:
 	$(PYTHON) npa/scripts/check_dev_environment.py --repo-root "$(CURDIR)"
 
-# Non-blocking: `make test` self-skips whatever optional prerequisite below is
-# missing rather than failing, so a green local run can quietly cover less than
-# CI. This surfaces the gap; it never exits non-zero.
+# Non-blocking: reports which optional prerequisites are missing, and their
+# verified real consequence (some self-skip; the adapter extra instead makes
+# pytest fail to collect outright). Also reports temp-disk headroom. Never
+# exits non-zero itself; see npa/scripts/check_test_prereqs.py.
 test-prereqs:
 	$(PYTHON) npa/scripts/check_test_prereqs.py
 
