@@ -1857,7 +1857,10 @@ def submit_workflow(
         initial_controller_absent = (
             getattr(controller_health, "state", None) is ControllerState.ABSENT
         )
-        if on_launch_ready is not None:
+        # Native request/result cleanup is an explicit confidential RoboTwin
+        # contract.  A generic caller may still provide the historical callback
+        # parameter, but that callback must never select the native bridge.
+        if on_launch_ready is not None and robotwin_authorization is not None:
             cleanup_state = _SubmissionCleanup(
                 run_id,
                 dict(control_env),

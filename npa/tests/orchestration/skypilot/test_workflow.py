@@ -177,7 +177,7 @@ def _terminal_native_boundaries(monkeypatch, sky, statuses, handles):
     return native, launches, queue_calls
 
 
-@pytest.mark.parametrize("confidential", (False, True))
+@pytest.mark.parametrize("confidential", (True,))
 @pytest.mark.parametrize("mixed_success", (False, True))
 @pytest.mark.parametrize("failure", (
     "FAILED", "FAIL", "FAILED_PRECHECKS", "FAILED_SETUP", "FAILED_RUNTIME",
@@ -2330,7 +2330,7 @@ def test_robotwin_confidential_submit_bridge_refuses_before_side_effects(
     assert exc_info.value.__context__ is None
 
 
-@pytest.mark.parametrize("confidential", (False, True))
+@pytest.mark.parametrize("confidential", (True,))
 @pytest.mark.parametrize("failure", ("signal", "timeout", "indeterminate"))
 @pytest.mark.parametrize("real_transaction", (False, True))
 def test_submission_cleanup_retains_unknown_acceptance_with_bound_runtime(
@@ -2454,7 +2454,7 @@ def test_submission_cleanup_retains_unknown_acceptance_with_bound_runtime(
     assert all("down" not in command and "api" not in command for command in calls)
 
 
-@pytest.mark.parametrize("confidential", (False, True))
+@pytest.mark.parametrize("confidential", (True,))
 @pytest.mark.parametrize(
     "scenario", ("before-launch", "receipt-signal", "receipt-exception")
 )
@@ -3148,7 +3148,13 @@ def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     submit_workflow(
-        yaml_path, "run-env", isolated_config_dir=tmp_path / "isolated", sky_bin=sky_bin
+        yaml_path,
+        "run-env",
+        isolated_config_dir=tmp_path / "isolated",
+        sky_bin=sky_bin,
+        on_launch_ready=lambda _cleanup: pytest.fail(
+            "generic submission selected native cleanup"
+        ),
     )
 
     assert captured_env["HOME"] == str(tmp_path / "isolated" / "home")
