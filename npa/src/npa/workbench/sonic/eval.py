@@ -327,7 +327,9 @@ def _stage_remote_policy(
                 "workflow (see sonic-export-eval)."
             ) from exc
     remote_metadata = metadata or (
-        onnx.removesuffix(".onnx") + ".metadata.json" if onnx.startswith("s3://") else ""
+        onnx.removesuffix(".onnx") + ".metadata.json"
+        if onnx.startswith("s3://")
+        else ""
     )
     if not remote_metadata.startswith("s3://"):
         return local_onnx, metadata

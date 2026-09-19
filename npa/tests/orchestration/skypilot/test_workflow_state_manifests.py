@@ -117,7 +117,9 @@ def test_list_runs_builds_exactly_one_client_for_the_whole_operation(
 ) -> None:
     objects = {
         (_BUCKET, f"runs/run-{i}/manifest.json"): _manifest_bytes(
-            run_id=f"run-{i}", workflow_name="wf", updated_at=f"2026-01-01T00:00:{i:02d}Z"
+            run_id=f"run-{i}",
+            workflow_name="wf",
+            updated_at=f"2026-01-01T00:00:{i:02d}Z",
         )
         for i in range(20)
     }
@@ -127,7 +129,9 @@ def test_list_runs_builds_exactly_one_client_for_the_whole_operation(
     runs = list_runs(state_parent=_state_parent(), limit=50)
 
     assert len(runs) == 20
-    assert len(calls) == 1, "list_runs must build exactly one client, not one per candidate"
+    assert len(calls) == 1, (
+        "list_runs must build exactly one client, not one per candidate"
+    )
 
 
 def test_discover_workflow_run_state_builds_exactly_one_client(
@@ -178,7 +182,9 @@ def test_list_runs_stops_early_without_fetching_the_whole_bucket(
     total = 30
     objects = {
         (_BUCKET, f"runs/run-{i:02d}/manifest.json"): _manifest_bytes(
-            run_id=f"run-{i:02d}", workflow_name="wf", updated_at=f"2026-01-01T00:{i:02d}:00Z"
+            run_id=f"run-{i:02d}",
+            workflow_name="wf",
+            updated_at=f"2026-01-01T00:{i:02d}:00Z",
         )
         for i in range(total)
     }
@@ -240,7 +246,9 @@ def test_discover_workflow_run_state_tie_breaks_equal_updated_at_by_prefix(
     assert found.prefix == "runs/attempt-z"
 
 
-def test_manifest_fetches_close_every_response_body(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_manifest_fetches_close_every_response_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     objects = {
         (_BUCKET, f"runs/run-{i}/manifest.json"): _manifest_bytes(
             run_id=f"run-{i}", workflow_name="wf", updated_at="2026-01-01T00:00:00Z"
@@ -256,7 +264,9 @@ def test_manifest_fetches_close_every_response_body(monkeypatch: pytest.MonkeyPa
     assert all(body.closed for body in client.bodies)
 
 
-def test_manifest_fetches_bound_in_flight_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_manifest_fetches_bound_in_flight_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from npa.orchestration.skypilot import workflow_state as module
 
     objects = {
@@ -327,7 +337,9 @@ def test_get_text_closes_body_and_reuses_explicit_client(
     assert len(calls) == 0
 
 
-def test_get_text_wraps_client_construction_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_text_wraps_client_construction_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _boom(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("no credentials on this host")
 

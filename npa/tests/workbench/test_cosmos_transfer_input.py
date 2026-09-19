@@ -154,9 +154,7 @@ def test_guardrail_nltk_download_failures_are_typed_and_leave_no_partial_cache(
         tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
 
     assert caught.value.category == category
-    destination = (
-        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
-    )
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
     assert not destination.exists()
     assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
 
@@ -186,10 +184,7 @@ def test_guardrail_nltk_copy_failure_is_atomic(
 ) -> None:
     hub = tmp_path / "hub"
     snapshot = (
-        hub
-        / "models--nvidia--Cosmos-Guardrail1"
-        / "snapshots"
-        / tx.GUARDRAIL_REVISION
+        hub / "models--nvidia--Cosmos-Guardrail1" / "snapshots" / tx.GUARDRAIL_REVISION
     )
     tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
     tokenizer.mkdir(parents=True)
@@ -215,9 +210,7 @@ def test_guardrail_nltk_copy_failure_is_atomic(
         tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
     assert caught.value.category == "materialization_failed"
 
-    destination = (
-        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
-    )
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
     assert not destination.exists()
     assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
 
@@ -227,10 +220,7 @@ def test_guardrail_nltk_corrupt_or_mismatched_cache_fails_closed_before_network(
 ) -> None:
     hub = tmp_path / "hub"
     snapshot = (
-        hub
-        / "models--nvidia--Cosmos-Guardrail1"
-        / "snapshots"
-        / tx.GUARDRAIL_REVISION
+        hub / "models--nvidia--Cosmos-Guardrail1" / "snapshots" / tx.GUARDRAIL_REVISION
     )
     tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
     tokenizer.mkdir(parents=True)
@@ -242,9 +232,7 @@ def test_guardrail_nltk_corrupt_or_mismatched_cache_fails_closed_before_network(
     )
     assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
 
-    destination = (
-        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
-    )
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
     payload = destination / "tokenizers" / "punkt_tab" / "collocations.tab"
     payload.chmod(0o644)
     payload.write_bytes(b"corrupt")

@@ -69,7 +69,9 @@ def list_s3_objects(
     return objects
 
 
-def status_s3_prefix(uri: str, *, s3_client: Any, sample_limit: int = 10) -> dict[str, Any]:
+def status_s3_prefix(
+    uri: str, *, s3_client: Any, sample_limit: int = 10
+) -> dict[str, Any]:
     """Return a compact status payload for an S3 prefix."""
     objects = list_s3_objects(uri, s3_client=s3_client)
     sample = [asdict(item) for item in objects[:sample_limit]]
@@ -173,10 +175,10 @@ def _relative_key(key: str, source_prefix: str) -> str:
     if not source_prefix:
         return key
     if source_prefix.endswith("/") and key.startswith(source_prefix):
-        return key[len(source_prefix):]
+        return key[len(source_prefix) :]
     source_dir = source_prefix.rstrip("/") + "/"
     if key.startswith(source_dir):
-        return key[len(source_dir):]
+        return key[len(source_dir) :]
     if key == source_prefix:
         return key.rsplit("/", 1)[-1]
     return key
@@ -201,7 +203,9 @@ def _copy_object(
     target_bucket: str,
     target_key: str,
 ) -> None:
-    if source_s3_client is target_s3_client and hasattr(target_s3_client, "copy_object"):
+    if source_s3_client is target_s3_client and hasattr(
+        target_s3_client, "copy_object"
+    ):
         target_s3_client.copy_object(
             Bucket=target_bucket,
             Key=target_key,

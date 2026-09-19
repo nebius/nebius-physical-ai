@@ -124,7 +124,8 @@ def chunk_text(
             {
                 "index": idx,
                 "text": chunk.strip(),
-                "title": resolved_title or (chunk.strip().splitlines()[0][:80] if chunk.strip() else ""),
+                "title": resolved_title
+                or (chunk.strip().splitlines()[0][:80] if chunk.strip() else ""),
             }
         )
     return records
@@ -221,7 +222,9 @@ class InMemoryVectorStore:
             added += 1
         return added
 
-    def search(self, vector: Sequence[float], k: int = DEFAULT_TOP_K) -> list[dict[str, Any]]:
+    def search(
+        self, vector: Sequence[float], k: int = DEFAULT_TOP_K
+    ) -> list[dict[str, Any]]:
         scored: list[dict[str, Any]] = []
         for record in self._records:
             score = cosine_similarity(vector, record.get("vector") or [])
@@ -235,7 +238,9 @@ class InMemoryVectorStore:
         return len(self._records)
 
     def sources(self) -> list[str]:
-        return sorted({str(r.get("source") or "") for r in self._records if r.get("source")})
+        return sorted(
+            {str(r.get("source") or "") for r in self._records if r.get("source")}
+        )
 
 
 class JsonVectorStore(InMemoryVectorStore):
@@ -313,7 +318,9 @@ class _LanceVectorStore:
             self._table.add(rows)
         return len(rows)
 
-    def search(self, vector: Sequence[float], k: int = DEFAULT_TOP_K) -> list[dict[str, Any]]:
+    def search(
+        self, vector: Sequence[float], k: int = DEFAULT_TOP_K
+    ) -> list[dict[str, Any]]:
         query = self._table.search(list(vector))
         # Use cosine distance so ``score`` lands on the SAME 0..1 cosine scale as
         # the pure-python stores; the shared ``min_score`` floor then behaves
@@ -425,7 +432,9 @@ def index_corpus(
     for uri, title, text in documents:
         docs_seen += 1
         kind = _classify_kind(uri)
-        for chunk in chunk_text(text, chunk_chars=chunk_chars, overlap=overlap, title=title):
+        for chunk in chunk_text(
+            text, chunk_chars=chunk_chars, overlap=overlap, title=title
+        ):
             pending.append(
                 {
                     "id": _record_id(source, uri, chunk["index"]),
@@ -473,7 +482,14 @@ def retrieve(
     """
     text = str(query or "").strip()
     if not text:
-        return {"ok": False, "query": "", "citations": [], "count": 0, "used_web": False, "error": "empty query"}
+        return {
+            "ok": False,
+            "query": "",
+            "citations": [],
+            "count": 0,
+            "used_web": False,
+            "error": "empty query",
+        }
     try:
         query_vector = list(embed([text])[0])
     except Exception as exc:  # noqa: BLE001 - surface embed failure as a grounded error
@@ -519,7 +535,10 @@ def retrieve(
             web_results = list(web_search(text) or [])
         except Exception:  # noqa: BLE001 - live search is best-effort
             web_results = []
-        web_texts = [str(r.get("snippet") or r.get("content") or r.get("title") or "") for r in web_results[: max(0, int(web_limit))]]
+        web_texts = [
+            str(r.get("snippet") or r.get("content") or r.get("title") or "")
+            for r in web_results[: max(0, int(web_limit))]
+        ]
         web_vectors: list[list[float]] = []
         if web_texts:
             try:
@@ -539,7 +558,9 @@ def retrieve(
                 Citation(
                     source="web",
                     title=str(result.get("title") or result.get("url") or "web result"),
-                    snippet=_snippet(result.get("snippet") or result.get("content") or ""),
+                    snippet=_snippet(
+                        result.get("snippet") or result.get("content") or ""
+                    ),
                     score=score,
                     uri=str(result.get("url") or result.get("uri") or ""),
                     kind=KIND_WEB,
@@ -578,11 +599,17 @@ def format_grounded_answer(query: str, citations: Sequence[dict[str, Any]]) -> s
         kind = str(cite.get("kind") or KIND_DOC)
         score = cite.get("score")
         loc = f" (`{uri}`)" if uri else ""
-        score_str = f" · score `{round(float(score), 3)}`" if isinstance(score, (int, float)) else ""
+        score_str = (
+            f" · score `{round(float(score), 3)}`"
+            if isinstance(score, (int, float))
+            else ""
+        )
         lines.append(f"{idx}. **{title}** [{kind}]{loc}{score_str}")
         lines.append(f"   > {str(cite.get('snippet') or '').strip()}")
     lines.append("")
-    lines.append("_Grounded on indexed corpus — no generated content beyond the cited snippets._")
+    lines.append(
+        "_Grounded on indexed corpus — no generated content beyond the cited snippets._"
+    )
     return "\n".join(lines)
 
 

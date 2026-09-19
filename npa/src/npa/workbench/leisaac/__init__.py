@@ -736,9 +736,13 @@ def _redirect_asset_cache_to_durable_storage(pod_spec: dict[str, Any]) -> None:
         if container.get("name") != "leisaac":
             continue
         env = [
-            item for item in container.get("env", []) if item.get("name") not in cache_env
+            item
+            for item in container.get("env", [])
+            if item.get("name") not in cache_env
         ]
-        env.extend({"name": key, "value": value} for key, value in sorted(cache_env.items()))
+        env.extend(
+            {"name": key, "value": value} for key, value in sorted(cache_env.items())
+        )
         container["env"] = env
 
 

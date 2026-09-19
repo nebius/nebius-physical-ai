@@ -93,10 +93,7 @@ def _resolved_artifact_for_content(
             )
         source_prefix = _validated_resolved_prefix(resolved_prefix)
         discovered_scope = (
-            "/".join(
-                part for part in (source_prefix, normalized_run) if part
-            )
-            + "/"
+            "/".join(part for part in (source_prefix, normalized_run) if part) + "/"
         )
         if not normalized_key.startswith(discovered_scope):
             raise HTTPException(

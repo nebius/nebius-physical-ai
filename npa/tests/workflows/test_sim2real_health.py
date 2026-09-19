@@ -294,7 +294,9 @@ def test_cluster_fails_when_selected_identity_cannot_patch_jobs() -> None:
     assert not any(arg.startswith("--as=") for call in calls for arg in call)
 
 
-def test_cluster_checks_workflow_identity_without_legacy_account_impersonation() -> None:
+def test_cluster_checks_workflow_identity_without_legacy_account_impersonation() -> (
+    None
+):
     def runner(args):
         if any(arg.startswith("--as=") for arg in args):
             return KubeResult(1, "no", "legacy service account does not exist")
@@ -404,11 +406,15 @@ def test_run_preflight_runs_checks_concurrently() -> None:
         return True
 
     probes = DoctorProbes(
-        credentials=_Creds(ak="a", sk="s"), s3_client_factory=_Client, image_inspector=_inspector,
+        credentials=_Creds(ak="a", sk="s"),
+        s3_client_factory=_Client,
+        image_inspector=_inspector,
     )
     results = run_preflight(
         _config(s3_bucket="b", s3_endpoint="https://endpoint.example"),
-        repo_root=REPO_ROOT, probes=probes, checks=["s3", "registry"],
+        repo_root=REPO_ROOT,
+        probes=probes,
+        checks=["s3", "registry"],
     )
 
     assert [r.name for r in results] == ["s3", "registry"]
@@ -430,11 +436,15 @@ def test_run_preflight_preserves_order_regardless_of_finish_order() -> None:
         return True
 
     probes = DoctorProbes(
-        credentials=_Creds(ak="a", sk="s"), s3_client_factory=_Client, image_inspector=_inspector,
+        credentials=_Creds(ak="a", sk="s"),
+        s3_client_factory=_Client,
+        image_inspector=_inspector,
     )
     results = run_preflight(
         _config(s3_bucket="b", s3_endpoint="https://endpoint.example"),
-        repo_root=REPO_ROOT, probes=probes, checks=["s3", "registry"],
+        repo_root=REPO_ROOT,
+        probes=probes,
+        checks=["s3", "registry"],
     )
 
     assert [r.name for r in results] == ["s3", "registry"]
@@ -448,7 +458,12 @@ def test_run_preflight_propagates_first_ordered_exception() -> None:
     probes = DoctorProbes(image_inspector=_boom)
 
     with pytest.raises(RuntimeError, match="registry probe exploded"):
-        run_preflight(_config(), repo_root=REPO_ROOT, probes=probes, checks=["registry", "coherence"])
+        run_preflight(
+            _config(),
+            repo_root=REPO_ROOT,
+            probes=probes,
+            checks=["registry", "coherence"],
+        )
 
 
 @pytest.mark.parametrize("gpu_resource", ["nvidia.com/gpu"])

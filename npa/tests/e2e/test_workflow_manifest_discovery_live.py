@@ -42,20 +42,29 @@ def _seed_manifests(client, bucket: str, prefix: str, seeded_keys: list[str]) ->
         key = f"{prefix}/{run_id}/manifest.json"
         seeded_keys.append(key)
         payload = {
-            "schema_version": 1, "run_id": run_id, "workflow_name": "live-test",
-            "stages": {}, "updated_at": f"2026-01-01T00:{i:02d}:00Z",
+            "schema_version": 1,
+            "run_id": run_id,
+            "workflow_name": "live-test",
+            "stages": {},
+            "updated_at": f"2026-01-01T00:{i:02d}:00Z",
         }
         client.s3.put_object(
-            Bucket=bucket, Key=key, Body=json.dumps(payload).encode("utf-8"),
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(payload).encode("utf-8"),
             ContentType="application/json",
         )
 
 
-def _delete_and_verify(client, bucket: str, prefix: str, seeded_keys: list[str]) -> None:
+def _delete_and_verify(
+    client, bucket: str, prefix: str, seeded_keys: list[str]
+) -> None:
     for key in seeded_keys:
         client.s3.delete_object(Bucket=bucket, Key=key)
     remaining = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-    assert not remaining.get("Contents"), "Live test fixture manifests were not fully deleted"
+    assert not remaining.get("Contents"), (
+        "Live test fixture manifests were not fully deleted"
+    )
 
 
 @pytest.fixture
@@ -64,10 +73,14 @@ def live_manifests():
     if not project:
         pytest.skip("Set NPA_E2E_PROJECT to an explicitly configured test project")
     storage = resolve_project_storage(project)
-    if not all((
-        storage.checkpoint_bucket, storage.endpoint_url,
-        storage.aws_access_key_id, storage.aws_secret_access_key,
-    )):
+    if not all(
+        (
+            storage.checkpoint_bucket,
+            storage.endpoint_url,
+            storage.aws_access_key_id,
+            storage.aws_secret_access_key,
+        )
+    ):
         pytest.fail("Selected live project needs complete object storage configuration")
     bucket = storage.checkpoint_bucket.removeprefix("s3://").split("/", 1)[0]
     prefix = "workflow-manifest-discovery-live-test/" + uuid.uuid4().hex
@@ -77,7 +90,8 @@ def live_manifests():
         aws_secret_access_key=storage.aws_secret_access_key,
     )
     state_parent = WorkflowS3Config(
-        bucket=bucket, prefix=prefix,
+        bucket=bucket,
+        prefix=prefix,
         endpoint_url=storage.endpoint_url,
         aws_access_key_id=storage.aws_access_key_id,
         aws_secret_access_key=storage.aws_secret_access_key,
@@ -95,7 +109,9 @@ def test_list_runs_finds_every_seeded_manifest(live_manifests):
 
     runs = list_runs(state_parent=state_parent, limit=1000)
 
-    assert sorted(r["run_id"] for r in runs) == [f"run-{i:03d}" for i in range(RUN_COUNT)]
+    assert sorted(r["run_id"] for r in runs) == [
+        f"run-{i:03d}" for i in range(RUN_COUNT)
+    ]
     assert all(r["workflow_name"] == "live-test" for r in runs)
 
 
@@ -112,6 +128,8 @@ def test_discover_workflow_run_state_finds_the_exact_run(live_manifests):
 def test_discover_workflow_run_state_returns_none_for_unknown_run(live_manifests):
     _client, _bucket, _prefix, state_parent = live_manifests
 
-    found = discover_workflow_run_state(state_parent=state_parent, run_id="does-not-exist")
+    found = discover_workflow_run_state(
+        state_parent=state_parent, run_id="does-not-exist"
+    )
 
     assert found is None

@@ -35,7 +35,13 @@ def index_in_lancedb(
     if not lancedb_endpoint.strip():
         return {"indexed": False, "backend": "manifest", "table": table}
     payload = {"table": table, "lance_uri": lance_uri, "records": records}
-    data = _post(lancedb_endpoint, "/index", payload=payload, token_env=token_env, timeout=timeout)
+    data = _post(
+        lancedb_endpoint,
+        "/index",
+        payload=payload,
+        token_env=token_env,
+        timeout=timeout,
+    )
     return {"indexed": True, "backend": "lancedb", "table": table, **data}
 
 
@@ -70,12 +76,21 @@ def query_lancedb(
     timeout: float = 60.0,
 ) -> list[dict[str, Any]]:
     """Query the LanceDB-backed index by the given facet predicate."""
-    payload: dict[str, Any] = {"filter": equality_facets(filter_predicate), "limit": limit}
+    payload: dict[str, Any] = {
+        "filter": equality_facets(filter_predicate),
+        "limit": limit,
+    }
     if table:
         payload["table"] = table
     if lance_uri:
         payload["lance_uri"] = lance_uri
-    data = _post(lancedb_endpoint, "/query", payload=payload, token_env=token_env, timeout=timeout)
+    data = _post(
+        lancedb_endpoint,
+        "/query",
+        payload=payload,
+        token_env=token_env,
+        timeout=timeout,
+    )
     records = data.get("records", [])
     if not isinstance(records, list):
         raise DatasetIntegrationError("LanceDB query returned an unexpected response")
@@ -87,7 +102,8 @@ def query_lancedb(
         records = [
             record
             for record in records
-            if isinstance(record.get(metric), (int, float)) and record[metric] >= float(threshold)
+            if isinstance(record.get(metric), (int, float))
+            and record[metric] >= float(threshold)
         ]
     return records
 
@@ -107,8 +123,18 @@ def fiftyone_handoff(
     """
     if not fiftyone_endpoint.strip():
         return {"handoff": False}
-    payload = {"manifest_uri": manifest_uri, "dataset_id": dataset_id, "version": version}
-    data = _post(fiftyone_endpoint, "/load-dataset", payload=payload, token_env=token_env, timeout=timeout)
+    payload = {
+        "manifest_uri": manifest_uri,
+        "dataset_id": dataset_id,
+        "version": version,
+    }
+    data = _post(
+        fiftyone_endpoint,
+        "/load-dataset",
+        payload=payload,
+        token_env=token_env,
+        timeout=timeout,
+    )
     return {"handoff": True, **data}
 
 
@@ -126,14 +152,22 @@ def _post(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.post(f"{resolved}{path}", headers=headers, json=payload, timeout=timeout)
+        response = httpx.post(
+            f"{resolved}{path}", headers=headers, json=payload, timeout=timeout
+        )
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        raise DatasetIntegrationError(f"workbench service call failed ({resolved}{path}): {exc}") from exc
+        raise DatasetIntegrationError(
+            f"workbench service call failed ({resolved}{path}): {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise DatasetIntegrationError("workbench service returned non-JSON response") from exc
+        raise DatasetIntegrationError(
+            "workbench service returned non-JSON response"
+        ) from exc
     if not isinstance(data, dict):
-        raise DatasetIntegrationError("workbench service returned an unexpected response")
+        raise DatasetIntegrationError(
+            "workbench service returned an unexpected response"
+        )
     return data

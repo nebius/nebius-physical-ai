@@ -50,7 +50,9 @@ IMAGE = (
 )
 PROMPT_ASSET = "assets/example_t2v_prompt.json"
 NEGATIVE_PROMPT_ASSET = "assets/negative_prompt.json"
-PUBLIC_PROMPT_SHA256 = "61c9c4b46b6787d967cc509a2bf323766e70bf5ecf40e09a739362beac135677"
+PUBLIC_PROMPT_SHA256 = (
+    "61c9c4b46b6787d967cc509a2bf323766e70bf5ecf40e09a739362beac135677"
+)
 PUBLIC_NEGATIVE_PROMPT_SHA256 = (
     "007a1bdfe1ec3edf3b9a71789ca1999a47ad565560f269a3d78bf9a8dfef9cfd"
 )
@@ -407,10 +409,14 @@ def _load_anchor_prompts() -> tuple[str, str, dict[str, str]]:
     )
     if not prompt.strip() or not negative.strip():
         raise Cosmos3SuperBenchmarkError("pinned model prompt assets must be non-empty")
-    return prompt, negative, {
-        "prompt_sha256": _sha256_text(prompt),
-        "negative_prompt_sha256": _sha256_text(negative),
-    }
+    return (
+        prompt,
+        negative,
+        {
+            "prompt_sha256": _sha256_text(prompt),
+            "negative_prompt_sha256": _sha256_text(negative),
+        },
+    )
 
 
 def service_command(topology: Topology, *, port: int) -> list[str]:
@@ -434,7 +440,9 @@ def service_command(topology: Topology, *, port: int) -> list[str]:
 
 def _gpu_set(topology: Topology, replica: int) -> str:
     first = replica * topology.gpus_per_service
-    return ",".join(str(index) for index in range(first, first + topology.gpus_per_service))
+    return ",".join(
+        str(index) for index in range(first, first + topology.gpus_per_service)
+    )
 
 
 def _ready(url: str) -> bool:
@@ -539,7 +547,10 @@ def validate_video(path: Path) -> dict[str, Any]:
     if stream:
         if (stream.get("width"), stream.get("height")) != (1280, 720):
             errors.append(
-                {"check": "geometry", "detail": f"{stream.get('width')}x{stream.get('height')}"}
+                {
+                    "check": "geometry",
+                    "detail": f"{stream.get('width')}x{stream.get('height')}",
+                }
             )
         try:
             fps = float(Fraction(stream["avg_frame_rate"]))
@@ -618,13 +629,16 @@ def validate_video(path: Path) -> dict[str, Any]:
 
 def _multipart(fields: Mapping[str, str]) -> tuple[bytes, str]:
     boundary = f"npa-cosmos3-{os.urandom(12).hex()}"
-    body = b"".join(
-        (
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n"
-            f"{value}\r\n"
-        ).encode()
-        for key, value in fields.items()
-    ) + f"--{boundary}--\r\n".encode()
+    body = (
+        b"".join(
+            (
+                f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode()
+            for key, value in fields.items()
+        )
+        + f"--{boundary}--\r\n".encode()
+    )
     return body, f"multipart/form-data; boundary={boundary}"
 
 
@@ -732,7 +746,9 @@ def _strict_valid(record: Mapping[str, Any]) -> bool:
     )
 
 
-def derive_cell(records: Sequence[Mapping[str, Any]], window_seconds: float) -> dict[str, Any]:
+def derive_cell(
+    records: Sequence[Mapping[str, Any]], window_seconds: float
+) -> dict[str, Any]:
     if window_seconds <= 0:
         raise Cosmos3SuperBenchmarkError("measurement window must be positive")
     valid = [record for record in records if _strict_valid(record)]
@@ -753,7 +769,9 @@ def derive_cell(records: Sequence[Mapping[str, Any]], window_seconds: float) -> 
         else None,
         "window_seconds": round(window_seconds, 6),
         "credited_valid_video_seconds": round(video_seconds, 3),
-        "valid_video_seconds_per_node_hour": round(video_seconds * 3600 / window_seconds, 1),
+        "valid_video_seconds_per_node_hour": round(
+            video_seconds * 3600 / window_seconds, 1
+        ),
         "failed_attempt_video_seconds_credit": 0,
     }
 
@@ -930,7 +948,9 @@ def dispatch_cell(
 
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _canonical_json_bytes(payload: Any) -> bytes:
@@ -944,9 +964,7 @@ def _cell_contract_sha256(
     prompt_hashes: Mapping[str, str],
     run_id: str,
 ) -> str:
-    planned = next(
-        item for item in plan["planned_cells"] if item["name"] == cell.name
-    )
+    planned = next(item for item in plan["planned_cells"] if item["name"] == cell.name)
     return _sha256(
         _canonical_json_bytes(
             {
@@ -1118,9 +1136,7 @@ def run_benchmark(
         gpu_family=family,
     )
     remote = output_path.startswith("s3://")
-    storage = (
-        storage_client or StorageClient.from_environment()
-    ) if remote else None
+    storage = (storage_client or StorageClient.from_environment()) if remote else None
     with tempfile.TemporaryDirectory(
         prefix=f"npa-cosmos3-super-{family.lower()}-"
     ) as tmp:

@@ -283,7 +283,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    if sum(bool(value) for value in (args.image, args.rootfs_tar, args.docker_save)) != 1:
+    if (
+        sum(bool(value) for value in (args.image, args.rootfs_tar, args.docker_save))
+        != 1
+    ):
         parser.error("provide exactly one IMAGE, --rootfs-tar, or --docker-save")
     if args.config_json and not args.rootfs_tar:
         parser.error("--config-json is valid only with --rootfs-tar")
@@ -306,7 +309,8 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "format": "npa_ltx_image_byte_scan_v1",
-        "image": args.image or ("docker-save" if args.docker_save else "offline-rootfs"),
+        "image": args.image
+        or ("docker-save" if args.docker_save else "offline-rootfs"),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
         "findings": [asdict(item) for item in findings],

@@ -17,9 +17,21 @@ import worker
 
 
 FINGERPRINT_FIELDS = (
-    "source_sha256", "application_sha256", "validation_sha256", "udf_sha256",
-    "model_revision", "model_files", "precision", "python", "ray", "torch", "cuda",
-    "transformers", "pyarrow", "lancedb", "gpu_capability",
+    "source_sha256",
+    "application_sha256",
+    "validation_sha256",
+    "udf_sha256",
+    "model_revision",
+    "model_files",
+    "precision",
+    "python",
+    "ray",
+    "torch",
+    "cuda",
+    "transformers",
+    "pyarrow",
+    "lancedb",
+    "gpu_capability",
 )
 
 
@@ -39,7 +51,9 @@ def model_snapshot_files(checkpoint: Path) -> list[dict]:
         if relative.parts[:2] == (".cache", "huggingface"):
             continue
         if path.is_file():
-            files.append({"path": relative.as_posix(), "sha256": validation.file_hash(path)})
+            files.append(
+                {"path": relative.as_posix(), "sha256": validation.file_hash(path)}
+            )
     return files
 
 
@@ -58,7 +72,9 @@ def load_workbench_udf():
     path = Path(worker.__file__).with_name("npa_lancedb_bdd100k_udfs.py")
     if not path.is_file() or path.is_symlink():
         raise RuntimeError("The Jobs working_dir lacks a regular Workbench CLIP UDF")
-    specification = importlib.util.spec_from_file_location("npa_lancedb_bdd100k_udfs", path)
+    specification = importlib.util.spec_from_file_location(
+        "npa_lancedb_bdd100k_udfs", path
+    )
     if specification is None or specification.loader is None:
         raise RuntimeError("The Jobs working_dir lacks the real Workbench CLIP UDF")
     module = importlib.util.module_from_spec(specification)
@@ -122,7 +138,9 @@ def _runtime_provenance():
 def _model_provenance(checkpoint, revision, load_seconds):
     """Record actual model bytes independently of the requested revision label."""
     files = model_snapshot_files(checkpoint)
-    weights = [entry for entry in files if entry["path"].endswith((".safetensors", ".bin"))]
+    weights = [
+        entry for entry in files if entry["path"].endswith((".safetensors", ".bin"))
+    ]
     if not weights:
         raise ValueError("Model snapshot has no verifiable PyTorch weights")
     return {
@@ -192,7 +210,9 @@ class ClipActor:
         self.info.update(_model_provenance(checkpoint, model_revision, load_seconds))
         identity = {field: self.info[field] for field in FINGERPRINT_FIELDS}
         self.info["execution_fingerprint"] = validation.canonical_hash(identity)
-        self.info["fingerprint_verification_seconds"] = time.perf_counter() - verification_started
+        self.info["fingerprint_verification_seconds"] = (
+            time.perf_counter() - verification_started
+        )
         self.inference_calls = 0
 
     def status(self) -> dict:
@@ -223,7 +243,9 @@ class ClipActor:
         import torch
 
         if shard["source_sha256"] != worker.source_hash():
-            raise ValueError("CPU and GPU workers imported different application revisions")
+            raise ValueError(
+                "CPU and GPU workers imported different application revisions"
+            )
         if barrier is not None:
             ray.get(barrier.arrive.remote(self.info["instance_id"]))
             ray.get(barrier.start.remote(self.info["instance_id"]))
@@ -236,13 +258,22 @@ class ClipActor:
             ray.get(barrier.finish.remote(self.info["instance_id"]))
         _verify_vectors(vectors, len(shard["rows"]))
         self.inference_calls += 1
-        measurement = {"instance_id": self.info["instance_id"],
-                       "start_monotonic_ns": started, "end_monotonic_ns": finished,
-                       "inference_seconds": (finished - started) / 1e9}
-        print("RAY_CLIP_INFERENCE " + json.dumps({
-            "record_ids": [row["record_id"] for row in shard["rows"]],
-            "inference": measurement,
-        }), flush=True)
+        measurement = {
+            "instance_id": self.info["instance_id"],
+            "start_monotonic_ns": started,
+            "end_monotonic_ns": finished,
+            "inference_seconds": (finished - started) / 1e9,
+        }
+        print(
+            "RAY_CLIP_INFERENCE "
+            + json.dumps(
+                {
+                    "record_ids": [row["record_id"] for row in shard["rows"]],
+                    "inference": measurement,
+                }
+            ),
+            flush=True,
+        )
         return vectors, measurement
 
 
@@ -304,7 +335,13 @@ class InferenceBarrier:
         self.active.add(instance)
         if len(self.active) > 1:
             self.overlap = True
-        self.events.append({"instance_id": instance, "event": "start", "monotonic_ns": time.monotonic_ns()})
+        self.events.append(
+            {
+                "instance_id": instance,
+                "event": "start",
+                "monotonic_ns": time.monotonic_ns(),
+            }
+        )
 
     async def finish(self, instance: str):
         """Record completion after the actor synchronizes its CUDA call.
@@ -316,7 +353,13 @@ class InferenceBarrier:
         Raises:
             KeyError: The actor had no corresponding active start.
         """
-        self.events.append({"instance_id": instance, "event": "finish", "monotonic_ns": time.monotonic_ns()})
+        self.events.append(
+            {
+                "instance_id": instance,
+                "event": "finish",
+                "monotonic_ns": time.monotonic_ns(),
+            }
+        )
         self.active.remove(instance)
 
     async def status(self):
@@ -329,7 +372,11 @@ class InferenceBarrier:
         Raises:
             None.
         """
-        return {"participants": len(self.arrived), "overlap": self.overlap, "events": self.events}
+        return {
+            "participants": len(self.arrived),
+            "overlap": self.overlap,
+            "events": self.events,
+        }
 
 
 def _write_shard_vectors(directory, shard, vectors):
@@ -337,12 +384,14 @@ def _write_shard_vectors(directory, shard, vectors):
     import pyarrow
     import pyarrow.parquet as parquet
 
-    table = pyarrow.table({
-        "record_id": [row["record_id"] for row in shard["rows"]],
-        "input_sha256": [row["input_sha256"] for row in shard["rows"]],
-        "processed_sha256": [row["processed_sha256"] for row in shard["rows"]],
-        "vector": vectors,
-    })
+    table = pyarrow.table(
+        {
+            "record_id": [row["record_id"] for row in shard["rows"]],
+            "input_sha256": [row["input_sha256"] for row in shard["rows"]],
+            "processed_sha256": [row["processed_sha256"] for row in shard["rows"]],
+            "vector": vectors,
+        }
+    )
     temporary = directory / f".{uuid.uuid4().hex}.parquet"
     try:
         parquet.write_table(table, temporary)
@@ -367,8 +416,14 @@ def _checkpoint_receipt(directory, shard, measurement, identity):
     }
 
 
-def commit_shard(path: Path, shard: dict, vectors, measurement: dict,
-                 model_revision: str, execution_fingerprint: str) -> dict:
+def commit_shard(
+    path: Path,
+    shard: dict,
+    vectors,
+    measurement: dict,
+    model_revision: str,
+    execution_fingerprint: str,
+) -> dict:
     """Commit a driver-owned shard or reuse an identical verified checkpoint.
 
     Args:
@@ -384,7 +439,9 @@ def commit_shard(path: Path, shard: dict, vectors, measurement: dict,
         ValueError: Existing checkpoint identity or data differs.
         OSError: Checkpoint bytes or commit metadata cannot be written.
     """
-    identity = validation.checkpoint_identity(shard, model_revision, execution_fingerprint)
+    identity = validation.checkpoint_identity(
+        shard, model_revision, execution_fingerprint
+    )
     cached = validation.read_checkpoint(path, identity)
     if cached is not None:
         return {**cached, "checkpoint_reused": True}
@@ -397,13 +454,21 @@ def commit_shard(path: Path, shard: dict, vectors, measurement: dict,
 
 def _reusable_checkpoint(shard, directory, model_revision, execution_fingerprint):
     """Keep identity/hash validation identical for direct and batched submission."""
-    identity = validation.checkpoint_identity(shard, model_revision, execution_fingerprint)
+    identity = validation.checkpoint_identity(
+        shard, model_revision, execution_fingerprint
+    )
     cached = validation.read_checkpoint(directory, identity)
     return {**cached, "checkpoint_reused": True} if cached is not None else None
 
 
-def submit_shard(actor, shard: dict, directory: Path, model_revision: str,
-                 execution_fingerprint: str, barrier=None):
+def submit_shard(
+    actor,
+    shard: dict,
+    directory: Path,
+    model_revision: str,
+    execution_fingerprint: str,
+    barrier=None,
+):
     """Reuse a committed shard before scheduling another GPU inference call.
 
     Args:
@@ -419,7 +484,9 @@ def submit_shard(actor, shard: dict, directory: Path, model_revision: str,
         ValueError: A committed checkpoint does not match this execution.
         OSError: Checkpoint data cannot be read.
     """
-    cached = _reusable_checkpoint(shard, directory, model_revision, execution_fingerprint)
+    cached = _reusable_checkpoint(
+        shard, directory, model_revision, execution_fingerprint
+    )
     if cached is not None:
         return cached, None
     return None, actor.infer.remote(shard, barrier)
@@ -474,7 +541,10 @@ def _preview_images(row):
     processed = worker.preprocess_image(original)
     original_hash = hashlib.sha256(original).hexdigest()
     processed_hash = hashlib.sha256(processed).hexdigest()
-    if original_hash != row["input_sha256"] or processed_hash != row["processed_sha256"]:
+    if (
+        original_hash != row["input_sha256"]
+        or processed_hash != row["processed_sha256"]
+    ):
         raise ValueError("Rendered preview differs from the embedded inputs")
     return (("original", original), ("crop", processed))
 
@@ -513,7 +583,9 @@ def _aggregation_report(output, table, vectors, retrievals, started, lance_rows)
     return {
         "records": len(table),
         "input_hash": validation.canonical_hash(table["input_sha256"].to_pylist()),
-        "processed_hash": validation.canonical_hash(table["processed_sha256"].to_pylist()),
+        "processed_hash": validation.canonical_hash(
+            table["processed_sha256"].to_pylist()
+        ),
         "embedding_sha256": validation.file_hash(output / "embeddings.parquet"),
         "vector_bytes_sha256": hashlib.sha256(vectors.tobytes()).hexdigest(),
         "mean_embedding": vectors.mean(axis=0, dtype=numpy.float64).tolist(),
@@ -556,20 +628,26 @@ def _arguments(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-path", required=True)
     parser.add_argument("--model-path", default="/tmp/npa-clip-model")
-    parser.add_argument("--model-revision", default="3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
+    parser.add_argument(
+        "--model-revision", default="3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
+    )
     parser.add_argument("--records", type=int, default=2048)
     parser.add_argument("--actors", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--recovery-check", action="store_true")
     parser.add_argument("--cancellation-probe", action="store_true")
-    parser.add_argument("--compare-baseline-path", help="Prior baseline output on the Jobs driver node")
+    parser.add_argument(
+        "--compare-baseline-path", help="Prior baseline output on the Jobs driver node"
+    )
     return parser.parse_args(argv)
 
 
 def _validate_output_directory(output, checkpoint_layout):
     """Keep durable output separate from Ray's cached application source."""
     if not output.is_absolute():
-        raise ValueError("output-path must be an absolute run-owned driver path outside working_dir")
+        raise ValueError(
+            "output-path must be an absolute run-owned driver path outside working_dir"
+        )
     if output.resolve().is_relative_to(Path(__file__).resolve().parent):
         raise ValueError("Keep output-path outside Ray's cached working_dir")
     output.mkdir(parents=True, exist_ok=True)
@@ -580,10 +658,17 @@ def _validate_output_directory(output, checkpoint_layout):
 
 def _verify_actor_allocations(initializations, actors):
     """Require matching execution identities on distinct Ray GPU allocations."""
-    fingerprints = {information["execution_fingerprint"] for information in initializations}
+    fingerprints = {
+        information["execution_fingerprint"] for information in initializations
+    }
     if len(fingerprints) != 1:
-        raise ValueError("GPU workers disagree on source, model weights, UDF, or runtime fingerprint")
-    allocations = {(information["node_id"], tuple(information["gpu_ids"])) for information in initializations}
+        raise ValueError(
+            "GPU workers disagree on source, model weights, UDF, or runtime fingerprint"
+        )
+    allocations = {
+        (information["node_id"], tuple(information["gpu_ids"]))
+        for information in initializations
+    }
     if len(allocations) != actors:
         raise ValueError("GPU actors did not receive distinct GPU allocations")
     return next(iter(fingerprints))
@@ -591,7 +676,11 @@ def _verify_actor_allocations(initializations, actors):
 
 def _recovery_receipt(old, replacement, replay, pending, committed):
     """Prove actor replacement reused an unchanged committed shard."""
-    if pending is not None or not replay["checkpoint_reused"] or replacement["inference_calls"] != 0:
+    if (
+        pending is not None
+        or not replay["checkpoint_reused"]
+        or replacement["inference_calls"] != 0
+    ):
         raise ValueError("Committed shard was not reused after actor replacement")
     if replay["parquet_sha256"] != committed["parquet_sha256"]:
         raise ValueError("Recovery changed a committed shard")
@@ -637,36 +726,60 @@ class _InferenceSession:
             raise ValueError("Submit through application Ray Jobs on GCS port 6381")
         self.started = time.perf_counter()
         self.ray.init(address=address, namespace=f"clip-{uuid.uuid4().hex}")
-        self.gpu_nodes = [node for node in self.ray.nodes()
-                          if node["Alive"] and node["Resources"].get("GPU", 0) > 0]
+        self.gpu_nodes = [
+            node
+            for node in self.ray.nodes()
+            if node["Alive"] and node["Resources"].get("GPU", 0) > 0
+        ]
         if self.ray.cluster_resources().get("GPU", 0) < self.arguments.actors:
             raise ValueError("Application Ray has fewer GPUs than requested actors")
-        self.clip_actor = self.ray.remote(num_gpus=1, num_cpus=1, scheduling_strategy="SPREAD")(ClipActor)
+        self.clip_actor = self.ray.remote(
+            num_gpus=1, num_cpus=1, scheduling_strategy="SPREAD"
+        )(ClipActor)
         self.inference_barrier = self.ray.remote(num_cpus=0)(InferenceBarrier)
         self.prepare_shard = self.ray.remote(num_cpus=1)(worker.preprocess_shard)
 
     def _new_actor(self):
         """Allocate one model actor using the prepared immutable snapshot."""
-        return self.clip_actor.remote(self.arguments.model_path, self.arguments.model_revision)
+        return self.clip_actor.remote(
+            self.arguments.model_path, self.arguments.model_revision
+        )
 
     def _initialize_actors(self):
         """Verify model/runtime agreement before any output is committed."""
         self.actors = [self._new_actor() for _ in range(self.arguments.actors)]
-        self.initializations = self.ray.get([actor.status.remote() for actor in self.actors])
-        self.fingerprint = _verify_actor_allocations(self.initializations, self.arguments.actors)
-        validation.verify_execution(self.output, self.fingerprint, self.checkpoint_layout)
+        self.initializations = self.ray.get(
+            [actor.status.remote() for actor in self.actors]
+        )
+        self.fingerprint = _verify_actor_allocations(
+            self.initializations, self.arguments.actors
+        )
+        validation.verify_execution(
+            self.output, self.fingerprint, self.checkpoint_layout
+        )
         self.model_ready = time.perf_counter()
 
     def _commit_first_shard(self):
         """Establish a real checkpoint for the recovery or cancellation check."""
         self.first_shard = self.ray.get(self.prepare_shard.remote(self.shards[0]))
         self.first_path = self.output / "shards" / "000000"
-        receipt, pending = submit_shard(self.actors[0], self.first_shard, self.first_path,
-                                       self.arguments.model_revision, self.fingerprint)
+        receipt, pending = submit_shard(
+            self.actors[0],
+            self.first_shard,
+            self.first_path,
+            self.arguments.model_revision,
+            self.fingerprint,
+        )
         if receipt is None:
             vectors, measurement = self.ray.get(pending)
-            receipt = commit_shard(self.first_path, self.first_shard, vectors, measurement,
-                                   self.arguments.model_revision, self.fingerprint)
+            receipt = commit_shard(
+                self.first_path,
+                self.first_shard,
+                vectors,
+                measurement,
+                self.arguments.model_revision,
+                self.fingerprint,
+            )
         self.receipts.append(receipt)
         print("RAY_CLIP_FIRST_CHECKPOINT", flush=True)
 
@@ -681,10 +794,17 @@ class _InferenceSession:
         if replacement["execution_fingerprint"] != self.fingerprint:
             raise ValueError("Replacement actor changed execution fingerprint")
         self.initializations.append(replacement)
-        replay, pending = submit_shard(self.actors[0], self.first_shard, self.first_path,
-                                      self.arguments.model_revision, self.fingerprint)
+        replay, pending = submit_shard(
+            self.actors[0],
+            self.first_shard,
+            self.first_path,
+            self.arguments.model_revision,
+            self.fingerprint,
+        )
         after_replay = self.ray.get(self.actors[0].status.remote())
-        self.recovery = _recovery_receipt(old, after_replay, replay, pending, self.receipts[0])
+        self.recovery = _recovery_receipt(
+            old, after_replay, replay, pending, self.receipts[0]
+        )
         validation.atomic_json(self.output / "recovery.json", self.recovery)
 
     def _run_until_cancelled(self):
@@ -701,9 +821,13 @@ class _InferenceSession:
         submissions = []
         for index, shard in enumerate(prepared, 1):
             directory = self.output / "shards" / f"{index:06d}"
-            receipt = _reusable_checkpoint(shard, directory, self.arguments.model_revision, self.fingerprint)
+            receipt = _reusable_checkpoint(
+                shard, directory, self.arguments.model_revision, self.fingerprint
+            )
             submissions.append((receipt, None))
-        missing = [index for index, (receipt, _) in enumerate(submissions) if receipt is None]
+        missing = [
+            index for index, (receipt, _) in enumerate(submissions) if receipt is None
+        ]
         participants = min(self.arguments.actors, len(missing))
         if participants:
             self.barrier = self.inference_barrier.remote(participants)
@@ -712,27 +836,50 @@ class _InferenceSession:
             # gives each first-wave task a distinct serial actor queue.
             actor = self.actors[(ordinal + 1) % self.arguments.actors]
             observation = self.barrier if ordinal < participants else None
-            submissions[index] = (None, actor.infer.remote(prepared[index], observation))
+            submissions[index] = (
+                None,
+                actor.infer.remote(prepared[index], observation),
+            )
         return submissions
 
     def _infer_remaining_shards(self):
         """Preprocess partitions, run concurrent inference and commit all outputs."""
-        prepared = self.ray.get([self.prepare_shard.remote(shard) for shard in self.shards[1:]])
+        prepared = self.ray.get(
+            [self.prepare_shard.remote(shard) for shard in self.shards[1:]]
+        )
         self.preprocessing_seconds = self.first_shard["preprocess_seconds"] + sum(
-            shard["preprocess_seconds"] for shard in prepared)
+            shard["preprocess_seconds"] for shard in prepared
+        )
         submissions = self._schedule_batches(prepared)
-        for index, (shard, (receipt, future)) in enumerate(zip(prepared, submissions, strict=True), 1):
+        for index, (shard, (receipt, future)) in enumerate(
+            zip(prepared, submissions, strict=True), 1
+        ):
             if receipt is None:
                 vectors, measurement = self.ray.get(future)
                 directory = self.output / "shards" / f"{index:06d}"
-                receipt = commit_shard(directory, shard, vectors, measurement,
-                                       self.arguments.model_revision, self.fingerprint)
+                receipt = commit_shard(
+                    directory,
+                    shard,
+                    vectors,
+                    measurement,
+                    self.arguments.model_revision,
+                    self.fingerprint,
+                )
             self.receipts.append(receipt)
-            print("RAY_CLIP_CHECKPOINT " + json.dumps({
-                "shard_index": index, "checkpoint_reused": receipt["checkpoint_reused"],
-            }), flush=True)
+            print(
+                "RAY_CLIP_CHECKPOINT "
+                + json.dumps(
+                    {
+                        "shard_index": index,
+                        "checkpoint_reused": receipt["checkpoint_reused"],
+                    }
+                ),
+                flush=True,
+            )
         self.work_done = time.perf_counter()
-        self.final_actors = self.ray.get([actor.status.remote() for actor in self.actors])
+        self.final_actors = self.ray.get(
+            [actor.status.remote() for actor in self.actors]
+        )
 
     def _check_concurrency(self):
         """Require actual observed overlap instead of inferring it from SPREAD."""
@@ -752,11 +899,15 @@ class _InferenceSession:
             "source_sha256": worker.source_hash(),
             "application_sha256": validation.file_hash(Path(__file__)),
             "validation_sha256": validation.file_hash(Path(validation.__file__)),
-            "udf_sha256": validation.file_hash(Path(__file__).with_name("npa_lancedb_bdd100k_udfs.py")),
+            "udf_sha256": validation.file_hash(
+                Path(__file__).with_name("npa_lancedb_bdd100k_udfs.py")
+            ),
             "crop_policy": worker.CROP_POLICY,
             "model_revision": self.arguments.model_revision,
             "execution_fingerprint": self.fingerprint,
-            "ray_nodes": len({information["node_id"] for information in self.initializations}),
+            "ray_nodes": len(
+                {information["node_id"] for information in self.initializations}
+            ),
             "ray_gpu_nodes_available": len(self.gpu_nodes),
             "gpu_actors": self.arguments.actors,
             "batch_size": self.arguments.batch_size,
@@ -773,14 +924,29 @@ class _InferenceSession:
             "concurrency_observation": observation,
             "concurrency_timing_boundary": "coordinator receives start before CUDA inference and finish after CUDA synchronize; includes RPC edges",
             "cluster_connect_and_actor_ready_seconds": self.model_ready - self.started,
-            "preprocessing_and_inference_wall_seconds": self.work_done - self.model_ready,
+            "preprocessing_and_inference_wall_seconds": self.work_done
+            - self.model_ready,
             "preprocessing_task_seconds_sum": self.preprocessing_seconds,
-            "inference_actor_seconds_sum": sum(receipt["inference"]["inference_seconds"]
-                                               for receipt in self.receipts if not receipt["checkpoint_reused"]),
-            "retained_checkpoint_inference_actor_seconds_sum": sum(receipt["inference"]["inference_seconds"]
-                                                                   for receipt in self.receipts if receipt["checkpoint_reused"]),
-            "inferred_shards": [index for index, receipt in enumerate(self.receipts) if not receipt["checkpoint_reused"]],
-            "reused_checkpoint_shards": [index for index, receipt in enumerate(self.receipts) if receipt["checkpoint_reused"]],
+            "inference_actor_seconds_sum": sum(
+                receipt["inference"]["inference_seconds"]
+                for receipt in self.receipts
+                if not receipt["checkpoint_reused"]
+            ),
+            "retained_checkpoint_inference_actor_seconds_sum": sum(
+                receipt["inference"]["inference_seconds"]
+                for receipt in self.receipts
+                if receipt["checkpoint_reused"]
+            ),
+            "inferred_shards": [
+                index
+                for index, receipt in enumerate(self.receipts)
+                if not receipt["checkpoint_reused"]
+            ],
+            "reused_checkpoint_shards": [
+                index
+                for index, receipt in enumerate(self.receipts)
+                if receipt["checkpoint_reused"]
+            ],
             "application_seconds": time.perf_counter() - self.started,
         }
 
@@ -790,16 +956,29 @@ class _InferenceSession:
         if self.arguments.compare_baseline_path:
             baseline = Path(self.arguments.compare_baseline_path) / "embeddings.parquet"
             result["full_vector_comparison"] = validation.compare_vectors(
-                baseline, self.output / "embeddings.parquet", changed=worker.CROP_POLICY == "right")
+                baseline,
+                self.output / "embeddings.parquet",
+                changed=worker.CROP_POLICY == "right",
+            )
         observation = self._check_concurrency()
         report = self._execution_report()
         report.update(result)
         report.update(self._timing_report(observation))
         validation.atomic_json(self.output / "report.json", report)
-        fields = ("records", "lance_rows", "retrieval_queries", "crop_policy", "ray_nodes",
-                  "gpu_actors", "application_seconds", "concurrent_actor_inference_observed")
+        fields = (
+            "records",
+            "lance_rows",
+            "retrieval_queries",
+            "crop_policy",
+            "ray_nodes",
+            "gpu_actors",
+            "application_seconds",
+            "concurrent_actor_inference_observed",
+        )
         visible_report = {field: report[field] for field in fields}
-        print("RAY_CLIP_REPORT " + json.dumps(visible_report, sort_keys=True), flush=True)
+        print(
+            "RAY_CLIP_REPORT " + json.dumps(visible_report, sort_keys=True), flush=True
+        )
 
     def _close(self, original_failure):
         """Attempt every owned actor and preserve prior failures during cleanup."""
@@ -810,7 +989,12 @@ class _InferenceSession:
         try:
             _write_cleanup_artifacts(self.output, errors, len(self.actors))
         except Exception as error:
-            errors.append({"operation": "write cleanup receipt", "error_type": type(error).__name__})
+            errors.append(
+                {
+                    "operation": "write cleanup receipt",
+                    "error_type": type(error).__name__,
+                }
+            )
         if not errors:
             return
         print("RAY_CLIP_CLEANUP " + json.dumps(errors), flush=True)
@@ -820,11 +1004,15 @@ class _InferenceSession:
 
 def _write_cleanup_artifacts(output, errors, attempted):
     """Preserve cleanup results and portable hashes before worker storage closes."""
-    validation.atomic_json(output / "actor-cleanup.json", {"errors": errors, "attempted": attempted})
+    validation.atomic_json(
+        output / "actor-cleanup.json", {"errors": errors, "attempted": attempted}
+    )
     entries = []
     for path in sorted(output.rglob("*")):
         if path.is_file() and path.name != "SHA256SUMS":
-            entries.append(f"{validation.file_hash(path)}  {path.relative_to(output)}\n")
+            entries.append(
+                f"{validation.file_hash(path)}  {path.relative_to(output)}\n"
+            )
     (output / "SHA256SUMS").write_text("".join(entries))
 
 
@@ -874,12 +1062,19 @@ def cleanup_actors(ray, actors: list) -> list[dict]:
         try:
             ray.kill(actor, no_restart=True)
         except Exception as error:
-            errors.append({"operation": "kill actor", "actor_index": index,
-                           "error_type": type(error).__name__})
+            errors.append(
+                {
+                    "operation": "kill actor",
+                    "actor_index": index,
+                    "error_type": type(error).__name__,
+                }
+            )
     try:
         ray.shutdown()
     except Exception as error:
-        errors.append({"operation": "driver shutdown", "error_type": type(error).__name__})
+        errors.append(
+            {"operation": "driver shutdown", "error_type": type(error).__name__}
+        )
     return errors
 
 

@@ -36,16 +36,30 @@ def _run_preflight(project: str, checks: str) -> tuple[int, dict, float]:
     started = time.perf_counter()
     result = subprocess.run(
         [
-            sys.executable, "-m", "npa", "workbench", "health", "preflight",
-            "--project", project, "--checks", checks, "--json",
+            sys.executable,
+            "-m",
+            "npa",
+            "workbench",
+            "health",
+            "preflight",
+            "--project",
+            project,
+            "--checks",
+            checks,
+            "--json",
         ],
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     elapsed = time.perf_counter() - started
     try:
         payload = json.loads(result.stdout)
     except ValueError:
-        pytest.fail(f"Preflight did not return one JSON document: {result.stdout!r} {result.stderr!r}")
+        pytest.fail(
+            f"Preflight did not return one JSON document: {result.stdout!r} {result.stderr!r}"
+        )
     return result.returncode, payload, elapsed
 
 
@@ -71,11 +85,22 @@ def test_concurrent_preflight_reaches_every_real_check(live_project):
 
     checks = {check["name"]: check["status"] for check in payload["checks"]}
     assert checks == {
-        "hf": "PASS", "ngc": "PASS", "s3": "PASS",
-        "token_factory": "PASS", "nebius": "PASS",
+        "hf": "PASS",
+        "ngc": "PASS",
+        "s3": "PASS",
+        "token_factory": "PASS",
+        "nebius": "PASS",
     }
     assert returncode == 0
-    print(json.dumps({"scenario": "credential_preflight_live_all", "elapsed_seconds": elapsed, "checks": checks}))
+    print(
+        json.dumps(
+            {
+                "scenario": "credential_preflight_live_all",
+                "elapsed_seconds": elapsed,
+                "checks": checks,
+            }
+        )
+    )
 
 
 def test_s3_and_nebius_checks_pass_against_the_dedicated_project(live_project):
@@ -86,4 +111,11 @@ def test_s3_and_nebius_checks_pass_against_the_dedicated_project(live_project):
     checks = {check["name"]: check["status"] for check in payload["checks"]}
     assert checks == {"s3": "PASS", "nebius": "PASS"}
     assert returncode == 0
-    print(json.dumps({"scenario": "credential_preflight_live_s3_nebius", "elapsed_seconds": elapsed}))
+    print(
+        json.dumps(
+            {
+                "scenario": "credential_preflight_live_s3_nebius",
+                "elapsed_seconds": elapsed,
+            }
+        )
+    )

@@ -63,6 +63,7 @@ def goal_requests_catalog_composition(user_text: str) -> bool:
         )
     )
 
+
 STATUS_QUERY_RE = re.compile(
     r"(?:\b(?:what(?:'s| is)|show|tell me|check|get)\b.*\b(?:current\s+)?"
     r"(?:sim\s*[- ]?2\s*[- ]?real|sim2real|workflow|rerun|sim(?:\s*[-_ ]?viz)))"
@@ -550,19 +551,58 @@ INTENT_APIS: dict[str, list[str]] = {
         "workflows/sim2real/runs/{run_id}",
     ],
     "start_sim2real": ["workflows/sim2real/submit"],
-    "watch_sim": ["sim-viz/status", "sim-viz/rrd", "sim-viz/rrd-blob", "workflows/sim2real/status"],
-    "live_runtime_evidence": ["infra/k8s", "artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
-    "find_artifacts": ["artifacts/runs", "artifacts/run/{run_id}", "sim-viz/load-artifact", "sim-viz/status"],
+    "watch_sim": [
+        "sim-viz/status",
+        "sim-viz/rrd",
+        "sim-viz/rrd-blob",
+        "workflows/sim2real/status",
+    ],
+    "live_runtime_evidence": [
+        "infra/k8s",
+        "artifacts/runs",
+        "artifacts/run/{run_id}",
+        "sim-viz/load-artifact",
+        "sim-viz/status",
+    ],
+    "find_artifacts": [
+        "artifacts/runs",
+        "artifacts/run/{run_id}",
+        "sim-viz/load-artifact",
+        "sim-viz/status",
+    ],
     "create_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
-    "create_vlm_rl_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "create_vlm_rl_workflow": [
+        "workflows/draft",
+        "workflows/validate",
+        "workflows/plan",
+    ],
     "create_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
-    "create_loop_gate_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
-    "create_rl_policy_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
-    "create_data_factory_workflow": ["workflows/draft", "workflows/validate", "workflows/plan"],
+    "create_loop_gate_workflow": [
+        "workflows/draft",
+        "workflows/validate",
+        "workflows/plan",
+    ],
+    "create_rl_policy_workflow": [
+        "workflows/draft",
+        "workflows/validate",
+        "workflows/plan",
+    ],
+    "create_data_factory_workflow": [
+        "workflows/draft",
+        "workflows/validate",
+        "workflows/plan",
+    ],
     "onboard_solution": ["tools", "workflows/validate", "workflows/plan"],
     "infra_backends": ["infra/k8s", "infra/provision", "workflows/submit"],
     "mk8s_provision": ["infra/mk8s", "infra/mk8s/provision", "infra/k8s"],
-    "live_infra_loop": ["infra/k8s", "infra/provision", "workflows/validate", "workflows/plan", "workflows/submit", "tools"],
+    "live_infra_loop": [
+        "infra/k8s",
+        "infra/provision",
+        "workflows/validate",
+        "workflows/plan",
+        "workflows/submit",
+        "tools",
+    ],
     "list_recordings": ["sim-viz/recordings", "sim-viz/runs"],
     "sim2real_status": ["sim-viz/status", "workflows/sim2real/status"],
     "sim_assets": ["sim-assets", "sim-assets/selection"],
@@ -579,9 +619,19 @@ INTENT_APIS: dict[str, list[str]] = {
     "tools_catalog": ["tools"],
     "configure_s3": ["tools"],
     "cosmos3": ["tools"],
-    "soperator": ["infra/soperator/validate", "infra/soperator/deploy", "infra/soperator/status/{name}", "tools"],
+    "soperator": [
+        "infra/soperator/validate",
+        "infra/soperator/deploy",
+        "infra/soperator/status/{name}",
+        "tools",
+    ],
     "load_franka": ["sim-viz/load-franka-demo", "sim-viz/status"],
-    "workflow_execute_guidance": ["workflows/validate", "workflows/plan", "workflows/submit", "tools"],
+    "workflow_execute_guidance": [
+        "workflows/validate",
+        "workflows/plan",
+        "workflows/submit",
+        "tools",
+    ],
     "foxglove_viewer": [
         "foxglove/status",
         "foxglove/config",
@@ -610,12 +660,18 @@ def _normalize_intent_text(text: str) -> str:
     """Normalize user text so intent routing survives punctuation/newlines."""
     lowered = str(text or "").lower()
     lowered = lowered.replace("\n", " ")
-    lowered = lowered.replace("rerunblobiframeuntilsuccess", "rerun blob iframe until success")
+    lowered = lowered.replace(
+        "rerunblobiframeuntilsuccess", "rerun blob iframe until success"
+    )
     lowered = lowered.replace("blobiframeuntilsuccess", "blob iframe until success")
     lowered = lowered.replace("rerunblobuntilsuccess", "rerun blob until success")
     lowered = lowered.replace("reruniframeuntilsuccess", "rerun iframe until success")
-    lowered = lowered.replace("rerunblobiframetilsuccess", "rerun blob iframe till success")
-    lowered = lowered.replace("rerunblobiframeuntilsuccessful", "rerun blob iframe until successful")
+    lowered = lowered.replace(
+        "rerunblobiframetilsuccess", "rerun blob iframe till success"
+    )
+    lowered = lowered.replace(
+        "rerunblobiframeuntilsuccessful", "rerun blob iframe until successful"
+    )
     lowered = lowered.replace("rrduripopulated", "rrd uri populated")
     lowered = lowered.replace("rrduri", "rrd uri")
     lowered = lowered.replace("runid", "run id")
@@ -649,7 +705,9 @@ def _normalize_intent_text(text: str) -> str:
 
 def _success_gated_watch_request(lowered: str) -> bool:
     """Detect explicit blob/iframe SUCCESS gating language for watch intent."""
-    if _WATCH_SUCCESS_GATE_RE.search(lowered) or _RERUN_SUCCESS_PHRASE_RE.search(lowered):
+    if _WATCH_SUCCESS_GATE_RE.search(lowered) or _RERUN_SUCCESS_PHRASE_RE.search(
+        lowered
+    ):
         return True
     # Keep explicit "rerun blob iframe until SUCCESS" intent sticky even when
     # operators append branch/bootstrap notes in the same sentence.
@@ -657,10 +715,21 @@ def _success_gated_watch_request(lowered: str) -> bool:
         "rerun" in lowered
         and "blob" in lowered
         and "iframe" in lowered
-        and any(token in lowered for token in ("until", "till", "when", "once", "retry", "wait"))
         and any(
             token in lowered
-            for token in ("success", "successful", "succeeded", "passed", "green", "ready", "healthy")
+            for token in ("until", "till", "when", "once", "retry", "wait")
+        )
+        and any(
+            token in lowered
+            for token in (
+                "success",
+                "successful",
+                "succeeded",
+                "passed",
+                "green",
+                "ready",
+                "healthy",
+            )
         )
     ):
         return True
@@ -771,9 +840,16 @@ def match_chat_intent(user_text: str) -> str | None:
             return intent
     lowered = _normalize_intent_text(text)
     metric_qualified = has_metric_resource_qualifier(lowered)
-    if re.search(r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster|deploy\s+slurm|slurm\s+deploy)\b", text, re.IGNORECASE):
+    if re.search(
+        r"\b(soperator|slurm(?:[- ]on[- ]k(?:ubernetes|8s))?|slurm cluster|deploy\s+slurm|slurm\s+deploy)\b",
+        text,
+        re.IGNORECASE,
+    ):
         return "soperator"
-    if (_NON_STOCK_ARTIFACT_DISCOVERY_RE.search(text) or _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(lowered)) and not metric_qualified:
+    if (
+        _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(text)
+        or _NON_STOCK_ARTIFACT_DISCOVERY_RE.search(lowered)
+    ) and not metric_qualified:
         return "find_artifacts"
     if _success_gated_watch_request(lowered):
         return "watch_sim"
@@ -806,16 +882,13 @@ def match_chat_intent(user_text: str) -> str | None:
         return "create_workflow"
     # Keep watch intent precedence over load-franka whenever the user asks to
     # monitor/retry the rerun view (especially with SUCCESS gating language).
-    if (
-        ("franka" in lowered or "load franka" in lowered)
-        and (
-            "watch" in lowered
-            or "monitor" in lowered
-            or "track" in lowered
-            or "blob" in lowered
-            or "iframe" in lowered
-            or "until success" in lowered
-        )
+    if ("franka" in lowered or "load franka" in lowered) and (
+        "watch" in lowered
+        or "monitor" in lowered
+        or "track" in lowered
+        or "blob" in lowered
+        or "iframe" in lowered
+        or "until success" in lowered
     ):
         return "watch_sim"
     for intent, pattern in _INTENT_RULES:
@@ -868,12 +941,16 @@ def format_live_context_block(state: dict[str, Any]) -> str:
         },
         "camera_selection": state.get("camera_selection", ["workspace"]),
     }
-    return "Live session snapshot (authoritative — prefer over guessing):\n```json\n" + json.dumps(
-        snapshot, indent=2, sort_keys=True
-    ) + "\n```"
+    return (
+        "Live session snapshot (authoritative — prefer over guessing):\n```json\n"
+        + json.dumps(snapshot, indent=2, sort_keys=True)
+        + "\n```"
+    )
 
 
-def format_sim2real_status(state: dict[str, Any], *, rerun_ready: bool | None = None) -> str:
+def format_sim2real_status(
+    state: dict[str, Any], *, rerun_ready: bool | None = None
+) -> str:
     sim_viz = _sim_viz(state)
     latest = _latest_submit(state)
     selection = _selection(state)
@@ -882,7 +959,9 @@ def format_sim2real_status(state: dict[str, Any], *, rerun_ready: bool | None = 
     stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
     camera = str(sim_viz.get("camera") or "workspace")
     rrd_updated = str(sim_viz.get("rrd_updated_at") or "").strip() or "n/a"
-    rerun_iframe_url = str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"
+    rerun_iframe_url = (
+        str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"
+    )
     submitted_at = str(latest.get("submitted_at") or "").strip() or "n/a"
     robot = str(selection.get("robot_preset") or "franka")
     backend = str(selection.get("sim_backend") or "isaac")
@@ -899,9 +978,13 @@ def format_sim2real_status(state: dict[str, Any], *, rerun_ready: bool | None = 
         f"- **sim_backend**: `{backend}`",
     ]
     if ready:
-        lines.append("- Open the **Rerun** panel or use **Load Franka in Rerun** to view the scene.")
+        lines.append(
+            "- Open the **Rerun** panel or use **Load Franka in Rerun** to view the scene."
+        )
     else:
-        lines.append("- No `.rrd` yet — click **Load Franka in Rerun** or submit a Sim2Real workflow.")
+        lines.append(
+            "- No `.rrd` yet — click **Load Franka in Rerun** or submit a Sim2Real workflow."
+        )
     return "\n".join(lines)
 
 
@@ -930,7 +1013,9 @@ def format_sim_assets(state: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def format_cameras(state: dict[str, Any], *, default_cameras: list[dict[str, Any]] | None = None) -> str:
+def format_cameras(
+    state: dict[str, Any], *, default_cameras: list[dict[str, Any]] | None = None
+) -> str:
     selected = state.get("camera_selection", ["workspace"])
     if not isinstance(selected, list):
         selected = ["workspace"]
@@ -954,7 +1039,9 @@ def format_cameras(state: dict[str, Any], *, default_cameras: list[dict[str, Any
                 "- **wrist**: end-effector mounted camera",
             ]
         )
-    lines.append("- Open the **Rerun** tab to inspect camera entities in the embedded viewer.")
+    lines.append(
+        "- Open the **Rerun** tab to inspect camera entities in the embedded viewer."
+    )
     return "\n".join(lines)
 
 
@@ -992,7 +1079,9 @@ def format_tools_catalog(tool_refs: list[str], *, sample_size: int = 16) -> str:
             lines.append(f"- `{ref}`")
         if count > sample_size:
             lines.append(f"- … and **{count - sample_size}** more via `GET /api/tools`")
-    lines.append("- Invoke tools via `npa workbench <tool> …`, confirmed Agent UI workflow runs, or npa.workflow specs on your operator machine.")
+    lines.append(
+        "- Invoke tools via `npa workbench <tool> …`, confirmed Agent UI workflow runs, or npa.workflow specs on your operator machine."
+    )
     return "\n".join(lines)
 
 
@@ -1006,17 +1095,23 @@ def _image_for_tool(tool: str) -> str:
         return f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}:{tag}"
 
 
-def _format_tool_family_capabilities(name: str, tool_refs: list[str], *, prefixes: tuple[str, ...], bullets: list[str]) -> str:
+def _format_tool_family_capabilities(
+    name: str, tool_refs: list[str], *, prefixes: tuple[str, ...], bullets: list[str]
+) -> str:
     matched = [
-        ref
-        for ref in tool_refs
-        if any(token in str(ref).lower() for token in prefixes)
+        ref for ref in tool_refs if any(token in str(ref).lower() for token in prefixes)
     ]
-    sample = ", ".join(f"`{ref}`" for ref in sorted(matched)[:5]) if matched else "_(none registered in this agent catalog)_"
+    sample = (
+        ", ".join(f"`{ref}`" for ref in sorted(matched)[:5])
+        if matched
+        else "_(none registered in this agent catalog)_"
+    )
     lines = [f"**{name} capabilities** (CLI + npa.workflow `toolRef`):"]
     lines.extend(f"- {bullet}" for bullet in bullets)
     lines.append(f"- **Catalog matches**: {sample}")
-    lines.append("- Draft a workflow in chat, then execute on the operator machine with `npa workbench workflow run-spec … --execute`.")
+    lines.append(
+        "- Draft a workflow in chat, then execute on the operator machine with `npa workbench workflow run-spec … --execute`."
+    )
     return "\n".join(lines)
 
 
@@ -1189,8 +1284,8 @@ def format_live_infra_loop_guidance() -> str:
             "- Loop pattern in tmux:",
             "```bash",
             "SESSION=live-infra-loop-$(date -u +%Y%m%dT%H%M%SZ)",
-            "tmux new -d -s \"$SESSION\"",
-            "tmux send-keys -t \"$SESSION:0.0\" 'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo \"attempt=$ATTEMPT\"; npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done' C-m",
+            'tmux new -d -s "$SESSION"',
+            'tmux send-keys -t "$SESSION:0.0" \'set -euo pipefail; ATTEMPT=1; while [ $ATTEMPT -le 5 ]; do echo "attempt=$ATTEMPT"; npa/.venv/bin/npa workbench workflow validate-spec <spec.yaml> --json && npa/.venv/bin/npa workbench workflow plan-spec <spec.yaml> --run-id loop-$ATTEMPT --json && npa/.venv/bin/python <runner>.py --image <real-registry-image> --gpu-type <compatible-gpu> && break; ATTEMPT=$((ATTEMPT+1)); sleep $((ATTEMPT*15)); done\' C-m',
             "```",
             "- If `FAILED_PRECHECKS` appears: adjust image reference or accelerator and retry in the same loop.",
         ]
@@ -1205,14 +1300,27 @@ def _infra_status_counts(rows: list[Any]) -> str:
             continue
         status = str(row.get("status") or row.get("state") or "unknown").lower()
         counts[status] = counts.get(status, 0) + 1
-    return ", ".join(f"{count} {status}" for status, count in sorted(counts.items())) or "none"
+    return (
+        ", ".join(f"{count} {status}" for status, count in sorted(counts.items()))
+        or "none"
+    )
 
 
 def format_infra_backends(state: dict[str, Any]) -> str:
     infra = state.get("infra") if isinstance(state.get("infra"), dict) else {}
-    configured = infra.get("configured") if isinstance(infra.get("configured"), list) else []
-    local_clusters = infra.get("local_clusters") if isinstance(infra.get("local_clusters"), list) else []
-    cloud_clusters = infra.get("cloud_clusters") if isinstance(infra.get("cloud_clusters"), list) else []
+    configured = (
+        infra.get("configured") if isinstance(infra.get("configured"), list) else []
+    )
+    local_clusters = (
+        infra.get("local_clusters")
+        if isinstance(infra.get("local_clusters"), list)
+        else []
+    )
+    cloud_clusters = (
+        infra.get("cloud_clusters")
+        if isinstance(infra.get("cloud_clusters"), list)
+        else []
+    )
     lines = [
         "**Kubernetes / workflow infra status**:",
         f"- **agent_npa_ready**: `{bool(infra.get('agent_npa_ready'))}`",
@@ -1228,14 +1336,18 @@ def format_infra_backends(state: dict[str, Any]) -> str:
             ]
         )
     else:
-        lines.append("- Resource identifiers stay hidden in chat; the Agent can use the configured backend after a workflow confirmation.")
+        lines.append(
+            "- Resource identifiers stay hidden in chat; the Agent can use the configured backend after a workflow confirmation."
+        )
     return "\n".join(lines)
 
 
 def format_tenant_resources(state: dict[str, Any]) -> str:
     from npa.cli.agent_resources import format_resource_inventory
 
-    inventory = state.get("resources") if isinstance(state.get("resources"), dict) else {}
+    inventory = (
+        state.get("resources") if isinstance(state.get("resources"), dict) else {}
+    )
     return format_resource_inventory(inventory)
 
 
@@ -1275,7 +1387,9 @@ def format_generate_workflow(
 ) -> str:
     from npa.cli.agent_workflow import format_workflow_chat_reply
 
-    return format_workflow_chat_reply(yaml_text, validation, template=template, plan=plan, runnable=runnable)
+    return format_workflow_chat_reply(
+        yaml_text, validation, template=template, plan=plan, runnable=runnable
+    )
 
 
 def format_soperator_deploy() -> str:
@@ -1313,7 +1427,9 @@ def format_cosmos3_setup() -> str:
 
 
 def format_onboard_solution() -> str:
-    registry = os.environ.get("NPA_REGISTRY", "").strip() or "<your-registry>/<namespace>"
+    registry = (
+        os.environ.get("NPA_REGISTRY", "").strip() or "<your-registry>/<namespace>"
+    )
     byof_skill_path = BYOF_ONBOARD_SKILL_PATH
     registry_skill_path = OSS_SOLUTION_REGISTRY_ONBOARD_SKILL_PATH
     return "\n".join(
@@ -1347,7 +1463,9 @@ def format_onboard_solution() -> str:
     )
 
 
-def format_load_franka_status(state: dict[str, Any], *, rerun_ready: bool, loaded_now: bool) -> str:
+def format_load_franka_status(
+    state: dict[str, Any], *, rerun_ready: bool, loaded_now: bool
+) -> str:
     sim_viz = _sim_viz(state)
     camera = str(sim_viz.get("camera") or "workspace")
     stage = str(sim_viz.get("stage") or "demo")
@@ -1361,7 +1479,9 @@ def format_load_franka_status(state: dict[str, Any], *, rerun_ready: bool, loade
         f"- **rerun_ready**: `{str(rerun_ready).lower()}`",
     ]
     if rerun_ready:
-        lines.append("- The **Rerun** iframe uses an authenticated blob fetch — open the center panel to view.")
+        lines.append(
+            "- The **Rerun** iframe uses an authenticated blob fetch — open the center panel to view."
+        )
     else:
         lines.append("- Rerun service still starting — wait a few seconds and refresh.")
     return "\n".join(lines)
@@ -1399,7 +1519,7 @@ def format_drive_sim2real_guidance(state: dict[str, Any]) -> str:
             "- A stage is marked complete only when `workflows/sim2real/status` / "
             "`runs/{run_id}` confirms it — no fabricated run data.",
             "- Drive it: `POST /api/agent/sim2real/drive` with "
-            "`{ \"config\": {\"run_id\": ..., \"threshold\": 0.8, \"max_iterations\": 3}, \"confirm_token\": ... }`.",
+            '`{ "config": {"run_id": ..., "threshold": 0.8, "max_iterations": 3}, "confirm_token": ... }`.',
             "- Read-only observation stays on `GET /api/workflows/sim2real/status`.",
         ]
     )
@@ -1418,7 +1538,9 @@ def build_grounded_reply(
         return format_drive_sim2real_guidance(state)
     if intent == "watch_sim":
         sim_viz = _sim_viz(state)
-        iframe_url = str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"
+        iframe_url = (
+            str(sim_viz.get("rerun_iframe_url") or "/rerun/").strip() or "/rerun/"
+        )
         stage = str(sim_viz.get("stage") or "idle").strip() or "idle"
         run_id = str(sim_viz.get("run_id") or "").strip() or "none"
         mode = str(sim_viz.get("mode") or "static").strip() or "static"
@@ -1491,8 +1613,14 @@ def build_grounded_reply(
     if intent == "onboard_solution":
         return format_onboard_solution()
     if intent == "load_franka":
-        ready = rerun_ready if rerun_ready is not None else bool(_sim_viz(state).get("rerun_ready"))
-        return format_load_franka_status(state, rerun_ready=ready, loaded_now=loaded_franka_now)
+        ready = (
+            rerun_ready
+            if rerun_ready is not None
+            else bool(_sim_viz(state).get("rerun_ready"))
+        )
+        return format_load_franka_status(
+            state, rerun_ready=ready, loaded_now=loaded_franka_now
+        )
     if intent in {
         "create_workflow",
         "create_vlm_rl_workflow",
@@ -1506,7 +1634,11 @@ def build_grounded_reply(
             draft = {}
         yaml_text = str(draft.get("yaml") or "").strip()
         if yaml_text:
-            validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
+            validation = (
+                draft.get("validation")
+                if isinstance(draft.get("validation"), dict)
+                else {}
+            )
             plan = draft.get("plan") if isinstance(draft.get("plan"), dict) else {}
             runnable = bool(draft.get("runnable"))
             if not validation:
@@ -1530,11 +1662,19 @@ def build_grounded_reply(
                     template = "physical-ai-data-factory"
                 else:
                     template = "two-step"
-            return format_generate_workflow(yaml_text, validation, template=template, plan=plan, runnable=runnable)
+            return format_generate_workflow(
+                yaml_text, validation, template=template, plan=plan, runnable=runnable
+            )
         from npa.cli.agent_workflow import generate_workflow_draft
 
-        generated = generate_workflow_draft(intent=intent, user_text="", tool_refs=frozenset(tool_refs))
-        validation = generated["validation"] if isinstance(generated.get("validation"), dict) else {"ok": False}
+        generated = generate_workflow_draft(
+            intent=intent, user_text="", tool_refs=frozenset(tool_refs)
+        )
+        validation = (
+            generated["validation"]
+            if isinstance(generated.get("validation"), dict)
+            else {"ok": False}
+        )
         plan = generated.get("plan") if isinstance(generated.get("plan"), dict) else {}
         runnable = bool(generated.get("runnable"))
         return format_generate_workflow(
@@ -1562,8 +1702,12 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
     sim_viz = _sim_viz(state)
     lines = ["**Foxglove viewer** (grounded):"]
     if not foxglove:
-        lines.append("- **status**: `unknown` — `/api/foxglove/config` returned nothing.")
-        lines.append("- Open the **Foxglove** tab in the Viewer panel to initialize it.")
+        lines.append(
+            "- **status**: `unknown` — `/api/foxglove/config` returned nothing."
+        )
+        lines.append(
+            "- Open the **Foxglove** tab in the Viewer panel to initialize it."
+        )
         return "\n".join(lines)
 
     available = bool(foxglove.get("available"))
@@ -1573,8 +1717,14 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
     lines.append(f"- **embed_src**: `{foxglove.get('embed_src') or '(unset)'}`")
     if foxglove.get("org_slug"):
         lines.append(f"- **org_slug**: `{foxglove['org_slug']}`")
-    lines.append(f"- **sdk_version**: `{foxglove.get('sdk_version') or '(unknown)'}` (@foxglove/embed)")
-    source = foxglove.get("data_source") if isinstance(foxglove.get("data_source"), dict) else {}
+    lines.append(
+        f"- **sdk_version**: `{foxglove.get('sdk_version') or '(unknown)'}` (@foxglove/embed)"
+    )
+    source = (
+        foxglove.get("data_source")
+        if isinstance(foxglove.get("data_source"), dict)
+        else {}
+    )
     source_type = str(source.get("type") or foxglove.get("data_source_type") or "none")
     lines.append(f"- **data_source**: `{source_type}`")
     urls = source.get("urls") if isinstance(source.get("urls"), list) else []
@@ -1590,7 +1740,9 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
     lines.append(f"- **foxglove_ready**: `{bool(sim_viz.get('foxglove_ready'))}`")
 
     if available:
-        lines.append("- Open the **Foxglove** tab in the Viewer panel; the SDK iframe mounts there.")
+        lines.append(
+            "- Open the **Foxglove** tab in the Viewer panel; the SDK iframe mounts there."
+        )
         if not urls and source_type == "none":
             lines.append(
                 "- No recording is loaded yet: pick an `.mcap`/`.bag` artifact in "
@@ -1617,7 +1769,11 @@ def format_list_recordings(state: dict[str, Any]) -> str:
     sim_viz = _sim_viz(state)
     runs = state.get("sim_viz_runs")
     recordings = state.get("sim_viz_recordings")
-    available = sim_viz.get("available_run_ids") if isinstance(sim_viz.get("available_run_ids"), list) else []
+    available = (
+        sim_viz.get("available_run_ids")
+        if isinstance(sim_viz.get("available_run_ids"), list)
+        else []
+    )
     lines = ["**Run / recording history** (grounded):"]
     active = str(sim_viz.get("active_run_id") or sim_viz.get("run_id") or "").strip()
     if active:
@@ -1640,12 +1796,16 @@ def format_list_recordings(state: dict[str, Any]) -> str:
             marker = " ← active" if run_id == active else ""
             lines.append(f"  - `{run_id}`{marker}")
     else:
-        lines.append("- No run history in session yet — open the **Rerun** tab and use **Runs & artifacts** → **Discover runs**.")
+        lines.append(
+            "- No run history in session yet — open the **Rerun** tab and use **Runs & artifacts** → **Discover runs**."
+        )
     if isinstance(recordings, list) and recordings:
         lines.append(f"- **sim-viz/recordings**: `{len(recordings)}` `.rrd` files")
         for row in recordings[:6]:
             if isinstance(row, dict):
-                name = str(row.get("name") or row.get("path") or row.get("uri") or "").strip()
+                name = str(
+                    row.get("name") or row.get("path") or row.get("uri") or ""
+                ).strip()
                 if name:
                     lines.append(f"  - `{name}`")
             else:

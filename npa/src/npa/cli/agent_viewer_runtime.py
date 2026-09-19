@@ -20,6 +20,7 @@ def _sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+
 # NPA_EMBED_STANDALONE_START
 # The rendered backend supplies these globals. Explicit sentinels keep this
 # module importable for direct helper tests without hiding undefined names from

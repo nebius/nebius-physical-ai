@@ -24,7 +24,9 @@ def genesis_modules(monkeypatch):
     for name in module_names:
         sys.modules.pop(name, None)
 
-    modules = {name.rsplit(".", 1)[-1]: importlib.import_module(name) for name in module_names}
+    modules = {
+        name.rsplit(".", 1)[-1]: importlib.import_module(name) for name in module_names
+    }
 
     yield modules
 
@@ -101,7 +103,9 @@ def test_episode_trace_classifies_failure_phases(
     assert trace.classify() == expected
 
 
-def test_diagnose_suggestions_and_serialization_are_json_safe(genesis_modules, tmp_path):
+def test_diagnose_suggestions_and_serialization_are_json_safe(
+    genesis_modules, tmp_path
+):
     diagnose = genesis_modules["diagnose"]
 
     joint = diagnose._get_approach_suggestion("joint")
@@ -109,7 +113,9 @@ def test_diagnose_suggestions_and_serialization_are_json_safe(genesis_modules, t
     serialized = diagnose._serialize_config_changes(
         {"friction_range": (0.6, 1.5), "grasp_weight": 5.0}
     )
-    output = diagnose.save_diagnosis({"phase_counts": {"success": 1}}, tmp_path / "d.json")
+    output = diagnose.save_diagnosis(
+        {"phase_counts": {"success": 1}}, tmp_path / "d.json"
+    )
 
     assert joint["config_changes"]["action_space"] == "cartesian"
     assert "action_space" not in cartesian["config_changes"]

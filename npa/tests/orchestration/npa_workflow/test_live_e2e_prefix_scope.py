@@ -110,12 +110,16 @@ def root(request, helpers, monkeypatch):
 
 
 @pytest.mark.parametrize("tamper", ["", "subtask", "source_parquet_sha256"])
-def test_subtask_live_readback_resolves_real_source_bytes(helpers, storage, root, tmp_path, tamper):
+def test_subtask_live_readback_resolves_real_source_bytes(
+    helpers, storage, root, tmp_path, tamper
+):
     from npa.workflows.lerobot_subtask_proof import prove_lerobot_subtasks
 
     client, _ = storage
     helpers.seed_live_workflow_inputs(
-        spec_name="lerobot-subtask-proof.yaml", bucket=BUCKET, run_id=RUN_ID,
+        spec_name="lerobot-subtask-proof.yaml",
+        bucket=BUCKET,
+        run_id=RUN_ID,
     )
     marker = f"{root}/lerobot-subtask-proof"
     prefix = f"{marker}/reviewed-dataset/"
@@ -124,11 +128,15 @@ def test_subtask_live_readback_resolves_real_source_bytes(helpers, storage, root
         path = dataset / key.removeprefix(prefix)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(body)
-    proof = prove_lerobot_subtasks(str(dataset), str(tmp_path / "proof.json"), expected_label="grasp")
+    proof = prove_lerobot_subtasks(
+        str(dataset), str(tmp_path / "proof.json"), expected_label="grasp"
+    )
     if tamper:
         proof["proof"][tamper] = "incorrect"
     client.put_object(
-        Bucket=BUCKET, Key=f"{marker}/proof/subtask-proof.json", Body=json.dumps(proof).encode(),
+        Bucket=BUCKET,
+        Key=f"{marker}/proof/subtask-proof.json",
+        Body=json.dumps(proof).encode(),
     )
     if tamper:
         with pytest.raises(AssertionError):

@@ -42,10 +42,14 @@ def live_bucket():
     if not project:
         pytest.skip("Set NPA_E2E_PROJECT to an explicitly configured test project")
     storage = resolve_project_storage(project)
-    if not all((
-        storage.checkpoint_bucket, storage.endpoint_url,
-        storage.aws_access_key_id, storage.aws_secret_access_key,
-    )):
+    if not all(
+        (
+            storage.checkpoint_bucket,
+            storage.endpoint_url,
+            storage.aws_access_key_id,
+            storage.aws_secret_access_key,
+        )
+    ):
         pytest.fail("Selected live project needs complete object storage configuration")
     bucket = storage.checkpoint_bucket.removeprefix("s3://").split("/", 1)[0]
     prefix = "storage-transfer-live-test/" + uuid.uuid4().hex + "/"
@@ -66,7 +70,9 @@ def live_bucket():
         for key in keys:
             client.s3.delete_object(Bucket=bucket, Key=key)
         remaining = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-        assert not remaining.get("Contents"), "Live test fixture objects were not fully deleted"
+        assert not remaining.get("Contents"), (
+            "Live test fixture objects were not fully deleted"
+        )
 
 
 def _round_trip(client, bucket, prefix, tmp_path, *, scenario: str, sizes: list[int]):
@@ -92,14 +98,22 @@ def _round_trip(client, bucket, prefix, tmp_path, *, scenario: str, sizes: list[
 def test_many_small_files_round_trip_with_matching_hashes(live_bucket, tmp_path):
     client, bucket, prefix = live_bucket
     _round_trip(
-        client, bucket, prefix, tmp_path,
-        scenario="small-files", sizes=[_SMALL_FILE_BYTES] * _SMALL_FILE_COUNT,
+        client,
+        bucket,
+        prefix,
+        tmp_path,
+        scenario="small-files",
+        sizes=[_SMALL_FILE_BYTES] * _SMALL_FILE_COUNT,
     )
 
 
 def test_one_multipart_sized_file_round_trips_with_matching_hash(live_bucket, tmp_path):
     client, bucket, prefix = live_bucket
     _round_trip(
-        client, bucket, prefix, tmp_path,
-        scenario="multipart-file", sizes=[_MULTIPART_FILE_BYTES],
+        client,
+        bucket,
+        prefix,
+        tmp_path,
+        scenario="multipart-file",
+        sizes=[_MULTIPART_FILE_BYTES],
     )

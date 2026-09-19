@@ -451,7 +451,10 @@ def _is_empty_provider_collision(payload: Mapping[str, Any]) -> bool:
     """Return whether a failed operation safely records a rejected create."""
     if str(payload.get("phase") or "") != "recovery-required":
         return False
-    if any(payload.get(key) for key in ("resources", "local_state_copies", "config_mutations")):
+    if any(
+        payload.get(key)
+        for key in ("resources", "local_state_copies", "config_mutations")
+    ):
         return False
     rollback = payload.get("rollback")
     if isinstance(rollback, Mapping) and rollback.get("attempted"):
@@ -462,7 +465,9 @@ def _is_empty_provider_collision(payload: Mapping[str, Any]) -> bool:
 
 def _terminalize_empty_provider_collision(operation: "ProvisioningOperation") -> None:
     """Close a provider-rejected create that made no recorded mutation."""
-    reason = "provider rejected a colliding create before NPA recorded any owned resource"
+    reason = (
+        "provider rejected a colliding create before NPA recorded any owned resource"
+    )
     operation.record_rollback(
         attempted=False,
         completed=True,

@@ -11,7 +11,11 @@ from .errors import IsaacArenaError
 def dataset_format_version(dataset: Any) -> int:
     """Match the pinned Lab loader's missing-version convention, without guessing."""
     version = dataset.attrs.get("format_version", 0)
-    if isinstance(version, bool) or not isinstance(version, Integral) or version not in (0, 1):
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, Integral)
+        or version not in (0, 1)
+    ):
         raise IsaacArenaError("replay format_version must be integer 0 or 1")
     return int(version)
 
@@ -19,7 +23,9 @@ def dataset_format_version(dataset: Any) -> int:
 def _validate_quaternions(values: Any, np: Any) -> None:
     norms = np.linalg.norm(values.astype(np.float64), axis=-1)
     if not np.isfinite(norms).all() or not (norms > 0).all():
-        raise IsaacArenaError("GR1 Pink replay poses require finite nonzero quaternions")
+        raise IsaacArenaError(
+            "GR1 Pink replay poses require finite nonzero quaternions"
+        )
 
 
 def _pink_actions(episode: Any, legacy: bool, np: Any) -> list[list[int]]:
@@ -37,7 +43,9 @@ def _pink_actions(episode: Any, legacy: bool, np: Any) -> list[list[int]]:
 
 
 def _initial_root_poses(episode: Any, legacy: bool, h5py: Any, np: Any) -> int:
-    if not isinstance(episode.get("initial_state/articulation/robot/root_pose"), h5py.Dataset):
+    if not isinstance(
+        episode.get("initial_state/articulation/robot/root_pose"), h5py.Dataset
+    ):
         raise IsaacArenaError("GR1 Pink replay requires its initial robot root_pose")
     converted = 0
 
@@ -47,7 +55,9 @@ def _initial_root_poses(episode: Any, legacy: bool, h5py: Any, np: Any) -> int:
             return
         values = np.asarray(item)
         if values.shape != (1, 7):
-            raise IsaacArenaError("GR1 Pink replay root_pose must have single-environment shape (1, 7)")
+            raise IsaacArenaError(
+                "GR1 Pink replay root_pose must have single-environment shape (1, 7)"
+            )
         _validate_quaternions(values[..., 3:7], np)
         if legacy:
             values[..., 3:7] = np.roll(values[..., 3:7], -1, axis=-1)

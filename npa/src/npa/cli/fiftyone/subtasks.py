@@ -53,15 +53,18 @@ def register_lerobot_subtask_export(
 @json_stdout_contract
 def export_lerobot_subtasks_cmd(
     dataset_name: str = typer.Option(
-        ..., "--dataset-name",
+        ...,
+        "--dataset-name",
         help="Persistent FiftyOne LeRobot dataset reviewed in the App.",
     ),
     output_path: str = typer.Option(
-        ..., "--output-path",
+        ...,
+        "--output-path",
         help="Empty S3 prefix for the derived LeRobot dataset.",
     ),
     output_format: str = typer.Option(
-        "text", "--output-format",
+        "text",
+        "--output-format",
         help="Output format: text or json.",
     ),
 ) -> None:
@@ -81,7 +84,9 @@ def export_lerobot_subtasks_cmd(
     bindings = _command_bindings()
     _validate_export_options(dataset_name, output_path, output_format, bindings.fail)
     try:
-        report = _export_lerobot_subtasks_remote(dataset_name.strip(), output_path.strip())
+        report = _export_lerobot_subtasks_remote(
+            dataset_name.strip(), output_path.strip()
+        )
     except Exception as exc:  # noqa: BLE001 - normalize the remote boundary
         bindings.fail(f"LeRobot subtask export failed: {exc}")
         return
@@ -146,7 +151,9 @@ exec(compile({adapter_source}, _npa_subtask_module.__file__, "exec"), _npa_subta
 
 def _subtask_export_python_script(dataset_name: str, output_path: str) -> str:
     module_source = json.dumps(_subtask_adapter_source())
-    storage_source = json.dumps(resources.files("npa.clients").joinpath("storage.py").read_text())
+    storage_source = json.dumps(
+        resources.files("npa.clients").joinpath("storage.py").read_text()
+    )
     return f"""\
 from __future__ import annotations
 import json
@@ -191,7 +198,9 @@ PY
     return fiftyone_cli._remote_bash(command)
 
 
-def _build_container_export_lerobot_subtasks_command(dataset_name: str, output_path: str) -> str:
+def _build_container_export_lerobot_subtasks_command(
+    dataset_name: str, output_path: str
+) -> str:
     from npa.cli import fiftyone as fiftyone_cli
 
     script = _subtask_export_python_script(dataset_name, output_path)
@@ -204,7 +213,7 @@ def _container_subtask_export_command(fiftyone_cli: Any, script: str) -> str:
     return f"""\
 set -euo pipefail
 source {fiftyone_cli.FIFTYONE_VENV}/bin/activate
-{fiftyone_cli.load_env_file_script('/etc/npa-fiftyone/env')}
+{fiftyone_cli.load_env_file_script("/etc/npa-fiftyone/env")}
 export FIFTYONE_DATABASE_DIR={fiftyone_cli.FIFTYONE_CONTAINER_DB_DIR}
 python - <<'PY'
 {script}
@@ -223,13 +232,17 @@ sudo docker exec -i {fiftyone_cli.FIFTYONE_CONTAINER_NAME} bash -lc {shlex.quote
 """
 
 
-def _export_lerobot_subtasks_remote(dataset_name: str, output_path: str) -> dict[str, Any]:
+def _export_lerobot_subtasks_remote(
+    dataset_name: str, output_path: str
+) -> dict[str, Any]:
     from npa.cli import fiftyone as fiftyone_cli
 
     cfg = fiftyone_cli._get_ssh_config()
     ssh = fiftyone_cli.SSHClient(cfg.ssh)
     if fiftyone_cli._is_container_runtime(cfg):
-        command = _build_container_export_lerobot_subtasks_command(dataset_name, output_path)
+        command = _build_container_export_lerobot_subtasks_command(
+            dataset_name, output_path
+        )
     else:
         command = _build_export_lerobot_subtasks_command(dataset_name, output_path)
     _, stdout, _ = fiftyone_cli._run_fiftyone_command(

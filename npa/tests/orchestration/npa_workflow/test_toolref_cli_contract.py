@@ -104,7 +104,9 @@ def test_every_toolref_the_data_factory_submits_is_checked() -> None:
 
     blueprint = (
         Path(__file__).resolve().parents[4]
-        / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+        / "workflows"
+        / "testing"
+        / "physical-ai-data-factory.yaml"
     )
     states = yaml.safe_load(blueprint.read_text(encoding="utf-8"))["states"]
     submitted = {
@@ -135,12 +137,9 @@ def test_visualize_stage_uses_prebuilt_rerun_image_without_runtime_install() -> 
 
     repo = Path(__file__).resolve().parents[4]
     blueprint = yaml.safe_load(
-        (
-            repo
-            / "workflows"
-            / "testing"
-            / "physical-ai-data-factory.yaml"
-        ).read_text(encoding="utf-8")
+        (repo / "workflows" / "testing" / "physical-ai-data-factory.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     state = blueprint["states"]["visualize"]
     assert state["toolRef"] == "workbench.nurec.visualize"
@@ -148,20 +147,27 @@ def test_visualize_stage_uses_prebuilt_rerun_image_without_runtime_install() -> 
     assert "pip install" not in str(state)
 
 
-@pytest.mark.parametrize(("tool_ref", "config_key"), [
-    ("workbench.token_factory.reason", "reason_model"),
-    ("workbench.vlm_eval.run", "vlm_model"),
-    ("workbench.vlm_eval.loop", "vlm_model"),
-    ("workbench.vlm_eval.judge_against_plan", "vlm_model"),
-])
-@pytest.mark.parametrize("model", ["", "vendor/explicit-model", "nvidia/Cosmos3-Super-Reasoner"])
+@pytest.mark.parametrize(
+    ("tool_ref", "config_key"),
+    [
+        ("workbench.token_factory.reason", "reason_model"),
+        ("workbench.vlm_eval.run", "vlm_model"),
+        ("workbench.vlm_eval.loop", "vlm_model"),
+        ("workbench.vlm_eval.judge_against_plan", "vlm_model"),
+    ],
+)
+@pytest.mark.parametrize(
+    "model", ["", "vendor/explicit-model", "nvidia/Cosmos3-Super-Reasoner"]
+)
 def test_hosted_model_override_survives_rendering(tool_ref, config_key, model) -> None:
     from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
+
     entry = TOOL_CATALOG[tool_ref]
     assert entry.config_defaults[config_key] == ""
     token = "{{config." + config_key + "}}"
-    argv = drop_empty_optional_flags(tool_ref, [model if item == token else item
-                                              for item in entry.argv_template])
+    argv = drop_empty_optional_flags(
+        tool_ref, [model if item == token else item for item in entry.argv_template]
+    )
     if model:
         assert argv[argv.index("--model") + 1] == model
     else:

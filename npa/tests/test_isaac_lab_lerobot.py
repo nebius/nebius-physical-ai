@@ -26,7 +26,9 @@ from npa.adapter.isaac_lab_lerobot import (
 def _write_episode(root: Path, index: int, frames: int = 3) -> None:
     episode = root / f"episode_{index:06d}"
     episode.mkdir(parents=True)
-    state = np.arange(frames * G1_STATE_DIM, dtype=np.float32).reshape(frames, G1_STATE_DIM)
+    state = np.arange(frames * G1_STATE_DIM, dtype=np.float32).reshape(
+        frames, G1_STATE_DIM
+    )
     actions = state + 0.25
     np.save(episode / "state.npy", state)
     np.save(episode / "actions.npy", actions)
@@ -66,7 +68,9 @@ def test_recorded_isaac_lab_sample_converts_to_lerobot(tmp_path: Path) -> None:
     assert data["episode_index"].to_pylist() == [0, 0, 1, 1, 1]
     assert data["frame_index"].to_pylist() == [0, 1, 0, 1, 2]
 
-    episodes = pq.read_table(out / "meta" / "episodes" / "chunk-000" / "file-000.parquet")
+    episodes = pq.read_table(
+        out / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    )
     assert episodes["length"].to_pylist() == [2, 3]
     tasks = pq.read_table(out / "meta" / "tasks.parquet")
     assert tasks["task"].to_pylist() == ["Isaac-Velocity-Flat-G1-v0"]
@@ -223,8 +227,10 @@ def test_convert_rejects_partial_or_unsynchronized_rgb(tmp_path) -> None:
 
 def test_rgb_stats_match_pixel_reference_for_unequal_episodes() -> None:
     generator = np.random.default_rng(281)
-    episodes = [generator.integers(0, 256, (length, 6, 8, 3), dtype=np.uint8)
-                for length in (1, 7, 2)]
+    episodes = [
+        generator.integers(0, 256, (length, 6, 8, 3), dtype=np.uint8)
+        for length in (1, 7, 2)
+    ]
     episodes[0][:] = 0
     episodes[1][:] = 255
     reference = np.concatenate(episodes).astype(np.float64) / 255.0
@@ -261,7 +267,9 @@ def test_rgb_stats_preserve_rare_intensity_variation() -> None:
 
     actual = adapter._compute_feature_stats([frames], is_video=True)
 
-    np.testing.assert_allclose(np.asarray(actual["std"]).reshape(3), expected, rtol=1e-12)
+    np.testing.assert_allclose(
+        np.asarray(actual["std"]).reshape(3), expected, rtol=1e-12
+    )
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.int16])
@@ -303,7 +311,9 @@ def test_rgb_loading_is_readonly_mapped_and_preserves_rgb(tmp_path, channels) ->
     np.testing.assert_array_equal(frames, pixels[..., :3])
 
 
-def test_convert_releases_rgb_between_episodes_and_writes_exact_stats(tmp_path, monkeypatch) -> None:
+def test_convert_releases_rgb_between_episodes_and_writes_exact_stats(
+    tmp_path, monkeypatch
+) -> None:
     raw = tmp_path / "raw"
     references = []
     original_load = adapter._load_rgb_frames
@@ -321,19 +331,25 @@ def test_convert_releases_rgb_between_episodes_and_writes_exact_stats(tmp_path, 
 
     for index, length in enumerate((2, 5, 3)):
         _write_episode(raw, index, frames=length)
-        np.save(raw / f"episode_{index:06d}" / "rgb.npy",
-                np.full((length, 6, 8, 4), index * 100, dtype=np.uint8))
+        np.save(
+            raw / f"episode_{index:06d}" / "rgb.npy",
+            np.full((length, 6, 8, 4), index * 100, dtype=np.uint8),
+        )
     monkeypatch.setattr(adapter, "_load_rgb_frames", load_episode)
     monkeypatch.setattr(adapter, "_encode_video", encode_episode)
 
     output = convert(raw, tmp_path / "lerobot")
 
     assert len(references) == 3 and all(reference() is None for reference in references)
-    actual = json.loads((output / "meta" / "stats.json").read_text())[WORKSPACE_VIEW_KEY]
+    actual = json.loads((output / "meta" / "stats.json").read_text())[
+        WORKSPACE_VIEW_KEY
+    ]
     reference = np.repeat([0, 100, 200], [2, 5, 3]).astype(np.float64) / 255.0
     assert actual["count"] == [10]
     for name in ("min", "max", "mean", "std"):
-        np.testing.assert_allclose(actual[name], np.full((3, 1, 1), getattr(reference, name)()))
+        np.testing.assert_allclose(
+            actual[name], np.full((3, 1, 1), getattr(reference, name)())
+        )
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
@@ -348,15 +364,30 @@ def test_streaming_encoder_preserves_noncontiguous_rgb_timeline(tmp_path) -> Non
     adapter._encode_video(frames, output, fps=20)
 
     decoded = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(output), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:"],
-        capture_output=True, check=True, timeout=10,
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(output),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:",
+        ],
+        capture_output=True,
+        check=True,
+        timeout=10,
     )
     pixels = np.frombuffer(decoded.stdout, dtype=np.uint8).reshape(frames.shape)
     np.testing.assert_allclose(pixels.mean(axis=(1, 2)), colors, atol=8)
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
-def test_streaming_encoder_reports_real_ffmpeg_failure_and_broken_pipe(tmp_path, monkeypatch) -> None:
+def test_streaming_encoder_reports_real_ffmpeg_failure_and_broken_pipe(
+    tmp_path, monkeypatch
+) -> None:
     frames = np.broadcast_to(np.zeros((64, 64, 3), dtype=np.uint8), (1000, 64, 64, 3))
     write_errors = []
     original_write = adapter._write_video_frames
@@ -366,8 +397,22 @@ def test_streaming_encoder_reports_real_ffmpeg_failure_and_broken_pipe(tmp_path,
         write_errors.extend(errors)
 
     monkeypatch.setattr(adapter, "_write_video_frames", record_write_errors)
-    command = ["ffmpeg", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-               "-s", "64x64", "-i", "pipe:", "-c:v", "npa_missing_codec", str(tmp_path / "bad.mp4")]
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        "64x64",
+        "-i",
+        "pipe:",
+        "-c:v",
+        "npa_missing_codec",
+        str(tmp_path / "bad.mp4"),
+    ]
 
     with pytest.raises(IsaacLabLeRobotError, match="ffmpeg failed.*npa_missing_codec"):
         adapter._run_video_encoder(command, frames, timeout=10)
@@ -376,7 +421,9 @@ def test_streaming_encoder_reports_real_ffmpeg_failure_and_broken_pipe(tmp_path,
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
-def test_streaming_encoder_timeout_reaps_child_and_closes_blocked_writer(monkeypatch) -> None:
+def test_streaming_encoder_timeout_reaps_child_and_closes_blocked_writer(
+    monkeypatch,
+) -> None:
     frames = np.broadcast_to(np.zeros((64, 64, 3), dtype=np.uint8), (1000, 64, 64, 3))
     processes = []
     original_popen = subprocess.Popen
@@ -388,7 +435,18 @@ def test_streaming_encoder_timeout_reaps_child_and_closes_blocked_writer(monkeyp
 
     monkeypatch.setattr(adapter.subprocess, "Popen", start_process)
     # An infinite generated stream leaves stdin unread, so the RGB writer also blocks.
-    command = ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=size=16x16", "-f", "null", "-"]
+    command = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=size=16x16",
+        "-f",
+        "null",
+        "-",
+    ]
 
     with pytest.raises(subprocess.TimeoutExpired):
         adapter._run_video_encoder(command, frames, timeout=1)

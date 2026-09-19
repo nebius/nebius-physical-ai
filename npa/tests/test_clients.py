@@ -131,23 +131,33 @@ def test_storage_client_uploads_and_downloads_directories(
     (local / "nested").mkdir(parents=True)
     (local / "nested" / "file.txt").write_text("data")
     paginator = mock_s3.get_paginator.return_value
-    paginator.paginate.return_value = [{"Contents": [{"Key": "prefix/nested/file.txt"}]}]
+    paginator.paginate.return_value = [
+        {"Contents": [{"Key": "prefix/nested/file.txt"}]}
+    ]
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret",
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
-    uploaded = client.upload_directory(str(local), "s3://bucket/base", remote_prefix="run")
+    uploaded = client.upload_directory(
+        str(local), "s3://bucket/base", remote_prefix="run"
+    )
     download_dir = tmp_path / "download"
     downloaded = client.download_directory("s3://bucket/prefix", str(download_dir))
 
     # A single-file directory takes the unpooled fast path: no Config kwarg.
     assert uploaded == "s3://bucket/base/run/"
     mock_s3.upload_file.assert_called_once_with(
-        str(local / "nested" / "file.txt"), "bucket", "base/run/nested/file.txt",
+        str(local / "nested" / "file.txt"),
+        "bucket",
+        "base/run/nested/file.txt",
     )
     assert downloaded == str(download_dir)
     mock_s3.download_file.assert_called_once_with(
-        "bucket", "prefix/nested/file.txt", str(download_dir / "nested" / "file.txt"),
+        "bucket",
+        "prefix/nested/file.txt",
+        str(download_dir / "nested" / "file.txt"),
     )
 
 
@@ -246,7 +256,9 @@ def test_download_file_preserves_prior_complete_file_on_interrupted_transport(
     body.iter_chunks.side_effect = _iter_chunks
     mock_s3.get_object.return_value = {"Body": body, "ContentLength": 999}
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
     with pytest.raises(ConnectionError):
@@ -269,7 +281,9 @@ def test_download_file_leaves_no_file_on_new_file_failure(
     body.iter_chunks.side_effect = _iter_chunks
     mock_s3.get_object.return_value = {"Body": body, "ContentLength": 10}
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
     with pytest.raises(ConnectionError):
@@ -287,7 +301,9 @@ def test_download_file_rejects_short_read_and_leaves_no_file(
     body.iter_chunks.return_value = [b"too-short"]
     mock_s3.get_object.return_value = {"Body": body, "ContentLength": 999}
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
     with pytest.raises(StorageError, match="Short read"):
@@ -306,7 +322,9 @@ def test_download_file_replaces_prior_file_atomically_on_success(
     body.iter_chunks.return_value = [b"fresh-checkpoint"]
     mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
     client.download_file("s3://bucket/checkpoints/model.pt", str(local))
@@ -331,7 +349,9 @@ def test_download_file_preserves_restrictive_permissions_on_replace(
         body.iter_chunks.return_value = [b"fresh-checkpoint"]
         mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
         client = StorageClient(
-            endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+            endpoint_url="https://storage",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
         )
 
         client.download_file("s3://bucket/checkpoints/model.pt", str(local))
@@ -356,7 +376,9 @@ def test_download_file_new_file_gets_umask_default_permissions(
         body.iter_chunks.return_value = [b"fresh-checkpoint"]
         mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
         client = StorageClient(
-            endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+            endpoint_url="https://storage",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
         )
 
         client.download_file("s3://bucket/checkpoints/model.pt", str(local))
@@ -374,7 +396,9 @@ def test_download_file_skips_length_check_when_provider_omits_it(
     body.iter_chunks.return_value = [b"unknown-length-body"]
     mock_s3.get_object.return_value = {"Body": body}
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
     client.download_file("s3://bucket/checkpoints/model.pt", str(local))
@@ -382,7 +406,9 @@ def test_download_file_skips_length_check_when_provider_omits_it(
     assert local.read_bytes() == b"unknown-length-body"
 
 
-def test_directory_transfers_run_concurrently_not_serially(tmp_path: Path, mock_s3) -> None:
+def test_directory_transfers_run_concurrently_not_serially(
+    tmp_path: Path, mock_s3
+) -> None:
     """All 8 uploads must be in flight at once, proven deterministically.
 
     A ``threading.Barrier(8)`` only releases once all 8 parties have called
@@ -404,7 +430,9 @@ def test_directory_transfers_run_concurrently_not_serially(tmp_path: Path, mock_
 
     mock_s3.upload_file.side_effect = _rendezvous_upload_file
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
     client.upload_directory(str(local), "s3://bucket/base")
@@ -425,7 +453,9 @@ def test_adaptive_transfer_config_gives_one_file_near_boto_default() -> None:
 def test_adaptive_transfer_config_shrinks_as_file_count_grows() -> None:
     one = storage._adaptive_transfer_config(1).max_concurrency
     few = storage._adaptive_transfer_config(2).max_concurrency
-    many = storage._adaptive_transfer_config(storage._DIRECTORY_TRANSFER_WORKERS).max_concurrency
+    many = storage._adaptive_transfer_config(
+        storage._DIRECTORY_TRANSFER_WORKERS
+    ).max_concurrency
     beyond_pool = storage._adaptive_transfer_config(
         storage._DIRECTORY_TRANSFER_WORKERS * 10
     ).max_concurrency
@@ -435,7 +465,10 @@ def test_adaptive_transfer_config_shrinks_as_file_count_grows() -> None:
     assert many == beyond_pool
     # The worst case (every outer slot busy) must stay within the documented
     # total thread budget.
-    assert storage._DIRECTORY_TRANSFER_WORKERS * many <= storage._TOTAL_TRANSFER_THREAD_BUDGET
+    assert (
+        storage._DIRECTORY_TRANSFER_WORKERS * many
+        <= storage._TOTAL_TRANSFER_THREAD_BUDGET
+    )
 
 
 def test_directory_download_bounds_in_flight_work(tmp_path: Path, mock_s3) -> None:
@@ -463,7 +496,9 @@ def test_directory_download_bounds_in_flight_work(tmp_path: Path, mock_s3) -> No
 
     mock_s3.download_file.side_effect = _tracking_download_file
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
 
     client.download_directory("s3://bucket/prefix", str(tmp_path / "download"))
@@ -506,10 +541,17 @@ def test_download_directory_joins_concurrent_siblings_before_raising(
     )
     paginator = mock_s3.get_paginator.return_value
     paginator.paginate.return_value = [
-        {"Contents": [{"Key": k} for k in ("prefix/fail.bin", "prefix/ok1.bin", "prefix/ok2.bin")]}
+        {
+            "Contents": [
+                {"Key": k}
+                for k in ("prefix/fail.bin", "prefix/ok1.bin", "prefix/ok2.bin")
+            ]
+        }
     ]
     client = StorageClient(
-        endpoint_url="https://storage", aws_access_key_id="key", aws_secret_access_key="secret"
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
     )
     download_dir = tmp_path / "download"
 
@@ -562,7 +604,10 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
     paramiko_client.set_missing_host_key_policy.assert_called_once()
     import paramiko
 
-    assert isinstance(paramiko_client.set_missing_host_key_policy.call_args.args[0], paramiko.RejectPolicy)
+    assert isinstance(
+        paramiko_client.set_missing_host_key_policy.call_args.args[0],
+        paramiko.RejectPolicy,
+    )
     paramiko_client.load_system_host_keys.assert_called_once_with()
     paramiko_client.connect.assert_called_once_with(
         hostname="host",
@@ -573,12 +618,16 @@ def test_ssh_connect_uses_paramiko_config(mocker) -> None:
     )
 
 
-def test_ssh_explicit_known_hosts_takes_precedence_over_ambient(mocker, monkeypatch, tmp_path):
+def test_ssh_explicit_known_hosts_takes_precedence_over_ambient(
+    mocker, monkeypatch, tmp_path
+):
     client = mocker.MagicMock()
     mocker.patch("paramiko.SSHClient", return_value=client)
     monkeypatch.setenv("NPA_SSH_KNOWN_HOSTS", str(tmp_path / "ambient"))
     pinned = str(tmp_path / "verified")
-    SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key"), known_hosts=pinned)._connect()
+    SSHClient(
+        SSHConfig(host="host", user="ubuntu", key_path="~/key"), known_hosts=pinned
+    )._connect()
     client.load_host_keys.assert_called_once_with(pinned)
     client.load_system_host_keys.assert_not_called()
 
@@ -589,7 +638,14 @@ def test_ssh_refuses_changed_host_before_credentials_are_staged(mocker):
     client = mocker.MagicMock()
     client.connect.side_effect = paramiko.SSHException("host key mismatch")
     mocker.patch("paramiko.SSHClient", return_value=client)
-    ssh = SSHClient(SSHConfig(host="host", user="ubuntu", key_path="~/key", tokens={"HF_TOKEN": "test-token"}))
+    ssh = SSHClient(
+        SSHConfig(
+            host="host",
+            user="ubuntu",
+            key_path="~/key",
+            tokens={"HF_TOKEN": "test-token"},
+        )
+    )
     with pytest.raises(SSHError, match="Unknown or changed host keys are refused"):
         ssh.run("true")
     client.open_sftp.assert_not_called()
@@ -971,13 +1027,16 @@ def test_nebius_cli_compatibility_error_keeps_existing_token_fallbacks(
         "npa.clients.nebius._env_iam_token",
         return_value=sentinel if source == "environment" else "",
     )
-    mocker.patch("npa.clients.nebius._candidate_iam_token_files", return_value=["/token"])
+    mocker.patch(
+        "npa.clients.nebius._candidate_iam_token_files", return_value=["/token"]
+    )
     file = mocker.patch(
         "npa.clients.nebius._read_iam_token_file",
         return_value=sentinel if source == "file" else "",
     )
     metadata = mocker.patch(
-        "npa.clients.nebius._metadata_iam_token", return_value=sentinel,
+        "npa.clients.nebius._metadata_iam_token",
+        return_value=sentinel,
     )
 
     assert nebius.get_iam_token() == sentinel
@@ -1685,7 +1744,9 @@ def test_nebius_agent_bootstrap_reuses_verified_storage_without_access_key_iam(
     assert service_account.call_args.kwargs["allow_saved_fallback"] is False
     assert result["agent_iam_scope_id"] == "project"
     assert project_grant.call_args.kwargs["project_id"] == "project"
-    assert project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    assert (
+        project_grant.call_args.kwargs["service_account_id"] == "serviceaccount-agent"
+    )
     tenant_grant.assert_not_called()
     full_bootstrap.assert_not_called()
     list_keys.assert_not_called()
@@ -1992,9 +2053,7 @@ def test_is_permission_denied_matches_access_denied() -> None:
 def test_nebius_bucket_exact_lookup_does_not_enumerate_project(mocker) -> None:
     run_json = mocker.patch(
         "npa.clients.nebius._run_json",
-        return_value={
-            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
-        },
+        return_value={"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
     )
 
     assert nebius.bucket_exists("project", "npa-bucket-abc") is True
@@ -2053,9 +2112,7 @@ def test_nebius_ensure_bucket_refuses_generated_name_create_race(mocker) -> None
     )
     mocker.patch(
         "npa.clients.nebius.get_bucket_by_name",
-        return_value={
-            "metadata": {"name": "npa-bucket-abc", "parent_id": "project"}
-        },
+        return_value={"metadata": {"name": "npa-bucket-abc", "parent_id": "project"}},
     )
 
     with pytest.raises(nebius.NebiusError, match="refusing to adopt"):
@@ -2421,9 +2478,7 @@ def test_nebius_quota_reads_omit_profile_flag_when_unset(mocker, monkeypatch) ->
 
 
 def test_nebius_quota_allowances_accept_project_parent(mocker) -> None:
-    run_json = mocker.patch(
-        "npa.clients.nebius._run_json", return_value={"items": []}
-    )
+    run_json = mocker.patch("npa.clients.nebius._run_json", return_value={"items": []})
 
     nebius.list_quota_allowances("project-test")
 

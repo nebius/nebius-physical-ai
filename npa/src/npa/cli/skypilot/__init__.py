@@ -46,10 +46,13 @@ SKYPILOT_PACKAGE = f"skypilot[{','.join(SKYPILOT_EXTRAS)}]=={SKYPILOT_VERSION}"
 # Every pod_config then fails validation and the managed-jobs controller retries
 # forever, so pin the client below the break.
 KUBERNETES_CLIENT_MAX_EXCLUSIVE = "36"
-KUBERNETES_CLIENT_SPEC = f"kubernetes>=20.0.0,!=32.0.0,<{KUBERNETES_CLIENT_MAX_EXCLUSIVE}"
-DEFAULT_VENV_PATH = Path(
-    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
-) / "skypilot-venv"
+KUBERNETES_CLIENT_SPEC = (
+    f"kubernetes>=20.0.0,!=32.0.0,<{KUBERNETES_CLIENT_MAX_EXCLUSIVE}"
+)
+DEFAULT_VENV_PATH = (
+    Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa"))
+    / "skypilot-venv"
+)
 VENV_PATH_ENV = "NPA_SKYPILOT_VENV_PATH"
 PYTHON_ENV = "NPA_SKYPILOT_PYTHON"
 MARKER_FILE = ".npa-bootstrap-ok"
@@ -228,7 +231,9 @@ def uninstall_cmd(
         "--path",
         help=f"SkyPilot venv path. Defaults to {VENV_PATH_ENV} or ~/.npa/skypilot-venv.",
     ),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Skip the confirmation prompt."
+    ),
 ) -> None:
     """Remove the isolated SkyPilot venv and clear the saved sky binary.
 
@@ -246,7 +251,9 @@ def uninstall_cmd(
 
     existed = venv_path.exists()
     if existed and not yes and sys.stdin.isatty():
-        if not typer.confirm(f"Remove the SkyPilot venv at {venv_path}?", default=False):
+        if not typer.confirm(
+            f"Remove the SkyPilot venv at {venv_path}?", default=False
+        ):
             typer.echo("Aborted.")
             raise typer.Exit(code=1)
     if existed:
@@ -278,12 +285,16 @@ def status_cmd(
         "--path",
         help=f"SkyPilot venv path. Defaults to {VENV_PATH_ENV} or ~/.npa/skypilot-venv.",
     ),
-    bin_path: bool = typer.Option(False, "--bin-path", help="Print only the resolved sky binary path."),
+    bin_path: bool = typer.Option(
+        False, "--bin-path", help="Print only the resolved sky binary path."
+    ),
     project: str = typer.Option(
         "", "--project", help="Project alias for immutable controller verification."
     ),
     context: str = typer.Option(
-        "", "--context", help="Kubernetes context for immutable controller verification."
+        "",
+        "--context",
+        help="Kubernetes context for immutable controller verification.",
     ),
 ) -> None:
     """Report the isolated SkyPilot runtime status."""
@@ -291,14 +302,22 @@ def status_cmd(
     state = inspect_venv(_resolve_venv_path(path))
     if bin_path:
         if not state.has_sky:
-            _fail(f"SkyPilot binary is not installed at {state.sky_bin}. Run `npa skypilot bootstrap`.")
+            _fail(
+                f"SkyPilot binary is not installed at {state.sky_bin}. Run `npa skypilot bootstrap`."
+            )
             return
         typer.echo(str(state.sky_bin))
         return
 
     if not state.installed:
-        detail = f"found version {state.version}" if state.version else "sky binary missing or not executable"
-        _fail(f"SkyPilot {SKYPILOT_VERSION} is not ready in {state.path}: {detail}. Run `npa skypilot bootstrap`.")
+        detail = (
+            f"found version {state.version}"
+            if state.version
+            else "sky binary missing or not executable"
+        )
+        _fail(
+            f"SkyPilot {SKYPILOT_VERSION} is not ready in {state.path}: {detail}. Run `npa skypilot bootstrap`."
+        )
         return
 
     marker_age = _format_marker_age(state.marker_path)
@@ -380,8 +399,12 @@ def cleanup_controller_cmd(
     ),
     receipt: str = typer.Option("", "--receipt", help="Opaque teardown receipt ID."),
     project_id: str = typer.Option("", "--project-id", help="Exact Nebius project ID."),
-    cluster_id: str = typer.Option("", "--cluster-id", help="Exact immutable cluster ID."),
-    cluster_name: str = typer.Option("", "--cluster-name", help="Exact provider cluster name."),
+    cluster_id: str = typer.Option(
+        "", "--cluster-id", help="Exact immutable cluster ID."
+    ),
+    cluster_name: str = typer.Option(
+        "", "--cluster-name", help="Exact provider cluster name."
+    ),
     recover_orphan_controller: bool = typer.Option(
         False,
         "--recover-orphan-controller",
@@ -415,7 +438,11 @@ def cleanup_controller_cmd(
         if output_json:
             typer.echo(
                 json.dumps(
-                    {"outcome": "confirmation_required", "changed": False, "message": message},
+                    {
+                        "outcome": "confirmation_required",
+                        "changed": False,
+                        "message": message,
+                    },
                     indent=2,
                     sort_keys=True,
                 )
@@ -526,7 +553,9 @@ def cleanup_controller_cmd(
         }:
             typer.echo("SkyPilot jobs controller is already absent; nothing to remove.")
         else:
-            typer.echo("SkyPilot controller state could not be verified; nothing was removed.")
+            typer.echo(
+                "SkyPilot controller state could not be verified; nothing was removed."
+            )
         for error in payload["errors"]:
             typer.echo(f"Controller cleanup warning: {error}", err=True)
     if payload["outcome"] == "verification_failed":
@@ -588,17 +617,35 @@ def bind_controller_cmd(
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        typer.echo(f"controller_owner: {owner.project_alias}/{owner.context}/{owner.cluster_id}")
+        typer.echo(
+            f"controller_owner: {owner.project_alias}/{owner.context}/{owner.cluster_id}"
+        )
 
 
 @app.command("verify")
 @json_stdout_contract
 def verify_cmd(
-    path: Path | None = typer.Option(None, "--path", help=f"SkyPilot venv path. Defaults to {VENV_PATH_ENV} or ~/.npa/skypilot-venv."),
-    kubeconfig: Path | None = typer.Option(None, "--kubeconfig", help="Exact kubeconfig for owned Kubernetes verification."),
-    cluster: str | None = typer.Option(None, "--cluster", help="NPA cluster/context; resolves its kubeconfig when --kubeconfig is omitted."),
-    controller_backend: str | None = typer.Option(None, "--controller-backend", help="Controller backend: kubernetes (default) or nebius."),
-    output_format: str = typer.Option("text", "--output-format", help="Output format: text or json."),
+    path: Path | None = typer.Option(
+        None,
+        "--path",
+        help=f"SkyPilot venv path. Defaults to {VENV_PATH_ENV} or ~/.npa/skypilot-venv.",
+    ),
+    kubeconfig: Path | None = typer.Option(
+        None, "--kubeconfig", help="Exact kubeconfig for owned Kubernetes verification."
+    ),
+    cluster: str | None = typer.Option(
+        None,
+        "--cluster",
+        help="NPA cluster/context; resolves its kubeconfig when --kubeconfig is omitted.",
+    ),
+    controller_backend: str | None = typer.Option(
+        None,
+        "--controller-backend",
+        help="Controller backend: kubernetes (default) or nebius.",
+    ),
+    output_format: str = typer.Option(
+        "text", "--output-format", help="Output format: text or json."
+    ),
 ) -> None:
     """Verify the runtime, using an owned API for an explicit Kubernetes target.
 
@@ -614,7 +661,9 @@ def verify_cmd(
         Exit: Runtime, target, verification, or owned cleanup failed.
     """
     try:
-        payload, code = _verify_selected_runtime(path, kubeconfig, cluster, controller_backend, output_format)
+        payload, code = _verify_selected_runtime(
+            path, kubeconfig, cluster, controller_backend, output_format
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         _verify_failure(exc, output_format)
         return
@@ -623,11 +672,19 @@ def verify_cmd(
         raise typer.Exit(code)
 
 
-def _verify_selected_runtime(path, kubeconfig, cluster, controller_backend, output_format):
+def _verify_selected_runtime(
+    path, kubeconfig, cluster, controller_backend, output_format
+):
     state = inspect_venv(_resolve_venv_path(path))
     if not state.installed:
-        detail = f"found version {state.version}" if state.version else "sky binary missing or not executable"
-        raise RuntimeError(f"SkyPilot {SKYPILOT_VERSION} is not ready in {state.path}: {detail}. Run npa skypilot bootstrap.")
+        detail = (
+            f"found version {state.version}"
+            if state.version
+            else "sky binary missing or not executable"
+        )
+        raise RuntimeError(
+            f"SkyPilot {SKYPILOT_VERSION} is not ready in {state.path}: {detail}. Run npa skypilot bootstrap."
+        )
     if not state.kubernetes_compatible:
         raise RuntimeError(kubernetes_client_remedy(state.kubernetes_version))
     backend = str(controller_backend or "kubernetes").strip().lower()
@@ -635,12 +692,18 @@ def _verify_selected_runtime(path, kubeconfig, cluster, controller_backend, outp
         raise ValueError("--controller-backend must be kubernetes or nebius")
     if output_format not in {"text", "json"}:
         raise ValueError("--output-format must be text or json")
-    check_env, context = _verify_kube_env(kubeconfig=kubeconfig, cluster=cluster, owned_target=backend == "kubernetes")
-    required = backend == "kubernetes" and bool(controller_backend is not None or kubeconfig is not None or cluster)
+    check_env, context = _verify_kube_env(
+        kubeconfig=kubeconfig, cluster=cluster, owned_target=backend == "kubernetes"
+    )
+    required = backend == "kubernetes" and bool(
+        controller_backend is not None or kubeconfig is not None or cluster
+    )
     command = [str(state.sky_bin), "check"]
     if backend == "kubernetes" and context:
         allowed = json.dumps([context], separators=(",", ":"))
-        command.extend(["--config", f"kubernetes.allowed_contexts={allowed}", "kubernetes"])
+        command.extend(
+            ["--config", f"kubernetes.allowed_contexts={allowed}", "kubernetes"]
+        )
     try:
         result = _run_verify_check(command, check_env, context, backend, output_format)
     except _VerificationFailed as exc:
@@ -651,26 +714,52 @@ def _verify_selected_runtime(path, kubeconfig, cluster, controller_backend, outp
 
 def _verification_payload(result, backend, kubernetes_required):
     lines = [line for line in _combined_output(result).splitlines() if line.strip()]
-    profile_failure = any("unable to create nebius profile" in line.lower() for line in lines)
+    profile_failure = any(
+        "unable to create nebius profile" in line.lower() for line in lines
+    )
     profile_status, detail = _verification_profile(profile_failure, backend == "nebius")
     plain_output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", "\n".join(lines))
-    enabled = bool(re.search(r"\bKubernetes:\s+enabled\b", plain_output, flags=re.IGNORECASE))
-    ok = result.returncode == 0 and not (profile_failure and backend == "nebius") and (not kubernetes_required or enabled)
-    filtered = [line for line in lines if "unable to create nebius profile" not in line.lower()
-                and not (profile_failure and backend == "nebius" and "setup completed" in line.lower())]
+    enabled = bool(
+        re.search(r"\bKubernetes:\s+enabled\b", plain_output, flags=re.IGNORECASE)
+    )
+    ok = (
+        result.returncode == 0
+        and not (profile_failure and backend == "nebius")
+        and (not kubernetes_required or enabled)
+    )
+    filtered = [
+        line
+        for line in lines
+        if "unable to create nebius profile" not in line.lower()
+        and not (
+            profile_failure
+            and backend == "nebius"
+            and "setup completed" in line.lower()
+        )
+    ]
     return {
-        "status": "ok" if ok else "failed", "controller_backend": backend,
-        "kubernetes_required": kubernetes_required, "kubernetes_enabled": enabled,
-        "nebius_profile": profile_status, "nebius_profile_detail": detail,
-        "sky_check_returncode": result.returncode, "sky_check_output": filtered,
+        "status": "ok" if ok else "failed",
+        "controller_backend": backend,
+        "kubernetes_required": kubernetes_required,
+        "kubernetes_enabled": enabled,
+        "nebius_profile": profile_status,
+        "nebius_profile_detail": detail,
+        "sky_check_returncode": result.returncode,
+        "sky_check_output": filtered,
     }
 
 
 def _verification_profile(failed, required):
     if failed and not required:
-        return "skipped_not_required", "Nebius profile skipped; not required for Kubernetes-controller mode"
+        return (
+            "skipped_not_required",
+            "Nebius profile skipped; not required for Kubernetes-controller mode",
+        )
     if failed:
-        return "failed_required", "Nebius profile creation failed and is required for Nebius-controller mode"
+        return (
+            "failed_required",
+            "Nebius profile creation failed and is required for Nebius-controller mode",
+        )
     return "available_or_not_reported", "Nebius profile failure was not reported"
 
 
@@ -680,7 +769,9 @@ def _emit_verification(payload, output_format):
         return
     typer.echo(f"status: {payload['status']}")
     typer.echo(f"controller_backend: {payload['controller_backend']}")
-    typer.echo(f"nebius_profile: {payload['nebius_profile']} ({payload['nebius_profile_detail']})")
+    typer.echo(
+        f"nebius_profile: {payload['nebius_profile']} ({payload['nebius_profile_detail']})"
+    )
     for line in payload["sky_check_output"]:
         typer.echo(line)
 
@@ -688,14 +779,26 @@ def _emit_verification(payload, output_format):
 class _VerificationFailed(RuntimeError):
     def __init__(self, result):
         self.result = result
-        super().__init__(_combined_output(result) or "SkyPilot did not enable the selected Kubernetes context")
+        super().__init__(
+            _combined_output(result)
+            or "SkyPilot did not enable the selected Kubernetes context"
+        )
 
 
 def _verify_failure(error, output_format):
     message = redact_text(str(error))
     if output_format == "json":
-        typer.echo(json.dumps({"status": "failed", "error": message, "error_type": type(error).__name__},
-                              indent=2, sort_keys=True))
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": message,
+                    "error_type": type(error).__name__,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
         typer.echo(message, err=True)
     raise typer.Exit(1)
@@ -703,25 +806,40 @@ def _verify_failure(error, output_format):
 
 def _run_verify_check(command, environment, context, backend, output_format):
     if backend != "kubernetes" or environment is None or not context:
-        return _run_observable(command, label="SkyPilot verification", env=environment,
-                               emit_progress=output_format != "json")
+        return _run_observable(
+            command,
+            label="SkyPilot verification",
+            env=environment,
+            emit_progress=output_format != "json",
+        )
     from npa.orchestration.skypilot.cluster_validation import cluster_validation_session
     from npa.orchestration.skypilot.k8s_gpu_catalog import kubernetes_sky_environment
 
     selected = Path(environment["KUBECONFIG"])
     with cluster_validation_session(selected, context, check_only=True):
-        owned = kubernetes_sky_environment(context=context, kubeconfig=selected, sky_executable=command[0])
-        result = _run_observable(command, label="SkyPilot verification", env=owned,
-                                 cwd=Path(owned["NPA_SKYPILOT_ISOLATED_API_DIR"]),
-                                 emit_progress=output_format != "json")
+        owned = kubernetes_sky_environment(
+            context=context, kubeconfig=selected, sky_executable=command[0]
+        )
+        result = _run_observable(
+            command,
+            label="SkyPilot verification",
+            env=owned,
+            cwd=Path(owned["NPA_SKYPILOT_ISOLATED_API_DIR"]),
+            emit_progress=output_format != "json",
+        )
         output = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", _combined_output(result))
-        if result.returncode != 0 or not re.search(r"\bKubernetes:\s+enabled\b", output, re.IGNORECASE):
+        if result.returncode != 0 or not re.search(
+            r"\bKubernetes:\s+enabled\b", output, re.IGNORECASE
+        ):
             raise _VerificationFailed(result)
     return result
 
 
 def _verify_kube_env(
-    *, kubeconfig: Path | None, cluster: str | None, owned_target: bool = True,
+    *,
+    kubeconfig: Path | None,
+    cluster: str | None,
+    owned_target: bool = True,
 ) -> tuple[dict[str, str] | None, str]:
     """Resolve an explicit Kubernetes target without changing ambient configuration."""
     resolved = kubeconfig
@@ -733,16 +851,24 @@ def _verify_kube_env(
         return None, str(cluster or "").strip()
     resolved = resolved.expanduser()
     if not resolved.exists():
-        raise RuntimeError("Kubeconfig not found; run npa cluster up/deploy or pass an existing --kubeconfig")
+        raise RuntimeError(
+            "Kubeconfig not found; run npa cluster up/deploy or pass an existing --kubeconfig"
+        )
     exact_context = str(cluster or "").strip()
     if owned_target:
-        from npa.orchestration.skypilot.cluster_validation import resolve_validation_target
+        from npa.orchestration.skypilot.cluster_validation import (
+            resolve_validation_target,
+        )
 
         resolved, exact_context = resolve_validation_target(resolved, exact_context)
     elif not exact_context:
         try:
             payload = yaml.safe_load(resolved.read_text()) or {}
-            exact_context = str(payload.get("current-context") or "").strip() if isinstance(payload, dict) else ""
+            exact_context = (
+                str(payload.get("current-context") or "").strip()
+                if isinstance(payload, dict)
+                else ""
+            )
         except (OSError, yaml.YAMLError):
             exact_context = ""
     env = os.environ.copy()
@@ -838,7 +964,9 @@ def _validate_managed_venv_path(path: Path) -> None:
 
     _reject_npa_environment(path)
     if path == Path(path.anchor) or path == path.parent:
-        raise SkyPilotBootstrapError(f"Refusing broad SkyPilot environment path: {path}")
+        raise SkyPilotBootstrapError(
+            f"Refusing broad SkyPilot environment path: {path}"
+        )
     if path.name in {"", ".", "..", ".npa"}:
         raise SkyPilotBootstrapError(f"Refusing parent NPA state path: {path}")
     raw = Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
@@ -905,7 +1033,9 @@ def _recover_bootstrap_exchange(path: Path) -> None:
 def _activate_staged_runtime(path: Path, staging: Path) -> None:
     previous, journal = _bootstrap_paths(path)
     if previous.exists() or previous.is_symlink():
-        raise SkyPilotBootstrapError(f"Refusing occupied bootstrap backup path: {previous}")
+        raise SkyPilotBootstrapError(
+            f"Refusing occupied bootstrap backup path: {previous}"
+        )
     _write_bootstrap_journal(
         journal,
         {"target": str(path), "staging": staging.name, "previous": previous.name},
@@ -994,7 +1124,7 @@ def _relocate_distlib_header(body: bytes, staging: Path, target: Path) -> bytes 
         return None
     if not launch.startswith(prefix) or not launch.endswith(suffix):
         return None
-    interpreter = launch[len(prefix):-len(suffix)]
+    interpreter = launch[len(prefix) : -len(suffix)]
     replacement = _relocate_distlib_interpreter(interpreter, staging, target)
     if replacement is None:
         return None
@@ -1003,7 +1133,9 @@ def _relocate_distlib_header(body: bytes, staging: Path, target: Path) -> bytes 
     return header + closing + closing_separator + payload
 
 
-def _relocate_distlib_interpreter(token: bytes, staging: Path, target: Path) -> bytes | None:
+def _relocate_distlib_interpreter(
+    token: bytes, staging: Path, target: Path
+) -> bytes | None:
     """Accept only one Python interpreter belonging to the staged environment.
 
     Args:
@@ -1034,7 +1166,9 @@ def _relocate_distlib_interpreter(token: bytes, staging: Path, target: Path) -> 
 def _validate_staged_runtime(state: VenvState, *, expected_version: str) -> None:
     problems: list[str] = []
     if state.version != expected_version:
-        problems.append(f"expected SkyPilot {expected_version}, got {state.version or 'unknown'}")
+        problems.append(
+            f"expected SkyPilot {expected_version}, got {state.version or 'unknown'}"
+        )
     if not state.has_sky:
         problems.append("sky executable is missing")
     if not state.importable:
@@ -1089,7 +1223,9 @@ def _resolve_venv_path(path: Path | str | None) -> Path:
 def _reject_npa_environment(path: Path) -> None:
     prefixes = [Path(sys.prefix).expanduser().resolve(strict=False)]
     if os.environ.get("VIRTUAL_ENV"):
-        prefixes.append(Path(os.environ["VIRTUAL_ENV"]).expanduser().resolve(strict=False))
+        prefixes.append(
+            Path(os.environ["VIRTUAL_ENV"]).expanduser().resolve(strict=False)
+        )
     for prefix in prefixes:
         if path == prefix or prefix in path.parents:
             raise SkyPilotBootstrapError(
@@ -1098,10 +1234,16 @@ def _reject_npa_environment(path: Path) -> None:
             )
 
 
-def _detect_python_version(executable: str | os.PathLike[str]) -> tuple[int, int] | None:
+def _detect_python_version(
+    executable: str | os.PathLike[str],
+) -> tuple[int, int] | None:
     """Return the ``(major, minor)`` of *executable*, or None when undeterminable."""
     result = _run_no_raise(
-        [os.fspath(executable), "-c", "import sys;print(sys.version_info[0], sys.version_info[1])"]
+        [
+            os.fspath(executable),
+            "-c",
+            "import sys;print(sys.version_info[0], sys.version_info[1])",
+        ]
     )
     if result.returncode != 0:
         return None
@@ -1347,7 +1489,10 @@ def _kubernetes_client_version(python_bin: Path) -> str | None:
 
 
 def _run_no_raise(
-    cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path | None = None,
+    cmd: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -1383,12 +1528,19 @@ def _run_observable(
     stop = threading.Event()
 
     reporter = threading.Thread(
-        target=_report_subprocess_wait, args=(stop, progress), name="npa-skypilot-cli-progress", daemon=True
+        target=_report_subprocess_wait,
+        args=(stop, progress),
+        name="npa-skypilot-cli-progress",
+        daemon=True,
     )
     reporter.start()
     result: subprocess.CompletedProcess[str] | None = None
     try:
-        result = _run_no_raise(cmd, env=env, cwd=cwd) if cwd is not None else _run_no_raise(cmd, env=env)
+        result = (
+            _run_no_raise(cmd, env=env, cwd=cwd)
+            if cwd is not None
+            else _run_no_raise(cmd, env=env)
+        )
         return result
     finally:
         stop.set()

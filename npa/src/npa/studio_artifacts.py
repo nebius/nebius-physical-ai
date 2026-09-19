@@ -30,22 +30,61 @@ _METADATA_FIELDS = {
 def _since(value: str) -> datetime:
     date = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if date.tzinfo is None:
-        raise argparse.ArgumentTypeError("--since requires an ISO timestamp with timezone")
+        raise argparse.ArgumentTypeError(
+            "--since requires an ISO timestamp with timezone"
+        )
     return date.astimezone(timezone.utc)
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Search accessible S3 objects; never provision or modify storage.")
+    parser = argparse.ArgumentParser(
+        description="Search accessible S3 objects; never provision or modify storage."
+    )
     projects = parser.add_mutually_exclusive_group()
-    projects.add_argument("--project", "-p", action="append", help="Configured project alias; repeat to select several.")
-    projects.add_argument("--all-projects", action="store_true", help="Search every configured project with its own credentials.")
-    parser.add_argument("--discover-tenant", action="store_true", help="Use Nebius inventory to discover the selected tenant's buckets.")
-    parser.add_argument("--bucket", action="append", default=[], help="Explicit bucket name; otherwise enumerate accessible buckets.")
-    parser.add_argument("--prefix", default="", help="Exact S3 key prefix; empty searches the whole bucket.")
-    parser.add_argument("--query", default="", help="Case-insensitive substring of the object key.")
-    parser.add_argument("--kind", choices=("video", "image", "rerun", "mcap", "json", "text", "download"))
-    parser.add_argument("--since", type=_since, help="Only objects modified at or after this ISO timestamp.")
-    parser.add_argument("--read-metadata", action="store_true", help="HEAD matched objects for declared tool/model/run/GPU metadata.")
+    projects.add_argument(
+        "--project",
+        "-p",
+        action="append",
+        help="Configured project alias; repeat to select several.",
+    )
+    projects.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="Search every configured project with its own credentials.",
+    )
+    parser.add_argument(
+        "--discover-tenant",
+        action="store_true",
+        help="Use Nebius inventory to discover the selected tenant's buckets.",
+    )
+    parser.add_argument(
+        "--bucket",
+        action="append",
+        default=[],
+        help="Explicit bucket name; otherwise enumerate accessible buckets.",
+    )
+    parser.add_argument(
+        "--prefix",
+        default="",
+        help="Exact S3 key prefix; empty searches the whole bucket.",
+    )
+    parser.add_argument(
+        "--query", default="", help="Case-insensitive substring of the object key."
+    )
+    parser.add_argument(
+        "--kind",
+        choices=("video", "image", "rerun", "mcap", "json", "text", "download"),
+    )
+    parser.add_argument(
+        "--since",
+        type=_since,
+        help="Only objects modified at or after this ISO timestamp.",
+    )
+    parser.add_argument(
+        "--read-metadata",
+        action="store_true",
+        help="HEAD matched objects for declared tool/model/run/GPU metadata.",
+    )
     parser.add_argument("--output-format", choices=("json", "text"), default="json")
     return parser
 
@@ -56,14 +95,22 @@ def _failure(error: Exception, operation: str) -> dict[str, str]:
     return {"operation": operation, "code": str(code)}
 
 
-def _bucket_names(client: Any, project: str | None, requested: list[str]) -> tuple[list[str], list[dict]]:
+def _bucket_names(
+    client: Any, project: str | None, requested: list[str]
+) -> tuple[list[str], list[dict]]:
     if requested:
         return sorted(set(requested)), []
     names: set[str] = set()
     errors: list[dict] = []
-    configured = resolve_project_storage(project, include_shared_credentials=False).checkpoint_bucket
+    configured = resolve_project_storage(
+        project, include_shared_credentials=False
+    ).checkpoint_bucket
     if configured:
-        names.add(urlsplit(configured).netloc if configured.startswith("s3://") else configured)
+        names.add(
+            urlsplit(configured).netloc
+            if configured.startswith("s3://")
+            else configured
+        )
     try:
         pages = client.get_paginator("list_buckets").paginate()
         for page in pages:
@@ -92,10 +139,16 @@ def _metadata(client: Any, bucket: str, key: str) -> dict:
         value = next((metadata[name] for name in names if metadata.get(name)), None)
         if value is not None:
             declared[field] = value
-    return {"status": "declared" if declared else "unknown", "basis": "s3_object_metadata", "declared": declared}
+    return {
+        "status": "declared" if declared else "unknown",
+        "basis": "s3_object_metadata",
+        "declared": declared,
+    }
 
 
-def _artifact(client: Any, project: str | None, bucket: str, obj: dict, metadata: bool) -> dict:
+def _artifact(
+    client: Any, project: str | None, bucket: str, obj: dict, metadata: bool
+) -> dict:
     key = obj["Key"]
     row = {
         "project": project,
@@ -114,17 +167,30 @@ def _artifact(client: Any, project: str | None, bucket: str, obj: dict, metadata
     return row
 
 
-def _search_bucket(client: Any, project: str | None, bucket: str, args: argparse.Namespace) -> tuple[dict, list[dict]]:
-    source = {"project": project, "endpoint": client.meta.endpoint_url, "bucket": bucket,
-              "prefix": args.prefix, "complete": False, "objects_scanned": 0, "matches": 0}
+def _search_bucket(
+    client: Any, project: str | None, bucket: str, args: argparse.Namespace
+) -> tuple[dict, list[dict]]:
+    source = {
+        "project": project,
+        "endpoint": client.meta.endpoint_url,
+        "bucket": bucket,
+        "prefix": args.prefix,
+        "complete": False,
+        "objects_scanned": 0,
+        "matches": 0,
+    }
     artifacts = []
     try:
-        pages = client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=args.prefix)
+        pages = client.get_paginator("list_objects_v2").paginate(
+            Bucket=bucket, Prefix=args.prefix
+        )
         for page in pages:
             for obj in page.get("Contents", []):
                 source["objects_scanned"] += 1
                 if _matches(obj, args):
-                    artifacts.append(_artifact(client, project, bucket, obj, args.read_metadata))
+                    artifacts.append(
+                        _artifact(client, project, bucket, obj, args.read_metadata)
+                    )
         source["complete"] = True
     except _STORAGE_ERRORS as error:
         source["error"] = _failure(error, "list_objects_v2")
@@ -132,7 +198,9 @@ def _search_bucket(client: Any, project: str | None, bucket: str, args: argparse
     return source, artifacts
 
 
-def _search_project(project: str | None, args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
+def _search_project(
+    project: str | None, args: argparse.Namespace
+) -> tuple[dict, list[dict], list[dict]]:
     discovery = {"project": project, "complete": False, "errors": []}
     try:
         client = s3_client_for_project(project)
@@ -154,7 +222,9 @@ def _search(args: argparse.Namespace) -> dict:
         return _search_tenant(args)
     projects = sorted(list_projects()) if args.all_projects else args.project or [None]
     if not projects:
-        raise ValueError("No configured projects; configure storage or select the default credential context")
+        raise ValueError(
+            "No configured projects; configure storage or select the default credential context"
+        )
     discoveries, sources, artifacts = [], [], []
     for project in dict.fromkeys(projects):
         discovery, selected, found = _search_project(project, args)
@@ -162,18 +232,32 @@ def _search(args: argparse.Namespace) -> dict:
         sources.extend(selected)
         artifacts.extend(found)
     complete = all(row["complete"] for row in discoveries + sources)
-    return {"schema": "npa.studio.artifact-search/v1", "complete": complete,
-            "scope": "explicit_buckets" if args.bucket else "credential_visible_buckets",
-            "searched_at": datetime.now(timezone.utc).isoformat(), "discovery": discoveries,
-            "sources": sources, "artifacts": artifacts, "count": len(artifacts)}
+    return {
+        "schema": "npa.studio.artifact-search/v1",
+        "complete": complete,
+        "scope": "explicit_buckets" if args.bucket else "credential_visible_buckets",
+        "searched_at": datetime.now(timezone.utc).isoformat(),
+        "discovery": discoveries,
+        "sources": sources,
+        "artifacts": artifacts,
+        "count": len(artifacts),
+    }
 
 
 def _tenant_bucket(target: dict, args: argparse.Namespace) -> tuple[dict, list[dict]]:
     try:
-        client = s3_client_for_project(target["project"], endpoint_url=target["endpoint"])
-        source, found = _search_bucket(client, target["project"], target["bucket"], args)
+        client = s3_client_for_project(
+            target["project"], endpoint_url=target["endpoint"]
+        )
+        source, found = _search_bucket(
+            client, target["project"], target["bucket"], args
+        )
     except _STORAGE_ERRORS as error:
-        return {**target, "complete": False, "error": _failure(error, "resolve_project_storage")}, []
+        return {
+            **target,
+            "complete": False,
+            "error": _failure(error, "resolve_project_storage"),
+        }, []
     source["resource_project_id"] = target["resource_project_id"]
     for row in found:
         row["resource_project_id"] = target["resource_project_id"]
@@ -184,7 +268,9 @@ def _search_tenant(args: argparse.Namespace) -> dict:
     from npa.studio_sources import tenant_sources
 
     if args.all_projects or len(args.project or []) > 1:
-        raise ValueError("--discover-tenant selects one project context; omit --all-projects")
+        raise ValueError(
+            "--discover-tenant selects one project context; omit --all-projects"
+        )
     targets, errors = tenant_sources(args.project[0] if args.project else None)
     sources, artifacts = [], []
     for target in targets:
@@ -194,13 +280,24 @@ def _search_tenant(args: argparse.Namespace) -> dict:
         sources.append(source)
         artifacts.extend(found)
     missing = set(args.bucket) - {target["bucket"] for target in targets}
-    errors.extend({"operation": "locate_requested_bucket", "code": "NotDiscovered", "bucket": name}
-                  for name in sorted(missing))
-    return {"schema": "npa.studio.artifact-search/v1", "scope": "selected_tenant_inventory",
-            "complete": not errors and all(row["complete"] for row in sources),
-            "searched_at": datetime.now(timezone.utc).isoformat(),
-            "discovery": [{"complete": not errors, "errors": errors}],
-            "sources": sources, "artifacts": artifacts, "count": len(artifacts)}
+    errors.extend(
+        {
+            "operation": "locate_requested_bucket",
+            "code": "NotDiscovered",
+            "bucket": name,
+        }
+        for name in sorted(missing)
+    )
+    return {
+        "schema": "npa.studio.artifact-search/v1",
+        "scope": "selected_tenant_inventory",
+        "complete": not errors and all(row["complete"] for row in sources),
+        "searched_at": datetime.now(timezone.utc).isoformat(),
+        "discovery": [{"complete": not errors, "errors": errors}],
+        "sources": sources,
+        "artifacts": artifacts,
+        "count": len(artifacts),
+    }
 
 
 @json_stdout_contract
@@ -209,9 +306,18 @@ def _execute(args: argparse.Namespace, *, output_format: str) -> int:
     if output_format == "json":
         print(json.dumps(result, indent=2))
     else:
-        print(f"{result['count']} objects; coverage {'complete' if result['complete'] else 'partial'}")
+        print(
+            f"{result['count']} objects; coverage {'complete' if result['complete'] else 'partial'}"
+        )
         for row in result["artifacts"]:
-            print(json.dumps({key: row[key] for key in ("project", "s3_uri", "render_hint", "provenance")}))
+            print(
+                json.dumps(
+                    {
+                        key: row[key]
+                        for key in ("project", "s3_uri", "render_hint", "provenance")
+                    }
+                )
+            )
         for row in result["discovery"] + result["sources"]:
             if not row["complete"]:
                 print(json.dumps(row))

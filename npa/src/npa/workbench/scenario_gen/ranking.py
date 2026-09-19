@@ -27,9 +27,13 @@ def rank_scenarios(request: RankRequest, *, run_id: str | None = None) -> RankRe
     try:
         source = read_json_uri(request.input_uri)
     except FileNotFoundError as exc:
-        raise ScenarioRankError(f"adversarial set not found: {request.input_uri}") from exc
+        raise ScenarioRankError(
+            f"adversarial set not found: {request.input_uri}"
+        ) from exc
     except Exception as exc:
-        raise ScenarioRankError(f"cannot read adversarial set {request.input_uri}: {exc}") from exc
+        raise ScenarioRankError(
+            f"cannot read adversarial set {request.input_uri}: {exc}"
+        ) from exc
 
     scenarios = source.get("scenarios")
     if not isinstance(scenarios, list) or not scenarios:
@@ -43,7 +47,9 @@ def rank_scenarios(request: RankRequest, *, run_id: str | None = None) -> RankRe
     for scenario in scenarios:
         severity = float(scenario.get("severity", scenario.get("failure_score", 0.0)))
         diversity = float(scenario.get("diversity", 0.0))
-        combined = (request.severity_weight * severity + request.diversity_weight * diversity) / weight_sum
+        combined = (
+            request.severity_weight * severity + request.diversity_weight * diversity
+        ) / weight_sum
         scored.append(
             {
                 "scenario_id": str(scenario.get("scenario_id", "")),

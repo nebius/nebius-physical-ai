@@ -184,9 +184,10 @@ def _validate_container_image(
         bool(re.fullmatch(r"sha256:[0-9a-f]{64}", accepted_digest)),
         "accepted Wan image digest is invalid",
     )
-    live_candidate = bool(acceptance_candidate_image) and reference == str(
-        acceptance_candidate_image
-    ).strip()
+    live_candidate = (
+        bool(acceptance_candidate_image)
+        and reference == str(acceptance_candidate_image).strip()
+    )
     if live_candidate:
         _require(
             re.fullmatch(
@@ -906,12 +907,10 @@ def validate_wan_run(
             "multi-GPU package-version inventory is absent",
         )
         _require(
-            _public_version(package_versions.get("torch"))
-            == ACCEPTED_TORCH_VERSION
+            _public_version(package_versions.get("torch")) == ACCEPTED_TORCH_VERSION
             and _public_version(package_versions.get("torchvision"))
             == ACCEPTED_TORCHVISION_VERSION
-            and package_versions.get("nvidia-nccl-cu13")
-            == ACCEPTED_NCCL_VERSION,
+            and package_versions.get("nvidia-nccl-cu13") == ACCEPTED_NCCL_VERSION,
             "multi-GPU package-version inventory is not the accepted runtime closure",
         )
     else:

@@ -54,12 +54,26 @@ app.command("failure-candidates")(cosmos3_policy.failure_candidates_cmd)
 @app.command("nano-video-augment")
 @json_stdout_contract
 def nano_video_augment_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="Exact S3 source MP4; 832x480 at 24fps."),
-    output_path: str = typer.Option(..., "--output-path", help="Immutable S3 prefix for source, augmentation and comparison."),
-    prompt: str = typer.Option(..., "--prompt", help="Detailed target appearance while preserving source motion."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="Exact S3 source MP4; 832x480 at 24fps."
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Immutable S3 prefix for source, augmentation and comparison.",
+    ),
+    prompt: str = typer.Option(
+        ...,
+        "--prompt",
+        help="Detailed target appearance while preserving source motion.",
+    ),
     seed: int = typer.Option(0, "--seed"),
     negative_prompt: str = typer.Option("", "--negative-prompt"),
-    system_prompt: str = typer.Option("", "--system-prompt", help="Empty uses the explicit structural-transfer default."),
+    system_prompt: str = typer.Option(
+        "",
+        "--system-prompt",
+        help="Empty uses the explicit structural-transfer default.",
+    ),
     num_inference_steps: int = typer.Option(35, "--num-inference-steps"),
     guidance_scale: float = typer.Option(3.0, "--guidance-scale"),
     flow_shift: float = typer.Option(10.0, "--flow-shift"),
@@ -67,7 +81,9 @@ def nano_video_augment_cmd(
     edge_threshold: str = typer.Option("medium", "--edge-threshold"),
     chunk_frames: int = typer.Option(121, "--chunk-frames"),
     max_sequence_length: int = typer.Option(4096, "--max-sequence-length"),
-    endpoint: str = typer.Option("", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."
+    ),
     token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
     output_format: str = typer.Option("json", "--output-format"),
 ) -> None:
@@ -77,15 +93,28 @@ def nano_video_augment_cmd(
     try:
         if output_format != "json":
             raise ValueError("output-format must be json")
-        validate_read_path(input_path, tool="cosmos3 nano-video-augment", allow_hf=False)
-        validate_write_path(output_path, tool="cosmos3 nano-video-augment", required=True)
+        validate_read_path(
+            input_path, tool="cosmos3 nano-video-augment", allow_hf=False
+        )
+        validate_write_path(
+            output_path, tool="cosmos3 nano-video-augment", required=True
+        )
         result = submit_augmentation(
-            input_path=input_path, output_path=output_path, prompt=prompt, seed=seed,
-            negative_prompt=negative_prompt, system_prompt=system_prompt,
-            num_inference_steps=num_inference_steps, guidance_scale=guidance_scale,
-            flow_shift=flow_shift, control_guidance=control_guidance,
-            edge_threshold=edge_threshold, chunk_frames=chunk_frames,
-            max_sequence_length=max_sequence_length, endpoint=endpoint, token_env=token_env,
+            input_path=input_path,
+            output_path=output_path,
+            prompt=prompt,
+            seed=seed,
+            negative_prompt=negative_prompt,
+            system_prompt=system_prompt,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            flow_shift=flow_shift,
+            control_guidance=control_guidance,
+            edge_threshold=edge_threshold,
+            chunk_frames=chunk_frames,
+            max_sequence_length=max_sequence_length,
+            endpoint=endpoint,
+            token_env=token_env,
         )
     except Exception as exc:
         typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
@@ -98,7 +127,9 @@ def nano_video_augment_cmd(
 @app.command("nano-video-augment-recover")
 @json_stdout_contract
 def nano_video_augment_recover_cmd(
-    output_path: str = typer.Option(..., "--output-path", help="Original augmentation S3 prefix."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Original augmentation S3 prefix."
+    ),
     endpoint: str = typer.Option("", "--endpoint"),
     token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
     output_format: str = typer.Option("json", "--output-format"),
@@ -109,8 +140,12 @@ def nano_video_augment_recover_cmd(
     try:
         if output_format != "json":
             raise ValueError("output-format must be json")
-        validate_write_path(output_path, tool="cosmos3 nano-video-augment-recover", required=True)
-        result = recover_augmentation(output_path=output_path, endpoint=endpoint, token_env=token_env)
+        validate_write_path(
+            output_path, tool="cosmos3 nano-video-augment-recover", required=True
+        )
+        result = recover_augmentation(
+            output_path=output_path, endpoint=endpoint, token_env=token_env
+        )
     except Exception as exc:
         typer.echo(json.dumps({"status": "failed", "error_type": type(exc).__name__}))
         raise typer.Exit(1) from exc
@@ -122,12 +157,25 @@ def nano_video_augment_recover_cmd(
 @app.command("nano-video-batch")
 @json_stdout_contract
 def nano_video_batch_cmd(
-    output_path: str = typer.Option(..., "--output-path", help="S3 prefix for verified videos and measurements."),
-    concurrency: int = typer.Option(..., "--concurrency", min=1, help="Concurrent complete 30-second generation requests."),
-    input_path: str = typer.Option("", "--input-path", help="Optional S3 JSON prompt object."),
-    endpoint: str = typer.Option("", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 prefix for verified videos and measurements."
+    ),
+    concurrency: int = typer.Option(
+        ...,
+        "--concurrency",
+        min=1,
+        help="Concurrent complete 30-second generation requests.",
+    ),
+    input_path: str = typer.Option(
+        "", "--input-path", help="Optional S3 JSON prompt object."
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Defaults to NPA_COSMOS3_VIDEO_ENDPOINT."
+    ),
     token_env: str = typer.Option("NPA_COSMOS3_VIDEO_TOKEN", "--token-env"),
-    output_format: str = typer.Option("json", "--output-format", help="Output format (json)."),
+    output_format: str = typer.Option(
+        "json", "--output-format", help="Output format (json)."
+    ),
 ) -> None:
     """Run measured chunked video requests through the Nano vLLM-Omni Ray service."""
     from npa.workbench.cosmos.nano_video import submit_batch
@@ -138,8 +186,13 @@ def nano_video_batch_cmd(
         validate_write_path(output_path, tool="cosmos3 nano-video-batch")
         if input_path:
             validate_read_path(input_path, tool="cosmos3 nano-video-batch")
-        result = submit_batch(output_path=output_path, concurrency=concurrency,
-                              input_path=input_path, endpoint=endpoint, token_env=token_env)
+        result = submit_batch(
+            output_path=output_path,
+            concurrency=concurrency,
+            input_path=input_path,
+            endpoint=endpoint,
+            token_env=token_env,
+        )
     except Exception as exc:
         # Runtime evidence retains operational diagnostics; public errors do not
         # serialize exception strings that might include private endpoints.
@@ -180,7 +233,9 @@ def super_benchmark_cmd(
     base_port: int = typer.Option(8100, "--base-port", min=1024, max=65527),
     run_id: str = typer.Option("", "--run-id"),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Print the immutable benchmark plan without touching a GPU."
+        False,
+        "--dry-run",
+        help="Print the immutable benchmark plan without touching a GPU.",
     ),
 ) -> None:
     """Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation."""
@@ -314,7 +369,9 @@ def ray_serve_cmd(
             for directory in model_cache_dirs(cache_root):
                 Path(directory).mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            typer.echo(f"cosmos3 ray-serve model cache is not writable: {exc}", err=True)
+            typer.echo(
+                f"cosmos3 ray-serve model cache is not writable: {exc}", err=True
+            )
             raise typer.Exit(1) from exc
         env.update(model_cache_env(cache_root))
     env.update(
@@ -346,7 +403,11 @@ def prepare_video_input_cmd(
     input_uri: str = typer.Option(..., "--output-uri"),
     provenance_uri: str = typer.Option(..., "--provenance-uri"),
     run_id: str = typer.Option("", "--run-id"),
-    conditioning_fps: int = typer.Option(0, "--conditioning-fps", help="Normalize the complete source to 832x480 at 10–30 fps; 0 preserves legacy preparation."),
+    conditioning_fps: int = typer.Option(
+        0,
+        "--conditioning-fps",
+        help="Normalize the complete source to 832x480 at 10–30 fps; 0 preserves legacy preparation.",
+    ),
 ) -> None:
     """Select a direct video or one LeRobot v2/v3 episode/camera for conditioning."""
 
@@ -403,14 +464,42 @@ def generate_variants_cmd(
             "ghosting, so variants publish unmodified model output."
         ),
     ),
-    structural_control: str = typer.Option("none", "--structural-control", help="edge uses native full-video structural transfer; none uses prefix conditioning."),
-    conditioning_fps: int = typer.Option(24, "--conditioning-fps", help="Prepared-source and generated-video frame rate."),
-    transfer_chunk_frames: int = typer.Option(93, "--transfer-chunk-frames", help="Native transfer window, 4k+1 frames; complete source coverage is mandatory."),
-    control_guidance: float = typer.Option(1.5, "--control-guidance", help="Positive native structural-control strength."),
-    transfer_edge_threshold: str = typer.Option("medium", "--transfer-edge-threshold", help="Native Canny preset: very_low, low, medium, high or very_high."),
-    transfer_rgb_weight: float = typer.Option(0.0, "--transfer-rgb-weight", help="Native RGB conditioning weight relative to edge weight 1; zero disables it. Does not blend source pixels into output."),
-    transfer_first_chunk_conditional_frames: int = typer.Option(1, "--transfer-first-chunk-conditional-frames", help="Source RGB frames anchoring the first native transfer window: 1 preserves the existing behavior; 0 allows restyling from the first frame. Later windows retain generated overlap."),
-    transfer_cfg_normalization: str = typer.Option("disabled", "--transfer-cfg-normalization", help="Native classifier-free guidance normalization: disabled or enabled. Requires edge transfer when enabled."),
+    structural_control: str = typer.Option(
+        "none",
+        "--structural-control",
+        help="edge uses native full-video structural transfer; none uses prefix conditioning.",
+    ),
+    conditioning_fps: int = typer.Option(
+        24, "--conditioning-fps", help="Prepared-source and generated-video frame rate."
+    ),
+    transfer_chunk_frames: int = typer.Option(
+        93,
+        "--transfer-chunk-frames",
+        help="Native transfer window, 4k+1 frames; complete source coverage is mandatory.",
+    ),
+    control_guidance: float = typer.Option(
+        1.5, "--control-guidance", help="Positive native structural-control strength."
+    ),
+    transfer_edge_threshold: str = typer.Option(
+        "medium",
+        "--transfer-edge-threshold",
+        help="Native Canny preset: very_low, low, medium, high or very_high.",
+    ),
+    transfer_rgb_weight: float = typer.Option(
+        0.0,
+        "--transfer-rgb-weight",
+        help="Native RGB conditioning weight relative to edge weight 1; zero disables it. Does not blend source pixels into output.",
+    ),
+    transfer_first_chunk_conditional_frames: int = typer.Option(
+        1,
+        "--transfer-first-chunk-conditional-frames",
+        help="Source RGB frames anchoring the first native transfer window: 1 preserves the existing behavior; 0 allows restyling from the first frame. Later windows retain generated overlap.",
+    ),
+    transfer_cfg_normalization: str = typer.Option(
+        "disabled",
+        "--transfer-cfg-normalization",
+        help="Native classifier-free guidance normalization: disabled or enabled. Requires edge transfer when enabled.",
+    ),
 ) -> None:
     """Generate and publish real source-video-conditioned Cosmos 3 variants."""
 
@@ -451,7 +540,12 @@ def generate_variants_cmd(
             transfer_first_chunk_conditional_frames=transfer_first_chunk_conditional_frames,
             transfer_cfg_normalization=transfer_cfg_normalization,
         )
-    except (PaidfCosmos3Error, Cosmos3GenerateError, VideoAlignmentError, ValueError) as exc:
+    except (
+        PaidfCosmos3Error,
+        Cosmos3GenerateError,
+        VideoAlignmentError,
+        ValueError,
+    ) as exc:
         typer.echo(f"cosmos3 generate-variants failed: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(json.dumps(payload, indent=2, sort_keys=True))
@@ -484,7 +578,9 @@ def checkpoint_eval_cmd(
         "--work-dir",
         help="Ephemeral local output and Hugging Face cache root.",
     ),
-    run_id: str = typer.Option("", "--run-id", help="Workflow run id carried into evidence."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Workflow run id carried into evidence."
+    ),
     runtime_image: str = typer.Option(
         "",
         "--runtime-image",
@@ -549,11 +645,19 @@ def generate_cmd(
         "Named checkpoints download at runtime with the operator's HF token; a "
         "staged path still needs one unless --no-guardrails is also passed.",
     ),
-    name: str = typer.Option(DEFAULT_NAME, "--name", help="Sample name / output subdirectory."),
-    negative_prompt: str = typer.Option("", "--negative-prompt", help="Optional negative prompt."),
+    name: str = typer.Option(
+        DEFAULT_NAME, "--name", help="Sample name / output subdirectory."
+    ),
+    negative_prompt: str = typer.Option(
+        "", "--negative-prompt", help="Optional negative prompt."
+    ),
     seed: int = typer.Option(0, "--seed", help="Sampling seed for reproducible runs."),
-    num_steps: int = typer.Option(0, "--num-steps", help="Override the mode's sampling steps."),
-    guidance: float = typer.Option(0.0, "--guidance", help="Override classifier-free guidance."),
+    num_steps: int = typer.Option(
+        0, "--num-steps", help="Override the mode's sampling steps."
+    ),
+    guidance: float = typer.Option(
+        0.0, "--guidance", help="Override classifier-free guidance."
+    ),
     no_guardrails: bool = typer.Option(
         False,
         "--no-guardrails",
@@ -564,7 +668,9 @@ def generate_cmd(
         "--parallelism-preset",
         help="Upstream parallelism preset: latency or throughput.",
     ),
-    run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id carried into the manifest."
+    ),
     output_json: Optional[Path] = typer.Option(
         None, "--output-json", help="Write the result manifest JSON locally."
     ),
@@ -609,13 +715,23 @@ def generate_cmd(
 
 @app.command("reason")
 def reason_cmd(
-    input_uri: str = typer.Option(..., "--input-uri", help="Input rollout or frame URI."),
-    output_uri: str = typer.Option(..., "--output-uri", help="Output prefix for reasoning JSON."),
-    model: str = typer.Option("nvidia/Cosmos-Reason1-7B", "--model", help="Reasoning model id."),
+    input_uri: str = typer.Option(
+        ..., "--input-uri", help="Input rollout or frame URI."
+    ),
+    output_uri: str = typer.Option(
+        ..., "--output-uri", help="Output prefix for reasoning JSON."
+    ),
+    model: str = typer.Option(
+        "nvidia/Cosmos-Reason1-7B", "--model", help="Reasoning model id."
+    ),
     image: str = typer.Option("", "--image", help="BYO Cosmos3 reason image."),
     prompt: str = typer.Option("", "--prompt", help="Optional reasoning prompt."),
-    run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),
-    output_json: Optional[Path] = typer.Option(None, "--output-json", help="Write manifest JSON locally."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id carried into the manifest."
+    ),
+    output_json: Optional[Path] = typer.Option(
+        None, "--output-json", help="Write manifest JSON locally."
+    ),
 ) -> None:
     """Build the Cosmos3 reason stage manifest."""
 
@@ -636,7 +752,9 @@ def reason_cmd(
 
 @app.command("text-to-image")
 def text_to_image_cmd(
-    prompt: str = typer.Option(..., "--prompt", help="Text prompt to generate an image from."),
+    prompt: str = typer.Option(
+        ..., "--prompt", help="Text prompt to generate an image from."
+    ),
     output_uri: str = typer.Option(
         "", "--output-uri", help="S3 prefix to publish the image and its manifest to."
     ),
@@ -645,7 +763,9 @@ def text_to_image_cmd(
         "--output-dir",
         help="Local working directory for inference outputs.",
     ),
-    model_id: str = typer.Option("", "--model-id", help="HF model repo id for the checkpoint."),
+    model_id: str = typer.Option(
+        "", "--model-id", help="HF model repo id for the checkpoint."
+    ),
     checkpoint_name: str = typer.Option(
         "Cosmos3-Nano",
         "--checkpoint-name",
@@ -658,7 +778,9 @@ def text_to_image_cmd(
         None, "--cache-dir", help="Ephemeral runtime cache for source and checkpoint."
     ),
     uv_group: str = typer.Option(
-        DEFAULT_UV_GROUP, "--uv-group", help="uv dependency group to sync in the framework repo."
+        DEFAULT_UV_GROUP,
+        "--uv-group",
+        help="uv dependency group to sync in the framework repo.",
     ),
     seed: int = typer.Option(0, "--seed", help="Inference seed."),
     guardrails: bool = typer.Option(
@@ -667,10 +789,14 @@ def text_to_image_cmd(
         help="Run the framework's content guardrails (they download extra gated weights).",
     ),
     hf_token_env: str = typer.Option(
-        "HF_TOKEN", "--hf-token-env", help="Environment variable holding the Hugging Face token."
+        "HF_TOKEN",
+        "--hf-token-env",
+        help="Environment variable holding the Hugging Face token.",
     ),
     github_token_env: str = typer.Option(
-        "GITHUB_TOKEN", "--github-token-env", help="Environment variable holding a GitHub token."
+        "GITHUB_TOKEN",
+        "--github-token-env",
+        help="Environment variable holding a GitHub token.",
     ),
 ) -> None:
     """Generate an image from a prompt with the Cosmos3 framework, and publish it.

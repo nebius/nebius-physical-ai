@@ -257,10 +257,9 @@ def kubernetes_prerequisites(
             except json.JSONDecodeError:
                 pvc = {}
         modes = set((pvc.get("spec") or {}).get("accessModes") or [])
-        if (
-            (pvc.get("status") or {}).get("phase") != "Bound"
-            or "ReadWriteMany" not in modes
-        ):
+        if (pvc.get("status") or {}).get(
+            "phase"
+        ) != "Bound" or "ReadWriteMany" not in modes:
             issues.append(
                 (
                     f"Isaac cache PVC {pvc_name!r} is missing or is not Bound ReadWriteMany "

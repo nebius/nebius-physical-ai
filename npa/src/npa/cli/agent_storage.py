@@ -127,7 +127,9 @@ def resolve_deploy_storage_credentials(
                 prefix=project_prefix,
             ):
                 if emit_status:
-                    emit("  Using health-verified project artifact storage credentials.")
+                    emit(
+                        "  Using health-verified project artifact storage credentials."
+                    )
                 candidate.update(
                     {
                         "s3_bucket": project_bucket,

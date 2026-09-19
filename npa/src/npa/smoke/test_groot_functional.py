@@ -46,7 +46,9 @@ def _format_exception(exc: BaseException) -> str:
 def check_repo_available(state: SmokeState) -> CheckResult:
     script = state.repo / "scripts" / "deployment" / "standalone_inference_script.py"
     if not script.exists():
-        return CheckResult("standalone inference script exists", False, f"missing {script}")
+        return CheckResult(
+            "standalone inference script exists", False, f"missing {script}"
+        )
     return CheckResult("standalone inference script exists", True, f"script: {script}")
 
 
@@ -87,7 +89,9 @@ def check_standalone_inference(state: SmokeState) -> CheckResult:
             check=False,
         )
     except Exception as exc:
-        return CheckResult("run standalone GR00T inference", False, _format_exception(exc))
+        return CheckResult(
+            "run standalone GR00T inference", False, _format_exception(exc)
+        )
 
     output = (result.stdout + "\n" + result.stderr).strip()
     if len(output) > 1000:

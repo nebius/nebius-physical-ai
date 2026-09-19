@@ -19,7 +19,9 @@ pytestmark = pytest.mark.token_factory_e2e
 
 
 @pytest.mark.parametrize("completed", [True, False])
-def test_live_hosted_rollout_scores_visual_events(tmp_path: Path, completed: bool) -> None:
+def test_live_hosted_rollout_scores_visual_events(
+    tmp_path: Path, completed: bool
+) -> None:
     """Verify model-local event labels and distinguish successful final geometry.
 
     These diagrams exercise the same API/parser used by Sim2Real Stage 8. They
@@ -33,9 +35,25 @@ def test_live_hosted_rollout_scores_visual_events(tmp_path: Path, completed: boo
     result = run_token_factory_rollout_vlm(
         model_id=DEFAULT_REASONER_MODEL,
         image_paths=frames,
-        actions=[{"step": index, "sim_step": index, "action": [0.0], "episode_boundary": _no_reset_boundary()} for index in range(len(frames))],
-        frame_metadata=[{"path": frame.name, "sim_step": index, "view_name": "primary",
-                         "episode_id": "synthetic-visual-events", "simulator_episode_id": 0} for index, frame in enumerate(frames)],
+        actions=[
+            {
+                "step": index,
+                "sim_step": index,
+                "action": [0.0],
+                "episode_boundary": _no_reset_boundary(),
+            }
+            for index in range(len(frames))
+        ],
+        frame_metadata=[
+            {
+                "path": frame.name,
+                "sim_step": index,
+                "view_name": "primary",
+                "episode_id": "synthetic-visual-events",
+                "simulator_episode_id": 0,
+            }
+            for index, frame in enumerate(frames)
+        ],
         task_description=(
             "These are synthetic geometric diagrams. The task is to move the red "
             "square fully inside the green rectangular outline by the final frame. "
@@ -75,34 +93,62 @@ def test_live_hosted_rollout_scores_visual_events(tmp_path: Path, completed: boo
 def _no_reset_boundary():
     return {
         "schema": "npa.sim2real.episode_boundary.v1",
-        "simulator_episode_id": 0, "action_episode_id": 0,
-        "reset_events": [], "reset_on_current_step": False,
-        "action_outcome_valid": True, "temporal_credit_valid": True,
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
     }
 
 
 def test_live_hosted_autoreset_cannot_support_terminal_action(tmp_path: Path) -> None:
     """Exercise neutral reset bindings through the real hosted response schema."""
     _require_key()
-    frames = [_shape_frame(tmp_path / f"camera-{index:03d}.png", red_inside=bool(index))
-              for index in range(2)]
+    frames = [
+        _shape_frame(tmp_path / f"camera-{index:03d}.png", red_inside=bool(index))
+        for index in range(2)
+    ]
     reset = {
         "schema": "npa.sim2real.episode_boundary.v1",
-        "simulator_episode_id": 1, "action_episode_id": 0,
-        "reset_events": [{"sim_step": 1, "terminated_episode_id": 0, "next_episode_id": 1}],
-        "reset_on_current_step": True, "action_outcome_valid": False,
+        "simulator_episode_id": 1,
+        "action_episode_id": 0,
+        "reset_events": [
+            {"sim_step": 1, "terminated_episode_id": 0, "next_episode_id": 1}
+        ],
+        "reset_on_current_step": True,
+        "action_outcome_valid": False,
         "temporal_credit_valid": False,
     }
     result = run_token_factory_rollout_vlm(
-        model_id=DEFAULT_REASONER_MODEL, image_paths=frames,
-        actions=[{"step": index, "sim_step": index, "action": [0.0], "episode_boundary": boundary}
-                 for index, boundary in enumerate([_no_reset_boundary(), reset])],
-        frame_metadata=[{"path": frame.name, "sim_step": index, "view_name": "primary",
-                         "episode_id": "synthetic-reset", "simulator_episode_id": None if index else 0}
-                        for index, frame in enumerate(frames)],
-        task_description=("Synthetic diagrams show a red square and green outline. The second "
-                          "image belongs to a reset episode; it cannot establish action progress."),
-        rollout_id="synthetic-reset", threshold=0.5, client=TokenFactoryClient(),
+        model_id=DEFAULT_REASONER_MODEL,
+        image_paths=frames,
+        actions=[
+            {
+                "step": index,
+                "sim_step": index,
+                "action": [0.0],
+                "episode_boundary": boundary,
+            }
+            for index, boundary in enumerate([_no_reset_boundary(), reset])
+        ],
+        frame_metadata=[
+            {
+                "path": frame.name,
+                "sim_step": index,
+                "view_name": "primary",
+                "episode_id": "synthetic-reset",
+                "simulator_episode_id": None if index else 0,
+            }
+            for index, frame in enumerate(frames)
+        ],
+        task_description=(
+            "Synthetic diagrams show a red square and green outline. The second "
+            "image belongs to a reset episode; it cannot establish action progress."
+        ),
+        rollout_id="synthetic-reset",
+        threshold=0.5,
+        client=TokenFactoryClient(),
     )
     (tmp_path / "reset-evaluation.json").write_text(json.dumps(result, indent=2) + "\n")
     event = result["per_step"][1]

@@ -116,7 +116,9 @@ def test_root_owned_sticky_ancestor_allows_owned_private_child(monkeypatch, tmp_
         return info
 
     monkeypatch.setattr(staging.os, "fstat", root_owner)
-    with staging.private_staging_directory(shared / "private", prefix="colmap-") as path:
+    with staging.private_staging_directory(
+        shared / "private", prefix="colmap-"
+    ) as path:
         assert path.parent == shared / "private"
         assert path.stat().st_uid == os.geteuid()
         assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700

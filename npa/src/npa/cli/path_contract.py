@@ -55,7 +55,9 @@ class PathContractError(ValueError):
 
 def is_s3_uri(value: str) -> bool:
     parsed = urlparse(value)
-    return parsed.scheme == "s3" and bool(parsed.netloc) and bool(parsed.path.lstrip("/"))
+    return (
+        parsed.scheme == "s3" and bool(parsed.netloc) and bool(parsed.path.lstrip("/"))
+    )
 
 
 def is_huggingface_dataset_url(value: str) -> bool:

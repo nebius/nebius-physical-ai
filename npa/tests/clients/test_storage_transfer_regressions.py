@@ -38,7 +38,11 @@ class _PagedArtifactStore:
         if kwargs.get("PaginationConfig"):
             yield {"Contents": [{"Key": "models/artifact-000.bin"}]}
             return
-        yield {"Contents": [{"Key": f"models/artifact-{index:03}.bin"} for index in range(16)]}
+        yield {
+            "Contents": [
+                {"Key": f"models/artifact-{index:03}.bin"} for index in range(16)
+            ]
+        }
         assert self.transfer_started.is_set(), "Listing outran every download"
         yield {"Contents": [{"Key": "models/tail.bin"}]}
 
@@ -78,7 +82,9 @@ def test_private_replacement_staging_stays_private(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == [target]
 
 
-def test_replacement_preserves_existing_mode_under_stricter_umask(tmp_path: Path) -> None:
+def test_replacement_preserves_existing_mode_under_stricter_umask(
+    tmp_path: Path,
+) -> None:
     """Preserve an existing group-readable destination under a private umask.
 
     Args:
@@ -94,7 +100,8 @@ def test_replacement_preserves_existing_mode_under_stricter_umask(tmp_path: Path
     client = StorageClient.__new__(StorageClient)
     client._s3 = Mock()
     client._s3.get_object.return_value = {
-        "Body": StreamingBody(io.BytesIO(b"replacement"), 11), "ContentLength": 11
+        "Body": StreamingBody(io.BytesIO(b"replacement"), 11),
+        "ContentLength": 11,
     }
 
     previous_umask = os.umask(0o077)
@@ -127,7 +134,8 @@ def test_head_denied_exact_object_keeps_precedence_over_tree(tmp_path: Path) -> 
         {"Contents": [{"Key": "checkpoint"}, {"Key": "checkpoint/nested.bin"}]}
     ]
     client._s3.get_object.return_value = {
-        "Body": StreamingBody(io.BytesIO(b"checkpoint"), 10), "ContentLength": 10
+        "Body": StreamingBody(io.BytesIO(b"checkpoint"), 10),
+        "ContentLength": 10,
     }
 
     def download(bucket: str, key: str, destination: str, **kwargs) -> None:
@@ -143,7 +151,9 @@ def test_head_denied_exact_object_keeps_precedence_over_tree(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("method", ["download_directory", "download_path"])
-def test_download_starts_before_entire_tree_is_listed(tmp_path: Path, method: str) -> None:
+def test_download_starts_before_entire_tree_is_listed(
+    tmp_path: Path, method: str
+) -> None:
     """Begin transfers before requesting every remote listing page.
 
     Args:
@@ -163,7 +173,9 @@ def test_download_starts_before_entire_tree_is_listed(tmp_path: Path, method: st
     assert (tmp_path / "tail.bin").read_bytes() == b"models/tail.bin"
 
 
-def test_upload_starts_before_entire_tree_is_walked(tmp_path: Path, monkeypatch) -> None:
+def test_upload_starts_before_entire_tree_is_walked(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Begin uploads before the local directory iterator is exhausted.
 
     Args:
@@ -191,7 +203,9 @@ def test_upload_starts_before_entire_tree_is_walked(tmp_path: Path, monkeypatch)
     assert client._s3.upload_file.call_count == 17
 
 
-def test_single_file_tree_retains_managed_transfer_defaults(tmp_path: Path, monkeypatch) -> None:
+def test_single_file_tree_retains_managed_transfer_defaults(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Avoid an outer worker pool or multipart override for a lone checkpoint.
 
     Args:
@@ -215,6 +229,10 @@ def test_single_file_tree_retains_managed_transfer_defaults(tmp_path: Path, monk
     client.upload_directory(str(tmp_path), "s3://bucket/models/")
     client.download_directory("s3://bucket/models/", str(tmp_path))
 
-    client._s3.upload_file.assert_called_once_with(str(source), "bucket", "models/checkpoint.bin")
-    client._s3.download_file.assert_called_once_with("bucket", "models/checkpoint.bin", str(source))
+    client._s3.upload_file.assert_called_once_with(
+        str(source), "bucket", "models/checkpoint.bin"
+    )
+    client._s3.download_file.assert_called_once_with(
+        "bucket", "models/checkpoint.bin", str(source)
+    )
     pool.assert_not_called()

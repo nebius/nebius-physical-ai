@@ -270,7 +270,9 @@ def test_converter_failure_is_private(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("field", ["cache_dir", "scratch_dir"])
-def test_unsafe_staging_fails_before_download_or_conversion(monkeypatch, tmp_path, field):
+def test_unsafe_staging_fails_before_download_or_conversion(
+    monkeypatch, tmp_path, field
+):
     storage, events = fake_conversion(monkeypatch, tmp_path)
     outside = tmp_path / "private-name"
     outside.mkdir(mode=0o700)
@@ -1777,12 +1779,19 @@ def _apply_publication_claim(cache) -> None:
 
     report_path = cache / colmap.CONVERSION_REPORT
     report = json.loads(report_path.read_text())
-    report["publication"] = {"mode": "immutable-prefix-v1", "claim": colmap.PUBLICATION_CLAIM}
+    report["publication"] = {
+        "mode": "immutable-prefix-v1",
+        "claim": colmap.PUBLICATION_CLAIM,
+    }
     report_path.write_text(json.dumps(report))
-    (cache / colmap.PUBLICATION_CLAIM).write_text(json.dumps({
-        "schema_version": 1,
-        "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
-    }))
+    (cache / colmap.PUBLICATION_CLAIM).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            }
+        )
+    )
 
 
 @pytest.mark.parametrize("claimed", [False, True])

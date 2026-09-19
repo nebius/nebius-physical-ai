@@ -48,7 +48,10 @@ def destinations() -> dict[str, str]:
     except (OSError, ValueError):
         pytest.fail("Cannot read the private destination file", pytrace=False)
     if not isinstance(values, dict) or set(values) != {"dataset", "predictions"}:
-        pytest.fail("Destination file must map dataset and predictions to exact S3 object URIs", pytrace=False)
+        pytest.fail(
+            "Destination file must map dataset and predictions to exact S3 object URIs",
+            pytrace=False,
+        )
     for value in values.values():
         if not isinstance(value, str):
             pytest.fail("Each destination must be an S3 URI string", pytrace=False)
@@ -69,15 +72,25 @@ def destinations() -> dict[str, str]:
             or parsed.query
             or parsed.fragment
         ):
-            pytest.fail("Each destination must be an exact S3 RRD object URI", pytrace=False)
+            pytest.fail(
+                "Each destination must be an exact S3 RRD object URI", pytrace=False
+            )
     if len(set(values.values())) != 2:
-        pytest.fail("Each conversion mode requires its own destination object", pytrace=False)
+        pytest.fail(
+            "Each conversion mode requires its own destination object", pytrace=False
+        )
     return values
 
 
 @pytest.mark.parametrize("mode", ["dataset", "predictions"])
 def test_sdk_rrd_s3_upload_and_readback(
-    tmp_path: Path, monkeypatch, record_property, destinations: dict[str, str], mode: str, capfd, caplog
+    tmp_path: Path,
+    monkeypatch,
+    record_property,
+    destinations: dict[str, str],
+    mode: str,
+    capfd,
+    caplog,
 ) -> None:
     failure = ""
     previous_logging_disable = logging.root.manager.disable
@@ -86,7 +99,9 @@ def test_sdk_rrd_s3_upload_and_readback(
         # private URIs before raising. Keep them out of console and JUnit reports.
         logging.disable(logging.CRITICAL)
         with warnings.catch_warnings(record=True):
-            _upload_and_readback(tmp_path, monkeypatch, record_property, destinations[mode], mode)
+            _upload_and_readback(
+                tmp_path, monkeypatch, record_property, destinations[mode], mode
+            )
     except pytest.fail.Exception as exc:
         failure = str(exc)  # Only the fixed messages below use pytest.fail.
     except Exception as exc:
@@ -99,7 +114,9 @@ def test_sdk_rrd_s3_upload_and_readback(
         pytest.fail(failure, pytrace=False)
 
 
-def _upload_and_readback(tmp_path: Path, monkeypatch, record_property, destination: str, mode: str) -> None:
+def _upload_and_readback(
+    tmp_path: Path, monkeypatch, record_property, destination: str, mode: str
+) -> None:
     storage = _storage_client(destination)
     if storage.read_bytes_with_etag(destination) is not None:
         pytest.fail("Refusing to overwrite an existing destination object")
@@ -109,7 +126,9 @@ def _upload_and_readback(tmp_path: Path, monkeypatch, record_property, destinati
     data.parent.mkdir(parents=True)
     states = np.zeros((4, G1_STATE_DIM), dtype=np.float32)
     states[:, 6] = [0.0, 0.1, 0.2, 0.3]
-    pq.write_table(pa.table({"observation.state": states.tolist(), "index": [0, 1, 2, 3]}), data)
+    pq.write_table(
+        pa.table({"observation.state": states.tolist(), "index": [0, 1, 2, 3]}), data
+    )
     metadata = dataset / "meta" / "info.json"
     metadata.parent.mkdir()
     metadata.write_text(json.dumps({"fps": 4, "robot_type": "unitree_g1"}))
@@ -143,12 +162,19 @@ def _upload_and_readback(tmp_path: Path, monkeypatch, record_property, destinati
     assert digest == hashlib.sha256(uploaded[0]).hexdigest()
 
     chunks = list(load_recording(downloaded).chunks())
-    roots = ["/world/skeleton"] + (["/world/predictions"] if mode == "predictions" else [])
+    roots = ["/world/skeleton"] + (
+        ["/world/predictions"] if mode == "predictions" else []
+    )
     for root in roots:
         times = []
         for chunk in chunks:
             if str(chunk.entity_path) == f"{root}/joints" and not chunk.is_static:
-                times.extend(chunk.to_record_batch().column("frame_time").cast(pa.int64()).to_pylist())
+                times.extend(
+                    chunk.to_record_batch()
+                    .column("frame_time")
+                    .cast(pa.int64())
+                    .to_pylist()
+                )
         assert sorted(times) == [0, 250_000_000, 500_000_000, 750_000_000]
     record_property("rrd_sha256", digest)
     record_property("rrd_bytes", len(payload))

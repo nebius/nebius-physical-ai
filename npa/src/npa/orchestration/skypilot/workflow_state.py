@@ -166,7 +166,12 @@ def resolve_workflow_s3_config(
     if workflow_s3_uri:
         bucket, prefix = parse_s3_uri(workflow_s3_uri)
     else:
-        bucket_source = s3_bucket or (selected_credentials.bucket if selected_credentials is not None else "") or storage.checkpoint_bucket or credentials.s3_bucket
+        bucket_source = (
+            s3_bucket
+            or (selected_credentials.bucket if selected_credentials is not None else "")
+            or storage.checkpoint_bucket
+            or credentials.s3_bucket
+        )
         if not bucket_source:
             raise WorkflowStateError(
                 "S3 bucket is not configured. Pass --s3-bucket, --workflow-s3-uri, "
@@ -362,7 +367,9 @@ def list_artifacts(state: WorkflowS3Config, stage: str | None = None) -> list[st
     return sorted(objects)
 
 
-def _iter_manifest_candidate_keys(client: Any, *, bucket: str, prefix: str) -> Iterator[str]:
+def _iter_manifest_candidate_keys(
+    client: Any, *, bucket: str, prefix: str
+) -> Iterator[str]:
     """Yield every ``.../manifest.json`` key below *prefix*, one page at a time."""
 
     paginator = client.get_paginator("list_objects_v2")
@@ -373,7 +380,9 @@ def _iter_manifest_candidate_keys(client: Any, *, bucket: str, prefix: str) -> I
                 yield key
 
 
-def _child_run_state(state_parent: WorkflowS3Config, run_prefix: str) -> WorkflowS3Config:
+def _child_run_state(
+    state_parent: WorkflowS3Config, run_prefix: str
+) -> WorkflowS3Config:
     return WorkflowS3Config(
         bucket=state_parent.bucket,
         prefix=run_prefix,
@@ -417,7 +426,9 @@ def _iter_candidate_manifests_bounded(
     submitted to the pool in one shot.
     """
 
-    keys = _iter_manifest_candidate_keys(client, bucket=state_parent.bucket, prefix=prefix)
+    keys = _iter_manifest_candidate_keys(
+        client, bucket=state_parent.bucket, prefix=prefix
+    )
     with ThreadPoolExecutor(max_workers=_MANIFEST_FETCH_WORKERS) as executor:
         while True:
             batch = list(itertools.islice(keys, _MANIFEST_FETCH_WORKERS))
@@ -449,7 +460,9 @@ def _run_summary(
 
 
 def _collect_valid_runs(
-    candidates: Iterator[tuple[str, WorkflowS3Config, dict[str, Any] | None]], *, limit: int
+    candidates: Iterator[tuple[str, WorkflowS3Config, dict[str, Any] | None]],
+    *,
+    limit: int,
 ) -> list[dict[str, Any]]:
     """Collect up to ``limit`` valid run summaries from *candidates*.
 
@@ -533,7 +546,9 @@ def is_durable_workflow_manifest(payload: Mapping[str, Any]) -> bool:
 
 
 def _newest_matching_state(
-    candidates: Iterator[tuple[str, WorkflowS3Config, dict[str, Any] | None]], *, wanted: str
+    candidates: Iterator[tuple[str, WorkflowS3Config, dict[str, Any] | None]],
+    *,
+    wanted: str,
 ) -> WorkflowS3Config | None:
     """Find the newest durable manifest declaring ``run_id == wanted``.
 
@@ -602,7 +617,9 @@ def put_json(state: WorkflowS3Config, *parts: str, payload: Mapping[str, Any]) -
     )
 
 
-def get_json(state: WorkflowS3Config, *parts: str, client: Any = None) -> dict[str, Any]:
+def get_json(
+    state: WorkflowS3Config, *parts: str, client: Any = None
+) -> dict[str, Any]:
     """Read one object and parse it as a JSON object.
 
     Args:
@@ -685,24 +702,34 @@ def workflow_state_error_is_missing(exc: BaseException) -> bool:
 
 
 def _task_selection_failed(
-    result: subprocess.CompletedProcess[str], *, job_id: str, stage: str,
+    result: subprocess.CompletedProcess[str],
+    *,
+    job_id: str,
+    stage: str,
 ) -> bool:
     """Recognize a complete task-not-found diagnostic amid SkyPilot log banners."""
     if result.returncode != 0 or not stage:
         return False
     task = int(stage) if stage.isdecimal() else stage
     diagnostic = f"No task found matching {task!r} in job {job_id}. Valid task IDs are "
-    output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    output = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
     output = re.sub(r"\x1b\[[0-9;]*m", "", output).strip()
     pattern = (
-        "^" + re.escape(diagnostic)
+        "^"
+        + re.escape(diagnostic)
         + r"0(?:-[1-9][0-9]*)?\.\s*\ncommand terminated with exit code 102[ \t\r]*$"
     )
     return re.search(pattern, output, flags=re.MULTILINE) is not None
 
 
 def tail_live_job_logs(
-    *, sky_bin: str, job_id: str, stage: str = "", follow: bool = False,
+    *,
+    sky_bin: str,
+    job_id: str,
+    stage: str = "",
+    follow: bool = False,
     timeout: int = 300,
 ) -> subprocess.CompletedProcess[str]:
     """Read managed-job logs through the selected, verified SkyPilot runtime.
@@ -733,16 +760,23 @@ def tail_live_job_logs(
         cmd.append(stage)
     cmd.append("--follow" if follow else "--no-follow")
     result = subprocess.run(
-        cmd, env=env, cwd=runtime.isolated_config_dir or Path.home(),
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        timeout=timeout, check=False,
+        cmd,
+        env=env,
+        cwd=runtime.isolated_config_dir or Path.home(),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout,
+        check=False,
     )
     # SkyPilot's non-following SDK streams output without returning the remote
     # exit code. Its CLI consequently exits zero even for task-not-found 102.
     # Match only that complete, request-bound provider diagnostic; application
     # tracebacks and failure messages are still successfully retrieved logs.
     if _task_selection_failed(result, job_id=job_id, stage=stage):
-        return subprocess.CompletedProcess(result.args, 102, result.stdout, result.stderr)
+        return subprocess.CompletedProcess(
+            result.args, 102, result.stdout, result.stderr
+        )
     return result
 
 

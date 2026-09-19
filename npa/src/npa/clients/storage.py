@@ -61,7 +61,9 @@ def _prepare_directory_transfers(
     """Size multipart concurrency from at most one worker pool of entries."""
     remaining = iter(entries)
     initial = list(itertools.islice(remaining, _DIRECTORY_TRANSFER_WORKERS))
-    transfer_config = _adaptive_transfer_config(len(initial)) if len(initial) > 1 else None
+    transfer_config = (
+        _adaptive_transfer_config(len(initial)) if len(initial) > 1 else None
+    )
     return itertools.chain(initial, remaining), transfer_config
 
 
@@ -97,7 +99,9 @@ def _path_object_keys(client: Any, bucket: str, prefix: str) -> Iterator[str]:
                 yield key
 
 
-def _run_bounded(tasks: Iterable[Callable[[], _T]], *, max_workers: int) -> Iterator[_T]:
+def _run_bounded(
+    tasks: Iterable[Callable[[], _T]], *, max_workers: int
+) -> Iterator[_T]:
     """Run zero-argument callables with a bounded number in flight at once.
 
     Consumes ``tasks`` lazily so a very large source (a directory walk or a
@@ -306,7 +310,11 @@ class StorageClient:
         return results
 
     def upload_directory(
-        self, local_dir: str, bucket_uri: str, *, remote_prefix: str = "",
+        self,
+        local_dir: str,
+        bucket_uri: str,
+        *,
+        remote_prefix: str = "",
         require_empty: bool = False,
     ) -> str:
         """Upload a directory with bounded file and multipart concurrency.
@@ -327,10 +335,16 @@ class StorageClient:
         """
         bucket, base_prefix = _parse_bucket_uri(bucket_uri)
         if remote_prefix:
-            base_prefix = "/".join(part for part in (base_prefix.rstrip("/"), remote_prefix.strip("/")) if part)
+            base_prefix = "/".join(
+                part
+                for part in (base_prefix.rstrip("/"), remote_prefix.strip("/"))
+                if part
+            )
         base_prefix = base_prefix.rstrip("/") + "/" if base_prefix else ""
         if require_empty:
-            existing = self._s3.list_objects_v2(Bucket=bucket, Prefix=base_prefix, MaxKeys=1)
+            existing = self._s3.list_objects_v2(
+                Bucket=bucket, Prefix=base_prefix, MaxKeys=1
+            )
             if existing.get("Contents"):
                 raise StorageError(f"Output S3 prefix must be empty: {bucket_uri}")
 
@@ -421,8 +435,14 @@ class StorageClient:
             response = self._s3.put_object(**kwargs)
         except ClientError as exc:
             code = str(exc.response.get("Error", {}).get("Code", ""))
-            status = int(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
-            if code in {"412", "PreconditionFailed", "ConditionalRequestConflict"} or status in {
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code in {
+                "412",
+                "PreconditionFailed",
+                "ConditionalRequestConflict",
+            } or status in {
                 409,
                 412,
             }:
@@ -517,7 +537,9 @@ class StorageClient:
         response = self._s3.get_object(Bucket=bucket, Key=key)
         body = response["Body"]
         try:
-            self._replace_download(body, target, response.get("ContentLength"), bucket_uri)
+            self._replace_download(
+                body, target, response.get("ContentLength"), bucket_uri
+            )
         finally:
             body.close()
         return str(target)
@@ -532,7 +554,9 @@ class StorageClient:
             existing_mode = None
         staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
         try:
-            self._stream_to_staging(body, staging, existing_mode, declared_length, bucket_uri)
+            self._stream_to_staging(
+                body, staging, existing_mode, declared_length, bucket_uri
+            )
             os.replace(staging, target)
         except BaseException:
             staging.unlink(missing_ok=True)
@@ -540,7 +564,11 @@ class StorageClient:
 
     @staticmethod
     def _stream_to_staging(
-        body: Any, staging: Path, mode: int | None, declared_length: object, bucket_uri: str
+        body: Any,
+        staging: Path,
+        mode: int | None,
+        declared_length: object,
+        bucket_uri: str,
     ) -> None:
         """Write a provider response body to a new staging file.
 
@@ -651,9 +679,7 @@ class StorageClient:
         self._s3.download_file(bucket, key, str(target))
         return str(target)
 
-    def _head_and_download_exact(
-        self, bucket: str, key: str, dest: Path
-    ) -> str | None:
+    def _head_and_download_exact(self, bucket: str, key: str, dest: Path) -> str | None:
         """HEAD-check one exact key and download it if present.
 
         Args:

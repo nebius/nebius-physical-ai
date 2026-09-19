@@ -742,7 +742,9 @@ def run_preflight(
     """
 
     selected = tuple(checks) if checks is not None else ALL_CHECKS
-    thunks = _preflight_thunks(config, repo_root=repo_root, probes=probes, selected=selected)
+    thunks = _preflight_thunks(
+        config, repo_root=repo_root, probes=probes, selected=selected
+    )
     return run_checks_concurrently(thunks, max_workers=len(thunks))
 
 
