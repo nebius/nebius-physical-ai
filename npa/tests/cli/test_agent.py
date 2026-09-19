@@ -4439,7 +4439,6 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
 
 def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
     """Deploy aborts on a missing terraform binary BEFORE any cloud side effects."""
-    from npa.cli import agent as agent_module
     from npa.cli.agent import deploy_cmd
 
     (tmp_path / "id_ed25519.pub").write_text(
