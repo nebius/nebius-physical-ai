@@ -38,6 +38,15 @@ numbers, invalid types, and partial output still fail rather than being repaired
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
+The serialized result retains the effective `rubric`, so the exact prompt can
+be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
+`passed` is always `score >= success_threshold`. A real backend also records
+the model's boolean as `provider_success` and whether it agrees in
+`provider_success_matches_score_gate`; disagreement is calibration evidence,
+not permission to replace the score-derived label. Before reviewing thin
+geometry or skeletons, compare retained submitted-frame dimensions with the
+source because normalization can remove the defect.
+
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
 JSON file containing `input_path`, `output_path` (a local JSON filename),

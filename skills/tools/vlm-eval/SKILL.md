@@ -70,6 +70,11 @@ accept surrounding prose, trailing output, duplicate keys, invalid types, or a
 partial fence.
 This evidence proves judge traceability, not physical correctness or safety.
 
+`passed` and `status` come only from `score >= success_threshold`. The model's
+own `success` boolean is retained as `provider_success`, and
+`provider_success_matches_score_gate` exposes disagreement; never substitute
+the provider boolean for the score-derived gate.
+
 ## Scoring controls that actually change the verdict
 
 ```bash
@@ -144,8 +149,12 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
 - **The judge sees only the frames you send it.** A low score with
   `--frame-selection final --max-frames 1` may be a sampling artifact rather than
   a policy failure; re-score with keyframes before believing it.
+- **Inspect retained frame dimensions before judging thin defects.** Image
+  normalization can downscale source pixels enough to erase faceting, skeletons,
+  unsupported surfaces, or other narrow structures.
 - **Benchmark the rubric before trusting it.** Rubric wording moves scores more
-  than most people expect, which is precisely what `benchmark` is for.
+  than most people expect, which is precisely what `benchmark` is for. The task
+  text and rubric form one prompt; changing either invalidates prior calibration.
 - **A green gate does not mean a good policy.** It means the judge, at this
   rubric and threshold, on these frames, said yes.
 

@@ -144,11 +144,13 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         input_path="rollouts",
         output_path=str(tmp_path / "stub"),
         score=0.61,
+        rubric="Retain this stub rubric.",
     )
     real = evaluate_vlm(
         input_path="rollouts",
         output_path=str(tmp_path / "real"),
         score=0.61,
+        rubric="Retain this override rubric.",
     )
 
     assert set(asdict(real)) == set(asdict(stub))
@@ -156,6 +158,10 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         assert isinstance(result.score, float)
         assert 0.0 <= result.score <= 1.0
         assert isinstance(result.passed, bool)
+        assert result.provider_success is None
+        assert result.provider_success_matches_score_gate is None
+    assert stub.rubric == "Retain this stub rubric."
+    assert real.rubric == "Retain this override rubric."
 
 
 def test_parse_structured_response_clamps_score() -> None:

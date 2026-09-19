@@ -209,7 +209,10 @@ class VlmEvalResult:
     frame_selection: str = DEFAULT_FRAME_SELECTION
     frame_count: int = 0
     rationale: str = ""
+    rubric: str = DEFAULT_RUBRIC
     served_model: str | None = None
+    provider_success: bool | None = None
+    provider_success_matches_score_gate: bool | None = None
     evidence: VlmEvaluationEvidence | None = None
 
 
@@ -295,6 +298,8 @@ class VlmBenchmarkCaseResult:
     rationale: str
     frame_count: int
     score_source: str
+    provider_success: bool | None
+    provider_success_matches_score_gate: bool | None
     evidence: VlmEvaluationEvidence | None
 
 
@@ -544,6 +549,7 @@ def evaluate_vlm(
         timeout_s=timeout_s,
     )
     backend = _normalize_backend(backend)
+    effective_rubric = _load_rubric(rubric=rubric, rubric_path=rubric_path)
     if backend == "stub":
         return evaluate_stub(
             input_path=input_path,
@@ -553,6 +559,7 @@ def evaluate_vlm(
             success_threshold=success_threshold,
             frame_selection=frame_selection,
             score=score,
+            rubric=effective_rubric,
         )
 
     effective_model = model or DEFAULT_MODEL
@@ -570,7 +577,6 @@ def evaluate_vlm(
         from npa.clients.token_factory import DEFAULT_VISION_MODEL
 
         effective_model = DEFAULT_VISION_MODEL
-    effective_rubric = _load_rubric(rubric=rubric, rubric_path=rubric_path)
     if score is not None:
         _validate_score_override(score)
         structured = VlmStructuredResponse(
@@ -615,6 +621,7 @@ def evaluate_vlm(
         success_threshold=success_threshold,
         frame_selection=frame_selection,
         frame_count=frame_count,
+        rubric=effective_rubric,
         structured=structured,
     )
 
@@ -628,6 +635,7 @@ def evaluate_stub(
     success_threshold: float = 0.8,
     frame_selection: str = DEFAULT_FRAME_SELECTION,
     score: float | None = None,
+    rubric: str = DEFAULT_RUBRIC,
 ) -> VlmEvalResult:
     """Return deterministic schema-compatible metrics without calling a VLM."""
 
@@ -659,6 +667,7 @@ def evaluate_stub(
         frame_selection=frame_selection,
         frame_count=0,
         rationale="Deterministic compatibility score.",
+        rubric=rubric,
     )
 
 
@@ -1033,10 +1042,15 @@ def _result_from_structured(
     success_threshold: float,
     frame_selection: str,
     frame_count: int,
+    rubric: str,
     structured: VlmStructuredResponse,
 ) -> VlmEvalResult:
     score = round(_clamp_score(structured.score), 4)
     passed = score >= success_threshold
+    provider_success = structured.success if structured.evidence is not None else None
+    provider_success_matches_score_gate = (
+        provider_success == passed if provider_success is not None else None
+    )
     return VlmEvalResult(
         status="passed" if passed else "needs_iteration",
         backend=backend,
@@ -1052,7 +1066,10 @@ def _result_from_structured(
         frame_selection=frame_selection,
         frame_count=frame_count,
         rationale=structured.rationale,
+        rubric=rubric,
         served_model=structured.served_model,
+        provider_success=provider_success,
+        provider_success_matches_score_gate=provider_success_matches_score_gate,
         evidence=structured.evidence,
     )
 
@@ -1106,6 +1123,8 @@ def _run_benchmark_case(
         rationale=result.rationale,
         frame_count=result.frame_count,
         score_source="fixture" if score is not None else result.backend,
+        provider_success=result.provider_success,
+        provider_success_matches_score_gate=result.provider_success_matches_score_gate,
         evidence=result.evidence,
     )
 
