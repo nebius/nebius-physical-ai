@@ -131,6 +131,17 @@ def test_admitted_policy_accepts_only_reviewed_ipc_population(
     assert len(facts["spec_sha256"]) == 64
 
 
+def test_admitted_policy_refuses_missing_reviewed_environment_controls() -> None:
+    pod = _pod(image_id=f"containerd://{DIGEST}")
+    with pytest.raises(AssertionError, match="admitted Pod violates"):
+        live._gymnasium_admitted_pod_policy(
+            pod,
+            namespace=NAMESPACE,
+            run_id=RUN_ID,
+            expected_environment={"AWS_ENDPOINT_URL": "https://storage.example"},
+        )
+
+
 @pytest.mark.parametrize(
     ("target", "key", "value"),
     [
@@ -214,6 +225,7 @@ def _assert_admitted_refusal_before_effects(
             namespace=NAMESPACE,
             run_id=RUN_ID,
             image=IMAGE,
+            expected_environment={},
         )
     assert len(calls) == 1
     assert list(evidence.iterdir()) == []
@@ -489,6 +501,7 @@ def test_owner_receipt_binds_exact_running_pod_and_writes_private_evidence(
         namespace=NAMESPACE,
         run_id=RUN_ID,
         image=IMAGE,
+        expected_environment={},
     )
 
     assert receipt["expected_digest"] == DIGEST
@@ -550,6 +563,7 @@ def test_owner_receipt_refuses_a_different_runtime_digest(
             namespace=NAMESPACE,
             run_id=RUN_ID,
             image=IMAGE,
+            expected_environment={},
         )
     assert not list(evidence.iterdir())
 
@@ -581,6 +595,7 @@ def test_owner_receipt_refuses_a_pod_from_a_different_namespace(
             namespace=NAMESPACE,
             run_id=RUN_ID,
             image=IMAGE,
+            expected_environment={},
         )
     assert not list(evidence.iterdir())
 
@@ -613,6 +628,7 @@ def test_owner_receipt_refuses_missing_or_mismatched_node_name(
             namespace=NAMESPACE,
             run_id=RUN_ID,
             image=IMAGE,
+            expected_environment={},
         )
     assert not list(evidence.iterdir())
 
@@ -762,6 +778,7 @@ def test_owner_receipt_scopes_gpu_request_to_matching_task_container(
             namespace=NAMESPACE,
             run_id=RUN_ID,
             image=IMAGE,
+            expected_environment={},
         )
 
 
@@ -801,6 +818,7 @@ def test_owner_receipt_rejects_gpu_request_from_an_extra_container(
             namespace=NAMESPACE,
             run_id=RUN_ID,
             image=IMAGE,
+            expected_environment={},
         )
 
 
@@ -818,6 +836,7 @@ def test_owner_receipt_poll_has_an_overall_deadline(
             namespace=NAMESPACE,
             run_id=RUN_ID,
             image=IMAGE,
+            expected_environment={},
         )
 
 

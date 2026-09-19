@@ -1166,6 +1166,7 @@ def _gymnasium_admitted_pod_policy(
         selected = validate_gymnasium_task_configuration(
             documents, solution_name="gymnasium-robotics",
             resolved_environment=expected_environment,
+            require_bound_environment=True,
         )
     except ExecutionPreflightError as exc:
         raise AssertionError(
@@ -1196,7 +1197,7 @@ def _gymnasium_pod_image_receipt(
     namespace: str,
     run_id: str,
     image: str,
-    expected_environment: dict[str, str] | None = None,
+    expected_environment: dict[str, str],
 ) -> dict[str, object]:
     expected_image = image.removeprefix("docker:")
     expected_digest = _immutable_image_digest(expected_image)
@@ -1258,7 +1259,7 @@ def _gymnasium_pod_image_receipt(
         ), "only the exact task container may request the one GPU"
         admitted_policy = _gymnasium_admitted_pod_policy(
             pod, namespace=namespace, run_id=run_id,
-            expected_environment=expected_environment or {},
+            expected_environment=expected_environment,
         )
         statuses = {
             item.get("name"): item

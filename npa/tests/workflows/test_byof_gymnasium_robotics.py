@@ -886,6 +886,19 @@ def test_gymnasium_configuration_binds_bucket_and_prefix_controls() -> None:
             validate_gymnasium_task_configuration([mutated])
 
 
+def test_gymnasium_configuration_refuses_missing_reviewed_pod_controls() -> None:
+    task = _configuration_task()
+    task["envs"] = {
+        "AWS_ENDPOINT_URL": "https://storage.eu-north1.nebius.cloud",
+        "NPA_S3_BUCKET": "synthetic-bucket",
+    }
+    task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"] = [
+        {"name": "AWS_ENDPOINT_URL", "value": task["envs"]["AWS_ENDPOINT_URL"]},
+    ]
+    with pytest.raises(ExecutionPreflightError, match="missing reviewed task controls"):
+        validate_gymnasium_task_configuration([task], require_bound_environment=True)
+
+
 @pytest.mark.parametrize("extra", [
     {"envs": {"SYNTHETIC_API_KEY": "not-a-credential"}},
     {"file_mounts": {"/synthetic/mount": "synthetic-local-input"}},

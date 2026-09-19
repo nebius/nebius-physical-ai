@@ -373,6 +373,7 @@ def _validate_gymnasium_environment(env: Mapping[str, Any], *, storage: bool) ->
 def _validate_gymnasium_pod_environment(
     container: Mapping[str, Any], *, expected_environment: Mapping[str, Any] | None = None,
     resolved_environment: Mapping[str, str] | None = None, storage: bool = False,
+    require_expected_environment: bool = False,
 ) -> None:
     if container.get("envFrom"):
         _gymnasium_configuration_error("pod envFrom is forbidden")
@@ -397,6 +398,14 @@ def _validate_gymnasium_pod_environment(
             value = entry.get("value")
             if not isinstance(expected, str) or not isinstance(value, str) or value != expected:
                 _gymnasium_configuration_error("pod control environment differs from the reviewed task")
+    required = {
+        name for name in expected_values
+        if name in _GYMNASIUM_BOUND_ENV_NAMES
+        or any(marker in name.upper() for marker in ("ENDPOINT", "OUTPUT", "PROXY"))
+    }
+    missing = required - names
+    if require_expected_environment and missing:
+        _gymnasium_configuration_error("pod control environment is missing reviewed task controls")
 
 
 def _validate_gymnasium_security_context(context: Any, *, required: bool = False, container: bool = False) -> None:
@@ -442,6 +451,7 @@ def _validate_gymnasium_pod(
     pod: Mapping[str, Any], *, require_automount: bool,
     expected_environment: Mapping[str, Any] | None = None,
     resolved_environment: Mapping[str, str] | None = None, storage: bool = False,
+    require_expected_environment: bool = False,
 ) -> None:
     if require_automount or "automountServiceAccountToken" in pod:
         if pod.get("automountServiceAccountToken") is not False:
@@ -460,6 +470,7 @@ def _validate_gymnasium_pod(
         _validate_gymnasium_pod_environment(
             container, expected_environment=expected_environment,
             resolved_environment=resolved_environment, storage=storage,
+            require_expected_environment=require_expected_environment,
         )
         _validate_gymnasium_security_context(
             container.get("securityContext", {}), required=require_automount, container=True,
@@ -475,6 +486,7 @@ def validate_gymnasium_task_configuration(
     documents: Sequence[Mapping[str, Any]], *, global_config: Mapping[str, Any] | None = None,
     solution_name: str = "", secret_envs: Sequence[str] = (),
     resolved_environment: Mapping[str, str] | None = None,
+    require_bound_environment: bool = False,
 ) -> bool:
     """Reject unsafe Gymnasium pod configuration without resolving any secret.
 
@@ -501,6 +513,7 @@ def validate_gymnasium_task_configuration(
     _validate_gymnasium_pod(
         _gymnasium_pod_config(global_values), require_automount=False,
         expected_environment=global_environment, resolved_environment=resolved_environment,
+        require_expected_environment=require_bound_environment,
     )
     for task in selected:
         if task.get("file_mounts") or task.get("workdir"):
@@ -510,7 +523,7 @@ def validate_gymnasium_task_configuration(
         _validate_gymnasium_pod(
             _task_kubernetes_pod_spec(task), require_automount=True,
             expected_environment=task_environment, resolved_environment=resolved_environment,
-            storage=True,
+            storage=True, require_expected_environment=require_bound_environment,
         )
     return True
 
