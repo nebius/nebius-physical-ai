@@ -148,6 +148,14 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
             "c" * 64,
         ),
         native_verified=True,
+        environment={
+            "HOME": str(expected / "home"),
+            "PATH": "/bin",
+            "KUBECONFIG": str(generated_config),
+            "SKYPILOT_API_SERVER_ENDPOINT": "https://synthetic-api",
+            "AWS_ACCESS_KEY_ID": "synthetic-secret",
+            "NPA_EXECUTION_OUTPUTS": "synthetic-output",
+        },
     )
     calls = []
 
@@ -164,6 +172,11 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
         assert "NPA_SKYPILOT_ISOLATED_CONFIG_DIR" not in kwargs["extra_env"]
         cleanup.cwd = kwargs["isolated_config_dir"]
         kwargs["on_launch_ready"](cleanup)
+        # The original authorization input may change after submit; polling
+        # must retain the producer-captured generated configuration instead.
+        context.authorization.kubeconfig_source = (
+            "/synthetic-private/changed-after-submit"
+        )
         calls.append(kwargs)
         if outcome == "signal":
             effects["install_teardown_signal_handlers"].call_args.args[0]()
@@ -205,9 +218,10 @@ def test_authorized_default_wrapper_uses_one_private_native_state(
         assert cleanup.cwd is kwargs["isolated_config_dir"]
         assert kwargs["config_path"] == generated_config
         assert kwargs["environment"] == {
-            "HOME": "/synthetic-home",
+            "HOME": str(expected / "home"),
             "PATH": "/bin",
-            "KUBECONFIG": context.authorization.kubeconfig_source,
+            "KUBECONFIG": str(generated_config),
+            "SKYPILOT_API_SERVER_ENDPOINT": "https://synthetic-api",
         }
         if outcome == "poll-error":
             raise module.SkyPilotConfigError("synthetic post-return polling failure")
@@ -315,6 +329,11 @@ def test_native_polling_identity_requires_bound_native_receipt(
         submitting=False,
         requested=False,
         native_verified=True,
+        environment={
+            "HOME": "/synthetic-private/home",
+            "PATH": "/bin",
+            "KUBECONFIG": "/synthetic-private/generated-kubeconfig",
+        },
         native_result=NativeLaunchResult(
             "a" * 64,
             "00000000-0000-4000-8000-000000000004",
@@ -961,7 +980,15 @@ def test_robotwin_terminal_summary_never_discloses_destination_or_customer_run(
         "_normalize_kubeconfig_current_context",
         lambda _path, values: values,
     )
-    monkeypatch.setattr(module, "_robotwin_control_environment", lambda *_args: {})
+    monkeypatch.setattr(
+        module,
+        "_robotwin_control_environment",
+        lambda *_args: {
+            "HOME": str(tmp_path / "home"),
+            "PATH": "/bin",
+            "KUBECONFIG": str(tmp_path / "generated-kubeconfig"),
+        },
+    )
     monkeypatch.setattr(module, "install_teardown_signal_handlers", lambda *_args: {})
     monkeypatch.setattr(module, "restore_signal_handlers", lambda *_args: None)
     api_events: list[tuple[str, Path]] = []
@@ -1076,6 +1103,11 @@ def _summary_submit_result(module, kwargs, confidential_dir):
             "d" * 64,
         ),
         native_verified=True,
+        environment={
+            "HOME": str(confidential_dir.parent),
+            "PATH": "/bin",
+            "KUBECONFIG": str(confidential_dir / "generated-kubeconfig"),
+        },
     )
     kwargs["on_launch_ready"](cleanup)
     return SimpleNamespace(

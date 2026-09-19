@@ -46,6 +46,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_OUTPUT_PREFIX_ENV,
     CHILD_RUN_ID_ENV,
     CHILD_RUNTIME_AUTH_ENV,
+    CONTEXT_ENV_NAMES,
     OPTIONAL_STORAGE_SECRET_NAME,
     RobotwinAuthorization,
     RobotwinSubmitContext,
@@ -589,6 +590,35 @@ def _robotwin_control_environment(
     return environment
 
 
+def _robotwin_polling_environment(cleanup: Any) -> dict[str, str]:
+    """Reuse the producer-captured control context without workload secrets."""
+
+    captured = getattr(cleanup, "environment", None)
+    if not isinstance(captured, Mapping):
+        raise SkyPilotConfigError(
+            "native polling environment unavailable; recovery state retained"
+        )
+    blocked = {
+        *DEFAULT_SECRET_ENVS,
+        *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
+        *STORAGE_ENDPOINT_SECRET_NAMES,
+        *CONTEXT_ENV_NAMES,
+        "NPA_EXECUTION_OUTPUTS",
+    }
+    selected = {
+        name: str(value)
+        for name, value in captured.items()
+        if name not in blocked and str(value or "")
+    }
+    kubeconfig = str(captured.get("KUBECONFIG") or "").strip()
+    if not kubeconfig:
+        raise SkyPilotConfigError(
+            "native polling kubeconfig unavailable; recovery state retained"
+        )
+    selected["KUBECONFIG"] = kubeconfig
+    return selected
+
+
 def _bootstrap_robotwin_sky(
     runtime_directory: Path, environment: Mapping[str, str]
 ) -> str:
@@ -886,6 +916,10 @@ def _submit_and_wait(
                     if robotwin_submit_context is not None
                     else scheduler_run_id
                 )
+                if robotwin_submit_context is not None:
+                    robotwin_control_env = _robotwin_polling_environment(
+                        teardown_guard.cleanup
+                    )
                 summary = (
                     {"launch_id": scheduler_run_id, "status": "submitted"}
                     if robotwin_submit_context is not None
