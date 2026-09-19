@@ -2126,6 +2126,36 @@ def test_dockerfile_authenticates_extracted_source_before_debian_install() -> No
     assert "--source-archive /mnt/robomimic-build-inputs/source/robomimic.tar" in text
 
 
+def test_source_tree_cli_mode_uses_build_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_image.py",
+            "source-tree",
+            "--source-root",
+            str(tmp_path / "source"),
+            "--source-archive",
+            str(tmp_path / "source.tar"),
+            "--source-manifest",
+            str(tmp_path / "manifest.json"),
+        ],
+    )
+    monkeypatch.setattr(
+        VERIFIER, "_dispatch_build", lambda _args: {"dispatch": "build"}
+    )
+    monkeypatch.setattr(
+        VERIFIER,
+        "_dispatch_runtime",
+        lambda _args: pytest.fail("source-tree must not use runtime dispatch"),
+    )
+
+    assert VERIFIER.main() == 0
+    assert json.loads(capsys.readouterr().out) == {"dispatch": "build"}
+
+
 def test_production_wheel_proof_refuses_without_complete_authenticated_closure(
     tmp_path: Path,
 ) -> None:

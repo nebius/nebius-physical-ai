@@ -1434,6 +1434,65 @@ def test_runtime_fetch_plan_requires_vendor_credential_for_mixed_closure(
         )
 
 
+def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    probed: list[Path] = []
+    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
+    monkeypatch.setattr(
+        verifier,
+        "_download_runtime_artifacts",
+        lambda *_args: tmp_path / "requirements.txt",
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_install_runtime_artifacts",
+        lambda *_args: stage / "site-packages",
+    )
+
+    verifier._stage_runtime_install(
+        runtime_root=runtime_root,
+        runtime_lock_path=lock_path,
+        expected_inventory_sha256=inventory_sha256,
+        artifacts={},
+        credential_env="HF_TOKEN",
+        credential="",
+        wheelhouse=tmp_path / "wheelhouse",
+        stage=stage,
+        before_request=lambda: None,
+    )
+
+    assert probed == [stage / "verified-runtime" / "payload" / "bin" / "python"]
+
+
+def test_runtime_fetch_refuses_changed_interpreter_before_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    interpreter = runtime_root / "payload" / "bin" / "python"
+    interpreter.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
+    probed: list[Path] = []
+    monkeypatch.setattr(verifier, "_runtime_pip_probe", probed.append)
+
+    with pytest.raises(verifier.VerificationError, match="identity mismatch"):
+        verifier._stage_runtime_install(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            artifacts={},
+            credential_env="HF_TOKEN",
+            credential="",
+            wheelhouse=tmp_path / "wheelhouse",
+            stage=tmp_path / "stage",
+            before_request=lambda: None,
+        )
+
+    assert probed == []
+
+
 def test_runtime_fetch_checks_entitlement_before_creating_lock(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

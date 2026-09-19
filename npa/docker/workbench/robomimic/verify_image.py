@@ -2712,25 +2712,25 @@ def _runtime_fetch_install(
     *,
     plan: tuple,
     runtime_root: Path,
+    runtime_lock_path: Path,
     wheelhouse: Path,
     stage: Path,
     before_request: Any,
 ) -> dict[str, Any]:
     (
         lock,
-        inventory,
         artifacts,
         lock_hash,
         inventory_sha256,
         site_root,
         denylist_source,
         credential_env,
-    ) = plan
-    # Public-only closures intentionally carry no vendor secret.  Credentialed
-    # origins were already enforced by _runtime_fetch_contract.
+    ) = _runtime_install_inputs(plan)
     credential = os.environ.get(credential_env, "")
     staged_site = _stage_runtime_install(
         runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=inventory_sha256,
         artifacts=artifacts,
         credential_env=credential_env,
         credential=credential,
@@ -2738,6 +2738,39 @@ def _runtime_fetch_install(
         stage=stage,
         before_request=before_request,
     )
+    return _runtime_install_result(
+        staged_site=staged_site,
+        lock=lock,
+        inventory_sha256=inventory_sha256,
+        lock_hash=lock_hash,
+        site_root=site_root,
+        artifacts=artifacts,
+        denylist_source=denylist_source,
+    )
+
+
+def _runtime_install_inputs(plan: tuple) -> tuple:
+    return (
+        plan[0],
+        plan[2],
+        plan[3],
+        plan[4],
+        plan[5],
+        plan[6],
+        plan[7],
+    )
+
+
+def _runtime_install_result(
+    *,
+    staged_site: Path,
+    lock: dict,
+    inventory_sha256: str,
+    lock_hash: str,
+    site_root: Path,
+    artifacts: dict,
+    denylist_source: str,
+) -> dict[str, Any]:
     return {
         "staged_site": staged_site,
         "lock": lock,
@@ -2749,9 +2782,38 @@ def _runtime_fetch_install(
     }
 
 
+def _prepare_verified_runtime(
+    *,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    stage: Path,
+) -> Path:
+    """Copy and re-prove the runtime tree before invoking its interpreter."""
+
+    verify_external_runtime(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=False,
+    )
+    verified_runtime = stage / "verified-runtime"
+    verified_runtime.mkdir(mode=0o700)
+    _copy_runtime_inventory(runtime_root, verified_runtime, expected_inventory_sha256)
+    verify_external_runtime(
+        runtime_root=verified_runtime,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=False,
+    )
+    return verified_runtime / "payload" / "bin" / "python"
+
+
 def _stage_runtime_install(
     *,
     runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
     artifacts: dict,
     credential_env: str,
     credential: str,
@@ -2760,7 +2822,12 @@ def _stage_runtime_install(
     before_request: Any,
 ) -> Path:
     before_request()
-    interpreter = runtime_root / "payload" / "bin" / "python"
+    interpreter = _prepare_verified_runtime(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        stage=stage,
+    )
     _runtime_pip_probe(interpreter)
     requirement_file = _download_runtime_artifacts(
         wheelhouse,
@@ -2786,6 +2853,7 @@ def _runtime_fetch_operation(
     prepared = _runtime_fetch_install(
         plan=plan,
         runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
         wheelhouse=wheelhouse,
         stage=stage,
         before_request=before_request,
@@ -3617,6 +3685,7 @@ def main() -> int:
             "build-inputs",
             "prepare-build-inputs",
             "debian-install",
+            "source-tree",
             "image",
             "installer",
         }:
