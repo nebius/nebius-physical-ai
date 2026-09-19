@@ -330,9 +330,7 @@ def test_valid_fragmented_glm_tool_call_is_preserved(
     assistant, telemetry = _stream_chat(
         "http://model.example/v1", "key", {"messages": []}
     )
-    calls = _validated_tool_calls(
-        assistant, finish_reason=telemetry.finish_reason
-    )
+    calls = _validated_tool_calls(assistant, finish_reason=telemetry.finish_reason)
 
     assert calls[0][1] == {"command": "git status"}
     assert assistant["tool_calls"][0]["id"] == "call_1"
@@ -605,9 +603,7 @@ def test_startup_rebuilds_oversized_legacy_checkpoint_from_full_transcript(
         "role": "user",
         "content": CHECKPOINT_MARKER + "\n" + "x" * 153_520,
     }
-    transcript.write_text(
-        json.dumps(diagnostic) + "\n" + json.dumps(oversized) + "\n"
-    )
+    transcript.write_text(json.dumps(diagnostic) + "\n" + json.dumps(oversized) + "\n")
     resumed = [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "task"},
@@ -667,9 +663,7 @@ def test_checkpoint_bounds_many_historical_run_identifiers() -> None:
                 {
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "content": json.dumps(
-                        {"run_id": f"run-{index:04d}-" + "x" * 110}
-                    ),
+                    "content": json.dumps({"run_id": f"run-{index:04d}-" + "x" * 110}),
                 },
             ]
         )
@@ -721,9 +715,7 @@ def test_repeated_checkpoint_preserves_full_run_identifier_summary(
 
     transcript = tmp_path / "transcript.jsonl"
     history = [message for index in range(30) for message in group(index)]
-    transcript.write_text(
-        "".join(json.dumps(message) + "\n" for message in history)
-    )
+    transcript.write_text("".join(json.dumps(message) + "\n" for message in history))
     messages = [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "task"},
@@ -908,8 +900,7 @@ def test_checkpoint_merges_historical_and_active_submit_attempts(
                         "arguments": json.dumps(
                             {
                                 "command": (
-                                    "npa workbench workflow submit "
-                                    f"spec-{index}.yaml"
+                                    f"npa workbench workflow submit spec-{index}.yaml"
                                 )
                             }
                         ),
@@ -1624,18 +1615,24 @@ def test_submission_state_excludes_help_and_classifies_real_submit() -> None:
         "content": json.dumps({"exit_code": 0, "stdout": "submitted"}),
     }
     history = [submitted_assistant, submitted_result]
-    assert _workflow_submission_block_reason(
-        history,
-        tool_name="run_command",
-        arguments={
-            "command": "npa/.venv/bin/npa workbench workflow submit spec.yaml"
-        },
-    ) == "DuplicateWorkflowSubmissionBlocked"
-    assert _workflow_submission_block_reason(
-        history,
-        tool_name="run_command",
-        arguments={"command": "npa/.venv/bin/npa workbench workflow submit --help"},
-    ) is None
+    assert (
+        _workflow_submission_block_reason(
+            history,
+            tool_name="run_command",
+            arguments={
+                "command": "npa/.venv/bin/npa workbench workflow submit spec.yaml"
+            },
+        )
+        == "DuplicateWorkflowSubmissionBlocked"
+    )
+    assert (
+        _workflow_submission_block_reason(
+            history,
+            tool_name="run_command",
+            arguments={"command": "npa/.venv/bin/npa workbench workflow submit --help"},
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

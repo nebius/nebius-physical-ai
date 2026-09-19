@@ -77,7 +77,7 @@ def test_foreign_checkout_without_pythonpath_fails(tmp_path: Path) -> None:
     assert str(target / "npa" / "src") in result.stderr
     assert "export PYTHONPATH" in result.stderr
     assert "[dev,adapter]" in result.stderr
-    assert "[dev]\"" not in result.stderr
+    assert '[dev]"' not in result.stderr
 
 
 def test_correcting_pythonpath_wins_over_a_foreign_entry(tmp_path: Path) -> None:
@@ -118,7 +118,9 @@ def test_missing_install_fails_with_install_instructions(tmp_path: Path) -> None
     assert "[dev,adapter]" in result.stderr
 
 
-def test_drift_message_never_recommends_installing_into_the_resolved_interpreter(tmp_path: Path) -> None:
+def test_drift_message_never_recommends_installing_into_the_resolved_interpreter(
+    tmp_path: Path,
+) -> None:
     """The fix never tells you to `pip install` into `sys.executable` itself.
 
     Args:
@@ -137,7 +139,9 @@ def test_drift_message_never_recommends_installing_into_the_resolved_interpreter
     assert f"{sys.executable} -m pip install" not in result.stderr
 
 
-def test_new_venv_recipe_aborts_on_any_existing_path_before_creating_anything(tmp_path: Path) -> None:
+def test_new_venv_recipe_aborts_on_any_existing_path_before_creating_anything(
+    tmp_path: Path,
+) -> None:
     """The printed recipe is a single guarded `&&` chain: it never touches a pre-existing path.
 
     Args:
@@ -154,7 +158,9 @@ def test_new_venv_recipe_aborts_on_any_existing_path_before_creating_anything(tm
     foreign = _make_checkout(tmp_path, "foreign")
     result = _run(target, str(foreign / "npa" / "src"))
     assert result.returncode == 1
-    recipe_line = next(line for line in result.stderr.splitlines() if "python3 -m venv" in line)
+    recipe_line = next(
+        line for line in result.stderr.splitlines() if "python3 -m venv" in line
+    )
     assert "test ! -e" in recipe_line
     assert "test ! -L" in recipe_line
     assert recipe_line.index("test ! -e") < recipe_line.index("python3 -m venv")
@@ -180,6 +186,8 @@ def test_recipe_paths_are_shell_quoted(tmp_path: Path) -> None:
     foreign = _make_checkout(roomy_root, "foreign")
     result = _run(target, str(foreign / "npa" / "src"))
     assert result.returncode == 1
-    pythonpath_line = next(line for line in result.stderr.splitlines() if "export PYTHONPATH=" in line)
+    pythonpath_line = next(
+        line for line in result.stderr.splitlines() if "export PYTHONPATH=" in line
+    )
     expected_src = str((target / "npa" / "src").resolve())
     assert shlex.split(pythonpath_line) == ["export", f"PYTHONPATH={expected_src}"]

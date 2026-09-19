@@ -33,7 +33,9 @@ def _new_venv_recipe(npa_dir: Path) -> str:
     return f"test ! -e {venv} && test ! -L {venv} && python3 -m venv {venv} && {pip} install -e {target}"
 
 
-def _missing_install_message(expected_src: Path, npa_dir: Path, error: BaseException) -> str:
+def _missing_install_message(
+    expected_src: Path, npa_dir: Path, error: BaseException
+) -> str:
     src = shlex.quote(str(expected_src))
     return (
         f"error: `import npa` failed under {sys.executable}: {error}\n"

@@ -348,8 +348,11 @@ def _materialize_single_gpu_run(root: Path, frame_count: int = 17) -> None:
             "prompt": "An abstract color study.",
             "seed": 42,
             "requested": {
-                "width": 1280, "height": 704, "frame_count": frame_count,
-                "fps": 24.0, "inference_steps": 8,
+                "width": 1280,
+                "height": 704,
+                "frame_count": frame_count,
+                "fps": 24.0,
+                "inference_steps": 8,
             },
             "observed": {
                 "width": decoded["width"],
@@ -517,7 +520,8 @@ def test_single_gpu_layout_builds_and_uses_accurate_execution_entity(
 @pytest.mark.parametrize("layout", [SINGLE_GPU_LAYOUT, MULTI_GPU_LAYOUT])
 def test_longer_generation_embeds_every_requested_frame(tmp_path: Path, layout) -> None:
     materialize = (
-        _materialize_multigpu_run if layout is MULTI_GPU_LAYOUT
+        _materialize_multigpu_run
+        if layout is MULTI_GPU_LAYOUT
         else _materialize_single_gpu_run
     )
     materialize(tmp_path, frame_count=21)
@@ -530,12 +534,16 @@ def test_longer_generation_embeds_every_requested_frame(tmp_path: Path, layout) 
 @pytest.mark.parametrize("layout", [SINGLE_GPU_LAYOUT, MULTI_GPU_LAYOUT])
 def test_decoded_frame_count_must_match_the_generation_request(tmp_path: Path, layout):
     materialize = (
-        _materialize_multigpu_run if layout is MULTI_GPU_LAYOUT
+        _materialize_multigpu_run
+        if layout is MULTI_GPU_LAYOUT
         else _materialize_single_gpu_run
     )
     materialize(tmp_path)
-    name = ("wan2_2_ti2v_5b_multigpu.json" if layout is MULTI_GPU_LAYOUT
-            else "wan2_2_ti2v_5b_text_to_video.json")
+    name = (
+        "wan2_2_ti2v_5b_multigpu.json"
+        if layout is MULTI_GPU_LAYOUT
+        else "wan2_2_ti2v_5b_text_to_video.json"
+    )
     primary = json.loads((tmp_path / name).read_text())
     if layout is MULTI_GPU_LAYOUT:
         primary["generation"]["frames"] = 121
@@ -549,20 +557,40 @@ def test_decoded_frame_count_must_match_the_generation_request(tmp_path: Path, l
 @pytest.mark.parametrize("layout", [SINGLE_GPU_LAYOUT, MULTI_GPU_LAYOUT])
 @pytest.mark.parametrize(
     "field,value",
-    [("frames", None), ("frames", 120), ("frames", "121"), ("frames", True),
-     ("steps", 0), ("steps", "50"), ("seed", -1), ("seed", False)],
+    [
+        ("frames", None),
+        ("frames", 120),
+        ("frames", "121"),
+        ("frames", True),
+        ("steps", 0),
+        ("steps", "50"),
+        ("seed", -1),
+        ("seed", False),
+    ],
 )
 def test_rerun_rejects_invalid_requested_generation(layout, field, value):
-    generation = {"width": 1280, "height": 704, "fps": 24.0,
-                  "frames": 121, "steps": 50, "seed": 42}
+    generation = {
+        "width": 1280,
+        "height": 704,
+        "fps": 24.0,
+        "frames": 121,
+        "steps": 50,
+        "seed": 42,
+    }
     generation[field] = value
     if layout is MULTI_GPU_LAYOUT:
         primary = {"generation": generation}
     else:
-        primary = {"seed": generation["seed"], "requested": {
-            "width": 1280, "height": 704, "fps": 24.0,
-            "frame_count": generation["frames"], "inference_steps": generation["steps"],
-        }}
+        primary = {
+            "seed": generation["seed"],
+            "requested": {
+                "width": 1280,
+                "height": 704,
+                "fps": 24.0,
+                "frame_count": generation["frames"],
+                "inference_steps": generation["steps"],
+            },
+        }
     with pytest.raises(WanRrdError, match=f"requested {field}"):
         wan_rerun._requested_frame_count(primary, layout)
 
@@ -613,9 +641,7 @@ def test_run_image_must_match_the_accepted_digest(tmp_path: Path, image: str) ->
 
 
 def test_explicit_acceptance_candidate_is_recorded_without_a_release_tag() -> None:
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     evidence = wan_rerun._validate_container_image(
         {"image": candidate}, acceptance_candidate_image=candidate
     )
@@ -631,9 +657,7 @@ def test_explicit_acceptance_candidate_is_recorded_without_a_release_tag() -> No
 def test_ambient_live_environment_cannot_bypass_accepted_wan_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    candidate = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
-    )
+    candidate = "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:" + "a" * 64
     monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_LIVE_GPU", "1")
     monkeypatch.setenv("NPA_BYOF_WAN22_REUSE_IMAGE", candidate)

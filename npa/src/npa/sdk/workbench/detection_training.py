@@ -70,7 +70,9 @@ def train(
     checkpoint_settings = CheckpointS3Settings(**checkpoint_payload)
     effective_output_uri = output_uri or checkpoint_settings.uri
     if not effective_output_uri:
-        raise DetectionTrainingValidationError("output_uri or checkpoint_s3.uri is required")
+        raise DetectionTrainingValidationError(
+            "output_uri or checkpoint_s3.uri is required"
+        )
     request = TrainRequest(
         view=view,
         lance_uri=data_path or lance_uri,
@@ -209,13 +211,19 @@ def _request_json(
             f"Detection-training service request failed ({exc.response.status_code}): {detail}"
         ) from exc
     except httpx.HTTPError as exc:
-        raise DetectionTrainingServiceError(f"Cannot reach detection-training service {resolved}: {exc}") from exc
+        raise DetectionTrainingServiceError(
+            f"Cannot reach detection-training service {resolved}: {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise DetectionTrainingServiceError("Detection-training service returned non-JSON response") from exc
+        raise DetectionTrainingServiceError(
+            "Detection-training service returned non-JSON response"
+        ) from exc
     if not isinstance(data, dict):
-        raise DetectionTrainingServiceError("Detection-training service returned an unexpected response")
+        raise DetectionTrainingServiceError(
+            "Detection-training service returned an unexpected response"
+        )
     return data
 
 

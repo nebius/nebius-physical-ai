@@ -293,7 +293,9 @@ def test_cluster_fails_when_selected_identity_cannot_patch_jobs() -> None:
     assert not any(arg.startswith("--as=") for call in calls for arg in call)
 
 
-def test_cluster_checks_workflow_identity_without_legacy_account_impersonation() -> None:
+def test_cluster_checks_workflow_identity_without_legacy_account_impersonation() -> (
+    None
+):
     def runner(args):
         if any(arg.startswith("--as=") for arg in args):
             return KubeResult(1, "no", "legacy service account does not exist")

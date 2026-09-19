@@ -5,7 +5,11 @@ import json
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workflows.sim_to_real_trigger import PipelineLaunch, TriggerResult, TriggerWatermark
+from npa.workflows.sim_to_real_trigger import (
+    PipelineLaunch,
+    TriggerResult,
+    TriggerWatermark,
+)
 
 
 runner = CliRunner()
@@ -34,7 +38,9 @@ def test_workbench_trigger_run_passes_byo_endpoint_and_paths(monkeypatch) -> Non
                 status="launched",
                 input_data_uri=config.input_data_uri,
             ),
-            watermark=TriggerWatermark(cursor_last_modified="2026-06-04T12:00:00Z", launches=1),
+            watermark=TriggerWatermark(
+                cursor_last_modified="2026-06-04T12:00:00Z", launches=1
+            ),
             generated_at="2026-06-04T12:00:01Z",
         )
 

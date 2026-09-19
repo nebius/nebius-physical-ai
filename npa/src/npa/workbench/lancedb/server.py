@@ -165,7 +165,9 @@ def _equality_predicate(filter_spec: dict[str, Any]) -> str:
     clauses: list[str] = []
     for key, value in sorted(filter_spec.items()):
         if not str(key).replace("_", "").replace(".", "").isalnum():
-            raise HTTPException(status_code=400, detail=f"unsupported filter field: {key}")
+            raise HTTPException(
+                status_code=400, detail=f"unsupported filter field: {key}"
+            )
         if isinstance(value, bool):
             clauses.append(f"{key} = {str(value).lower()}")
         elif isinstance(value, (int, float)):
@@ -204,7 +206,9 @@ def create_app(
     token: str | None = None,
 ) -> FastAPI:
     """Create the LanceDB wrapper FastAPI app."""
-    resolved_storage = storage_path or os.environ.get("LANCEDB_STORAGE_PATH", "/tmp/npa-lancedb")
+    resolved_storage = storage_path or os.environ.get(
+        "LANCEDB_STORAGE_PATH", "/tmp/npa-lancedb"
+    )
     resolved_auth_mode = auth_mode or os.environ.get("LANCEDB_AUTH_MODE", "token")
     resolved_token = token if token is not None else os.environ.get("LANCEDB_TOKEN", "")
     app = FastAPI(title="NPA LanceDB wrapper")
@@ -216,22 +220,34 @@ def create_app(
             "Set LANCEDB_AUTH_MODE=token and LANCEDB_TOKEN before exposing it beyond localhost."
         )
 
-    async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
+    async def require_auth(
+        request: Request, authorization: str = Header(default="")
+    ) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
-            raise HTTPException(status_code=500, detail="LANCEDB_TOKEN is not configured")
+            raise HTTPException(
+                status_code=500, detail="LANCEDB_TOKEN is not configured"
+            )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 
     @app.get("/health")
-    async def health(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def health(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         known_tables.update(_list_tables(db))
-        return {"status": "ok", "storage_path": resolved_storage, "tables": len(known_tables)}
+        return {
+            "status": "ok",
+            "storage_path": resolved_storage,
+            "tables": len(known_tables),
+        }
 
     @app.get("/tables")
-    async def tables(request: Request, authorization: str = Header(default="")) -> dict[str, Any]:
+    async def tables(
+        request: Request, authorization: str = Header(default="")
+    ) -> dict[str, Any]:
         await require_auth(request, authorization)
         known_tables.update(_list_tables(db))
         return {"tables": sorted(known_tables)}
@@ -246,7 +262,10 @@ def create_app(
         await require_auth(request, authorization)
         rows = body.rows
         if not rows and body.input_path.startswith("s3://"):
-            raise HTTPException(status_code=400, detail="server-side S3 import is not implemented in the OSS wrapper")
+            raise HTTPException(
+                status_code=400,
+                detail="server-side S3 import is not implemented in the OSS wrapper",
+            )
         if not rows:
             rows = [{body.id_column: "empty", body.vector_column: [0.0]}]
         if body.mode == "append":
@@ -269,9 +288,15 @@ def create_app(
     ) -> dict[str, Any]:
         await require_auth(request, authorization)
         if body.top_k < 1 or body.top_k > 1000:
-            raise HTTPException(status_code=400, detail="top_k must be between 1 and 1000")
-        if not body.vector or any(not math.isfinite(float(value)) for value in body.vector):
-            raise HTTPException(status_code=400, detail="vector must contain finite numbers")
+            raise HTTPException(
+                status_code=400, detail="top_k must be between 1 and 1000"
+            )
+        if not body.vector or any(
+            not math.isfinite(float(value)) for value in body.vector
+        ):
+            raise HTTPException(
+                status_code=400, detail="vector must contain finite numbers"
+            )
         table = db.open_table(table_name)
         query = table.search(body.vector).limit(body.top_k)
         if body.filter:
@@ -320,7 +345,9 @@ def create_app(
 
         await require_auth(request, authorization)
         if body.limit < 1 or body.limit > 10_000:
-            raise HTTPException(status_code=400, detail="limit must be between 1 and 10000")
+            raise HTTPException(
+                status_code=400, detail="limit must be between 1 and 10000"
+            )
         if body.table not in set(_list_tables(db)):
             # An unregistered dataset is an empty result, not an error: a curation step may
             # legitimately query before anything has been indexed.

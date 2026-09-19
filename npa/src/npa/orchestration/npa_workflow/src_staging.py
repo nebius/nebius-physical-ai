@@ -243,7 +243,10 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
         for relative in iter_source_files(catalog):
             if (
                 (
-                    (len(relative.parts) == 2 and relative.parts[0] in {"main", "testing"})
+                    (
+                        len(relative.parts) == 2
+                        and relative.parts[0] in {"main", "testing"}
+                    )
                     or (len(relative.parts) == 3 and relative.parts[0] == "partners")
                 )
                 and relative.suffix == ".yaml"

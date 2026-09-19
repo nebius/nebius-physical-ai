@@ -17,14 +17,18 @@ _DAY = 24 * 60 * 60
 def _disk_usage(total_gib: float, free_gib: float):
     gib = 1024**3
     return lambda _path: SimpleNamespace(
-        total=int(total_gib * gib), used=int((total_gib - free_gib) * gib), free=int(free_gib * gib)
+        total=int(total_gib * gib),
+        used=int((total_gib - free_gib) * gib),
+        free=int(free_gib * gib),
     )
 
 
 def _present_everything(monkeypatch) -> None:
     monkeypatch.setattr(prereqs.shutil, "which", lambda _name: "/usr/bin/fake")
     monkeypatch.setattr(prereqs.importlib.util, "find_spec", lambda _name: object())
-    monkeypatch.setattr(prereqs.os, "memfd_create", lambda *_a, **_k: None, raising=False)
+    monkeypatch.setattr(
+        prereqs.os, "memfd_create", lambda *_a, **_k: None, raising=False
+    )
 
 
 def _absent_everything(monkeypatch) -> None:
@@ -49,7 +53,9 @@ def test_present_prereqs_report_ok(monkeypatch) -> None:
     assert "Every known optional prerequisite is present." in report
 
 
-def test_missing_adapter_extra_is_reported_as_a_collection_blocker_not_a_skip(monkeypatch) -> None:
+def test_missing_adapter_extra_is_reported_as_a_collection_blocker_not_a_skip(
+    monkeypatch,
+) -> None:
     """Missing pyarrow is reported as making `make test` FAIL, never phrased as a quiet skip.
 
     Args:
@@ -101,7 +107,9 @@ def test_probe_failure_is_reported_as_unknown_not_a_crash(monkeypatch) -> None:
 
     monkeypatch.setattr(prereqs.shutil, "which", _boom)
     monkeypatch.setattr(prereqs.importlib.util, "find_spec", lambda _name: object())
-    monkeypatch.setattr(prereqs.os, "memfd_create", lambda *_a, **_k: None, raising=False)
+    monkeypatch.setattr(
+        prereqs.os, "memfd_create", lambda *_a, **_k: None, raising=False
+    )
     report = prereqs.format_report(prereqs.collect_prereqs())
     assert "UNKNOWN" in report
     assert "PermissionError: no access" in report
@@ -148,7 +156,9 @@ def test_script_always_exits_zero_as_a_real_subprocess() -> None:
     assert "Temp-directory observations" in result.stdout
 
 
-def test_temp_space_report_warns_when_free_space_is_low(monkeypatch, tmp_path: Path) -> None:
+def test_temp_space_report_warns_when_free_space_is_low(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Free space under the warning threshold recommends `--basetemp` isolation.
 
     Args:
@@ -159,7 +169,9 @@ def test_temp_space_report_warns_when_free_space_is_low(monkeypatch, tmp_path: P
     Raises:
         AssertionError: Low free space is not flagged, or omits the fix.
     """
-    monkeypatch.setattr(prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=5))
+    monkeypatch.setattr(
+        prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=5)
+    )
     report = prereqs.collect_temp_space_report(tmp_root=tmp_path)
     rendered = prereqs.format_temp_space_report(report)
     assert "Below" in rendered
@@ -179,7 +191,9 @@ def test_temp_space_report_is_quiet_with_ample_space_and_no_retained_runs(
     Raises:
         AssertionError: A healthy environment is reported as needing action.
     """
-    monkeypatch.setattr(prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90))
+    monkeypatch.setattr(
+        prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90)
+    )
     monkeypatch.setattr(getpass, "getuser", lambda: "fakeuser-with-no-retained-dirs")
     report = prereqs.collect_temp_space_report(tmp_root=tmp_path)
     rendered = prereqs.format_temp_space_report(report)
@@ -201,7 +215,9 @@ def test_temp_space_report_never_implies_a_non_current_run_is_safe_to_delete(
         AssertionError: The report is silent about a retained run, or implies
             that a directory other than `pytest-current` is inactive/deletable.
     """
-    monkeypatch.setattr(prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90))
+    monkeypatch.setattr(
+        prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90)
+    )
     monkeypatch.setattr(getpass, "getuser", lambda: "fakeuser")
     pytest_root = tmp_path / "pytest-of-fakeuser"
     old_run = pytest_root / "pytest-1"
@@ -236,7 +252,9 @@ def test_temp_space_report_notes_a_live_lock_file(monkeypatch, tmp_path: Path) -
         AssertionError: A fresh `.lock` file is not surfaced, understating how
             confidently this report can call a directory abandoned.
     """
-    monkeypatch.setattr(prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90))
+    monkeypatch.setattr(
+        prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90)
+    )
     monkeypatch.setattr(getpass, "getuser", lambda: "fakeuser")
     pytest_root = tmp_path / "pytest-of-fakeuser"
     locked_run = pytest_root / "pytest-1"
@@ -249,7 +267,9 @@ def test_temp_space_report_notes_a_live_lock_file(monkeypatch, tmp_path: Path) -
     assert "pytest still treats this as live" in rendered
 
 
-def test_temp_space_report_survives_a_disk_usage_failure(monkeypatch, tmp_path: Path) -> None:
+def test_temp_space_report_survives_a_disk_usage_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
     """`shutil.disk_usage` raising is reported as an observation, not propagated.
 
     Args:
@@ -271,7 +291,9 @@ def test_temp_space_report_survives_a_disk_usage_failure(monkeypatch, tmp_path: 
     assert "disk unavailable" in rendered
 
 
-def test_temp_space_report_survives_an_unresolvable_user(monkeypatch, tmp_path: Path) -> None:
+def test_temp_space_report_survives_an_unresolvable_user(
+    monkeypatch, tmp_path: Path
+) -> None:
     """`getpass.getuser` raising (no USER/LOGNAME, no pwd entry) degrades to an observation.
 
     Args:
@@ -282,7 +304,9 @@ def test_temp_space_report_survives_an_unresolvable_user(monkeypatch, tmp_path: 
     Raises:
         AssertionError: The report raises instead of reporting the scan as unavailable.
     """
-    monkeypatch.setattr(prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90))
+    monkeypatch.setattr(
+        prereqs.shutil, "disk_usage", _disk_usage(total_gib=100, free_gib=90)
+    )
 
     def _boom():
         raise OSError("no such user")

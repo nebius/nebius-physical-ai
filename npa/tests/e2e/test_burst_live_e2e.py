@@ -88,7 +88,7 @@ def test_burst_two_node_job_reaches_running_and_reports_distributed_env() -> Non
     last_status = ""
     non_scheduling: list[str] = []
     entrypoint = (
-        "python -c \"import os; "
+        'python -c "import os; '
         "print('BURST_E2E_PROCESS rank=%s world_size=%s master_addr=%s' % "
         "(os.environ.get('RANK'), os.environ.get('WORLD_SIZE'), os.environ.get('MASTER_ADDR')))\""
     )
@@ -127,9 +127,7 @@ def test_burst_two_node_job_reaches_running_and_reports_distributed_env() -> Non
             return
 
         if terminal_failure:
-            pytest.fail(
-                f"burst job failed on {gpu_per_node}: status={last_status}"
-            )
+            pytest.fail(f"burst job failed on {gpu_per_node}: status={last_status}")
         # Never scheduled (still non-terminal at deadline) or capacity-unavailable.
         non_scheduling.append(f"{gpu_per_node}={last_status}")
 

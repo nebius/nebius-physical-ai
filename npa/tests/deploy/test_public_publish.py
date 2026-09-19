@@ -301,9 +301,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore"}
-    )
+    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
         "lingbot-world",
@@ -463,9 +461,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "alpamayo2-super",
     ):
         entry = manifest[tool]
-        assert by_tool[tool].source_ref.endswith(
-            f":dev-{entry['development_sha']}"
-        )
+        assert by_tool[tool].source_ref.endswith(f":dev-{entry['development_sha']}")
         if tool == "ltx2":
             accepted_digest = images.ltx2_accepted_image_manifest()["oci_digest"]
         elif tool == "wan2-2":
@@ -558,9 +554,7 @@ def test_restricted_image_names_cover_every_contract_restricted_image() -> None:
     assert names == sorted(names), "names must be stable/sorted for operator output"
     assert contract_restricted <= set(names), sorted(contract_restricted - set(names))
     assert set(RESTRICTED_DERIVED_IMAGES).isdisjoint(CONTAINER_IMAGE_NAMES)
-    assert set(RESTRICTED_DERIVED_IMAGES).isdisjoint(
-        publicly_publishable_tools()
-    )
+    assert set(RESTRICTED_DERIVED_IMAGES).isdisjoint(publicly_publishable_tools())
 
 
 def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
@@ -683,9 +677,7 @@ def test_restricted_tool_refuses_default_official_namespace_after_override(
     monkeypatch.setattr(images, "RESTRICTED_PUBLICATION_TOOLS", frozenset({"genesis"}))
 
     with pytest.raises(ValueError, match="not publicly redistributable"):
-        container_image_for_tool(
-            "genesis", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
-        )
+        container_image_for_tool("genesis", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
 
 
 def test_restricted_tool_allows_deliberate_operator_ghcr_namespace(
@@ -738,7 +730,9 @@ def anonymous_registry(monkeypatch):
     """Exercise the real anonymous client, replacing only HTTP transport."""
     from npa.deploy import publish_public
 
-    body = b'{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}'
+    body = (
+        b'{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}'
+    )
     digest = "sha256:" + hashlib.sha256(body).hexdigest()
     state = {
         "body": body,
@@ -789,7 +783,9 @@ def anonymous_registry(monkeypatch):
 @pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
 @pytest.mark.parametrize("suffix", [":release", "@{digest}", ":release@{digest}"])
 def test_anonymous_reference_selects_exact_manifest_and_repository_scope(
-    anonymous_registry, helper, suffix,
+    anonymous_registry,
+    helper,
+    suffix,
 ):
     from npa.deploy import publish_public
 
@@ -800,10 +796,16 @@ def test_anonymous_reference_selects_exact_manifest_and_repository_scope(
     assert detail == (state["digest"] if helper == "anonymous_digest" else "HTTP 200")
     token_request, manifest_request = state["requests"]
     query = urllib.parse.parse_qs(urllib.parse.urlsplit(token_request[0]).query)
-    assert query == {"scope": ["repository:example/workbench/image:pull"], "service": ["ghcr.io"]}
+    assert query == {
+        "scope": ["repository:example/workbench/image:pull"],
+        "service": ["ghcr.io"],
+    }
     assert token_request[1] == {}
     selected = state["digest"] if "@" in suffix else "release"
-    assert manifest_request[0] == "https://ghcr.io/v2/example/workbench/image/manifests/" + selected
+    assert (
+        manifest_request[0]
+        == "https://ghcr.io/v2/example/workbench/image/manifests/" + selected
+    )
     assert manifest_request[1]["Authorization"] == "Bearer fixture-anonymous-pull"
     assert "fixture-ambient-token" not in str(state["requests"])
 
@@ -822,7 +824,9 @@ def test_anonymous_registry_port_is_not_a_tag(anonymous_registry, suffix):
     assert "Authorization" not in headers
 
 
-def test_untagged_pull_uses_latest_but_digest_resolution_requires_reference(anonymous_registry):
+def test_untagged_pull_uses_latest_but_digest_resolution_requires_reference(
+    anonymous_registry,
+):
     from npa.deploy import publish_public
 
     ref = "registry.example/team/image"
@@ -833,7 +837,9 @@ def test_untagged_pull_uses_latest_but_digest_resolution_requires_reference(anon
 
 
 @pytest.mark.parametrize("suffix", [":release", "@{digest}"])
-def test_anonymous_digest_without_header_hashes_actual_bytes(anonymous_registry, suffix):
+def test_anonymous_digest_without_header_hashes_actual_bytes(
+    anonymous_registry, suffix
+):
     from npa.deploy import publish_public
 
     state = anonymous_registry
@@ -843,17 +849,23 @@ def test_anonymous_digest_without_header_hashes_actual_bytes(anonymous_registry,
 
 
 @pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
-@pytest.mark.parametrize("case,reason", [
-    ("tampered_body", "does not match response body"),
-    ("invalid_header", "invalid manifest digest header"),
-    ("wrong_requested_digest", "does not match requested digest"),
-    ("wrong_requested_digest_no_header", "does not match requested digest"),
-    ("empty_body", "empty manifest"),
-    ("partial_response", "unreachable"),
-    ("wrong_status", "HTTP 206"),
-])
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("tampered_body", "does not match response body"),
+        ("invalid_header", "invalid manifest digest header"),
+        ("wrong_requested_digest", "does not match requested digest"),
+        ("wrong_requested_digest_no_header", "does not match requested digest"),
+        ("empty_body", "empty manifest"),
+        ("partial_response", "unreachable"),
+        ("wrong_status", "HTTP 206"),
+    ],
+)
 def test_anonymous_manifest_integrity_failure_is_not_public(
-    anonymous_registry, helper, case, reason,
+    anonymous_registry,
+    helper,
+    case,
+    reason,
 ):
     from npa.deploy import publish_public
 
@@ -873,25 +885,32 @@ def test_anonymous_manifest_integrity_failure_is_not_public(
         state["body"] = http.client.IncompleteRead(b"partial", 100)
     elif case == "wrong_status":
         state["status"] = 206
-    ok, detail = getattr(publish_public, helper)("registry.example/team/image@" + requested)
+    ok, detail = getattr(publish_public, helper)(
+        "registry.example/team/image@" + requested
+    )
     assert not ok
     assert reason in detail
     assert len(state["requests"]) == 1
 
 
 @pytest.mark.parametrize("helper", ["anonymous_digest", "anonymous_pull_ok"])
-@pytest.mark.parametrize("ref", [
-    "image:release",
-    "ghcr.io/team/image@sha256:abc",
-    "ghcr.io/team/image@sha256:" + "a" * 64 + "@sha256:" + "b" * 64,
-    "ghcr.io/team/image:release?alternate=1",
-    "ghcr.io/team/image:release#fragment",
-    "ghcr.io/team/image:release\nInjected: value",
-    "ghcr.io:99999/team/image:release",
-    "user:password@ghcr.io/team/image:release",
-    "ghcr.io/team/../image:release",
-])
-def test_invalid_anonymous_reference_rejected_before_http(anonymous_registry, helper, ref):
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "image:release",
+        "ghcr.io/team/image@sha256:abc",
+        "ghcr.io/team/image@sha256:" + "a" * 64 + "@sha256:" + "b" * 64,
+        "ghcr.io/team/image:release?alternate=1",
+        "ghcr.io/team/image:release#fragment",
+        "ghcr.io/team/image:release\nInjected: value",
+        "ghcr.io:99999/team/image:release",
+        "user:password@ghcr.io/team/image:release",
+        "ghcr.io/team/../image:release",
+    ],
+)
+def test_invalid_anonymous_reference_rejected_before_http(
+    anonymous_registry, helper, ref
+):
     from npa.deploy import publish_public
 
     assert getattr(publish_public, helper)(ref)[0] is False
@@ -902,13 +921,18 @@ def test_invalid_anonymous_reference_rejected_before_http(anonymous_registry, he
 @pytest.mark.parametrize("stage", ["token", "manifest"])
 @pytest.mark.parametrize("status", [401, 403])
 def test_anonymous_denial_never_falls_back_to_credentials(
-    anonymous_registry, helper, stage, status,
+    anonymous_registry,
+    helper,
+    stage,
+    status,
 ):
     from npa.deploy import publish_public
 
     state = anonymous_registry
     state[stage + "_error"] = status
-    ok, detail = getattr(publish_public, helper)("ghcr.io/team/image@" + state["digest"])
+    ok, detail = getattr(publish_public, helper)(
+        "ghcr.io/team/image@" + state["digest"]
+    )
     assert not ok
     assert f"HTTP {status}" in detail
     assert "private" in detail
@@ -916,13 +940,18 @@ def test_anonymous_denial_never_falls_back_to_credentials(
     assert "fixture-ambient-token" not in str(state["requests"])
 
 
-@pytest.mark.parametrize("payload", [b"{}", b"[]", b'{"token":10}', b'{"token":"bad token"}', b"not-json", b"\xff"])
+@pytest.mark.parametrize(
+    "payload",
+    [b"{}", b"[]", b'{"token":10}', b'{"token":"bad token"}', b"not-json", b"\xff"],
+)
 def test_invalid_anonymous_token_stops_before_manifest(anonymous_registry, payload):
     from npa.deploy import publish_public
 
     state = anonymous_registry
     state["token_body"] = payload
-    ok, detail = publish_public.anonymous_digest("ghcr.io/team/image@" + state["digest"])
+    ok, detail = publish_public.anonymous_digest(
+        "ghcr.io/team/image@" + state["digest"]
+    )
     assert not ok
     assert "token" in detail
     assert len(state["requests"]) == 1
@@ -1095,9 +1124,7 @@ def test_verify_accepted_releases_compares_anonymous_live_and_recorded_digests(
     plan = publish_public.accepted_release_plan(
         target_registry="ghcr.io/nebius/nebius-physical-ai"
     )[:2]
-    expected = {
-        item.target_ref: item.source_ref.rpartition("@")[2] for item in plan
-    }
+    expected = {item.target_ref: item.source_ref.rpartition("@")[2] for item in plan}
     drifted = plan[1]
 
     def resolve(ref: str, **_: object) -> tuple[bool, str]:

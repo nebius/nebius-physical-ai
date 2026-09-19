@@ -196,11 +196,18 @@ def test_gpu_subprocess_failure_retains_evidence_and_never_uploads(
 def completed_plan(monkeypatch, tmp_path):
     """Real artifact validation/publication, with only GPU and storage mocked."""
     monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
-    manifest = PlanManifest(problems=[{
-        "id": "case",
-        "start": [0, 0, 0, 0, 0, 0, 0],
-        "goal_pose": {"position_xyz": [0.5, 0, 0.3], "quaternion_wxyz": [1, 0, 0, 0]},
-    }]).model_dump(mode="json")
+    manifest = PlanManifest(
+        problems=[
+            {
+                "id": "case",
+                "start": [0, 0, 0, 0, 0, 0, 0],
+                "goal_pose": {
+                    "position_xyz": [0.5, 0, 0.3],
+                    "quaternion_wxyz": [1, 0, 0, 0],
+                },
+            }
+        ]
+    ).model_dump(mode="json")
     objects = {request().input_path: canonical(manifest)}
     events = []
     calls = []
@@ -219,15 +226,19 @@ def completed_plan(monkeypatch, tmp_path):
         output = Path(argv[argv.index("--output") + 1])
         output.mkdir()
         (output / "problems.jsonl").write_bytes(canonical(plan_row()) + b"\n")
-        (output / "result.json").write_bytes(canonical({
-            "schema_version": "npa.curobo.result.v1",
-            "engine": "nvidia-curobo-v2",
-            "source_revision": SOURCE_REVISION,
-            "run_id": "unit-run",
-            "kind": "plan",
-            "requested_modes": ["kinematic"],
-            "summary": summarize([plan_row()]),
-        }))
+        (output / "result.json").write_bytes(
+            canonical(
+                {
+                    "schema_version": "npa.curobo.result.v1",
+                    "engine": "nvidia-curobo-v2",
+                    "source_revision": SOURCE_REVISION,
+                    "run_id": "unit-run",
+                    "kind": "plan",
+                    "requested_modes": ["kinematic"],
+                    "summary": summarize([plan_row()]),
+                }
+            )
+        )
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr(runtime, "read_bytes_uri", read)
@@ -236,7 +247,9 @@ def completed_plan(monkeypatch, tmp_path):
     return SimpleNamespace(root=tmp_path, objects=objects, events=events, calls=calls)
 
 
-def test_success_cleans_only_owned_directory_after_both_readbacks(completed_plan, monkeypatch):
+def test_success_cleans_only_owned_directory_after_both_readbacks(
+    completed_plan, monkeypatch
+):
     state = completed_plan
     unrelated = state.root / "another-operation"
     unrelated.mkdir()
@@ -265,13 +278,19 @@ def test_success_cleans_only_owned_directory_after_both_readbacks(completed_plan
 
 
 @pytest.mark.parametrize("failure", ["write", "readback"])
-def test_partial_publication_preserves_completed_journal(completed_plan, monkeypatch, failure):
+def test_partial_publication_preserves_completed_journal(
+    completed_plan, monkeypatch, failure
+):
     state = completed_plan
     original_read, original_write = runtime.read_bytes_uri, runtime.write_bytes_uri
 
     def read(uri):
         data = original_read(uri)
-        return b"altered remote bytes" if failure == "readback" and uri.endswith("result.json") else data
+        return (
+            b"altered remote bytes"
+            if failure == "readback" and uri.endswith("result.json")
+            else data
+        )
 
     def write(uri, data):
         if failure == "write" and uri.endswith("result.json"):
@@ -280,14 +299,20 @@ def test_partial_publication_preserves_completed_journal(completed_plan, monkeyp
 
     monkeypatch.setattr(runtime, "read_bytes_uri", read)
     monkeypatch.setattr(runtime, "write_bytes_uri", write)
-    monkeypatch.setattr(runtime.shutil, "rmtree", lambda *_: pytest.fail("cleaned failed publication"))
+    monkeypatch.setattr(
+        runtime.shutil, "rmtree", lambda *_: pytest.fail("cleaned failed publication")
+    )
     with pytest.raises((OSError, CuroboError)):
         runtime.plan(request())
     directories = list(state.root.iterdir())
     assert len(directories) == 1
     assert directories[0].stat().st_mode & 0o777 == 0o700
-    assert (directories[0] / "output/problems.jsonl").read_bytes() == canonical(plan_row()) + b"\n"
-    assert (directories[0] / "runtime.log").read_bytes() == b"completed solver fixture\n"
+    assert (directories[0] / "output/problems.jsonl").read_bytes() == canonical(
+        plan_row()
+    ) + b"\n"
+    assert (
+        directories[0] / "runtime.log"
+    ).read_bytes() == b"completed solver fixture\n"
     assert request().output_path + "/problems.jsonl" in state.objects
     assert len(state.calls) == 1
 
@@ -308,7 +333,9 @@ def test_cleanup_failure_keeps_success_and_emits_only_fixed_warning(
     assert json.loads(state.objects[request().output_path + "/result.json"]) == result
     assert len(state.calls) == 1
     assert len(list(state.root.iterdir())) == 1
-    assert caplog.messages == ["cuRobo artifacts verified; local working-file cleanup failed"]
+    assert caplog.messages == [
+        "cuRobo artifacts verified; local working-file cleanup failed"
+    ]
     assert "private diagnostic" not in caplog.text
     assert str(state.root) not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
@@ -460,10 +487,7 @@ def test_plan_result_requires_exact_requested_population(
     def run(argv, **kwargs):
         output = Path(argv[argv.index("--output") + 1])
         output.mkdir()
-        rows = [
-            {**plan_row(), "problem_id": name}
-            for name in ("first", "second")
-        ]
+        rows = [{**plan_row(), "problem_id": name} for name in ("first", "second")]
         if mutation == "drop":
             rows.pop()
         elif mutation == "swap_id":

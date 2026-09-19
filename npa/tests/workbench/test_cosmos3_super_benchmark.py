@@ -34,7 +34,9 @@ def test_plan_pins_primary_contract() -> None:
     assert plan["model"]["revision"] == benchmark.MODEL_REVISION
     assert plan["workload"] == benchmark.WORKLOAD
     assert [cell["services"] for cell in plan["topologies"]] == [1, 2, 4, 8]
-    assert all(cell["request_concurrency_per_service"] == 1 for cell in plan["topologies"])
+    assert all(
+        cell["request_concurrency_per_service"] == 1 for cell in plan["topologies"]
+    )
     assert all(cell["warmups_per_service"] == 1 for cell in plan["topologies"])
     assert plan["sync_timeout_seconds"] == 5400
     assert plan["gpu"] == {"family": "B200", "node_gpu_count": 8}
@@ -64,9 +66,7 @@ def test_h200_single_gpu_plan_is_tp1_and_explicitly_not_a_paper_cell() -> None:
         gpu_family="H200",
         suite="h200-single-gpu",
     )
-    assert plan["schema_version"] == (
-        "npa.cosmos3-super.h200-single-gpu-validation.v1"
-    )
+    assert plan["schema_version"] == ("npa.cosmos3-super.h200-single-gpu-validation.v1")
     assert plan["gpu"] == {"family": "H200", "node_gpu_count": 1}
     assert plan["validation_scope"] == {
         "kind": "single-gpu-functional-performance",
@@ -100,9 +100,7 @@ def test_h200_single_gpu_plan_is_tp1_and_explicitly_not_a_paper_cell() -> None:
         ({"attempts": 23}, "exactly 24"),
     ],
 )
-def test_h200_single_gpu_suite_rejects_scope_drift(
-    kwargs: dict, message: str
-) -> None:
+def test_h200_single_gpu_suite_rejects_scope_drift(kwargs: dict, message: str) -> None:
     options = {
         "output_path": "/tmp/results",
         "topologies": "1x1",
@@ -241,9 +239,7 @@ def test_failed_attempt_keeps_window_time_and_gets_zero_credit() -> None:
 
 def test_resource_normalized_metrics_are_explicit() -> None:
     derived = benchmark.derive_cell([_valid_record("ok")], 90.0)
-    benchmark._add_resource_normalized_metrics(
-        derived, gpu_count=1, service_count=1
-    )
+    benchmark._add_resource_normalized_metrics(derived, gpu_count=1, service_count=1)
     assert derived["valid_video_seconds_per_gpu_hour"] == 315.0
     assert derived["valid_video_seconds_per_service_hour"] == 315.0
 
@@ -432,7 +428,9 @@ def test_video_gate_checks_shape_blank_and_motion(
             }
         ]
     }
-    frames = b"".join(bytes((value + index) % 256 for value in range(256)) * 4 for index in range(5))
+    frames = b"".join(
+        bytes((value + index) % 256 for value in range(256)) * 4 for index in range(5)
+    )
 
     def fake_run(command, *, binary=False):
         if "ffprobe" in command[0]:

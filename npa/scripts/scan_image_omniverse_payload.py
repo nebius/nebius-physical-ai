@@ -288,7 +288,9 @@ def _iter_crane_export(image: str, *, max_attempts: int = 4):
             return
         if attempt == max_attempts:
             if returncode != 0:
-                raise subprocess.CalledProcessError(returncode, command) from archive_error
+                raise subprocess.CalledProcessError(
+                    returncode, command
+                ) from archive_error
             assert archive_error is not None
             raise archive_error
 
@@ -333,12 +335,16 @@ def _iter_saved_member(handle, name, documents, scanned_layers):
 
 def _require_saved_config(name, documents):
     if not isinstance(documents.get(name), dict):
-        raise RuntimeError(f"Incomplete image archive: missing or invalid config {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing or invalid config {name}"
+        )
 
 
 def _require_saved_layer(name, scanned_layers):
     if name not in scanned_layers:
-        raise RuntimeError(f"Incomplete image archive: missing or unreadable layer {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing or unreadable layer {name}"
+        )
 
 
 def _check_docker_manifest(manifest, documents, scanned_layers):
@@ -349,7 +355,9 @@ def _check_docker_manifest(manifest, documents, scanned_layers):
             raise RuntimeError("Invalid Docker image archive config reference")
         _require_saved_config(image["Config"], documents)
         layers = image.get("Layers")
-        if not isinstance(layers, list) or not all(isinstance(item, str) for item in layers):
+        if not isinstance(layers, list) or not all(
+            isinstance(item, str) for item in layers
+        ):
             raise RuntimeError("Invalid Docker image archive layer references")
         for name in layers:
             _require_saved_layer(name, scanned_layers)
@@ -359,11 +367,16 @@ def _saved_descriptor_path(descriptor, sizes):
     if not isinstance(descriptor, dict):
         raise RuntimeError("Invalid OCI image archive descriptor")
     digest = descriptor.get("digest", "")
-    if not isinstance(digest, str) or re.fullmatch(r"[a-z0-9]+:[a-f0-9]+", digest) is None:
+    if (
+        not isinstance(digest, str)
+        or re.fullmatch(r"[a-z0-9]+:[a-f0-9]+", digest) is None
+    ):
         raise RuntimeError("Invalid OCI image archive descriptor digest")
     name = "blobs/" + digest.replace(":", "/", 1)
     if name not in sizes:
-        raise RuntimeError(f"Incomplete image archive: missing referenced member {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing referenced member {name}"
+        )
     if descriptor.get("size") != sizes[name]:
         raise RuntimeError(f"Incomplete image archive: referenced size mismatch {name}")
     return name
@@ -374,14 +387,18 @@ def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
         raise RuntimeError("Invalid OCI image archive: cyclic index reference")
     document = documents.get(name)
     if not isinstance(document, dict) or document.get("schemaVersion") != 2:
-        raise RuntimeError(f"Incomplete image archive: missing or invalid manifest {name}")
+        raise RuntimeError(
+            f"Incomplete image archive: missing or invalid manifest {name}"
+        )
     if "manifests" in document:
         children = document["manifests"]
         if not isinstance(children, list) or not children:
             raise RuntimeError(f"Invalid OCI image archive: empty index {name}")
         for descriptor in children:
             child = _saved_descriptor_path(descriptor, sizes)
-            _check_oci_manifest(child, documents, scanned_layers, sizes, (*ancestors, name))
+            _check_oci_manifest(
+                child, documents, scanned_layers, sizes, (*ancestors, name)
+            )
         return
     config = _saved_descriptor_path(document.get("config"), sizes)
     _require_saved_config(config, documents)
@@ -401,7 +418,9 @@ def _check_saved_image(documents, scanned_layers, sizes):
     if "index.json" in documents:
         layout = documents.get("oci-layout")
         if not isinstance(layout, dict) or layout.get("imageLayoutVersion") != "1.0.0":
-            raise RuntimeError("Incomplete image archive: missing or invalid oci-layout")
+            raise RuntimeError(
+                "Incomplete image archive: missing or invalid oci-layout"
+            )
         _check_oci_manifest("index.json", documents, scanned_layers, sizes)
 
 
@@ -447,7 +466,14 @@ def _iter_docker_save(image: str):
 
 def _local_image_history(image: str) -> list[str]:
     docker = _require("docker")
-    command = [docker, "history", "--no-trunc", "--format", "{{json .CreatedBy}}", image]
+    command = [
+        docker,
+        "history",
+        "--no-trunc",
+        "--format",
+        "{{json .CreatedBy}}",
+        image,
+    ]
     result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, command)
@@ -570,7 +596,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    selected = sum(bool(value) for value in (args.image, args.tarball, args.docker_image))
+    selected = sum(
+        bool(value) for value in (args.image, args.tarball, args.docker_image)
+    )
     if selected != 1:
         parser.error("pass exactly one image reference, --tarball, or --docker-image")
 

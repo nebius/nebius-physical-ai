@@ -17,8 +17,10 @@ from npa.workflows.byof import openpi_gcs as gcs
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.public_inputs,
-    pytest.mark.skipif(os.environ.get("NPA_INTEGRATION_E2E") != "1",
-                       reason="requires explicit public GCS live validation"),
+    pytest.mark.skipif(
+        os.environ.get("NPA_INTEGRATION_E2E") != "1",
+        reason="requires explicit public GCS live validation",
+    ),
 ]
 
 
@@ -39,9 +41,12 @@ def test_real_pinned_filter_dictionary_staging_and_cache_reuse(tmp_path):
     assert first["cache_reused"] is False
     assert second["cache_reused"] is True
     evidence = {
-        "status": "completed", "component": "OpenPI public DROID filter staging",
-        "size_bytes": first["size_bytes"], "sha256": first["sha256"],
-        "entry_count": first["entry_count"], "verified_cache_reuse": True,
+        "status": "completed",
+        "component": "OpenPI public DROID filter staging",
+        "size_bytes": first["size_bytes"],
+        "sha256": first["sha256"],
+        "entry_count": first["entry_count"],
+        "verified_cache_reuse": True,
     }
     (tmp_path / "validation.json").write_text(json.dumps(evidence, indent=2))
 
@@ -61,14 +66,22 @@ def test_real_public_prefix_inventory_sync_and_corruption_repair(tmp_path, capsy
     assert len(files) == expected_count
     assert sum(path.stat().st_size for path in files) == expected_bytes
     target = destination / droid.FILTER_DICTIONARY_URI.rsplit("/", 1)[1]
-    assert droid._validate_filter_dictionary(target)["sha256"] == droid.FILTER_DICTIONARY_SHA256
+    assert (
+        droid._validate_filter_dictionary(target)["sha256"]
+        == droid.FILTER_DICTIONARY_SHA256
+    )
     with target.open("r+b") as handle:
         handle.write(b"corrupt")
     gcs.run(["-m", "rsync", "-r", "-c", source, str(destination)])
-    assert droid._validate_filter_dictionary(target)["sha256"] == droid.FILTER_DICTIONARY_SHA256
+    assert (
+        droid._validate_filter_dictionary(target)["sha256"]
+        == droid.FILTER_DICTIONARY_SHA256
+    )
     evidence = {
-        "status": "completed", "component": "OpenPI public GCS checksum synchronization",
-        "object_count": expected_count, "size_bytes": expected_bytes,
+        "status": "completed",
+        "component": "OpenPI public GCS checksum synchronization",
+        "object_count": expected_count,
+        "size_bytes": expected_bytes,
         "verified_corruption_repair": True,
     }
     (tmp_path / "validation.json").write_text(json.dumps(evidence, indent=2))

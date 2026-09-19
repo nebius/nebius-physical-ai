@@ -52,7 +52,9 @@ def eval_cmd(
         help="S3 or local path for MJLab evaluation JSON.",
     ),
     suite: str = typer.Option("locomotion", "--suite", help="MJLab suite name."),
-    embodiment: str = typer.Option("unitree-g1", "--embodiment", help="Robot embodiment."),
+    embodiment: str = typer.Option(
+        "unitree-g1", "--embodiment", help="Robot embodiment."
+    ),
     episodes: int = typer.Option(8, "--episodes", help="Evaluation episode count."),
     success_threshold: float = typer.Option(
         0.75,
@@ -64,8 +66,12 @@ def eval_cmd(
         "--score",
         help="Override deterministic score for tests and dry validation.",
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not write the result artifact."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Evaluate a SONIC locomotion checkpoint against MJLab metrics."""
 
@@ -99,7 +105,9 @@ def workflow_cmd(
         envvar=DEFAULT_WORKBENCH_IMAGE_ENV,
         help="Workbench workflow image. Also settable with NPA_WORKBENCH_IMAGE.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show the npa.workflow spec for MJLab evaluation."""
 
@@ -115,7 +123,9 @@ def workflow_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show MJLab tool status."""
 
@@ -131,7 +141,9 @@ def status_cmd(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List supported MJLab evaluation suites."""
 
@@ -147,7 +159,11 @@ def list_cmd(
 
 
 def _env_dry_run() -> bool:
-    return os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
+    return os.environ.get("NPA_DRY_RUN", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    } or os.environ.get(
         "DRY_RUN",
         "",
     ).lower() in {"1", "true", "yes"}

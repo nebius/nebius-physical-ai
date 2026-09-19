@@ -30,7 +30,10 @@ def _planner(script):
     def _call(messages, *, tier="cheap"):
         obj = script[min(calls["n"], len(script) - 1)]
         calls["n"] += 1
-        return {"choices": [{"message": {"content": json.dumps(obj)}}], "usage": {"total_tokens": 0}}
+        return {
+            "choices": [{"message": {"content": json.dumps(obj)}}],
+            "usage": {"total_tokens": 0},
+        }
 
     return _call
 
@@ -39,41 +42,79 @@ def test_match_sim2real_status_intent() -> None:
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("What's the workflow status?") == "sim2real_status"
     assert match_chat_intent("create a 2-step sim2real workflow") == "create_workflow"
-    assert match_chat_intent("create a gpu workflow across 2 different regions") == "create_workflow"
-    assert match_chat_intent("generate an example simple workflow YAML") == "create_workflow"
+    assert (
+        match_chat_intent("create a gpu workflow across 2 different regions")
+        == "create_workflow"
+    )
+    assert (
+        match_chat_intent("generate an example simple workflow YAML")
+        == "create_workflow"
+    )
     assert match_chat_intent("start the sim2real pipeline") == "start_sim2real"
     assert match_chat_intent("run actual Sim2Real now") == "start_sim2real"
     assert match_chat_intent("what sim2real run should I view?") == "find_artifacts"
     assert match_chat_intent("which run should I load") == "find_artifacts"
     assert match_chat_intent("watch the sim") == "watch_sim"
     assert match_chat_intent("track the rerun timeline") == "watch_sim"
-    assert match_chat_intent("keep me posted with live updates on the sim run") == "watch_sim"
+    assert (
+        match_chat_intent("keep me posted with live updates on the sim run")
+        == "watch_sim"
+    )
     assert match_chat_intent("rerun blob iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("retry blob iframe until ready") == "watch_sim"
     assert match_chat_intent("watch sim and refresh when rrd lands") == "watch_sim"
     assert match_chat_intent("watch rerun blob+iframe until success") == "watch_sim"
-    assert match_chat_intent("wait until both blob and iframe are SUCCESS") == "watch_sim"
-    assert match_chat_intent("watch rerun blob iframe until consecutive success") == "watch_sim"
-    assert match_chat_intent("keep rerun blob iframe green before finishing") == "watch_sim"
-    assert match_chat_intent("mark rerun blob iframe passed before finishing") == "watch_sim"
+    assert (
+        match_chat_intent("wait until both blob and iframe are SUCCESS") == "watch_sim"
+    )
+    assert (
+        match_chat_intent("watch rerun blob iframe until consecutive success")
+        == "watch_sim"
+    )
+    assert (
+        match_chat_intent("keep rerun blob iframe green before finishing")
+        == "watch_sim"
+    )
+    assert (
+        match_chat_intent("mark rerun blob iframe passed before finishing")
+        == "watch_sim"
+    )
     assert match_chat_intent("rerun blob-iframe until SUCCESS") == "watch_sim"
     assert match_chat_intent("rerun: blob/iframe; wait -> SUCCESS") == "watch_sim"
-    assert match_chat_intent("keep rerun blob iframe healthy before finishing") == "watch_sim"
-    assert match_chat_intent("Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent.") == "watch_sim"
+    assert (
+        match_chat_intent("keep rerun blob iframe healthy before finishing")
+        == "watch_sim"
+    )
+    assert (
+        match_chat_intent(
+            "Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent."
+        )
+        == "watch_sim"
+    )
     assert (
         match_chat_intent(
             "Enhance NPA agent chat intent routing and Rerun blob iframe until SUCCESS. Branch feat/npa-agent. Bootstrap rtxpro/agent after changes."
         )
         == "watch_sim"
     )
-    assert match_chat_intent("watch until RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS") == "watch_sim"
-    assert match_chat_intent("load franka then rerun blob iframe until SUCCESS") == "watch_sim"
     assert (
-        match_chat_intent("add an open source repo, containerize, push to registry, and run LeIsaac")
+        match_chat_intent("watch until RERUN_BLOB_SUCCESS and RERUN_MOUNT_SUCCESS")
+        == "watch_sim"
+    )
+    assert (
+        match_chat_intent("load franka then rerun blob iframe until SUCCESS")
+        == "watch_sim"
+    )
+    assert (
+        match_chat_intent(
+            "add an open source repo, containerize, push to registry, and run LeIsaac"
+        )
         == "onboard_solution"
     )
     assert (
-        match_chat_intent("onboard a new workbench solution from a github repo with container and sky smoke")
+        match_chat_intent(
+            "onboard a new workbench solution from a github repo with container and sky smoke"
+        )
         == "onboard_solution"
     )
     assert (
@@ -84,14 +125,34 @@ def test_match_sim2real_status_intent() -> None:
         == "onboard_solution"
     )
     assert match_chat_intent("what artifacts can I view?") == "find_artifacts"
-    assert match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra") == "create_workflow"
-    assert match_chat_intent("camera angle inspector with top-down frustum preview") == "cameras"
-    assert match_chat_intent("select scene robot props and cameras before submit") == "sim_assets"
-    assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
+    assert (
+        match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra")
+        == "create_workflow"
+    )
+    assert (
+        match_chat_intent("camera angle inspector with top-down frustum preview")
+        == "cameras"
+    )
+    assert (
+        match_chat_intent("select scene robot props and cameras before submit")
+        == "sim_assets"
+    )
+    assert (
+        match_chat_intent("what does cosmos support for finetuning")
+        == "cosmos_capabilities"
+    )
     assert match_chat_intent("what does lancedb expose") == "lancedb_capabilities"
-    assert match_chat_intent("run on live infra in tmux loop with gpu compatibility checks") == "live_infra_loop"
+    assert (
+        match_chat_intent(
+            "run on live infra in tmux loop with gpu compatibility checks"
+        )
+        == "live_infra_loop"
+    )
     assert match_chat_intent("show my tenant resources") == "tenant_resources"
-    assert match_chat_intent("what resources can I access in this project?") == "tenant_resources"
+    assert (
+        match_chat_intent("what resources can I access in this project?")
+        == "tenant_resources"
+    )
 
 
 def test_every_intent_declares_its_apis() -> None:
@@ -129,7 +190,7 @@ def test_live_runtime_evidence_routes_to_safe_artifact_loading() -> None:
 
 
 def test_tool_capability_questions_route_consistently() -> None:
-    """"what can <tool> do" reaches the tool's own grounded reply.
+    """ "what can <tool> do" reaches the tool's own grounded reply.
 
     Regression: every sibling tool rule accepted this phrasing except LanceDB,
     so the LanceDB turn silently degraded to the generic component overview
@@ -190,7 +251,9 @@ def test_catalog_composition_requires_semantic_or_tool_specific_goal() -> None:
     from npa.cli.agent_chat import goal_requests_catalog_composition
 
     assert not goal_requests_catalog_composition("create 2-step sim2real workflow")
-    assert not goal_requests_catalog_composition("generate an example simple workflow YAML")
+    assert not goal_requests_catalog_composition(
+        "generate an example simple workflow YAML"
+    )
     assert goal_requests_catalog_composition("write YAML using the cosmos tool")
     assert goal_requests_catalog_composition("curate a dataset -> train -> evaluate")
     assert goal_requests_catalog_composition(
@@ -254,7 +317,10 @@ def test_format_sim2real_status_includes_run_id_and_stage() -> None:
             "rrd_updated_at": "2026-06-25T00:00:00+00:00",
             "rerun_iframe_url": "/rerun/?url=/api/sim-viz/rrd&camera=workspace",
         },
-        "latest_submit": {"run_id": "agent-run-deadbeef", "submitted_at": "2026-06-25T00:00:00+00:00"},
+        "latest_submit": {
+            "run_id": "agent-run-deadbeef",
+            "submitted_at": "2026-06-25T00:00:00+00:00",
+        },
         "selection": {"robot_preset": "franka", "sim_backend": "isaac"},
     }
     reply = format_sim2real_status(state, rerun_ready=True)
@@ -268,15 +334,27 @@ def test_format_sim2real_status_includes_run_id_and_stage() -> None:
 
 
 def test_build_grounded_reply_sim2real_status() -> None:
-    state = {"sim_viz": {"run_id": "x", "stage": "idle"}, "selection": {}, "latest_submit": {}}
-    reply = build_grounded_reply("sim2real_status", state, ["workbench.lerobot"], rerun_ready=False)
+    state = {
+        "sim_viz": {"run_id": "x", "stage": "idle"},
+        "selection": {},
+        "latest_submit": {},
+    }
+    reply = build_grounded_reply(
+        "sim2real_status", state, ["workbench.lerobot"], rerun_ready=False
+    )
     assert "**stage**" in reply
     assert "GET /api" not in reply
 
 
 def test_build_grounded_reply_watch_sim_mentions_success() -> None:
-    state = {"sim_viz": {"run_id": "x", "stage": "running"}, "selection": {}, "latest_submit": {}}
-    reply = build_grounded_reply("watch_sim", state, ["workbench.lerobot"], rerun_ready=True)
+    state = {
+        "sim_viz": {"run_id": "x", "stage": "running"},
+        "selection": {},
+        "latest_submit": {},
+    }
+    reply = build_grounded_reply(
+        "watch_sim", state, ["workbench.lerobot"], rerun_ready=True
+    )
     assert "SUCCESS" in reply
     assert "blob" in reply
     assert "iframe mount" in reply
@@ -298,7 +376,9 @@ def test_watch_sim_apis_include_rrd_paths() -> None:
 
 def test_onboard_solution_reply_is_generic_and_runnable() -> None:
     state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
-    reply = build_grounded_reply("onboard_solution", state, ["workbench.rl.policy_train"])
+    reply = build_grounded_reply(
+        "onboard_solution", state, ["workbench.rl.policy_train"]
+    )
     assert "npa workbench byof run" in reply or "run_byof_repo.py" in reply
     assert "--base-profile" in reply or "--base-image" in reply
     assert "byof-onboard" in reply or "skills/workflows/byof-onboard" in reply
@@ -332,9 +412,14 @@ def test_onboard_solution_apis_include_tools_and_workflow_gates() -> None:
 
 
 def test_onboard_solution_does_not_shadow_create_workflow() -> None:
-    assert match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra") == "create_workflow"
     assert (
-        match_chat_intent("containerize a github repo and onboard it into the workbench with sky smoke")
+        match_chat_intent("create a LeIsaac BYOF Isaac Lab workflow for live infra")
+        == "create_workflow"
+    )
+    assert (
+        match_chat_intent(
+            "containerize a github repo and onboard it into the workbench with sky smoke"
+        )
         == "onboard_solution"
     )
 
@@ -395,7 +480,10 @@ def test_tenant_resources_reply_is_zero_token_grounded_inventory() -> None:
                     "discovered": [],
                     "configured_count": 1,
                     "discovered_count": 0,
-                    "error": {"kind": "permission_denied", "message": "Not enumerable."},
+                    "error": {
+                        "kind": "permission_denied",
+                        "message": "Not enumerable.",
+                    },
                 },
             ],
         }
@@ -408,7 +496,9 @@ def test_tenant_resources_reply_is_zero_token_grounded_inventory() -> None:
 
 def test_live_infra_loop_reply_mentions_registry_and_gpu_checks() -> None:
     state = {"sim_viz": {}, "selection": {}, "latest_submit": {}}
-    reply = build_grounded_reply("live_infra_loop", state, ["workbench.cosmos2.transfer"])
+    reply = build_grounded_reply(
+        "live_infra_loop", state, ["workbench.cosmos2.transfer"]
+    )
     assert "Live infra loop guidance" in reply
     assert "public GHCR releases" in reply or "no placeholders" in reply
     assert "sky gpus list" in reply
@@ -454,11 +544,19 @@ def test_chat_action_mode_drives_readonly_loop_over_insights() -> None:
     # trace + grounded final), not the old "POST /api/agent/act" boilerplate.
     planner = _planner(
         [
-            {"tool": "insights_compare", "args": {"base_run": "r1", "candidate_run": "r2"}},
+            {
+                "tool": "insights_compare",
+                "args": {"base_run": "r1", "candidate_run": "r2"},
+            },
             {"final": "Run `r2` regressed on **collision_rate** vs `r1`."},
         ]
     )
-    tools = {"insights_compare": lambda args: {"regressed": ["collision_rate"], "improved": []}}
+    tools = {
+        "insights_compare": lambda args: {
+            "regressed": ["collision_rate"],
+            "improved": [],
+        }
+    }
     result = agent_actions.run_chat_action_loop(
         "which runs regressed on collision rate", tools=tools, model_call=planner
     )
@@ -477,9 +575,11 @@ def test_chat_action_mode_gpu_turn_still_needs_confirmation() -> None:
         launched["n"] += 1
         return {"run_id": "x"}
 
-    planner = _planner([{ "tool": "sim2real_submit", "args": {"run_id": "x"}}])
+    planner = _planner([{"tool": "sim2real_submit", "args": {"run_id": "x"}}])
     result = agent_actions.run_chat_action_loop(
-        "launch a big sim2real run", tools={"sim2real_submit": _submit}, model_call=planner
+        "launch a big sim2real run",
+        tools={"sim2real_submit": _submit},
+        model_call=planner,
     )
     assert launched["n"] == 0
     assert result["needs_confirmation"] is True
@@ -489,12 +589,24 @@ def test_chat_action_mode_gpu_turn_still_needs_confirmation() -> None:
 def test_author_workflow_requests_route_to_create_workflow_not_capabilities() -> None:
     # "write me a 2 step npa yaml that uses cosmos" must generate a workflow,
     # not fall through to the cosmos capabilities blurb.
-    assert match_chat_intent("write me a 2 step npa yaml that uses cosmos") == "create_workflow"
-    assert match_chat_intent("generate a 3-step npa spec that uses cosmos") == "create_workflow"
-    assert match_chat_intent("build an npa yaml pipeline that uses lancedb") == "create_workflow"
+    assert (
+        match_chat_intent("write me a 2 step npa yaml that uses cosmos")
+        == "create_workflow"
+    )
+    assert (
+        match_chat_intent("generate a 3-step npa spec that uses cosmos")
+        == "create_workflow"
+    )
+    assert (
+        match_chat_intent("build an npa yaml pipeline that uses lancedb")
+        == "create_workflow"
+    )
     assert match_chat_intent("draft a two step npa.workflow spec") == "create_workflow"
     # Non-authoring cosmos questions still route to capabilities.
-    assert match_chat_intent("what does cosmos support for finetuning") == "cosmos_capabilities"
+    assert (
+        match_chat_intent("what does cosmos support for finetuning")
+        == "cosmos_capabilities"
+    )
     assert match_chat_intent("what can cosmos do") == "cosmos_capabilities"
 
 
@@ -509,7 +621,9 @@ def test_metric_resource_queries_fall_through_to_insights() -> None:
         "list runs by accelerator count",
         "which runs regressed on success rate",
     ):
-        assert match_chat_intent(turn) not in {"find_artifacts", "list_recordings"}, turn
+        assert match_chat_intent(turn) not in {"find_artifacts", "list_recordings"}, (
+            turn
+        )
 
 
 def test_plain_run_listing_stays_grounded_zero_tokens() -> None:
@@ -540,7 +654,9 @@ def test_author_workflow_from_goal_composes_cosmos_from_live_catalog() -> None:
     assert result["runnable"] is False
     assert result["context_errors"]
     assert len(result["states"]) == 2
-    assert result["tool_refs"] and all(ref in TOOL_CATALOG for ref in result["tool_refs"])
+    assert result["tool_refs"] and all(
+        ref in TOOL_CATALOG for ref in result["tool_refs"]
+    )
     assert any("cosmos" in ref for ref in result["tool_refs"])
     assert "npa.workflow/v0.0.1" in result["yaml"]
     # Two cosmos tools match a 2-step cosmos goal, so no padding.
@@ -659,7 +775,8 @@ def test_author_workflow_flags_padded_placeholder_states() -> None:
         (
             candidate
             for candidate in ("cosmos", "sonic", "mjlab", "retargeting")
-            if len([ref for ref in TOOL_CATALOG if candidate in ref.lower()]) < max_steps
+            if len([ref for ref in TOOL_CATALOG if candidate in ref.lower()])
+            < max_steps
         ),
         "",
     )
@@ -698,7 +815,11 @@ def test_foxglove_intent_routes_and_grounds() -> None:
         assert match_chat_intent(text) == "foxglove_viewer", text
 
     # Rerun / generic viewer turns must not be captured by the new intent.
-    for text in ("watch the sim", "what is the current status", "open the rerun timeline"):
+    for text in (
+        "watch the sim",
+        "what is the current status",
+        "open the rerun timeline",
+    ):
         assert match_chat_intent(text) != "foxglove_viewer", text
 
     reply = build_grounded_reply(
@@ -734,7 +855,12 @@ def test_foxglove_grounded_reply_explains_unconfigured_state() -> None:
 
     reply = build_grounded_reply(
         "foxglove_viewer",
-        {"foxglove": {"available": False, "reason": "Foxglove SDK assets are not installed."}},
+        {
+            "foxglove": {
+                "available": False,
+                "reason": "Foxglove SDK assets are not installed.",
+            }
+        },
         [],
     )
     assert "`False`" in reply
@@ -765,7 +891,9 @@ def test_keyword_skill_rules_lead_with_the_npa_workflow_skill() -> None:
         assert skill_names_for_keywords(text) == [], text
 
 
-def test_keyword_skill_rules_select_access_approval_without_catching_unrelated_access() -> None:
+def test_keyword_skill_rules_select_access_approval_without_catching_unrelated_access() -> (
+    None
+):
     from npa.cli.agent_chat import skill_names_for_keywords
 
     for text in (

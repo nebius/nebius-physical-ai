@@ -26,14 +26,18 @@ def _add(track, sound, start, gain, pan=0):
     end = min(len(track), begin + len(sound))
     if end <= begin:
         return
-    track[begin:end, 0] += sound[:end - begin] * gain * (1 - pan * 0.35)
-    track[begin:end, 1] += sound[:end - begin] * gain * (1 + pan * 0.35)
+    track[begin:end, 0] += sound[: end - begin] * gain * (1 - pan * 0.35)
+    track[begin:end, 1] += sound[: end - begin] * gain * (1 + pan * 0.35)
 
 
 def _score(path, duration):
     track = np.zeros((round(duration * _RATE), 2), dtype=np.float32)
-    chords = [(164.81, 196, 246.94), (130.81, 164.81, 196),
-              (146.83, 185, 220), (110, 130.81, 164.81)]
+    chords = [
+        (164.81, 196, 246.94),
+        (130.81, 164.81, 196),
+        (146.83, 185, 220),
+        (110, 130.81, 164.81),
+    ]
     random = np.random.default_rng(20260912)
     for section, start in enumerate(np.arange(0, duration, 8)):
         chord = chords[section % len(chords)]
@@ -57,10 +61,21 @@ def _score(path, duration):
 
 
 def _duration(path):
-    return float(subprocess.check_output([
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", str(path),
-    ], text=True).strip())
+    return float(
+        subprocess.check_output(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            text=True,
+        ).strip()
+    )
 
 
 def _normalize_voice(scene, source, target):
@@ -68,10 +83,28 @@ def _normalize_voice(scene, source, target):
     speed = max(1, _duration(source) / available)
     if speed > 1.15:
         raise ValueError(f"Narration too long for {scene['id']}; shorten its text")
-    filters = (f"atempo={speed},loudnorm=I=-18:TP=-2:LRA=9,"
-               f"adelay=350:all=1,apad,atrim=duration={scene['duration']}")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source),
-                    "-af", filters, "-ar", str(_RATE), "-ac", "2", str(target)], check=True)
+    filters = (
+        f"atempo={speed},loudnorm=I=-18:TP=-2:LRA=9,"
+        f"adelay=350:all=1,apad,atrim=duration={scene['duration']}"
+    )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-af",
+            filters,
+            "-ar",
+            str(_RATE),
+            "-ac",
+            "2",
+            str(target),
+        ],
+        check=True,
+    )
 
 
 def _narration(scenes, voice_dir, output_dir, cache_root=None):
@@ -82,11 +115,22 @@ def _narration(scenes, voice_dir, output_dir, cache_root=None):
         if cache_root is None:
             _normalize_voice(scene, source, target)
         else:
-            inputs = {"audio": _hash(source), "duration": scene["duration"],
-                      "code": _hash(Path(__file__)),
-                      "ffmpeg": subprocess.check_output(["ffmpeg", "-version"], text=True).splitlines()[0]}
-            cached, _ = _build_cached(cache_root, "voices", inputs,
-                lambda staging, scene=scene, source=source: _normalize_voice(scene, source, staging / "voice.wav"))
+            inputs = {
+                "audio": _hash(source),
+                "duration": scene["duration"],
+                "code": _hash(Path(__file__)),
+                "ffmpeg": subprocess.check_output(
+                    ["ffmpeg", "-version"], text=True
+                ).splitlines()[0],
+            }
+            cached, _ = _build_cached(
+                cache_root,
+                "voices",
+                inputs,
+                lambda staging, scene=scene, source=source: _normalize_voice(
+                    scene, source, staging / "voice.wav"
+                ),
+            )
             target = cached / "voice.wav"
         parts.append(target)
     target = output_dir / "narration.wav"
@@ -107,20 +151,56 @@ def _mix(scenes, voice_dir, output_dir, cache_root=None, music_path=None):
         _score(music, duration)
     narration = _narration(scenes, Path(voice_dir), output_dir, cache_root)
     result = output_dir / "mix.m4a"
-    subprocess.run([
-        "ffmpeg", "-v", "error", "-y", "-i", str(narration), "-i", str(music),
-        "-filter_complex", "[0:a][1:a]amix=inputs=2:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=9",
-        "-ar", str(_RATE), "-c:a", "aac", "-b:a", "256k", str(result),
-    ], check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(narration),
+            "-i",
+            str(music),
+            "-filter_complex",
+            "[0:a][1:a]amix=inputs=2:normalize=0,loudnorm=I=-16:TP=-1.5:LRA=9",
+            "-ar",
+            str(_RATE),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "256k",
+            str(result),
+        ],
+        check=True,
+    )
     return result
 
 
 def _prepare_music(source, target, duration):
     digest = _hash(source)
     if _duration(source) + 0.05 < duration:
-        raise ValueError("Supplied music must cover the film duration; extend the score before rendering")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(source),
-                    "-t", str(duration), "-af", "loudnorm=I=-29:TP=-6:LRA=12",
-                    "-ar", str(_RATE), "-ac", "2", str(target)], check=True)
+        raise ValueError(
+            "Supplied music must cover the film duration; extend the score before rendering"
+        )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-t",
+            str(duration),
+            "-af",
+            "loudnorm=I=-29:TP=-6:LRA=12",
+            "-ar",
+            str(_RATE),
+            "-ac",
+            "2",
+            str(target),
+        ],
+        check=True,
+    )
     if _hash(source) != digest:
         raise ValueError("Music changed during mixing; rerun after finishing the edit")

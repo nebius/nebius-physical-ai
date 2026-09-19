@@ -156,7 +156,10 @@ def _adopted_project_kubernetes_config(project_id: str) -> tuple[dict[str, str],
         content = kubeconfig.read_text(encoding="utf-8")
     except OSError:
         return {}, ""
-    return {"cluster_name": context, "context": context}, _agent_kubeconfig_without_operator_profile(content)
+    return {
+        "cluster_name": context,
+        "context": context,
+    }, _agent_kubeconfig_without_operator_profile(content)
 
 
 def _remote_kubernetes_config(project_alias: str) -> tuple[dict[str, str], str]:

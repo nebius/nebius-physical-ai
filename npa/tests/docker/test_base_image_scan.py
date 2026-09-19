@@ -149,7 +149,9 @@ def test_python_scan_matches_fiftyones_pinned_and_upgraded_base() -> None:
         for line in dockerfile.splitlines()
         if line.startswith("FROM ")
     )
-    entry = next(item for item in _entries() if item["name"] == "python-3-11-slim-trixie")
+    entry = next(
+        item for item in _entries() if item["name"] == "python-3-11-slim-trixie"
+    )
     assert entry["image"] == base and "@sha256:" in base
     assert entry["upgrade_os"] is True
     for command in ("apt-get update", "apt-get upgrade", "rm -rf /var/lib/apt/lists/*"):
@@ -167,7 +169,9 @@ def test_base_cve_gate_is_blocking_and_os_scoped() -> None:
         AssertionError: The Trivy command becomes advisory or changes scope.
     """
 
-    command = scanner._trivy_command("synthetic@sha256:digest", Path("cache"), sarif=None)
+    command = scanner._trivy_command(
+        "synthetic@sha256:digest", Path("cache"), sarif=None
+    )
     assert command[command.index("--exit-code") + 1] == "1"
     assert command[command.index("--severity") + 1] == "CRITICAL"
     assert command[command.index("--vuln-type") + 1] == "os"
@@ -215,7 +219,9 @@ def test_parallel_scans_use_worker_private_trivy_caches(
 
     cache = tmp_path / "trivy"
     scan_caches: list[Path] = []
-    monkeypatch.setattr(scanner.subprocess, "run", _record_parallel_scans(cache, scan_caches))
+    monkeypatch.setattr(
+        scanner.subprocess, "run", _record_parallel_scans(cache, scan_caches)
+    )
     entries = [
         {
             "name": f"base-{index}",

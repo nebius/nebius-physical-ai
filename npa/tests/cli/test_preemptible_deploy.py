@@ -11,7 +11,9 @@ from npa.cli.main import app
 from npa.cli.fiftyone import FIFTYONE_VERSION
 
 runner = CliRunner()
-TERRAFORM_PLAN_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+TERRAFORM_PLAN_FIXTURES = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
+)
 
 
 @pytest.fixture(autouse=True)

@@ -15,10 +15,7 @@ from npa.workbench.cosmos.super_benchmark import IMAGE, MODEL_REVISION, WORKLOAD
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPEC_PATH = (
-    REPO_ROOT
-    / "workflows/testing/cosmos3-super-b200-benchmark.yaml"
-)
+SPEC_PATH = REPO_ROOT / "workflows/testing/cosmos3-super-b200-benchmark.yaml"
 
 
 def test_workflow_is_fixed_full_node_primary_sweep() -> None:
@@ -35,9 +32,12 @@ def test_workflow_is_fixed_full_node_primary_sweep() -> None:
     assert raw["config"]["suite"] == "primary"
     assert raw["config"]["gpu_family"] == "B200"
     assert raw["states"]["benchmark"]["toolRef"] == "workbench.cosmos3.super_benchmark"
-    assert raw["resources"]["b200-node"]["kubernetes"]["pod_config"]["spec"][
-        "volumes"
-    ][0]["emptyDir"]["sizeLimit"] == "32Gi"
+    assert (
+        raw["resources"]["b200-node"]["kubernetes"]["pod_config"]["spec"]["volumes"][0][
+            "emptyDir"
+        ]["sizeLimit"]
+        == "32Gi"
+    )
     assert raw["resources"]["b200-node"]["kubernetes"]["pod_config"]["spec"][
         "containers"
     ] == [
@@ -54,12 +54,11 @@ def test_workflow_is_fixed_full_node_primary_sweep() -> None:
 
 def test_workflow_renders_exact_vendor_digest_and_real_command(monkeypatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src")
-    wrapper = "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:" + (
-        "1" * 64
+    wrapper = (
+        "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:"
+        + ("1" * 64)
     )
-    spec = load_spec_for_submit(
-        SPEC_PATH, config_overrides={"runtime_image": wrapper}
-    )
+    spec = load_spec_for_submit(SPEC_PATH, config_overrides={"runtime_image": wrapper})
     plan = build_plan(spec, run_id="cosmos3-super-test")
     rendered = render_skypilot_yaml(
         spec,
@@ -70,9 +69,10 @@ def test_workflow_renders_exact_vendor_digest_and_real_command(monkeypatch) -> N
     docs = [item for item in yaml.safe_load_all(rendered) if item]
     assert docs[1]["resources"]["image_id"] == f"docker:{wrapper}"
     assert docs[1]["resources"]["accelerators"] == "B200:8"
-    assert docs[1]["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0][
-        "name"
-    ] == "ray-node"
+    assert (
+        docs[1]["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["name"]
+        == "ray-node"
+    )
     assert "npa workbench cosmos3 super-benchmark" in docs[1]["run"]
     assert "--attempts 24" in docs[1]["run"]
     assert "--suite primary" in docs[1]["run"]

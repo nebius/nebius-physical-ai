@@ -258,7 +258,9 @@ def _run(args: list[str], *, check: bool = True) -> str:
     from npa.clients.nebius_auth import nebius_profile
 
     profile = nebius_profile()
-    explicit_profile = any(arg == "--profile" or arg.startswith("--profile=") for arg in args)
+    explicit_profile = any(
+        arg == "--profile" or arg.startswith("--profile=") for arg in args
+    )
     profile_args = ["--profile", profile] if profile and not explicit_profile else []
     result = subprocess.run(
         [nebius, *profile_args, *args],
@@ -947,7 +949,15 @@ def list_quota_allowances(
         raise NebiusError("parent_id is required to list quota allowances")
     profile_args, _resolved = _iam_profile_args(profile)
     payload = _run_json(
-        [*profile_args, "quotas", "quota-allowance", "list", "--parent-id", parent, "--all"]
+        [
+            *profile_args,
+            "quotas",
+            "quota-allowance",
+            "list",
+            "--parent-id",
+            parent,
+            "--all",
+        ]
     )
     if not isinstance(payload.get("items"), list):
         raise NebiusError("quota allowance response is malformed: items is not a list")
@@ -1058,9 +1068,7 @@ def get_compute_instance_quota(
     return region_less if region_less is not None else (None, None)
 
 
-def discover_container_registry(
-    project_id: str, *, preferred_region: str = ""
-) -> str:
+def discover_container_registry(project_id: str, *, preferred_region: str = "") -> str:
     """Compatibility seam for callers that previously discovered a registry.
 
     Official execution defaults to public GHCR and configuration no longer
@@ -2187,7 +2195,9 @@ def apply_bucket_rerun_cors(project_id: str, bucket_name: str) -> BucketCorsPlan
 
     verified = plan_bucket_rerun_cors(project_id, bucket_name)
     if verified.changed:
-        raise NebiusError("bucket CORS update completed but read-back verification failed")
+        raise NebiusError(
+            "bucket CORS update completed but read-back verification failed"
+        )
     return BucketCorsPlan(
         bucket_id=verified.bucket_id,
         resource_version=verified.resource_version,

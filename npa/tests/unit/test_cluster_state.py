@@ -39,7 +39,9 @@ def test_cluster_state_roundtrip(tmp_path) -> None:
     assert saved.exists()
     loaded = load_cluster_state("cluster-a", base_dir=tmp_path)
     assert loaded == _state()
-    assert json.loads((tmp_path / "cluster-a" / "metadata.json").read_text()) == {"event": "test"}
+    assert json.loads((tmp_path / "cluster-a" / "metadata.json").read_text()) == {
+        "event": "test"
+    }
 
 
 def test_missing_cluster_state_returns_none(tmp_path) -> None:
@@ -50,7 +52,10 @@ def test_list_local_clusters(tmp_path) -> None:
     save_cluster_state(_state("cluster-b"), base_dir=tmp_path)
     save_cluster_state(_state("cluster-a"), base_dir=tmp_path)
 
-    assert [cluster.name for cluster in list_local_clusters(base_dir=tmp_path)] == ["cluster-a", "cluster-b"]
+    assert [cluster.name for cluster in list_local_clusters(base_dir=tmp_path)] == [
+        "cluster-a",
+        "cluster-b",
+    ]
 
 
 def test_delete_cluster_state_removes_directory(tmp_path) -> None:

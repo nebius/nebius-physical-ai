@@ -492,7 +492,9 @@ def resolve_run(
 
     from npa.orchestration.npa_workflow.first_run_state import terminal_run_evidence
 
-    terminal_evidence = terminal_run_evidence(project=ledger_project, run_id=resolved_id)
+    terminal_evidence = terminal_run_evidence(
+        project=ledger_project, run_id=resolved_id
+    )
     if terminal_evidence:
         result.found = True
         result.source = "project_run_terminal_ledger"
@@ -587,7 +589,8 @@ def resolve_run(
     result.managed_job = managed
     managed_outcome: ResolutionOutcome = (
         cast(ResolutionOutcome, managed.outcome)
-        if managed.outcome in {"found", "absent", "unavailable", "not_supplied", "skipped"}
+        if managed.outcome
+        in {"found", "absent", "unavailable", "not_supplied", "skipped"}
         else "unavailable"
     )
     detail = managed.error
@@ -653,7 +656,11 @@ def resolve_run(
             )
             result.verification_unavailable = True
 
-    if planned_only_candidate and not result.found and not result.verification_unavailable:
+    if (
+        planned_only_candidate
+        and not result.found
+        and not result.verification_unavailable
+    ):
         later_checks = [
             check
             for check in result.checks

@@ -41,15 +41,17 @@ def _write_image_lerobot_dataset(
     meta = root / "meta"
     meta.mkdir(parents=True)
     (meta / "info.json").write_text(
-        json.dumps({
-            "codebase_version": "v3.0",
-            "features": {
-                "observation.image": {
-                    "dtype": "image",
-                    "shape": [1, 1, 3],
-                }
-            },
-        })
+        json.dumps(
+            {
+                "codebase_version": "v3.0",
+                "features": {
+                    "observation.image": {
+                        "dtype": "image",
+                        "shape": [1, 1, 3],
+                    }
+                },
+            }
+        )
     )
 
     rows: list[dict] = [
@@ -110,7 +112,9 @@ def test_build_lerobot_import_plan_maps_parquet_metadata(tmp_path: Path) -> None
     assert first.fields["task"] == "push cube"
 
 
-def test_build_lerobot_import_plan_skips_missing_columns_with_warnings(tmp_path: Path) -> None:
+def test_build_lerobot_import_plan_skips_missing_columns_with_warnings(
+    tmp_path: Path,
+) -> None:
     root = _write_image_lerobot_dataset(
         tmp_path / "dataset",
         include_optional_columns=False,
@@ -174,7 +178,11 @@ def test_native_task_normalization_preserves_source_and_every_other_file(tmp_pat
     root = _write_image_lerobot_dataset(tmp_path / "source")
     tasks = pa.Table.from_pandas(pd.DataFrame({"task_index": [0]}, index=["push cube"]))
     pq.write_table(tasks, root / "meta/tasks.parquet")
-    original = {path.relative_to(root): path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    original = {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
     staged = _prepare_native_lerobot_source(root, tmp_path / "staging")
     assert staged != root
     for relative, contents in original.items():
@@ -194,7 +202,10 @@ def test_native_task_column_does_not_require_a_staging_copy(tmp_path):
 
 def test_native_task_normalization_rejects_ambiguous_catalog_before_copy(tmp_path):
     root = _write_image_lerobot_dataset(tmp_path / "source")
-    pq.write_table(pa.table({"task_index": [0], "unknown": ["push cube"]}), root / "meta/tasks.parquet")
+    pq.write_table(
+        pa.table({"task_index": [0], "unknown": ["push cube"]}),
+        root / "meta/tasks.parquet",
+    )
     with pytest.raises(ValueError, match="task column or one named Pandas index"):
         _prepare_native_lerobot_source(root, tmp_path / "staging")
     assert not (tmp_path / "staging").exists()
@@ -206,10 +217,23 @@ def test_native_import_uses_normalized_staging_copy(tmp_path, monkeypatch):
     from npa import fiftyone_lerobot
 
     root = _write_image_lerobot_dataset(tmp_path / "source")
-    pq.write_table(pa.Table.from_pandas(pd.DataFrame({"task_index": [0]}, index=["push cube"])), root / "meta/tasks.parquet")
-    monkeypatch.setitem(sys.modules, "fiftyone", SimpleNamespace(types=SimpleNamespace(LeRobotDataset=object())))
-    monkeypatch.setattr(fiftyone_lerobot, "_import_native_lerobot_dataset", lambda fo, **kwargs: kwargs)
-    report = fiftyone_lerobot.import_lerobot_dataset("review", str(root), tmp_path / "datasets")
+    pq.write_table(
+        pa.Table.from_pandas(pd.DataFrame({"task_index": [0]}, index=["push cube"])),
+        root / "meta/tasks.parquet",
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "fiftyone",
+        SimpleNamespace(types=SimpleNamespace(LeRobotDataset=object())),
+    )
+    monkeypatch.setattr(
+        fiftyone_lerobot, "_import_native_lerobot_dataset", lambda fo, **kwargs: kwargs
+    )
+    report = fiftyone_lerobot.import_lerobot_dataset(
+        "review", str(root), tmp_path / "datasets"
+    )
     assert report["source_root"] != root
-    assert pq.read_table(report["source_root"] / "meta/tasks.parquet")["task"].to_pylist() == ["push cube"]
+    assert pq.read_table(report["source_root"] / "meta/tasks.parquet")[
+        "task"
+    ].to_pylist() == ["push cube"]
     assert "task" not in pq.read_table(root / "meta/tasks.parquet").column_names

@@ -144,7 +144,9 @@ def test_declared_case_budget_survives_the_daily_runner_cap(monkeypatch) -> None
 
 def test_daily_runner_wires_agent_confirmed_gpu_proof() -> None:
     repo_root = Path(__file__).resolve().parents[4]
-    script = (repo_root / "scripts" / "dev-vm-daily-tests.sh").read_text(encoding="utf-8")
+    script = (repo_root / "scripts" / "dev-vm-daily-tests.sh").read_text(
+        encoding="utf-8"
+    )
     assert "NPA_DAILY_AGENT_GPU_E2E" in script
     assert "test_agent_gpu_workflow_live_e2e.py::" in script
     assert 'NPA_AGENT_GPU_LIVE="${NPA_DAILY_AGENT_GPU_E2E:-0}"' in script

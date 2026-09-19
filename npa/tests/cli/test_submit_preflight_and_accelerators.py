@@ -31,8 +31,7 @@ from npa.provisioning_journal import OperationJournalError
 runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPENPI_FOUR_MODE_SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
+    REPO_ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 )
 
 SPEC = {
@@ -130,7 +129,9 @@ def test_verified_preflight_failure_releases_lifecycle_lock() -> None:
 
 def test_ambiguous_failure_preserves_recovery_blocker() -> None:
     operation = _RecordingOperation()
-    workflow_cli._record_workflow_submit_failure(operation, SkyPilotSubmitError("unknown"))
+    workflow_cli._record_workflow_submit_failure(
+        operation, SkyPilotSubmitError("unknown")
+    )
 
     assert operation.rollback is None
     assert operation.transitions == [("recovery-required", {"error": "unknown"})]
@@ -140,8 +141,11 @@ def test_ambiguous_failure_preserves_recovery_blocker() -> None:
 def test_postlaunch_failure_preserves_recovery_blocker(launch_attempted) -> None:
     operation = _RecordingOperation()
     transaction = type("Transaction", (), {"launch_sequence": 1})()
-    error = SkyPilotSubmitError("launch indeterminate", transaction=transaction,
-                               launch_attempted=launch_attempted)
+    error = SkyPilotSubmitError(
+        "launch indeterminate",
+        transaction=transaction,
+        launch_attempted=launch_attempted,
+    )
 
     workflow_cli._record_workflow_submit_failure(operation, error)
 
@@ -309,7 +313,9 @@ def test_openpi_readiness_uses_fully_resolved_planned_profiles(
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
@@ -432,7 +438,9 @@ def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     monkeypatch.setenv("KUBECONTEXT", "unrelated-ambient-context")
     kubeconfig = tmp_path / "kubeconfig"
-    kubeconfig.write_text(owned_gpu_discovery.read_text().replace("npa-cluster", "selected-cluster"))
+    kubeconfig.write_text(
+        owned_gpu_discovery.read_text().replace("npa-cluster", "selected-cluster")
+    )
     monkeypatch.setattr(
         "npa.cluster.state.kubeconfig_file", lambda _cluster: kubeconfig
     )
@@ -557,7 +565,9 @@ def test_submit_isolated_state_skips_shared_owner_verification(
     )
 
 
-def test_submit_isolated_state_refuses_shared_controller_binding(tmp_path: Path) -> None:
+def test_submit_isolated_state_refuses_shared_controller_binding(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(ValueError, match="cannot be combined"):
         workflow_cli._verify_submit_controller_owner(
             project="project-alias",
@@ -850,7 +860,10 @@ states:
     def check(images, **kwargs):
         observed["images"] = list(images)
         observed["pull_secrets_by_image"] = kwargs["pull_secrets_by_image"]
-        return [ImagePullCheck(image=image, status="ok", http_status=200) for image in images]
+        return [
+            ImagePullCheck(image=image, status="ok", http_status=200)
+            for image in images
+        ]
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
@@ -949,24 +962,36 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
     ],
 )
 def test_cached_capability_preserves_the_selected_image_repository(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, spec_path: Path,
-    selected_image: str, source: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    spec_path: Path,
+    selected_image: str,
+    source: str,
 ) -> None:
     """Identical mirrored bytes must not redirect a verified pull to another registry."""
     digest = "sha256:" + "7" * 64
     cached_image = "registry.example.invalid/previous/npa-cosmos-curate@" + digest
     monkeypatch.setenv("HOME", str(tmp_path))
     cache_path = tmp_path / ".npa/cache/sky-image-bootstrap.json"
-    store_cached_evidence(cache_path, ImageContractEvidence(
-        image=cached_image, digest=digest, contract_version=CONTRACT_VERSION,
-        state="compatible", source=source, cleanup="verified",
-    ))
+    store_cached_evidence(
+        cache_path,
+        ImageContractEvidence(
+            image=cached_image,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source=source,
+            cleanup="verified",
+        ),
+    )
     original_cache = cache_path.read_bytes()
     checked: list[str] = []
 
     def pull(images, **_kwargs):
         checked.extend(images)
-        return [ImagePullCheck(image=image, status="ok", digest=digest) for image in images]
+        return [
+            ImagePullCheck(image=image, status="ok", digest=digest) for image in images
+        ]
 
     def metadata(image, **_kwargs):
         assert image == selected_image
@@ -976,17 +1001,22 @@ def test_cached_capability_preserves_the_selected_image_repository(
         raise AssertionError("compatible bytes should reuse capability evidence")
 
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials", pull,
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        pull,
     )
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata", metadata,
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata,
     )
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities", unexpected_probe,
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        unexpected_probe,
     )
     pins = workflow_cli._preflight_submit_images(
-        spec_path, options=SkypilotRenderOptions(image_overrides={"*": selected_image}),
-        assume_decision="promote_checkpoint", enabled=True,
+        spec_path,
+        options=SkypilotRenderOptions(image_overrides={"*": selected_image}),
+        assume_decision="promote_checkpoint",
+        enabled=True,
     )
 
     assert checked == [selected_image]

@@ -20,7 +20,9 @@ EVIDENCE = REPOSITORY / "docs/workbench/evidence/lerobot-subtasks"
 
 @pytest.fixture(scope="module")
 def recorder():
-    spec = importlib.util.spec_from_file_location("record_lerobot_subtask_proof", SCRIPT)
+    spec = importlib.util.spec_from_file_location(
+        "record_lerobot_subtask_proof", SCRIPT
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -61,12 +63,31 @@ def test_rerun_records_all_input_and_labeled_rows(recorded) -> None:
         if chunk.entity_path != "/reviewed/frame":
             continue
         batch = chunk.to_record_batch()
-        for ordinal, text in zip(batch.column("dataset_row").to_pylist(),
-                                 batch.column("TextDocument:text").to_pylist(), strict=True):
+        for ordinal, text in zip(
+            batch.column("dataset_row").to_pylist(),
+            batch.column("TextDocument:text").to_pylist(),
+            strict=True,
+        ):
             labels.append((ordinal, json.loads(text[0])["resolved_subtask"]))
-    assert sorted(labels) == list(enumerate(["approach", "approach", "grasp", "grasp", "align", "place", "place", "place"]))
+    assert sorted(labels) == list(
+        enumerate(
+            [
+                "approach",
+                "approach",
+                "grasp",
+                "grasp",
+                "align",
+                "place",
+                "place",
+                "place",
+            ]
+        )
+    )
     assert manifest["recording"]["samples_per_entity"] == {
-        "/input/action_0": 8, "/input/frame": 8, "/reviewed/frame": 8, "/subtasks/index": 8,
+        "/input/action_0": 8,
+        "/input/frame": 8,
+        "/reviewed/frame": 8,
+        "/subtasks/index": 8,
     }
     assert manifest["recording"]["rrd_verify"] == "1 file verified without error."
 
@@ -96,7 +117,9 @@ def test_recording_inspection_rejects_wrong_run_id(recorded, recorder) -> None:
     root, _manifest = recorded
     rows = json.loads((root / "before-after.json").read_text())
     with pytest.raises(ValueError, match="identity"):
-        recorder._inspect_recording(root / "lerobot-subtasks.rrd", rows, "wrong-recording")
+        recorder._inspect_recording(
+            root / "lerobot-subtasks.rrd", rows, "wrong-recording"
+        )
 
 
 def test_recording_inspection_rejects_wrong_label(recorded, recorder) -> None:
@@ -104,7 +127,9 @@ def test_recording_inspection_rejects_wrong_label(recorded, recorder) -> None:
     rows = json.loads((root / "before-after.json").read_text())
     rows[2]["subtask"] = "fabricated-label"
     with pytest.raises(ValueError, match="every source frame and subtask"):
-        recorder._inspect_recording(root / "lerobot-subtasks.rrd", rows, "test-recorded-subtasks")
+        recorder._inspect_recording(
+            root / "lerobot-subtasks.rrd", rows, "test-recorded-subtasks"
+        )
 
 
 def test_recording_rejects_modified_original_column(tmp_path, recorder) -> None:
@@ -112,7 +137,9 @@ def test_recording_rejects_modified_original_column(tmp_path, recorder) -> None:
     recorder._label_copy(tmp_path)
     path = tmp_path / "reviewed/data/chunk-000/file-000.parquet"
     table = pq.read_table(path)
-    table = table.set_column(table.column_names.index("action"), "action", pa.array([[99.0]] * 8))
+    table = table.set_column(
+        table.column_names.index("action"), "action", pa.array([[99.0]] * 8)
+    )
     pq.write_table(table, path)
     with pytest.raises(ValueError, match="original frame column"):
         recorder._before_after(tmp_path)
@@ -127,10 +154,15 @@ def test_committed_bundle_proves_the_saved_parquet_row() -> None:
         data = archive.read("reviewed/" + proof["source_data_file"])
         assert hashlib.sha256(data).hexdigest() == proof["source_parquet_sha256"]
         row = pq.read_table(pa.BufferReader(data)).to_pylist()[2]
-        catalog = pq.read_table(pa.BufferReader(archive.read("reviewed/meta/subtasks.parquet"))).to_pylist()
+        catalog = pq.read_table(
+            pa.BufferReader(archive.read("reviewed/meta/subtasks.parquet"))
+        ).to_pylist()
         labels = {item["subtask_index"]: item["subtask"] for item in catalog}
         assert labels[row["subtask_index"]] == proof["subtask"] == "grasp"
-        assert archive.read("lerobot-subtasks.rrd") == (EVIDENCE / "lerobot-subtasks.rrd").read_bytes()
+        assert (
+            archive.read("lerobot-subtasks.rrd")
+            == (EVIDENCE / "lerobot-subtasks.rrd").read_bytes()
+        )
         assert json.loads(archive.read("manifest.json")) == manifest
     for relative, digest in manifest["provenance"]["recipe_sha256"].items():
         recipe = REPOSITORY / relative
@@ -148,19 +180,26 @@ def test_agent_ui_mp4_decodes_and_matches_its_capture_receipt() -> None:
     assert path.stat().st_size == video["bytes"]
     assert hashlib.sha256(path.read_bytes()).hexdigest() == video["sha256"]
     source = receipt["source"]
-    assert hashlib.sha256((EVIDENCE / source["path"]).read_bytes()).hexdigest() == source["sha256"]
+    assert (
+        hashlib.sha256((EVIDENCE / source["path"]).read_bytes()).hexdigest()
+        == source["sha256"]
+    )
     sampled_pixels = set()
     with av.open(str(path)) as container:
         stream = container.streams.video[0]
         assert stream.codec_context.name == "h264"
         assert (stream.width, stream.height) == (video["width"], video["height"])
         assert float(stream.average_rate) == 25.0
-        assert float(stream.duration * stream.time_base) == pytest.approx(video["duration_seconds"])
+        assert float(stream.duration * stream.time_base) == pytest.approx(
+            video["duration_seconds"]
+        )
         timestamps = []
         for index, frame in enumerate(container.decode(video=0)):
             timestamps.append(frame.pts)
             if index in (0, 225, 600):
-                sampled_pixels.add(hashlib.sha256(frame.to_ndarray(format="rgb24")).hexdigest())
+                sampled_pixels.add(
+                    hashlib.sha256(frame.to_ndarray(format="rgb24")).hexdigest()
+                )
     assert len(timestamps) == video["decoded_frame_count"]
     assert all(left < right for left, right in zip(timestamps, timestamps[1:]))
     assert len(sampled_pixels) == 3

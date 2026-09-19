@@ -79,11 +79,17 @@ def collect_prereqs() -> list[Prereq]:
     Raises:
         None.
     """
-    pyarrow_present, pyarrow_error = _probe(lambda: importlib.util.find_spec("pyarrow") is not None)
-    ffmpeg_present, ffmpeg_error = _probe(
-        lambda: shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+    pyarrow_present, pyarrow_error = _probe(
+        lambda: importlib.util.find_spec("pyarrow") is not None
     )
-    torch_present, torch_error = _probe(lambda: importlib.util.find_spec("torch") is not None)
+    ffmpeg_present, ffmpeg_error = _probe(
+        lambda: (
+            shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+        )
+    )
+    torch_present, torch_error = _probe(
+        lambda: importlib.util.find_spec("torch") is not None
+    )
     tmux_present, tmux_error = _probe(lambda: shutil.which("tmux") is not None)
     node_present, node_error = _probe(lambda: shutil.which("node") is not None)
     memfd_present, memfd_error = _probe(lambda: hasattr(os, "memfd_create"))
@@ -114,11 +120,11 @@ def collect_prereqs() -> list[Prereq]:
             torch_present,
             torch_error,
             False,
-            "self-skips via pytest.importorskip(\"torch\") in "
+            'self-skips via pytest.importorskip("torch") in '
             "npa/tests/workbench/test_checkpoint_security.py and similar "
             "security tests; presence here does not confirm it is the CPU "
             "torch==2.13.0 wheel CI pins, only that some torch import works",
-            'pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 '
+            "pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 "
             '&& pip install -e "npa[sonic]"',
         ),
         Prereq(
@@ -200,7 +206,9 @@ def format_report(prereqs: list[Prereq]) -> str:
             f"`make test` can still exit 0 with less coverage than CI: {', '.join(skips)}."
         )
     if unknown:
-        lines.append(f"\n{len(unknown)} prerequisite check(s) could not run: {', '.join(unknown)}.")
+        lines.append(
+            f"\n{len(unknown)} prerequisite check(s) could not run: {', '.join(unknown)}."
+        )
     if not (blockers or skips or unknown):
         lines.append(
             "\nEvery known optional prerequisite is present. That is not by itself "
@@ -265,20 +273,30 @@ def _current_user() -> tuple[str | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
-def _describe_run(entry: Path, current: Path | None, reference_time: float) -> RetainedRun | None:
+def _describe_run(
+    entry: Path, current: Path | None, reference_time: float
+) -> RetainedRun | None:
     try:
-        if not entry.is_dir() or entry.is_symlink() or not entry.name.startswith("pytest-"):
+        if (
+            not entry.is_dir()
+            or entry.is_symlink()
+            or not entry.name.startswith("pytest-")
+        ):
             return None
         age = reference_time - entry.stat().st_mtime
         is_current = current is not None and entry.resolve() == current
         lock_path = entry / ".lock"
-        lock_age = reference_time - lock_path.stat().st_mtime if lock_path.is_file() else None
+        lock_age = (
+            reference_time - lock_path.stat().st_mtime if lock_path.is_file() else None
+        )
         return RetainedRun(entry, age, is_current, lock_age)
     except OSError:
         return None
 
 
-def collect_temp_space_report(tmp_root: Path | None = None, now: float | None = None) -> TempSpaceReport:
+def collect_temp_space_report(
+    tmp_root: Path | None = None, now: float | None = None
+) -> TempSpaceReport:
     """Inspect the effective pytest temp root for free space and other processes' retained runs.
 
     Args:
@@ -319,7 +337,9 @@ def collect_temp_space_report(tmp_root: Path | None = None, now: float | None = 
         except OSError as exc:
             scan_error = f"{type(exc).__name__}: {exc}"
 
-    return TempSpaceReport(root, free_gib, total_gib, disk_usage_error, pytest_root, retained, scan_error)
+    return TempSpaceReport(
+        root, free_gib, total_gib, disk_usage_error, pytest_root, retained, scan_error
+    )
 
 
 def _format_age(age_seconds: float | None) -> str:
@@ -349,11 +369,17 @@ def format_temp_space_report(report: TempSpaceReport) -> str:
     Raises:
         None.
     """
-    lines = ["\nTemp-directory observations (read-only; no deletion is ever recommended here):"]
+    lines = [
+        "\nTemp-directory observations (read-only; no deletion is ever recommended here):"
+    ]
     if report.disk_usage_error:
-        lines.append(f"  could not read disk usage for {report.tmp_root}: {report.disk_usage_error}")
+        lines.append(
+            f"  could not read disk usage for {report.tmp_root}: {report.disk_usage_error}"
+        )
     else:
-        lines.append(f"  {report.tmp_root}: {report.free_gib:.1f} GiB free of {report.total_gib:.1f} GiB.")
+        lines.append(
+            f"  {report.tmp_root}: {report.free_gib:.1f} GiB free of {report.total_gib:.1f} GiB."
+        )
         if report.free_gib < _LOW_SPACE_WARNING_GIB:
             lines.append(
                 f"  Below {_LOW_SPACE_WARNING_GIB} GiB free. This root is shared by every "
@@ -363,15 +389,21 @@ def format_temp_space_report(report: TempSpaceReport) -> str:
             )
 
     if report.scan_error:
-        lines.append(f"  could not enumerate retained pytest run directories: {report.scan_error}")
+        lines.append(
+            f"  could not enumerate retained pytest run directories: {report.scan_error}"
+        )
         return "\n".join(lines)
     if not report.retained_runs:
         return "\n".join(lines)
 
-    lines.append(f"  {len(report.retained_runs)} run director(y/ies) under {report.pytest_root}:")
+    lines.append(
+        f"  {len(report.retained_runs)} run director(y/ies) under {report.pytest_root}:"
+    )
     for run in report.retained_runs:
         marker = " [pytest-current target]" if run.is_current else ""
-        lines.append(f"    {run.path}{marker}: {_format_age(run.age_seconds)}{_lock_note(run)}")
+        lines.append(
+            f"    {run.path}{marker}: {_format_age(run.age_seconds)}{_lock_note(run)}"
+        )
     lines.append(
         "  This is observational only. A directory not marked as the pytest-current "
         "target is NOT thereby proven inactive -- do not delete anything here based on "
@@ -385,12 +417,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.parse_args(argv)
     try:
         print(format_report(collect_prereqs()))
-    except Exception as exc:  # this command must never itself crash a contributor's shell
-        print(f"prereq report unavailable: {type(exc).__name__}: {exc}", file=sys.stderr)
+    except (
+        Exception
+    ) as exc:  # this command must never itself crash a contributor's shell
+        print(
+            f"prereq report unavailable: {type(exc).__name__}: {exc}", file=sys.stderr
+        )
     try:
         print(format_temp_space_report(collect_temp_space_report()))
     except Exception as exc:
-        print(f"temp-space report unavailable: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"temp-space report unavailable: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
     return 0
 
 

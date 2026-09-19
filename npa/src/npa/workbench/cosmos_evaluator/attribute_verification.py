@@ -63,9 +63,18 @@ QUESTION_SCHEMA: dict[str, Any] = {
         "schema": {
             "type": "object",
             "properties": {
-                "variable": {"type": "string", "description": "Name of the variable being verified"},
-                "value": {"type": "string", "description": "The selected value to verify"},
-                "question": {"type": "string", "description": "The multiple choice question text"},
+                "variable": {
+                    "type": "string",
+                    "description": "Name of the variable being verified",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The selected value to verify",
+                },
+                "question": {
+                    "type": "string",
+                    "description": "The multiple choice question text",
+                },
                 "options": {
                     "type": "object",
                     "properties": {
@@ -85,7 +94,13 @@ QUESTION_SCHEMA: dict[str, Any] = {
     },
 }
 
-REQUIRED_QUESTION_FIELDS = ("variable", "value", "question", "options", "correct_answer")
+REQUIRED_QUESTION_FIELDS = (
+    "variable",
+    "value",
+    "question",
+    "options",
+    "correct_answer",
+)
 ANSWER_LETTERS = ("A", "B", "C", "D")
 DEFAULT_QUESTION_MAX_TOKENS = 2048
 DEFAULT_VERIFY_MAX_TOKENS = 10
@@ -153,16 +168,22 @@ def verify_attributes(
     from npa.clients.token_factory import DEFAULT_TEXT_MODEL, DEFAULT_VISION_MODEL
 
     if not selected_variables:
-        raise CosmosEvaluatorError("attribute verification needs at least one selected variable")
+        raise CosmosEvaluatorError(
+            "attribute verification needs at least one selected variable"
+        )
     if not 0.0 < threshold <= 1.0:
-        raise CosmosEvaluatorError("attribute threshold must be greater than 0 and at most 1")
+        raise CosmosEvaluatorError(
+            "attribute threshold must be greater than 0 and at most 1"
+        )
     if (video is None) == (frame is None):
         raise CosmosEvaluatorError("pass exactly one of video= or frame=")
 
     active = client if client is not None else _default_client()
     llm_model = question_model or DEFAULT_TEXT_MODEL
     vision_model = vlm_model or DEFAULT_VISION_MODEL
-    options_table = {key: list(values) for key, values in (variable_options or {}).items()}
+    options_table = {
+        key: list(values) for key, values in (variable_options or {}).items()
+    }
 
     if sample_policy not in ATTRIBUTE_SAMPLE_POLICIES:
         raise CosmosEvaluatorError("sample_policy must be ranking or holdout")
@@ -171,7 +192,9 @@ def verify_attributes(
         video=video, frame=frame, sample_policy=sample_policy
     ) as image_path:
         image_b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
-        media_type = "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
+        media_type = (
+            "image/png" if image_path.suffix.lower() == ".png" else "image/jpeg"
+        )
         data_url = f"data:{media_type};base64,{image_b64}"
 
         checks: list[AttributeVerificationCheck] = []
@@ -195,7 +218,9 @@ def verify_attributes(
     score = round(passed_checks / len(checks), 6) if checks else 0.0
     return AttributeVerificationResult(
         clip_id=clip_id,
-        passed=bool(checks) and not any(check.error for check in checks) and score >= threshold,
+        passed=bool(checks)
+        and not any(check.error for check in checks)
+        and score >= threshold,
         total_checks=len(checks),
         passed_checks=passed_checks,
         failed_checks=failed_checks,
@@ -227,7 +252,9 @@ def _verify_one(
             model=llm_model,
         )
     except Exception as exc:  # noqa: BLE001 - one bad question must not drop the batch
-        _log.warning("question generation failed for %r: %s", variable, exc, exc_info=True)
+        _log.warning(
+            "question generation failed for %r: %s", variable, exc, exc_info=True
+        )
         return AttributeVerificationCheck(
             variable=variable,
             value=value,
@@ -309,7 +336,9 @@ def generate_question(
         # about guided JSON.
         if not _looks_like_unsupported_response_format(exc):
             raise
-        _log.info("guided JSON unsupported by %s (%s); retrying unstructured", model, exc)
+        _log.info(
+            "guided JSON unsupported by %s (%s); retrying unstructured", model, exc
+        )
         text = client.chat_completion_text(
             model=model,
             messages=messages,
@@ -412,7 +441,9 @@ def question_user_prompt(*, variable: str, value: str, options: Sequence[str]) -
 def format_question(question: str, options: dict[str, str]) -> str:
     """Upstream's rendering of a question plus its lettered options."""
 
-    options_text = "\n".join(f"{key}) {value}" for key, value in sorted(options.items()))
+    options_text = "\n".join(
+        f"{key}) {value}" for key, value in sorted(options.items())
+    )
     return f"{question}\n{options_text}\n\nAnswer with only a single letter (A, B, C, or D)."
 
 
@@ -426,8 +457,14 @@ def parse_question_response(text: str) -> dict[str, Any]:
     if not text:
         raise CosmosEvaluatorError("question generation returned no content")
     think_close = text.rfind("</think>")
-    base = text[think_close + len("</think>") :].strip() if think_close != -1 else text.strip()
-    fenced = re.search(r"```(?:json|javascript|js|python)?([\s\S]*?)```", base, flags=re.IGNORECASE)
+    base = (
+        text[think_close + len("</think>") :].strip()
+        if think_close != -1
+        else text.strip()
+    )
+    fenced = re.search(
+        r"```(?:json|javascript|js|python)?([\s\S]*?)```", base, flags=re.IGNORECASE
+    )
     candidate = fenced.group(1).strip() if fenced else base
     candidate = re.sub(r"```[a-zA-Z]*", "", candidate)
     candidate = re.sub(r"```", "", candidate)
@@ -442,7 +479,9 @@ def parse_question_response(text: str) -> dict[str, Any]:
         unwrapped = _unwrap_question(payload)
         if unwrapped is not None:
             return unwrapped
-    raise CosmosEvaluatorError("could not parse a verification question from the model output")
+    raise CosmosEvaluatorError(
+        "could not parse a verification question from the model output"
+    )
 
 
 def _unwrap_question(payload: Any) -> dict[str, Any] | None:
@@ -451,7 +490,9 @@ def _unwrap_question(payload: Any) -> dict[str, Any] | None:
             return payload
         for key in ("question", "item", "data", "result", "output"):
             inner = payload.get(key)
-            if isinstance(inner, dict) and all(field in inner for field in REQUIRED_QUESTION_FIELDS):
+            if isinstance(inner, dict) and all(
+                field in inner for field in REQUIRED_QUESTION_FIELDS
+            ):
                 return inner
     if isinstance(payload, list) and len(payload) == 1:
         return _unwrap_question(payload[0])
@@ -475,24 +516,32 @@ def normalize_question(
 
     raw_options = question.get("options")
     if not isinstance(raw_options, dict) or len(raw_options) < 2:
-        raise CosmosEvaluatorError(f"generated question for {variable!r} has no usable options")
+        raise CosmosEvaluatorError(
+            f"generated question for {variable!r} has no usable options"
+        )
     letters = {
         str(key).strip().upper(): str(text).strip()
         for key, text in raw_options.items()
         if str(key).strip().upper() in ANSWER_LETTERS and str(text).strip()
     }
     if len(letters) < 2:
-        raise CosmosEvaluatorError(f"generated question for {variable!r} has fewer than two lettered options")
+        raise CosmosEvaluatorError(
+            f"generated question for {variable!r} has fewer than two lettered options"
+        )
 
     wanted = str(value).strip().casefold()
-    matches = [letter for letter, text in letters.items() if text.strip().casefold() == wanted]
+    matches = [
+        letter for letter, text in letters.items() if text.strip().casefold() == wanted
+    ]
     if not matches:
         raise CosmosEvaluatorError(
             f"generated question for {variable!r} omits the requested value {value!r}"
         )
     text = str(question.get("question") or "").strip()
     if not text:
-        raise CosmosEvaluatorError(f"generated question for {variable!r} has no question text")
+        raise CosmosEvaluatorError(
+            f"generated question for {variable!r} has no question text"
+        )
     return {
         "variable": variable,
         "value": value,
@@ -516,7 +565,11 @@ def parse_answer_letter(text: str, *, offered: Iterable[str] | None = None) -> s
 
     if not text:
         return "UNKNOWN"
-    allowed = {str(letter).strip().upper() for letter in offered} if offered else set(ANSWER_LETTERS)
+    allowed = (
+        {str(letter).strip().upper() for letter in offered}
+        if offered
+        else set(ANSWER_LETTERS)
+    )
     allowed &= set(ANSWER_LETTERS)
     if not allowed:
         return "UNKNOWN"
@@ -583,9 +636,7 @@ def _frame_image(
     frame: str | Path | None,
     sample_policy: str = "ranking",
 ) -> _FrameImage:
-    return _FrameImage(
-        video=video, frame=frame, sample_policy=sample_policy
-    )
+    return _FrameImage(video=video, frame=frame, sample_policy=sample_policy)
 
 
 def _write_representative_contact_sheet(
@@ -638,9 +689,7 @@ def _write_representative_contact_sheet(
     sheet.save(output, format="JPEG", quality=95, subsampling=0)
 
 
-def _representative_frame_targets(
-    frame_count: int, sample_policy: str
-) -> set[int]:
+def _representative_frame_targets(frame_count: int, sample_policy: str) -> set[int]:
     """Return deterministic ranking or strictly disjoint holdout frame indices."""
 
     if frame_count < 1:
@@ -650,9 +699,7 @@ def _representative_frame_targets(
         return ranking_targets
     if sample_policy != "holdout":
         raise CosmosEvaluatorError("sample_policy must be ranking or holdout")
-    available = [
-        index for index in range(frame_count) if index not in ranking_targets
-    ]
+    available = [index for index in range(frame_count) if index not in ranking_targets]
     if not available:
         raise CosmosEvaluatorError(
             "holdout verification needs a frame not used by ranking"

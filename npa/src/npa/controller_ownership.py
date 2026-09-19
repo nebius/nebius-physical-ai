@@ -254,7 +254,10 @@ def controller_preflight(project: str, context: str) -> tuple[str, str]:
 
     try:
         existing = controller_owner(strict=True)
-    except (ClusterOwnerIdentityMismatchError, ControllerIdentityUnavailableError) as exc:
+    except (
+        ClusterOwnerIdentityMismatchError,
+        ControllerIdentityUnavailableError,
+    ) as exc:
         return (
             "blocked",
             f"controller owner configuration is unsafe: {exc}; reconcile the exact "
@@ -276,7 +279,10 @@ def controller_preflight(project: str, context: str) -> tuple[str, str]:
         )
     if cluster is None:
         if existing is None:
-            return "ready", "unowned new cluster will be bound after exact provider identity is durable"
+            return (
+                "ready",
+                "unowned new cluster will be bound after exact provider identity is durable",
+            )
         return (
             "blocked",
             "recorded controller owner references missing/stale cluster state; clean up "
@@ -306,7 +312,10 @@ def controller_preflight(project: str, context: str) -> tuple[str, str]:
             "cancel/finish its jobs and run `npa skypilot cleanup-controller --project "
             f"{existing.project_alias} --context {existing.context} --yes` before provisioning",
         )
-    return "ready", f"compatible owner verified for exact cluster {candidate.cluster_id}"
+    return (
+        "ready",
+        f"compatible owner verified for exact cluster {candidate.cluster_id}",
+    )
 
 
 def _same_immutable_owner(left: ControllerOwner, right: ControllerOwner) -> bool:
@@ -351,7 +360,9 @@ def _configured_owner(payload: dict[str, Any]) -> ControllerOwner | None:
     return next(iter(legacy), None)
 
 
-def controller_owner(project: str = "", *, strict: bool = False) -> ControllerOwner | None:
+def controller_owner(
+    project: str = "", *, strict: bool = False
+) -> ControllerOwner | None:
     import yaml
 
     try:

@@ -366,10 +366,14 @@ def _gpu_info() -> dict[str, Any]:
         torch = import_module("torch")
     except ModuleNotFoundError as exc:
         if exc.name != "torch":
-            raise IsaacArenaError("PyTorch import failed because a dependency is missing") from exc
+            raise IsaacArenaError(
+                "PyTorch import failed because a dependency is missing"
+            ) from exc
         return {"available": False, "device_name": "", "compute_capability": []}
     except ImportError as exc:
-        raise IsaacArenaError("PyTorch could not be imported for CUDA inspection") from exc
+        raise IsaacArenaError(
+            "PyTorch could not be imported for CUDA inspection"
+        ) from exc
     try:
         available = bool(torch.cuda.is_available())
         if not available:
@@ -380,7 +384,9 @@ def _gpu_info() -> dict[str, Any]:
             "compute_capability": list(torch.cuda.get_device_capability(0)),
         }
     except (AssertionError, OSError, RuntimeError) as exc:
-        raise IsaacArenaError("CUDA driver/device query failed during Arena evidence capture") from exc
+        raise IsaacArenaError(
+            "CUDA driver/device query failed during Arena evidence capture"
+        ) from exc
 
 
 def _publish(local_dir: Path, output_path: str) -> str:
@@ -540,7 +546,9 @@ def _execute_upstream(
         from functools import partial
         from .phase_liveness import run_supervised
 
-        runner = partial(run_supervised, artifact_root=artifact_root, private_dir=private_dir)
+        runner = partial(
+            run_supervised, artifact_root=artifact_root, private_dir=private_dir
+        )
     completed = runner(
         argv,
         cwd=ISAAC_ARENA_ROOT,

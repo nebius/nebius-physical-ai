@@ -38,11 +38,14 @@ def _remote(config, code):
 
 def _download(config, source, destination):
     """Preserve actual driver files before infrastructure teardown."""
-    payload = _remote(config, (
-        "import sys,tarfile\n"
-        "with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as archive:\n"
-        f"    archive.add({str(source)!r}, arcname='result')\n"
-    ))
+    payload = _remote(
+        config,
+        (
+            "import sys,tarfile\n"
+            "with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as archive:\n"
+            f"    archive.add({str(source)!r}, arcname='result')\n"
+        ),
+    )
     destination.mkdir()
     with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
         archive.extractall(destination, filter="data")
@@ -58,7 +61,11 @@ def _committed(directory):
         receipt = json.loads(marker.read_text())
         data = marker.with_name("embeddings.parquet").read_bytes()
         assert hashlib.sha256(data).hexdigest() == receipt["parquet_sha256"]
-        result[int(marker.parent.name)] = {"receipt": receipt, "marker_bytes": marker.read_bytes(), "data": data}
+        result[int(marker.parent.name)] = {
+            "receipt": receipt,
+            "marker_bytes": marker.read_bytes(),
+            "data": data,
+        }
     return result
 
 
@@ -75,12 +82,27 @@ def _inference_events(log):
 
 def _verify_runtime(report, source_hashes):
     """Bind every model initialization and surviving GPU actor to shipped bytes."""
-    fields = {"application.py": "application_sha256", "worker.py": "source_sha256",
-              "validation.py": "validation_sha256", "npa_lancedb_bdd100k_udfs.py": "udf_sha256"}
+    fields = {
+        "application.py": "application_sha256",
+        "worker.py": "source_sha256",
+        "validation.py": "validation_sha256",
+        "npa_lancedb_bdd100k_udfs.py": "udf_sha256",
+    }
     for filename, field in fields.items():
         assert report[field] == source_hashes[filename]
-        assert all(actor[field] == source_hashes[filename] for actor in report["model_initializations"])
-    assert len({(actor["node_id"], tuple(actor["gpu_ids"])) for actor in report["final_actors"]}) == 2
+        assert all(
+            actor[field] == source_hashes[filename]
+            for actor in report["model_initializations"]
+        )
+    assert (
+        len(
+            {
+                (actor["node_id"], tuple(actor["gpu_ids"]))
+                for actor in report["final_actors"]
+            }
+        )
+        == 2
+    )
     assert all(actor["cuda"] and actor["gpu_ids"] for actor in report["final_actors"])
 
 
@@ -95,9 +117,16 @@ def _verify_vectors(directory, records):
     vectors = np.asarray(table["vector"].to_pylist())
     assert vectors.shape == (records, 512) and np.isfinite(vectors).all()
     assert np.allclose(np.linalg.norm(vectors, axis=1), 1, atol=1e-4)
-    lance = lancedb.connect(str(directory / "lance")).open_table("embeddings").to_arrow().sort_by("record_id")
+    lance = (
+        lancedb.connect(str(directory / "lance"))
+        .open_table("embeddings")
+        .to_arrow()
+        .sort_by("record_id")
+    )
     assert lance["record_id"].to_pylist() == list(range(records))
-    np.testing.assert_array_equal(lance["vector"].to_pylist(), table["vector"].to_pylist())
+    np.testing.assert_array_equal(
+        lance["vector"].to_pylist(), table["vector"].to_pylist()
+    )
 
 
 def _verify_measurements(commits, retained, report, logs):
@@ -107,22 +136,43 @@ def _verify_measurements(commits, retained, report, logs):
     expected = sorted(set(commits) - set(retained))
     assert report["inferred_shards"] == expected
     assert report["reused_checkpoint_shards"] == sorted(retained)
-    assert sum(actor["inference_calls"] for actor in report["final_actors"]) == len(expected)
-    expected_records = sorted(record for index in expected for record in commits[index]["receipt"]["identity"]["record_ids"])
+    assert sum(actor["inference_calls"] for actor in report["final_actors"]) == len(
+        expected
+    )
+    expected_records = sorted(
+        record
+        for index in expected
+        for record in commits[index]["receipt"]["identity"]["record_ids"]
+    )
     events = _inference_events(logs)
-    assert sorted(record for event in events for record in event["record_ids"]) == expected_records
+    assert (
+        sorted(record for event in events for record in event["record_ids"])
+        == expected_records
+    )
     by_records = {tuple(event["record_ids"]): event["inference"] for event in events}
     assert len(by_records) == len(events) == len(expected)
     current_actors = {actor["instance_id"] for actor in report["final_actors"]}
     for index in expected:
         receipt = commits[index]["receipt"]
-        assert by_records[tuple(receipt["identity"]["record_ids"])] == receipt["inference"]
+        assert (
+            by_records[tuple(receipt["identity"]["record_ids"])] == receipt["inference"]
+        )
         assert receipt["inference"]["instance_id"] in current_actors
-    retained_actors = {value["receipt"]["inference"]["instance_id"] for value in retained.values()}
-    assert retained_actors.isdisjoint(actor["instance_id"] for actor in report["final_actors"])
-    for field, indices in (("inference_actor_seconds_sum", expected),
-                           ("retained_checkpoint_inference_actor_seconds_sum", retained)):
-        assert report[field] == pytest.approx(sum(commits[i]["receipt"]["inference"]["inference_seconds"] for i in indices))
+    retained_actors = {
+        value["receipt"]["inference"]["instance_id"] for value in retained.values()
+    }
+    assert retained_actors.isdisjoint(
+        actor["instance_id"] for actor in report["final_actors"]
+    )
+    for field, indices in (
+        ("inference_actor_seconds_sum", expected),
+        ("retained_checkpoint_inference_actor_seconds_sum", retained),
+    ):
+        assert report[field] == pytest.approx(
+            sum(
+                commits[i]["receipt"]["inference"]["inference_seconds"] for i in indices
+            )
+        )
 
 
 def _verify_result(directory, records, retained, logs, source_hashes):
@@ -141,7 +191,10 @@ def _configuration():
         pytest.skip("requires private preflighted native Ray Jobs configuration")
     private_config = Path(config_path)
     assert private_config.is_file() and not private_config.is_symlink()
-    assert private_config.stat().st_uid == os.getuid() and private_config.stat().st_mode & 0o077 == 0
+    assert (
+        private_config.stat().st_uid == os.getuid()
+        and private_config.stat().st_mode & 0o077 == 0
+    )
     return json.loads(private_config.read_text())
 
 
@@ -164,8 +217,13 @@ def _package_source(tmp_path, evidence):
     example = package / "workflows/workbench/ray-clip-development"
     for name in ("application.py", "worker.py", "validation.py"):
         shutil.copy2(example / name, source / name)
-    shutil.copy2(package / "src/npa/workbench/lancedb/bdd100k_udfs.py", source / "npa_lancedb_bdd100k_udfs.py")
-    source_hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source.iterdir()}
+    shutil.copy2(
+        package / "src/npa/workbench/lancedb/bdd100k_udfs.py",
+        source / "npa_lancedb_bdd100k_udfs.py",
+    )
+    source_hashes = {
+        p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source.iterdir()
+    }
     _write_private(evidence / "source.json", json.dumps(source_hashes))
     return source, source_hashes
 
@@ -189,11 +247,30 @@ class _NativeJobs:
         identifier = f"clip-resume-{self.token}-{name}"
         self.jobs.append(identifier)
         self.outputs[identifier] = directory
-        _write_private(self.evidence / f"{name}-submission.json", json.dumps({"job_id": identifier, "output_path": str(directory)}))
-        argv = ["python", "application.py", "--actors", "2", "--records", str(self.records),
-                "--batch-size", str(self.batch_size), "--output-path", str(directory)]
-        self.client.submit_job(submission_id=identifier, entrypoint=shlex.join(argv),
-                               runtime_env={"working_dir": str(self.source), "env_vars": {"RAY_DEDUP_LOGS": "0"}})
+        _write_private(
+            self.evidence / f"{name}-submission.json",
+            json.dumps({"job_id": identifier, "output_path": str(directory)}),
+        )
+        argv = [
+            "python",
+            "application.py",
+            "--actors",
+            "2",
+            "--records",
+            str(self.records),
+            "--batch-size",
+            str(self.batch_size),
+            "--output-path",
+            str(directory),
+        ]
+        self.client.submit_job(
+            submission_id=identifier,
+            entrypoint=shlex.join(argv),
+            runtime_env={
+                "working_dir": str(self.source),
+                "env_vars": {"RAY_DEDUP_LOGS": "0"},
+            },
+        )
         return identifier
 
     def _finish(self, identifier, expected="SUCCEEDED"):
@@ -203,7 +280,10 @@ class _NativeJobs:
         details = self.client.get_job_info(identifier)
         log = self.client.get_job_logs(identifier)
         _write_private(self.evidence / f"{identifier}.log", log)
-        _write_private(self.evidence / f"{identifier}.json", json.dumps(vars(details), default=str, indent=2))
+        _write_private(
+            self.evidence / f"{identifier}.json",
+            json.dumps(vars(details), default=str, indent=2),
+        )
         assert str(details.status) == expected
         return log
 
@@ -221,7 +301,13 @@ class _NativeJobs:
                 time.sleep(1)
             return True
         except Exception as error:
-            errors.append({"job_id": identifier, "operation": "stop", "error_type": type(error).__name__})
+            errors.append(
+                {
+                    "job_id": identifier,
+                    "operation": "stop",
+                    "error_type": type(error).__name__,
+                }
+            )
             return False
 
     def _status_for_cleanup(self, identifier, terminal, errors):
@@ -229,17 +315,35 @@ class _NativeJobs:
         try:
             details = self.client.get_job_info(identifier)
             terminal = details.status.is_terminal()
-            _write_private(self.evidence / f"{identifier}-final.json", json.dumps(vars(details), default=str, indent=2))
+            _write_private(
+                self.evidence / f"{identifier}-final.json",
+                json.dumps(vars(details), default=str, indent=2),
+            )
         except Exception as error:
-            errors.append({"job_id": identifier, "operation": "status", "error_type": type(error).__name__})
+            errors.append(
+                {
+                    "job_id": identifier,
+                    "operation": "status",
+                    "error_type": type(error).__name__,
+                }
+            )
         return terminal
 
     def _logs_for_cleanup(self, identifier, errors):
         """Preserve native failure logs independently of status-query success."""
         try:
-            _write_private(self.evidence / f"{identifier}-final.log", self.client.get_job_logs(identifier))
+            _write_private(
+                self.evidence / f"{identifier}-final.log",
+                self.client.get_job_logs(identifier),
+            )
         except Exception as error:
-            errors.append({"job_id": identifier, "operation": "logs", "error_type": type(error).__name__})
+            errors.append(
+                {
+                    "job_id": identifier,
+                    "operation": "logs",
+                    "error_type": type(error).__name__,
+                }
+            )
 
     def _snapshot_for_cleanup(self, identifier, terminal, errors):
         """Recover partial output only when the corresponding Job is terminal."""
@@ -247,11 +351,24 @@ class _NativeJobs:
             return
         try:
             directory = self.outputs[identifier]
-            exists = _remote(self.config, f"import pathlib,json; print(json.dumps(pathlib.Path({str(directory)!r}).is_dir()))")
+            exists = _remote(
+                self.config,
+                f"import pathlib,json; print(json.dumps(pathlib.Path({str(directory)!r}).is_dir()))",
+            )
             if json.loads(exists):
-                _download(self.config, directory, self.evidence / f"{identifier}-cleanup-snapshot")
+                _download(
+                    self.config,
+                    directory,
+                    self.evidence / f"{identifier}-cleanup-snapshot",
+                )
         except Exception as error:
-            errors.append({"job_id": identifier, "operation": "snapshot", "error_type": type(error).__name__})
+            errors.append(
+                {
+                    "job_id": identifier,
+                    "operation": "snapshot",
+                    "error_type": type(error).__name__,
+                }
+            )
 
     def _cleanup(self, original_failure):
         """Attempt every cleanup boundary without masking an original test failure."""
@@ -261,7 +378,10 @@ class _NativeJobs:
             terminal = self._status_for_cleanup(identifier, terminal, errors)
             self._logs_for_cleanup(identifier, errors)
             self._snapshot_for_cleanup(identifier, terminal, errors)
-        _write_private(self.evidence / "job-cleanup.json", json.dumps({"attempted": self.jobs, "errors": errors}))
+        _write_private(
+            self.evidence / "job-cleanup.json",
+            json.dumps({"attempted": self.jobs, "errors": errors}),
+        )
         if errors and not original_failure:
             raise RuntimeError("Native Job cleanup failed; inspect private receipts")
 
@@ -341,7 +461,13 @@ def test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path):
     jobs = _NativeJobs(config, source, source_hashes, evidence, token)
     try:
         partial, full = _resume_partial(jobs)
-        cases = {"sparse": [1, 3], "single": [3], "zero": [], "uncommitted": [3], "corrupt": []}
+        cases = {
+            "sparse": [1, 3],
+            "single": [3],
+            "zero": [],
+            "uncommitted": [3],
+            "corrupt": [],
+        }
         for name, missing in cases.items():
             _verify_boundary(jobs, partial, full, name, missing)
     finally:

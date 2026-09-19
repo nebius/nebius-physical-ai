@@ -14,10 +14,7 @@ from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SPEC_PATH = (
-    REPO_ROOT
-    / "workflows/testing/cosmos3-super-h200-single-gpu.yaml"
-)
+SPEC_PATH = REPO_ROOT / "workflows/testing/cosmos3-super-h200-single-gpu.yaml"
 
 
 def test_h200_single_gpu_workflow_preserves_exact_isolated_contract() -> None:
@@ -39,12 +36,11 @@ def test_h200_single_gpu_workflow_preserves_exact_isolated_contract() -> None:
 
 def test_h200_single_gpu_workflow_renders_tp1_command(monkeypatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src")
-    wrapper = "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:" + (
-        "3" * 64
+    wrapper = (
+        "registry.example.invalid/operator/npa-cosmos3-super-benchmark@sha256:"
+        + ("3" * 64)
     )
-    spec = load_spec_for_submit(
-        SPEC_PATH, config_overrides={"runtime_image": wrapper}
-    )
+    spec = load_spec_for_submit(SPEC_PATH, config_overrides={"runtime_image": wrapper})
     plan = build_plan(spec, run_id="cosmos3-super-h200-single-test")
     rendered = render_skypilot_yaml(
         spec,

@@ -8,7 +8,8 @@ from typing import Any
 
 from npa.workflows.sim2real.constants import CORRECTIVE_TARGETS, ERROR_SEVERITY
 from npa.workflows.sim2real.episode_boundaries import (
-    temporal_credit_valid, validate_episode_sequence,
+    temporal_credit_valid,
+    validate_episode_sequence,
 )
 
 
@@ -247,7 +248,11 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
         else:
             calibrated += 1
 
-        components = _grounded_components(truth, previous_truth) if truth and credit_valid else {}
+        components = (
+            _grounded_components(truth, previous_truth)
+            if truth and credit_valid
+            else {}
+        )
         grounded = sum(components.values()) if components else 0.0
         severity = max(ERROR_SEVERITY.get(tag, 0.5) for tag in tags)
         vlm_shape = 0.12 * confidence * _clip(1.0 - 2.0 * severity)
@@ -257,12 +262,17 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
             {
                 "step": int(raw["step"]),
                 "sim_step": raw.get("sim_step"),
-                **({"episode_boundary": dict(raw["episode_boundary"])}
-                   if "episode_boundary" in raw else {}),
+                **(
+                    {"episode_boundary": dict(raw["episode_boundary"])}
+                    if "episode_boundary" in raw
+                    else {}
+                ),
                 "camera_observation": raw.get("camera_observation"),
                 "visual_grounding": dict(raw.get("visual_grounding") or {}),
                 "reward": round(reward, 6),
-                "target": _target(tags if visual_supported and confidence > 0 else ["ok"]),
+                "target": _target(
+                    tags if visual_supported and confidence > 0 else ["ok"]
+                ),
                 "critique_text": str(raw.get("critique_text") or ""),
                 "error_tags": tags,
                 "confidence": round(confidence, 6),
@@ -292,7 +302,9 @@ def convert_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:
     variance, nonzero, fallback_used = _complete_rewards(items)
     calibration = {
         "step_count": len(items),
-        "episode_boundary_excluded_steps": sum(not temporal_credit_valid(item) for item in items),
+        "episode_boundary_excluded_steps": sum(
+            not temporal_credit_valid(item) for item in items
+        ),
         "credit_eligible_steps": sum(temporal_credit_valid(item) for item in items),
         "simulator_grounded_steps": sum(
             bool(item["simulator_ground_truth"]) for item in items
