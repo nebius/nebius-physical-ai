@@ -20,7 +20,9 @@ AGENT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent.py"
 AGENT_CHAT_MODULE = REPO_ROOT / "npa" / "src" / "npa" / "cli" / "agent_chat.py"
 VERIFY_FRANKA_SCRIPT = REPO_ROOT / "npa" / "scripts" / "verify_agent_franka.sh"
 VERIFY_CHAT_VIZ_SCRIPT = REPO_ROOT / "npa" / "scripts" / "verify_agent_chat_viz.sh"
-VERIFY_RERUN_BUNDLE_SCRIPT = REPO_ROOT / "npa" / "scripts" / "verify_agent_rerun_bundle.sh"
+VERIFY_RERUN_BUNDLE_SCRIPT = (
+    REPO_ROOT / "npa" / "scripts" / "verify_agent_rerun_bundle.sh"
+)
 NPA_AGENT_SKILL = REPO_ROOT / "skills" / "tools" / "npa-agent" / "SKILL.md"
 
 
@@ -49,7 +51,12 @@ def test_agent_chat_module_intent_patterns() -> None:
     assert match_chat_intent("what is the current sim2real status") == "sim2real_status"
     assert match_chat_intent("what sim assets are selected") == "sim_assets"
     assert match_chat_intent("list workspace cameras") == "cameras"
-    assert match_chat_intent("onboard a github repo into the workbench with container smoke") == "onboard_solution"
+    assert (
+        match_chat_intent(
+            "onboard a github repo into the workbench with container smoke"
+        )
+        == "onboard_solution"
+    )
 
 
 def test_agent_chat_response_schema_in_bootstrap() -> None:
@@ -79,7 +86,12 @@ def test_verify_agent_rerun_bundle_script_exists_and_executable() -> None:
     assert mode & stat.S_IXUSR, "verify_agent_rerun_bundle.sh must be executable"
     text = VERIFY_RERUN_BUNDLE_SCRIPT.read_text(encoding="utf-8")
     assert "agent_rerun_bundle_check" in text
-    assert VERIFY_CHAT_VIZ_SCRIPT.read_text(encoding="utf-8").count("verify_agent_rerun_bundle.sh") >= 1
+    assert (
+        VERIFY_CHAT_VIZ_SCRIPT.read_text(encoding="utf-8").count(
+            "verify_agent_rerun_bundle.sh"
+        )
+        >= 1
+    )
 
 
 def test_npa_agent_skill_documents_chat_maturity() -> None:

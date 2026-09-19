@@ -207,7 +207,10 @@ def _is_stale_validation_api_error(error: Exception) -> bool:
 
 
 def kubernetes_sky_environment(
-    *, context: str, kubeconfig: Kubeconfig, sky_executable: str,
+    *,
+    context: str,
+    kubeconfig: Kubeconfig,
+    sky_executable: str,
 ) -> dict[str, str]:
     """Bind cluster checks and discovery to one exact owned API session."""
     env = _kubeconfig_env(kubeconfig) or os.environ.copy()
@@ -227,16 +230,21 @@ def kubernetes_sky_environment(
     env["KUBECONFIG"] = str(kubeconfig_path)
     if session is not None:
         session.require_target(kubeconfig_path, context)
-        env["SKYPILOT_USER_ID"] = "npa-" + hashlib.sha256(
-            str(session.scope.resolve()).encode()
-        ).hexdigest()[:12]
+        env["SKYPILOT_USER_ID"] = (
+            "npa-"
+            + hashlib.sha256(str(session.scope.resolve()).encode()).hexdigest()[:12]
+        )
         if session.record.get("project_alias"):
             env["NPA_SKYPILOT_PROJECT"] = session.record["project_alias"]
 
     identity = hashlib.sha256(
         f"{kubeconfig_path.resolve()}\0{context}".encode()
     ).hexdigest()[:24]
-    scope = session.scope if session is not None else isolated_root / "cluster-validation" / identity
+    scope = (
+        session.scope
+        if session is not None
+        else isolated_root / "cluster-validation" / identity
+    )
     scope.mkdir(mode=0o700, parents=True, exist_ok=True)
     if scope.is_symlink():
         raise RuntimeError("Cluster validation state must not be a symlink")
@@ -247,9 +255,9 @@ def kubernetes_sky_environment(
 
     validation_user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
     if not validation_user_id:
-        validation_user_id = "npa-" + hashlib.sha256(
-            str(scope.resolve()).encode()
-        ).hexdigest()[:12]
+        validation_user_id = (
+            "npa-" + hashlib.sha256(str(scope.resolve()).encode()).hexdigest()[:12]
+        )
     config: dict = {}
     inherited = str(env.get("SKYPILOT_GLOBAL_CONFIG") or "")
     if inherited:
@@ -301,7 +309,9 @@ def kubernetes_sky_environment(
     try:
         return start_validation_api()
     except local_api.IsolatedApiError as exc:
-        if not _is_stale_validation_api_error(exc) or not _recover_idle_validation_scope(
+        if not _is_stale_validation_api_error(
+            exc
+        ) or not _recover_idle_validation_scope(
             scope,
             context=context,
             kubeconfig_path=kubeconfig_path,
@@ -559,15 +569,21 @@ def _pod_commitment(pod: object) -> tuple[str, int, int, int, int, int]:
         _pod_resource_commitment(containers, init_containers, overhead, "cpu"),
         _pod_resource_commitment(containers, init_containers, overhead, "memory"),
         1,
-        _pod_resource_commitment(containers, init_containers, overhead, "ephemeral-storage"),
+        _pod_resource_commitment(
+            containers, init_containers, overhead, "ephemeral-storage"
+        ),
     )
 
 
 def _pod_resource_commitment(containers, init_containers, overhead, resource):
     regular = sum(_container_request(item, resource) for item in containers)
-    initial = max((_container_request(item, resource) for item in init_containers), default=0)
+    initial = max(
+        (_container_request(item, resource) for item in init_containers), default=0
+    )
     raw_overhead = overhead.get(resource, 0) if isinstance(overhead, dict) else 0
-    extra = _cpu_millis(raw_overhead) if resource == "cpu" else _memory_bytes(raw_overhead)
+    extra = (
+        _cpu_millis(raw_overhead) if resource == "cpu" else _memory_bytes(raw_overhead)
+    )
     return max(regular, initial) + extra
 
 
@@ -710,7 +726,9 @@ def discover_kubernetes_gpu_inventory(
         node_capacity = int((status.get("capacity") or {}).get("nvidia.com/gpu", 0))
         node_cpu = _cpu_millis((status.get("allocatable") or {}).get("cpu", 0))
         node_memory = _memory_bytes((status.get("allocatable") or {}).get("memory", 0))
-        node_storage = _memory_bytes((status.get("allocatable") or {}).get("ephemeral-storage", 0))
+        node_storage = _memory_bytes(
+            (status.get("allocatable") or {}).get("ephemeral-storage", 0)
+        )
         try:
             node_pods = max(0, int((status.get("allocatable") or {}).get("pods", 0)))
         except (TypeError, ValueError):
@@ -743,9 +761,13 @@ def discover_kubernetes_gpu_inventory(
             ):
                 if value:
                     node_products.add(value)
-        committed, committed_cpu, committed_memory, committed_pods, committed_storage = (
-            committed_by_node.get(name, (0, 0, 0, 0, 0))
-        )
+        (
+            committed,
+            committed_cpu,
+            committed_memory,
+            committed_pods,
+            committed_storage,
+        ) = committed_by_node.get(name, (0, 0, 0, 0, 0))
         free = max(0, node_allocatable - committed)
         free_cpu = max(0, node_cpu - committed_cpu)
         free_memory = max(0, node_memory - committed_memory)
@@ -783,7 +805,9 @@ def discover_kubernetes_gpu_inventory(
                     labels=tuple(sorted(all_labels.items())),
                     allocatable_ephemeral_storage_bytes=node_storage,
                     committed_ephemeral_storage_bytes=committed_storage,
-                    free_ephemeral_storage_bytes=max(0, node_storage - committed_storage),
+                    free_ephemeral_storage_bytes=max(
+                        0, node_storage - committed_storage
+                    ),
                 )
             )
         if ready and not blocked and node_allocatable > 0:
@@ -935,7 +959,9 @@ class _GangRequirements:
     pod_spec: Mapping[str, object]
 
 
-def _gang_requirements(accelerator, node_count, cpus, memory, ephemeral_storage, allowed_nodes, pod_spec):
+def _gang_requirements(
+    accelerator, node_count, cpus, memory, ephemeral_storage, allowed_nodes, pod_spec
+):
     expected = int(node_count)
     if expected < 1:
         raise ValueError("node_count must be positive")
@@ -947,32 +973,47 @@ def _gang_requirements(accelerator, node_count, cpus, memory, ephemeral_storage,
             "existing-capacity preflight cannot authoritatively evaluate topology "
             "spread constraints"
         )
-    allowed = frozenset(str(name).strip() for name in (allowed_nodes or ()) if str(name).strip())
-    return _GangRequirements(parse_accelerator_request(accelerator), expected,
-                             _cpu_millis(cpus), _memory_bytes(memory),
-                             _memory_bytes(ephemeral_storage), allowed, selected)
+    allowed = frozenset(
+        str(name).strip() for name in (allowed_nodes or ()) if str(name).strip()
+    )
+    return _GangRequirements(
+        parse_accelerator_request(accelerator),
+        expected,
+        _cpu_millis(cpus),
+        _memory_bytes(memory),
+        _memory_bytes(ephemeral_storage),
+        allowed,
+        selected,
+    )
 
 
 def _compatible_gang_nodes(inventory: KubernetesGpuInventory, shape: _GangRequirements):
     wanted = _normalize(shape.accelerator.name)
-    aliases = next((group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
-                   frozenset({wanted}))
-    return [node for node in inventory.nodes
-            if (not shape.allowed or node.name in shape.allowed)
-            and _node_matches_pod_spec(node, shape.pod_spec)
-            and any(_normalize(product) in aliases for product in node.products)
-            and node.allocatable >= shape.accelerator.quantity
-            and node.allocatable_cpu_millis >= shape.cpu
-            and node.allocatable_memory_bytes >= shape.memory
-            and node.allocatable_ephemeral_storage_bytes >= shape.storage
-            and node.allocatable_pods >= 1]
+    aliases = next(
+        (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
+        frozenset({wanted}),
+    )
+    return [
+        node
+        for node in inventory.nodes
+        if (not shape.allowed or node.name in shape.allowed)
+        and _node_matches_pod_spec(node, shape.pod_spec)
+        and any(_normalize(product) in aliases for product in node.products)
+        and node.allocatable >= shape.accelerator.quantity
+        and node.allocatable_cpu_millis >= shape.cpu
+        and node.allocatable_memory_bytes >= shape.memory
+        and node.allocatable_ephemeral_storage_bytes >= shape.storage
+        and node.allocatable_pods >= 1
+    ]
 
 
 def _require_free_gang(inventory, shape, compatible_nodes, candidates):
     if len(candidates) < shape.nodes:
-        error = (TemporarilyUnavailableAcceleratorError
-                 if len(compatible_nodes) >= shape.nodes
-                 else PermanentlyUnsatisfiableAcceleratorError)
+        error = (
+            TemporarilyUnavailableAcceleratorError
+            if len(compatible_nodes) >= shape.nodes
+            else PermanentlyUnsatisfiableAcceleratorError
+        )
         raise error(
             f"Kubernetes context {inventory.context or '<current>'} has "
             f"{len(candidates)} distinct compatible schedulable node(s) with at "
@@ -995,8 +1036,13 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
 
 
 def preflight_kubernetes_gpu_gang(
-    inventory: KubernetesGpuInventory, *, accelerator: str, node_count: int,
-    cpus: object = 0, memory: object = 0, ephemeral_storage: object = 0,
+    inventory: KubernetesGpuInventory,
+    *,
+    accelerator: str,
+    node_count: int,
+    cpus: object = 0,
+    memory: object = 0,
+    ephemeral_storage: object = 0,
     allowed_nodes: tuple[str, ...] | list[str] | None = None,
     pod_spec: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -1022,20 +1068,39 @@ def preflight_kubernetes_gpu_gang(
     """
     if inventory.error:
         raise KubernetesGpuCatalogError(inventory.error)
-    shape = _gang_requirements(accelerator, node_count, cpus, memory, ephemeral_storage, allowed_nodes, pod_spec)
+    shape = _gang_requirements(
+        accelerator,
+        node_count,
+        cpus,
+        memory,
+        ephemeral_storage,
+        allowed_nodes,
+        pod_spec,
+    )
     compatible = _compatible_gang_nodes(inventory, shape)
-    candidates = [node for node in compatible if node.ready and node.schedulable
-                  and node.free >= shape.accelerator.quantity
-                  and node.free_cpu_millis >= shape.cpu
-                  and node.free_memory_bytes >= shape.memory
-                  and node.free_ephemeral_storage_bytes >= shape.storage and node.free_pod_slots >= 1]
+    candidates = [
+        node
+        for node in compatible
+        if node.ready
+        and node.schedulable
+        and node.free >= shape.accelerator.quantity
+        and node.free_cpu_millis >= shape.cpu
+        and node.free_memory_bytes >= shape.memory
+        and node.free_ephemeral_storage_bytes >= shape.storage
+        and node.free_pod_slots >= 1
+    ]
     _require_free_gang(inventory, shape, compatible, candidates)
-    return {"context": inventory.context, "accelerator": shape.accelerator.spec,
-            "node_count": shape.nodes, "compatible_free_nodes": len(candidates),
-            "selected_nodes": [node.name for node in candidates[:shape.nodes]],
-            "cpus_per_node": shape.cpu / 1000, "memory_bytes_per_node": shape.memory,
-            "ephemeral_storage_bytes_per_node": shape.storage,
-            "allowed_nodes": sorted(shape.allowed)}
+    return {
+        "context": inventory.context,
+        "accelerator": shape.accelerator.spec,
+        "node_count": shape.nodes,
+        "compatible_free_nodes": len(candidates),
+        "selected_nodes": [node.name for node in candidates[: shape.nodes]],
+        "cpus_per_node": shape.cpu / 1000,
+        "memory_bytes_per_node": shape.memory,
+        "ephemeral_storage_bytes_per_node": shape.storage,
+        "allowed_nodes": sorted(shape.allowed),
+    }
 
 
 @dataclass(frozen=True)

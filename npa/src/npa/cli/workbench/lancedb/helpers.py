@@ -14,7 +14,11 @@ from urllib.parse import urlparse
 import httpx
 import typer
 
-from npa.clients.config import default_project_name, default_workbench_name, list_projects
+from npa.clients.config import (
+    default_project_name,
+    default_workbench_name,
+    list_projects,
+)
 from npa.clients.credentials import load_credentials
 from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 
@@ -22,7 +26,9 @@ LANCEDB_VERSION = "0.30.3"
 DEFAULT_PORT = 8686
 DEFAULT_TOKEN_ENV = "LANCEDB_TOKEN"
 DEFAULT_API_KEY_ENV = "LANCEDB_API_KEY"
-DEFAULT_CONTAINER_IMAGE = container_image_for_tool("lancedb", registry=DEFAULT_CONTAINER_REGISTRY)
+DEFAULT_CONTAINER_IMAGE = container_image_for_tool(
+    "lancedb", registry=DEFAULT_CONTAINER_REGISTRY
+)
 DEFAULT_CONTAINER_NAME = "npa-lancedb"
 TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 
@@ -48,7 +54,9 @@ def fail(message: str) -> None:
     raise typer.Exit(code=1)
 
 
-def emit(payload: dict[str, Any], *, output: OutputFormat, text: str | None = None) -> None:
+def emit(
+    payload: dict[str, Any], *, output: OutputFormat, text: str | None = None
+) -> None:
     if output == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
@@ -111,17 +119,15 @@ def resolve_endpoint(endpoint: str = "") -> str:
     projects = list_projects()
     project = default_project_name()
     workbench = default_workbench_name()
-    candidate = (
-        projects.get(project, {})
-        .get("workbenches", {})
-        .get(workbench, {})
-    )
+    candidate = projects.get(project, {}).get("workbenches", {}).get(workbench, {})
     if candidate.get("workbench_type") == "lancedb" and candidate.get("endpoint"):
         return validate_endpoint(str(candidate["endpoint"]))
 
     for project_cfg in projects.values():
         for workbench_cfg in project_cfg.get("workbenches", {}).values():
-            if workbench_cfg.get("workbench_type") == "lancedb" and workbench_cfg.get("endpoint"):
+            if workbench_cfg.get("workbench_type") == "lancedb" and workbench_cfg.get(
+                "endpoint"
+            ):
                 return validate_endpoint(str(workbench_cfg["endpoint"]))
 
     fail("--endpoint is required; no saved LanceDB endpoint was found")
@@ -133,7 +139,9 @@ def validate_table_name(table: str) -> str:
     if not value:
         fail("--table is required")
     if not TABLE_NAME_RE.fullmatch(value):
-        fail("--table must start with a letter or underscore and contain only letters, digits, dot, dash, or underscore")
+        fail(
+            "--table must start with a letter or underscore and contain only letters, digits, dot, dash, or underscore"
+        )
     return value
 
 
@@ -211,7 +219,9 @@ def load_rows(input_path: str) -> list[dict[str, Any]]:
             rows = data.get("rows")
             if isinstance(rows, list):
                 return [_require_object(row) for row in rows]
-        fail("--input-path JSON must be a list of objects or an object with a rows list")
+        fail(
+            "--input-path JSON must be a list of objects or an object with a rows list"
+        )
     if suffix == ".jsonl":
         rows = []
         for line in path.read_text().splitlines():
@@ -277,7 +287,9 @@ def request_json(
 ) -> dict[str, Any]:
     url = f"{endpoint.rstrip('/')}/{path.lstrip('/')}"
     try:
-        response = httpx.request(method, url, headers=headers, json=payload, timeout=timeout)
+        response = httpx.request(
+            method, url, headers=headers, json=payload, timeout=timeout
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
@@ -296,8 +308,10 @@ def request_json(
 def storage_env() -> dict[str, str]:
     creds = load_credentials()
     env = {
-        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID") or creds.s3_access_key_id,
-        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY") or creds.s3_secret_access_key,
+        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID")
+        or creds.s3_access_key_id,
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY")
+        or creds.s3_secret_access_key,
         "AWS_ENDPOINT_URL": os.environ.get("AWS_ENDPOINT_URL") or creds.s3_endpoint,
         "AWS_REGION": os.environ.get("AWS_REGION", "auto"),
     }

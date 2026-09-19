@@ -386,7 +386,9 @@ def test_public_workbench_raw_shard_retains_legacy_prefix_behavior(
 
 
 @pytest.mark.parametrize("download_fails", [False, True])
-def test_scene_spec_s3_uses_private_staging_and_preserves_precreated_symlink(tmp_path, monkeypatch, download_fails):
+def test_scene_spec_s3_uses_private_staging_and_preserves_precreated_symlink(
+    tmp_path, monkeypatch, download_fails
+):
     from dataclasses import asdict
     import stat
     import tempfile
@@ -397,9 +399,19 @@ def test_scene_spec_s3_uses_private_staging_and_preserves_precreated_symlink(tmp
     legacy.symlink_to(victim)
     original_path = Path
     # Redirect only the unsafe historical fixed path into the test sandbox.
-    monkeypatch.setattr(envgen, "Path", lambda value: legacy if value == "/tmp/npa-scene-spec.json" else original_path(value))
+    monkeypatch.setattr(
+        envgen,
+        "Path",
+        lambda value: (
+            legacy if value == "/tmp/npa-scene-spec.json" else original_path(value)
+        ),
+    )
     temporary_directory = tempfile.TemporaryDirectory
-    monkeypatch.setattr(envgen.tempfile, "TemporaryDirectory", lambda **kwargs: temporary_directory(dir=tmp_path, **kwargs))
+    monkeypatch.setattr(
+        envgen.tempfile,
+        "TemporaryDirectory",
+        lambda **kwargs: temporary_directory(dir=tmp_path, **kwargs),
+    )
     observed = []
 
     class Storage:

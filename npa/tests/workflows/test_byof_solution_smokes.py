@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+from npa.deploy.images import (
+    DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    wan_accepted_image_manifest,
+)
 
 
 WAN_IMAGE = (
@@ -56,7 +59,11 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "capability_name": "lingbot_world_camera_conditioned_video",
         "smoke_artifact_name": "lingbot_world_camera_conditioned_video.json",
         "spec": "byof-lingbot-world.yaml",
-        "must_exercise": ["lingbot_world_camera_conditioned_video", "distributed_rank_validation", "decoded_mp4_validation"],
+        "must_exercise": [
+            "lingbot_world_camera_conditioned_video",
+            "distributed_rank_validation",
+            "decoded_mp4_validation",
+        ],
     },
     "mochi-1": {
         "capability_name": "mochi-1_text_to_video",

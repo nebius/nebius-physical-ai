@@ -60,7 +60,11 @@ def _load_sweep_runner():
 
 
 def _docs(path: Path) -> list[dict]:
-    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc is not None]
+    return [
+        doc
+        for doc in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if doc is not None
+    ]
 
 
 # --- pure helpers ---------------------------------------------------------
@@ -85,12 +89,20 @@ def test_join_and_report_uris() -> None:
     assert join_uri("s3://b/run/", "triage") == "s3://b/run/triage"
     assert join_uri("s3://b/run", "a", "b") == "s3://b/run/a/b"
     assert join_uri("s3://b/run/", "") == "s3://b/run/"
-    assert triage_report_uri("s3://b/run/triage") == "s3://b/run/triage/generations.jsonl"
+    assert (
+        triage_report_uri("s3://b/run/triage") == "s3://b/run/triage/generations.jsonl"
+    )
 
 
-def test_summarize_run_artifacts_reads_text_skips_binary_and_truncates(tmp_path: Path) -> None:
-    (tmp_path / "train_config.json").write_text(json.dumps({"steps": 50, "policy": "act"}), encoding="utf-8")
-    (tmp_path / "train.log").write_text("step 0 loss 1.2\nstep 50 loss 0.3\n", encoding="utf-8")
+def test_summarize_run_artifacts_reads_text_skips_binary_and_truncates(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "train_config.json").write_text(
+        json.dumps({"steps": 50, "policy": "act"}), encoding="utf-8"
+    )
+    (tmp_path / "train.log").write_text(
+        "step 0 loss 1.2\nstep 50 loss 0.3\n", encoding="utf-8"
+    )
     (tmp_path / "model.safetensors").write_bytes(b"\x00\x01\x02binaryweights")
     nested = tmp_path / "checkpoints" / "last"
     nested.mkdir(parents=True)
@@ -108,7 +120,9 @@ def test_summarize_run_artifacts_reads_text_skips_binary_and_truncates(tmp_path:
 
 def test_summarize_truncates_large_files(tmp_path: Path) -> None:
     (tmp_path / "big.log").write_text("x" * 50_000, encoding="utf-8")
-    digest = summarize_run_artifacts(tmp_path, max_file_bytes=1000, max_total_bytes=5000)
+    digest = summarize_run_artifacts(
+        tmp_path, max_file_bytes=1000, max_total_bytes=5000
+    )
     assert "[truncated]" in digest
     assert len(digest.encode("utf-8")) < 8000
 
@@ -136,7 +150,9 @@ def test_build_triage_prompt_includes_context_and_digest() -> None:
 
 
 def test_triage_prompt_record_and_jsonl_roundtrip() -> None:
-    record = triage_prompt_record(job_name="My Job", output_uri="s3://b/run/", artifact_digest="d")
+    record = triage_prompt_record(
+        job_name="My Job", output_uri="s3://b/run/", artifact_digest="d"
+    )
     assert record["id"] == "triage-my-job"
     jsonl = render_triage_prompts_jsonl([record])
     parsed = json.loads(jsonl.strip())
@@ -201,8 +217,7 @@ def test_rollout_judge_combo_spec_is_gpu_producer_then_hosted_judge() -> None:
     from npa.orchestration.npa_workflow.spec import load_spec
 
     spec = load_spec(
-        ROOT
-        / "workflows" / "testing" / "tokenfactory-rollout-judge-combo.yaml"
+        ROOT / "workflows" / "testing" / "tokenfactory-rollout-judge-combo.yaml"
     )
     plan = build_plan(spec, run_id="rollout-judge-test")
     steps = {step.state: step for step in plan.steps if step.argv}
@@ -317,13 +332,17 @@ def test_sweep_runner_rank_existing_skips_design_and_gpu() -> None:
     assert "design_prompt" not in plan
 
 
-def test_sweep_runner_full_mode_resolves_rank_root_without_keyerror(monkeypatch) -> None:
+def test_sweep_runner_full_mode_resolves_rank_root_without_keyerror(
+    monkeypatch,
+) -> None:
     """Regression: full-sweep mode must derive rank_root from sweep_root, not variant_uris."""
     module = _load_sweep_runner()
     captured: dict[str, str] = {}
 
     monkeypatch.setattr(module, "_hydrate_credentials", lambda: None)
-    monkeypatch.setattr(module, "_design_sweep", lambda *a, **k: {"status": "completed"})
+    monkeypatch.setattr(
+        module, "_design_sweep", lambda *a, **k: {"status": "completed"}
+    )
     monkeypatch.setattr(
         module,
         "_launch_variants",
@@ -336,7 +355,9 @@ def test_sweep_runner_full_mode_resolves_rank_root_without_keyerror(monkeypatch)
 
     monkeypatch.setattr(module, "_rank_runs", _fake_rank)
 
-    args = module._parse_args(["--run-id", "demo", "--num-variants", "2", "--bucket", "s3://b/sweeps"])
+    args = module._parse_args(
+        ["--run-id", "demo", "--num-variants", "2", "--bucket", "s3://b/sweeps"]
+    )
     plan = module.build_plan(args)
     assert module._run(args, plan) == 0
     assert captured["rank_root"] == "s3://b/sweeps/demo/ranking"
@@ -375,7 +396,10 @@ def test_sweep_runner_disambiguates_colliding_run_labels() -> None:
     assert [r["id"] for r in runs] == ["runA", "runB"]
     # ...colliding last segments are suffixed by position.
     collide = module._label_existing_runs(
-        ["s3://b/r1/checkpoints/pretrained_model/", "s3://b/r2/checkpoints/pretrained_model/"]
+        [
+            "s3://b/r1/checkpoints/pretrained_model/",
+            "s3://b/r2/checkpoints/pretrained_model/",
+        ]
     )
     assert [r["id"] for r in collide] == ["pretrained_model-0", "pretrained_model-1"]
     assert len({r["id"] for r in collide}) == 2
@@ -396,8 +420,7 @@ def test_scene_to_rollout_judge_spec_chains_reason_to_judge() -> None:
     from npa.orchestration.npa_workflow.spec import load_spec
 
     spec = load_spec(
-        ROOT
-        / "workflows" / "testing" / "tokenfactory-scene-to-rollout-judge.yaml"
+        ROOT / "workflows" / "testing" / "tokenfactory-scene-to-rollout-judge.yaml"
     )
     plan = build_plan(spec, run_id="scene-judge-test")
     steps = {step.state: step for step in plan.steps if step.argv}
@@ -416,11 +439,16 @@ def test_scene_to_rollout_judge_spec_chains_reason_to_judge() -> None:
     assert judge_argv[judge_argv.index("--input-path") + 1] == rollouts
     # ... against the plan the reasoner wrote. Without this link the third stage is decorative.
     plan_uri = reason_argv[reason_argv.index("--output-path") + 1]
-    assert judge_argv[judge_argv.index("--task-from") + 1] == f"{plan_uri}scene_reasoning.json"
+    assert (
+        judge_argv[judge_argv.index("--task-from") + 1]
+        == f"{plan_uri}scene_reasoning.json"
+    )
 
 
 def test_the_retired_scene_judge_template_is_gone() -> None:
-    assert not SCENE_JUDGE_YAML.exists(), "tokenfactory-scene-to-rollout-judge.yaml came back"
+    assert not SCENE_JUDGE_YAML.exists(), (
+        "tokenfactory-scene-to-rollout-judge.yaml came back"
+    )
 
 
 def test_combo_specs_have_no_hardcoded_infra_ids() -> None:
@@ -452,9 +480,7 @@ def test_train_triage_spec_is_two_stage_gpu_then_hosted_triage() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
 
-    spec = load_spec(
-        ROOT / "workflows" / "testing" / "tokenfactory-train-triage.yaml"
-    )
+    spec = load_spec(ROOT / "workflows" / "testing" / "tokenfactory-train-triage.yaml")
     plan = build_plan(spec, run_id="train-triage-test")
     steps = {step.state: step for step in plan.steps if step.argv}
 
@@ -485,13 +511,17 @@ def test_all_combo_yamls_are_well_formed_serial_pipelines() -> None:
         assert docs[0]["execution"] == "serial", f"{path.name} is not serial"
         stages = docs[1:]
         assert len(stages) >= 2, f"{path.name} should have >=2 stages"
-        assert all(stage.get("name") for stage in stages), f"{path.name} has an unnamed stage"
+        assert all(stage.get("name") for stage in stages), (
+            f"{path.name} has an unnamed stage"
+        )
         # At least one GPU stage (Nebius compute) and at least one fail-fast on the key.
         assert any("accelerators" in stage.get("resources", {}) for stage in stages), (
             f"{path.name} has no GPU compute stage"
         )
         full_text = path.read_text(encoding="utf-8")
-        assert "NEBIUS_TOKEN_FACTORY_KEY" in full_text, f"{path.name} never references the Token Factory key"
+        assert "NEBIUS_TOKEN_FACTORY_KEY" in full_text, (
+            f"{path.name} never references the Token Factory key"
+        )
 
 
 def test_sdk_exposes_workflow_submit_for_combo_yamls() -> None:
@@ -521,7 +551,10 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
     # This delegation test replaces the backend. The real CLI/SDK ownership
     # and exact-output probes are covered in test_execution_preflight.
-    mocker.patch("npa.cli.workbench.workflow._execution_target_preflight", return_value=(None, {}))
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
     fake = types.SimpleNamespace(status="SUBMITTED", job_id="job-1")
     submit_mock = mocker.patch(
@@ -529,8 +562,7 @@ def test_sdk_workflow_submit_delegates_to_orchestrator(mocker, monkeypatch) -> N
     )
 
     workflow.submit(
-        ROOT
-        / "workflows" / "testing" / "tokenfactory-scene-to-rollout-judge.yaml",
+        ROOT / "workflows" / "testing" / "tokenfactory-scene-to-rollout-judge.yaml",
         run_id="rj-test",
         secret_env=["NEBIUS_TOKEN_FACTORY_KEY", "AWS_ACCESS_KEY_ID"],
         # Clear the workbench image pins: this test is not exercising image preflight.

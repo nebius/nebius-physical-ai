@@ -84,7 +84,9 @@ def segments_from_temporal_tags(
         if segment is not None:
             segments.append(segment)
 
-    segments.sort(key=lambda item: (item.episode_index, item.start_ns, item.end_ns, item.label))
+    segments.sort(
+        key=lambda item: (item.episode_index, item.start_ns, item.end_ns, item.label)
+    )
     _validate_non_overlapping_segments(segments)
     return segments
 
@@ -152,7 +154,9 @@ def export_fiftyone_subtasks(
     import fiftyone as fo
 
     dataset_type, dataset, samples = _load_review_dataset(fo, dataset_name)
-    export_view, episode_by_sample_id, episode_mapping = _ordered_export(dataset, samples)
+    export_view, episode_by_sample_id, episode_mapping = _ordered_export(
+        dataset, samples
+    )
     segments = segments_from_temporal_tags(
         episode_by_sample_id,
         dataset.temporal_tags.values(),
@@ -160,13 +164,17 @@ def export_fiftyone_subtasks(
     destination = output_dir.expanduser().resolve()
     _require_empty_destination(destination)
     export_view.export(export_dir=str(destination), dataset_type=dataset_type)
-    report = apply_subtask_segments(destination, segments, require_complete=require_complete)
+    report = apply_subtask_segments(
+        destination, segments, require_complete=require_complete
+    )
     report.update({"dataset_name": dataset_name, "output_dir": str(destination)})
     report["episode_index_mapping"] = episode_mapping
     return report
 
 
-def _ordered_export(dataset: Any, samples: list[Any]) -> tuple[Any, dict[str, int], list[dict[str, int]]]:
+def _ordered_export(
+    dataset: Any, samples: list[Any]
+) -> tuple[Any, dict[str, int], list[dict[str, int]]]:
     indexed_samples = [(_source_episode_index(sample), sample) for sample in samples]
     indexed_samples.sort(key=lambda item: item[0])
     source_indexes = [index for index, _sample in indexed_samples]
@@ -190,19 +198,25 @@ def _source_episode_index(sample: Any) -> int:
     except (KeyError, AttributeError) as exc:
         raise SubtaskLabelError("LeRobot sample is missing episode_index") from exc
     if isinstance(index, bool) or not isinstance(index, int) or index < 0:
-        raise SubtaskLabelError("LeRobot sample episode_index must be a nonnegative integer")
+        raise SubtaskLabelError(
+            "LeRobot sample episode_index must be a nonnegative integer"
+        )
     return index
 
 
 def _load_review_dataset(fo: Any, dataset_name: str) -> tuple[Any, Any, list[Any]]:
     dataset_type = getattr(fo.types, "LeRobotDataset", None)
     if dataset_type is None:
-        raise SubtaskLabelError("FiftyOne 1.22 or newer is required for LeRobot subtask export")
+        raise SubtaskLabelError(
+            "FiftyOne 1.22 or newer is required for LeRobot subtask export"
+        )
     if dataset_name not in fo.list_datasets():
         raise SubtaskLabelError(f"FiftyOne dataset not found: {dataset_name}")
     dataset = fo.load_dataset(dataset_name)
     if dataset.media_type != "multimodal":
-        raise SubtaskLabelError(f"FiftyOne dataset is not a native LeRobot multimodal dataset: {dataset_name}")
+        raise SubtaskLabelError(
+            f"FiftyOne dataset is not a native LeRobot multimodal dataset: {dataset_name}"
+        )
     samples = list(dataset.iter_samples())
     if not samples:
         raise SubtaskLabelError(f"FiftyOne dataset has no episodes: {dataset_name}")
@@ -232,7 +246,9 @@ def export_fiftyone_subtasks_to_s3(
         StorageError: If the S3 URI is invalid or its prefix is nonempty.
         Exception: If the storage service rejects or cannot complete the upload.
     """
-    with tempfile.TemporaryDirectory(prefix="npa-lerobot-subtasks-") as temporary_directory:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-lerobot-subtasks-"
+    ) as temporary_directory:
         output_dir = Path(temporary_directory) / "dataset"
         report = export_fiftyone_subtasks(
             dataset_name,
@@ -275,7 +291,9 @@ def _segment_from_temporal_tag(
         return None
     label = tag.removeprefix(SUBTASK_TAG_PREFIX).strip()
     if not label:
-        raise SubtaskLabelError(f"Subtask tag must include a label after {SUBTASK_TAG_PREFIX!r}")
+        raise SubtaskLabelError(
+            f"Subtask tag must include a label after {SUBTASK_TAG_PREFIX!r}"
+        )
     sample_id = str(_tag_value(temporal_tag, "sample_id") or "")
     if sample_id not in episode_by_sample_id:
         raise SubtaskLabelError(f"Subtask tag references unknown sample {sample_id!r}")
@@ -289,7 +307,9 @@ def _segment_from_temporal_tag(
     start_ns = int(start)
     end_ns = int(end)
     if start_ns < 0 or end_ns <= start_ns:
-        raise SubtaskLabelError(f"Subtask tag {tag!r} has invalid interval [{start_ns}, {end_ns})")
+        raise SubtaskLabelError(
+            f"Subtask tag {tag!r} has invalid interval [{start_ns}, {end_ns})"
+        )
     return SubtaskSegment(episode_by_sample_id[sample_id], label, start_ns, end_ns)
 
 
@@ -338,7 +358,9 @@ def _plan_frame_annotations(
         episode_indexes.update(file_episodes)
         gap_count += file_gaps
     if require_complete and gap_count:
-        raise SubtaskLabelError(f"Subtask labels leave {gap_count} LeRobot frame(s) unlabeled")
+        raise SubtaskLabelError(
+            f"Subtask labels leave {gap_count} LeRobot frame(s) unlabeled"
+        )
     return plans, episode_indexes, gap_count
 
 
@@ -359,7 +381,9 @@ def _frame_subtask_indices(
     required = {"episode_index", "timestamp"}
     missing = sorted(required.difference(table.column_names))
     if missing:
-        raise SubtaskLabelError(f"LeRobot data parquet is missing columns: {', '.join(missing)}")
+        raise SubtaskLabelError(
+            f"LeRobot data parquet is missing columns: {', '.join(missing)}"
+        )
     episodes = table.column("episode_index").to_pylist()
     timestamps = table.column("timestamp").to_pylist()
     indices = []
@@ -436,9 +460,13 @@ def _read_dataset_info(root: Path) -> dict[str, Any]:
     try:
         info = json.loads(info_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise SubtaskLabelError(f"LeRobot dataset metadata is invalid: {info_path}") from exc
+        raise SubtaskLabelError(
+            f"LeRobot dataset metadata is invalid: {info_path}"
+        ) from exc
     if not isinstance(info, dict):
-        raise SubtaskLabelError(f"LeRobot dataset metadata must be an object: {info_path}")
+        raise SubtaskLabelError(
+            f"LeRobot dataset metadata must be an object: {info_path}"
+        )
     return info
 
 
@@ -456,7 +484,10 @@ def _write_annotation_state(path: Path, segments: list[SubtaskSegment]) -> None:
             ],
             "high_levels": [],
         }
-    path.write_text(json.dumps({"version": 1, "episodes": episodes}, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps({"version": 1, "episodes": episodes}, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _build_export_report(
@@ -488,7 +519,9 @@ def _upload_directory(root: Path, output_uri: str, storage_client: Any = None) -
     paths = sorted(root.rglob("*"))
     for path in paths:
         if path.is_symlink():
-            raise SubtaskLabelError(f"Refusing to upload symlinked dataset asset: {path}")
+            raise SubtaskLabelError(
+                f"Refusing to upload symlinked dataset asset: {path}"
+            )
     if storage_client is None:
         from npa.clients.storage import StorageClient
 
@@ -541,7 +574,9 @@ def _collapse_subtask_rows(
     segments = []
     frame_ns = round(NANOSECONDS_PER_SECOND / fps)
     for episode_index, episode_rows in grouped.items():
-        segments.extend(_collapse_episode_rows(episode_index, episode_rows, labels, frame_ns))
+        segments.extend(
+            _collapse_episode_rows(episode_index, episode_rows, labels, frame_ns)
+        )
     return segments
 
 
@@ -560,12 +595,22 @@ def _collapse_episode_rows(
         if subtask_index == active_index:
             continue
         if active_index is not None and active_index >= 0:
-            segments.append(SubtaskSegment(episode_index, labels[active_index], start_ns, timestamp_ns))
+            segments.append(
+                SubtaskSegment(
+                    episode_index, labels[active_index], start_ns, timestamp_ns
+                )
+            )
         active_index = subtask_index
         start_ns = timestamp_ns
         if subtask_index >= 0 and subtask_index not in labels:
-            raise SubtaskLabelError(f"Unknown subtask_index {subtask_index} in episode {episode_index}")
+            raise SubtaskLabelError(
+                f"Unknown subtask_index {subtask_index} in episode {episode_index}"
+            )
     if rows and active_index is not None and active_index >= 0:
         last_ns = round(float(rows[-1]["timestamp"]) * NANOSECONDS_PER_SECOND)
-        segments.append(SubtaskSegment(episode_index, labels[active_index], start_ns, last_ns + frame_ns))
+        segments.append(
+            SubtaskSegment(
+                episode_index, labels[active_index], start_ns, last_ns + frame_ns
+            )
+        )
     return segments

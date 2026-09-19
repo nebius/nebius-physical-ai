@@ -51,9 +51,11 @@ def terraform_scratch_root() -> Path:
 
 
 def _legacy_terraform_scratch_root() -> Path:
-    return Path(
-        os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
-    ) / "terraform-data" / "cluster"
+    return (
+        Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa"))
+        / "terraform-data"
+        / "cluster"
+    )
 
 
 def terraform_inventory_file(context: str) -> Path:
@@ -247,9 +249,7 @@ def collect_terraform_residue(start: Path | None = None) -> list[TerraformResidu
         cache = repo_root.joinpath(*_LEGACY_CACHE_PARTS)
         if _validated_legacy_source_cache(cache, repo_root):
             found.append(
-                TerraformResidue(
-                    "Legacy source-checkout Terraform cache", cache, True
-                )
+                TerraformResidue("Legacy source-checkout Terraform cache", cache, True)
             )
         elif cache.exists() or cache.is_symlink():
             found.append(

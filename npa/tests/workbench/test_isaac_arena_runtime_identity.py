@@ -117,17 +117,23 @@ def test_gpu_info_treats_absent_optional_torch_as_unavailable(monkeypatch) -> No
 def test_gpu_info_reports_real_cuda_query_failure(monkeypatch) -> None:
     cuda = SimpleNamespace(
         is_available=lambda: True,
-        get_device_name=lambda _index: (_ for _ in ()).throw(RuntimeError("driver failed")),
+        get_device_name=lambda _index: (_ for _ in ()).throw(
+            RuntimeError("driver failed")
+        ),
         get_device_capability=lambda _index: (10, 0),
     )
-    monkeypatch.setattr(runtime, "import_module", lambda _name: SimpleNamespace(cuda=cuda))
+    monkeypatch.setattr(
+        runtime, "import_module", lambda _name: SimpleNamespace(cuda=cuda)
+    )
     with pytest.raises(IsaacArenaError, match="CUDA driver/device query failed"):
         runtime._gpu_info()
 
 
 def test_gpu_info_reports_broken_torch_dependency(monkeypatch) -> None:
     def broken(_name: str):
-        raise ModuleNotFoundError("No module named typing_extensions", name="typing_extensions")
+        raise ModuleNotFoundError(
+            "No module named typing_extensions", name="typing_extensions"
+        )
 
     monkeypatch.setattr(runtime, "import_module", broken)
     with pytest.raises(IsaacArenaError, match="dependency is missing"):

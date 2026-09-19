@@ -142,7 +142,9 @@ def check_lerobot_train(state: SmokeState) -> CheckResult:
     try:
         code, output = _run_command(command, log_path=state.train_log, timeout=1800)
     except Exception as exc:
-        return CheckResult("run lerobot-train for 50 steps", False, _format_exception(exc))
+        return CheckResult(
+            "run lerobot-train for 50 steps", False, _format_exception(exc)
+        )
 
     if code != 0:
         return CheckResult(

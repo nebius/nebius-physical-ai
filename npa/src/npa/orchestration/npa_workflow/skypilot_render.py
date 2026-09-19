@@ -401,9 +401,7 @@ def normalize_resources(
     # operators can retarget without editing the committed blueprint; otherwise
     # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
-    gpu_memory_override = str(
-        _os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or ""
-    ).strip()
+    gpu_memory_override = str(_os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or "").strip()
     overrides = dict(accelerator_overrides or {})
 
     out: dict[str, Any] = {}
@@ -954,7 +952,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
         return content_agents_pythonpath + (
             "/opt/venv/bin/python -m npa.workflows.content_agents bootstrap-runtime\n"
             "if ! python3 -c 'import ctypes; "
-            'ctypes.CDLL("libGLX_nvidia.so.0")' "' >/dev/null 2>&1; then\n"
+            'ctypes.CDLL("libGLX_nvidia.so.0")'
+            "' >/dev/null 2>&1; then\n"
             "  echo 'OVRTX requires NVIDIA GPU Operator graphics driver mounts; "
             "libGLX_nvidia.so.0 is unavailable' >&2\n"
             "  exit 1\n"
@@ -1636,14 +1635,14 @@ def render_setup_for_tool(
             '  echo "Content Agents baked interpreter is unavailable" >&2\n'
             "  exit 69\n"
             "fi\n"
-            '"$npa_baked_python" - <<\'PY\'\n'
+            "\"$npa_baked_python\" - <<'PY'\n"
             "from npa.workflows.content_agents import inspect_image\n"
             "payload = inspect_image()\n"
             "if payload.get('status') != 'image-ready':\n"
             "    raise SystemExit('Content Agents image boundary is not ready')\n"
             "print('Content Agents narrow baked runtime verified')\n"
             "PY\n"
-            'printf \'%s\\n\' "$npa_baked_python" > /tmp/npa-python\n'
+            "printf '%s\\n' \"$npa_baked_python\" > /tmp/npa-python\n"
         )
     require_baked = str(config.get("require_baked_npa") or "").strip().lower()
     if require_baked in {"1", "true", "yes", "on"}:
@@ -1690,7 +1689,7 @@ def render_setup_for_tool(
             "fi\n"
             'npa_baked_pythonpath=""\n'
             "if [ -d /opt/npa/src ]; then\n"
-            '  npa_baked_pythonpath=/opt/npa/src\n'
+            "  npa_baked_pythonpath=/opt/npa/src\n"
             '  export PYTHONPATH="$npa_baked_pythonpath${PYTHONPATH:+:$PYTHONPATH}"\n'
             "fi\n"
             "\"$npa_baked_python\" - <<'PY'\n"
@@ -1814,7 +1813,9 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
         # the workflow config.  Read the already-resolved argv rather than
         # guessing a fixed variable name, so a deployment can use a scoped
         # token without silently dropping it at submit time.
-        if tool_ref == "workbench.robocasa" or tool_ref.startswith("workbench.robocasa."):
+        if tool_ref == "workbench.robocasa" or tool_ref.startswith(
+            "workbench.robocasa."
+        ):
             for index, arg in enumerate(step.argv[:-1]):
                 if arg != "--token-env":
                     continue
@@ -1989,11 +1990,18 @@ def build_skypilot_task_doc(
         "NPA_WORKFLOW_RUN_ID": run_id,
         "NPA_WORKFLOW_STATE": str(scheduler_task["name"]),
         # Retain output roles for the shared raw/rendered SDK submission gate.
-        "NPA_EXECUTION_OUTPUTS": json.dumps([
-            {"uri": output["uri"], "kind": output.get("kind") or ("directory" if str(output["uri"]).endswith("/") else "file")}
-            for output in scheduler_task.get("outputs") or []
-            if str(output.get("uri") or "").startswith("s3://")
-        ], separators=(",", ":")),
+        "NPA_EXECUTION_OUTPUTS": json.dumps(
+            [
+                {
+                    "uri": output["uri"],
+                    "kind": output.get("kind")
+                    or ("directory" if str(output["uri"]).endswith("/") else "file"),
+                }
+                for output in scheduler_task.get("outputs") or []
+                if str(output.get("uri") or "").startswith("s3://")
+            ],
+            separators=(",", ":"),
+        ),
     }
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
@@ -2069,9 +2077,10 @@ def build_skypilot_task_doc(
     # other cloud SkyPilot hands us a fresh VM, so only an explicit
     # NPA_MODEL_CACHE_DIR -- the operator saying the path is already there --
     # can be honored, and the env must not name a path nothing backs.
-    cache_on_kubernetes = (
-        str(resources.get("cloud") or "").strip().lower() in {"kubernetes", "k8s"}
-    )
+    cache_on_kubernetes = str(resources.get("cloud") or "").strip().lower() in {
+        "kubernetes",
+        "k8s",
+    }
     cache_root = resolve_model_cache_root(
         runtime=RUNTIME_KUBERNETES if cache_on_kubernetes else RUNTIME_PREMOUNTED
     )
@@ -2152,7 +2161,9 @@ def build_skypilot_task_doc(
         # downloads its model here so the eval's readiness window is not spent on
         # it), and SkyPilot runs it in a different shell than run -- so the cache
         # tree has to exist in both.
-        doc["setup"] = render_model_cache_shell(cache_root, mounted=cache_mounted) + setup
+        doc["setup"] = (
+            render_model_cache_shell(cache_root, mounted=cache_mounted) + setup
+        )
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
@@ -2189,7 +2200,13 @@ def build_skypilot_task_doc(
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
         if (
-            str(os.environ.get("NPA_SRC_OVERLAY") or spec.config.get("source_overlay") or "").strip().lower()
+            str(
+                os.environ.get("NPA_SRC_OVERLAY")
+                or spec.config.get("source_overlay")
+                or ""
+            )
+            .strip()
+            .lower()
             in {"1", "true"}
             and src_uri
         ):

@@ -64,9 +64,9 @@ def test_demo_stage_stages_all_artifacts(
                 _ensure_prefix(artifact["target_path"]),
             )
             assert len(objects) == artifact["expected_count"], artifact["name"]
-            assert sum(int(obj["Size"]) for obj in objects) == artifact[
-                "total_size_bytes"
-            ]
+            assert (
+                sum(int(obj["Size"]) for obj in objects) == artifact["total_size_bytes"]
+            )
             continue
 
         head = s3_helper.head_object(demo_stage_bucket, artifact["target_path"])
@@ -254,11 +254,15 @@ def _materialize_demo_manifest(
 
     for artifact in artifacts:
         target_path = str(artifact["target_path"]).strip("/")
-        source_uri = _source_uri(source_bucket, source_prefix, target_path, bool(artifact.get("is_prefix")))
+        source_uri = _source_uri(
+            source_bucket, source_prefix, target_path, bool(artifact.get("is_prefix"))
+        )
         entry = dict(artifact)
         entry["source_uri"] = source_uri
         if artifact.get("is_prefix"):
-            stats = _populate_prefix_artifact(s3_helper, source_bucket, source_prefix, target_path)
+            stats = _populate_prefix_artifact(
+                s3_helper, source_bucket, source_prefix, target_path
+            )
             entry["expected_count"] = stats["expected_count"]
             entry["total_size_bytes"] = stats["total_size_bytes"]
         else:
@@ -314,7 +318,9 @@ def _populate_prefix_artifact(
 
 def _payload_for_artifact(target_path: str) -> bytes:
     return (
-        json.dumps({"artifact": target_path, "kind": "demo-stage-fixture"}, sort_keys=True)
+        json.dumps(
+            {"artifact": target_path, "kind": "demo-stage-fixture"}, sort_keys=True
+        )
         + "\n"
     ).encode("utf-8")
 

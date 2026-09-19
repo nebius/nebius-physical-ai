@@ -22,22 +22,35 @@ pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot, pytest.mark.gpu]
 def _cases():
     path = os.environ.get("NPA_PAIDF_REALISM_CASES", "")
     if os.environ.get("NPA_INTEGRATION_E2E") != "1" or not path:
-        return [pytest.param(None, marks=pytest.mark.skip(reason="requires retained real PAIDF comparison runs"))]
+        return [
+            pytest.param(
+                None,
+                marks=pytest.mark.skip(
+                    reason="requires retained real PAIDF comparison runs"
+                ),
+            )
+        ]
     cases = json.loads(Path(path).read_text())
-    assert isinstance(cases, list) and cases, "The supplied live comparison manifest must not be empty"
+    assert isinstance(cases, list) and cases, (
+        "The supplied live comparison manifest must not be empty"
+    )
     return cases
 
 
 def _read(client, root, relative):
     location = urlsplit(root)
     assert location.scheme == "s3" and location.netloc
-    with client.get_object(Bucket=location.netloc, Key=location.path.strip("/") + "/" + relative)["Body"] as body:
+    with client.get_object(
+        Bucket=location.netloc, Key=location.path.strip("/") + "/" + relative
+    )["Body"] as body:
         return json.loads(body.read())
 
 
 def _download(client, root, relative, destination):
     location = urlsplit(root)
-    client.download_file(location.netloc, location.path.strip("/") + "/" + relative, str(destination))
+    client.download_file(
+        location.netloc, location.path.strip("/") + "/" + relative, str(destination)
+    )
     return destination
 
 
@@ -55,7 +68,9 @@ def _audit_variant(client, root, variant, source, destination, *, normalized):
     relative = "cosmos_augmented/" + variant["clip"] + "/"
     metadata = _read(client, root, relative + "metadata.json")
     receipt = _read(client, root, relative + "transfer.json")
-    video = _download(client, root, relative + "augmented_video.mp4", destination / "generated.mp4")
+    video = _download(
+        client, root, relative + "augmented_video.mp4", destination / "generated.mp4"
+    )
     alignment = verify_pair(source, video)
     assert alignment["generated_sha256"] == metadata["published_video_sha256"]
     assert alignment["source_sha256"] == metadata["temporal_alignment"]["source_sha256"]
@@ -80,9 +95,15 @@ def _audit_disposition(client, root, clips):
     assert {clip["clip_id"] for clip in report["clips"]} == set(clips)
     assert disposition["threshold"] == pytest.approx(0.75)
     assert disposition["score"] == pytest.approx(report["score"])
-    expected = "accepted" if disposition["hard_checks_passed"] and report["score"] >= 0.75 else "rejected"
+    expected = (
+        "accepted"
+        if disposition["hard_checks_passed"] and report["score"] >= 0.75
+        else "rejected"
+    )
     assert disposition["quality_status"] == expected
-    assert disposition["decision"] == ("promote_checkpoint" if expected == "accepted" else "loop_back")
+    assert disposition["decision"] == (
+        "promote_checkpoint" if expected == "accepted" else "loop_back"
+    )
 
 
 @pytest.mark.timeout(0)
@@ -109,14 +130,22 @@ def test_matched_native_cfg_normalization_artifacts(case, tmp_path):
         source = _audit_source(client, case["baseline_uri"], case, destination)
         manifest = _read(client, root, "cosmos_augmented/manifest.json")
         assert manifest["status"] == "executed" and manifest["variants"]
-        assert manifest["lineage"]["input_provenance_uri"] == case["baseline_uri"].rstrip("/") + "/input/provenance.json"
+        assert (
+            manifest["lineage"]["input_provenance_uri"]
+            == case["baseline_uri"].rstrip("/") + "/input/provenance.json"
+        )
         assert manifest["variant_count"] == len(manifest["variants"])
         outputs = {}
         for index, variant in enumerate(manifest["variants"]):
             folder = destination / str(index)
             folder.mkdir()
             outputs[variant["clip"]] = _audit_variant(
-                client, root, variant, source, folder, normalized=role == "candidate",
+                client,
+                root,
+                variant,
+                source,
+                folder,
+                normalized=role == "candidate",
             )
         _audit_disposition(client, root, outputs)
         runs[role] = outputs
@@ -132,8 +161,17 @@ def _assert_matched_inputs(runs, prepared_frames):
         for key in ("source_sha256", "decoded_frames", "fps", "duration_seconds"):
             assert old_alignment[key] == alignment[key]
         assert alignment["decoded_frames"] == prepared_frames
-        for key in ("control_pixels_sha256", "native_chunks", "first_chunk_conditional_frames",
-                    "overlap_conditional_frames", "edge_threshold", "effective_prompts", "output_fps"):
+        for key in (
+            "control_pixels_sha256",
+            "native_chunks",
+            "first_chunk_conditional_frames",
+            "overlap_conditional_frames",
+            "edge_threshold",
+            "effective_prompts",
+            "output_fps",
+        ):
             assert old_control[key] == control[key], f"Source control changed: {key}"
         for key in ("control_pixels_sha256", "weight", "source_frames", "preset"):
-            assert old_control["rgb_conditioning"][key] == control["rgb_conditioning"][key]
+            assert (
+                old_control["rgb_conditioning"][key] == control["rgb_conditioning"][key]
+            )

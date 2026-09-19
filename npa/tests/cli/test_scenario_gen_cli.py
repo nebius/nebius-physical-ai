@@ -88,8 +88,12 @@ def test_scenario_gen_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> N
 
     client = TestClient(create_app(auth_mode="none"))
 
-    def fake_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        response = client.request(method, path, json=kwargs.get("payload"), params=kwargs.get("params"))
+    def fake_request(
+        method: str, endpoint: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        response = client.request(
+            method, path, json=kwargs.get("payload"), params=kwargs.get("params")
+        )
         assert response.status_code == 200, response.text
         return response.json()
 

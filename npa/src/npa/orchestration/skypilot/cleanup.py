@@ -488,7 +488,9 @@ def cleanup_jobs_controller(
 
     try:
         with _cloned_skypilot_state(
-            isolated_config_dir, config_path=config_path, sky_bin=sky_bin,
+            isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin,
             env_extra={"KUBECONFIG": str(identity.kubeconfig)},
             controller_names=[_cluster_name(item) for item in controller_clusters],
             context=identity.context,
@@ -507,7 +509,10 @@ def cleanup_jobs_controller(
                 if remote_result.errors:
                     cleanup.errors.extend(remote_result.errors)
                     _record_controller_result(
-                        identity, cleanup, "verification_failed", remote_pods=remote_pods
+                        identity,
+                        cleanup,
+                        "verification_failed",
+                        remote_pods=remote_pods,
                     )
                     return cleanup
     except (OSError, RuntimeError, ValueError) as exc:
@@ -515,7 +520,9 @@ def cleanup_jobs_controller(
             "controller transaction could not complete safely; original metadata "
             f"was preserved: {redact_text(str(exc))}"
         )
-        _record_controller_result(identity, cleanup, "verification_failed", remote_pods=remote_pods)
+        _record_controller_result(
+            identity, cleanup, "verification_failed", remote_pods=remote_pods
+        )
         return cleanup
 
     remaining, verify_error = _wait_for_controller_pods_absent(
@@ -1471,24 +1478,38 @@ def _controller_belongs_to_context(cluster: dict[str, Any], context: str) -> boo
 
 @contextmanager
 def _cloned_skypilot_state(
-    source_root: Path | None, *, config_path: Path | None = None,
-    sky_bin: SkyBin = None, env_extra: dict[str, str] | None = None,
-    controller_names: Sequence[str] = (), context: str = "",
+    source_root: Path | None,
+    *,
+    config_path: Path | None = None,
+    sky_bin: SkyBin = None,
+    env_extra: dict[str, str] | None = None,
+    controller_names: Sequence[str] = (),
+    context: str = "",
 ) -> Iterator[Path]:
     """Use a separate owned API with the original controller identity and state."""
 
     from npa.orchestration.skypilot import local_api
 
-    runtime = resolve_config(sky_bin=sky_bin, global_config_path=config_path,
-                             isolated_config_dir=source_root)
+    runtime = resolve_config(
+        sky_bin=sky_bin, global_config_path=config_path, isolated_config_dir=source_root
+    )
     source_root = runtime.isolated_config_dir
     executable = str(ensure_skypilot_version(runtime.sky_bin))
-    owned_source = bool(source_root and (Path(source_root) / "local-api" / "server-config.yaml").is_file())
+    owned_source = bool(
+        source_root
+        and (Path(source_root) / "local-api" / "server-config.yaml").is_file()
+    )
     if owned_source:
         source_env = local_api.owned_daemon_environment(source_root)
         record = local_api._read(Path(source_root).absolute() / "local-api")
-        if not record or str(Path(executable).absolute().parent / "python") != record["interpreter"]:
-            raise local_api.IsolatedApiError("controller transaction requires the original managed Sky executable")
+        if (
+            not record
+            or str(Path(executable).absolute().parent / "python")
+            != record["interpreter"]
+        ):
+            raise local_api.IsolatedApiError(
+                "controller transaction requires the original managed Sky executable"
+            )
         config_path = Path(source_env["SKYPILOT_GLOBAL_CONFIG"])
     else:
         source_env = sky_environment(source_root)
@@ -1505,67 +1526,113 @@ def _cloned_skypilot_state(
     else:
         source_runtime = Path(runtime_value)
     if not runtime_value or not source_runtime.is_absolute():
-        raise local_api.IsolatedApiError("controller transaction requires an absolute source runtime directory")
+        raise local_api.IsolatedApiError(
+            "controller transaction requires an absolute source runtime directory"
+        )
     if source_runtime.resolve() != source_runtime:
-        raise local_api.IsolatedApiError("controller transaction cannot isolate linked source runtime metadata")
+        raise local_api.IsolatedApiError(
+            "controller transaction cannot isolate linked source runtime metadata"
+        )
     user_file = source_home / ".sky" / "user_hash"
     # Before owned APIs existed, Sky stored its stable identity in this file;
     # a new root-derived default must not replace that legacy controller owner.
-    user_id = (source_env.get("SKYPILOT_USER_ID") if owned_source else os.environ.get("SKYPILOT_USER_ID")) or (
-        user_file.read_text().strip() if user_file.is_file() else ""
-    )
+    user_id = (
+        source_env.get("SKYPILOT_USER_ID")
+        if owned_source
+        else os.environ.get("SKYPILOT_USER_ID")
+    ) or (user_file.read_text().strip() if user_file.is_file() else "")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", user_id):
-        raise local_api.IsolatedApiError("controller transaction requires the original saved Sky user identity")
+        raise local_api.IsolatedApiError(
+            "controller transaction requires the original saved Sky user identity"
+        )
     if user_file.is_file() and user_file.read_text().strip() != user_id:
-        raise local_api.IsolatedApiError("controller transaction source client and server identities disagree")
+        raise local_api.IsolatedApiError(
+            "controller transaction source client and server identities disagree"
+        )
     for key, value in (env_extra or {}).items():
         previous = source_env.get(key)
-        if key == "KUBECONFIG" and not previous and (source_home / ".kube/config").is_file():
+        if (
+            key == "KUBECONFIG"
+            and not previous
+            and (source_home / ".kube/config").is_file()
+        ):
             previous = str(source_home / ".kube/config")
         if owned_source and not previous and value:
-            raise local_api.IsolatedApiError("controller transaction cannot infer a missing source execution setting")
-        if previous and previous != value and (
-            key != "KUBECONFIG" or Path(previous).resolve() != Path(value).resolve()
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot infer a missing source execution setting"
+            )
+        if (
+            previous
+            and previous != value
+            and (
+                key != "KUBECONFIG" or Path(previous).resolve() != Path(value).resolve()
+            )
         ):
-            raise local_api.IsolatedApiError("controller transaction differs from the original executing identity")
+            raise local_api.IsolatedApiError(
+                "controller transaction differs from the original executing identity"
+            )
         source_env[key] = value
     parent = None
     if source_root:
         parent = Path(source_root) / "controller-transactions"
         parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    clone_root = Path(tempfile.mkdtemp(prefix="npa-controller-transaction-", dir=parent))
+    clone_root = Path(
+        tempfile.mkdtemp(prefix="npa-controller-transaction-", dir=parent)
+    )
     token = None
     try:
         clone_home = clone_root / "home"
         clone_home.mkdir(mode=0o700, parents=True, exist_ok=True)
         source_sky = source_home / ".sky"
         if source_sky.is_symlink():
-            raise local_api.IsolatedApiError("controller transaction cannot isolate linked source metadata")
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot isolate linked source metadata"
+            )
         if source_sky.is_dir():
             _snapshot_skypilot_state(source_sky, clone_home / ".sky")
         clone_runtime = clone_root / "sky-runtime"
         clone_runtime.mkdir(mode=0o700)
         runtime_sky = source_runtime / ".sky"
         if runtime_sky.is_symlink():
-            raise local_api.IsolatedApiError("controller transaction cannot isolate linked source runtime metadata")
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot isolate linked source runtime metadata"
+            )
         if runtime_sky.is_dir():
             _snapshot_skypilot_state(runtime_sky, clone_runtime / ".sky")
         for name in (".aws", ".nebius", ".kube"):
             path = source_home / name
             if path.exists():
-                (clone_home / name).symlink_to(path.resolve(), target_is_directory=path.is_dir())
+                (clone_home / name).symlink_to(
+                    path.resolve(), target_is_directory=path.is_dir()
+                )
         environment = dict(source_env)
-        for key in ("SKYPILOT_API_SERVER_ENDPOINT", "SKYPILOT_SERVER_PLUGINS_CONFIG",
-                    "NPA_OWNED_SKYPILOT_API_ID", "IS_SKYPILOT_SERVER", "NPA_SKYPILOT_ISOLATED_API_DIR"):
+        for key in (
+            "SKYPILOT_API_SERVER_ENDPOINT",
+            "SKYPILOT_SERVER_PLUGINS_CONFIG",
+            "NPA_OWNED_SKYPILOT_API_ID",
+            "IS_SKYPILOT_SERVER",
+            "NPA_SKYPILOT_ISOLATED_API_DIR",
+        ):
             environment.pop(key, None)
-        environment.update(HOME=str(clone_home), SKY_RUNTIME_DIR=str(clone_runtime),
-                           SKYPILOT_USER_ID=user_id)
+        environment.update(
+            HOME=str(clone_home),
+            SKY_RUNTIME_DIR=str(clone_runtime),
+            SKYPILOT_USER_ID=user_id,
+        )
         environment = local_api.isolated_api_environment(clone_root, environment)
-        config = local_api._yaml_document(config_path.read_bytes()) if config_path and config_path.is_file() else {}
+        config = (
+            local_api._yaml_document(config_path.read_bytes())
+            if config_path and config_path.is_file()
+            else {}
+        )
         if config.get("db") or environment.get("SKYPILOT_DB_CONNECTION_URI"):
-            raise local_api.IsolatedApiError("controller transaction cannot use a shared external database")
+            raise local_api.IsolatedApiError(
+                "controller transaction cannot use a shared external database"
+            )
         if (config.get("api_server") or {}).get("endpoint"):
-            config["api_server"]["endpoint"] = environment["SKYPILOT_API_SERVER_ENDPOINT"]
+            config["api_server"]["endpoint"] = environment[
+                "SKYPILOT_API_SERVER_ENDPOINT"
+            ]
         import yaml
 
         temporary_config = clone_root / "transaction-config.yaml"
@@ -1574,24 +1641,50 @@ def _cloned_skypilot_state(
         environment["SKYPILOT_GLOBAL_CONFIG"] = str(temporary_config)
         if controller_names:
             manifest_path = clone_root / "controller-clone.json"
-            with open(manifest_path, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as manifest:
-                json.dump({"clone_root": str(clone_root), "source_home": str(source_home),
-                           "controller_names": list(controller_names), "context": context}, manifest)
+            with open(
+                manifest_path, "w", opener=lambda p, flags: os.open(p, flags, 0o600)
+            ) as manifest:
+                json.dump(
+                    {
+                        "clone_root": str(clone_root),
+                        "source_home": str(source_home),
+                        "controller_names": list(controller_names),
+                        "context": context,
+                    },
+                    manifest,
+                )
             prepared = subprocess.run(
-                [str(Path(executable).absolute().parent / "python"),
-                 str(Path(__file__).with_name("controller_clone.py")), str(manifest_path)],
-                env=environment, cwd=clone_root, capture_output=True, check=False,
+                [
+                    str(Path(executable).absolute().parent / "python"),
+                    str(Path(__file__).with_name("controller_clone.py")),
+                    str(manifest_path),
+                ],
+                env=environment,
+                cwd=clone_root,
+                capture_output=True,
+                check=False,
             )
             if prepared.returncode:
-                raise local_api.IsolatedApiError("controller transaction could not verify its copied controller metadata")
-        local_api.ensure_isolated_api(isolated_dir=clone_root, sky_executable=executable,
-                                      environment=environment, cwd=str(clone_root))
+                raise local_api.IsolatedApiError(
+                    "controller transaction could not verify its copied controller metadata"
+                )
+        local_api.ensure_isolated_api(
+            isolated_dir=clone_root,
+            sky_executable=executable,
+            environment=environment,
+            cwd=str(clone_root),
+        )
         restored_user = clone_home / ".sky" / "user_hash"
         if restored_user.is_file() and restored_user.read_text().strip() != user_id:
-            raise local_api.IsolatedApiError("cloned controller database restored a different server identity")
-        token = _TRANSACTION_ENVIRONMENTS.set({
-            **_TRANSACTION_ENVIRONMENTS.get(), str(clone_root.resolve()): environment,
-        })
+            raise local_api.IsolatedApiError(
+                "cloned controller database restored a different server identity"
+            )
+        token = _TRANSACTION_ENVIRONMENTS.set(
+            {
+                **_TRANSACTION_ENVIRONMENTS.get(),
+                str(clone_root.resolve()): environment,
+            }
+        )
         yield clone_root
     finally:
         if token is not None:
@@ -1603,7 +1696,10 @@ def _cloned_skypilot_state(
 
 
 def _snapshot_skypilot_state(
-    source: Path, destination: Path, *, relative: Path = Path(),
+    source: Path,
+    destination: Path,
+    *,
+    relative: Path = Path(),
 ) -> None:
     """Back up open SQLite databases including committed WAL rows consistently."""
     destination.mkdir(mode=0o700)
@@ -1616,14 +1712,18 @@ def _snapshot_skypilot_state(
         if entry.is_symlink():
             from npa.orchestration.skypilot.local_api import IsolatedApiError
 
-            raise IsolatedApiError("controller transaction cannot isolate linked source metadata")
+            raise IsolatedApiError(
+                "controller transaction cannot isolate linked source metadata"
+            )
         elif entry.is_dir():
             _snapshot_skypilot_state(entry, target, relative=relative / entry.name)
         elif not entry.name.endswith(("-wal", "-shm", "-journal")):
             with entry.open("rb") as handle:
                 sqlite_database = handle.read(16) == b"SQLite format 3\x00"
             if sqlite_database:
-                with sqlite3.connect(entry.resolve().as_uri() + "?mode=ro", uri=True) as original:
+                with sqlite3.connect(
+                    entry.resolve().as_uri() + "?mode=ro", uri=True
+                ) as original:
                     with sqlite3.connect(target) as backup:
                         original.backup(backup)
                 target.chmod(0o600)
@@ -1855,7 +1955,9 @@ def sky_environment(
     env = dict(os.environ if environment is None else environment)
     if isolated_config_dir is None:
         return env
-    transaction = _TRANSACTION_ENVIRONMENTS.get().get(str(Path(isolated_config_dir).resolve()))
+    transaction = _TRANSACTION_ENVIRONMENTS.get().get(
+        str(Path(isolated_config_dir).resolve())
+    )
     if transaction is not None:
         from npa.orchestration.skypilot.local_api import isolated_api_environment
 
@@ -1897,7 +1999,10 @@ def sky_environment(
             if isolated_kubeconfig.is_symlink():
                 if isolated_kubeconfig.resolve(strict=False) != selected_target:
                     isolated_kubeconfig.unlink()
-            if not isolated_kubeconfig.exists() and not isolated_kubeconfig.is_symlink():
+            if (
+                not isolated_kubeconfig.exists()
+                and not isolated_kubeconfig.is_symlink()
+            ):
                 isolated_kubeconfig.symlink_to(selected_target)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)

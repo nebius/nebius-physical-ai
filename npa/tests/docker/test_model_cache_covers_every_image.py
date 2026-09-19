@@ -140,7 +140,9 @@ def test_no_new_pod_local_cache_volume_appears_unnoticed() -> None:
         for name in named.findall(text):
             found[name] = source.relative_to(SRC_ROOT).as_posix()
         if not named.findall(text):
-            found[f"<unnamed in {source.name}>"] = source.relative_to(SRC_ROOT).as_posix()
+            found[f"<unnamed in {source.name}>"] = source.relative_to(
+                SRC_ROOT
+            ).as_posix()
 
     unaccounted = {
         name: where for name, where in found.items() if name not in EXCUSED_EMPTY_DIRS

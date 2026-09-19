@@ -36,15 +36,27 @@ def _download(root: Path, name: str, entry: dict) -> dict:
     path = root / _relative(name)
     path.parent.mkdir(parents=True, exist_ok=True)
     url = urlsplit(entry["url"])
-    if url.scheme != "https" or not url.hostname or url.username or url.password or url.fragment:
-        raise ValueError("Signed downloads require HTTPS without user information or fragments")
+    if (
+        url.scheme != "https"
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.fragment
+    ):
+        raise ValueError(
+            "Signed downloads require HTTPS without user information or fragments"
+        )
     try:
-        with closing(HTTPSConnection(url.hostname, url.port, timeout=120)) as connection:
+        with closing(
+            HTTPSConnection(url.hostname, url.port, timeout=120)
+        ) as connection:
             connection.request("GET", url.path + ("?" + url.query if url.query else ""))
             with connection.getresponse() as response:
                 digest, size = _receive_file(response, path)
     except (HTTPException, OSError) as error:
-        raise RuntimeError(f"Signed artifact download failed: {type(error).__name__}") from None
+        raise RuntimeError(
+            f"Signed artifact download failed: {type(error).__name__}"
+        ) from None
     if digest != entry["sha256"] or size != entry["bytes"]:
         raise ValueError(f"S3 input differs from its approved identity: {name}")
     return {"sha256": digest, "bytes": size}
@@ -63,11 +75,18 @@ def _main() -> None:
     request = json.load(sys.stdin)
     root = Path(request["root"])
     root.mkdir(parents=True, exist_ok=False)
-    verified = {name: _download(root, name, entry) for name, entry in request["files"].items()}
+    verified = {
+        name: _download(root, name, entry) for name, entry in request["files"].items()
+    }
     if request.get("source_bundle"):
         _extract(root, request["source_bundle"])
     (root / "input-receipt.json").write_text(json.dumps(verified, indent=2))
-    print(json.dumps({"files": verified, "source": "nebius_s3", "download_verified": True}), flush=True)
+    print(
+        json.dumps(
+            {"files": verified, "source": "nebius_s3", "download_verified": True}
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

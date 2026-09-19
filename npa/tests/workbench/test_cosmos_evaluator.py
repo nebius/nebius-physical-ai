@@ -559,8 +559,7 @@ def test_appearance_fidelity_rejects_chroma_shift_instability(
     result = _run_appearance_with_frames(tmp_path, monkeypatch, source, augmented)
     assert result.passed is False
     assert any(
-        region.chroma_instability_p95
-        > result.chroma_instability_tolerance
+        region.chroma_instability_p95 > result.chroma_instability_tolerance
         for region in result.regions
     )
 
@@ -576,9 +575,7 @@ def test_appearance_fidelity_rejects_frame_count_mismatch(
 
 
 def test_appearance_regions_accept_labels_and_validate_bounds() -> None:
-    parsed = appearance.parse_regions(
-        '[{"id":"protected","bounds":[0.1,0.2,0.8,0.9]}]'
-    )
+    parsed = appearance.parse_regions('[{"id":"protected","bounds":[0.1,0.2,0.8,0.9]}]')
     assert parsed == [("protected", (0.1, 0.2, 0.8, 0.9))]
     assert appearance.parse_regions("") == list(appearance.DEFAULT_REGIONS)
     with pytest.raises(CosmosEvaluatorError, match="bounds"):
@@ -825,7 +822,9 @@ def test_generate_question_retries_without_structured_output() -> None:
 
 
 @pytest.mark.parametrize("threshold,passed", [(1.0, False), (0.5, True)])
-def test_verify_attributes_scores_a_matching_answer(tmp_path: Path, threshold: float, passed: bool) -> None:
+def test_verify_attributes_scores_a_matching_answer(
+    tmp_path: Path, threshold: float, passed: bool
+) -> None:
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"\x89PNG\r\n\x1a\nfake")
     client = FakeTokenFactory(
@@ -1651,7 +1650,10 @@ def test_transient_attribute_endpoint_failure_marks_run_degraded(
 
 @pytest.mark.parametrize(
     ("metadata_payload", "warning"),
-    [([], "metadata is not an object"), ({"variables": []}, "variables are not an object")],
+    [
+        ([], "metadata is not an object"),
+        ({"variables": []}, "variables are not an object"),
+    ],
 )
 def test_malformed_variant_metadata_does_not_crash_and_degrades_run(
     tmp_path: Path, metadata_payload: Any, warning: str
@@ -1725,7 +1727,9 @@ def test_evaluator_refuses_attempt_layout_without_canonical_manifest(
 
     root = tmp_path / "cosmos_augmented"
     (root / "_attempts" / "orphan" / "clip").mkdir(parents=True)
-    with pytest.raises(evaluator.CosmosEvaluatorError, match="without a valid canonical"):
+    with pytest.raises(
+        evaluator.CosmosEvaluatorError, match="without a valid canonical"
+    ):
         evaluator._list_clip_targets(str(root), store=object())
 
 

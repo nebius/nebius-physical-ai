@@ -9,7 +9,12 @@ import pytest
 from PIL import Image
 from PIL import ImageDraw
 
-from npa.workbench.vlm_eval import DEFAULT_MODEL, DEFAULT_RUBRIC, evaluate_vlm, write_result
+from npa.workbench.vlm_eval import (
+    DEFAULT_MODEL,
+    DEFAULT_RUBRIC,
+    evaluate_vlm,
+    write_result,
+)
 from test_vlm_eval_backend import LIVE_GPU_REQUEST_TIMEOUT_S
 from test_vlm_eval_backend import live_gpu_endpoint as live_gpu_endpoint
 
@@ -60,7 +65,9 @@ def test_vlm_eval_loop_e2e_scores_rollouts_and_reports(
         latency_s=time.monotonic() - started_at,
     )
     report_path = output_dir / "task_success_report.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     print(f"NPA_VLM_LOOP_E2E_GPU_TYPE={live_gpu_endpoint.gpu_type}")
     print(f"NPA_VLM_LOOP_E2E_MODEL={DEFAULT_MODEL}")

@@ -45,7 +45,13 @@ def _profile(spec, step) -> dict:
         (
             "token-factory-caption.yaml",
             "npa workbench token-factory caption",
-            ("--input-path", "--output-path", "--model", "--max-images", "--max-tokens"),
+            (
+                "--input-path",
+                "--output-path",
+                "--model",
+                "--max-images",
+                "--max-tokens",
+            ),
         ),
         (
             "token-factory-generate.yaml",
@@ -72,7 +78,9 @@ def test_token_factory_specs_are_cpu_only_and_run_the_real_cli(
     profile = _profile(spec, step)
 
     assert profile["cloud"] == "kubernetes"
-    assert "accelerators" not in profile, f"{spec_name} is hosted inference; it needs no GPU"
+    assert "accelerators" not in profile, (
+        f"{spec_name} is hosted inference; it needs no GPU"
+    )
     assert command in argv
     for flag in flags:
         assert flag in argv, f"{spec_name} argv is missing {flag}"
@@ -86,7 +94,9 @@ def test_token_factory_specs_are_cpu_only_and_run_the_real_cli(
         "token-factory-cosmos-reason.yaml",
     ],
 )
-def test_token_factory_setup_requires_the_api_key_and_serves_nothing(spec_name: str) -> None:
+def test_token_factory_setup_requires_the_api_key_and_serves_nothing(
+    spec_name: str,
+) -> None:
     spec, step = _only_step(spec_name)
 
     setup = render_setup_for_tool(
@@ -115,7 +125,9 @@ TEMPLATE_ONLY_FLAGS = {
 
 
 @pytest.mark.parametrize("spec_name", sorted(TEMPLATE_ONLY_FLAGS))
-def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: str) -> None:
+def test_template_only_flags_are_still_absent_from_the_spec_surface(
+    spec_name: str,
+) -> None:
     """Pin the capability delta against the retired templates.
 
     A spec author cannot set these today; the tool's CLI defaults apply instead. When a
@@ -125,7 +137,9 @@ def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: s
     _, step = _only_step(spec_name)
     argv = set(step.argv)
 
-    still_missing = tuple(flag for flag in TEMPLATE_ONLY_FLAGS[spec_name] if flag not in argv)
+    still_missing = tuple(
+        flag for flag in TEMPLATE_ONLY_FLAGS[spec_name] if flag not in argv
+    )
     assert still_missing == TEMPLATE_ONLY_FLAGS[spec_name], (
         f"{spec_name}: the toolRef argv now carries "
         f"{sorted(set(TEMPLATE_ONLY_FLAGS[spec_name]) - set(still_missing))}; "
@@ -133,8 +147,12 @@ def test_template_only_flags_are_still_absent_from_the_spec_surface(spec_name: s
     )
 
 
-@pytest.mark.parametrize("model", [None, "MiniMaxAI/MiniMax-M3", "vendor/explicit-model"])
-def test_cosmos_reason_spec_preserves_default_and_explicit_model(model: str | None) -> None:
+@pytest.mark.parametrize(
+    "model", [None, "MiniMaxAI/MiniMax-M3", "vendor/explicit-model"]
+)
+def test_cosmos_reason_spec_preserves_default_and_explicit_model(
+    model: str | None,
+) -> None:
     """An omitted model uses the new CLI default; an override reaches the command."""
 
     from npa.clients.token_factory import DEFAULT_REASONER_MODEL

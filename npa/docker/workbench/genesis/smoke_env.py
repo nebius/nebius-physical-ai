@@ -66,7 +66,9 @@ def check_cuda_gpu() -> CheckResult:
     try:
         torch = importlib.import_module("torch")
         if not torch.cuda.is_available():
-            return CheckResult("check CUDA/GPU access", False, "torch.cuda.is_available() is false")
+            return CheckResult(
+                "check CUDA/GPU access", False, "torch.cuda.is_available() is false"
+            )
         device_count = torch.cuda.device_count()
         device_name = torch.cuda.get_device_name(0)
         before = torch.cuda.memory_allocated(0)
@@ -94,7 +96,9 @@ def check_genesis_python_entrypoint() -> CheckResult:
             ]
         )
     except Exception as exc:
-        return CheckResult("genesis Python entry point responds", False, _format_exception(exc))
+        return CheckResult(
+            "genesis Python entry point responds", False, _format_exception(exc)
+        )
 
     output = (result.stdout or result.stderr).strip()
     if result.returncode != 0:
@@ -109,11 +113,15 @@ def check_genesis_python_entrypoint() -> CheckResult:
 def check_npa_genesis_help() -> CheckResult:
     npa = shutil.which("npa")
     if npa is None:
-        return CheckResult("npa workbench genesis --help", False, "npa executable not found on PATH")
+        return CheckResult(
+            "npa workbench genesis --help", False, "npa executable not found on PATH"
+        )
     try:
         result = _run([npa, "workbench", "genesis", "--help"])
     except Exception as exc:
-        return CheckResult("npa workbench genesis --help", False, _format_exception(exc))
+        return CheckResult(
+            "npa workbench genesis --help", False, _format_exception(exc)
+        )
 
     if result.returncode != 0:
         output = (result.stderr or result.stdout).strip()

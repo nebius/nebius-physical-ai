@@ -71,14 +71,18 @@ def check_model_weights_dir() -> CheckResult:
     model_dir = Path(os.environ.get("COSMOS_MODEL_DIR", str(DEFAULT_MODEL_DIR)))
     try:
         if not model_dir.is_dir():
-            return CheckResult("model weights directory exists", False, f"missing {model_dir}")
+            return CheckResult(
+                "model weights directory exists", False, f"missing {model_dir}"
+            )
         model_path = model_dir / _model_slug(model)
         detail = f"directory: {model_dir}"
         if model_path.exists():
             detail += f"; model: {model_path}"
         return CheckResult("model weights directory exists", True, detail)
     except Exception as exc:
-        return CheckResult("model weights directory exists", False, _format_exception(exc))
+        return CheckResult(
+            "model weights directory exists", False, _format_exception(exc)
+        )
 
 
 def _print_result(result: CheckResult) -> None:

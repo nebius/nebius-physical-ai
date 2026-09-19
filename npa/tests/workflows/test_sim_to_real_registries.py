@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from npa.workbench.lerobot.policy_container import LeRobotEvalResult
-from npa.workflows.eval_backends import EvalMetric, RolloutContext, evaluate_backend, get_eval_backend
+from npa.workflows.eval_backends import (
+    EvalMetric,
+    RolloutContext,
+    evaluate_backend,
+    get_eval_backend,
+)
 from npa.workflows.feedback import (
     ByoContainerFeedbackSource,
     FeedbackPayload,
@@ -17,7 +22,9 @@ from npa.workflows.feedback import (
 )
 
 
-def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(tmp_path: Path) -> None:
+def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(
+    tmp_path: Path,
+) -> None:
     context = RolloutContext(
         rollout_path=tmp_path,
         task="pick",
@@ -57,7 +64,9 @@ def test_eval_backend_registry_selects_canonical_and_compatibility_aliases(tmp_p
     assert vlm_status.tier == "PARTIAL"
 
 
-def test_state_success_backend_adapts_lerobot_eval_pc_success(monkeypatch, tmp_path: Path) -> None:
+def test_state_success_backend_adapts_lerobot_eval_pc_success(
+    monkeypatch, tmp_path: Path
+) -> None:
     from npa.workflows import eval_backends as eval_backends_module
 
     eval_info = tmp_path / "eval" / "eval_info.json"
@@ -118,12 +127,20 @@ def test_state_success_backend_adapts_lerobot_eval_pc_success(monkeypatch, tmp_p
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
-        (FeedbackPayload("test", FeedbackType.SCALAR, 0.8, score=0.8, success=True), {"scalar_reward": 0.8}),
         (
-            FeedbackPayload("test", FeedbackType.DENSE_PER_STEP, [0.2, 0.6, 1.0], success=True),
+            FeedbackPayload("test", FeedbackType.SCALAR, 0.8, score=0.8, success=True),
+            {"scalar_reward": 0.8},
+        ),
+        (
+            FeedbackPayload(
+                "test", FeedbackType.DENSE_PER_STEP, [0.2, 0.6, 1.0], success=True
+            ),
             {"scalar_reward": 0.6, "dense_rewards": [0.2, 0.6, 1.0]},
         ),
-        (FeedbackPayload("test", FeedbackType.PASS_FAIL, True, success=True), {"scalar_reward": 1.0}),
+        (
+            FeedbackPayload("test", FeedbackType.PASS_FAIL, True, success=True),
+            {"scalar_reward": 1.0},
+        ),
         (
             FeedbackPayload(
                 "test",
@@ -142,11 +159,20 @@ def test_state_success_backend_adapts_lerobot_eval_pc_success(monkeypatch, tmp_p
                 score=0.7,
                 success=True,
             ),
-            {"scalar_reward": 0.7, "preference": {"chosen": "candidate", "rejected": "baseline", "score": 0.7}},
+            {
+                "scalar_reward": 0.7,
+                "preference": {
+                    "chosen": "candidate",
+                    "rejected": "baseline",
+                    "score": 0.7,
+                },
+            },
         ),
     ],
 )
-def test_feedback_type_adapters_emit_training_signal(payload: FeedbackPayload, expected: dict) -> None:
+def test_feedback_type_adapters_emit_training_signal(
+    payload: FeedbackPayload, expected: dict
+) -> None:
     signal = adapt_feedback_to_training_signal(payload)
 
     for key, value in expected.items():
@@ -175,7 +201,9 @@ def test_sim_env_feedback_source_adapts_eval_metric(tmp_path: Path) -> None:
     assert signal["scalar_reward"] == 1.0
 
 
-def test_byo_container_feedback_source_dispatches_provided_rollout_http(tmp_path: Path) -> None:
+def test_byo_container_feedback_source_dispatches_provided_rollout_http(
+    tmp_path: Path,
+) -> None:
     calls: list[tuple[str, dict]] = []
 
     def fake_post(url: str, payload: dict) -> dict:
@@ -209,7 +237,9 @@ def test_byo_container_feedback_source_dispatches_provided_rollout_http(tmp_path
     assert calls[0][1]["rollout_path"].endswith("rollout")
 
 
-def test_byo_container_feedback_source_dispatches_self_rollout_cli(tmp_path: Path) -> None:
+def test_byo_container_feedback_source_dispatches_self_rollout_cli(
+    tmp_path: Path,
+) -> None:
     calls: list[tuple[list[str], dict]] = []
 
     def fake_command(command: list[str], payload: dict) -> dict:
@@ -241,9 +271,14 @@ def test_byo_container_feedback_source_dispatches_self_rollout_cli(tmp_path: Pat
     assert "rollout_path" not in calls[0][1]
 
 
-def test_byo_container_feedback_source_rejects_mismatched_declared_type(tmp_path: Path) -> None:
+def test_byo_container_feedback_source_rejects_mismatched_declared_type(
+    tmp_path: Path,
+) -> None:
     source = ByoContainerFeedbackSource(
-        http_post=lambda _url, _payload: {"feedback_type": "critique", "value": {"score": 0.5}}
+        http_post=lambda _url, _payload: {
+            "feedback_type": "critique",
+            "value": {"score": 0.5},
+        }
     )
 
     with pytest.raises(FeedbackSourceError, match="expected 'scalar'"):

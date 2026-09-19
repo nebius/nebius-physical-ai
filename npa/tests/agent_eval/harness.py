@@ -81,41 +81,67 @@ def _module(overrides: Mapping[str, Any] | None, name: str, default: Any) -> Any
     return (overrides or {}).get(name, default)
 
 
-def _run_grounded(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+def _run_grounded(
+    sc: Scenario, overrides: Mapping[str, Any] | None = None
+) -> EvalResult:
     chat = _module(overrides, "agent_chat", agent_chat)
     intent = chat.match_chat_intent(sc.goal)
-    reply = chat.build_grounded_reply(intent or "", {}, ["workbench.cosmos.train"]) if intent else ""
+    reply = (
+        chat.build_grounded_reply(intent or "", {}, ["workbench.cosmos.train"])
+        if intent
+        else ""
+    )
     success = intent == sc.expected.get("intent") and bool(reply)
-    return EvalResult(sc.id, sc.kind, success, steps=1, tokens=0, detail=f"intent={intent}")
+    return EvalResult(
+        sc.id, sc.kind, success, steps=1, tokens=0, detail=f"intent={intent}"
+    )
 
 
-def _run_workflow(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+def _run_workflow(
+    sc: Scenario, overrides: Mapping[str, Any] | None = None
+) -> EvalResult:
     # End-state: the intent is recognized AND a runnable spec is drafted+validated.
     chat = _module(overrides, "agent_chat", agent_chat)
     workflow = _module(overrides, "agent_workflow", agent_workflow)
     intent = chat.match_chat_intent(sc.goal)
     if intent != sc.expected.get("intent"):
-        return EvalResult(sc.id, sc.kind, False, steps=1, tokens=0, detail=f"intent={intent}")
+        return EvalResult(
+            sc.id, sc.kind, False, steps=1, tokens=0, detail=f"intent={intent}"
+        )
     draft = workflow.generate_workflow_draft(
         intent=intent, user_text=sc.goal, tool_refs=_EVAL_TOOL_REFS
     )
-    validation = draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
-    success = bool(draft.get("runnable")) and bool(validation.get("ok")) and bool(draft.get("yaml"))
+    validation = (
+        draft.get("validation") if isinstance(draft.get("validation"), dict) else {}
+    )
+    success = (
+        bool(draft.get("runnable"))
+        and bool(validation.get("ok"))
+        and bool(draft.get("yaml"))
+    )
     return EvalResult(
-        sc.id, sc.kind, success, steps=2, tokens=0, detail=f"template={draft.get('template')}"
+        sc.id,
+        sc.kind,
+        success,
+        steps=2,
+        tokens=0,
+        detail=f"template={draft.get('template')}",
     )
 
 
-def _run_action_loop(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+def _run_action_loop(
+    sc: Scenario, overrides: Mapping[str, Any] | None = None
+) -> EvalResult:
     actions = _module(overrides, "agent_actions", agent_actions)
     expected_tool = sc.expected.get("tool")
     if sc.expected.get("needs_confirmation"):
-        planner = _scripted([{ "tool": expected_tool, "args": {"run_id": "eval"}}])
+        planner = _scripted([{"tool": expected_tool, "args": {"run_id": "eval"}}])
         tools = {expected_tool: lambda args: {"run_id": "eval"}}
         result = actions.run_action_loop(sc.goal, tools=tools, model_call=planner)
-        success = bool(result.get("needs_confirmation")) and result.get(
-            "proposed_action", {}
-        ).get("tool") == expected_tool
+        success = (
+            bool(result.get("needs_confirmation"))
+            and result.get("proposed_action", {}).get("tool") == expected_tool
+        )
     else:
         planner = _scripted(
             [
@@ -125,16 +151,22 @@ def _run_action_loop(sc: Scenario, overrides: Mapping[str, Any] | None = None) -
         )
         tools = {expected_tool: lambda args: {"run_id": "r", "stage": "demo"}}
         result = actions.run_action_loop(sc.goal, tools=tools, model_call=planner)
-        success = (
-            result.get("stopped_reason") == sc.expected.get("stopped_reason")
-            and expected_tool in result.get("tools_used", [])
-        )
-    steps = len([s for s in result.get("steps", []) if s.get("phase") in {"call", "confirm"}])
-    return EvalResult(sc.id, sc.kind, success, steps=steps, tokens=int(result.get("tokens") or 0))
+        success = result.get("stopped_reason") == sc.expected.get(
+            "stopped_reason"
+        ) and expected_tool in result.get("tools_used", [])
+    steps = len(
+        [s for s in result.get("steps", []) if s.get("phase") in {"call", "confirm"}]
+    )
+    return EvalResult(
+        sc.id, sc.kind, success, steps=steps, tokens=int(result.get("tokens") or 0)
+    )
 
 
-def _run_sim2real_loop(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+def _run_sim2real_loop(
+    sc: Scenario, overrides: Mapping[str, Any] | None = None
+) -> EvalResult:
     sim2real = _module(overrides, "agent_sim2real_loop", agent_sim2real_loop)
+
     def _status(run_id):
         return {"ok": True, "sim_viz": {"run_id": run_id}, "run": {"run_id": run_id}}
 
@@ -157,15 +189,16 @@ def _run_sim2real_loop(sc: Scenario, overrides: Mapping[str, Any] | None = None)
             confirm_token="t",
             session_token="t",
         )
-        success = (
-            result.get("decision") == sc.expected.get("decision")
-            and result.get("stopped_reason") == sc.expected.get("stopped_reason")
-        )
+        success = result.get("decision") == sc.expected.get("decision") and result.get(
+            "stopped_reason"
+        ) == sc.expected.get("stopped_reason")
     steps = len(result.get("iterations", [])) or 1
     return EvalResult(sc.id, sc.kind, success, steps=steps, tokens=0)
 
 
-def _run_semantic(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+def _run_semantic(
+    sc: Scenario, overrides: Mapping[str, Any] | None = None
+) -> EvalResult:
     chat = _module(overrides, "agent_chat", agent_chat)
     semantic_router = _module(overrides, "agent_semantic_router", agent_semantic_router)
     expected = sc.expected.get("intent")
@@ -174,7 +207,12 @@ def _run_semantic(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> E
     regex_intent = chat.match_chat_intent(sc.goal)
     if regex_intent is not None:
         return EvalResult(
-            sc.id, sc.kind, regex_intent == expected, steps=1, tokens=0, detail="regex-hit"
+            sc.id,
+            sc.kind,
+            regex_intent == expected,
+            steps=1,
+            tokens=0,
+            detail="regex-hit",
         )
     result = semantic_router.classify_intent_semantic(
         sc.goal,
@@ -183,7 +221,11 @@ def _run_semantic(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> E
     )
     success = result.get("intent") == expected
     return EvalResult(
-        sc.id, sc.kind, success, steps=1, tokens=int(result.get("tokens") or 0),
+        sc.id,
+        sc.kind,
+        success,
+        steps=1,
+        tokens=int(result.get("tokens") or 0),
         detail=result.get("source", ""),
     )
 
@@ -198,7 +240,9 @@ def _fake_embed(texts, dim: int = 32):
     return vectors
 
 
-def _run_retrieval(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> EvalResult:
+def _run_retrieval(
+    sc: Scenario, overrides: Mapping[str, Any] | None = None
+) -> EvalResult:
     # End-state: indexing the corpus then retrieving returns a citation whose uri
     # matches the expected source. Fully mocked embedder -> 0 tokens.
     retrieval = _module(overrides, "agent_retrieval", agent_retrieval)
@@ -206,11 +250,24 @@ def _run_retrieval(sc: Scenario, overrides: Mapping[str, Any] | None = None) -> 
     corpus = sc.expected.get("corpus") or []
     documents = [(uri, title, text) for uri, title, text in corpus]
     retrieval.index_corpus(documents, embed=_fake_embed, store=store, source="repo")
-    result = retrieval.retrieve(sc.goal, embed=_fake_embed, store=store, k=3, min_score=0.0)
+    result = retrieval.retrieve(
+        sc.goal, embed=_fake_embed, store=store, k=3, min_score=0.0
+    )
     citations = result.get("citations") or []
     expected_uri = sc.expected.get("uri")
-    success = bool(result.get("ok")) and bool(citations) and citations[0].get("uri") == expected_uri
-    return EvalResult(sc.id, sc.kind, success, steps=1, tokens=0, detail=f"count={result.get('count')}")
+    success = (
+        bool(result.get("ok"))
+        and bool(citations)
+        and citations[0].get("uri") == expected_uri
+    )
+    return EvalResult(
+        sc.id,
+        sc.kind,
+        success,
+        steps=1,
+        tokens=0,
+        detail=f"count={result.get('count')}",
+    )
 
 
 _RUNNERS = {
@@ -228,11 +285,15 @@ def run_scenario(
 ) -> EvalResult:
     runner = _RUNNERS.get(sc.kind)
     if runner is None:
-        return EvalResult(sc.id, sc.kind, False, steps=0, tokens=0, detail="unknown kind")
+        return EvalResult(
+            sc.id, sc.kind, False, steps=0, tokens=0, detail="unknown kind"
+        )
     try:
         return runner(sc, module_overrides)
     except Exception as exc:  # noqa: BLE001 - a crash is a failed task, not a suite error
-        return EvalResult(sc.id, sc.kind, False, steps=0, tokens=0, detail=f"error: {exc}")
+        return EvalResult(
+            sc.id, sc.kind, False, steps=0, tokens=0, detail=f"error: {exc}"
+        )
 
 
 def _scenario_identity(scenarios: list[Scenario]) -> dict[str, Any]:
@@ -283,7 +344,9 @@ def scorecard_regressions(
     regressions.extend(scorecard_policy_violations(baseline, role="baseline"))
     for metric, direction in _SCORECARD_DIRECTIONS.items():
         if metric not in current or metric not in baseline:
-            regressions.append(f"{metric} is missing from current or baseline scorecard")
+            regressions.append(
+                f"{metric} is missing from current or baseline scorecard"
+            )
             continue
         current_value = float(current[metric])
         baseline_value = float(baseline[metric])
@@ -305,7 +368,9 @@ def assert_scorecard_not_regressed(
 ) -> None:
     regressions = scorecard_regressions(current, baseline)
     if regressions:
-        raise AssertionError("agent eval scorecard regressed: " + "; ".join(regressions))
+        raise AssertionError(
+            "agent eval scorecard regressed: " + "; ".join(regressions)
+        )
 
 
 def _reply_and_tools(response: Mapping[str, Any] | str) -> tuple[str, list[str], int]:
@@ -353,7 +418,9 @@ def run_operate_eval(
     observed_ids = _observed_run_ids(observation)
 
     populated_answer = ask(store_uri)
-    populated_reply, populated_tools, populated_tokens = _reply_and_tools(populated_answer)
+    populated_reply, populated_tools, populated_tokens = _reply_and_tools(
+        populated_answer
+    )
     populated_ok = (
         run_id in observed_ids
         and run_id in populated_reply

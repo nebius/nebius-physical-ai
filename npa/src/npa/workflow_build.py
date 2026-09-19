@@ -25,7 +25,8 @@ def catalog_directories(catalog: Path) -> tuple[Path, ...]:
     directories = [catalog / "main", catalog / "testing"]
     if partners.is_dir():
         directories.extend(
-            path for path in sorted(partners.iterdir())
+            path
+            for path in sorted(partners.iterdir())
             if path.is_dir() or path.is_symlink()
         )
     if any(path.is_symlink() for path in directories):

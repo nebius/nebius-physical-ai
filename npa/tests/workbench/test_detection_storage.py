@@ -17,7 +17,9 @@ from npa.workbench.detection_training.schemas import EvalRequest, TrainRequest
 
 @pytest.fixture(params=["local", "s3"])
 def destination(request, tmp_path, monkeypatch):
-    client = Mock(spec=["put_object", "get_object", "download_file", "download_fileobj"])
+    client = Mock(
+        spec=["put_object", "get_object", "download_file", "download_fileobj"]
+    )
     objects = {}
 
     def put_object(*, Bucket, Key, Body):
@@ -27,7 +29,11 @@ def destination(request, tmp_path, monkeypatch):
     for method in (client.get_object, client.download_file, client.download_fileobj):
         method.side_effect = AssertionError("unexpected artifact read-back")
     monkeypatch.setattr(storage, "_s3_client", lambda: client)
-    base = "s3://synthetic/artifacts" if request.param == "s3" else str(tmp_path / "artifacts")
+    base = (
+        "s3://synthetic/artifacts"
+        if request.param == "s3"
+        else str(tmp_path / "artifacts")
+    )
     writes = []
     original_write = storage.write_bytes_uri
 
@@ -38,11 +44,17 @@ def destination(request, tmp_path, monkeypatch):
 
     monkeypatch.setattr(storage, "write_bytes_uri", capture_write)
     monkeypatch.setattr(training, "write_bytes_uri", capture_write)
-    return SimpleNamespace(base=base, client=client, objects=objects, writes=writes, backend=request.param)
+    return SimpleNamespace(
+        base=base, client=client, objects=objects, writes=writes, backend=request.param
+    )
 
 
 def _forbid_readback(monkeypatch, destination):
-    monkeypatch.setattr(storage, "read_bytes_uri", Mock(side_effect=AssertionError("unexpected artifact read-back")))
+    monkeypatch.setattr(
+        storage,
+        "read_bytes_uri",
+        Mock(side_effect=AssertionError("unexpected artifact read-back")),
+    )
     read_bytes = Path.read_bytes
 
     def check_local_read(path):
@@ -60,7 +72,9 @@ def _assert_metadata(artifact, uri, payload):
     assert artifact.exists and artifact.integrity_verified
 
 
-def test_training_checkpoint_and_metrics_use_each_successful_write(monkeypatch, destination):
+def test_training_checkpoint_and_metrics_use_each_successful_write(
+    monkeypatch, destination
+):
     import torch
 
     class Detector(torch.nn.Module):
@@ -75,7 +89,9 @@ def test_training_checkpoint_and_metrics_use_each_successful_write(monkeypatch, 
 
     model = Detector()
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(training, "build_fasterrcnn_resnet50_fpn_v2", lambda **kwargs: model)
+    monkeypatch.setattr(
+        training, "build_fasterrcnn_resnet50_fpn_v2", lambda **kwargs: model
+    )
     batch = ([torch.zeros(1)], [{"labels": torch.ones(1, dtype=torch.int64)}])
     monkeypatch.setattr(training, "make_dataloader", lambda **kwargs: [batch])
     snapshots = []
@@ -83,7 +99,8 @@ def test_training_checkpoint_and_metrics_use_each_successful_write(monkeypatch, 
         _forbid_readback(no_reads, destination)
         result = training.train_detector(
             TrainRequest(view="synthetic", output_uri=destination.base, epochs=2),
-            run_id="synthetic-run", artifact_callback=snapshots.append,
+            run_id="synthetic-run",
+            artifact_callback=snapshots.append,
         )
 
     assert result.status == "completed"
@@ -96,7 +113,10 @@ def test_training_checkpoint_and_metrics_use_each_successful_write(monkeypatch, 
             uri, payload = destination.writes[2 * (checkpoint_epoch - 1)]
             _assert_metadata(artifact, uri, payload)
             assert artifact.role == "checkpoint" and artifact.epoch == checkpoint_epoch
-            assert torch.load(io.BytesIO(payload), weights_only=False)["epoch"] == checkpoint_epoch
+            assert (
+                torch.load(io.BytesIO(payload), weights_only=False)["epoch"]
+                == checkpoint_epoch
+            )
         uri, payload = destination.writes[2 * epoch - 1]
         _assert_metadata(snapshot[-1], uri, payload)
         assert snapshot[-1].role == "training_metrics"
@@ -105,7 +125,11 @@ def test_training_checkpoint_and_metrics_use_each_successful_write(monkeypatch, 
     assert snapshots[0][-1].sha256 != snapshots[1][-1].sha256
     assert result.artifacts == snapshots[-1]
     for artifact in result.artifacts:
-        payload = destination.objects[artifact.uri] if destination.backend == "s3" else Path(artifact.uri).read_bytes()
+        payload = (
+            destination.objects[artifact.uri]
+            if destination.backend == "s3"
+            else Path(artifact.uri).read_bytes()
+        )
         _assert_metadata(artifact, artifact.uri, payload)
     destination.client.get_object.assert_not_called()
     destination.client.download_file.assert_not_called()
@@ -113,11 +137,19 @@ def test_training_checkpoint_and_metrics_use_each_successful_write(monkeypatch, 
 
 
 def test_evaluation_metrics_use_successful_write(monkeypatch, destination):
-    monkeypatch.setattr(evaluation, "_evaluate_with_model", lambda request: {"mAP": 0.2, "mAP_50": 0.3, "mAP_75": 0.1})
+    monkeypatch.setattr(
+        evaluation,
+        "_evaluate_with_model",
+        lambda request: {"mAP": 0.2, "mAP_50": 0.3, "mAP_75": 0.1},
+    )
     _forbid_readback(monkeypatch, destination)
-    result = evaluation.evaluate_detector(EvalRequest(
-        checkpoint_uri="synthetic.pt", eval_view="synthetic", output_uri=destination.base,
-    ))
+    result = evaluation.evaluate_detector(
+        EvalRequest(
+            checkpoint_uri="synthetic.pt",
+            eval_view="synthetic",
+            output_uri=destination.base,
+        )
+    )
     assert len(destination.writes) == len(result.artifacts) == 1
     uri, payload = destination.writes[0]
     _assert_metadata(result.artifacts[0], uri, payload)
@@ -126,16 +158,23 @@ def test_evaluation_metrics_use_successful_write(monkeypatch, destination):
     destination.client.get_object.assert_not_called()
 
 
-def test_describe_existing_artifact_reads_current_bytes_without_receipt(monkeypatch, destination):
+def test_describe_existing_artifact_reads_current_bytes_without_receipt(
+    monkeypatch, destination
+):
     uri = storage.uri_join(destination.base, "existing.json")
     for payload in (b'{"old": true}', b'{"replacement": true}'):
         if destination.backend == "s3":
-            destination.client.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(payload)}
+            destination.client.get_object.side_effect = lambda **kwargs: {
+                "Body": io.BytesIO(payload)
+            }
         else:
             Path(uri).parent.mkdir(parents=True, exist_ok=True)
             Path(uri).write_bytes(payload)
         artifact = storage.describe_artifact(
-            uri, role="training_metrics", media_type="application/json", schema_version="synthetic.v1",
+            uri,
+            role="training_metrics",
+            media_type="application/json",
+            schema_version="synthetic.v1",
         )
         _assert_metadata(artifact, uri, payload)
     assert destination.writes == []
@@ -150,10 +189,15 @@ def test_write_receipt_is_bound_to_uri(monkeypatch, destination):
     _, payload = destination.writes[0]
     assert receipt.size_bytes == len(payload)
     assert receipt.sha256 == hashlib.sha256(payload).hexdigest()
-    with pytest.raises(ValueError, match="artifact write receipt URI does not match artifact URI"):
+    with pytest.raises(
+        ValueError, match="artifact write receipt URI does not match artifact URI"
+    ):
         storage.describe_artifact(
-            storage.uri_join(destination.base, "other.json"), role="training_metrics",
-            media_type="application/json", schema_version="synthetic.v1", write_receipt=receipt,
+            storage.uri_join(destination.base, "other.json"),
+            role="training_metrics",
+            media_type="application/json",
+            schema_version="synthetic.v1",
+            write_receipt=receipt,
         )
 
 
@@ -164,16 +208,25 @@ def test_describe_empty_artifact_still_fails(monkeypatch, destination, use_recei
     if use_receipt:
         _forbid_readback(monkeypatch, destination)
     elif destination.backend == "s3":
-        destination.client.get_object.side_effect = lambda **kwargs: {"Body": io.BytesIO(b"")}
+        destination.client.get_object.side_effect = lambda **kwargs: {
+            "Body": io.BytesIO(b"")
+        }
     with pytest.raises(ValueError, match="produced artifact is empty"):
         storage.describe_artifact(
-            uri, role="training_metrics", media_type="application/json", schema_version="synthetic.v1",
+            uri,
+            role="training_metrics",
+            media_type="application/json",
+            schema_version="synthetic.v1",
             write_receipt=receipt if use_receipt else None,
         )
 
 
 def test_failed_write_never_publishes_artifact_metadata(monkeypatch, destination):
-    monkeypatch.setattr(evaluation, "_evaluate_with_model", lambda request: {"mAP": 0.2, "mAP_50": 0.3, "mAP_75": 0.1})
+    monkeypatch.setattr(
+        evaluation,
+        "_evaluate_with_model",
+        lambda request: {"mAP": 0.2, "mAP_50": 0.3, "mAP_75": 0.1},
+    )
     failure = Mock(side_effect=OSError("synthetic write failure"))
     if destination.backend == "s3":
         destination.client.put_object.side_effect = failure
@@ -182,9 +235,13 @@ def test_failed_write_never_publishes_artifact_metadata(monkeypatch, destination
     describe = Mock(side_effect=AssertionError("failed write cannot publish metadata"))
     monkeypatch.setattr(evaluation, "describe_artifact", describe)
     with pytest.raises(OSError, match="synthetic write failure"):
-        evaluation.evaluate_detector(EvalRequest(
-            checkpoint_uri="synthetic.pt", eval_view="synthetic", output_uri=destination.base,
-        ))
+        evaluation.evaluate_detector(
+            EvalRequest(
+                checkpoint_uri="synthetic.pt",
+                eval_view="synthetic",
+                output_uri=destination.base,
+            )
+        )
     describe.assert_not_called()
     assert destination.writes == []
     assert destination.objects == {}

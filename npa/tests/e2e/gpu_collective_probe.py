@@ -40,10 +40,16 @@ def measure(nbytes, rank, world, repeat):
     seconds = elapsed.item() / 100
     assert torch.count_nonzero(tensor).item() == 0, "timed reduction corrupted data"
     if rank == 0:
-        emit("measurement", world_size=world, repeat=repeat, bytes=nbytes,
-             latency_us=seconds * 1e6, algbw_gbps=nbytes / seconds / 1e9,
-             busbw_gbps=nbytes / seconds / 1e9 * 2 * (world - 1) / world,
-             correctness="pass")
+        emit(
+            "measurement",
+            world_size=world,
+            repeat=repeat,
+            bytes=nbytes,
+            latency_us=seconds * 1e6,
+            algbw_gbps=nbytes / seconds / 1e9,
+            busbw_gbps=nbytes / seconds / 1e9 * 2 * (world - 1) / world,
+            correctness="pass",
+        )
     return seconds
 
 
@@ -54,26 +60,44 @@ def main():
     torch.cuda.set_device(rank)
     dist.init_process_group("nccl", device_id=torch.device("cuda", rank))
     props = torch.cuda.get_device_properties(rank)
-    emit("rank", rank=rank, world_size=world, hostname=platform.node(),
-         device_name=props.name, device_uuid=str(props.uuid),
-         peer_access=[torch.cuda.can_device_access_peer(rank, peer)
-                      for peer in range(world)],
-         visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
-         nccl_env={key: value for key, value in os.environ.items()
-                   if key.startswith("NCCL_")},
-         pytorch=torch.__version__, cuda=torch.version.cuda,
-         nccl=torch.cuda.nccl.version())
+    emit(
+        "rank",
+        rank=rank,
+        world_size=world,
+        hostname=platform.node(),
+        device_name=props.name,
+        device_uuid=str(props.uuid),
+        peer_access=[
+            torch.cuda.can_device_access_peer(rank, peer) for peer in range(world)
+        ],
+        visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
+        nccl_env={
+            key: value for key, value in os.environ.items() if key.startswith("NCCL_")
+        },
+        pytorch=torch.__version__,
+        cuda=torch.version.cuda,
+        nccl=torch.cuda.nccl.version(),
+    )
     if rank == 0:
-        for args in [["nvidia-smi", "topo", "-m"],
-                     ["nvidia-smi", "--query-gpu=index,uuid,pci.bus_id,name,driver_version",
-                      "--format=csv"]]:
+        for args in [
+            ["nvidia-smi", "topo", "-m"],
+            [
+                "nvidia-smi",
+                "--query-gpu=index,uuid,pci.bus_id,name,driver_version",
+                "--format=csv",
+            ],
+        ]:
             result = subprocess.run(args, capture_output=True, text=True, check=True)
             emit("topology", command=args, output=result.stdout)
     for nbytes in [1024, 1024**2, 16 * 1024**2, 64 * 1024**2, 256 * 1024**2]:
         times = [measure(nbytes, rank, world, repeat) for repeat in range(3)]
         if rank == 0:
-            emit("summary", world_size=world, bytes=nbytes,
-                 median_latency_us=statistics.median(times) * 1e6)
+            emit(
+                "summary",
+                world_size=world,
+                bytes=nbytes,
+                median_latency_us=statistics.median(times) * 1e6,
+            )
     dist.barrier()
     dist.destroy_process_group()
     emit("complete", rank=rank, world_size=world)

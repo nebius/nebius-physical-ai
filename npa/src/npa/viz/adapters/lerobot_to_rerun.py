@@ -128,7 +128,9 @@ def verify_rerun_entities(
         if fallback_counts is not None:
             _assert_required_entity_counts(rrd_path, fallback_counts, required_entities)
             return fallback_counts
-        raise RerunAdapterError("rerun-sdk recording loader is required to verify .rrd content") from exc
+        raise RerunAdapterError(
+            "rerun-sdk recording loader is required to verify .rrd content"
+        ) from exc
 
     chunks = list(load_recording(rrd_path).chunks())
     counts: dict[str, int] = {}
@@ -156,7 +158,9 @@ def _assert_required_entity_counts(
         if counts.get(_normalize_count_entity(entity), 0) <= 0
     }
     if missing:
-        raise RerunAdapterError(f"Rerun recording is missing dynamic content for: {sorted(missing)}")
+        raise RerunAdapterError(
+            f"Rerun recording is missing dynamic content for: {sorted(missing)}"
+        )
 
 
 def _write_logical_lerobot_recording(
@@ -171,9 +175,13 @@ def _write_logical_lerobot_recording(
 ) -> dict[str, int]:
     rr, rrb = _import_rerun()
     if output_rrd_path.suffix.lower() != ".rrd":
-        raise RerunAdapterError(f"Rerun output path must end in .rrd, got: {output_rrd_path}")
+        raise RerunAdapterError(
+            f"Rerun output path must end in .rrd, got: {output_rrd_path}"
+        )
     if max_frames_per_episode <= 0:
-        raise RerunAdapterError(f"max_frames_per_episode must be positive, got {max_frames_per_episode}")
+        raise RerunAdapterError(
+            f"max_frames_per_episode must be positive, got {max_frames_per_episode}"
+        )
     output_rrd_path.parent.mkdir(parents=True, exist_ok=True)
 
     metadata = _read_lerobot_metadata(dataset_path)
@@ -418,15 +426,23 @@ def _log_episode_rows(
                 rr.log(
                     f"{root}/camera/{_entity_key(camera_key)}",
                     rr.VideoFrameReference(
-                        seconds=timestamp + float(
-                            video_location.get(f"videos/{camera_key}/from_timestamp", 0.0) or 0.0
+                        seconds=timestamp
+                        + float(
+                            video_location.get(
+                                f"videos/{camera_key}/from_timestamp", 0.0
+                            )
+                            or 0.0
                         ),
                         video_reference=video_entity,
                     ),
                     recording=recording,
                 )
         for index, value in enumerate(_as_float_list(row.get("observation.state"))):
-            rr.log(f"{root}/state/dim_{index:02d}", rr.Scalars(float(value)), recording=recording)
+            rr.log(
+                f"{root}/state/dim_{index:02d}",
+                rr.Scalars(float(value)),
+                recording=recording,
+            )
         state = _as_float_list(row.get("observation.state"))
         if len(state) >= 2:
             rr.log(
@@ -435,16 +451,36 @@ def _log_episode_rows(
                 recording=recording,
             )
         for index, value in enumerate(_as_float_list(row.get("action"))):
-            rr.log(f"{root}/actions/dim_{index:02d}", rr.Scalars(float(value)), recording=recording)
+            rr.log(
+                f"{root}/actions/dim_{index:02d}",
+                rr.Scalars(float(value)),
+                recording=recording,
+            )
 
 
-def _log_feedback(rr: Any, recording: Any, episode: int, feedback: dict[str, Any]) -> None:
+def _log_feedback(
+    rr: Any, recording: Any, episode: int, feedback: dict[str, Any]
+) -> None:
     root = f"eval/episodes/episode_{episode:06d}"
     _set_time_seconds(rr, recording, float(feedback.get("timestamp", 0.0) or 0.0))
-    rr.log(f"{root}/success", rr.Scalars(1.0 if feedback.get("success") else 0.0), recording=recording)
-    rr.log(f"{root}/score", rr.Scalars(float(feedback.get("score", 0.0))), recording=recording)
-    rationale = str(feedback.get("rationale") or feedback.get("critique") or "No critique provided.")
-    rr.log(f"{root}/critique", rr.TextDocument(rationale, media_type="text/plain"), recording=recording)
+    rr.log(
+        f"{root}/success",
+        rr.Scalars(1.0 if feedback.get("success") else 0.0),
+        recording=recording,
+    )
+    rr.log(
+        f"{root}/score",
+        rr.Scalars(float(feedback.get("score", 0.0))),
+        recording=recording,
+    )
+    rationale = str(
+        feedback.get("rationale") or feedback.get("critique") or "No critique provided."
+    )
+    rr.log(
+        f"{root}/critique",
+        rr.TextDocument(rationale, media_type="text/plain"),
+        recording=recording,
+    )
 
 
 def _log_dataset_videos(
@@ -458,14 +494,16 @@ def _log_dataset_videos(
     locations: dict[int, dict[str, Any]],
 ) -> dict[int, dict[str, str]]:
     video_entities: dict[int, dict[str, str]] = {}
-    video_path_pattern = str(metadata.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4")
+    video_path_pattern = str(
+        metadata.get("video_path")
+        or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    )
     for episode_index in episode_indices:
         for camera_key in camera_keys:
             location = locations.get(int(episode_index), {})
             chunk_index = int(location.get(f"videos/{camera_key}/chunk_index", 0) or 0)
             file_index = int(
-                location.get(f"videos/{camera_key}/file_index", episode_index)
-                or 0
+                location.get(f"videos/{camera_key}/file_index", episode_index) or 0
             )
             candidate = dataset_path / video_path_pattern.format(
                 video_key=camera_key,
@@ -481,8 +519,7 @@ def _log_dataset_videos(
                 candidate = matches[0] if matches else candidate
             if candidate.exists():
                 entity = (
-                    f"videos/episode_{int(episode_index):06d}/"
-                    f"{_entity_key(camera_key)}"
+                    f"videos/episode_{int(episode_index):06d}/{_entity_key(camera_key)}"
                 )
                 rr.log(
                     entity,
@@ -490,9 +527,7 @@ def _log_dataset_videos(
                     static=True,
                     recording=recording,
                 )
-                video_entities.setdefault(int(episode_index), {})[
-                    camera_key
-                ] = entity
+                video_entities.setdefault(int(episode_index), {})[camera_key] = entity
     return video_entities
 
 
@@ -508,7 +543,9 @@ def _episode_video_locations(dataset_path: Path) -> dict[int, dict[str, Any]]:
 def _read_lerobot_metadata(dataset_path: Path) -> dict[str, Any]:
     info_path = dataset_path / "meta" / "info.json"
     if not info_path.exists():
-        raise RerunAdapterError(f"LeRobotDataset meta/info.json is missing: {info_path}")
+        raise RerunAdapterError(
+            f"LeRobotDataset meta/info.json is missing: {info_path}"
+        )
     return json.loads(info_path.read_text(encoding="utf-8"))
 
 
@@ -517,7 +554,9 @@ def _camera_keys(metadata: dict[str, Any]) -> list[str]:
     return sorted(
         key
         for key, value in features.items()
-        if str(key).startswith("observation.") and isinstance(value, dict) and value.get("dtype") in {"image", "video"}
+        if str(key).startswith("observation.")
+        and isinstance(value, dict)
+        and value.get("dtype") in {"image", "video"}
     )
 
 
@@ -530,12 +569,22 @@ def _read_lerobot_rows(
     max_frames_per_episode: int,
 ) -> dict[int, list[dict[str, Any]]]:
     data_dir = dataset_path / "data"
-    parquet_paths = sorted(path for path in data_dir.rglob("*.parquet") if not path.name.startswith("._"))
+    parquet_paths = sorted(
+        path for path in data_dir.rglob("*.parquet") if not path.name.startswith("._")
+    )
     if not parquet_paths:
         raise RerunAdapterError(f"No LeRobot parquet files found under {data_dir}")
     requested = {int(index) for index in episode_indices}
-    rows_by_episode: dict[int, list[dict[str, Any]]] = {episode: [] for episode in requested}
-    columns = ["observation.state", "action", "episode_index", "frame_index", "timestamp"]
+    rows_by_episode: dict[int, list[dict[str, Any]]] = {
+        episode: [] for episode in requested
+    }
+    columns = [
+        "observation.state",
+        "action",
+        "episode_index",
+        "frame_index",
+        "timestamp",
+    ]
     for path in parquet_paths:
         table = pq.read_table(path, columns=columns)
         for row in table.to_pylist():
@@ -552,7 +601,9 @@ def _read_lerobot_rows(
         if not rows:
             raise RerunAdapterError(f"Episode {episode} has no rows")
         if len(rows) > frame_limit:
-            indices = np.rint(np.linspace(0, len(rows) - 1, frame_limit)).astype(np.int64)
+            indices = np.rint(np.linspace(0, len(rows) - 1, frame_limit)).astype(
+                np.int64
+            )
             rows_by_episode[episode] = [rows[int(index)] for index in indices]
     return rows_by_episode
 
@@ -638,7 +689,9 @@ def _write_lerobot_recording(
 
     output_rrd_path = Path(output_rrd_path)
     if output_rrd_path.suffix.lower() != ".rrd":
-        raise RerunAdapterError(f"Rerun output path must end in .rrd, got: {output_rrd_path}")
+        raise RerunAdapterError(
+            f"Rerun output path must end in .rrd, got: {output_rrd_path}"
+        )
     output_rrd_path.parent.mkdir(parents=True, exist_ok=True)
 
     blueprint = _build_blueprint(rrb)
@@ -646,7 +699,9 @@ def _write_lerobot_recording(
     rr.save(output_rrd_path, default_blueprint=blueprint, recording=recording)
     rr.send_blueprint(blueprint, recording=recording)
     _log_angle_series_styles(rr, recording, entity_root, color_rgb)
-    for frame_idx, (positions, state) in enumerate(zip(skeleton, selected_states, strict=True)):
+    for frame_idx, (positions, state) in enumerate(
+        zip(skeleton, selected_states, strict=True)
+    ):
         _set_time_seconds(rr, recording, frame_idx / float(source_fps))
         _log_frame(rr, recording, entity_root, positions, state, color_rgb)
     rr.disconnect(recording=recording)
@@ -691,7 +746,9 @@ def _log_frame(
         )
 
 
-def _log_angle_series_styles(rr: Any, recording: Any, entity_root: str, color: tuple[int, int, int]) -> None:
+def _log_angle_series_styles(
+    rr: Any, recording: Any, entity_root: str, color: tuple[int, int, int]
+) -> None:
     if not hasattr(rr, "SeriesLines"):
         return
     for joint_name in REPRESENTATIVE_JOINTS:
@@ -756,7 +813,9 @@ def _select_adapter_frames(
     if target_frames == frame_count:
         indices = np.arange(frame_count, dtype=np.int64)
     else:
-        indices = np.rint(np.linspace(0, frame_count - 1, target_frames)).astype(np.int64)
+        indices = np.rint(np.linspace(0, frame_count - 1, target_frames)).astype(
+            np.int64
+        )
     return state_vectors[indices], indices, resolved_duration_s
 
 
@@ -801,7 +860,9 @@ def _storage_client(bucket_uri: str | None = None) -> StorageClient:
         storage = _matching_project_storage(bucket_uri)
         endpoint_url = endpoint_url or storage.get("endpoint_url", "")
         access_key_id = access_key_id or storage.get("aws_access_key_id", "")
-        secret_access_key = secret_access_key or storage.get("aws_secret_access_key", "")
+        secret_access_key = secret_access_key or storage.get(
+            "aws_secret_access_key", ""
+        )
     return StorageClient.from_environment(
         endpoint_url=endpoint_url,
         aws_access_key_id=access_key_id,
@@ -828,7 +889,10 @@ def _matching_project_storage(bucket_uri: str | None) -> dict[str, str]:
             continue
         if not fallback:
             fallback = candidate
-        if target_bucket and _bucket_name(candidate["checkpoint_bucket"]) == target_bucket:
+        if (
+            target_bucket
+            and _bucket_name(candidate["checkpoint_bucket"]) == target_bucket
+        ):
             return candidate
     return fallback
 
@@ -867,7 +931,9 @@ def _import_rerun() -> tuple[Any, Any]:
         import rerun as rr
         import rerun.blueprint as rrb
     except ImportError as exc:
-        raise RerunAdapterError("rerun-sdk is required to write .rrd recordings") from exc
+        raise RerunAdapterError(
+            "rerun-sdk is required to write .rrd recordings"
+        ) from exc
     if not hasattr(rr, "Scalars") and not hasattr(rr, "Scalar"):
         raise RerunAdapterError("rerun-sdk does not expose a scalar archetype")
     return rr, rrb

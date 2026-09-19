@@ -64,7 +64,9 @@ def build_records(
     if not modalities:
         raise DatasetFixtureError("at least one modality is required")
     if not 0.0 <= event_share <= 1.0:
-        raise DatasetFixtureError(f"event_share must be within [0, 1], got {event_share}")
+        raise DatasetFixtureError(
+            f"event_share must be within [0, 1], got {event_share}"
+        )
 
     tagged = max(1, round(count * event_share)) if event_share else 0
     records: list[dict[str, Any]] = []
@@ -107,7 +109,9 @@ def write_document(output_path: str | Path, **kwargs: Any) -> dict[str, Any]:
     document = build_document(**kwargs)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return document
 
 
@@ -147,7 +151,9 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--uri", default="", help="s3:// object URI to publish to.")
-    parser.add_argument("--output-path", default="", help="Local path to write instead.")
+    parser.add_argument(
+        "--output-path", default="", help="Local path to write instead."
+    )
     parser.add_argument("--count", type=int, default=DEFAULT_RECORD_COUNT)
     parser.add_argument("--event", default=DEFAULT_EVENT)
     parser.add_argument("--location", default=DEFAULT_LOCATION)
@@ -162,7 +168,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             result = write_document(
-                args.output_path, count=args.count, event=args.event, location=args.location
+                args.output_path,
+                count=args.count,
+                event=args.event,
+                location=args.location,
             )
     except DatasetFixtureError as exc:
         print(f"Error: {exc}")

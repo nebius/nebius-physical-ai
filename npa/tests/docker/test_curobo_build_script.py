@@ -138,15 +138,27 @@ Path(os.environ["TEST_DOCKER_CALL"]).write_text(json.dumps({
     def run(mode="clean", *args):
         result = subprocess.run(
             ["bash", str(BUILD), *args],
-            env={**environment, "TEST_GIT_MODE": mode,
-                 "NPA_PYTHON_BIN": str(tmp_path / "missing-python") if mode == "missing-python" else sys.executable},
+            env={
+                **environment,
+                "TEST_GIT_MODE": mode,
+                "NPA_PYTHON_BIN": str(tmp_path / "missing-python")
+                if mode == "missing-python"
+                else sys.executable,
+            },
             capture_output=True,
             text=True,
             check=False,
         )
-        calls = [json.loads(line) for line in (tmp_path / "git.jsonl").read_text().splitlines()]
+        calls = [
+            json.loads(line)
+            for line in (tmp_path / "git.jsonl").read_text().splitlines()
+        ]
         docker_call = tmp_path / "docker.json"
-        return result, calls, json.loads(docker_call.read_text()) if docker_call.exists() else None
+        return (
+            result,
+            calls,
+            json.loads(docker_call.read_text()) if docker_call.exists() else None,
+        )
 
     return run
 
@@ -163,12 +175,19 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
         "src/npa/workflows/testing/curobo-benchmark.yaml": "metadata: {name: committed-curobo}\n",
     }
     assert docker["catalog"] == catalog
-    assert docker["files"] == sorted([
-        "docker/workbench/curobo/Dockerfile", "pyproject.toml",
-        "src/npa/committed.py", "src/npa/workflow_build.py", *catalog,
-    ])
+    assert docker["files"] == sorted(
+        [
+            "docker/workbench/curobo/Dockerfile",
+            "pyproject.toml",
+            "src/npa/committed.py",
+            "src/npa/workflow_build.py",
+            *catalog,
+        ]
+    )
     assert docker["context"] != str(ROOT / "npa")
-    assert not Path(docker["context"]).exists(), "The run-owned build snapshot must be removed"
+    assert not Path(docker["context"]).exists(), (
+        "The run-owned build snapshot must be removed"
+    )
     assert f"npa-curobo:dev-{SOURCE_SHA}" in docker["args"]
     assert f"NPA_SOURCE_SHA={SOURCE_SHA}" in docker["args"]
     assert "SOURCE_DATE_EPOCH=1700000000" in docker["args"]
@@ -181,8 +200,16 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
     for call in calls:
         if call[0] in {"diff", "ls-files", "archive"}:
             assert set(call[call.index("--") + 1 :]) == INPUTS
-    assert ["cat-file", "-e", f"{SOURCE_SHA}:npa/docker/workbench/curobo/Dockerfile"] in calls
-    assert next(c for c in calls if c[0] == "archive")[:3] == ["archive", SOURCE_SHA, "--"]
+    assert [
+        "cat-file",
+        "-e",
+        f"{SOURCE_SHA}:npa/docker/workbench/curobo/Dockerfile",
+    ] in calls
+    assert next(c for c in calls if c[0] == "archive")[:3] == [
+        "archive",
+        SOURCE_SHA,
+        "--",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -210,7 +237,9 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
         ("missing-python", "Repository Python is required"),
     ],
 )
-def test_unreviewed_or_unreadable_build_inputs_never_reach_docker(build_boundary, mode, message, tmp_path):
+def test_unreviewed_or_unreadable_build_inputs_never_reach_docker(
+    build_boundary, mode, message, tmp_path
+):
     result, _, docker = build_boundary(mode)
     assert result.returncode != 0
     assert message in result.stderr

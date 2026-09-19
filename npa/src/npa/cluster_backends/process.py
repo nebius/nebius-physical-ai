@@ -85,7 +85,9 @@ def isolate_terraform_providers(workdir: Path, env: dict[str, str]) -> None:
     providers = data_dir / "providers"
     if not providers.is_dir() or not any(p.is_symlink() for p in providers.rglob("*")):
         return
-    with tempfile.TemporaryDirectory(prefix=".npa-providers-", dir=data_dir) as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix=".npa-providers-", dir=data_dir
+    ) as temporary:
         staging = Path(temporary)
         snapshot = staging / "snapshot"
         shutil.copytree(providers, snapshot, symlinks=False)
@@ -413,7 +415,9 @@ def run_stream(
         # streaming path; otherwise a provider rejection degrades into a
         # content-free exit code and cannot be classified or repaired.
         detail = "\n".join(
-            part for part in ("".join(captured_stderr), "".join(captured_stdout)) if part
+            part
+            for part in ("".join(captured_stderr), "".join(captured_stdout))
+            if part
         ).strip()
         suffix = f": {detail[-3000:]}" if detail else ""
         raise BackendCommandError(

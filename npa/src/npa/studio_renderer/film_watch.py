@@ -13,17 +13,26 @@ _ROOT = Path(__file__).parent
 
 
 def _watch_paths(project_path, scene_id, previous=()):
-    paths = {project_path, *_ROOT.glob("*.py"), *_ROOT.glob("fonts/*"), *_ROOT.glob("brand/*")}
+    paths = {
+        project_path,
+        *_ROOT.glob("*.py"),
+        *_ROOT.glob("fonts/*"),
+        *_ROOT.glob("brand/*"),
+    }
     try:
         project = _project(project_path)
         paths.update([project["storyboard"], project["assets"]])
         story = json.loads(project["storyboard"].read_text())
         assets = json.loads(project["assets"].read_text())
-        scene = next((scene for scene in story["scenes"] if scene["id"] == scene_id), None)
+        scene = next(
+            (scene for scene in story["scenes"] if scene["id"] == scene_id), None
+        )
         if scene:
             for role in scene["assets"]:
                 path = Path(assets[role]["path"]).expanduser()
-                paths.add(path if path.is_absolute() else project["assets"].parent / path)
+                paths.add(
+                    path if path.is_absolute() else project["assets"].parent / path
+                )
     except (ValueError, TypeError, KeyError, OSError):
         paths.update(previous)
     return paths
@@ -60,15 +69,26 @@ class _Changes:
 def _watch(project_path, scene_id, interval=0.25, debounce=0.5):
     changes = _Changes(debounce)
     paths = set()
-    command = [sys.executable, str(_ROOT / "film_draft.py"),
-               "--project", str(project_path), "--scene", scene_id]
-    print(f"Watching {scene_id}. Muted previews only; Ctrl+C stops watching.", flush=True)
+    command = [
+        sys.executable,
+        str(_ROOT / "film_draft.py"),
+        "--project",
+        str(project_path),
+        "--scene",
+        scene_id,
+    ]
+    print(
+        f"Watching {scene_id}. Muted previews only; Ctrl+C stops watching.", flush=True
+    )
     while True:
         paths = _watch_paths(project_path, scene_id, paths)
         if changes.ready(_signature(paths), time.monotonic()):
             completed = subprocess.run(command, check=False)
             if completed.returncode:
-                print("Draft failed; last good output retained. Waiting for the next edit.", flush=True)
+                print(
+                    "Draft failed; last good output retained. Waiting for the next edit.",
+                    flush=True,
+                )
         time.sleep(interval)
 
 

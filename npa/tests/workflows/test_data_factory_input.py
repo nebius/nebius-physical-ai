@@ -154,8 +154,7 @@ def test_explicit_selectors_override_default() -> None:
     assert dfi.select_paidf_input(input_uri="s3://bucket/capture.mp4") == "object_uri"
     assert dfi.select_paidf_input(seed_fixture=True) == "synthetic_fixture"
     assert (
-        dfi.select_paidf_input(lerobot_uri="s3://bucket/dataset/")
-        == "lerobot_dataset"
+        dfi.select_paidf_input(lerobot_uri="s3://bucket/dataset/") == "lerobot_dataset"
     )
 
 
@@ -201,23 +200,20 @@ def test_lerobot_selector_materializes_only_selected_camera_episode(
     storage.s3.objects[
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.front/episode_000001.mp4",
+            prefix + "videos/chunk-000/observation.images.front/episode_000001.mp4",
         )
     ] = b"front-episode-one"
     storage.s3.objects[
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
+            prefix + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
         )
     ] = b"wrist-episode-one"
     # An unrelated episode proves that PAIDF does not materialize the full dataset.
     storage.s3.objects[
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.front/episode_000000.mp4",
+            prefix + "videos/chunk-000/observation.images.front/episode_000000.mp4",
         )
     ] = b"front-episode-zero"
 
@@ -247,8 +243,7 @@ def test_lerobot_selector_materializes_only_selected_camera_episode(
     assert storage.s3.downloads == [
         (
             "artifacts",
-            prefix
-            + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
+            prefix + "videos/chunk-000/observation.images.wrist/episode_000001.mp4",
         )
     ]
     assert storage.s3.list_requests == []
@@ -270,9 +265,7 @@ def test_lerobot_camera_and_episode_validation_is_fail_closed() -> None:
             lerobot_episode=-1,
         )
     with pytest.raises(dfi.PaidfInputError, match="require --lerobot-uri"):
-        dfi.plan_paidf_input(
-            run_id="bad", bucket="artifacts", lerobot_camera="front"
-        )
+        dfi.plan_paidf_input(run_id="bad", bucket="artifacts", lerobot_camera="front")
 
 
 @pytest.mark.parametrize(
@@ -470,9 +463,7 @@ def test_lerobot_v3_selects_and_trims_one_episode_from_shared_video(
         metadata_key,
         shared_key,
     ]
-    assert storage.s3.list_requests == [
-        ("artifacts", prefix + "meta/episodes/")
-    ]
+    assert storage.s3.list_requests == [("artifacts", prefix + "meta/episodes/")]
 
 
 def test_lerobot_rejects_unsupported_version_and_unsafe_video_template(
@@ -722,7 +713,9 @@ def test_fetch_verifies_caches_and_supports_offline_hit(
 ) -> None:
     body = b"verified physical video bytes"
     contract = _contract_for_bytes(body)
-    monkeypatch.setattr(dfi, "_open_starter_url", lambda *_args, **_kwargs: _Response(body))
+    monkeypatch.setattr(
+        dfi, "_open_starter_url", lambda *_args, **_kwargs: _Response(body)
+    )
 
     path, status = dfi._fetch_starter(
         contract, cache_dir=tmp_path, offline=False, reporter=lambda _message: None

@@ -24,7 +24,9 @@ class FakeS3:
         return self
 
     def paginate(self, *, Bucket: str, Prefix: str):  # noqa: ANN201
-        return [{"Contents": [{"Key": key} for key in self.keys if key.startswith(Prefix)]}]
+        return [
+            {"Contents": [{"Key": key} for key in self.keys if key.startswith(Prefix)]}
+        ]
 
 
 class Response:
@@ -139,14 +141,14 @@ def test_resume_skips_duplicate_post_when_agent_already_has_artifact(
     assert methods == ["GET"]
 
 
-def test_missing_agent_is_partial_not_workflow_failure(monkeypatch, tmp_path: Path) -> None:
+def test_missing_agent_is_partial_not_workflow_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     import npa.cli.agent as agent
 
     monkeypatch.setattr(agent, "resolve_project_agents", lambda _project: {})
-    client = FakeS3(
-        {"physical-ai-data-factory/paidf-1/reports/sim2real.rrd"}
-    )
+    client = FakeS3({"physical-ai-data-factory/paidf-1/reports/sim2real.rrd"})
 
     result = load_final_artifact_into_agent(
         project="demo",

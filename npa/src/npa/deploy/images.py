@@ -153,9 +153,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore"}
-)
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -373,7 +371,9 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+        raise RuntimeError(
+            "Content Agents accepted image manifest must be a JSON object"
+        )
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -575,7 +575,9 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+        raise RuntimeError(
+            "Public release manifest registry drifted from official GHCR"
+        )
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
@@ -587,12 +589,17 @@ def public_release_manifest() -> dict[str, Any]:
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+            raise RuntimeError(
+                f"Public release manifest entry {tool!r} must be an object"
+            )
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if re.fullmatch(
-            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-        ) is None:
+        if (
+            re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+            )
+            is None
+        ):
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -719,7 +726,10 @@ def sonic_image_variant_for_gpu(
             token = _normalize_gpu_target(str(match))
             # The family name also occurs in datacenter GPU labels. Those must
             # reach their model-specific rule, never the workstation default.
-            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
+            if (
+                token == "blackwell"
+                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
+            ):
                 continue
             if token in normalized:
                 if not requested:

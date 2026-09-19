@@ -21,10 +21,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
-WORKFLOW_DIR = (
-    Path(__file__).resolve().parents[3]
-    / "workflows"
-)
+WORKFLOW_DIR = Path(__file__).resolve().parents[3] / "workflows"
 # Synthetic offline renderer input, never a publication or acceptance record.
 NCORE_VALIDATION_IMAGE = (
     f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-ncore@sha256:{'0' * 64}"
@@ -68,13 +65,17 @@ def test_sim2real_custom_registry_is_scoped_and_explicit(monkeypatch) -> None:
 
 def _prepare_registry_workflow(spec_path):
     spec = load_spec(spec_path)
-    requires_baked_image = str(
-        spec.config.get("require_baked_npa") or ""
-    ).lower() in {"1", "true", "yes", "on"}
+    requires_baked_image = str(spec.config.get("require_baked_npa") or "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
     image_overrides = (
         {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
-        if requires_baked_image else {}
+        if requires_baked_image
+        else {}
     )
     if spec_path.name == "nurec-colmap-reconstruct.yaml":
         # This validation workflow documents a required per-tool override
@@ -84,9 +85,7 @@ def _prepare_registry_workflow(spec_path):
         spec_path,
         run_id=f"registry-guard-{spec_path.stem}",
         assume_decision="promote_checkpoint",
-        config_overrides=(
-            {"source_sha": "0" * 40} if requires_baked_image else None
-        ),
+        config_overrides=({"source_sha": "0" * 40} if requires_baked_image else None),
         render_options=SkypilotRenderOptions(
             image_overrides=image_overrides,
             materialize_registry_secrets=False,

@@ -222,7 +222,9 @@ def _load_record_payload(payload: Any) -> tuple[list[MetricRecord], list[Lineage
         rows = payload.get("records", [])
         edge_rows = payload.get("edges", [])
     else:
-        raise InsightsStoreError("record input must be a JSON object or list of records")
+        raise InsightsStoreError(
+            "record input must be a JSON object or list of records"
+        )
     if not isinstance(rows, list) or not isinstance(edge_rows, list):
         raise InsightsStoreError("record input 'records'/'edges' must be lists")
     records = [MetricRecord.model_validate(row) for row in rows]
@@ -240,15 +242,21 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
         except StorageAuthorizationError:
             raise
         except FileNotFoundError as exc:
-            raise InsightsStoreError(f"record input not found: {request.input_uri}") from exc
+            raise InsightsStoreError(
+                f"record input not found: {request.input_uri}"
+            ) from exc
         except Exception as exc:  # noqa: BLE001
-            raise InsightsStoreError(f"cannot read record input {request.input_uri}: {exc}") from exc
+            raise InsightsStoreError(
+                f"cannot read record input {request.input_uri}: {exc}"
+            ) from exc
         loaded_records, loaded_edges = _load_record_payload(payload)
         records.extend(loaded_records)
         edges.extend(loaded_edges)
 
     if not records and not edges:
-        raise InsightsStoreError("record requires at least one metric record or lineage edge")
+        raise InsightsStoreError(
+            "record requires at least one metric record or lineage edge"
+        )
 
     if request.workflow_run:
         for record in records:
@@ -276,7 +284,9 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
     """Scan an S3 run prefix for known manifests and extract metrics + lineage."""
     uris = list_json_uris(request.input_uri)
     if not uris:
-        raise InsightsStoreError(f"no JSON artifacts found under run prefix: {request.input_uri}")
+        raise InsightsStoreError(
+            f"no JSON artifacts found under run prefix: {request.input_uri}"
+        )
 
     all_records: list[MetricRecord] = []
     all_edges: list[LineageEdge] = []
@@ -311,7 +321,9 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
         all_records.extend(records)
         all_edges.extend(edges)
         ingested.append(
-            IngestedArtifact(uri=uri, schema_id=schema_id, records=len(records), edges=len(edges))
+            IngestedArtifact(
+                uri=uri, schema_id=schema_id, records=len(records), edges=len(edges)
+            )
         )
 
     if not ingested:
@@ -389,14 +401,22 @@ def _extract(
     schema_id = str(payload.get("schema", ""))
     schema_version = str(payload.get("schema_version", ""))
     if schema_version == WORKFLOW_RUN_SCHEMA:
-        records, edges = _extract_run_manifest(payload, source_uri, workflow, workflow_run)
+        records, edges = _extract_run_manifest(
+            payload, source_uri, workflow, workflow_run
+        )
         if not records and not edges:
             return [], [], None
         return records, edges, WORKFLOW_RUN_SCHEMA
     if schema_id == DATASET_MANIFEST_SCHEMA:
-        return (*_extract_dataset_manifest(payload, source_uri, workflow, workflow_run), schema_id)
+        return (
+            *_extract_dataset_manifest(payload, source_uri, workflow, workflow_run),
+            schema_id,
+        )
     if schema_id == DATASET_VALIDATION_SCHEMA:
-        return (*_extract_validation_report(payload, source_uri, workflow, workflow_run), schema_id)
+        return (
+            *_extract_validation_report(payload, source_uri, workflow, workflow_run),
+            schema_id,
+        )
     if schema_id == SCENARIO_ADVERSARIAL_SCHEMA:
         # The set manifest carries the ``scenarios`` list; per-scenario config
         # files reuse the same schema tag but describe a single scenario. Only
@@ -404,10 +424,16 @@ def _extract(
         # as zero-metric records.
         if not isinstance(payload.get("scenarios"), list):
             return [], [], None
-        return (*_extract_adversarial_set(payload, source_uri, workflow, workflow_run), schema_id)
+        return (
+            *_extract_adversarial_set(payload, source_uri, workflow, workflow_run),
+            schema_id,
+        )
     if "decision" in payload and (not schema_id or "decision" in schema_id):
         decision_schema = schema_id or "decision"
-        return (*_extract_decision(payload, source_uri, workflow, workflow_run), decision_schema)
+        return (
+            *_extract_decision(payload, source_uri, workflow, workflow_run),
+            decision_schema,
+        )
     profile = _report_profile(payload, source_uri)
     if profile is not None:
         report_schema, tool, stage = profile
@@ -457,8 +483,10 @@ def _report_profile(
     if all(key in payload for key in ("score", "success_threshold", "passed")):
         return "vlm_eval.result", "vlm_eval", "eval"
     if schema_id and ("billing" in schema_id or "resource_usage" in schema_id):
-        return schema_id, str(payload.get("tool") or "workflow"), str(
-            payload.get("stage") or "run"
+        return (
+            schema_id,
+            str(payload.get("tool") or "workflow"),
+            str(payload.get("stage") or "run"),
         )
     # Older VLM aggregate reports have no schema but do carry this exact output
     # contract. The filename alone is not enough to classify arbitrary JSON.
@@ -473,10 +501,13 @@ def _is_number(value: Any) -> bool:
 
 def _is_curve_metric(name: str) -> bool:
     lowered = name.lower()
-    return (
-        lowered in {"loss", "reward", "success_rate", "train_loss", "eval_loss"}
-        or lowered.endswith(("_loss", "_reward", "_success_rate"))
-    )
+    return lowered in {
+        "loss",
+        "reward",
+        "success_rate",
+        "train_loss",
+        "eval_loss",
+    } or lowered.endswith(("_loss", "_reward", "_success_rate"))
 
 
 def _is_duration(name: str) -> bool:
@@ -565,10 +596,16 @@ def _is_counter(name: str) -> bool:
 
 def _is_eval_score(name: str, *, container: str) -> bool:
     lowered = name.lower()
-    return (
-        lowered in _EVAL_SCORE_NAMES
-        or lowered.endswith(
-            ("_accuracy", "_f1", "_precision", "_recall", "_return", "_reward", "_score", "_success_rate")
+    return lowered in _EVAL_SCORE_NAMES or lowered.endswith(
+        (
+            "_accuracy",
+            "_f1",
+            "_precision",
+            "_recall",
+            "_return",
+            "_reward",
+            "_score",
+            "_success_rate",
         )
     )
 
@@ -600,10 +637,13 @@ def _observed_lineage(payload: dict[str, Any]) -> tuple[list[str], str]:
         value = payload.get(key)
         if isinstance(value, str) and value.strip() and value.strip() not in input_uris:
             input_uris.append(value.strip())
-    checkpoint_uri = _first_uri(
-        payload,
-        ("checkpoint_uri", "policy_checkpoint", "checkpoint_path", "model_uri"),
-    ) or str(lineage.get("checkpoint_uri") or "").strip()
+    checkpoint_uri = (
+        _first_uri(
+            payload,
+            ("checkpoint_uri", "policy_checkpoint", "checkpoint_path", "model_uri"),
+        )
+        or str(lineage.get("checkpoint_uri") or "").strip()
+    )
     policy = payload.get("policy")
     if not checkpoint_uri and isinstance(policy, dict):
         checkpoint_uri = _first_uri(policy, ("checkpoint_uri", "model_uri", "onnx_uri"))
@@ -629,7 +669,9 @@ def _extract_observed_report(
     records: list[MetricRecord] = []
     seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
 
-    def emit(name: str, value: Any, kind: str, labels: dict[str, str] | None = None) -> None:
+    def emit(
+        name: str, value: Any, kind: str, labels: dict[str, str] | None = None
+    ) -> None:
         if not _is_number(value):
             return
         resolved_labels = {METRIC_KIND_LABEL: kind, **(labels or {})}
@@ -767,18 +809,82 @@ def _extract_dataset_manifest(
     ref = LineageRef(
         input_uris=input_uris,
         dataset_version=dataset_version,
-        parent_uri=str(payload.get("parent_dataset_id", "") or lineage_meta.get("parent_dataset_id", "")),
-        parent_version=str(payload.get("parent_version", "") or lineage_meta.get("parent_version", "")),
+        parent_uri=str(
+            payload.get("parent_dataset_id", "")
+            or lineage_meta.get("parent_dataset_id", "")
+        ),
+        parent_version=str(
+            payload.get("parent_version", "") or lineage_meta.get("parent_version", "")
+        ),
     )
     metrics = [
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage=stage, name="record_count", value=record_count, unit="records", lineage=ref, artifact_uri=source_uri, artifact_version=dataset_version),
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage=stage, name="mean_completeness", value=float(stats.get("mean_completeness", 0.0) or 0.0), lineage=ref, artifact_uri=source_uri, artifact_version=dataset_version),
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage=stage, name="corrupt_count", value=corrupt, unit="records", lineage=ref, artifact_uri=source_uri, artifact_version=dataset_version),
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage=stage, name="corruption_rate", value=round(corrupt / record_count, 4) if record_count else 0.0, lineage=ref, artifact_uri=source_uri, artifact_version=dataset_version),
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage=stage, name="modality_count", value=len(stats.get("modalities", []) or []), unit="modalities", lineage=ref, artifact_uri=source_uri, artifact_version=dataset_version),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage=stage,
+            name="record_count",
+            value=record_count,
+            unit="records",
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=dataset_version,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage=stage,
+            name="mean_completeness",
+            value=float(stats.get("mean_completeness", 0.0) or 0.0),
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=dataset_version,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage=stage,
+            name="corrupt_count",
+            value=corrupt,
+            unit="records",
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=dataset_version,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage=stage,
+            name="corruption_rate",
+            value=round(corrupt / record_count, 4) if record_count else 0.0,
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=dataset_version,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage=stage,
+            name="modality_count",
+            value=len(stats.get("modalities", []) or []),
+            unit="modalities",
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=dataset_version,
+        ),
     ]
     edges = [
-        LineageEdge(from_uri=input_uri, to_uri=source_uri, to_version=dataset_version, relation="produced_from", run_id=run_id)
+        LineageEdge(
+            from_uri=input_uri,
+            to_uri=source_uri,
+            to_version=dataset_version,
+            relation="produced_from",
+            run_id=run_id,
+        )
         for input_uri in input_uris
     ]
     return metrics, edges
@@ -792,14 +898,58 @@ def _extract_validation_report(
     run_id = _run_id(payload, workflow_run)
     ref = LineageRef(input_uris=[source_manifest] if source_manifest else [])
     metrics = [
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage="validate", name="validation_passed", value=1.0 if payload.get("passed") else 0.0, lineage=ref, artifact_uri=source_uri),
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage="validate", name="corruption_rate", value=float(payload.get("corruption_rate", 0.0) or 0.0), lineage=ref, artifact_uri=source_uri),
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage="validate", name="record_count", value=int(payload.get("record_count", stats.get("record_count", 0)) or 0), unit="records", lineage=ref, artifact_uri=source_uri),
-        _metric(run_id=run_id, workflow=workflow, tool="dataset", stage="validate", name="failed_check_count", value=len(payload.get("failed_checks", []) or []), lineage=ref, artifact_uri=source_uri),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage="validate",
+            name="validation_passed",
+            value=1.0 if payload.get("passed") else 0.0,
+            lineage=ref,
+            artifact_uri=source_uri,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage="validate",
+            name="corruption_rate",
+            value=float(payload.get("corruption_rate", 0.0) or 0.0),
+            lineage=ref,
+            artifact_uri=source_uri,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage="validate",
+            name="record_count",
+            value=int(payload.get("record_count", stats.get("record_count", 0)) or 0),
+            unit="records",
+            lineage=ref,
+            artifact_uri=source_uri,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="dataset",
+            stage="validate",
+            name="failed_check_count",
+            value=len(payload.get("failed_checks", []) or []),
+            lineage=ref,
+            artifact_uri=source_uri,
+        ),
     ]
     edges: list[LineageEdge] = []
     if source_manifest:
-        edges.append(LineageEdge(from_uri=source_manifest, to_uri=source_uri, relation="evaluated_on", run_id=run_id))
+        edges.append(
+            LineageEdge(
+                from_uri=source_manifest,
+                to_uri=source_uri,
+                relation="evaluated_on",
+                run_id=run_id,
+            )
+        )
     return metrics, edges
 
 
@@ -816,13 +966,60 @@ def _extract_adversarial_set(
     input_uris = [u for u in (policy_uri, base_config_uri) if u]
     ref = LineageRef(input_uris=input_uris, checkpoint_uri=policy_uri)
     metrics = [
-        _metric(run_id=run_id, workflow=workflow, tool="scenario_gen", stage="generate", name="scenario_count", value=int(payload.get("scenario_count", len(scenarios)) or 0), unit="scenarios", lineage=ref, artifact_uri=source_uri, artifact_version=run_id),
-        _metric(run_id=run_id, workflow=workflow, tool="scenario_gen", stage="generate", name="top_severity", value=max(severities) if severities else 0.0, lineage=ref, artifact_uri=source_uri, artifact_version=run_id),
-        _metric(run_id=run_id, workflow=workflow, tool="scenario_gen", stage="generate", name="mean_severity", value=round(sum(severities) / len(severities), 4) if severities else 0.0, lineage=ref, artifact_uri=source_uri, artifact_version=run_id),
-        _metric(run_id=run_id, workflow=workflow, tool="scenario_gen", stage="generate", name="mean_diversity", value=round(sum(diversities) / len(diversities), 4) if diversities else 0.0, lineage=ref, artifact_uri=source_uri, artifact_version=run_id),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="scenario_gen",
+            stage="generate",
+            name="scenario_count",
+            value=int(payload.get("scenario_count", len(scenarios)) or 0),
+            unit="scenarios",
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=run_id,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="scenario_gen",
+            stage="generate",
+            name="top_severity",
+            value=max(severities) if severities else 0.0,
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=run_id,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="scenario_gen",
+            stage="generate",
+            name="mean_severity",
+            value=round(sum(severities) / len(severities), 4) if severities else 0.0,
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=run_id,
+        ),
+        _metric(
+            run_id=run_id,
+            workflow=workflow,
+            tool="scenario_gen",
+            stage="generate",
+            name="mean_diversity",
+            value=round(sum(diversities) / len(diversities), 4) if diversities else 0.0,
+            lineage=ref,
+            artifact_uri=source_uri,
+            artifact_version=run_id,
+        ),
     ]
     edges = [
-        LineageEdge(from_uri=input_uri, to_uri=source_uri, to_version=run_id, relation="produced_from", run_id=run_id)
+        LineageEdge(
+            from_uri=input_uri,
+            to_uri=source_uri,
+            to_version=run_id,
+            relation="produced_from",
+            run_id=run_id,
+        )
         for input_uri in input_uris
     ]
     return metrics, edges
@@ -872,7 +1069,9 @@ def _extract_run_manifest(
         if not isinstance(step, dict):
             continue
         profile = step.get("resources_profile")
-        accel = str(profile.get("accelerators", "")) if isinstance(profile, dict) else ""
+        accel = (
+            str(profile.get("accelerators", "")) if isinstance(profile, dict) else ""
+        )
         acc_type, count = _parse_accelerators(accel)
         if count <= 0:
             continue
