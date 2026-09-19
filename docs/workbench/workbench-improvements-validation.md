@@ -11,6 +11,16 @@ its own writable object storage; concrete resource identifiers are kept out
 of this document per the repository's confidentiality conventions and are
 retained in access-controlled private evidence.
 
+**Method note on the speedup numbers:** every before/after timing
+measurement in this document (credential preflight, manifest discovery,
+storage transfer) was run from the operator's local machine against
+remote Nebius endpoints in one region — not measured from inside a GPU
+worker or from a machine co-located with the service. Absolute latencies
+therefore reflect that specific client-to-remote-endpoint topology and the
+tested workload shapes; the relative speedups (concurrent vs. serial, same
+client, same network path each trial) are the reproducible claim, not the
+absolute seconds in isolation.
+
 ## Summary
 
 | Target | What changed | Real measured result |
@@ -183,6 +193,16 @@ multipart threshold, hash-verified, dedicated-prefix cleanup) in
 `npa/tests/e2e/test_storage_transfer_live.py`.
 
 ## Real GPU execution
+
+**Scope:** this GPU job proves the changed source runs correctly, and that
+its S3/manifest-discovery/credential-preflight behavior is correct, on
+real GPU compute. It is not a training-throughput benchmark and does not
+extend any "5x" claim to GPU compute — the SGD steps and matmul below are
+a correctness/liveness check (real gradients, real device math), not a
+performance measurement. It is also not a Genesis simulator qualification:
+the published Genesis image was used only as a ready-made PyTorch/CUDA
+runtime container, and no Genesis simulation capability was exercised or
+validated.
 
 A real GPU job (RTX PRO 6000 Blackwell, `torch 2.9.0+cu130`, CUDA 13.0) ran
 the reviewed source snapshot for all three changed modules plus the
