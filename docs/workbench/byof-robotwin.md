@@ -113,7 +113,10 @@ payload-probe, native-content, built-image, storage/context, or live gates.
 Only validated bytes cross the existing secret-value transport. The CPU worker
 materializes temporary context/authenticated-authorization-receipt/config files
 below a 0700 directory as exclusive 0600 files, scrubs context variables from
-child environments, and cleans them on every exit. The public YAML and plan
+child environments, and attempts cleanup on every exit. If unlink or directory
+fsync fails, the owner-only directory is retained with per-file outcomes,
+residual names, and the fsync result for recovery; deletion is claimed only
+when its receipt proves it. The public YAML and plan
 retain `tool://robotwin`,
 `example-bucket`, and the context variable name—not any value. The outer task is
 CPU-only and the inner profile contains the sole accelerator request:

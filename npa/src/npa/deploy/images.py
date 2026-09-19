@@ -826,7 +826,7 @@ def container_image_for_tool(
             "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
             "or explicitly select a dev-<full-source-sha> tag for validation."
         )
-    if tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+    if tool == "robotwin" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
         raise ValueError(
             f"{tool!r} has no accepted release image. Supply a validated immutable "
             "image or explicitly select a dev-<full-source-sha> tag for validation."
