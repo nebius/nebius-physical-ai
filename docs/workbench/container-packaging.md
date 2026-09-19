@@ -497,12 +497,14 @@ Its packaging class remains `unvalidated`: pinned source and lock metadata do
 not establish redistribution rights for the exact base and selected package
 bytes. A future exact built-byte licence review must establish the final class.
 
-The CUDA-capable Python environment is not a runtime downloader. It is an exact
-file/package/ABI inventory prepared outside the image and mounted read-only.
-The bootstrap can verify, execute with, or prove refusal of that inventory; it
-cannot populate it or accept terms. This packaging split does not supply
-distribution, use, or service rights. Until an unexpired customer-created
-run/manifest entitlement, transaction
+The CUDA-capable Python environment is a customer-owned runtime boundary. The
+bootstrap may fetch the exact inventory from its declared official endpoints
+only after the customer entitlement and credential checks, then independently
+verify installed files and `RECORD` before publishing a private runtime tree;
+it never accepts terms or logs the credential. Public PyPI/PyTorch requests are
+anonymous, while credentials are bound to their approved vendor origin. This
+packaging split does not supply distribution, use, or service rights. Until an
+unexpired customer-created run/manifest entitlement, transaction
 authorization, built-byte/security/SBOM/provenance gates, private exact-digest
 B200 qualification, and anonymous pull proof all pass, the
 tool remains in `NEUTRAL_UNBUILT_CANDIDATE_TOOLS`, is included in
