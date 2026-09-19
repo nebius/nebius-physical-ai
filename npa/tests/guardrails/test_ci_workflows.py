@@ -24,6 +24,7 @@ AUTOMATIC_PR_WORKFLOWS = (
     "lint.yml",
     "security-regression.yml",
     "test.yml",
+    "typecheck.yml",
 )
 
 
@@ -272,11 +273,41 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     )
 
 
-def test_advisory_mypy_is_manual_only() -> None:
+def test_blocking_mypy_runs_on_pr_with_baseline() -> None:
+    # CI POLICY CHANGE (PR #574, closes #489): mypy used to be advisory-only
+    # and manual-dispatch-only -- the previous version of this test pinned
+    # exactly that. It now runs on PRs touching npa/src/** and BLOCKS the
+    # merge on new errors beyond the committed baseline in
+    # npa/mypy-baseline.txt. If you are flipping this back to advisory, that
+    # is a deliberate policy reversal: say so in the PR body and update this
+    # test, don't just weaken the workflow.
     lint = _load_workflow("lint.yml")
     typecheck = _load_workflow("typecheck.yml")
 
     assert "mypy" not in lint["jobs"]
-    assert typecheck["on"] == {"workflow_dispatch": ""}
+    assert "pull_request" in typecheck["on"]
+    assert "workflow_dispatch" in typecheck["on"]
     assert set(typecheck["jobs"]) == {"mypy"}
     assert typecheck["permissions"] == {"contents": "read"}
+
+    # The check must actually be blocking: no continue-on-error anywhere on
+    # the mypy job's steps.
+    steps = typecheck["jobs"]["mypy"]["steps"]
+    for step in steps:
+        assert step.get("continue-on-error", "") != "true", step.get("name")
+
+    # The original PR shipped an empty baseline that was never seeded from a
+    # real mypy run. The baseline must contain the grandfathered errors, or
+    # the first PR touching npa/src/** fails on pre-existing errors that are
+    # not actually new.
+    baseline = REPO_ROOT / "npa" / "mypy-baseline.txt"
+    assert baseline.is_file(), "mypy baseline file is missing"
+    entries = [
+        line
+        for line in baseline.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert entries, (
+        "mypy baseline is empty; seed it from a real mypy run "
+        "(or, if mypy is genuinely clean, update this test to say so)"
+    )
