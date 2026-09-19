@@ -267,6 +267,14 @@ namespace/payload grant and controller checks after infrastructure preflight
 immediately adjacent to submission. It rechecks the bound Role, sole Pod UID,
 job label, image, and no-ClusterRoleBinding result immediately after binding and
 at every scheduler-status observation, together with the controller identity.
+These sampled checks are not a run-long isolation proof: qualification MUST also
+bind a dedicated cluster or an admission-enforced exclusive-writer policy that
+rejects every non-run-authorized namespace, RBAC, and workload mutation for the
+entire execution interval, plus a gap-free Kubernetes watch or audit-log interval
+anchored by resource versions before submission and after cleanup. Every unexpected
+create, update, or delete event fails qualification. If that enforcement and
+continuous event evidence are unavailable, the run stops before submission and
+the documentation must not claim run-long isolation.
 At a failed terminal status the exact Pod may already be absent, but a successful
 qualification must still expose it for the manager-side live-evidence read;
 any replacement or foreign Pod is a hard failure. Every

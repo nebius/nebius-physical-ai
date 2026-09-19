@@ -14,6 +14,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 PUBLISH = WORKFLOWS / "publish-public-images.yml"
 HEALTH = WORKFLOWS / "public-release-health.yml"
 SECURITY_SCAN = WORKFLOWS / "image-security-scan.yml"
+LIBERO_DOC = ROOT / "docs" / "workbench" / "byof-libero.md"
 
 
 def _spec(path: Path) -> dict:
@@ -64,6 +65,23 @@ def _shell_function_call(script: str, name: str) -> str:
     call = f"\n{name}\n"
     end = script.index(call, start) + len(call)
     return script[start:end]
+
+
+def test_libero_namespace_claim_requires_continuous_isolation_evidence() -> None:
+    """Sampled inventories must never be presented as run-long isolation proof."""
+
+    text = LIBERO_DOC.read_text(encoding="utf-8")
+    start = text.index("Before a future run,\n")
+    end = text.index("The execution and payload-proof kubeconfig contexts", start)
+    contract = text[start:end]
+    for required in (
+        "not a run-long isolation proof",
+        "admission-enforced exclusive-writer policy",
+        "gap-free Kubernetes watch or audit-log interval",
+        "Every unexpected\ncreate, update, or delete event fails qualification",
+        "must not claim run-long isolation",
+    ):
+        assert required in contract
 
 
 def test_public_only_workflows_exist_without_a_private_candidate_workflow() -> None:
