@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 import re
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
@@ -538,6 +540,13 @@ def status_key(prefix: str) -> str:
     return f"{base}/npa-workflow/status.json"
 
 
+def _corrupt_runtime_state(reason: str) -> NpaWorkflowError:
+    return NpaWorkflowError(
+        "durable runtime state is corrupt: "
+        f"runtime.json {reason}; preserve it and restore a valid ledger before resuming"
+    )
+
+
 class RunStateStore:
     """Persist workflow run manifests (mock ``reader``/``writer`` in unit tests)."""
 
@@ -635,12 +644,14 @@ class RunStateStore:
             body = self._read(runtime_key(self.prefix))
         except FileNotFoundError:
             return None
+        except UnicodeDecodeError as exc:
+            raise _corrupt_runtime_state("is not valid UTF-8 JSON") from exc
         try:
             payload = json.loads(body)
-        except json.JSONDecodeError:
-            return None
+        except json.JSONDecodeError as exc:
+            raise _corrupt_runtime_state("is not valid JSON") from exc
         if not isinstance(payload, dict):
-            return None
+            raise _corrupt_runtime_state("must contain a JSON object")
         return RuntimeRunState.from_dict(payload)
 
     def write_runtime_state(self, state: RuntimeRunState) -> dict[str, Any]:

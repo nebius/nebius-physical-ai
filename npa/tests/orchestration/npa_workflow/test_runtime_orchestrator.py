@@ -22,7 +22,11 @@ import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
+from npa.orchestration.npa_workflow.run_state import (
+    RunStateStore,
+    RuntimeRunState,
+    runtime_key,
+)
 from npa.orchestration.npa_workflow.runtime import (
     MAX_TERMINAL_PLAN_MIGRATIONS,
     RuntimeLedger,
@@ -1263,6 +1267,27 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     # Successful waves replay, while a terminal workload failure remains terminal.
     assert second_submitter.calls == []
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
+
+
+def test_resume_rejects_corrupt_ledger_before_executor_creation(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    corrupt_bytes = b'{"schema_version":'
+    key = runtime_key("unit-prefix")
+    store = MemoryStore({key: corrupt_bytes})
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(resume=True)
+
+    with pytest.raises(NpaWorkflowError, match="durable runtime state is corrupt"):
+        _executor(
+            spec,
+            run_id="rt-corrupt-ledger",
+            submitter=submitter,
+            options=options,
+            store=store,
+        )
+
+    assert submitter.calls == []
+    assert store.objects[key] == corrupt_bytes
 
 
 @pytest.mark.parametrize(

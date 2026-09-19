@@ -314,6 +314,27 @@ def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
         store.read_runtime_state()
 
 
+@pytest.mark.parametrize("corrupt_body", ['{"schema_version":', "[]"])
+def test_read_runtime_state_rejects_corrupt_ledger(corrupt_body: str) -> None:
+    """Corrupt durable state must never be mistaken for an absent resume ledger."""
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.run_state import RunStateStore as Store
+
+    corrupt = Store(
+        bucket="bucket",
+        prefix="runs/demo",
+        reader=lambda *_args: corrupt_body,
+        writer=lambda *_: pytest.fail("corrupt state must never be overwritten"),
+    )
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ):
+        corrupt.read_runtime_state()
+
+
 # ── Resource-honest manifests for submitted runs ─────────────────────────────
 # A cluster submit used to leave no `npa.workflow.run.v1` manifest at all, and the
 # manifest the local path did write carried no resource profile -- so a run that
