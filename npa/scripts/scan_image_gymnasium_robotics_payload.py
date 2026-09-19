@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import bz2
+import gzip
 import hashlib
 import io
 import json
@@ -35,6 +36,7 @@ REQUIRED = {
     "opt/npa/gymnasium-robotics/runtime-bootstrap.py",
     "opt/npa/gymnasium-robotics/capability_smoke.py",
     "opt/npa/gymnasium-robotics/verify_image.py",
+    "opt/npa/gymnasium-robotics/runtime-fetch-manifest.json",
     "usr/local/bin/npa-gymnasium-entrypoint",
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md",
     "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md",
@@ -47,7 +49,8 @@ FORBIDDEN_PATH = re.compile(
     r"(^|/)gymnasium_robotics(/|$)|"
     r"(^|/)[^/]*(?:shadow[_-]?hand|mujoco)[^/]*(/|$)|"
     r"(^|/)(usr/local/cuda|opt/nvidia)(/|$)|"
-    r"(^|/)[^/]*(?:nvidia|isaac|omniverse|ngc)[^/]*(/|$)|"
+    r"(^|/)(?:nvidia|isaac|isaacsim|omniverse|ngc)(?:[-_.][^/]*)?(?:/|$)|"
+    r"(^|/)[^/]*(?:[-_.](?:nvidia|isaac|isaacsim|omniverse|ngc))(?:[-_.][^/]*)?(?:/|$)|"
     r"(^|/)(libcuda[^/]*|libnvcuvid[^/]*|libnvoptix[^/]*)$|"
     r"\.(whl|pt|pth|ckpt|safetensors|onnx|engine)$",
     re.IGNORECASE,
@@ -127,6 +130,13 @@ MAX_LAYER_MEMBERS = 100_000
 MAX_TOTAL_LAYER_MEMBERS = 250_000
 MAX_LAYER_MEMBER_BYTES = 256 * 1024 * 1024
 MAX_MATERIALIZED_LAYER_BYTES = 2 * 1024 * 1024 * 1024
+ALLOWED_EMPTY_BASE_PATHS = frozenset(
+    {
+        "var/cache/apt/archives",
+        "var/cache/apt/archives/lock",
+        "var/cache/apt/archives/partial",
+    }
+)
 OCI_INDEX_MEDIA_TYPES = frozenset(
     {
         "application/vnd.oci.image.index.v1+json",
@@ -192,27 +202,28 @@ EXPECTED_BASE = {
 # bind every raw layer. They come from the independently inspected neutral
 # Linux/amd64 reference build and do not identify its private registry location.
 EXPECTED_IMAGE_CONFIG_SHA256 = (
-    "500cf71fa1d9e0a75d4964145ad5cabeb8f4dab213daa47e3eb4062daa26d8ee"
+    "f092ed44bb9bf1dd63585b73212bea9f8562ece6a63bf368ad870ab2185e1278"
 )
 EXPECTED_ORDERED_LAYER_DIFF_IDS = (
     "sha256:6078cde548a521a729def2ee7875e9f65513c18f0d4bac4db817417617d7006a",
-    "sha256:c9cf8fb2bd23a9b4cd1ef490c213633de55e6a887ee5547d089383e491154e12",
-    "sha256:93c52d9272eb0cde34be14ec5541dd7cebeed9c4a13a54d4f3682708dd8a2f1d",
-    "sha256:0045f3459f22650614cba0e2646d6b0370f4ca34395ad21435034ac5f00b9448",
-    "sha256:8587c6811751a3100449f130899bfa9bdf1b4214cb2ec12f19efbee1942cddc1",
-    "sha256:7f055f5205d17043ec1313658cba330c2f238bde0ed0b34019c220746a2a6337",
-    "sha256:79635158e127d0a04f16447015b91173f8d087974e74f038662f239e024a5797",
-    "sha256:ed03f50a7b2aaf2ef2af649de5b3ae7b5b02cb7322252c8f83c05cd080a2024b",
-    "sha256:19e0aa2e363317597d1dd9c36298f4206fa4dd7c959f1cfe9051d8312bed4992",
-    "sha256:09c25ddba64560ba3f771966162de427cfef63be3076a81ad0a19274cb108ad9",
-    "sha256:3e5e0723100daa82e8ad5f1b3ae6d6219f14bb1834a7a0ff00515c2529917d67",
-    "sha256:9383b67b9516ff63b6101eb63b61d43af658be9e94140439906bcd6b1dc670b1",
-    "sha256:b4b8a74abd8032119aafb59213e9d623fa165277c068ca414bc36cafbacfe641",
-    "sha256:788c735ea050854edec8c6cb7fd2b047d63a1f66ec4f7d5ef2e530a1eba72ced",
-    "sha256:0e12e5ec3ae67e7b7acfc3af3ca2d8d22cbaa30ed919aa01a31c7a3aabb447c2",
-    "sha256:c5a7933d5fede3c5fa064ce851fa19398905c5f48db1bd82beb7c08e33d01055",
-    "sha256:e7b1f9832244e62d3eadbeef9e0efdc40d176175757bc1445027c05b30e7a38b",
-    "sha256:da653977f5c0d22035c98b7f98b6331f6125480eed0f6df50624af05ce1d8729",
+    "sha256:f2cea436a3738d53d631bf57f322c35c6a1be6b21460843a2ec047b056b8c4e1",
+    "sha256:b1bcf1bd6dfe330dd4c41bcf0293e5bc26b812efc0659f9a24cc0eb9773e8545",
+    "sha256:c56dc218ffc8d025a332e9ceae8962b632d8b0782230f6525e49906cbd3e1053",
+    "sha256:ed036594e9aa162a66f47d90d6084eaa259d775dcbbe7467994a4f0bd8a977d6",
+    "sha256:2ba04a6cc5b69ee205d249aae25e1de60a6e63f32d3d4eb6e52dd48ffff0309c",
+    "sha256:001ab717894637e9d7ff7b6cbb8a56dca3907cc253e510b026f5a4ad0ba34bc8",
+    "sha256:4beb089e6b62a23f68ad02adab33168dfc954f37f437613f849a6dc4d35eaecc",
+    "sha256:1699ab172e299b1a3cc27c7658ebb2c444fbb916e1795eb9e6e5b1434393c358",
+    "sha256:a990387443c5fc8fc8b7be383bf89dcc90cfa22a495bd96280f129c50d9647d8",
+    "sha256:cebb133929934ca8e210947de1acd5eb932db7dc4f35e2fcba361beb2a9c31e4",
+    "sha256:89ebc990b9628c06d579a28cf955e6a3fbfe78b0152250353dad63ea6a7ba98e",
+    "sha256:44b83ff0055489f21fd63dccd13cbe3715fc31075c7a41b06520f079efd4f94b",
+    "sha256:c38f675dc6e707e7b7e0f44b24dfb67a713c72d6d56320ee387990ffcefe92d1",
+    "sha256:4bdc3cc733a031185a73c2974128963b13b91927bbf408f44aeb15b150ce1d50",
+    "sha256:0d8e45528e7cb0781c56cdc86d5e80c727d11e8b4190d55172f3a1f619c6f025",
+    "sha256:ea6781139179b673020e78d80871ed0bf6903a84295eeb1acb423ef99de33435",
+    "sha256:48447a17c085b126041fb227bf8b0f1f1d52ddc968647ccbd45d1bfa7c99510a",
+    "sha256:ae7ac567f97ceb96b65251342a658cf225692d4d910a25ec65d83d0c824add02",
     "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
     "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
 )
@@ -223,11 +234,12 @@ EXPECTED_ORDERED_LAYER_DIFF_IDS = (
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
-    "corresponding-source.lock.json": "7a097851d8c9eae45bb663d7d8d989f507afc0fcdc12e721d7431dd27aa9a3be",
+    "corresponding-source.lock.json": "10ea8843b7b68c70b38a137a1683f46fcb6de8517d1863684f5419b21145967a",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "ebf8126e6c3477c25b8cb0eb40ddcdbb936aeef0c3fab24dfed6e530bb63c879",
+    "runtime-bootstrap.py": "ec1b843ff18606f64a3238ce86d4eef00ac4f0c14f93ba2801c17cbc003ae0e2",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
-    "verify_image.py": "4deb49724fcab6e79d9efcd97c3a91cab29f86e811edbeb3df485bfdea203e97",  # gitleaks:allow; public file-content SHA-256
+    "verify_image.py": "5704f9ccb9fd231f0082d46d99d42bc549b42e91a55d1a299b48161e1018389f",  # gitleaks:allow; public file-content SHA-256
+    "runtime-fetch-manifest.json": "08a628dd444d52dcaa7e60b41f1b416a42a4a7b85cde6dce0ab0887f1ea78f17",
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
@@ -314,6 +326,26 @@ def _raw_member(
     if len(content) != member.size or len(content) > max_bytes:
         raise ValueError(f"archive member exceeds scan bound: {name}")
     return content
+
+
+def _repeated_docker_layer_member_is_identical(
+    archive_bytes: bytes,
+    first: tarfile.TarInfo,
+    duplicate: tarfile.TarInfo,
+    name: str,
+) -> bool:
+    """Accept Docker 29's repeated empty-layer alias only when byte-bound."""
+
+    if re.fullmatch(r"blobs/sha256/[0-9a-f]{64}", name) is None:
+        return False
+    if not first.isfile() or not duplicate.isfile() or first.size != duplicate.size:
+        return False
+    first_raw = archive_bytes[first.offset_data : first.offset_data + first.size]
+    duplicate_raw = archive_bytes[
+        duplicate.offset_data : duplicate.offset_data + duplicate.size
+    ]
+    digest = name.rsplit("/", 1)[-1]
+    return first_raw == duplicate_raw and hashlib.sha256(first_raw).hexdigest() == digest
 
 
 def _archive_path_identity(metadata: os.stat_result) -> tuple[int, ...]:
@@ -458,7 +490,11 @@ def _scan_raw_blob_bytes(
 
 
 def _scan_archive_representation_bytes(
-    label: str, content: bytes, *, allowed_system_wheel_path: str | None = None
+    label: str,
+    content: bytes,
+    *,
+    allowed_system_wheel_path: str | None = None,
+    skip_text_policy: bool = False,
 ) -> None:
     """Apply policy to one archive's stored representation."""
 
@@ -469,14 +505,18 @@ def _scan_archive_representation_bytes(
     )
     if allowed_system_wheel_path is not None:
         return
-    if SECRET_TEXT.search(content):
+    if not skip_text_policy and SECRET_TEXT.search(content):
         raise ValueError(f"forbidden secret signature: {label}")
-    if VENDOR_TEXT.search(content):
+    if not skip_text_policy and VENDOR_TEXT.search(content):
         raise ValueError(f"forbidden vendor payload signature: {label}")
 
 
 def _scan_decoded_member_bytes(
-    label: str, content: bytes, *, allowed_system_wheel_path: str | None = None
+    label: str,
+    content: bytes,
+    *,
+    allowed_system_wheel_path: str | None = None,
+    skip_text_policy: bool = False,
 ) -> None:
     """Apply exact-byte and textual policy to one actionable decoded member."""
 
@@ -485,6 +525,8 @@ def _scan_decoded_member_bytes(
         content,
         allowed_system_wheel_path=allowed_system_wheel_path,
     )
+    if skip_text_policy:
+        return
     if SECRET_TEXT.search(content):
         raise ValueError(f"forbidden secret signature: {label}")
     if VENDOR_TEXT.search(content):
@@ -538,6 +580,11 @@ def _looks_like_tar(content: bytes) -> bool:
     """Recognize a valid first tar header, including pre-ustar archives."""
 
     if len(content) < 512 or not any(content[:512]):
+        return False
+    # Avoid treating arbitrary binary members (notably Python bytecode) as a
+    # tar stream merely because their random checksum bytes happen to match.
+    name = content[:100].rstrip(b"\0")
+    if not name or any(byte < 0x20 or byte > 0x7E for byte in name):
         return False
     checksum_field = content[148:156].rstrip(b"\0 ").lstrip(b" ")
     try:
@@ -897,6 +944,7 @@ def _nested_archive_members(
     depth: int = 0,
     allowed_system_wheel_path: str | None = None,
     budget: _NestedArchiveBudget | None = None,
+    skip_text_policy: bool = False,
 ) -> int:
     """Inspect retained archives by validated bytes, never only by filename."""
 
@@ -910,7 +958,11 @@ def _nested_archive_members(
     declared_plain_tar = lowered.endswith(".tar")
     declared_compression = _declared_compression(path)
     is_tar = _looks_like_tar(content)
-    is_zip = not is_tar and zipfile.is_zipfile(io.BytesIO(content))
+    is_zip = (
+        not is_tar
+        and content.startswith(ZIP_SIGNATURES)
+        and zipfile.is_zipfile(io.BytesIO(content))
+    )
     compression_kind = next(
         (
             kind
@@ -939,12 +991,14 @@ def _nested_archive_members(
             f"raw archive member: {path}",
             content,
             allowed_system_wheel_path=allowed_system_wheel_path,
+            skip_text_policy=skip_text_policy,
         )
     else:
         _scan_decoded_member_bytes(
             f"decoded member: {path}",
             content,
             allowed_system_wheel_path=allowed_system_wheel_path,
+            skip_text_policy=skip_text_policy,
         )
     if archive_like and len(content) > MAX_NESTED_ARCHIVE:
         raise ValueError(f"nested archive exceeds scan bound: {path}")
@@ -958,6 +1012,7 @@ def _nested_archive_members(
             expanded,
             depth=depth + 1,
             budget=budget,
+            skip_text_policy=skip_text_policy,
         )
     if is_zip:
         infos = _validated_zip_infos(path, content, budget=budget)
@@ -997,7 +1052,9 @@ def _nested_archive_members(
                                 f"forbidden nested archive link: {path}:{safe}"
                             )
                         _scan_decoded_member_bytes(
-                            f"nested archive link: {path}:{safe}", nested_content
+                            f"nested archive link: {path}:{safe}",
+                            nested_content,
+                            skip_text_policy=skip_text_policy,
                         )
                         continue
                     if stat.S_IFMT(mode) not in (0, stat.S_IFREG):
@@ -1021,6 +1078,7 @@ def _nested_archive_members(
                         nested_content,
                         depth=depth + 1,
                         budget=budget,
+                        skip_text_policy=skip_text_policy,
                     )
                 return budget.member_count - starting_member_count
         except zipfile.BadZipFile as error:
@@ -1060,12 +1118,15 @@ def _nested_archive_members(
                             nested_content,
                             depth=depth + 1,
                             budget=budget,
+                            skip_text_policy=skip_text_policy,
                         )
                     elif member.issym() or member.islnk():
                         target_text = member.linkname
                         target = target_text.encode("utf-8", errors="surrogateescape")
                         _scan_decoded_member_bytes(
-                            f"nested archive link: {path}:{safe}", target
+                            f"nested archive link: {path}:{safe}",
+                            target,
+                            skip_text_policy=skip_text_policy,
                         )
                         resolved = _resolved_link_target(
                             safe, target_text, relative=member.issym()
@@ -1217,6 +1278,16 @@ def _layers_from_bytes(
         layer_members = _validated_tar_members(
             f"raw layer: {layer_name}", raw, max_members=MAX_LAYER_MEMBERS
         )
+        layer_contains_candidate = any(
+            _safe(member.name).startswith(
+                (
+                    "opt/npa/gymnasium-robotics/",
+                    "usr/local/bin/npa-gymnasium-entrypoint",
+                    "usr/share/doc/npa-gymnasium-robotics/",
+                )
+            )
+            for member in layer_members
+        )
         if total + len(layer_members) > MAX_TOTAL_LAYER_MEMBERS:
             raise ValueError("total member count exceeds scan bound")
         total += len(layer_members)
@@ -1248,8 +1319,14 @@ def _layers_from_bytes(
                     continue
                 allowed_system_wheel = path in EXPECTED_SYSTEM_WHEEL_FILES
                 if (
-                    FORBIDDEN_PATH.search(path) and not allowed_system_wheel
-                ) or UPSTREAM_TREE_PATH.search(path):
+                    (
+                        FORBIDDEN_PATH.search(path)
+                        and not allowed_system_wheel
+                        and not item.isdir()
+                        and not (path in ALLOWED_EMPTY_BASE_PATHS and item.size == 0)
+                    )
+                    or (UPSTREAM_TREE_PATH.search(path) and not item.isdir())
+                ):
                     raise ValueError(f"forbidden image path: {path}")
                 current_order.append(path)
                 if item.isfile():
@@ -1271,6 +1348,7 @@ def _layers_from_bytes(
                             path if allowed_system_wheel else None
                         ),
                         budget=nested_budget,
+                        skip_text_policy=not layer_contains_candidate,
                     )
                     _remove_path(current_rootfs, current_entries, path)
                     current_rootfs[path] = content
@@ -1931,9 +2009,15 @@ def scan(
         max_members=MAX_DOCKER_SAVE_OUTER_MEMBERS,
     )
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
-        outer_by_name = {_safe(member.name): member for member in outer_members}
-        if len(outer_by_name) != len(outer_members):
-            raise ValueError("Docker save contains duplicate normalized member paths")
+        outer_by_name: dict[str, tarfile.TarInfo] = {}
+        for member in outer_members:
+            name = _safe(member.name)
+            prior = outer_by_name.get(name)
+            if prior is not None and not _repeated_docker_layer_member_is_identical(
+                archive_bytes, prior, member, name
+            ):
+                raise ValueError("Docker save contains duplicate normalized member paths")
+            outer_by_name.setdefault(name, member)
         outer_names = set(outer_by_name)
         manifest_raw = _raw_member(
             archive, "manifest.json", max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
@@ -1970,9 +2054,29 @@ def scan(
         if len(layer_names) > MAX_ORDERED_LAYERS:
             raise ValueError("ordered layer count exceeds scan bound")
         layers = [_safe(str(name)) for name in layer_names]
-        if len(layers) != len(set(layers)):
-            raise ValueError("Docker save repeats an ordered layer")
-        allowed_outer = {"manifest.json", config_name, *layers, "repositories"}
+        for name in set(layers):
+            if layers.count(name) > 1:
+                member = outer_by_name.get(name)
+                if member is None or not _repeated_docker_layer_member_is_identical(
+                    archive_bytes, member, member, name
+                ):
+                    raise ValueError("Docker save repeats an ordered layer")
+        auxiliary_blobs = {
+            name
+            for name in outer_names
+            if re.fullmatch(r"blobs/sha256/[0-9a-f]{64}", name)
+            and name not in set(layers)
+            and name != config_name
+        }
+        allowed_outer = {
+            "manifest.json",
+            "index.json",
+            "oci-layout",
+            config_name,
+            *layers,
+            *auxiliary_blobs,
+            "repositories",
+        }
         allowed_directories = {
             str(parent)
             for name in allowed_outer
@@ -1998,13 +2102,42 @@ def scan(
                     max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES,
                 ),
             )
-        raw_layers = [
-            (
-                name,
-                _raw_member(archive, name, max_bytes=MAX_LAYER_ARCHIVE_BYTES),
+        # Docker 29 saves BuildKit's OCI index/attestation graph alongside the
+        # Docker-save manifest.  Every extra blob remains part of the complete
+        # byte scan: its path digest must bind its exact bytes and no arbitrary
+        # non-blob member is admitted.
+        for name in auxiliary_blobs:
+            member = outer_by_name[name]
+            raw = _raw_member(
+                archive, name, max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
             )
-            for name in layers
-        ]
+            if hashlib.sha256(raw).hexdigest() != name.rsplit("/", 1)[-1]:
+                raise ValueError(f"unexpected Docker-save members: [{name}]")
+            _scan_decoded_member_bytes(f"Docker-save auxiliary blob: {name}", raw)
+        for name in ("index.json", "oci-layout"):
+            if name in outer_by_name:
+                _scan_decoded_member_bytes(
+                    f"Docker-save OCI metadata: {name}",
+                    _raw_member(
+                        archive, name, max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
+                    ),
+                )
+        raw_layers: list[tuple[str, bytes]] = []
+        for name in layers:
+            stored = _raw_member(
+                archive, name, max_bytes=MAX_LAYER_ARCHIVE_BYTES
+            )
+            _scan_raw_blob_bytes(f"stored layer bytes: {name}", stored)
+            if stored.startswith(b"\x1f\x8b"):
+                try:
+                    decoded = gzip.decompress(stored)
+                except (OSError, EOFError) as error:
+                    raise ValueError(f"unreadable gzip layer: {name}") from error
+                if len(decoded) > MAX_LAYER_ARCHIVE_BYTES:
+                    raise ValueError(f"archive member exceeds scan bound: {name}")
+                raw_layers.append((name, decoded))
+            else:
+                raw_layers.append((name, stored))
     return _finalize_scan(
         archive_sha256=archive_sha256,
         config_raw=config_raw,

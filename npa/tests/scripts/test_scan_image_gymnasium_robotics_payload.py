@@ -997,9 +997,9 @@ def test_source_and_built_graph_trust_roots_are_pinned() -> None:
         "sha256:6078cde548a521a729def2ee7875e9f65513c18f0d4bac4db817417617d7006a"
     )
     assert SCAN.EXPECTED_IMAGE_CONFIG_SHA256 == (
-        "500cf71fa1d9e0a75d4964145ad5cabeb8f4dab213daa47e3eb4062daa26d8ee"
+        "f092ed44bb9bf1dd63585b73212bea9f8562ece6a63bf368ad870ab2185e1278"
     )
-    assert len(SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS) == 20
+    assert len(SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS) == 21
     assert SCAN.EXPECTED_ORDERED_LAYER_DIFF_IDS[0] == (
         SCAN.EXPECTED_BASE["uncompressed_layer_digest"]
     )

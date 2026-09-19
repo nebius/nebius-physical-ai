@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "npa/docker/workbench/gymnasium-robotics/runtime-bootstrap.py"
 LOCK = ROOT / "npa/docker/workbench/gymnasium-robotics/source-lock.json"
 REQUIREMENTS = ROOT / "npa/docker/workbench/gymnasium-robotics/requirements.lock"
+CORRESPONDING_LOCK = ROOT / "npa/docker/workbench/gymnasium-robotics/corresponding-source.lock.json"
 SPEC = importlib.util.spec_from_file_location("gymnasium_runtime_bootstrap", SCRIPT)
 assert SPEC and SPEC.loader
 BOOTSTRAP = importlib.util.module_from_spec(SPEC)
@@ -496,6 +497,36 @@ def _write_inputs(
         payload.update(mutate)
     manifest = tmp_path / "source-lock.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
+    corresponding = tmp_path / "corresponding-source.lock.json"
+    corresponding.write_bytes(CORRESPONDING_LOCK.read_bytes())
+    contract = tmp_path / "runtime-fetch-manifest.json"
+    contract.write_text(
+        json.dumps(
+            {
+                "schema": BOOTSTRAP.PUBLIC_RUNTIME_CONTRACT_SCHEMA,
+                "status": "complete",
+                "tool": "gymnasium-robotics",
+                "image": {
+                    "redistribution": "public",
+                    "payload_policy": "neutral-bootstrap-only",
+                    "restricted_payloads_baked": False,
+                },
+                "runtime_fetch": {
+                    "source_lock": manifest.name,
+                    "source_lock_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                    "corresponding_source_lock": corresponding.name,
+                    "corresponding_source_lock_sha256": hashlib.sha256(corresponding.read_bytes()).hexdigest(),
+                    "delivery": "operator-owned-runtime-cache",
+                    "customer_gate": "operator-owned-official-access-after-notice-and-acceptance",
+                    "acceptance_record": "customer-run-external",
+                    "credential_storage": "never-in-image-or-repository",
+                },
+                "excluded_from_public_image": sorted(BOOTSTRAP.PUBLIC_RUNTIME_CONTRACT_EXCLUDED),
+                "rights_boundary": BOOTSTRAP.PUBLIC_RUNTIME_CONTRACT_RIGHTS,
+            }
+        ),
+        encoding="utf-8",
+    )
     return manifest, requirements, urls
 
 
@@ -509,6 +540,16 @@ def _opener(
         return _Response(content[url], (redirects or {}).get(url, url))
 
     return open_url
+
+
+def _refresh_contract_source_binding(manifest: Path) -> None:
+    """Keep fixture contract binding aligned after an intentional lock mutation."""
+    contract = manifest.with_name("runtime-fetch-manifest.json")
+    payload = json.loads(contract.read_text(encoding="utf-8"))
+    payload["runtime_fetch"]["source_lock_sha256"] = hashlib.sha256(
+        manifest.read_bytes()
+    ).hexdigest()
+    contract.write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _installer(stage: Path, requirements: Path) -> None:
@@ -595,6 +636,26 @@ def test_repository_lock_refuses_before_any_network_access(tmp_path: Path) -> No
             REQUIREMENTS,
             tmp_path / "cache",
             opener=_opener({}, calls),
+            installer=_installer,
+        )
+    assert calls == []
+    assert not (tmp_path / "cache").exists()
+
+
+def test_public_runtime_contract_is_mandatory_before_network_access(
+    tmp_path: Path,
+) -> None:
+    manifest, requirements, content = _write_inputs(tmp_path)
+    (tmp_path / "runtime-fetch-manifest.json").unlink()
+    calls: list[str] = []
+    with pytest.raises(
+        BOOTSTRAP.BootstrapRefusal, match="public runtime-fetch contract is missing"
+    ):
+        BOOTSTRAP.prepare(
+            manifest,
+            requirements,
+            tmp_path / "cache",
+            opener=_opener(content, calls),
             installer=_installer,
         )
     assert calls == []
@@ -1388,6 +1449,7 @@ def test_mismatched_artifact_leaves_no_published_or_partial_runtime(
     if mismatch == "sha256":
         payload["components"]["farama_gymnasium_robotics"]["archive_sha256"] = "0" * 64
     manifest.write_text(json.dumps(payload), encoding="utf-8")
+    _refresh_contract_source_binding(manifest)
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="mismatch"):
         BOOTSTRAP.prepare(
             manifest,
@@ -1471,6 +1533,7 @@ def test_adversarial_source_archive_refuses_without_escape(
         payload = json.loads(manifest.read_text())
         payload["artifacts"][0]["max_unpacked_bytes"] = 10
         manifest.write_text(json.dumps(payload), encoding="utf-8")
+        _refresh_contract_source_binding(manifest)
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match=message):
         BOOTSTRAP.prepare(
             manifest,
@@ -1501,6 +1564,7 @@ def test_wheel_stream_expansion_limit_refuses_before_install(tmp_path: Path) -> 
     payload = json.loads(manifest.read_text())
     payload["artifacts"][1]["max_unpacked_bytes"] = 1
     manifest.write_text(json.dumps(payload), encoding="utf-8")
+    _refresh_contract_source_binding(manifest)
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="expansion limit"):
         BOOTSTRAP.prepare(
             manifest,

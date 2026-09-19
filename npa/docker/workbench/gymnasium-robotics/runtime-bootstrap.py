@@ -1536,10 +1536,14 @@ def prepare(
     """Fetch, validate, materialize, and atomically select one runtime version."""
 
     _refuse_root_runtime("runtime preparation")
-    contract = manifest.with_name("runtime-fetch-manifest.json")
-    if contract.exists():
-        _validate_public_runtime_contract(contract, manifest)
+    # Parse and validate the immutable runtime lock before consulting the
+    # publication contract.  This preserves the lock's precise refusal
+    # diagnostics while still requiring the contract before any network access.
     runtime_lock = load_lock(manifest, requirements)
+    contract = manifest.with_name("runtime-fetch-manifest.json")
+    if not contract.is_file():
+        _refuse("public runtime-fetch contract is missing; refusing before network access")
+    _validate_public_runtime_contract(contract, manifest)
     handles: tuple[int, int, int] | None = None
     with _open_cache_directories(cache_root) as cache:
         cache_root = cache.root_path

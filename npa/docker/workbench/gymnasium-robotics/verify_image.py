@@ -22,7 +22,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "corresponding-source.lock.json": "10ea8843b7b68c70b38a137a1683f46fcb6de8517d1863684f5419b21145967a",
     "runtime-fetch-manifest.json": "08a628dd444d52dcaa7e60b41f1b416a42a4a7b85cde6dce0ab0887f1ea78f17",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "d29c9571c6790637c8674afbfe67277da5ed2e876c6251509f313d0a865b2971",
+    "runtime-bootstrap.py": "ec1b843ff18606f64a3238ce86d4eef00ac4f0c14f93ba2801c17cbc003ae0e2",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(
@@ -92,7 +92,7 @@ EXPECTED_FIXED_FILE_SHA256 = {
         "e02bb4b0137e1e6b5db555b9dd04d89e5c5c8ca9730dbba7a1c9ff5244c8029a"
     ),
     "usr/local/bin/npa-gymnasium-entrypoint": (
-        "8f9cb981d8b9e0e821af502f4fca97d06f29b74d01c9a7324a16f9e3ac40c8b0"
+        "e02bb4b0137e1e6b5db555b9dd04d89e5c5c8ca9730dbba7a1c9ff5244c8029a"
     ),
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": (
         "0b6c38b84bf8e386cfaba6caf50634a99e8c1804efec433608ad6438cd5b3d9e"
