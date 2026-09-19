@@ -1448,7 +1448,7 @@ def _serverless_job_env(
     return split_serverless_env(env)
 
 
-def _cosmos_train_smoke_command(seconds: int, *, fail_after_checkpoint: bool = False) -> str:
+def _cosmos_train_smoke_command(seconds: int) -> str:
     local_dir = "/tmp/npa-cosmos-train-smoke"
     script = f"""
 import json, os, pathlib, time
@@ -1464,17 +1464,7 @@ out.mkdir(parents=True, exist_ok=True)
 print("NPA_COSMOS_TRAIN_SMOKE_DONE", uri.rstrip("/") + "/checkpoint.json", flush=True)
 """.strip()
     upload = build_serverless_output_upload_cmd(local_dir, "")
-    remote_script = f"python3 - <<'PY'\n{script}\nPY\n{upload}"
-    if fail_after_checkpoint:
-        # Test hook only: the checkpoint above is already written and
-        # uploaded by this point, so this proves status diagnostics for a
-        # job that failed *after* producing a real artifact, distinct from
-        # one that never produced anything.
-        remote_script += (
-            "\necho NPA_COSMOS_TRAIN_SMOKE_DELIBERATE_FAILURE_AFTER_CHECKPOINT >&2"
-            "\nexit 17"
-        )
-    return _remote_bash(remote_script)
+    return _remote_bash(f"python3 - <<'PY'\n{script}\nPY\n{upload}")
 
 
 def _serverless_project_id(cfg: Any) -> str:
@@ -3124,17 +3114,6 @@ def train_cmd(
     job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
     smoke: bool = typer.Option(False, "--smoke", help="Run the minimal e2e smoke workload."),
     smoke_seconds: int = typer.Option(0, "--smoke-seconds", help="Seconds the smoke job should run."),
-    smoke_fail_after_checkpoint: bool = typer.Option(
-        False,
-        "--smoke-fail-after-checkpoint",
-        help=(
-            "With --smoke, publish the real checkpoint artifact and then exit "
-            "non-zero. Test hook for validating failure diagnostics (status "
-            "log_tail/pending_reason) against a job whose checkpoint really "
-            "exists despite a terminal failed status; has no effect on the "
-            "checkpoint content or upload."
-        ),
-    ),
     require_hf: bool = typer.Option(False, "--require-hf", help="Require HF token inside the job."),
     submit_only: bool = typer.Option(False, "--submit-only", help="Submit and return before polling."),
     poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between status checks."),
@@ -3212,9 +3191,7 @@ def train_cmd(
             project_id=resolved_project_id,
             name=name,
             image=image or container_image_for_tool("cosmos"),
-            command=_cosmos_train_smoke_command(
-                smoke_seconds, fail_after_checkpoint=smoke_fail_after_checkpoint
-            ),
+            command=_cosmos_train_smoke_command(smoke_seconds),
             gpu_type=resolved_gpu_type,
             gpu_count=resolved_gpu_count,
             preset=resolved_gpu_preset,

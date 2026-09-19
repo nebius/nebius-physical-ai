@@ -384,16 +384,6 @@ def test_cosmos_train_smoke_command_uses_shared_upload_helper() -> None:
     assert "boto3" in command
     assert "PYUPLOAD" in command
     assert "NPA_COSMOS_TRAIN_SMOKE_DONE" in command
-    assert "NPA_COSMOS_TRAIN_SMOKE_DELIBERATE_FAILURE_AFTER_CHECKPOINT" not in command
-
-
-def test_cosmos_train_smoke_fail_after_checkpoint_runs_upload_before_exit() -> None:
-    command = _cosmos_train_smoke_command(0, fail_after_checkpoint=True)
-
-    upload_index = command.index("PYUPLOAD")
-    failure_index = command.index("NPA_COSMOS_TRAIN_SMOKE_DELIBERATE_FAILURE_AFTER_CHECKPOINT")
-    exit_index = command.rindex("exit 17")
-    assert upload_index < failure_index < exit_index
 
 
 def test_cosmos_train_serverless_rejects_bad_output_path(mocker) -> None:
