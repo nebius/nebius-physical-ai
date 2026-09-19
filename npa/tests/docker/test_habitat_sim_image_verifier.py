@@ -1285,6 +1285,78 @@ def test_apt_source_module_missing_manifest_member_is_refused():
         VERIFIER._parse_source_manifest(reduced)
 
 
+def test_provenance_unexpected_path_is_rejected_before_body_open():
+    member = SimpleNamespace(isfile=lambda: True, size=128)
+    archive = Mock()
+    expected = {"declared.txt": "a" * 64}
+    findings = []
+    VERIFIER._record_provenance_member(
+        archive, member, "unexpected.txt", expected, {"declared.txt": 0}, {}, findings
+    )
+    archive.extractfile.assert_not_called()
+    assert findings == [{"code": "source_provenance_unexpected_path", "path": "unexpected.txt"}]
+
+
+def test_provenance_declared_oversize_is_rejected_before_body_open():
+    member = SimpleNamespace(isfile=lambda: True, size=129)
+    archive = Mock()
+    findings = []
+    VERIFIER._record_provenance_member(
+        archive,
+        member,
+        "declared.txt",
+        {"declared.txt": "a" * 64},
+        {"declared.txt": 128},
+        {},
+        findings,
+    )
+    archive.extractfile.assert_not_called()
+    assert findings == [
+        {"code": "source_provenance_declared_oversize", "path": "declared.txt"}
+    ]
+
+
+def test_provenance_invalid_declared_size_is_rejected_before_body_open():
+    member = SimpleNamespace(isfile=lambda: True, size="oversize")
+    archive = Mock()
+    findings = []
+    VERIFIER._record_provenance_member(
+        archive,
+        member,
+        "declared.txt",
+        {"declared.txt": "a" * 64},
+        {"declared.txt": 128},
+        {},
+        findings,
+    )
+    archive.extractfile.assert_not_called()
+    assert findings == [
+        {"code": "source_provenance_declared_size_invalid", "path": "declared.txt"}
+    ]
+
+
+def test_provenance_observed_oversize_is_bounded_and_rejected():
+    member = SimpleNamespace(isfile=lambda: True, size=4)
+    body = Mock()
+    body.read.side_effect = [b"abc", b"def", b""]
+    archive = Mock()
+    archive.extractfile.return_value = body
+    findings = []
+    VERIFIER._record_provenance_member(
+        archive,
+        member,
+        "declared.txt",
+        {"declared.txt": "a" * 64},
+        {"declared.txt": 4},
+        {},
+        findings,
+    )
+    assert findings == [
+        {"code": "source_provenance_observed_oversize", "path": "declared.txt"}
+    ]
+    assert body.read.call_args.args == (2,)
+
+
 def _cli_fixture(
     tmp_path: Path,
     *,
@@ -1366,11 +1438,27 @@ def _cli_fixture(
     manifest_path = analysis / "expected-npa-source-manifest.sha256"
     manifest_path.write_bytes(manifest)
     manifest_path.chmod(0o600)
+    sizes_path = analysis / "expected-provenance-sizes.json"
+    sizes_path.write_text(
+        json.dumps(
+            {
+                "npa-source-manifest.sha256": len(manifest),
+                "npa-source-provenance.json": len(provenance),
+                **{
+                    f"inputs/{path}": len(payload)
+                    for path, payload in source_inputs.items()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    sizes_path.chmod(0o600)
     return {
         "analysis": analysis,
         "archive": archive,
         "contract": contract_path,
         "manifest": manifest_path,
+        "sizes": sizes_path,
         "manifest_sha256": manifest_sha256,
         "expected": expected,
         "dpkg": baseline["dpkg_inventory_sha256"],
@@ -1397,9 +1485,11 @@ def _write_cli_wrapper(wrapper: Path) -> None:
             spec.loader.exec_module(module)
             contract = json.loads(Path(sys.argv[1]).read_text())
             manifest = Path(sys.argv[2]).read_bytes()
+            sizes = json.loads(Path(sys.argv[3]).read_text())
             module._load_contract = lambda: contract
             module._source_manifest_from_git = lambda _revision: manifest
-            raise SystemExit(module.main(sys.argv[3:]))
+            module._trusted_provenance_sizes = lambda *_args: sizes
+            raise SystemExit(module.main(sys.argv[4:]))
             """
         ),
         encoding="utf-8",
@@ -1419,6 +1509,7 @@ def _cli_arguments(
         str(wrapper),
         str(fixture["contract"]),
         str(fixture["manifest"]),
+        str(fixture["sizes"]),
         "--analysis-root",
         str(analysis_root or fixture["analysis"]),
         "--trusted-root",
@@ -1851,6 +1942,29 @@ def test_report_scanner_failure_is_fail_closed_and_diagnostic(
         assert _codes(report) == {"unreadable_or_incomplete_image_evidence"}
         assert report["scanner_error_type"] == error_type.__name__
         assert error_type.__name__ in capsys.readouterr().err
+
+
+def test_structured_failure_report_survives_broken_stderr(tmp_path, monkeypatch):
+    args = _report_arguments(tmp_path)
+
+    class BrokenStderr:
+        def write(self, _message):
+            raise OSError("inert diagnostic refusal")
+
+        def flush(self):
+            raise OSError("inert diagnostic refusal")
+
+    monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
+    monkeypatch.setattr(
+        VERIFIER,
+        "_verify_archive",
+        Mock(side_effect=RuntimeError("inert scanner failure")),
+    )
+    monkeypatch.setattr(VERIFIER.sys, "stderr", BrokenStderr())
+    assert VERIFIER.main([]) == 1
+    report = json.loads(args.json.read_bytes())
+    assert report["valid"] is False
+    assert report["scanner_error_type"] == "RuntimeError"
 
 
 def test_report_cleanup_attempts_close_after_unlink_failure(

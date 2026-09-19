@@ -48,6 +48,7 @@ NPA_SOURCE_PATHS = (
 )
 PROVENANCE_ROOT = "usr/share/doc/npa-habitat-sim/npa-source-provenance"
 PROVENANCE_SCHEMA = "npa.source-provenance.v1"
+PROVENANCE_READ_CHUNK = 1024 * 1024
 EXECUTABLE_SOURCE_DESTINATIONS = {
     "inputs/src/npa/__init__.py": ("/opt/npa-runtime/npa/__init__.py", 0o644),
     "inputs/src/npa/workflows/__init__.py": (
@@ -147,6 +148,25 @@ def _provenance_bytes(revision: str, manifest_sha256: str) -> bytes:
     ).encode()
 
 
+def _trusted_provenance_sizes(
+    expected: dict[str, str], manifest: bytes, revision: str, manifest_sha256: str
+) -> dict[str, int]:
+    """Derive provenance limits from already-authenticated source bytes."""
+    sizes = {
+        "npa-source-manifest.sha256": len(manifest),
+        "npa-source-provenance.json": len(_provenance_bytes(revision, manifest_sha256)),
+    }
+    for relative, digest in expected.items():
+        source = NPA_ROOT / relative.removeprefix("inputs/")
+        try:
+            payload = source.read_bytes()
+        except OSError:
+            continue
+        if hashlib.sha256(payload).hexdigest() == digest:
+            sizes[relative] = len(payload)
+    return sizes
+
+
 def _parse_source_manifest(manifest: bytes) -> dict[str, str]:
     expected: dict[str, str] = {}
     for raw in manifest.splitlines():
@@ -164,7 +184,11 @@ def _parse_source_manifest(manifest: bytes) -> dict[str, str]:
 
 
 def _bind_provenance_files(
-    contract: dict, revision: str, expected: dict[str, str], manifest_sha256: str
+    contract: dict,
+    revision: str,
+    expected: dict[str, str],
+    manifest_sha256: str,
+    manifest: bytes | None = None,
 ) -> None:
     """Bind the attested manifest and provenance population to image paths."""
     provenance = _provenance_bytes(revision, manifest_sha256)
@@ -185,6 +209,10 @@ def _bind_provenance_files(
         image_path = f"/{PROVENANCE_ROOT}/{path}"
         paths.append(image_path)
         files[image_path] = digest
+    if manifest is not None:
+        contract["_trusted_provenance_sizes"] = _trusted_provenance_sizes(
+            expected, manifest, revision, manifest_sha256
+        )
 
 
 def _bind_executable_sources(contract: dict, expected: dict[str, str]) -> None:
@@ -238,29 +266,79 @@ def _bind_source_contract(
         "source_manifest_digest_mismatch",
     )
     expected = _parse_source_manifest(manifest)
-    _bind_provenance_files(contract, revision, expected, manifest_sha256)
+    _bind_provenance_files(contract, revision, expected, manifest_sha256, manifest)
     _bind_executable_sources(contract, expected)
     _bind_bootstrap_files(contract)
     return contract, expected
 
 
-def _record_provenance_member(archive, member, relative, expected, observed, findings):
-    """Check one regular provenance member without extracting it to disk."""
-    if not member.isfile():
-        findings.append({"code": "source_provenance_nonregular_path", "path": relative})
-        return
-    body = archive.extractfile(member)
-    W.require(body is not None, "source_provenance_file_read")
-    digest = hashlib.sha256(body.read()).hexdigest()
+def _bounded_provenance_digest(body, expected_size, relative, findings):
+    """Hash a provenance stream with an exact trusted size and bounded reads."""
+    digest = hashlib.sha256()
+    observed_size = 0
+    while True:
+        chunk = body.read(min(PROVENANCE_READ_CHUNK, expected_size - observed_size + 1))
+        if not chunk:
+            break
+        observed_size += len(chunk)
+        if observed_size > expected_size:
+            findings.append(
+                {"code": "source_provenance_observed_oversize", "path": relative}
+            )
+            return None
+        digest.update(chunk)
+    if observed_size != expected_size:
+        findings.append(
+            {"code": "source_provenance_observed_size_mismatch", "path": relative}
+        )
+        return None
+    return digest.hexdigest()
+
+
+def _record_provenance_member(
+    archive, member, relative, expected, expected_sizes, observed, findings
+):
+    """Check one declared regular member with a trusted bounded read."""
     if relative not in expected:
         findings.append({"code": "source_provenance_unexpected_path", "path": relative})
         return
-    if digest != expected[relative]:
+    expected_size = expected_sizes.get(relative)
+    if not isinstance(expected_size, int) or expected_size < 0:
+        findings.append(
+            {"code": "source_provenance_expected_size_missing", "path": relative}
+        )
+        return
+    if not member.isfile():
+        findings.append({"code": "source_provenance_nonregular_path", "path": relative})
+        return
+    if type(member.size) is not int or member.size < 0:
+        findings.append(
+            {"code": "source_provenance_declared_size_invalid", "path": relative}
+        )
+        return
+    if member.size > expected_size:
+        findings.append(
+            {"code": "source_provenance_declared_oversize", "path": relative}
+        )
+        return
+    if member.size != expected_size:
+        findings.append(
+            {"code": "source_provenance_declared_size_mismatch", "path": relative}
+        )
+        return
+    body = archive.extractfile(member)
+    W.require(body is not None, "source_provenance_file_read")
+    digest_hex = _bounded_provenance_digest(body, expected_size, relative, findings)
+    if digest_hex is None:
+        return
+    if digest_hex != expected[relative]:
         findings.append({"code": "source_provenance_file_mismatch", "path": relative})
-    observed[relative] = digest
+    observed[relative] = digest_hex
 
 
-def _inspect_provenance_layer(fd, layer, layer_index, expected, observed, findings):
+def _inspect_provenance_layer(
+    fd, layer, layer_index, expected, expected_sizes, observed, findings
+):
     """Account for each provenance-layer member, including removals and types."""
     prefix = PROVENANCE_ROOT + "/"
     with tarfile.open(fileobj=H._decoded(fd, layer), mode="r|") as archive:
@@ -277,7 +355,7 @@ def _inspect_provenance_layer(fd, layer, layer_index, expected, observed, findin
                 )
                 continue
             _record_provenance_member(
-                archive, member, relative, expected, observed, findings
+                archive, member, relative, expected, expected_sizes, observed, findings
             )
 
 
@@ -289,6 +367,7 @@ def _source_provenance_findings(
     manifest: bytes,
     revision: str,
     manifest_sha256: str,
+    expected_sizes: dict[str, int],
 ) -> list[dict[str, object]]:
     """Require the exact source-provenance population in every image layer."""
 
@@ -303,7 +382,9 @@ def _source_provenance_findings(
     findings: list[dict[str, object]] = []
     graph = H.inspect(fd, length, expected_image_id)
     for layer_index, layer in enumerate(graph["layers"]):
-        _inspect_provenance_layer(fd, layer, layer_index, expected, observed, findings)
+        _inspect_provenance_layer(
+            fd, layer, layer_index, expected, expected_sizes, observed, findings
+        )
     for path in sorted(set(expected) - set(observed)):
         findings.append({"code": "source_provenance_path_missing", "path": path})
     if observed.get("npa-source-manifest.sha256") == manifest_sha256:
@@ -368,6 +449,7 @@ def _archive_report(args, fd, length, digest, contract, expected_inputs, manifes
             manifest,
             args.expected_source_revision,
             args.expected_npa_source_manifest_sha256,
+            contract.get("_trusted_provenance_sizes", {}),
         )
     )
     report["valid"] = not report["findings"]
@@ -471,6 +553,15 @@ def _report_cleanup_warning(message: str) -> None:
     try:
         rendered = str(message)
         sys.stderr.write(rendered + "\n")
+        sys.stderr.flush()
+    except BaseException:
+        return
+
+
+def _report_diagnostic(message: str) -> None:
+    """Write a diagnostic without allowing stderr failure to mask a report."""
+    try:
+        sys.stderr.write(str(message) + "\n")
         sys.stderr.flush()
     except BaseException:
         return
@@ -593,7 +684,7 @@ def _verification_report(args: argparse.Namespace) -> dict[str, object]:
     except W.INPUT_ERRORS as error:
         report = _failure_report("unreadable_or_incomplete_image_evidence")
         report["scanner_error_type"] = type(error).__name__
-        print(f"Habitat-Sim scanner failure: {type(error).__name__}", file=sys.stderr)
+        _report_diagnostic(f"Habitat-Sim scanner failure: {type(error).__name__}")
         return report
 
 
@@ -629,10 +720,10 @@ def main(argv: list[str] | None = None) -> int:
             report = _verification_report(args)
             _publish_report(args, parent, report)
     except W.ScanError as error:
-        print(f"Habitat-Sim report refused: {error}", file=sys.stderr)
+        _report_diagnostic(f"Habitat-Sim report refused: {error}")
         return 1
     except W.INPUT_ERRORS as error:
-        print(f"Habitat-Sim report failure: {type(error).__name__}", file=sys.stderr)
+        _report_diagnostic(f"Habitat-Sim report failure: {type(error).__name__}")
         return 1
     print(
         "Habitat-Sim complete image verification "
