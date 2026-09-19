@@ -179,6 +179,7 @@ def test_native_sample_uses_all_source_controls_and_explicit_seed(
     assert sample["edge"]["preset_edge_threshold"] == preset
     assert sample["num_first_chunk_conditional_frames"] == first_frames
     assert sample["num_conditional_frames"] == 5
+    assert sample["normalize_cfg"] is False
     assert sample["show_input"] is sample["show_control_condition"] is False
     if rgb_weight:
         assert sample["blur"] == {
@@ -190,12 +191,29 @@ def test_native_sample_uses_all_source_controls_and_explicit_seed(
         assert "blur" not in sample
 
 
+@pytest.mark.parametrize("mode,enabled", [("disabled", False), ("enabled", True)])
+def test_native_sample_forwards_cfg_normalization(prepared, tmp_path, mode, enabled):
+    _, source, _ = prepared
+    sample = transfer.transfer_sample(
+        {"name": "sample", "model_mode": "video2video", "vision_path": str(source)},
+        transfer.TransferSettings(cfg_normalization=mode),
+        tmp_path,
+        17,
+    )
+    assert sample["normalize_cfg"] is enabled
+    assert sample["seed"] == 17 and sample["max_frames"] == 81
+
+
 @pytest.mark.parametrize(
     "values",
     [
         {"fps": 50},
         {"fps": True},
         {"chunk_frames": 94},
+        {"cfg_normalization": True},
+        {"cfg_normalization": "true"},
+        {"cfg_normalization": "auto"},
+        {"cfg_normalization": None},
         {"control_guidance": float("nan")},
         {"control_guidance": 10.1},
         {"control_guidance": "1.5"},
@@ -392,7 +410,10 @@ def _install_save_contract(monkeypatch, saved):
     )
 
 
-def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
+@pytest.mark.parametrize("normalize_cfg", [False, True])
+def test_saved_output_is_guardrail_postprocessed_tensor(
+    monkeypatch, tmp_path, normalize_cfg
+):
     saved = []
     _install_save_contract(monkeypatch, saved)
     processed = np.zeros((3, 6, 480, 832), dtype=np.float32)
@@ -406,6 +427,7 @@ def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
         video_save_quality=5,
         num_first_chunk_conditional_frames=0,
         num_conditional_frames=5,
+        normalize_cfg=normalize_cfg,
         model_dump=lambda **kw: {},
     )
     generated = SimpleNamespace(
@@ -421,6 +443,7 @@ def test_saved_output_is_guardrail_postprocessed_tensor(monkeypatch, tmp_path):
     assert evidence["native_torch_compile"] is False
     assert evidence["first_chunk_conditional_frames"] == 0
     assert evidence["overlap_conditional_frames"] == 5
+    assert evidence["normalize_cfg"] is normalize_cfg
 
 
 @pytest.mark.parametrize("include_rgb", [False, True])

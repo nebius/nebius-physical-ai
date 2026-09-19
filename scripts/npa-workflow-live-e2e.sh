@@ -40,7 +40,8 @@ while true; do
   fi
 
   echo "--- CLI validate-spec / plan-spec (all golden YAMLs) ---"
-  for spec in "${SPECS_DIR}/main"/*.yaml "${SPECS_DIR}/testing"/*.yaml; do
+  for spec in "${SPECS_DIR}/main"/*.yaml "${SPECS_DIR}/testing"/*.yaml "${SPECS_DIR}/partners"/*/*.yaml; do
+    [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     echo "spec: ${spec}"
     if ! "${NPA}" workbench workflow validate-spec "${spec}"; then

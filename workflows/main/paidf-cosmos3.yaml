@@ -37,6 +37,8 @@ config:
   transfer_rgb_weight: 0.0
   # Zero releases the original first-frame appearance; one retains compatibility.
   transfer_first_chunk_conditional_frames: "1"
+  # Optional native guided-prediction normalization; compare matched outputs.
+  transfer_cfg_normalization: disabled
   prompt: "Preserve the source robot motion and scene structure while creating a physically plausible appearance variant."
   negative_prompt: "distorted robot geometry, impossible motion, unsafe content"
   seed: "17"

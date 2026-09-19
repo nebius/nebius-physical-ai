@@ -229,6 +229,9 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
+    # creates a separate vendor venv before installing XR1's pinned packages.
+    "workflow.xr1": ("/opt/conda/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),

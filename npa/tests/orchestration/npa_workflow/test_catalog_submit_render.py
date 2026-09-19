@@ -6,14 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-WORKFLOW_DIR = REPO_ROOT / "workflows"
-SHIPPED_SPECS = sorted(WORKFLOW_DIR.glob("*/*.yaml"))
+SHIPPED_SPECS = iter_npa_workflow_specs()
 TEST_REGISTRY = "cr.ci.invalid/workbench"
 TEST_BAKED_IMAGE = f"{TEST_REGISTRY}/npa-runtime@sha256:{'0' * 64}"
 

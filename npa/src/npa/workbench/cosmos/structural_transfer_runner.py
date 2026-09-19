@@ -270,6 +270,7 @@ def _save_guarded_output(
         "output_fps": generated.fps,
         "first_chunk_conditional_frames": sample.num_first_chunk_conditional_frames,
         "overlap_conditional_frames": sample.num_conditional_frames,
+        "normalize_cfg": sample.normalize_cfg,
         "native_torch_compile": False,
     }
     (sample.output_dir / "transfer_evidence.json").write_text(
