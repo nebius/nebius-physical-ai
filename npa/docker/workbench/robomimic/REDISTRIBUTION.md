@@ -2,9 +2,10 @@
 
 This candidate contains the immutable MIT-licensed robomimic source, the neutral
 Python base, the exact 78-package Debian closure, and the 40-package
-hash-locked non-CUDA Python closure. Those baked distributions are
-redistributable open-source build inputs subject to their own notices and
-license review; they are not the restricted customer runtime. The public image
+hash-locked non-CUDA Python closure. Those baked distributions are candidate
+open-source build inputs subject to exact selected-byte notices, source duties,
+and license review; redistribution eligibility remains unvalidated. They are
+not the restricted customer runtime. The public image
 contains no PyTorch, torchvision, Triton, NVIDIA CUDA, cuDNN, NCCL, model
 weights, dataset bytes, populated runtime cache, credentials, or run output.
 Its build path stages the exact Git tree and canonical archive plus every exact
