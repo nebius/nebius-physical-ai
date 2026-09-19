@@ -123,26 +123,13 @@ def _json_object(path: Path) -> dict[str, Any]:
     return value
 
 
-def _bounded_json_object(
+def _open_bounded_json_descriptor(
     path: Path,
     *,
     maximum_size: int,
-    require_single_link: bool = False,
-    require_owner_only: bool = False,
-) -> tuple[dict[str, Any], bytes]:
-    """Read one regular JSON object through a no-link hard byte ceiling.
-
-    Args:
-        path: Runtime metadata file to read.
-        maximum_size: Maximum accepted file size and read length in bytes.
-
-    Returns:
-        The parsed JSON object and the exact bytes that produced it.
-
-    Raises:
-        VerificationError: The file is absent, unsafe, oversized, or invalid JSON.
-    """
-
+    require_single_link: bool,
+    require_owner_only: bool,
+) -> tuple[int, os.stat_result]:
     nofollow = getattr(os, "O_NOFOLLOW", None)
     nonblock = getattr(os, "O_NONBLOCK", None)
     if nofollow is None or nonblock is None:
@@ -164,16 +151,35 @@ def _bounded_json_object(
             raise VerificationError("runtime metadata must be owner-only")
         if details.st_size > maximum_size:
             raise VerificationError(f"runtime metadata exceeds size limit: {path}")
+    except VerificationError:
+        os.close(descriptor)
+        raise
+    except OSError as exc:
+        os.close(descriptor)
+        raise VerificationError(f"invalid JSON at {path}: {exc}") from exc
+    return descriptor, details
+
+
+def _read_bounded_json_descriptor(
+    descriptor: int,
+    initial: os.stat_result,
+    path: Path,
+    *,
+    maximum_size: int,
+    require_single_link: bool,
+    require_owner_only: bool,
+) -> bytes:
+    try:
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             raw = handle.read(maximum_size + 1)
         if len(raw) > maximum_size:
             raise VerificationError(f"runtime metadata exceeds size limit: {path}")
         after = os.fstat(descriptor)
         if (
-            len(raw) != details.st_size
-            or after.st_size != details.st_size
-            or after.st_dev != details.st_dev
-            or after.st_ino != details.st_ino
+            len(raw) != initial.st_size
+            or after.st_size != initial.st_size
+            or after.st_dev != initial.st_dev
+            or after.st_ino != initial.st_ino
             or (require_single_link and after.st_nlink != 1)
             or (
                 require_owner_only
@@ -183,6 +189,33 @@ def _bounded_json_object(
             raise VerificationError(f"runtime metadata changed while read: {path}")
     except OSError as exc:
         raise VerificationError(f"invalid JSON at {path}: {exc}") from exc
+    return raw
+
+
+def _bounded_json_object(
+    path: Path,
+    *,
+    maximum_size: int,
+    require_single_link: bool = False,
+    require_owner_only: bool = False,
+) -> tuple[dict[str, Any], bytes]:
+    """Read one regular JSON object through a no-link hard byte ceiling."""
+
+    descriptor, initial = _open_bounded_json_descriptor(
+        path,
+        maximum_size=maximum_size,
+        require_single_link=require_single_link,
+        require_owner_only=require_owner_only,
+    )
+    try:
+        raw = _read_bounded_json_descriptor(
+            descriptor,
+            initial,
+            path,
+            maximum_size=maximum_size,
+            require_single_link=require_single_link,
+            require_owner_only=require_owner_only,
+        )
     finally:
         os.close(descriptor)
     try:
@@ -580,7 +613,7 @@ def _checked_debian_source(value: Any) -> dict[str, Any]:
     return value
 
 
-def _checked_debian_package(value: Any, *, source_ids: set[str]) -> dict[str, Any]:
+def _validate_debian_package_identity(value: dict[str, Any]) -> str:
     required = {
         "name",
         "version",
@@ -593,7 +626,7 @@ def _checked_debian_package(value: Any, *, source_ids: set[str]) -> dict[str, An
         "depends",
         "notice_path",
     }
-    if not isinstance(value, dict) or set(value) != required:
+    if set(value) != required:
         raise VerificationError("invalid Debian binary package record")
     name, digest = value.get("name"), value.get("sha256")
     if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9+.-]+", name):
@@ -607,6 +640,12 @@ def _checked_debian_package(value: Any, *, source_ids: set[str]) -> dict[str, An
     version = value.get("version")
     if not isinstance(version, str) or not version or any(c.isspace() for c in version):
         raise VerificationError(f"invalid Debian binary version for {name}")
+    return name
+
+
+def _validate_debian_package_sources(
+    value: dict[str, Any], *, name: str, source_ids: set[str]
+) -> None:
     if value.get("source") not in source_ids:
         raise VerificationError(f"missing Debian source record for {name}")
     if not isinstance(value.get("size"), int) or value["size"] <= 0:
@@ -620,6 +659,9 @@ def _checked_debian_package(value: Any, *, source_ids: set[str]) -> dict[str, An
         raise VerificationError(f"invalid Debian snapshot path for {name}")
     if value.get("notice_path") != f"/usr/share/doc/{name}/copyright":
         raise VerificationError(f"invalid Debian notice path for {name}")
+
+
+def _validate_debian_package_dependencies(value: dict[str, Any], *, name: str) -> None:
     dependencies = value.get("depends")
     if not isinstance(dependencies, list) or len(dependencies) != len(
         set(dependencies)
@@ -627,6 +669,14 @@ def _checked_debian_package(value: Any, *, source_ids: set[str]) -> dict[str, An
         raise VerificationError(f"invalid Debian dependency list for {name}")
     if not all(isinstance(item, str) and item for item in dependencies):
         raise VerificationError(f"invalid Debian dependency name for {name}")
+
+
+def _checked_debian_package(value: Any, *, source_ids: set[str]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise VerificationError("invalid Debian binary package record")
+    name = _validate_debian_package_identity(value)
+    _validate_debian_package_sources(value, name=name, source_ids=source_ids)
+    _validate_debian_package_dependencies(value, name=name)
     return value
 
 
@@ -1894,6 +1944,40 @@ def _checked_payload_entries(
     return files, links, total_bytes
 
 
+def _checked_artifact_entry(entry: Any) -> tuple[str, dict[str, str | int]]:
+    if not isinstance(entry, dict):
+        raise VerificationError("runtime artifact inventory entry must be an object")
+    name = _canonical_name(str(entry.get("name") or ""))
+    version = entry.get("version")
+    filename = entry.get("filename")
+    source = entry.get("source")
+    digest = entry.get("sha256")
+    size = entry.get("size")
+    if (
+        not name
+        or not isinstance(version, str)
+        or not version
+        or not isinstance(filename, str)
+        or Path(filename).name != filename
+        or not isinstance(source, str)
+        or not source.startswith("https://")
+        or re.fullmatch(r"[0-9a-f]{64}", str(digest)) is None
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size <= 0
+    ):
+        raise VerificationError(f"invalid runtime artifact identity: {entry!r}")
+    if size > RUNTIME_OBJECT_MAX_BYTES:
+        raise VerificationError(f"runtime artifact exceeds size limit: {name}")
+    return name, {
+        "version": version,
+        "filename": filename,
+        "source": source,
+        "sha256": str(digest),
+        "size": size,
+    }
+
+
 def _checked_artifacts(
     value: Any,
 ) -> tuple[dict[str, dict[str, str | int]], int]:
@@ -1903,53 +1987,21 @@ def _checked_artifacts(
         raise VerificationError("runtime artifact object count exceeds limit")
     result: dict[str, dict[str, str | int]] = {}
     total_bytes = 0
-    for entry in value:
-        if not isinstance(entry, dict):
-            raise VerificationError(
-                "runtime artifact inventory entry must be an object"
-            )
-        name = _canonical_name(str(entry.get("name") or ""))
-        version = entry.get("version")
-        filename = entry.get("filename")
-        source = entry.get("source")
-        digest = entry.get("sha256")
-        size = entry.get("size")
-        if (
-            not name
-            or not isinstance(version, str)
-            or not version
-            or not isinstance(filename, str)
-            or Path(filename).name != filename
-            or not isinstance(source, str)
-            or not source.startswith("https://")
-            or re.fullmatch(r"[0-9a-f]{64}", str(digest)) is None
-            or not isinstance(size, int)
-            or isinstance(size, bool)
-            or size <= 0
-        ):
-            raise VerificationError(f"invalid runtime artifact identity: {entry!r}")
-        if size > RUNTIME_OBJECT_MAX_BYTES:
-            raise VerificationError(f"runtime artifact exceeds size limit: {name}")
+    for raw_entry in value:
+        name, entry = _checked_artifact_entry(raw_entry)
+        size = entry["size"]
         if total_bytes > RUNTIME_PAYLOAD_MAX_BYTES - size:
             raise VerificationError("runtime artifact aggregate exceeds size limit")
         if name in result:
             raise VerificationError(f"duplicate runtime artifact: {name}")
         total_bytes += size
-        result[name] = {
-            "version": version,
-            "filename": filename,
-            "source": source,
-            "sha256": str(digest),
-            "size": size,
-        }
+        result[name] = entry
     return result, total_bytes
 
 
-def _verify_declared_runtime_file(
-    path: Path, *, expected_size: int, expected_sha256: str
-) -> None:
-    """Verify one declared payload through a bounded, identity-stable descriptor."""
-
+def _open_declared_runtime_file(
+    path: Path, expected_size: int
+) -> tuple[int, os.stat_result]:
     nofollow = getattr(os, "O_NOFOLLOW", None)
     nonblock = getattr(os, "O_NONBLOCK", None)
     if nofollow is None or nonblock is None:
@@ -1957,13 +2009,12 @@ def _verify_declared_runtime_file(
             "runtime payload verification requires safe descriptor flags"
         )
     flags = os.O_RDONLY | os.O_CLOEXEC | nofollow | nonblock
-    open_failed = False
     try:
         descriptor = os.open(path, flags)
-    except OSError:
-        open_failed = True
-    if open_failed:
-        raise VerificationError("declared runtime file is not a safe regular file")
+    except OSError as exc:
+        raise VerificationError(
+            "declared runtime file is not a safe regular file"
+        ) from exc
     try:
         opened = os.fstat(descriptor)
         if (
@@ -1972,8 +2023,21 @@ def _verify_declared_runtime_file(
             or opened.st_size != expected_size
         ):
             raise VerificationError("runtime file identity mismatch")
-        digest = hashlib.sha256()
-        remaining = expected_size
+    except VerificationError:
+        os.close(descriptor)
+        raise
+    except OSError as exc:
+        os.close(descriptor)
+        raise VerificationError("runtime file identity mismatch") from exc
+    return descriptor, opened
+
+
+def _read_declared_runtime_digest(
+    descriptor: int, opened: os.stat_result, expected_size: int, expected_sha256: str
+) -> None:
+    digest = hashlib.sha256()
+    remaining = expected_size
+    try:
         with os.fdopen(descriptor, "rb", closefd=False) as handle:
             while remaining:
                 chunk = handle.read(min(1024 * 1024, remaining))
@@ -1982,14 +2046,28 @@ def _verify_declared_runtime_file(
                 digest.update(chunk)
                 remaining -= len(chunk)
         closed = os.fstat(descriptor)
-        if (
-            closed.st_dev != opened.st_dev
-            or closed.st_ino != opened.st_ino
-            or closed.st_size != expected_size
-            or closed.st_nlink != 1
-            or digest.hexdigest() != expected_sha256
-        ):
-            raise VerificationError("runtime file identity mismatch")
+    except OSError as exc:
+        raise VerificationError("runtime file identity mismatch") from exc
+    if (
+        closed.st_dev != opened.st_dev
+        or closed.st_ino != opened.st_ino
+        or closed.st_size != expected_size
+        or closed.st_nlink != 1
+        or digest.hexdigest() != expected_sha256
+    ):
+        raise VerificationError("runtime file identity mismatch")
+
+
+def _verify_declared_runtime_file(
+    path: Path, *, expected_size: int, expected_sha256: str
+) -> None:
+    """Verify one declared payload through a bounded, identity-stable descriptor."""
+
+    descriptor, opened = _open_declared_runtime_file(path, expected_size)
+    try:
+        _read_declared_runtime_digest(
+            descriptor, opened, expected_size, expected_sha256
+        )
     finally:
         os.close(descriptor)
 
@@ -2269,28 +2347,9 @@ def verify_missing_runtime_refusal(
     }
 
 
-def _copy_bounded_regular_file(
-    source: Path,
-    destination: Path,
-    *,
-    expected_size: int | None,
-    expected_sha256: str | None,
-    maximum_size: int | None = None,
-) -> None:
-    """Copy one regular file without following links or exceeding its identity.
-
-    Args:
-        source: File in the operator-selected external runtime.
-        destination: New file in the private snapshot staging tree.
-        expected_size: Exact inventory size, or ``None`` to lock the opened size.
-        expected_sha256: Exact inventory digest when one is available.
-        maximum_size: Optional hard byte ceiling for metadata without a size lock.
-
-    Raises:
-        VerificationError: The source is unsafe or changes from its declared identity.
-        OSError: Opening, reading, or writing either file fails.
-    """
-
+def _open_snapshot_source(
+    source: Path, expected_size: int | None, maximum_size: int | None
+) -> tuple[int, os.stat_result, int]:
     nofollow = getattr(os, "O_NOFOLLOW", None)
     nonblock = getattr(os, "O_NONBLOCK", None)
     if nofollow is None or nonblock is None:
@@ -2308,46 +2367,83 @@ def _copy_bounded_regular_file(
             raise VerificationError(
                 f"runtime snapshot metadata exceeds limit: {source}"
             )
+    except (OSError, VerificationError):
+        os.close(source_fd)
+        raise
+    return source_fd, source_stat, locked_size
 
+
+def _copy_snapshot_bytes(
+    source_fd: int,
+    destination_fd: int,
+    source: Path,
+    source_stat: os.stat_result,
+    locked_size: int,
+    expected_sha256: str | None,
+) -> None:
+    digest = hashlib.sha256()
+    remaining = locked_size
+    with (
+        os.fdopen(source_fd, "rb", closefd=False) as source_handle,
+        os.fdopen(destination_fd, "wb", closefd=False) as destination_handle,
+    ):
+        while remaining:
+            chunk = source_handle.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise VerificationError(
+                    f"runtime snapshot source shrank while copying: {source}"
+                )
+            destination_handle.write(chunk)
+            digest.update(chunk)
+            remaining -= len(chunk)
+        source_after = os.fstat(source_fd)
+        if (
+            source_after.st_dev != source_stat.st_dev
+            or source_after.st_ino != source_stat.st_ino
+            or source_after.st_size != locked_size
+            or source_after.st_nlink != 1
+            or not stat.S_ISREG(source_after.st_mode)
+        ):
+            raise VerificationError(
+                f"runtime snapshot source identity changed: {source}"
+            )
+        destination_handle.flush()
+    if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
+        raise VerificationError(
+            f"runtime snapshot source hash changed while copying: {source}"
+        )
+
+
+def _copy_bounded_regular_file(
+    source: Path,
+    destination: Path,
+    *,
+    expected_size: int | None,
+    expected_sha256: str | None,
+    maximum_size: int | None = None,
+) -> None:
+    """Copy one regular file without following links or exceeding its identity."""
+
+    source_fd, source_stat, locked_size = _open_snapshot_source(
+        source, expected_size, maximum_size
+    )
+    destination_fd = -1
+    try:
         destination_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
         destination_fd = os.open(destination, destination_flags, 0o600)
-        try:
-            digest = hashlib.sha256()
-            remaining = locked_size
-            with (
-                os.fdopen(source_fd, "rb", closefd=False) as source_handle,
-                os.fdopen(destination_fd, "wb", closefd=False) as destination_handle,
-            ):
-                while remaining:
-                    chunk = source_handle.read(min(1024 * 1024, remaining))
-                    if not chunk:
-                        raise VerificationError(
-                            f"runtime snapshot source shrank while copying: {source}"
-                        )
-                    destination_handle.write(chunk)
-                    digest.update(chunk)
-                    remaining -= len(chunk)
-                source_after = os.fstat(source_fd)
-                if (
-                    source_after.st_dev != source_stat.st_dev
-                    or source_after.st_ino != source_stat.st_ino
-                    or source_after.st_size != locked_size
-                    or source_after.st_nlink != 1
-                    or not stat.S_ISREG(source_after.st_mode)
-                ):
-                    raise VerificationError(
-                        f"runtime snapshot source identity changed: {source}"
-                    )
-                destination_handle.flush()
-            if expected_sha256 is not None and digest.hexdigest() != expected_sha256:
-                raise VerificationError(
-                    f"runtime snapshot source hash changed while copying: {source}"
-                )
-            os.fchmod(destination_fd, stat.S_IMODE(source_stat.st_mode))
-        finally:
-            os.close(destination_fd)
+        _copy_snapshot_bytes(
+            source_fd,
+            destination_fd,
+            source,
+            source_stat,
+            locked_size,
+            expected_sha256,
+        )
+        os.fchmod(destination_fd, stat.S_IMODE(source_stat.st_mode))
     finally:
         os.close(source_fd)
+        if destination_fd >= 0:
+            os.close(destination_fd)
 
 
 def _copy_runtime_inventory(
@@ -2470,6 +2566,53 @@ def _cleanup_snapshot_staging(snapshot: Path, expected: tuple[int, int]) -> None
         raise VerificationError("runtime snapshot cleanup failed") from None
 
 
+def _prepare_runtime_snapshot(
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    staging: Path,
+) -> dict[str, Any]:
+    _copy_runtime_inventory(runtime_root, staging, expected_inventory_sha256)
+    snapshot_proof = verify_external_runtime(
+        runtime_root=staging,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=False,
+    )
+    _remove_snapshot_write_bits(staging)
+    return snapshot_proof
+
+
+def _publish_runtime_snapshot(
+    *,
+    source_proof: dict[str, Any],
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    destination: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent)
+    )
+    staging_identity = _owned_snapshot_identity(staging)
+    try:
+        snapshot_proof = _prepare_runtime_snapshot(
+            runtime_root, runtime_lock_path, expected_inventory_sha256, staging
+        )
+        staging.replace(destination)
+    except VerificationError:
+        _cleanup_snapshot_staging(staging, staging_identity)
+        raise
+    except OSError:
+        _cleanup_snapshot_staging(staging, staging_identity)
+        raise VerificationError("runtime snapshot materialization failed") from None
+    except BaseException:
+        _cleanup_snapshot_staging(staging, staging_identity)
+        raise
+    return source_proof, snapshot_proof
+
+
 def materialize_external_runtime(
     *,
     runtime_root: Path,
@@ -2488,37 +2631,17 @@ def materialize_external_runtime(
     )
     if destination.exists() or destination.is_symlink():
         raise VerificationError("runtime snapshot destination already exists")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}.staging-", dir=destination.parent)
+    published_source, snapshot_proof = _publish_runtime_snapshot(
+        source_proof=source_proof,
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        destination=destination,
     )
-    staging_identity = _owned_snapshot_identity(staging)
-    operating_system_failure = False
-    try:
-        _copy_runtime_inventory(runtime_root, staging, expected_inventory_sha256)
-        snapshot_proof = verify_external_runtime(
-            runtime_root=staging,
-            runtime_lock_path=runtime_lock_path,
-            expected_inventory_sha256=expected_inventory_sha256,
-            require_read_only_mount=False,
-        )
-        _remove_snapshot_write_bits(staging)
-        staging.replace(destination)
-    except VerificationError:
-        _cleanup_snapshot_staging(staging, staging_identity)
-        raise
-    except OSError:
-        _cleanup_snapshot_staging(staging, staging_identity)
-        operating_system_failure = True
-    except BaseException:
-        _cleanup_snapshot_staging(staging, staging_identity)
-        raise
-    if operating_system_failure:
-        raise VerificationError("runtime snapshot materialization failed")
     return {
         **snapshot_proof,
         "read_only_mount_observed": source_proof["read_only_mount_observed"],
-        "source_read_only_mount_observed": source_proof["read_only_mount_observed"],
+        "source_read_only_mount_observed": published_source["read_only_mount_observed"],
         "atomic_snapshot_published": True,
         "snapshot_write_bits_absent": destination.stat().st_mode & 0o222 == 0,
         "snapshot_root": str(destination),

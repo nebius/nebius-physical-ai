@@ -1679,25 +1679,43 @@ def test_build_helper_shell_functions_remain_reviewable() -> None:
     assert max(function_lengths.values()) < 40, function_lengths
 
 
-def test_verifier_installer_and_entitlement_stages_remain_reviewable() -> None:
-    tree = ast.parse((IMAGE_ROOT / "verify_image.py").read_text(encoding="utf-8"))
-    names = {
-        "verify_customer_runtime_entitlement",
-        "_validate_runtime_entitlement_request",
-        "_read_runtime_entitlement",
-        "_validate_runtime_entitlement_fields",
-        "_runtime_entitlement_expected_values",
-        "_validate_runtime_entitlement_expiry",
-        "_runtime_entitlement_result",
-        "_wheel_member_installation",
-        "_wheel_expected_inventory",
-    }
-    lengths = {
-        node.name: node.end_lineno - node.lineno + 1
+def test_verifier_changed_functions_remain_reviewable() -> None:
+    verifier = IMAGE_ROOT / "verify_image.py"
+    tree = ast.parse(verifier.read_text(encoding="utf-8"))
+    changed_lines: set[int] = set()
+    for revision in ("HEAD^ HEAD", "HEAD"):
+        result = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--unified=0",
+                *revision.split(),
+                "--",
+                str(verifier.relative_to(ROOT)),
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        for line in result.stdout.splitlines():
+            match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
+            if match:
+                start = int(match.group(1))
+                count = int(match.group(2) or "1")
+                changed_lines.update(range(start, start + count))
+    functions = [
+        node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name in names
-    }
-    assert set(lengths) == names
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    touched = [
+        node
+        for node in functions
+        if any(node.lineno <= line <= node.end_lineno for line in changed_lines)
+    ]
+    lengths = {node.name: node.end_lineno - node.lineno + 1 for node in touched}
+    assert touched, "the verifier repair must be covered by this reviewability guard"
     assert max(lengths.values()) < 40, lengths
 
 
@@ -2072,6 +2090,18 @@ def test_installed_byte_proof_binds_archive_wheels_and_inventories(
     assert "inert_platform.txt," in record
     assert "../../inert_data.txt," not in record
     assert "../../inert_platform.txt," not in record
+
+
+def test_production_wheel_proof_refuses_without_complete_authenticated_closure(
+    tmp_path: Path,
+) -> None:
+    lock = IMAGE_ROOT / "baked-requirements.lock"
+    locked = VERIFIER._locked_baked_artifacts(lock)
+    assert len(locked) == 40
+    wheel_root = tmp_path / "wheels"
+    wheel_root.mkdir()
+    with pytest.raises(VERIFIER.VerificationError, match="selected wheel closure"):
+        VERIFIER._baked_dependency_proof(wheel_root, tmp_path / "installed", lock)
 
 
 @pytest.mark.parametrize(
