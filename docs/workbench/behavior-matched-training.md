@@ -16,8 +16,10 @@ on the fixed holdout, and exported a selected model. A subsequent serving
 consistency check found different loss metrics despite identical learned
 parameters. A B200 diagnostic isolated a correlation-statistics precision
 difference at update 600: matching that one array made all four checked metrics
-byte-identical. The selected update-3599 model still needs serving validation
-and rollout evaluation. See the [experiment report](behavior-matched-results-2026-09-19.md).
+byte-identical. The selected update-3599 model then passed typed-state,
+fixed-batch metric, fixed-RNG action, and existing-wrapper validation with the
+same explicit native BF16 correlation asset. Rollout evaluation is still
+required. See the [experiment report](behavior-matched-results-2026-09-19.md).
 
 ## What is trained
 
@@ -193,6 +195,38 @@ manifest, and holdout trace. Then pass its `selection.json` to
 unchanged normalization assets. A selected offline checkpoint is still
 `not_rollout_evaluated`; measure it with the unchanged official evaluator before
 making a policy-quality claim.
+
+Checkpoints produced by the completed run also contain a native BF16
+`action_correlation_cholesky` intermediate that is not part of the parameter-only
+export. To serve one of those selected checkpoints, first validate the full
+native state against the export and emit a correlation manifest, artifact, and
+serving-validation receipt. Package the selected files under the exact
+`selected-model/` archive prefix, then use `--policy-kind rlc-selected` with:
+
+- `--policy-selected-export-receipt`
+- `--policy-correlation-manifest`
+- `--policy-validation-receipt`
+
+The loader binds all three receipts, the selected step, the correlation bytes,
+and the unchanged RLC serving sources. It installs the validated intermediate
+before the policy constructs its JIT sampler. This route preserves the completed
+checkpoint's native precision semantics; it does not alter selection or imply a
+rollout gain. Future runs using the corrected parameter-only freeze filter do
+not automatically inherit this historical compatibility requirement.
+
+The selected export inherits checkpoint 2's 16-task support ceiling: task IDs
+0, 1, 7, 8, 9, 12, 16, 17, 18, 20, 21, 22, 26, 30, 43, and 45. The completed
+run fine-tuned IDs 0, 1, and 22 and the matched development evaluation covers
+IDs 0, 1, 8, 22, 30, and 45. The runner rejects tasks outside that inherited
+set; support within the set does not imply that an unevaluated task improved.
+
+New validators should emit the generic
+`npa.behavior.rlc-selected-native-correlation-adapter.v1` and
+`npa.behavior.rlc-selected-serving-validation.v1` schemas with status
+`selected_serving_validated`. The loader also accepts the retained
+update-3599-specific schemas and status only when their selected step is exactly
+3599. Generic receipts require a positive selected step, finite correlation
+values, exact exported-file inventory, and exact RLC serving-source identities.
 
 ```bash
 for arm in teacher replay; do

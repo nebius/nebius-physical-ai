@@ -20,6 +20,11 @@ from .protocol import file_digest, stream_digest
 OPENPI_COMMIT = "0cc8e355f7bac0976db1cc3139b1ff0379feea60"
 CHECKPOINT_PREFIX = "pi05_turn_on_the_radio/"
 POLICY_FIELDS = ("policy_root", "policy_python", "policy_checkpoint", "policy_archive")
+SELECTED_RLC_FIELDS = (
+    "policy_selected_export_receipt",
+    "policy_correlation_manifest",
+    "policy_validation_receipt",
+)
 _POLICY_STARTUP_TIMEOUT_SECONDS = 600
 
 
@@ -147,7 +152,7 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
     require_openpi_terms()
     if args.host not in {"localhost", "127.0.0.1"}:
         raise ValueError("Managed policy requires a loopback evaluator host")
-    if getattr(args, "policy_kind", "official") == "rlc":
+    if getattr(args, "policy_kind", "official") in {"rlc", "rlc-selected"}:
         from .rlc_policy import prepare_policy
 
         return prepare_policy(args, plan, output)
@@ -211,6 +216,16 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         OSError: Files or the policy interpreter are unavailable.
     """
     selected = [bool(getattr(args, field, None)) for field in POLICY_FIELDS]
+    selected_rlc = [bool(getattr(args, field, None)) for field in SELECTED_RLC_FIELDS]
+    selected_kind = getattr(args, "policy_kind", "official") == "rlc-selected"
+    if selected_kind and not all(selected_rlc):
+        raise ValueError(
+            "Selected RLC policy requires its export, correlation, and validation receipts"
+        )
+    if not selected_kind and any(selected_rlc):
+        raise ValueError("Selected RLC receipts require --policy-kind rlc-selected")
+    if selected_kind and not all(selected):
+        raise ValueError("Selected RLC policy requires all four policy paths")
     if not any(selected):
         yield
         return

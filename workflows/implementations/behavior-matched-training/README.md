@@ -29,8 +29,10 @@ The command sequence is:
 
 The repository does not include upstream source, weights, demonstrations,
 credentials, or runtime caches. Both matched training arms and their holdout
-selection completed on B200 GPUs. Serving consistency and official candidate
-rollout evaluation remain pending; these helpers do not establish a policy gain.
-The current freeze filter excludes non-parameter statistics from the native
-initializer's BF16 weight conversion. Completed checkpoints retain the earlier
-filter's behavior; see the training guide before reusing them.
+selection completed on B200 GPUs. The selected replay checkpoint passed serving
+consistency after restoring its receipt-bound native BF16 correlation
+intermediate before policy/JIT construction. Candidate rollout evaluation
+remains pending; these helpers do not establish a policy gain. The current
+freeze filter excludes non-parameter statistics from the native initializer's
+BF16 weight conversion. Completed checkpoints retain the earlier filter's
+behavior; see the training guide before reusing them.

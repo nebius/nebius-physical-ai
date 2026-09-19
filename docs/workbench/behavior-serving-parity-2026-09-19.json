@@ -133,9 +133,55 @@
     "orbax-checkpoint": "0.11.13"
   },
   "scalar_contracts_equal": true,
-  "schema": "npa.behavior.public-serving-parity-diagnostic.v1",
+  "schema": "npa.behavior.public-serving-parity-diagnostic.v2",
   "scope": "One fixed 16-record holdout batch at checkpoint 600; no rollout or selected-checkpoint validation.",
-  "selected_step_3599_validated": false,
+  "selected_checkpoint_validation": {
+    "adapter_manifest_sha256": "af8693ba9a72c3fe87df61793ae7ccde7f4f7938d538c0c67c458e54241eda2c",
+    "candidate_rollout_admitted": true,
+    "fixed_batch_metrics": {
+      "all_byte_equal": true,
+      "max_abs_delta": 0.0,
+      "mean_abs_delta": 0.0,
+      "parts": 4
+    },
+    "fixed_rng_actions": {
+      "existing_adapter_action": {
+        "dtype": "float32",
+        "finite": true,
+        "sha256": "1aa57a284d385fe82766a9c746969fbdd74609e900af791c7cfb014746f2fa39",
+        "shape": [
+          23
+        ]
+      },
+      "masked_stage_logits": {
+        "byte_equal_native_direct_and_existing_jit": true,
+        "max_abs_delta": null,
+        "mean_abs_delta": null,
+        "undefined_delta_reason": "Invalid task stages use identical negative-infinity sentinels; subtracting those sentinels is undefined."
+      },
+      "physical_actions": {
+        "byte_equal_native_direct_and_existing_jit": true,
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0
+      }
+    },
+    "raw_validation_receipt_sha256": "be3411a9e886575a8c8a7ded1c46af355a9264c0b100c4ad85ec5c9e38133dd0",
+    "scope": "Selected update 3599 serving validation on one fixed batch and fixed-RNG action call; no simulator rollout or policy-quality comparison.",
+    "selected_step": 3599,
+    "status": "serving_validated_not_rollout_evaluated",
+    "typed_state": {
+      "compared_leaves": 75,
+      "equal_after_adapter": true,
+      "only_pre_adapter_difference": {
+        "direct_dtype": "float32",
+        "native_dtype": "bfloat16",
+        "native_sha256": "0104a7911ffff4658eedb7feb259f2705fdc07cab933bf5c62c54dffb3063ee7",
+        "path": "action_correlation_cholesky",
+        "variable_type": "Intermediate"
+      }
+    },
+    "worker_receipt_sha256": "c2dd6260dd8979335c3a61aae2077b9fe6f4314869346b1e75c556ab0fffddce"
+  },
   "source_result_sha256": "a6be2b8e3cf5cc37161f337f307f4da565d534c1c27a2c81e8114f02322fc734",
   "state_difference": {
     "differing": [

@@ -28,13 +28,7 @@ def _verify_checkout(root: Path, expected: str) -> None:
 
 
 def _task_checkpoint(root: Path, upstream: Path, task: str) -> tuple[int, str]:
-    old = json.loads((root / "BEHAVIOR-1K/docs/challenge/task_data.json").read_text())
-    new = json.loads((upstream / "docs/challenge/task_data.json").read_text())
-    names = [item["id"] for item in old["tasks"]]
-    current = [item["id"] for item in new["tasks"]]
-    if len(names) != 50 or names != current[:50] or task not in names:
-        raise ValueError("Published RLC checkpoints support the original 50 tasks only")
-    task_id = names.index(task)
+    task_id = _task_id(root, upstream, task)
     mapping = json.loads((root / "task_checkpoint_mapping.json").read_text())
     matches = [
         name for name, row in mapping["checkpoints"].items() if task_id in row["tasks"]
@@ -42,6 +36,16 @@ def _task_checkpoint(root: Path, upstream: Path, task: str) -> tuple[int, str]:
     if len(matches) != 1:
         raise ValueError("RLC task must map to exactly one checkpoint")
     return task_id, matches[0]
+
+
+def _task_id(root: Path, upstream: Path, task: str) -> int:
+    old = json.loads((root / "BEHAVIOR-1K/docs/challenge/task_data.json").read_text())
+    new = json.loads((upstream / "docs/challenge/task_data.json").read_text())
+    names = [item["id"] for item in old["tasks"]]
+    current = [item["id"] for item in new["tasks"]]
+    if len(names) != 50 or names != current[:50] or task not in names:
+        raise ValueError("Published RLC checkpoints support the original 50 tasks only")
+    return names.index(task)
 
 
 def _verify_published_files(root: Path, checkpoint: str, files: dict) -> None:
@@ -67,11 +71,19 @@ def _verify_published_files(root: Path, checkpoint: str, files: dict) -> None:
             raise ValueError("Checkpoint bytes differ from the pinned published model")
 
 
-def _record(output: Path, command: list[str], files: dict, checkpoint: str, plan: dict):
+def _adapter_files(output: Path, *, selected: bool) -> dict[str, str]:
     adapters = {}
-    for name in ("rlc_server.py", "rlc_observations.py"):
+    names = ["rlc_server.py", "rlc_observations.py"]
+    if selected:
+        names.extend(("rlc_selected.py", "rlc_selected_server.py"))
+    for name in names:
         shutil.copyfile(Path(__file__).with_name(name), output / name)
         adapters[name] = file_digest(output / name)
+    return adapters
+
+
+def _record(output: Path, command: list[str], files: dict, checkpoint: str, plan: dict):
+    adapters = _adapter_files(output, selected=False)
     shutil.copyfile(
         Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
     )
@@ -111,7 +123,14 @@ def _verify_task(args, plan):
         ("BEHAVIOR-1K", BEHAVIOR_COMMIT),
     ):
         _verify_checkout(args.policy_root / relative, revision)
-    return _task_checkpoint(args.policy_root, args.upstream_root, tasks[0])
+    task_id, checkpoint = _task_checkpoint(
+        args.policy_root, args.upstream_root, tasks[0]
+    )
+    if getattr(args, "policy_kind", "rlc") == "rlc-selected":
+        if checkpoint != "checkpoint_2":
+            raise ValueError("Selected RLC export supports checkpoint_2 tasks only")
+        return task_id, "selected"
+    return task_id, checkpoint
 
 
 def _verify_weights(args, plan, checkpoint):
@@ -128,10 +147,77 @@ def _verify_weights(args, plan, checkpoint):
     return files
 
 
-def _command(args, task_id, output):
-    return [
+def _verify_selected_export(args, files: dict[str, str]) -> dict:
+    path = args.policy_selected_export_receipt
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Selected export receipt must be a regular file")
+    receipt = json.loads(path.read_text())
+    expected = receipt.get("files")
+    if (
+        receipt.get("schema") != "npa.behavior.rlc-selected-export.v1"
+        or receipt.get("status") != "holdout_selected_not_rollout_evaluated"
+        or not isinstance(receipt.get("selected_step"), int)
+        or isinstance(receipt.get("selected_step"), bool)
+        or receipt["selected_step"] <= 0
+        or not isinstance(expected, dict)
+        or set(files) != set(expected)
+    ):
+        raise ValueError("Selected export receipt contract differs")
+    for name, identity in expected.items():
+        path = args.policy_checkpoint / name
+        if path.is_symlink() or identity != {
+            "sha256": files[name],
+            "bytes": path.stat().st_size,
+        }:
+            raise ValueError("Selected checkpoint bytes differ from its export receipt")
+    return receipt
+
+
+def _verify_selected_weights(args, plan):
+    from .policy import _verify_checkpoint
+    from .rlc_selected import validate_selected_correlation
+
+    files = _verify_checkpoint(
+        args.policy_archive,
+        args.policy_checkpoint,
+        plan["recipe"]["policy_checkpoint_sha256"],
+        prefix="selected-model/",
+        normalization=NORMALIZATION,
+    )
+    receipt = _verify_selected_export(args, files)
+    validate_selected_correlation(
+        args.policy_correlation_manifest,
+        args.policy_validation_receipt,
+        args.policy_selected_export_receipt,
+        Path(__file__).parent,
+    )
+    return files, receipt
+
+
+def _stage_selected_artifacts(args, output: Path) -> dict[str, Path]:
+    manifest = json.loads(args.policy_correlation_manifest.read_text())
+    artifact = args.policy_correlation_manifest.parent / manifest["artifact"]["path"]
+    sources = {
+        "selected_export": args.policy_selected_export_receipt,
+        "correlation_manifest": args.policy_correlation_manifest,
+        "validation_receipt": args.policy_validation_receipt,
+        "correlation_artifact": artifact,
+    }
+    staged = {}
+    for name, source in sources.items():
+        target = output / source.name
+        if target in staged.values():
+            raise ValueError("Selected RLC artifact basenames must be distinct")
+        shutil.copyfile(source, target)
+        staged[name] = target
+    return staged
+
+
+def _command(args, task_id, output, selected_artifacts=None):
+    server = "rlc_selected_server.py" if selected_artifacts else "rlc_server.py"
+    command = [
         str(args.policy_python),
-        str(output / "rlc_server.py"),
+        str(output / server),
         "--source-root",
         str(args.policy_root),
         "--checkpoint",
@@ -141,6 +227,46 @@ def _command(args, task_id, output):
         "--port",
         str(args.port),
     ]
+    if selected_artifacts:
+        command[4:4] = ["--adapter-root", str(output)]
+        command.extend(
+            [
+                "--selected-export-receipt",
+                str(selected_artifacts["selected_export"]),
+                "--correlation-manifest",
+                str(selected_artifacts["correlation_manifest"]),
+                "--validation-receipt",
+                str(selected_artifacts["validation_receipt"]),
+            ]
+        )
+    return command
+
+
+def _record_selected(output, command, files, receipt, plan, staged):
+    adapters = _adapter_files(output, selected=True)
+    shutil.copyfile(
+        Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
+    )
+    evidence = {
+        "schema": "npa.behavior.policy.v1",
+        "kind": "rlc-selected",
+        "source_commit": SOURCE_COMMIT,
+        "openpi_commit": OPENPI_COMMIT,
+        "selected_step": receipt["selected_step"],
+        "checkpoint_files": files,
+        "checkpoint_archive_sha256": plan["recipe"]["policy_checkpoint_sha256"],
+        "adapters": adapters,
+        "selected_artifacts": {
+            name: {"sha256": file_digest(path), "bytes": path.stat().st_size}
+            for name, path in staged.items()
+        },
+        "command": command,
+        "normalization_asset": NORMALIZATION,
+        "status": "serving_validated_not_rollout_evaluated",
+    }
+    (output / "policy-provenance.json").write_text(
+        json.dumps(evidence, indent=2) + "\n"
+    )
 
 
 def prepare_policy(args, plan: dict, output: Path) -> list[str]:
@@ -159,11 +285,19 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     from .policy import _healthy
 
     task_id, checkpoint = _verify_task(args, plan)
-    files = _verify_weights(args, plan, checkpoint)
+    selected = getattr(args, "policy_kind", "rlc") == "rlc-selected"
+    if selected:
+        files, receipt = _verify_selected_weights(args, plan)
+    else:
+        files = _verify_weights(args, plan, checkpoint)
     if _healthy(args.port) or any(
         case.get("policy_port") not in {None, args.port} for case in plan["cases"]
     ):
         raise ValueError("Managed RLC policy requires its own matching loopback port")
-    command = _command(args, task_id, output)
-    _record(output, command, files, checkpoint, plan)
+    staged = _stage_selected_artifacts(args, output) if selected else None
+    command = _command(args, task_id, output, staged)
+    if selected:
+        _record_selected(output, command, files, receipt, plan, staged)
+    else:
+        _record(output, command, files, checkpoint, plan)
     return command

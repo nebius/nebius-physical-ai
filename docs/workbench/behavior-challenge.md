@@ -9,10 +9,11 @@ a fixed policy; policy serving uses pinned upstream implementations.
 
 **Latest experiment, September 19:** both
 [matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
-updates, full holdout selection, and selected-model export. A GPU diagnostic
-confirmed a training-to-serving precision mismatch at update 600. The
-prospective fix is included; the selected model remains unvalidated for serving
-and has no rollout score.
+updates, full holdout selection, and selected-model export. GPU validation found
+one native correlation-statistics precision difference, then proved the selected
+update-3599 model's typed state, fixed-batch metrics, fixed-RNG actions, and
+existing serving wrapper agree after restoring that receipt-bound intermediate.
+The selected model has no rollout score.
 
 **Earlier comparison, September 18:** the
 [76-rollout follow-up](behavior-followup-results-2026-09-18.md) scored the
@@ -83,8 +84,8 @@ timestamp and annotation-alignment audits. The separate
 [matched stage-conditioning implementation](behavior-matched-training.md)
 freezes the parent task and stage modules while comparing teacher-bin and parent
 stage-replay action conditioning. Native GPU training and holdout selection
-completed for both arms. Selected-model serving validation and rollout
-evaluation remain pending; the published RLC comparison below is a separate
+completed for both arms. Selected-model serving validation passed; rollout
+evaluation remains pending. The published RLC comparison below is a separate
 measured result.
 
 `--policy-kind rlc` selects a development-only transfer of the published
@@ -142,6 +143,23 @@ Hugging Face revision `89545bc1b7aa7f2e687bc0032d091f132d715d4e` of
 [`IliaLarchenko/behavior_submission`](https://huggingface.co/IliaLarchenko/behavior_submission).
 Source and weights remain runtime inputs; Workbench does not redistribute them.
 Retain upstream attribution and satisfy the existing OpenPI/Gemma use terms.
+
+For a holdout-selected matched-training export, use
+`--policy-kind rlc-selected` with the same four paths and three additional
+regular files: `--policy-selected-export-receipt`,
+`--policy-correlation-manifest`, and `--policy-validation-receipt`. The archive
+must use `selected-model/` as its top-level prefix. The validation receipt must
+bind the selected step, exact export receipt, exact BF16 correlation artifact,
+and the unchanged RLC server and observation-adapter sources. The runner loads
+that intermediate before policy/JIT construction and rejects partial or mixed
+receipt sets. A successful serving validation permits development evaluation;
+it does not establish a policy-quality improvement.
+
+This selected export remains limited to the 16 tasks assigned to published
+checkpoint 2: task IDs 0, 1, 7, 8, 9, 12, 16, 17, 18, 20, 21, 22, 26, 30, 43,
+and 45. Fine-tuning used IDs 0, 1, and 22; the matched development panel uses
+IDs 0, 1, 8, 22, 30, and 45. Selected mode rejects every other task, and tasks
+inside the inherited set remain unevaluated unless the panel says otherwise.
 
 The launcher creates a temporary policy-source copy with exactly three import
 changes to use the 2026 proprioception layout. It accepts only the three onboard

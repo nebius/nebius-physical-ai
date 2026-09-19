@@ -2,18 +2,168 @@
 
 import argparse
 import asyncio
+import builtins
+import functools
 import hashlib
+import inspect
 import importlib.util
 import json
 from pathlib import Path
 import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import ml_dtypes
 import numpy as np
 import pytest
 
-from npa.workflows.behavior_challenge import rlc_observations, rlc_policy
+from npa.workflows.behavior_challenge import (
+    policy,
+    rlc_observations,
+    rlc_policy,
+    rlc_selected,
+)
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _selected_artifacts(tmp_path: Path) -> SimpleNamespace:
+    export = tmp_path / "export-receipt.json"
+    export.write_text(
+        json.dumps(
+            {
+                "schema": rlc_selected.EXPORT_SCHEMA,
+                "selected_step": 3599,
+                "status": "holdout_selected_not_rollout_evaluated",
+                "files": {},
+            }
+        )
+        + "\n"
+    )
+    array = np.zeros(rlc_selected.CORRELATION_SHAPE, dtype=ml_dtypes.bfloat16)
+    artifact = tmp_path / "native-correlation.bf16"
+    artifact.write_bytes(array.tobytes())
+    source_hashes = {"validator": "1" * 64}
+    evidence_hashes = {"selected_export_receipt": _digest(export)}
+    manifest = {
+        "schema": rlc_selected.MANIFEST_SCHEMA,
+        "adapter_version": 1,
+        "selected_step": 3599,
+        "artifact": {
+            "path": artifact.name,
+            **rlc_selected.array_identity(array),
+        },
+        "native_correlation": {
+            **rlc_selected.array_identity(array),
+            "path": "action_correlation_cholesky",
+            "variable_type": "Intermediate",
+        },
+        "direct_correlation_before": {
+            **rlc_selected.array_identity(
+                np.zeros(rlc_selected.CORRELATION_SHAPE, dtype=np.float32)
+            ),
+            "path": "action_correlation_cholesky",
+            "variable_type": "Intermediate",
+        },
+        "source_sha256": source_hashes,
+        "evidence_sha256": evidence_hashes,
+    }
+    manifest_path = tmp_path / "correlation-manifest.json"
+    manifest_path.write_text(json.dumps(manifest) + "\n")
+    adapter_root = Path(rlc_policy.__file__).parent
+    validation = {
+        "schema": rlc_selected.VALIDATION_SCHEMA,
+        "selected_step": 3599,
+        "status": "selected_serving_validated",
+        "candidate_rollout_eligible": True,
+        "adapter": {"manifest_sha256": _digest(manifest_path)},
+        "typed_state": {
+            "leaves": 2,
+            "after_adapter": {
+                "equal": True,
+                "differing": [],
+                "direct_only": [],
+                "native_only": [],
+            },
+        },
+        "metrics": {
+            "native_vs_aligned_selected_export": {
+                "equal": True,
+                "parts": [
+                    {
+                        "equal": True,
+                        "dtype_equal": True,
+                        "shape_equal": True,
+                        "max_abs_delta": 0.0,
+                        "mean_abs_delta": 0.0,
+                    }
+                    for _ in range(4)
+                ],
+            }
+        },
+        "actions": {
+            "native_vs_aligned_selected_export": {
+                "equal": True,
+                "parts": [
+                    {
+                        "equal": True,
+                        "dtype_equal": True,
+                        "shape_equal": True,
+                        "max_abs_delta": 0.0,
+                        "mean_abs_delta": 0.0,
+                    }
+                    for _ in range(2)
+                ],
+            },
+            "native_vs_existing_adapter_policy_jit": {
+                "equal": True,
+                "parts": [
+                    {
+                        "equal": True,
+                        "dtype_equal": True,
+                        "shape_equal": True,
+                        "max_abs_delta": 0.0,
+                        "mean_abs_delta": 0.0,
+                    }
+                    for _ in range(2)
+                ],
+            },
+            "existing_adapter_smoke": {
+                "finite": True,
+                "dtype": "float32",
+                "shape": [23],
+            },
+        },
+        "source_sha256": source_hashes,
+        "evidence_sha256": evidence_hashes,
+        "existing_adapter": {
+            "source_sha256": {
+                name: _digest(adapter_root / name)
+                for name in ("rlc_server.py", "rlc_observations.py")
+            }
+        },
+    }
+    validation_path = tmp_path / "validation-receipt.json"
+    validation_path.write_text(json.dumps(validation) + "\n")
+    return SimpleNamespace(
+        export=export,
+        manifest=manifest_path,
+        validation=validation_path,
+        adapter_root=adapter_root,
+        array=array,
+    )
+
+
+def _install_fake_jax(monkeypatch) -> None:
+    jax = types.ModuleType("jax")
+    jax_numpy = types.ModuleType("jax.numpy")
+    jax_numpy.asarray = np.asarray
+    jax.numpy = jax_numpy
+    monkeypatch.setitem(sys.modules, "jax", jax)
+    monkeypatch.setitem(sys.modules, "jax.numpy", jax_numpy)
 
 
 @pytest.fixture
@@ -172,3 +322,470 @@ def test_task_mapping_rejects_new_tasks_and_reordered_registry(tmp_path):
     new.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="original 50"):
         rlc_policy._task_checkpoint(tmp_path, tmp_path, "0")
+
+
+def test_selected_policy_is_limited_to_checkpoint_2_tasks(tmp_path, monkeypatch):
+    old = tmp_path / "BEHAVIOR-1K/docs/challenge/task_data.json"
+    new = tmp_path / "docs/challenge/task_data.json"
+    tasks = [{"id": str(task_id)} for task_id in range(100)]
+    old.parent.mkdir(parents=True)
+    new.parent.mkdir(parents=True)
+    old.write_text(json.dumps({"tasks": tasks[:50]}))
+    new.write_text(json.dumps({"tasks": tasks}))
+    supported = [0, 1, 7, 8, 9, 12, 16, 17, 18, 20, 21, 22, 26, 30, 43, 45]
+    unsupported = [task_id for task_id in range(50) if task_id not in supported]
+    (tmp_path / "task_checkpoint_mapping.json").write_text(
+        json.dumps(
+            {
+                "checkpoints": {
+                    "checkpoint_2": {"tasks": supported},
+                    "other": {"tasks": unsupported},
+                }
+            }
+        )
+    )
+    monkeypatch.setattr(rlc_policy, "_verify_checkout", lambda *_: None)
+    args = SimpleNamespace(
+        policy_kind="rlc-selected",
+        policy_root=tmp_path,
+        upstream_root=tmp_path,
+    )
+    for task_id in supported:
+        plan = {"recipe": {"split": "development", "tasks": [str(task_id)]}}
+        assert rlc_policy._verify_task(args, plan) == (task_id, "selected")
+    with pytest.raises(ValueError, match="checkpoint_2 tasks only"):
+        rlc_policy._verify_task(
+            args, {"recipe": {"split": "development", "tasks": ["2"]}}
+        )
+
+
+def test_selected_correlation_is_bound_to_export_and_existing_adapter(tmp_path):
+    selected = _selected_artifacts(tmp_path)
+    array, manifest = rlc_selected.load_validated_correlation(
+        selected.manifest,
+        selected.validation,
+        selected.export,
+        selected.adapter_root,
+    )
+    assert rlc_selected.array_identity(array) == {
+        field: manifest["native_correlation"][field]
+        for field in rlc_selected.ARRAY_IDENTITY_FIELDS
+    }
+
+    selected.export.write_text(selected.export.read_text() + " ")
+    with pytest.raises(ValueError, match="does not bind the selected export"):
+        rlc_selected.load_validated_correlation(
+            selected.manifest,
+            selected.validation,
+            selected.export,
+            selected.adapter_root,
+        )
+
+
+def test_host_selected_validation_needs_no_policy_numeric_runtime(
+    tmp_path, monkeypatch
+):
+    selected = _selected_artifacts(tmp_path)
+    original_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name in {"jax", "jax.numpy", "ml_dtypes"}:
+            raise AssertionError(f"host validation imported {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    artifact, manifest = rlc_selected.validate_selected_correlation(
+        selected.manifest,
+        selected.validation,
+        selected.export,
+        selected.adapter_root,
+    )
+    assert artifact.name == manifest["artifact"]["path"]
+
+
+def test_selected_validation_requires_typed_state_metrics_and_actions(tmp_path):
+    selected = _selected_artifacts(tmp_path)
+    validation = json.loads(selected.validation.read_text())
+    validation["actions"]["native_vs_existing_adapter_policy_jit"]["equal"] = False
+    selected.validation.write_text(json.dumps(validation) + "\n")
+    with pytest.raises(ValueError, match="action contract"):
+        rlc_selected.validate_selected_correlation(
+            selected.manifest,
+            selected.validation,
+            selected.export,
+            selected.adapter_root,
+        )
+
+
+def test_legacy_3599_receipts_remain_compatible(tmp_path):
+    selected = _selected_artifacts(tmp_path)
+    manifest = json.loads(selected.manifest.read_text())
+    manifest["schema"] = rlc_selected.LEGACY_MANIFEST_SCHEMA
+    selected.manifest.write_text(json.dumps(manifest) + "\n")
+    validation = json.loads(selected.validation.read_text())
+    validation["schema"] = rlc_selected.LEGACY_VALIDATION_SCHEMA
+    validation["status"] = "selected_3599_serving_validated"
+    validation["adapter"]["manifest_sha256"] = _digest(selected.manifest)
+    selected.validation.write_text(json.dumps(validation) + "\n")
+
+    array, loaded = rlc_selected.load_validated_correlation(
+        selected.manifest,
+        selected.validation,
+        selected.export,
+        selected.adapter_root,
+    )
+    assert loaded["selected_step"] == 3599
+    assert np.isfinite(array.astype(np.float32)).all()
+
+
+def test_generic_selected_receipts_support_other_positive_steps(tmp_path):
+    selected = _selected_artifacts(tmp_path)
+    export = json.loads(selected.export.read_text())
+    export["selected_step"] = 1200
+    selected.export.write_text(json.dumps(export) + "\n")
+    manifest = json.loads(selected.manifest.read_text())
+    manifest["selected_step"] = 1200
+    manifest["evidence_sha256"]["selected_export_receipt"] = _digest(selected.export)
+    selected.manifest.write_text(json.dumps(manifest) + "\n")
+    validation = json.loads(selected.validation.read_text())
+    validation["selected_step"] = 1200
+    validation["evidence_sha256"] = manifest["evidence_sha256"]
+    validation["adapter"]["manifest_sha256"] = _digest(selected.manifest)
+    selected.validation.write_text(json.dumps(validation) + "\n")
+
+    _, loaded = rlc_selected.load_validated_correlation(
+        selected.manifest,
+        selected.validation,
+        selected.export,
+        selected.adapter_root,
+    )
+    assert loaded["selected_step"] == 1200
+
+
+def test_selected_correlation_rejects_nonfinite_asset(tmp_path):
+    selected = _selected_artifacts(tmp_path)
+    array = selected.array.copy()
+    array[0, 0] = np.inf
+    artifact = selected.manifest.parent / "native-correlation.bf16"
+    artifact.write_bytes(array.tobytes())
+    manifest = json.loads(selected.manifest.read_text())
+    identity = rlc_selected.array_identity(array)
+    manifest["artifact"].update(identity)
+    manifest["native_correlation"].update(identity)
+    selected.manifest.write_text(json.dumps(manifest) + "\n")
+    validation = json.loads(selected.validation.read_text())
+    validation["adapter"]["manifest_sha256"] = _digest(selected.manifest)
+    selected.validation.write_text(json.dumps(validation) + "\n")
+
+    with pytest.raises(ValueError, match="non-finite"):
+        rlc_selected.load_validated_correlation(
+            selected.manifest,
+            selected.validation,
+            selected.export,
+            selected.adapter_root,
+        )
+
+
+def test_selected_export_requires_exact_checkpoint_inventory(tmp_path):
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    weights = checkpoint / "params.bin"
+    weights.write_bytes(b"selected params")
+    digest = _digest(weights)
+    receipt = tmp_path / "export.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema": rlc_selected.EXPORT_SCHEMA,
+                "selected_step": 3599,
+                "status": "holdout_selected_not_rollout_evaluated",
+                "files": {
+                    weights.name: {"sha256": digest, "bytes": weights.stat().st_size}
+                },
+            }
+        )
+    )
+    args = SimpleNamespace(
+        policy_selected_export_receipt=receipt,
+        policy_checkpoint=checkpoint,
+    )
+    assert (
+        rlc_policy._verify_selected_export(args, {weights.name: digest})[
+            "selected_step"
+        ]
+        == 3599
+    )
+    with pytest.raises(ValueError, match="contract differs"):
+        rlc_policy._verify_selected_export(
+            args, {weights.name: digest, "unexpected": "0" * 64}
+        )
+    invalid = json.loads(receipt.read_text())
+    invalid["selected_step"] = True
+    receipt.write_text(json.dumps(invalid))
+    with pytest.raises(ValueError, match="contract differs"):
+        rlc_policy._verify_selected_export(args, {weights.name: digest})
+
+
+def test_selected_correlation_rejects_boolean_step(tmp_path):
+    selected = _selected_artifacts(tmp_path)
+    export = json.loads(selected.export.read_text())
+    export["selected_step"] = True
+    selected.export.write_text(json.dumps(export) + "\n")
+    manifest = json.loads(selected.manifest.read_text())
+    manifest["selected_step"] = True
+    manifest["evidence_sha256"]["selected_export_receipt"] = _digest(selected.export)
+    selected.manifest.write_text(json.dumps(manifest) + "\n")
+    validation = json.loads(selected.validation.read_text())
+    validation["selected_step"] = True
+    validation["evidence_sha256"] = manifest["evidence_sha256"]
+    validation["adapter"]["manifest_sha256"] = _digest(selected.manifest)
+    selected.validation.write_text(json.dumps(validation) + "\n")
+
+    with pytest.raises(ValueError, match="positive integer"):
+        rlc_selected.validate_selected_correlation(
+            selected.manifest,
+            selected.validation,
+            selected.export,
+            selected.adapter_root,
+        )
+
+
+def test_selected_policy_installs_correlation_before_policy_capture(
+    tmp_path, monkeypatch
+):
+    selected = _selected_artifacts(tmp_path)
+    native, manifest = rlc_selected.load_validated_correlation(
+        selected.manifest,
+        selected.validation,
+        selected.export,
+        selected.adapter_root,
+    )
+    _install_fake_jax(monkeypatch)
+
+    class PiBehavior:
+        def __init__(self):
+            self.action_correlation_cholesky = SimpleNamespace(value=None)
+
+        def load_correlation_matrix(self, norm_stats):
+            del norm_stats
+            self.action_correlation_cholesky.value = np.zeros(
+                rlc_selected.CORRELATION_SHAPE, dtype=np.float32
+            )
+
+    pi_module = types.ModuleType("b1k.models.pi_behavior")
+    pi_module.PiBehavior = PiBehavior
+    monkeypatch.setitem(sys.modules, "b1k", types.ModuleType("b1k"))
+    monkeypatch.setitem(sys.modules, "b1k.models", types.ModuleType("b1k.models"))
+    monkeypatch.setitem(sys.modules, "b1k.models.pi_behavior", pi_module)
+    original = PiBehavior.load_correlation_matrix
+
+    def load_policy(args):
+        del args
+        model = PiBehavior()
+        model.load_correlation_matrix({})
+        return SimpleNamespace(policy=SimpleNamespace(_model=model))
+
+    wrapper = rlc_selected.load_selected_policy(
+        SimpleNamespace(_load_policy=load_policy), object(), native, manifest
+    )
+    assert PiBehavior.load_correlation_matrix is original
+    assert rlc_selected.array_identity(
+        wrapper.policy._model.action_correlation_cholesky.value
+    ) == {
+        field: manifest["native_correlation"][field]
+        for field in rlc_selected.ARRAY_IDENTITY_FIELDS
+    }
+
+
+def test_selected_policy_rejects_initializer_that_skips_correlation(
+    tmp_path, monkeypatch
+):
+    selected = _selected_artifacts(tmp_path)
+    native, manifest = rlc_selected.load_validated_correlation(
+        selected.manifest,
+        selected.validation,
+        selected.export,
+        selected.adapter_root,
+    )
+    _install_fake_jax(monkeypatch)
+
+    class PiBehavior:
+        def load_correlation_matrix(self, norm_stats):
+            del norm_stats
+
+    pi_module = types.ModuleType("b1k.models.pi_behavior")
+    pi_module.PiBehavior = PiBehavior
+    monkeypatch.setitem(sys.modules, "b1k", types.ModuleType("b1k"))
+    monkeypatch.setitem(sys.modules, "b1k.models", types.ModuleType("b1k.models"))
+    monkeypatch.setitem(sys.modules, "b1k.models.pi_behavior", pi_module)
+    original = PiBehavior.load_correlation_matrix
+
+    with pytest.raises(ValueError, match="exactly one"):
+        rlc_selected.load_selected_policy(
+            SimpleNamespace(_load_policy=lambda args: object()),
+            object(),
+            native,
+            manifest,
+        )
+    assert PiBehavior.load_correlation_matrix is original
+
+
+def test_selected_hook_precedes_real_pinned_nnx_jit_capture(monkeypatch):
+    jax = pytest.importorskip("jax")
+    jnp = pytest.importorskip("jax.numpy")
+    flax = pytest.importorskip("flax")
+    from flax import nnx
+
+    if jax.__version__ != "0.5.3" or flax.__version__ != "0.10.2":
+        pytest.skip("requires the selected checkpoint's pinned JAX/Flax runtime")
+
+    class PiBehavior(nnx.Module):
+        def __init__(self):
+            self.action_correlation_cholesky = nnx.Intermediate(
+                jnp.zeros((2, 2), dtype=jnp.float32)
+            )
+
+        def load_correlation_matrix(self, norm_stats):
+            del norm_stats
+            self.action_correlation_cholesky.value = jnp.zeros(
+                (2, 2), dtype=jnp.float32
+            )
+
+        def sample_actions(self, value):
+            return value + jnp.sum(self.action_correlation_cholesky.value)
+
+    def module_jit(method):
+        assert inspect.ismethod(method) and isinstance(method.__self__, nnx.Module)
+        graph, state = nnx.split(method.__self__)
+
+        def call(frozen, value):
+            module = nnx.merge(graph, frozen)
+            return method.__func__(module, value)
+
+        compiled = jax.jit(call)
+
+        @functools.wraps(method)
+        def captured(value):
+            return compiled(state, value)
+
+        return captured
+
+    pi_module = types.ModuleType("b1k.models.pi_behavior")
+    pi_module.PiBehavior = PiBehavior
+    monkeypatch.setitem(sys.modules, "b1k", types.ModuleType("b1k"))
+    monkeypatch.setitem(sys.modules, "b1k.models", types.ModuleType("b1k.models"))
+    monkeypatch.setitem(sys.modules, "b1k.models.pi_behavior", pi_module)
+    native = jnp.full((2, 2), 2, dtype=jnp.bfloat16)
+    manifest = {
+        "direct_correlation_before": {
+            **rlc_selected.array_identity(np.zeros((2, 2), dtype=np.float32)),
+            "path": "action_correlation_cholesky",
+            "variable_type": "Intermediate",
+        }
+    }
+
+    def load_policy(args):
+        del args
+        model = PiBehavior()
+        model.load_correlation_matrix({})
+        return SimpleNamespace(
+            policy=SimpleNamespace(
+                _model=model,
+                _sample_actions=module_jit(model.sample_actions),
+            )
+        )
+
+    original = PiBehavior.load_correlation_matrix
+    wrapper = rlc_selected.load_selected_policy(
+        SimpleNamespace(_load_policy=load_policy), object(), native, manifest
+    )
+    assert PiBehavior.load_correlation_matrix is original
+    assert wrapper.policy._model.action_correlation_cholesky.value.dtype == jnp.bfloat16
+    assert float(wrapper.policy._sample_actions(jnp.array(1.0))) == 9.0
+    wrapper.policy._model.action_correlation_cholesky.value = jnp.zeros(
+        (2, 2), dtype=jnp.bfloat16
+    )
+    assert float(wrapper.policy._sample_actions(jnp.array(1.0))) == 9.0
+
+    for calls in (0, 2):
+        with pytest.raises(ValueError, match="exactly one"):
+            with rlc_selected.pre_policy_correlation(PiBehavior, native):
+                model = PiBehavior()
+                for _ in range(calls):
+                    model.load_correlation_matrix({})
+        assert PiBehavior.load_correlation_matrix is original
+
+    def fail_after_install(args):
+        del args
+        model = PiBehavior()
+        model.load_correlation_matrix({})
+        raise RuntimeError("constructor failure")
+
+    with pytest.raises(RuntimeError, match="constructor failure"):
+        rlc_selected.load_selected_policy(
+            SimpleNamespace(_load_policy=fail_after_install),
+            object(),
+            native,
+            manifest,
+        )
+    assert PiBehavior.load_correlation_matrix is original
+
+
+def test_selected_server_command_uses_explicit_receipts(tmp_path):
+    staged = {
+        "selected_export": tmp_path / "export.json",
+        "correlation_manifest": tmp_path / "manifest.json",
+        "validation_receipt": tmp_path / "validation.json",
+    }
+    args = SimpleNamespace(
+        policy_python=Path("/runtime/python"),
+        policy_root=Path("/runtime/source"),
+        policy_checkpoint=Path("/runtime/selected-model"),
+        port=9000,
+    )
+    command = rlc_policy._command(args, 22, tmp_path, staged)
+    assert command[:6] == [
+        "/runtime/python",
+        str(tmp_path / "rlc_selected_server.py"),
+        "--source-root",
+        "/runtime/source",
+        "--adapter-root",
+        str(tmp_path),
+    ]
+    assert command[-6:] == [
+        "--selected-export-receipt",
+        str(staged["selected_export"]),
+        "--correlation-manifest",
+        str(staged["correlation_manifest"]),
+        "--validation-receipt",
+        str(staged["validation_receipt"]),
+    ]
+    published = rlc_policy._command(args, 22, tmp_path)
+    assert published[1] == str(tmp_path / "rlc_server.py")
+    assert "--adapter-root" not in published
+
+
+def test_selected_policy_arguments_are_all_or_nothing(tmp_path):
+    base = {
+        "policy_kind": "rlc-selected",
+        "policy_root": tmp_path,
+        "policy_python": tmp_path / "python",
+        "policy_checkpoint": tmp_path / "checkpoint",
+        "policy_archive": tmp_path / "archive",
+        "policy_selected_export_receipt": tmp_path / "export.json",
+        "policy_correlation_manifest": tmp_path / "manifest.json",
+        "policy_validation_receipt": None,
+    }
+    with pytest.raises(ValueError, match="export, correlation, and validation"):
+        with policy.managed_policy(
+            argparse.Namespace(**base), {"recipe": {}}, tmp_path / "output"
+        ):
+            pass
+
+    base["policy_kind"] = "rlc"
+    base["policy_validation_receipt"] = tmp_path / "validation.json"
+    with pytest.raises(ValueError, match="require --policy-kind"):
+        with policy.managed_policy(
+            argparse.Namespace(**base), {"recipe": {}}, tmp_path / "output"
+        ):
+            pass

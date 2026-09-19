@@ -161,9 +161,22 @@ This isolates the correlation precision difference as the cause of this
 first-batch failure. The [machine-readable diagnostic summary](behavior-serving-parity-2026-09-19.json)
 records the exact differences and the original evidence hash.
 
-The diagnostic does not validate update 3599, generated action trajectories, or
-rollout performance. Candidate evaluation remains blocked pending a validated
-serving contract for the selected checkpoint.
+The selected update-3599 checkpoint subsequently passed the same state and
+serving boundary on a B200. Before adaptation, the same correlation intermediate
+was the only difference among 75 typed leaves. Installing its validated native
+BF16 bytes before the existing policy constructs its JIT sampler made all typed
+state equal. Four fixed-batch metric parts matched byte-for-byte between the
+native model and selected export. Fixed-RNG physical actions matched across the
+native model, selected export, and existing serving wrapper. The wrapper also
+returned one finite 23-element physical action.
+
+The auxiliary stage-logit tuple component also matched byte-for-byte. Its numeric
+maximum and mean deltas are undefined because invalid task stages use identical
+negative-infinity mask sentinels: subtracting `-inf` from `-inf` produces no
+finite delta. The public JSON records those two deltas as `null`, with this
+reason, and retains the raw validation receipt hash. This serving result admits
+the checkpoint to development rollouts. It is not a rollout result or evidence
+that training improved the policy.
 
 ## Selected failure observations
 
@@ -182,9 +195,9 @@ sparse frames cannot establish frequency or cause.
 
 ## Changes needed before the next campaign
 
-1. Make native-to-serving state and first-batch metric agreement a gate before
-   long training. Compare non-parameter state as well as learned weights. The
-   update-600 diagnostic alone cannot validate the selected update-3599 export.
+1. Keep native-to-serving typed-state, first-batch metric, and fixed-RNG action
+   agreement as a gate before rollouts. The selected update-3599 export now
+   passes that gate through an explicit, receipt-bound correlation asset.
 2. Preserve final checkpoints and evidence as awaited workflow stages. Backup
    child processes can be terminated when their managed parent completes. Archive
    the selected full checkpoint first; scanning every earlier optimizer-state

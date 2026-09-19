@@ -133,6 +133,8 @@ dev = [
     "imageio-ffmpeg==0.6.0",
     # Isaac Arena replay validation and its unit fixtures use real HDF5 bytes.
     "h5py==3.16.0",
+    # Selected-policy fixtures exercise real BF16 checkpoint bytes.
+    "ml-dtypes>=0.5.1",
     "pytest>=9.0.3",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
@@ -154,6 +156,7 @@ dev = [
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
     "h5py==3.16.0",
+    "ml-dtypes>=0.5.1",
     "pytest>=9.0.3",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",

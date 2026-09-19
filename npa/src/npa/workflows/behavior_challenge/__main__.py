@@ -12,9 +12,17 @@ from .protocol import make_plan, verify_upstream
 
 def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--policy-kind", choices=("official", "rlc"), default="official"
+        "--policy-kind",
+        choices=("official", "rlc", "rlc-selected"),
+        default="official",
     )
     for field in ("root", "python", "checkpoint", "archive"):
+        parser.add_argument(f"--policy-{field}", type=Path)
+    for field in (
+        "selected-export-receipt",
+        "correlation-manifest",
+        "validation-receipt",
+    ):
         parser.add_argument(f"--policy-{field}", type=Path)
 
 
