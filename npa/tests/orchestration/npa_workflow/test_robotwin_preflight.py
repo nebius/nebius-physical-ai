@@ -753,27 +753,13 @@ def test_transport_round_trip_is_digest_bound_and_repr_redacted(tmp_path: Path) 
     )
     authorization = _load_authorization(environment, raw)
     transport = encode_transport(authorization)
-    decoded = decode_transport(transport)
-
-    assert decoded.raw_context == raw
-    assert decoded.context_sha256 == hashlib.sha256(raw).hexdigest()
-    assert decoded.kubeconfig_bytes == authorization.kubeconfig_bytes
-    assert decoded.inner_launch_id == authorization.inner_launch_id
-    assert decoded.inner_launch_id.startswith("robotwin-inner-")
-    assert (
-        decoded.raw_customer_authorization == authorization.raw_customer_authorization
-    )
-    assert entitlement_raw not in transport.encode()
-    assert "robotwin-project-canary" not in repr(decoded)
-    assert raw.decode() not in repr(decoded)
-    assert "portable-test-token" in decoded.redactions
-    for private_assertion_value in (
-        "https://customer-auth.example.invalid",
-        "assertion-canary-0001",
-        "nonce-canary-00000001",
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="customer-authorization-independent-proof-unavailable",
     ):
-        assert private_assertion_value in decoded.redactions
-        assert private_assertion_value not in repr(decoded)
+        decode_transport(transport)
+
+    assert entitlement_raw not in transport.encode()
 
     payload = json.loads(transport)
     payload["files"]["kubeconfig"]["sha256"] = "0" * 64
@@ -785,7 +771,10 @@ def test_transport_round_trip_is_digest_bound_and_repr_redacted(tmp_path: Path) 
         "base64": "",
         "sha256": hashlib.sha256(b"").hexdigest(),
     }
-    with pytest.raises(RobotwinPreflightError, match="kubeconfig-invalid"):
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="customer-authorization-independent-proof-unavailable",
+    ):
         decode_transport(json.dumps(payload))
 
     with pytest.raises(RobotwinPreflightError, match="transport-size-invalid"):
@@ -800,21 +789,13 @@ def test_worker_materialization_preserves_bytes_modes_and_paths(tmp_path: Path) 
     directory = tmp_path / "materialized"
     directory.mkdir(mode=0o700)
 
-    result = materialize_transport(encode_transport(authorization), directory)
-
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="customer-authorization-independent-proof-unavailable",
+    ):
+        materialize_transport(encode_transport(authorization), directory)
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700
-    assert result.context_path.read_bytes() == raw
-    assert result.customer_authorization_path.read_bytes() == (
-        authorization.raw_customer_authorization
-    )
-    assert result.customer_authorization_path.read_bytes() != entitlement_raw
-    assert result.kubeconfig_path.read_bytes() == authorization.kubeconfig_bytes
-    assert (
-        result.skypilot_config_path.read_bytes() == authorization.skypilot_config_bytes
-    )
-    for child in directory.iterdir():
-        assert child.is_file() and not child.is_symlink()
-        assert stat.S_IMODE(child.stat().st_mode) == 0o600
+    assert list(directory.iterdir()) == []
 
 
 def test_worker_materialization_rolls_back_partial_private_files(
@@ -837,7 +818,10 @@ def test_worker_materialization_rolls_back_partial_private_files(
         real_write(path, payload, directory_fd=directory_fd)
 
     monkeypatch.setattr(preflight_module, "write_owner_file", fail_second)
-    with pytest.raises(OSError, match="injected write failure"):
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="customer-authorization-independent-proof-unavailable",
+    ):
         materialize_transport(encode_transport(authorization), directory)
     assert list(directory.iterdir()) == []
 
@@ -856,9 +840,41 @@ def test_worker_materialization_removes_the_file_whose_fsync_fails(
         raise OSError("injected fsync failure")
 
     monkeypatch.setattr(preflight_module.os, "fsync", fail_fsync)
-    with pytest.raises(OSError, match="injected fsync failure"):
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="customer-authorization-independent-proof-unavailable",
+    ):
         materialize_transport(encode_transport(authorization), directory)
     assert list(directory.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"issuer": "https://attacker-auth.example.invalid"},
+        {"assertion_id": "replayed-assertion-0001"},
+    ),
+)
+def test_transported_customer_receipts_require_independent_proof(
+    tmp_path: Path, updates: dict[str, object]
+) -> None:
+    environment, _path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = _load_authorization(environment, raw)
+    payload = json.loads(authorization.raw_customer_authorization)
+    payload.update(updates)
+    receipt = json.dumps(payload, sort_keys=True).encode()
+    with pytest.raises(
+        RobotwinPreflightError,
+        match="customer-authorization-independent-proof-unavailable",
+    ):
+        preflight_module._parse_transported_customer_authorization(
+            receipt,
+            customer_scope_id=payload["customer_scope_id"],
+            run_id=payload["run_id"],
+            context=raw,
+        )
 
 
 @pytest.mark.parametrize("reference", ["~definitely-no-such-user/context", "bad\0path"])

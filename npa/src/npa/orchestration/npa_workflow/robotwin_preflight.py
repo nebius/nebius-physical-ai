@@ -957,9 +957,17 @@ def _parse_transported_customer_authorization(
     customer_scope_id: str,
     run_id: str,
     context: bytes,
+    trusted_issuer: str = "",
     now: datetime | None = None,
 ) -> _VerifiedCustomerAuthorization:
-    """Decode a receipt carried only by the existing private worker transport."""
+    """Decode a transport receipt only with an independent issuer binding.
+
+    The worker transport carries observations from the authenticated outer
+    boundary, but it cannot establish that boundary itself.  In particular,
+    an issuer copied from the same JSON receipt is not an independent trust
+    anchor.  Until a supported signed/opaque control-plane receipt provides
+    one, materialized receipts fail closed before they can enable runtime use.
+    """
 
     payload: Any = None
     try:
@@ -975,6 +983,8 @@ def _parse_transported_customer_authorization(
     terms = payload.get("terms")
     if not isinstance(terms, list) or any(not isinstance(term, dict) for term in terms):
         raise _refusal("customer-authorization-terms-mismatch", context)
+    if not isinstance(trusted_issuer, str) or not trusted_issuer.strip():
+        raise _refusal("customer-authorization-independent-proof-unavailable", context)
     assertion = _TransportedCustomerAssertion(
         issuer=payload.get("issuer"),
         customer_scope_id=payload.get("customer_scope_id"),
@@ -992,10 +1002,7 @@ def _parse_transported_customer_authorization(
         assertion,
         customer_scope_id=customer_scope_id,
         run_id=run_id,
-        # The private transport is produced only after the outer authenticated
-        # boundary performed the exact issuer comparison. Revalidation binds
-        # that canonical byte receipt without inventing a local issuer source.
-        expected_issuer=str(payload.get("issuer") or ""),
+        expected_issuer=trusted_issuer,
         context=context,
         now=now,
     )
