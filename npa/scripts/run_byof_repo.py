@@ -1514,6 +1514,16 @@ def _run_byof(
                 if authorization is not None
                 else _run(cmd, **run_kwargs)
             )
+            # Validate the authorized receipt against its raw captured bytes before
+            # redaction. The run-scoped launch identity is intentionally also present
+            # in the private runtime authorization envelope, so redacting first would
+            # turn a valid receipt into a deterministic identity mismatch. Raw bytes
+            # remain transient and are never printed, stored, or included in errors.
+            parsed_run = (
+                _parse_last_json(run_proc.stdout)
+                if authorization is not None
+                else None
+            )
             sanitized_stdout = _redact_text(run_proc.stdout, effective_redactions)
             sanitized_stderr = _redact_text(run_proc.stderr, effective_redactions)
             sys.stdout.write(sanitized_stdout)
@@ -1529,7 +1539,8 @@ def _run_byof(
                 raise RuntimeError(
                     f"authorized RoboTwin verifier failed with exit {run_proc.returncode}"
                 )
-            parsed_run = _parse_last_json(sanitized_stdout)
+            if authorization is None:
+                parsed_run = _parse_last_json(sanitized_stdout)
             if authorization is not None:
                 if not isinstance(parsed_run, dict):
                     raise RuntimeError(

@@ -658,7 +658,11 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         module, "_load_runtime_authorization", lambda _args: authorization
     )
     monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
-    monkeypatch.setattr(module, "encode_runtime_authorization", lambda _value: "synthetic-runtime-auth")
+    monkeypatch.setattr(
+        module,
+        "encode_runtime_authorization",
+        lambda value: json.dumps({"inner_launch_id": value.inner_launch_id}),
+    )
     if allocated_outer:
         monkeypatch.setenv("NPA_WORKFLOW_RUN_ID", "synthetic-outer-run")
         monkeypatch.setenv("NPA_WORKFLOW_STATE", "synthetic-cpu-launcher")
@@ -760,6 +764,10 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     ):
         assert str(private_value) not in seen_runner_cmd
     output = capsys.readouterr().out
+    # The authorized receipt must be validated before redaction, while the
+    # printed/stored summary must never expose the run-scoped native identity.
+    assert authorization.inner_launch_id not in output
+    assert "<redacted>" in output
     private_image = str(payload["bootstrap_image"])
     for field in (
         "project",
