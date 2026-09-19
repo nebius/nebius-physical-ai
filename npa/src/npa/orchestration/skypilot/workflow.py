@@ -1905,7 +1905,11 @@ def _group_libero_managed_job_rows(
 def _libero_managed_job_group_is_viable(
     rows: Sequence[Mapping[str, Any]],
 ) -> bool:
-    """Treat any failed/cancelled task as making its whole managed job historical."""
+    """Keep active mixed-status jobs eligible for reconciliation, not replacement."""
+
+    statuses = {str(row.get("status") or "UNKNOWN").upper() for row in rows}
+    if statuses & {"RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"}:
+        return True
 
     return not any(
         is_terminal_failure_job_status(str(row.get("status") or "UNKNOWN").upper())
@@ -1916,9 +1920,12 @@ def _libero_managed_job_group_is_viable(
 def _libero_managed_job_group_status(
     rows: Sequence[Mapping[str, Any]],
 ) -> str:
-    """Select a deterministic whole-job status with terminal failure precedence."""
+    """Select a deterministic status without hiding active mixed-status work."""
 
     statuses = [str(row.get("status") or "UNKNOWN").upper() for row in rows]
+    for status in ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"):
+        if status in statuses:
+            return status
     for status in statuses:
         if is_terminal_failure_job_status(status):
             return status

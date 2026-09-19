@@ -3008,8 +3008,11 @@ def test_libero_launch_binding_groups_task_rows_by_unique_job_id(monkeypatch) ->
     assert error == ""
 
 
-def test_libero_launch_binding_excludes_mixed_failed_historical_job(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "active_status", ["RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"]
+)
+def test_libero_launch_binding_blocks_mixed_failed_active_job(
+    monkeypatch, active_status
 ) -> None:
     rows = [
         {
@@ -3022,6 +3025,12 @@ def test_libero_launch_binding_excludes_mixed_failed_historical_job(
             "job_id": 125,
             "job_name": "exact-run",
             "task_id": "task-1",
+            "status": active_status,
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-2",
             "status": "FAILED",
         },
         {
@@ -3048,13 +3057,16 @@ def test_libero_launch_binding_excludes_mixed_failed_historical_job(
         expected_profile_sha256="a" * 64,
     )
 
-    assert verified == "126"
-    assert plausible == ()
-    assert error == ""
+    assert verified == ""
+    assert plausible == ("125", "126")
+    assert "multiple or missing viable" in error
 
 
-def test_libero_reconciliation_ignores_mixed_failed_historical_competitor(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "active_status", ["RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING"]
+)
+def test_libero_reconciliation_blocks_mixed_failed_active_competitor(
+    monkeypatch, active_status
 ) -> None:
     rows = [
         {
@@ -3067,6 +3079,12 @@ def test_libero_reconciliation_ignores_mixed_failed_historical_competitor(
             "job_id": 125,
             "job_name": "exact-run",
             "task_id": "task-1",
+            "status": active_status,
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-2",
             "status": "FAILED",
         },
         {
@@ -3094,8 +3112,8 @@ def test_libero_reconciliation_ignores_mixed_failed_historical_competitor(
         allow_omitted_profile=True,
     )
 
-    assert evidence.state is workflow_module.ReconciliationState.FOUND
-    assert evidence.job_id == "126"
+    assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
+    assert "another viable" in evidence.error
 
 
 def test_libero_launch_binding_rejects_mismatched_optional_queue_profile(
