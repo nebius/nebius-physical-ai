@@ -612,7 +612,9 @@ def _up_axis(o3d, cloud, voxel: float) -> dict[str, Any]:
 
 CAMERA_FOV_DEGREES = 55.0
 CAMERA_ELEVATION_DEGREES = 28.0
-CAMERA_FRAME_MARGIN = 1.12
+CAMERA_FRAME_MARGIN = 1.08
+#: Rerun's 3D views are wider than tall; the horizontal half-angle scales by this.
+CAMERA_ASPECT = 4.0 / 3.0
 
 
 def _camera(cloud, up: list[float]) -> dict[str, Any]:
@@ -641,26 +643,33 @@ def _camera(cloud, up: list[float]) -> dict[str, Any]:
     offset = np.cos(elevation) * horizontal + np.sin(elevation) * up_vector
     offset = offset / float(np.linalg.norm(offset))
 
-    # Fit: the eye must sit far enough back that every bounding-box corner still
-    # projects inside the frame at this field of view.
-    corners = np.array(
-        [
-            centre + np.array([sx, sy, sz]) * extent / 2.0
-            for sx in (-1.0, 1.0)
-            for sy in (-1.0, 1.0)
-            for sz in (-1.0, 1.0)
-        ]
-    )
+    # Fit against the points themselves rather than the bounding box. A room scan
+    # fills very little of its own box, so fitting the box strands the scan in the
+    # middle of an empty frame -- the same reviewability problem as clipping it,
+    # from the other direction. Solve for the distance at which the widest actual
+    # sample sits just inside the frame, then iterate once because perspective
+    # makes that distance depend on itself.
     forward = -offset
     right = np.cross(forward, up_vector)
     right = right / float(np.linalg.norm(right))
     true_up = np.cross(right, forward)
-    relative = corners - centre
+    points = np.asarray(cloud.points)
+    relative = points - centre
     half_angle = np.tan(np.radians(CAMERA_FOV_DEGREES) / 2.0)
-    lateral = np.abs(relative @ right).max()
-    vertical = np.abs(relative @ true_up).max()
-    depth = np.abs(relative @ forward).max()
-    distance = float(max(lateral, vertical) / half_angle + depth) * CAMERA_FRAME_MARGIN
+    lateral = relative @ right
+    vertical = relative @ true_up
+    along = relative @ forward
+    distance = float(np.linalg.norm(extent))
+    for _ in range(8):
+        depth = distance + along
+        depth = np.where(depth < 1e-6, 1e-6, depth)
+        reach = np.abs(
+            np.stack([lateral / half_angle / CAMERA_ASPECT, vertical / half_angle])
+            / depth
+        ).max()
+        if reach <= 1e-9:
+            break
+        distance = float(distance * reach * CAMERA_FRAME_MARGIN)
     return {
         "eye": [float(value) for value in centre + offset * distance],
         "look_target": [float(value) for value in centre],

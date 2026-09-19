@@ -19,6 +19,7 @@ from typing import Any
 from npa.workbench.open3d.artifacts import (
     read_journal,
     validate_mesh,
+    validate_support,
     validate_pose_graph,
     verify_rerun_recording,
 )
@@ -39,6 +40,13 @@ SAMPLE_POINTS = 60_000
 #: wrong basin of attraction fails.
 MAX_ROTATION_DEGREES = 1.0
 MAX_TRANSLATION = VOXEL_SIZE
+#: Surface the scan never supported. The crop targets zero; the allowance covers
+#: the boundary triangles whose worst corner sits a hair past a voxel.
+MAX_UNSUPPORTED_AREA_FRACTION = 0.02
+#: The other direction, and the reason the crop is defensible: the observations
+#: have to still lie on what survives it.
+MIN_COVERAGE_WITHIN_VOXEL = 0.97
+MAX_SAMPLE_TO_SURFACE_RMSE = VOXEL_SIZE / 2.0
 
 
 def _scene(o3d):
@@ -86,6 +94,46 @@ def _write_clouds(o3d, root: Path) -> tuple[dict[str, str], dict[str, Any]]:
             raise AssertionError(f"could not write {path}")
         paths[name] = str(path)
     return paths, poses
+
+
+def _assert_support_crop_kept_the_observations(report) -> None:
+    """The crop has to buy honesty without costing accuracy.
+
+    Discarding surface is only an improvement if the observations still lie on
+    what is left. Both directions are asserted here so a future change that
+    trims a prettier mesh by throwing away measured structure fails this eval
+    instead of shipping.
+
+    Tolerances rather than equalities, deliberately: Open3D reduces over its
+    correspondences in thread-scheduling order, so `registration_icp`,
+    `get_information_matrix_from_point_clouds`, `compute_fpfh_feature` and
+    `global_optimization` return results that depend on how many threads the
+    container was given. Integer counts and RANSAC correspondence choices repeat
+    bit-for-bit because the generator is seeded; floating-point sums do not. On
+    the upstream demo scans two builds of this image agreed to 4e-06 relative on
+    surface area and about 1e-08 on pose, which is the contract a consumer can
+    actually rely on. Do not tighten these to byte equality without pinning the
+    thread count, and do not loosen them to hide a real regression.
+    """
+
+    before = report["support_before_crop"]["unsupported_area_fraction"]
+    after = report["support"]["unsupported_area_fraction"]
+    coverage = report["coverage"]
+    assert after <= MAX_UNSUPPORTED_AREA_FRACTION, (
+        f"{after:.4f} of the surface area still has no sample within a voxel"
+    )
+    assert before > after, (
+        "this scene is meant to exercise the crop, but Poisson returned nothing "
+        f"unsupported to remove (before {before:.4f}, after {after:.4f})"
+    )
+    assert coverage["fraction_within_voxel"] >= MIN_COVERAGE_WITHIN_VOXEL, (
+        f"only {coverage['fraction_within_voxel']:.4f} of samples lie within a "
+        "voxel of the cropped surface; the crop took observed structure"
+    )
+    assert coverage["sample_to_surface_rmse"] <= MAX_SAMPLE_TO_SURFACE_RMSE, (
+        f"sample-to-surface RMSE {coverage['sample_to_surface_rmse']:.5f} exceeds "
+        f"{MAX_SAMPLE_TO_SURFACE_RMSE}"
+    )
 
 
 def _assert_recovered(o3d, measured, source_pose, target_pose) -> None:
@@ -153,6 +201,7 @@ def main() -> None:
                     "run_id": RUN_ID,
                     "poisson_depth": 8,
                     "density_quantile": 0.02,
+                    "support_distance_factor": 1.0,
                 },
                 "fused_path": str(graph_dir / "fused.ply"),
                 "voxel_size": VOXEL_SIZE,
@@ -161,6 +210,9 @@ def main() -> None:
             RUN_ID,
         )
         validate_mesh(mesh_report["mesh"])
+        validate_mesh(mesh_report["mesh_uncropped"])
+        validate_support(mesh_report, voxel_size=VOXEL_SIZE)
+        _assert_support_crop_kept_the_observations(mesh_report)
 
         recording = root / "visualize"
         recording.mkdir()
@@ -170,6 +222,8 @@ def main() -> None:
                 "fragments": paths,
                 "fused_path": str(graph_dir / "fused.ply"),
                 "mesh_path": str(surface / "mesh.ply"),
+                "uncropped_mesh_path": str(surface / "mesh_uncropped.ply"),
+                "voxel_size": VOXEL_SIZE,
             },
             recording,
             RUN_ID,
@@ -180,8 +234,11 @@ def main() -> None:
             "Open3D registration recovered the ground-truth pose "
             f"(ICP fitness {min(row['icp']['fitness'] for row in rows):.4f}+), "
             f"optimized a {len(report['pose_graph']['nodes'])}-node pose graph, "
-            f"reconstructed {mesh_report['mesh']['triangle_count']} triangles and "
-            "wrote a verified RRD"
+            f"reconstructed {mesh_report['mesh']['triangle_count']} triangles, "
+            "cropped surface the scan did not support "
+            f"({mesh_report['support_before_crop']['unsupported_area_fraction']:.4f} "
+            f"-> {mesh_report['support']['unsupported_area_fraction']:.4f} of area) "
+            "and wrote a verified RRD"
         )
 
 
