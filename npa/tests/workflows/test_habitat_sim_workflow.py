@@ -1639,13 +1639,15 @@ def test_ready_marker_race_preserves_the_unowned_object(tmp_path) -> None:
 
     storage = ReadyMarkerRace()
     ready_key = "run-owned/race/habitat-sim-publication-ready.json"
-    with pytest.raises(OSError, match="immutable object already exists"):
+    with pytest.raises(H.SmokeFailure, match="immutable object already exists") as raised:
         H._upload_directory(
             tmp_path / "outputs",
             "s3://fixture-bucket/run-owned/race/",
             client=storage,
             stage_token="3" * 32,
         )
+    assert isinstance(raised.value.__cause__, OSError)
+    assert str(raised.value.__cause__) == "fixture immutable object already exists"
     assert storage.objects == {("fixture-bucket", ready_key): b"foreign-ready-marker\n"}
     assert ("fixture-bucket", ready_key) not in storage.deleted
 
@@ -1684,6 +1686,31 @@ def test_ambiguous_ready_write_is_reported_without_deleting_shared_marker(
         )
     assert ("fixture-bucket", ready_key) in storage.objects
     assert ("fixture-bucket", ready_key) not in storage.deleted
+
+
+def test_identical_readback_after_failed_write_remains_unresolved() -> None:
+    class SameBytesPreexisting(Storage):
+        def put_object(self, *, Bucket, Key, Body, ContentType, IfNoneMatch):
+            del ContentType, IfNoneMatch
+            self.objects.setdefault((Bucket, Key), bytes(Body))
+            raise OSError("fixture conditional write acknowledgement lost")
+
+    storage = SameBytesPreexisting()
+    ledger = H._ObjectWriteLedger()
+    with pytest.raises(OSError, match="acknowledgement lost"):
+        H._put_owned_object(
+            storage,
+            "fixture-bucket",
+            "run-owned/same-bytes.json",
+            b"{}\n",
+            "application/json",
+            "same-bytes",
+            ledger,
+            exclusive_key=True,
+        )
+    assert ledger.owned == []
+    assert ledger.unresolved == ["run-owned/same-bytes.json"]
+    assert storage.deleted == []
 
 
 def test_main_removes_run_cache_before_publication_commit(monkeypatch) -> None:
