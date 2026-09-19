@@ -1020,6 +1020,8 @@ def submit_workflow(
     prepared_yaml: Path | None = None
     streamer: _LaunchStreamer | None = None
     bound_libero_job_id = ""
+    unverified_libero_job_id = ""
+    libero_binding_error = ""
     try:
         prepared = _prepare_workflow_submission(
             yaml_path,
@@ -1146,6 +1148,11 @@ def submit_workflow(
                 from npa.execution_preflight import libero_executable_profile_sha256
 
                 expected_profile_sha256 = libero_executable_profile_sha256(docs)
+                if libero_binding_error:
+                    return ReconciliationEvidence(
+                        ReconciliationState.UNAVAILABLE,
+                        error=libero_binding_error,
+                    )
                 if bound_libero_job_id:
                     expected_job_id, binding_error = bound_libero_job_id, ""
                 else:
@@ -1202,6 +1209,7 @@ def submit_workflow(
                 )
             if libero_submission:
                 nonlocal bound_libero_job_id
+                nonlocal libero_binding_error, unverified_libero_job_id
                 parsed_job_id = _parse_job_id(
                     "\n".join(
                         part
@@ -1211,7 +1219,6 @@ def submit_workflow(
                 )
                 from npa.execution_preflight import libero_executable_profile_sha256
 
-                bound_libero_job_id = parsed_job_id if parsed_job_id.isdigit() else ""
                 verified_job_id = _verified_libero_job_id(
                     parsed_job_id,
                     run_id,
@@ -1222,6 +1229,12 @@ def submit_workflow(
                 )
                 if verified_job_id:
                     bound_libero_job_id = verified_job_id
+                elif parsed_job_id.isdigit():
+                    unverified_libero_job_id = parsed_job_id
+                    libero_binding_error = (
+                        "LIBERO launch returned success without an exact queue/name/profile "
+                        "binding; preserving indeterminate state and refusing retry"
+                    )
             return launch_result, diagnoses
 
         def _classify(exc: BaseException) -> tuple[EvidenceState, FailureCategory]:
@@ -1255,6 +1268,9 @@ def submit_workflow(
                 enriched["libero_profile_sha256"] = libero_executable_profile_sha256(docs)
                 if bound_libero_job_id:
                     enriched["libero_candidate_job_id"] = bound_libero_job_id
+                if unverified_libero_job_id:
+                    enriched["libero_unverified_candidate_job_id"] = unverified_libero_job_id
+                    enriched["libero_binding_error"] = libero_binding_error
             enriched["controller"] = {
                 **controller_health.to_dict(),
                 "selected_context": selected_context,
@@ -1753,18 +1769,43 @@ def _reconcile_managed_job_env(
     workload_markers: dict[str, set[str]] = {}
     expected_profile_sha256 = str(expected_profile_sha256 or "").strip()
     expected_job_id = str(expected_job_id or "").strip()
-    matching_rows = [
+    all_matching_rows = [
         row
         for row in rows
         if isinstance(row, Mapping)
         and str(row.get("job_name") or row.get("name") or "") == job_name
     ]
+    matching_rows = all_matching_rows
     if expected_job_id:
         matching_rows = [
             row
             for row in matching_rows
             if str(row.get("job_id") or row.get("id") or "") == expected_job_id
         ]
+        viable_other_rows = [
+            row
+            for row in all_matching_rows
+            if str(row.get("job_id") or row.get("id") or "") != expected_job_id
+            and not is_terminal_failure_job_status(
+                str(row.get("status") or "UNKNOWN").upper()
+            )
+        ]
+        if viable_other_rows and matching_rows:
+            return ReconciliationEvidence(
+                ReconciliationState.AMBIGUOUS,
+                error=(
+                    f"exact managed-job name {job_name!r} has another viable "
+                    "immutable ID beside its owner-bound job"
+                ),
+            )
+        if viable_other_rows and not matching_rows:
+            return ReconciliationEvidence(
+                ReconciliationState.UNAVAILABLE,
+                error=(
+                    "owner-bound LIBERO job is absent but another viable same-name "
+                    "managed job exists; refusing duplicate launch"
+                ),
+            )
     elif require_owner_binding:
         viable_rows = [
             row
@@ -1905,6 +1946,11 @@ def _load_libero_bound_job_id(
         job_id = str(
             launch.get("job_id") or launch.get("libero_candidate_job_id") or ""
         ).strip()
+        unverified_candidate = str(
+            launch.get("libero_unverified_candidate_job_id") or ""
+        ).strip()
+        if not job_id and unverified_candidate.isdigit():
+            return "", "a prior LIBERO launch has an unverified immutable job candidate"
         digest = str(launch.get("libero_profile_sha256") or "").strip()
         if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
             return "", "existing LIBERO launch ledger has no valid profile binding"
