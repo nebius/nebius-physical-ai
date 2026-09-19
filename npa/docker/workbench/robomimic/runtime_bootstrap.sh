@@ -48,7 +48,11 @@ fetch_runtime() {
   /usr/local/bin/python3 "${verifier}" fetch \
     --runtime-root "${runtime_root}" \
     --runtime-lock "${runtime_lock}" \
-    --expected-inventory-sha256 "${expected_inventory_sha256}"
+    --expected-inventory-sha256 "${expected_inventory_sha256}" \
+    --entitlement "${entitlement_file}" \
+    --expected-entitlement-sha256 "${expected_entitlement_sha256}" \
+    --expected-customer-binding-sha256 "${expected_customer_binding_sha256}" \
+    --expected-run-id "${NPA_BYOF_RUN_ID:-}"
 }
 
 case "${1:-}" in

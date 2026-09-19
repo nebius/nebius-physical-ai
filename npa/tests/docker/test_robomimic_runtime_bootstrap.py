@@ -1290,6 +1290,11 @@ def test_bootstrap_has_no_fetch_install_or_cache_population_path() -> None:
     assert "NPA_ROBOMIMIC_CUSTOMER_DENYLIST" in (
         IMAGE_ROOT / "verify_image.py"
     ).read_text(encoding="utf-8")
+    assert '"${verifier}" fetch' in text
+    assert '--entitlement "${entitlement_file}"' in text
+    assert "credential host binding" in (IMAGE_ROOT / "verify_image.py").read_text(
+        encoding="utf-8"
+    )
     assert "--expected-inventory-sha256" in text
     assert '"${verifier}" snapshot' in text
     assert 'NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT="${snapshot_root}"' in text
@@ -1358,6 +1363,57 @@ def test_runtime_fetch_denylist_has_safe_default_and_explicit_override(
     assert source == "runtime-input"
     assert pattern.search("blocked-wheel.whl")
     assert not pattern.search("safe-wheel.whl")
+
+
+def test_runtime_fetch_public_hosts_never_receive_customer_credentials() -> None:
+    assert (
+        verifier._runtime_fetch_auth_headers(
+            "https://files.pythonhosted.org/packages/example.whl", "HF_TOKEN", "secret"
+        )
+        == {}
+    )
+    assert (
+        verifier._runtime_fetch_auth_headers(
+            "https://download.pytorch.org/whl/example.whl", "NGC_API_KEY", "secret"
+        )
+        == {}
+    )
+
+
+def test_runtime_fetch_credentials_are_bound_to_provider_origins() -> None:
+    assert verifier._runtime_fetch_auth_headers(
+        "https://huggingface.co/org/example.whl", "HF_TOKEN", "secret"
+    ) == {"Authorization": "Bearer secret"}
+    assert verifier._runtime_fetch_auth_headers(
+        "https://ngc.nvidia.com/org/example.whl", "NGC_API_KEY", "secret"
+    ) == {"Authorization": "Bearer secret"}
+    with pytest.raises(verifier.VerificationError, match="host binding"):
+        verifier._runtime_fetch_auth_headers(
+            "https://huggingface.co/org/example.whl", "NGC_API_KEY", "secret"
+        )
+
+
+def test_runtime_fetch_does_not_remove_replaced_published_tree(tmp_path: Path) -> None:
+    published = tmp_path / "site-packages"
+    published.mkdir()
+    identity = verifier._runtime_path_identity(published)
+    published.rename(tmp_path / "replaced")
+    (tmp_path / "site-packages").mkdir()
+    with pytest.raises(verifier.VerificationError, match="ownership changed"):
+        verifier._remove_owned_runtime(published, identity)
+    assert (tmp_path / "site-packages").is_dir()
+
+
+def test_runtime_fetch_lock_is_adjacent_and_owner_only(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    lock_path, handle = verifier._acquire_runtime_fetch_lock(runtime_root)
+    try:
+        assert lock_path == tmp_path / ".runtime.fetch.lock"
+        assert lock_path.stat().st_mode & 0o077 == 0
+        assert not (runtime_root / ".fetch.lock").exists()
+    finally:
+        verifier._release_runtime_fetch_lock(lock_path, handle)
 
 
 def test_fetched_record_tree_rejects_changed_installed_member(tmp_path: Path) -> None:

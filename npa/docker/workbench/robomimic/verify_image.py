@@ -9,6 +9,7 @@ import binascii
 import configparser
 import csv
 from email.parser import BytesParser
+import fcntl
 import hashlib
 import io
 import json
@@ -77,12 +78,20 @@ RUNTIME_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
 # The metadata ceiling makes this independently bounded limit conservative for
 # the future exact operator-selected inventory while preventing inode exhaustion.
 RUNTIME_PAYLOAD_MAX_ENTRY_COUNT = 65_536
-RUNTIME_FETCH_ALLOWED_HOSTS = frozenset(
+RUNTIME_FETCH_PUBLIC_HOSTS = frozenset(
     {
         "download.pytorch.org",
         "files.pythonhosted.org",
         "pypi.org",
     }
+)
+RUNTIME_FETCH_CREDENTIAL_HOSTS = {
+    "HF_TOKEN": frozenset({"huggingface.co"}),
+    "NGC_API_KEY": frozenset({"ngc.nvidia.com", "nvcr.io"}),
+}
+RUNTIME_FETCH_ALLOWED_HOSTS = frozenset().union(
+    RUNTIME_FETCH_PUBLIC_HOSTS,
+    *RUNTIME_FETCH_CREDENTIAL_HOSTS.values(),
 )
 RUNTIME_FETCH_MANIFEST_MAX_BYTES = 4 * 1024 * 1024
 RUNTIME_FETCH_DEFAULT_DENYLIST = (
@@ -2172,7 +2181,7 @@ def _runtime_artifact_closure(lock: dict, inventory: dict) -> tuple[dict, int]:
 
 
 def _runtime_fetch_url(value: str) -> str:
-    """Accept only immutable HTTPS artifact URLs on approved public hosts."""
+    """Accept only immutable HTTPS artifact URLs on approved provider hosts."""
 
     parsed = urllib.parse.urlsplit(value)
     if (
@@ -2186,6 +2195,21 @@ def _runtime_fetch_url(value: str) -> str:
     ):
         raise VerificationError("runtime fetch URL is not an approved HTTPS endpoint")
     return value
+
+
+def _runtime_fetch_auth_headers(
+    url: str, credential_env: str, credential: str
+) -> dict[str, str]:
+    """Bind bearer credentials to their provider origin; public hosts stay anonymous."""
+
+    host = urllib.parse.urlsplit(_runtime_fetch_url(url)).hostname
+    if host in RUNTIME_FETCH_PUBLIC_HOSTS:
+        return {}
+    if host not in RUNTIME_FETCH_CREDENTIAL_HOSTS.get(credential_env, frozenset()):
+        raise VerificationError("runtime fetch credential host binding is unsupported")
+    if not credential:
+        raise VerificationError("customer runtime credential is absent")
+    return {"Authorization": f"Bearer {credential}"}
 
 
 def _runtime_fetch_denylist() -> tuple[re.Pattern[str], str]:
@@ -2244,10 +2268,13 @@ def _runtime_fetch_destination(runtime_root: Path, site_packages: str) -> Path:
     return site_root
 
 
-def _runtime_fetch_artifacts(artifacts: dict) -> str:
+def _runtime_fetch_artifacts(
+    artifacts: dict, credential_env: str, credential: str
+) -> str:
     denylist, denylist_source = _runtime_fetch_denylist()
     for artifact in artifacts.values():
         source = _runtime_fetch_url(str(artifact["source"]))
+        _runtime_fetch_auth_headers(source, credential_env, credential)
         for candidate in (artifact["filename"], source):
             if denylist.search(candidate):
                 raise VerificationError(
@@ -2258,7 +2285,7 @@ def _runtime_fetch_artifacts(artifacts: dict) -> str:
 
 def _runtime_fetch_plan(
     *, runtime_root: Path, runtime_lock_path: Path, expected_inventory_sha256: str
-) -> tuple[dict, dict, dict, str, str, Path, str]:
+) -> tuple[dict, dict, dict, str, str, Path, str, str]:
     """Validate the customer-authored artifact plan before any network access."""
     if not runtime_root.is_dir() or runtime_root.is_symlink():
         raise VerificationError("runtime fetch root is absent or is a symlink")
@@ -2271,9 +2298,9 @@ def _runtime_fetch_plan(
         require_read_only_mount=False,
     )
     artifacts, _ = _runtime_artifact_closure(lock, inventory)
-    _, _, site_packages = _runtime_fetch_contract(inventory)
+    credential_env, credential, site_packages = _runtime_fetch_contract(inventory)
     site_root = _runtime_fetch_destination(runtime_root, site_packages)
-    denylist_source = _runtime_fetch_artifacts(artifacts)
+    denylist_source = _runtime_fetch_artifacts(artifacts, credential_env, credential)
     return (
         lock,
         inventory,
@@ -2282,6 +2309,7 @@ def _runtime_fetch_plan(
         inventory_sha256,
         site_root,
         denylist_source,
+        credential_env,
     )
 
 
@@ -2301,13 +2329,19 @@ class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _download_runtime_wheel(
-    *, artifact: dict[str, str | int], destination: Path, credential: str
+    *,
+    artifact: dict[str, str | int],
+    destination: Path,
+    credential_env: str,
+    credential: str,
 ) -> None:
     """Download one exact wheel into a private temporary wheelhouse."""
 
     request = urllib.request.Request(
         _runtime_fetch_url(str(artifact["source"])),
-        headers={"Authorization": f"Bearer {credential}"},
+        headers=_runtime_fetch_auth_headers(
+            str(artifact["source"]), credential_env, credential
+        ),
     )
     opener = urllib.request.build_opener(_SameHostRedirect())
     try:
@@ -2428,14 +2462,22 @@ def _runtime_pip_probe(interpreter: Path) -> None:
 
 
 def _download_runtime_artifacts(
-    wheelhouse: Path, artifacts: dict, credential: str
+    wheelhouse: Path,
+    artifacts: dict,
+    credential_env: str,
+    credential: str,
+    before_request: Any,
 ) -> Path:
     requirement_file = wheelhouse / "requirements.txt"
     lines = []
     for name, artifact in artifacts.items():
         wheel = wheelhouse / str(artifact["filename"])
+        before_request()
         _download_runtime_wheel(
-            artifact=artifact, destination=wheel, credential=credential
+            artifact=artifact,
+            destination=wheel,
+            credential_env=credential_env,
+            credential=credential,
         )
         lines.append(
             f"{name}=={artifact['version']} --hash=sha256:{artifact['sha256']}"
@@ -2477,6 +2519,75 @@ def _install_runtime_artifacts(
     return staged_site
 
 
+def _runtime_path_identity(path: Path) -> tuple[int, int]:
+    details = path.lstat()
+    if not stat.S_ISDIR(details.st_mode) or path.is_symlink():
+        raise VerificationError("published runtime tree is not an owned directory")
+    return details.st_dev, details.st_ino
+
+
+def _remove_owned_runtime(path: Path, identity: tuple[int, int]) -> None:
+    try:
+        if _runtime_path_identity(path) != identity:
+            raise VerificationError("published runtime ownership changed")
+        shutil.rmtree(path, ignore_errors=False)
+    except FileNotFoundError as exc:
+        raise VerificationError("published runtime ownership is ambiguous") from exc
+
+
+def _acquire_runtime_fetch_lock(runtime_root: Path) -> tuple[Path, Any]:
+    if not runtime_root.is_dir() or runtime_root.is_symlink():
+        raise VerificationError("runtime fetch root is absent or is a symlink")
+    lock_path = runtime_root.parent / f".{runtime_root.name}.fetch.lock"
+    try:
+        flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+        descriptor = os.open(lock_path, flags, 0o600)
+        details = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_nlink != 1
+            or details.st_uid != os.geteuid()
+            or details.st_mode & 0o077
+        ):
+            os.close(descriptor)
+            raise VerificationError("runtime fetch ownership lock is unsafe")
+        handle = os.fdopen(descriptor, "a+b")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except (OSError, VerificationError) as exc:
+        raise VerificationError("runtime fetch ownership lock unavailable") from exc
+    return lock_path, handle
+
+
+def _release_runtime_fetch_lock(lock_path: Path, handle: Any) -> None:
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+    except OSError as exc:
+        raise VerificationError("runtime fetch ownership lock release failed") from exc
+
+
+def _runtime_entitlement_rechecker(
+    *,
+    entitlement_path: Path,
+    runtime_lock_path: Path,
+    expected_entitlement_sha256: str,
+    expected_customer_binding_sha256: str,
+    expected_run_id: str,
+    expected_inventory_sha256: str,
+) -> Any:
+    def recheck() -> None:
+        verify_customer_runtime_entitlement(
+            entitlement_path=entitlement_path,
+            runtime_lock_path=runtime_lock_path,
+            expected_entitlement_sha256=expected_entitlement_sha256,
+            expected_customer_binding_sha256=expected_customer_binding_sha256,
+            expected_run_id=expected_run_id,
+            expected_inventory_sha256=expected_inventory_sha256,
+        )
+
+    return recheck
+
+
 def _publish_fetched_runtime(
     *,
     staged_site: Path,
@@ -2489,15 +2600,16 @@ def _publish_fetched_runtime(
     lock_hash: str,
     inventory_sha256: str,
     denylist_source: str,
+    before_publish: Any,
 ) -> dict[str, Any]:
     record_count = _verify_fetched_record_tree(staged_site, artifacts)
-    site_root.parent.mkdir(parents=True, exist_ok=True)
-    staged_site.replace(site_root)
-    proof = verify_external_runtime(
+    before_publish()
+    proof = _publish_and_verify_runtime(
+        staged_site=staged_site,
+        site_root=site_root,
         runtime_root=runtime_root,
         runtime_lock_path=runtime_lock_path,
         expected_inventory_sha256=expected_inventory_sha256,
-        require_read_only_mount=False,
     )
     return {
         "schema": "npa.robomimic.runtime-fetch.v1",
@@ -2512,14 +2624,36 @@ def _publish_fetched_runtime(
     }
 
 
-def _runtime_fetch_operation(
+def _publish_and_verify_runtime(
     *,
-    plan: tuple,
+    staged_site: Path,
+    site_root: Path,
     runtime_root: Path,
     runtime_lock_path: Path,
     expected_inventory_sha256: str,
+) -> dict[str, Any]:
+    site_root.parent.mkdir(parents=True, exist_ok=True)
+    staged_site.replace(site_root)
+    published_identity = _runtime_path_identity(site_root)
+    try:
+        return verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+            require_read_only_mount=False,
+        )
+    except (OSError, VerificationError):
+        _remove_owned_runtime(site_root, published_identity)
+        raise
+
+
+def _runtime_fetch_install(
+    *,
+    plan: tuple,
+    runtime_root: Path,
     wheelhouse: Path,
     stage: Path,
+    before_request: Any,
 ) -> dict[str, Any]:
     (
         lock,
@@ -2529,26 +2663,82 @@ def _runtime_fetch_operation(
         inventory_sha256,
         site_root,
         denylist_source,
+        credential_env,
     ) = plan
+    credential = os.environ[credential_env]
+    staged_site = _stage_runtime_install(
+        runtime_root=runtime_root,
+        artifacts=artifacts,
+        credential_env=credential_env,
+        credential=credential,
+        wheelhouse=wheelhouse,
+        stage=stage,
+        before_request=before_request,
+    )
+    return {
+        "staged_site": staged_site,
+        "lock": lock,
+        "inventory_sha256": inventory_sha256,
+        "lock_hash": lock_hash,
+        "site_root": site_root,
+        "artifacts": artifacts,
+        "denylist_source": denylist_source,
+    }
+
+
+def _stage_runtime_install(
+    *,
+    runtime_root: Path,
+    artifacts: dict,
+    credential_env: str,
+    credential: str,
+    wheelhouse: Path,
+    stage: Path,
+    before_request: Any,
+) -> Path:
+    before_request()
     interpreter = runtime_root / "payload" / "bin" / "python"
     _runtime_pip_probe(interpreter)
     requirement_file = _download_runtime_artifacts(
-        wheelhouse, artifacts, os.environ[inventory["fetch"]["credential_env"]]
+        wheelhouse,
+        artifacts,
+        credential_env,
+        credential,
+        before_request,
     )
-    staged_site = _install_runtime_artifacts(
-        interpreter, wheelhouse, stage, requirement_file
+    before_request()
+    return _install_runtime_artifacts(interpreter, wheelhouse, stage, requirement_file)
+
+
+def _runtime_fetch_operation(
+    *,
+    plan: tuple,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    wheelhouse: Path,
+    stage: Path,
+    before_request: Any,
+) -> dict[str, Any]:
+    prepared = _runtime_fetch_install(
+        plan=plan,
+        runtime_root=runtime_root,
+        wheelhouse=wheelhouse,
+        stage=stage,
+        before_request=before_request,
     )
     return _publish_fetched_runtime(
-        staged_site=staged_site,
-        site_root=site_root,
+        staged_site=prepared["staged_site"],
+        site_root=prepared["site_root"],
         runtime_root=runtime_root,
         runtime_lock_path=runtime_lock_path,
         expected_inventory_sha256=expected_inventory_sha256,
-        artifacts=artifacts,
-        lock=lock,
-        lock_hash=lock_hash,
-        inventory_sha256=inventory_sha256,
-        denylist_source=denylist_source,
+        artifacts=prepared["artifacts"],
+        lock=prepared["lock"],
+        lock_hash=prepared["lock_hash"],
+        inventory_sha256=prepared["inventory_sha256"],
+        denylist_source=prepared["denylist_source"],
+        before_publish=before_request,
     )
 
 
@@ -2558,11 +2748,10 @@ def _run_runtime_fetch_transaction(
     runtime_root: Path,
     runtime_lock_path: Path,
     expected_inventory_sha256: str,
+    before_request: Any,
 ) -> dict[str, Any]:
-    site_root = plan[5]
     wheelhouse = Path(tempfile.mkdtemp(prefix=".npa-runtime-wheels-", dir=runtime_root))
     stage = Path(tempfile.mkdtemp(prefix=".npa-runtime-site-", dir=runtime_root))
-    published = False
     try:
         result = _runtime_fetch_operation(
             plan=plan,
@@ -2571,31 +2760,52 @@ def _run_runtime_fetch_transaction(
             expected_inventory_sha256=expected_inventory_sha256,
             wheelhouse=wheelhouse,
             stage=stage,
+            before_request=before_request,
         )
-        published = True
         return result
     finally:
-        if not published and site_root.exists():
-            shutil.rmtree(site_root, ignore_errors=False)
         shutil.rmtree(wheelhouse, ignore_errors=False)
         shutil.rmtree(stage, ignore_errors=False)
 
 
 def fetch_external_runtime(
-    *, runtime_root: Path, runtime_lock_path: Path, expected_inventory_sha256: str
+    *,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    entitlement_path: Path,
+    expected_entitlement_sha256: str,
+    expected_customer_binding_sha256: str,
+    expected_run_id: str,
 ) -> dict[str, Any]:
     """Fetch customer-authorized wheels, verify RECORDs, then publish one site tree."""
-    plan = _runtime_fetch_plan(
-        runtime_root=runtime_root,
-        runtime_lock_path=runtime_lock_path,
-        expected_inventory_sha256=expected_inventory_sha256,
-    )
-    return _run_runtime_fetch_transaction(
-        plan=plan,
-        runtime_root=runtime_root,
-        runtime_lock_path=runtime_lock_path,
-        expected_inventory_sha256=expected_inventory_sha256,
-    )
+    _, lock_handle = _acquire_runtime_fetch_lock(runtime_root)
+    try:
+        before_request = _runtime_entitlement_rechecker(
+            entitlement_path=entitlement_path,
+            runtime_lock_path=runtime_lock_path,
+            expected_entitlement_sha256=expected_entitlement_sha256,
+            expected_customer_binding_sha256=expected_customer_binding_sha256,
+            expected_run_id=expected_run_id,
+            expected_inventory_sha256=expected_inventory_sha256,
+        )
+        before_request()
+        plan = _runtime_fetch_plan(
+            runtime_root=runtime_root,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+        )
+        return _run_runtime_fetch_transaction(
+            plan=plan,
+            runtime_root=runtime_root,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+            before_request=before_request,
+        )
+    finally:
+        _release_runtime_fetch_lock(
+            runtime_root.parent / f".{runtime_root.name}.fetch.lock", lock_handle
+        )
 
 
 def _runtime_declared_objects(
@@ -3155,6 +3365,7 @@ def _entitlement_parser(subparsers: Any) -> None:
 
 def _fetch_parser(subparsers: Any) -> None:
     fetch = subparsers.add_parser("fetch")
+    fetch.add_argument("--entitlement", type=Path, required=True)
     fetch.add_argument("--runtime-root", type=Path, default=Path(RUNTIME_ROOT_DEFAULT))
     fetch.add_argument(
         "--runtime-lock",
@@ -3164,6 +3375,17 @@ def _fetch_parser(subparsers: Any) -> None:
     fetch.add_argument(
         "--expected-inventory-sha256",
         default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""),
+    )
+    fetch.add_argument(
+        "--expected-entitlement-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256", ""),
+    )
+    fetch.add_argument(
+        "--expected-customer-binding-sha256",
+        default=os.environ.get("NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256", ""),
+    )
+    fetch.add_argument(
+        "--expected-run-id", default=os.environ.get("NPA_BYOF_RUN_ID", "")
     )
 
 
@@ -3291,16 +3513,24 @@ def _dispatch_runtime(args: argparse.Namespace) -> dict:
             require_source_read_only=not args.allow_writable_source,
         )
     if args.mode == "fetch":
-        return fetch_external_runtime(
-            runtime_root=args.runtime_root,
-            runtime_lock_path=args.runtime_lock,
-            expected_inventory_sha256=args.expected_inventory_sha256,
-        )
+        return _dispatch_fetch(args)
     if args.mode == "assert-missing-runtime":
         return verify_missing_runtime_refusal(
             runtime_root=args.runtime_root, runtime_lock_path=args.runtime_lock
         )
     raise AssertionError(f"unhandled mode: {args.mode}")
+
+
+def _dispatch_fetch(args: argparse.Namespace) -> dict:
+    return fetch_external_runtime(
+        runtime_root=args.runtime_root,
+        runtime_lock_path=args.runtime_lock,
+        expected_inventory_sha256=args.expected_inventory_sha256,
+        entitlement_path=args.entitlement,
+        expected_entitlement_sha256=args.expected_entitlement_sha256,
+        expected_customer_binding_sha256=args.expected_customer_binding_sha256,
+        expected_run_id=args.expected_run_id,
+    )
 
 
 def main() -> int:

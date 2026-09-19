@@ -61,8 +61,15 @@
     "allowed_hosts": [
       "download.pytorch.org",
       "files.pythonhosted.org",
-      "pypi.org"
+      "pypi.org",
+      "huggingface.co",
+      "ngc.nvidia.com",
+      "nvcr.io"
     ],
+    "credential_hosts": {
+      "HF_TOKEN": ["huggingface.co"],
+      "NGC_API_KEY": ["ngc.nvidia.com", "nvcr.io"]
+    },
     "credential_envs": [
       "HF_TOKEN",
       "NGC_API_KEY"
