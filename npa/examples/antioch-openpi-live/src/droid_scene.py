@@ -1,9 +1,10 @@
 """Native DROID embodiment and camera calibration for joint-position policies.
 
-Wrist calibration follows NVIDIA RoboLab's Apache-2.0 DROID reference at
-ad45d4f974725d020f82c2b0d77d78533aeba2b3 (robolab/robots/droid.py and
-robolab/variations/camera.py). Robot assets remain in the operator's Isaac
-runtime; this module contains no redistributed meshes or simulator payload.
+The joint and image contracts follow NVIDIA RoboLab's Apache-2.0 DROID
+reference at ad45d4f974725d020f82c2b0d77d78533aeba2b3. Fixed camera mounts
+and lenses are calibrated against native renders of recorded approach poses.
+Robot assets remain in the operator's Isaac runtime; this module contains no
+redistributed meshes or simulator payload.
 """
 
 from __future__ import annotations
@@ -20,20 +21,21 @@ CAMERA_PATHS = {"exterior": "/World/ExteriorDroid", "wrist": f"{GRIPPER_BASE}/wr
 NATIVE_POLICY_RESOLUTION = (180, 320)
 CAMERA_CALIBRATION = {
     "exterior": {
-        # The over-shoulder view loses the cube behind the forearm near grasp.
-        # This fixed front-oblique view was checked at recorded failure poses.
-        "position": (0.85, 0.48, 0.75),
-        "quaternion_wxyz": (0.32286024864799473, 0.13954537788660748,
-                             0.37139296250295056, 0.8592762156354155),
+        # Low side view keeps the target clear of the forearm across recorded
+        # failure poses, while retaining the approaching fingers in frame.
+        "position": (0.35, -0.65, 0.38),
+        "quaternion_wxyz": (0.7760544786384438, 0.6276901716946259,
+                             -0.03848190493529904, -0.04757769998365795),
         "focal_length": 2.8,
     },
     "wrist": {
-        # The native accessory frame differs from RoboLab's flattened asset.
-        # Rotate the reference mount -90 degrees about local Y. Verified against
-        # rendered initial/approach poses; this remains rigidly tool-mounted.
-        "position": (0.074, -0.031, 0.011),
-        "quaternion_wxyz": (0.110288973, 0.692134004, 0.704152674, 0.113823876),
-        "focal_length": 2.8,
+        # A fixed bracket and wider lens retain the target during close approach.
+        # The optical frame is calibrated in the native Robotiq body basis;
+        # neither this transform nor the exterior camera tracks the object.
+        "position": (0.12, -0.031, -0.025),
+        "quaternion_wxyz": (0.2514280790974722, 0.6726227449022252,
+                             0.6804223192506174, 0.14624647533244078),
+        "focal_length": 2.1,
     },
 }
 

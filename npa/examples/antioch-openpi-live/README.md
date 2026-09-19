@@ -55,17 +55,21 @@ The pickup uses native 320x180 RGB inputs, resized to 224x126 and centered in a
 and contrast checks inspect only the content rows, so padding cannot disguise a
 blank or overexposed sensor. Target resolution checks use the exact model pixels.
 
-The fixed exterior camera views the table from the front and side, keeping the
-cube visible when the forearm occludes the former over-shoulder view. A fixed
-wrist camera inherits the Robotiq body transform; it never tracks the cube.
-The wrist extrinsics and optics follow the public
-[NVIDIA RoboLab DROID reference](https://github.com/NVlabs/RoboLab/blob/ad45d4f974725d020f82c2b0d77d78533aeba2b3/robolab/robots/droid.py),
-with a -90-degree local-Y basis correction for Isaac's native wrist accessory.
-No RoboLab robot assets are redistributed. Native diagnostic renders verify
-the exterior's target visibility at the initial, closest-approach, and previous
-visibility-loss poses. The wrist can still be occluded at unfavorable poses;
-the independent exterior view supplies target visibility then. Pickup success
-still requires the complete live policy run.
+The fixed exterior camera views the table from a low side angle, keeping the
+cube clear of the forearm at all seven inspected poses from failed policy runs.
+A fixed wrist bracket moves the camera away from the tool body and uses a wider
+2.1 mm lens. Native diagnostic renders show the complete initial target and
+improved visibility at both previous closest-approach poses and one earlier
+visibility-loss pose.
+The wrist still cannot see the cube at every unfavorable arm pose; the independent
+exterior view supplies target visibility then. Both mounts remain fixed to their
+respective world or rigid-body frames and never track the cube.
+The joint and image contracts follow the public
+[NVIDIA RoboLab DROID reference](https://github.com/NVlabs/RoboLab/blob/ad45d4f974725d020f82c2b0d77d78533aeba2b3/robolab/robots/droid.py).
+The camera transforms and focal lengths are calibrated for Isaac's native
+Robotiq accessory, rather than copied across different asset frames.
+No RoboLab robot assets are redistributed. The camera diagnostics establish
+framing only; pickup success still requires the complete live policy run.
 Both cameras must initially contain the target and grasp region geometrically,
 and both must visibly resolve the red target before inference.
 
