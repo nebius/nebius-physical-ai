@@ -2,6 +2,18 @@
 
 [Workbench docs](README.md)
 
+## Integration onto current main
+
+The measurements below record the original validation campaign and its source
+snapshot. The PR was subsequently extracted onto main at `8c9c2909b`, preserving
+the newer S3 URI validation, `require_empty` upload preflight, bucket-root
+prefix handling, and portable object keys. The extracted version passed 334
+focused tests (80 optional tests skipped) and all 7 committed live credential,
+manifest-discovery, and transfer tests against fresh Nebius storage. Its full
+baseline comparison and renewed GPU validation are tracked separately in the PR;
+the historical timing and GPU results below are not a claim that the extracted
+source snapshot has already passed those checks.
+
 Scope: three shared, high-frequency code paths in `npa` — credential
 preflight, S3 directory transfer, and workflow-run manifest discovery —
 changed to run independent I/O concurrently instead of serially. Base commit
@@ -216,7 +228,7 @@ either job started. SHA256 of each staged module file matched that frozen
 reviewed snapshot exactly, verified independently on the operator's own
 machine, not just the jobs' self-report. That frozen snapshot predates one
 documentation-only change (a docstring clarification, no behavior change)
-that later landed in `sim2real_health.py`; today's repository differs from
+that later landed in `sim2real_health.py`; the final original-campaign snapshot differed from
 what both GPU jobs actually ran only by that one change, confirmed
 executable-AST-equivalent (source with docstrings stripped is identical) —
 the other 4 modules remain byte-identical. Both jobs exercised the real
@@ -271,7 +283,7 @@ file.
 
 ## Cleanup
 
-The dedicated validation project's real infrastructure has been torn down:
+The original campaign's dedicated validation infrastructure was torn down:
 GPU compute (both jobs) reached terminal `COMPLETED` state, and an
 independent post-completion inventory audit of that project found zero
 remaining jobs, endpoints, instances, disks, filesystems, snapshots, GPU
