@@ -311,15 +311,29 @@ def test_capability_file_fsync_failure_rolls_back_marker(
     state_dir = tmp_path / "capabilities"
     capability = json.loads(_environment()[runtime.AUTH_ENV])
     original_fsync = runtime.os.fsync
+    original_unlink = runtime.os.unlink
+    marker_name = hashlib.sha256(capability["capability_id"].encode()).hexdigest()
+    fsync_kinds: list[str] = []
+    unlink_receipts: list[tuple[str, int | None]] = []
 
     def fail_file_fsync(descriptor: int) -> None:
+        kind = "directory" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
+        fsync_kinds.append(kind)
         if stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise OSError("synthetic marker fsync failure")
         original_fsync(descriptor)
 
+    def record_unlink(name: str, *, dir_fd: int | None = None) -> None:
+        unlink_receipts.append((str(name), dir_fd))
+        original_unlink(name, dir_fd=dir_fd)
+
     monkeypatch.setattr(runtime.os, "fsync", fail_file_fsync)
+    monkeypatch.setattr(runtime.os, "unlink", record_unlink)
     with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
         runtime._consume_capability(capability, state_dir=state_dir)
+    assert fsync_kinds == ["file", "directory"]
+    assert [name for name, _dir_fd in unlink_receipts] == [marker_name]
+    assert all(dir_fd is not None for _name, dir_fd in unlink_receipts)
     assert list(state_dir.iterdir()) == []
 
 
@@ -329,18 +343,63 @@ def test_capability_directory_fsync_failure_rolls_back_marker(
     state_dir = tmp_path / "capabilities"
     capability = json.loads(_environment()[runtime.AUTH_ENV])
     original_fsync = runtime.os.fsync
-    calls = 0
+    original_unlink = runtime.os.unlink
+    marker_name = hashlib.sha256(capability["capability_id"].encode()).hexdigest()
+    fsync_kinds: list[str] = []
+    unlink_receipts: list[tuple[str, int | None]] = []
 
     def fail_directory_commit(descriptor: int) -> None:
-        nonlocal calls
-        calls += 1
-        if calls == 2 and stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        kind = "directory" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
+        fsync_kinds.append(kind)
+        if kind == "directory" and fsync_kinds.count("directory") == 1:
             raise OSError("synthetic directory fsync failure")
         original_fsync(descriptor)
 
+    def record_unlink(name: str, *, dir_fd: int | None = None) -> None:
+        unlink_receipts.append((str(name), dir_fd))
+        original_unlink(name, dir_fd=dir_fd)
+
     monkeypatch.setattr(runtime.os, "fsync", fail_directory_commit)
+    monkeypatch.setattr(runtime.os, "unlink", record_unlink)
     with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
         runtime._consume_capability(capability, state_dir=state_dir)
+    assert fsync_kinds == ["file", "directory", "directory"]
+    assert [name for name, _dir_fd in unlink_receipts] == [marker_name]
+    assert all(dir_fd is not None for _name, dir_fd in unlink_receipts)
+    assert list(state_dir.iterdir()) == []
+
+
+def test_capability_rollback_fsync_failure_preserves_exact_recovery_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    state_dir = tmp_path / "capabilities"
+    capability = json.loads(_environment()[runtime.AUTH_ENV])
+    original_fsync = runtime.os.fsync
+    original_unlink = runtime.os.unlink
+    marker_name = hashlib.sha256(capability["capability_id"].encode()).hexdigest()
+    fsync_kinds: list[str] = []
+    unlink_receipts: list[tuple[str, int | None]] = []
+
+    def fail_rollback_fsync(descriptor: int) -> None:
+        kind = "directory" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
+        fsync_kinds.append(kind)
+        if kind == "directory":
+            raise OSError("synthetic rollback directory fsync failure")
+        original_fsync(descriptor)
+
+    def record_unlink(name: str, *, dir_fd: int | None = None) -> None:
+        unlink_receipts.append((str(name), dir_fd))
+        original_unlink(name, dir_fd=dir_fd)
+
+    monkeypatch.setattr(runtime.os, "fsync", fail_rollback_fsync)
+    monkeypatch.setattr(runtime.os, "unlink", record_unlink)
+    with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
+        runtime._consume_capability(capability, state_dir=state_dir)
+    # The commit and rollback attempts are both visible, while the marker is
+    # removed and no private contents enter the receipt.
+    assert fsync_kinds == ["file", "directory", "directory"]
+    assert [name for name, _dir_fd in unlink_receipts] == [marker_name]
+    assert all(dir_fd is not None for _name, dir_fd in unlink_receipts)
     assert list(state_dir.iterdir()) == []
 
 

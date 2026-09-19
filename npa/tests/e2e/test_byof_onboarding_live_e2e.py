@@ -734,6 +734,14 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
     )
     submitted = _parse_last_json_blob(combined)
     assert submitted.get("status") == "SUBMITTED", submitted
+    submitted_job_id = submitted.get("job_id")
+    if submitted_job_id is not None:
+        assert (
+            isinstance(submitted_job_id, str)
+            and submitted_job_id.isascii()
+            and submitted_job_id.isdecimal()
+            and not submitted_job_id.startswith("0")
+        ), "live receipt contained an invalid managed-job identity"
 
     client = s3_client_for_project(project, allow_host_creds=True)
     prefix = parsed_output.path.strip("/") + f"/{run_id}/"
@@ -763,7 +771,12 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
                 f"{max_wait_seconds}s live-test deadline"
             )
     finally:
-        if summary is None and submitted.get("job_id"):
+        if summary is None:
+            if not isinstance(submitted_job_id, str) or not submitted_job_id:
+                pytest.fail(
+                    "RoboTwin live receipt had no exact managed-job identity; "
+                    "no name-based cleanup was attempted and recovery context is retained"
+                )
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
                 from npa.orchestration.skypilot.workflow_state import (
@@ -771,14 +784,21 @@ def test_live_robotwin_build_push_run_and_artifacts() -> None:
                 )
 
                 sky = resolve_config()
-                cancel_workflow_job(
+                cleanup_receipt = cancel_workflow_job(
                     sky_bin=str(sky.sky_bin),
-                    job_id=str(submitted["job_id"]),
+                    job_id=submitted_job_id,
                     run_id=f"robotwin-launcher-{os.getpid()}",
                     cluster=f"robotwin-launcher-{os.getpid()}",
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                pytest.fail(
+                    "RoboTwin live cleanup failed before a receipt was produced; "
+                    f"recovery context is retained ({type(exc).__name__})"
+                )
+            assert isinstance(cleanup_receipt, dict)
+            assert cleanup_receipt.get("job_id") == submitted_job_id
+            assert cleanup_receipt.get("cancel_returncode") == 0
+            assert cleanup_receipt.get("down_returncode") == 0
     assert summary is not None
     assert summary["status"] == "success"
     assert summary["run_id"] == run_id
