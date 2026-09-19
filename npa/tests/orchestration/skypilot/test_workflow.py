@@ -2767,6 +2767,34 @@ def test_submission_cleanup_retains_private_context_on_unverified_failure(
     assert marker.is_file() and cleanup.result.errors and not cleanup.verified
 
 
+def test_submission_cleanup_retains_original_failure_on_interrupt(
+    monkeypatch, tmp_path
+):
+    owned = tmp_path / "owned-submission"
+    owned.mkdir(mode=0o700)
+    cleanup = workflow_module._SubmissionCleanup(
+        "synthetic",
+        {},
+        "/sky",
+        None,
+        1,
+        owned / "private-config",
+        job_id="41",
+        active=True,
+        submitting=False,
+        cleanup_on_failure=True,
+    )
+    monkeypatch.setattr(
+        cleanup, "_cancel_exact", lambda: (_ for _ in ()).throw(KeyboardInterrupt())
+    )
+
+    workflow_module._finish_failed_submission(owned, cleanup)
+
+    assert cleanup.result.errors == ["exact managed-job cleanup unavailable"]
+    assert cleanup.requested and not cleanup.verified and not cleanup.busy
+    assert owned.is_dir()
+
+
 @pytest.mark.parametrize(
     ("mutation", "name"),
     [

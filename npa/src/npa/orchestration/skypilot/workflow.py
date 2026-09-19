@@ -258,7 +258,7 @@ class _SubmissionCleanup:
             try:
                 self.result = self._cancel_exact()
                 self.verified = self.result.verified
-            except Exception:  # Cleanup cannot replace the original failure.
+            except BaseException:  # Cleanup cannot replace the original failure.
                 self.result = CleanupResult(
                     errors=["exact managed-job cleanup unavailable"]
                 )
