@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -3694,6 +3695,94 @@ def test_confidential_controller_probe_omits_context_argument() -> None:
     assert result.healthy is True
     assert all("--context" not in cmd for cmd in calls)
     assert all(private_context not in json.dumps(cmd) for cmd in calls)
+
+
+def test_native_controller_probe_environment_excludes_launch_secrets() -> None:
+    environment = {
+        "KUBECONFIG": "/owner-only/materialized",
+        "HOME": "/owner-only/home",
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+        "AWS_ACCESS_KEY_ID": "synthetic-access",
+        "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+        "AWS_SESSION_TOKEN": "synthetic-session",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1": "synthetic-auth",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX": "s3://private/output",
+        "SKYPILOT_API_SERVER_ENDPOINT": "https://private-api",
+    }
+
+    assert workflow_module._controller_probe_environment(environment) == {
+        "KUBECONFIG": "/owner-only/materialized",
+        "HOME": "/owner-only/home",
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+    }
+
+
+def test_native_context_digest_sanitizes_kubectl_environment(
+    monkeypatch, tmp_path
+) -> None:
+    home = tmp_path / "home"
+    store = home / ".sky" / "api_server"
+    store.mkdir(parents=True)
+    (store / "requests.db").write_text("synthetic", encoding="utf-8")
+    config = tmp_path / "global.yaml"
+    config.write_text("api_server: {}\n", encoding="utf-8")
+    sky_executable = tmp_path / "sky" / "bin" / "sky"
+    environment = {
+        "HOME": str(home),
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+        "KUBECONFIG": str(tmp_path / "kubeconfig"),
+        "SKYPILOT_USER_ID": "synthetic-user",
+        "SKYPILOT_GLOBAL_CONFIG": str(config),
+        "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:50123",
+        "AWS_ACCESS_KEY_ID": "synthetic-access",
+        "AWS_SECRET_ACCESS_KEY": "synthetic-secret",
+        "AWS_SESSION_TOKEN": "synthetic-session",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_RUNTIME_AUTH_V1": "synthetic-auth",
+        "NPA_INTERNAL_BYOF_ROBOTWIN_OUTPUT_PREFIX": "s3://private/output",
+    }
+    digest = workflow_module.hashlib.sha256
+    record = {
+        "state": "ready",
+        "marker": "synthetic-marker",
+        "port": 50123,
+        "interpreter": str(sky_executable.parent / "python"),
+        "config_sha256": digest(config.read_bytes()).hexdigest(),
+        "environment_binding": {
+            name: digest(environment[name].encode()).hexdigest()
+            for name in ("HOME", "SKYPILOT_USER_ID", "KUBECONFIG")
+        },
+        "identity_files": [],
+    }
+    observed = {}
+    monkeypatch.setattr(local_api_module, "_locked", lambda _root: nullcontext())
+    monkeypatch.setattr(local_api_module, "_read", lambda _root: record)
+    monkeypatch.setattr(local_api_module, "_process", lambda _record: {"pid": 1})
+    monkeypatch.setattr(local_api_module, "_listener_owned", lambda *_args: True)
+    monkeypatch.setattr(
+        local_api_module, "_endpoint", lambda _record: "http://127.0.0.1:50123"
+    )
+
+    def probe(*_args, **kwargs):
+        observed.update(kwargs["env"])
+        return workflow_module.ControllerExecutionProbe(True, "cwd_live", identity="i")
+
+    monkeypatch.setattr(workflow_module, "_probe_kubernetes_controller_cwd", probe)
+    workflow_module._native_context_digest(
+        isolated_dir=tmp_path,
+        controller="synthetic-controller",
+        context="",
+        sky_executable=sky_executable,
+        environment=environment,
+    )
+    assert observed == {
+        "HOME": str(home),
+        "PATH": "/usr/bin",
+        "LANG": "C.UTF-8",
+        "KUBECONFIG": str(tmp_path / "kubeconfig"),
+    }
 
 
 def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:

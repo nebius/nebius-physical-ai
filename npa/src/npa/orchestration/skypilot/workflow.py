@@ -3155,6 +3155,28 @@ def _controller_incarnation(pod: Mapping[str, Any]) -> str:
                                "containers": sorted(containers, key=lambda row: row["name"])})
 
 
+_CONTROLLER_PROBE_ENV_KEYS = (
+    "KUBECONFIG",
+    "HOME",
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TMPDIR",
+)
+
+
+def _controller_probe_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    """Keep controller probes independent of the confidential launch environment."""
+
+    return {
+        name: str(environment[name])
+        for name in _CONTROLLER_PROBE_ENV_KEYS
+        if environment.get(name)
+    }
+
+
 def _native_context_digest(*, isolated_dir, controller, context, sky_executable, environment):
     from npa.orchestration.skypilot import local_api
     from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable, observation_digest
@@ -3177,7 +3199,10 @@ def _native_context_digest(*, isolated_dir, controller, context, sky_executable,
                "config": record["config_sha256"], "files": record.get("identity_files"),
                "endpoint": local_api._endpoint(record)}
     probe = _probe_kubernetes_controller_cwd(
-        controller, context=context, env=environment, use_current_context=not context,
+        controller,
+        context=context,
+        env=_controller_probe_environment(environment),
+        use_current_context=not context,
     )
     if not probe.healthy or not probe.identity:
         raise NativeResultUnavailable("controller incarnation is unverified; context retained")
