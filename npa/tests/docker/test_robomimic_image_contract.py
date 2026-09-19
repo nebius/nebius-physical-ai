@@ -1683,7 +1683,7 @@ def test_verifier_changed_functions_remain_reviewable() -> None:
     verifier = IMAGE_ROOT / "verify_image.py"
     tree = ast.parse(verifier.read_text(encoding="utf-8"))
     changed_lines: set[int] = set()
-    for revision in ("HEAD^ HEAD", "HEAD"):
+    for revision in ("origin/main HEAD", "HEAD"):
         result = subprocess.run(
             [
                 "git",
