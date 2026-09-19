@@ -31,6 +31,8 @@ SOURCE_PATHS = (
     "docker/workbench/habitat-sim/verify_apt_source.py",
     "docker/workbench/habitat-sim/verify_image.py",
     "docker/workbench/packaging-contract.yaml",
+    "scripts/image_byte_scan/core.py",
+    "scripts/image_byte_scan/habitat_sim_verification.py",
     "src/npa/__init__.py",
     "src/npa/workflows/__init__.py",
     "src/npa/workflows/habitat_sim_smoke.py",
@@ -178,7 +180,7 @@ def test_builder_keeps_relative_output_bound_to_original_cwd(tmp_path: Path) -> 
 
 
 def test_builder_and_verifier_share_the_exact_source_input_path_set() -> None:
-    assert len(SOURCE_PATHS) == 20
+    assert len(SOURCE_PATHS) == 22
     tree = ast.parse((SCRIPT.parent / "verify_image.py").read_text(encoding="utf-8"))
     assignment = next(
         node
@@ -208,7 +210,7 @@ def test_source_verifier_module_is_projected_from_exact_committed_bytes(tmp_path
     )
     assert (capture / "inputs" / relative).read_bytes() == committed
     manifest = (capture / "npa-source-manifest.sha256").read_text().splitlines()
-    assert len(manifest) == 20
+    assert len(manifest) == 22
     import hashlib
 
     assert f"{hashlib.sha256(committed).hexdigest()}  inputs/{relative}" in manifest

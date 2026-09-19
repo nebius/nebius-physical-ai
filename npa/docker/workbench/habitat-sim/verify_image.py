@@ -42,6 +42,8 @@ NPA_SOURCE_PATHS = (
     "docker/workbench/habitat-sim/verify_apt_source.py",
     "docker/workbench/habitat-sim/verify_image.py",
     "docker/workbench/packaging-contract.yaml",
+    "scripts/image_byte_scan/core.py",
+    "scripts/image_byte_scan/habitat_sim_verification.py",
     "src/npa/__init__.py",
     "src/npa/workflows/__init__.py",
     "src/npa/workflows/habitat_sim_smoke.py",

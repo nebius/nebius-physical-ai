@@ -1244,7 +1244,7 @@ def test_apt_source_module_provenance_binds_exact_final_bytes(observation):
     manifest, _inputs = _cli_source_manifest()
     expected = VERIFIER._parse_source_manifest(manifest)
     relative = "inputs/docker/workbench/habitat-sim/verify_apt_source.py"
-    assert len(expected) == 20 and relative in expected
+    assert len(expected) == 22 and relative in expected
     assert relative not in VERIFIER.EXECUTABLE_SOURCE_DESTINATIONS
     contract = {
         "required_labels": {},
@@ -1280,6 +1280,25 @@ def test_apt_source_module_missing_manifest_member_is_refused():
             if not row.endswith(b"/verify_apt_source.py")
         )
         + b"\n"
+    )
+    with pytest.raises(H.W.ScanError, match="source_manifest_path_set_mismatch"):
+        VERIFIER._parse_source_manifest(reduced)
+
+
+def test_imported_scanner_modules_are_manifest_bound_and_missing_binding_refused():
+    manifest, _inputs = _cli_source_manifest()
+    expected = VERIFIER._parse_source_manifest(manifest)
+    imported = {
+        "inputs/scripts/image_byte_scan/core.py",
+        "inputs/scripts/image_byte_scan/habitat_sim_verification.py",
+    }
+    assert imported <= set(expected)
+    assert imported <= {f"inputs/{path}" for path in VERIFIER.NPA_SOURCE_PATHS}
+
+    reduced = b"".join(
+        row
+        for row in manifest.splitlines(keepends=True)
+        if not row.endswith(b"inputs/scripts/image_byte_scan/core.py\n")
     )
     with pytest.raises(H.W.ScanError, match="source_manifest_path_set_mismatch"):
         VERIFIER._parse_source_manifest(reduced)
