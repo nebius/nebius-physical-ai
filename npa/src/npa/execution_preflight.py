@@ -890,7 +890,7 @@ def verify_solution_payload_service_accounts(
     return libero_found
 
 
-def _verify_libero_submission_authorization(
+def _validate_libero_runtime_authorization(
     documents: Sequence[Mapping[str, Any]],
     process_env: Mapping[str, str],
     *,
@@ -899,7 +899,13 @@ def _verify_libero_submission_authorization(
     run_id: str,
     executable_profile_sha256: str,
 ) -> dict[str, Any]:
-    """Bind secret forwarding to one customer/run authorization."""
+    """Validate runtime-supplied evidence without accepting customer terms.
+
+    The customer-run runtime owns acknowledgement of third-party terms.  This
+    control-plane helper only authenticates and transports the already-bound
+    evidence so it can enforce exact run/image/profile binding; it never issues,
+    acknowledges, or signs that evidence.
+    """
 
     try:
         _validate_libero_submission_identity(
@@ -1245,7 +1251,7 @@ def preflight_skypilot_submission(
         documents, global_config=global_config
     )
     if libero_submission:
-        customer_authorization = _verify_libero_submission_authorization(
+        customer_authorization = _validate_libero_runtime_authorization(
             documents,
             process_env,
             submission_backend=submission_backend,
@@ -1646,8 +1652,8 @@ def preflight_skypilot_submission(
             )
 
     report = verify_execution_target(target, gpu_check=gpu_check)
-    report["checks"]["libero_authorization"] = (
-        "pass" if libero_submission else "not-required"
+    report["checks"]["libero_customer_authorization_validated"] = (
+        "validated" if libero_submission else "not-required"
     )
     return target, report, {name: value for name, value in injected.items() if value}
 

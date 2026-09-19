@@ -97,10 +97,6 @@ _BYOF_REPO_ARGV = [
     "{{config.smoke_artifact_name}}",
     "--libero-qualified-candidate-image",
     "{{config.libero_qualified_candidate_image}}",
-    "--libero-customer-runtime-authorization-file",
-    "{{config.libero_customer_runtime_authorization_file}}",
-    "--libero-authenticated-caller-identity-file",
-    "{{config.libero_authenticated_caller_identity_file}}",
     "--yaml",
     "{{config.resource_profile_yaml}}",
     "--task",
@@ -126,8 +122,6 @@ _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_token_env": "",
     "source_prune_path": "",
     "libero_qualified_candidate_image": "",
-    "libero_customer_runtime_authorization_file": "",
-    "libero_authenticated_caller_identity_file": "",
 }
 
 _OPENPI_PIPELINE = ["python3", "-m", "npa.workflows.byof.openpi_pipeline"]
@@ -1240,8 +1234,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
-            "--libero-customer-runtime-authorization-file",
-            "--libero-authenticated-caller-identity-file",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
@@ -1553,8 +1545,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
-            "--libero-customer-runtime-authorization-file",
-            "--libero-authenticated-caller-identity-file",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),

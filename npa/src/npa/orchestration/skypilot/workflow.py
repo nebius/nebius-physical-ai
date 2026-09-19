@@ -879,9 +879,12 @@ def _preflight_prepared_submission(
         )
     except (ExecutionPreflightError, ValueError) as exc:
         raise SkyPilotSubmitError(str(exc), launch_attempted=False) from exc
+    # This marker means only that the customer-runtime evidence was
+    # cryptographically validated and bound to this run.  It is not an
+    # acceptance decision and is never issued by the manager/control plane.
     libero_submission = (_report.get("checks") or {}).get(
-        "libero_authorization"
-    ) == "pass"
+        "libero_customer_authorization_validated"
+    ) == "validated"
     env.update(injected)
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
@@ -1268,11 +1271,15 @@ def submit_workflow(
             if libero_submission:
                 from npa.execution_preflight import libero_executable_profile_sha256
 
-                enriched["libero_profile_sha256"] = libero_executable_profile_sha256(docs)
+                enriched["libero_profile_sha256"] = libero_executable_profile_sha256(
+                    docs
+                )
                 if bound_libero_job_id:
                     enriched["libero_candidate_job_id"] = bound_libero_job_id
                 if unverified_libero_job_id:
-                    enriched["libero_unverified_candidate_job_id"] = unverified_libero_job_id
+                    enriched["libero_unverified_candidate_job_id"] = (
+                        unverified_libero_job_id
+                    )
                     enriched["libero_binding_error"] = libero_binding_error
             enriched["controller"] = {
                 **controller_health.to_dict(),
@@ -1958,7 +1965,10 @@ def _load_libero_bound_job_id(
         if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
             return "", "existing LIBERO launch ledger has no valid profile binding"
         if digest != expected_profile_sha256:
-            return "", "existing LIBERO launch ledger profile digest conflicts with the prepared profile"
+            return (
+                "",
+                "existing LIBERO launch ledger profile digest conflicts with the prepared profile",
+            )
         return job_id, ""
     except Exception:  # noqa: BLE001 - unavailable owner state must fail closed
         return "", "existing LIBERO launch ledger is unavailable"

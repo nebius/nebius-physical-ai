@@ -255,7 +255,11 @@ def test_libero_submit_uses_one_identity_for_unchanged_noncanonical_yaml(
     def preflight(documents, **kwargs):
         observed["documents"] = documents
         observed.update(kwargs)
-        return None, {"checks": {"libero_authorization": "pass"}}, {}
+        return (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        )
 
     def fake_run(command, **_kwargs):
         if _is_status_cmd(command):
@@ -312,7 +316,11 @@ def test_libero_submit_refuses_any_post_preflight_profile_change(
 
     def mutate_after_preflight(documents, **_kwargs):
         documents[0]["run"] = "unreviewed-command"
-        return None, {"checks": {"libero_authorization": "pass"}}, {}
+        return (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        )
 
     monkeypatch.setattr(workflow_module, "_execution_preflight", mutate_after_preflight)
     monkeypatch.setattr(
@@ -372,7 +380,7 @@ def test_libero_submit_revalidates_exact_artifact_bytes_at_launch(
         "_execution_preflight",
         lambda *_a, **_k: (
             None,
-            {"checks": {"libero_authorization": "pass"}},
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
             {},
         ),
     )
@@ -437,7 +445,7 @@ def test_submit_uses_shared_libero_classification_for_secret_channel(
         "_execution_preflight",
         lambda *_args, **_kwargs: (
             None,
-            {"checks": {"libero_authorization": "pass"}},
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
             {},
         ),
     )

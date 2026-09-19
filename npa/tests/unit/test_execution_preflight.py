@@ -1100,7 +1100,7 @@ def libero_authorized(monkeypatch) -> None:
     monkeypatch.setenv("AWS_SESSION_TOKEN", "temporary-session")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.eu-west1.nebius.cloud")
     monkeypatch.setattr(
-        "npa.execution_preflight._verify_libero_submission_authorization",
+        "npa.execution_preflight._validate_libero_runtime_authorization",
         lambda *_args, **_kwargs: {},
     )
     monkeypatch.setattr(
@@ -1318,7 +1318,7 @@ def test_libero_preflight_requires_output_authority_before_target_resolution(
     from npa.execution_preflight import preflight_skypilot_submission
 
     monkeypatch.setattr(
-        "npa.execution_preflight._verify_libero_submission_authorization",
+        "npa.execution_preflight._validate_libero_runtime_authorization",
         lambda *_args, **_kwargs: {"infrastructure": {}},
     )
     document = libero_task("npa-byof-libero-payload")
@@ -1510,7 +1510,7 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
     monkeypatch,
 ) -> None:
     from npa.deploy import images
-    from npa.execution_preflight import _verify_libero_submission_authorization
+    from npa.execution_preflight import _validate_libero_runtime_authorization
 
     run_id = "libero-exact-profile-0001"
     profile_sha256 = "a" * 64
@@ -1564,7 +1564,7 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
         "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": "/owner/trust-root",
     }
 
-    _verify_libero_submission_authorization(
+    _validate_libero_runtime_authorization(
         [document],
         process_env,
         run_id=run_id,
@@ -1614,7 +1614,7 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
     from npa.deploy import images
     from npa.execution_preflight import (
         ExecutionPreflightError,
-        _verify_libero_submission_authorization,
+        _validate_libero_runtime_authorization,
     )
 
     run_id = "libero-exact-profile-0001"
@@ -1694,7 +1694,7 @@ def test_libero_submission_authorization_rejects_every_identity_drift(
         )
 
     with pytest.raises(ExecutionPreflightError, match=expected_check) as failure:
-        _verify_libero_submission_authorization(
+        _validate_libero_runtime_authorization(
             [document],
             process_env,
             run_id=run_id,

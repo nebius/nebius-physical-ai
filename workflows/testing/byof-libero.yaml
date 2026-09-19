@@ -32,8 +32,6 @@ config:
   wait_timeout: -1
   poll_interval: 60
   libero_qualified_candidate_image: ""
-  libero_customer_runtime_authorization_file: ""
-  libero_authenticated_caller_identity_file: ""
   output_root: s3://{{config.bucket}}/oss-solutions/libero
   receipt_uri: "{{config.output_root}}/{{run.id}}/npa_upload_receipt.json"
 resources:

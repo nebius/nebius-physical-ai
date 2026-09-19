@@ -30,8 +30,9 @@ credentials, acceptance records, terms payloads, and runtime payloads are never
 baked into the neutral image. Image qualification carries no customer signer
 fingerprint; signer trust is supplied owner-private and checked only at runtime.
 
-The authenticated control plane supplies these inputs; they are not customer
-acceptance switches and must not be synthesized locally:
+The customer-run runtime supplies these inputs through its authenticated
+handoff; they are not generic BYOF workflow/config inputs, customer acceptance
+switches, or manager-issued values and must not be synthesized locally:
 
 | Input | Boundary |
 | --- | --- |

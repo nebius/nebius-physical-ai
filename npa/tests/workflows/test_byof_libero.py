@@ -112,8 +112,8 @@ def test_libero_workflow_uses_only_quarantined_prebuilt_managed_path() -> None:
     assert config["smoke_artifact_name"] == "libero-smoke.json"
     assert config["wait_timeout"] == -1
     assert config["libero_qualified_candidate_image"] == ""
-    assert config["libero_customer_runtime_authorization_file"] == ""
-    assert config["libero_authenticated_caller_identity_file"] == ""
+    assert "libero_customer_runtime_authorization_file" not in config
+    assert "libero_authenticated_caller_identity_file" not in config
     assert "libero_build_metadata_sha256" not in config
     resources = workflow["resources"]
     assert isinstance(resources, dict)
@@ -124,25 +124,17 @@ def test_libero_workflow_uses_only_quarantined_prebuilt_managed_path() -> None:
     assert state["terminal"] is True
 
 
-def test_libero_toolref_forwards_customer_authorization_inputs() -> None:
+def test_libero_toolref_does_not_expose_customer_authorization_inputs() -> None:
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
     entry = TOOL_CATALOG["workbench.byof.repo"]
-    for flag, config_key in (
-        (
-            "--libero-customer-runtime-authorization-file",
-            "libero_customer_runtime_authorization_file",
-        ),
-        (
-            "--libero-authenticated-caller-identity-file",
-            "libero_authenticated_caller_identity_file",
-        ),
+    for flag in (
+        "--libero-customer-runtime-authorization-file",
+        "--libero-authenticated-caller-identity-file",
     ):
-        assert flag in entry.argv_template
-        assert entry.config_defaults[config_key] == ""
-        index = entry.argv_template.index(flag)
-        assert entry.argv_template[index + 1] == "{{config." + config_key + "}}"
-        assert flag in entry.omit_flags_when_empty
+        assert flag not in entry.argv_template
+    assert "libero_customer_runtime_authorization_file" not in entry.config_defaults
+    assert "libero_authenticated_caller_identity_file" not in entry.config_defaults
 
 
 def test_publication_workflow_binds_anonymous_tag_to_pushed_digest() -> None:
