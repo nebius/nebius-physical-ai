@@ -133,6 +133,7 @@ def test_public_workflow_uses_hash_bound_graph_not_candidate_digests() -> None:
     assert "--reviewed-graph-record" in text
     assert text.count('gymnasium_scan_args=(--oci-layout "$archive")') == 2
     assert text.count('gymnasium_scan_args=(--docker-save "$archive")') == 2
+    assert text.count("index_members=\"$(tar -tf \"$archive\" | grep -Fx -c 'index.json' || true)\"") == 2
     assert text.count('ambiguous Gymnasium archive format') == 1
     assert text.count('ambiguous pushed Gymnasium archive format') == 1
     assert text.count('.archive_format == "oci-layout"') == 2

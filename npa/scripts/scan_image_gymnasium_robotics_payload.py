@@ -1638,6 +1638,55 @@ def _oci_blob(
     return raw, media_type
 
 
+def _oci_descriptor_path(descriptor: object, label: str) -> str:
+    """Return the canonical tar member path for one validated OCI descriptor."""
+
+    if not isinstance(descriptor, dict):
+        raise ValueError(f"OCI {label} descriptor is not an object")
+    digest = descriptor.get("digest")
+    if not isinstance(digest, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None:
+        raise ValueError(f"OCI {label} descriptor digest is malformed")
+    return f"blobs/sha256/{digest.removeprefix('sha256:')}"
+
+
+def _validate_hybrid_docker_manifest(
+    archive: tarfile.TarFile,
+    outer_by_name: dict[str, tarfile.TarInfo],
+    *,
+    config_path: str,
+    layer_paths: list[str],
+) -> None:
+    """Bind Docker 29's compatibility manifest to the validated OCI graph.
+
+    Newer Docker stores an OCI descriptor graph together with the legacy
+    ``manifest.json`` compatibility member.  The compatibility member is
+    accepted only when it is one exact, single-entry projection of the already
+    validated config and ordered layer descriptor paths.
+    """
+
+    member = outer_by_name.get("manifest.json")
+    if member is None:
+        return
+    raw = _raw_member(
+        archive, "manifest.json", max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
+    )
+    _scan_decoded_member_bytes("hybrid Docker manifest", raw)
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("hybrid Docker manifest is malformed") from error
+    if not isinstance(manifest, list) or len(manifest) != 1:
+        raise ValueError("hybrid Docker manifest must contain exactly one image")
+    entry = manifest[0]
+    if not isinstance(entry, dict):
+        raise ValueError("hybrid Docker manifest entry must be an object")
+    if _safe(str(entry.get("Config", ""))) != config_path:
+        raise ValueError("hybrid Docker manifest config does not bind OCI graph")
+    layers = entry.get("Layers")
+    if not isinstance(layers, list) or [_safe(str(item)) for item in layers] != layer_paths:
+        raise ValueError("hybrid Docker manifest layers do not bind OCI graph")
+
+
 def _oci_manifest_candidates(
     archive: tarfile.TarFile,
     descriptors: object,
@@ -1893,6 +1942,7 @@ def scan_oci_layout(
         )
         manifest = _selected_oci_manifest(candidates)
         config_descriptor = manifest.get("config")
+        config_path = _oci_descriptor_path(config_descriptor, "selected image config")
         config_raw, config_media = _oci_blob(
             archive,
             config_descriptor,
@@ -1911,7 +1961,9 @@ def scan_oci_layout(
             raise ValueError("OCI image contains no layers")
         layers: list[tuple[str, bytes]] = []
         normalized_descriptors: list[dict[str, object]] = []
+        layer_paths: list[str] = []
         for position, descriptor in enumerate(layer_descriptors):
+            layer_paths.append(_oci_descriptor_path(descriptor, f"selected layer {position}"))
             raw, media_type = _oci_blob(
                 archive,
                 descriptor,
@@ -1932,7 +1984,15 @@ def scan_oci_layout(
                     "digest": descriptor["digest"],
                 }
             )
+        _validate_hybrid_docker_manifest(
+            archive,
+            outer_by_name,
+            config_path=config_path,
+            layer_paths=layer_paths,
+        )
         allowed_files = {"oci-layout", "index.json", *referenced}
+        if "manifest.json" in outer_by_name:
+            allowed_files.add("manifest.json")
         _validate_exact_outer_layout(
             archive,
             outer_by_name,

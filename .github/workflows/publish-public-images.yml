@@ -457,8 +457,9 @@ jobs:
           if [ "$TOOL" = gymnasium-robotics ]; then
             archive="$RUNNER_TEMP/${TOOL}.tar"
             oci_members="$(tar -tf "$archive" | grep -Fx -c 'oci-layout' || true)"
+            index_members="$(tar -tf "$archive" | grep -Fx -c 'index.json' || true)"
             docker_members="$(tar -tf "$archive" | grep -Fx -c 'manifest.json' || true)"
-            if [ "$oci_members" = 1 ] && [ "$docker_members" = 0 ]; then
+            if [ "$oci_members" = 1 ] && [ "$index_members" = 1 ]; then
               gymnasium_scan_args=(--oci-layout "$archive")
             elif [ "$oci_members" = 0 ] && [ "$docker_members" = 1 ]; then
               gymnasium_scan_args=(--docker-save "$archive")
@@ -783,8 +784,9 @@ jobs:
           if [ "$TOOL" = gymnasium-robotics ]; then
             archive="$RUNNER_TEMP/${TOOL}-pushed.tar"
             oci_members="$(tar -tf "$archive" | grep -Fx -c 'oci-layout' || true)"
+            index_members="$(tar -tf "$archive" | grep -Fx -c 'index.json' || true)"
             docker_members="$(tar -tf "$archive" | grep -Fx -c 'manifest.json' || true)"
-            if [ "$oci_members" = 1 ] && [ "$docker_members" = 0 ]; then
+            if [ "$oci_members" = 1 ] && [ "$index_members" = 1 ]; then
               gymnasium_scan_args=(--oci-layout "$archive")
             elif [ "$oci_members" = 0 ] && [ "$docker_members" = 1 ]; then
               gymnasium_scan_args=(--docker-save "$archive")

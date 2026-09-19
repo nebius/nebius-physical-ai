@@ -398,6 +398,26 @@ def _duplicate_outer_member(path: Path, name: str) -> None:
     path.write_bytes(rendered.getvalue())
 
 
+def _add_outer_file(path: Path, name: str, content: bytes) -> None:
+    """Add one regular compatibility member while preserving existing bytes."""
+
+    source = path.read_bytes()
+    rendered = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(source), mode="r:") as source_tar:
+        with tarfile.open(fileobj=rendered, mode="w") as output:
+            for member in source_tar.getmembers():
+                body = (
+                    source_tar.extractfile(member).read()
+                    if member.isfile()
+                    else None
+                )
+                output.addfile(member, io.BytesIO(body) if body is not None else None)
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            output.addfile(info, io.BytesIO(content))
+    path.write_bytes(rendered.getvalue())
+
+
 def _gzip_layer(content: bytes, *, filename: str = "") -> bytes:
     stream = io.BytesIO()
     with gzip.GzipFile(filename=filename, mode="wb", fileobj=stream, mtime=0) as archive:
@@ -604,6 +624,54 @@ def test_oci_layout_binds_compressed_descriptors_and_uncompressed_diff_ids(
     assert result["ordered_layer_diff_ids"] == diff_ids
     assert result["ordered_layer_descriptors"] == descriptors
     assert result["distributed_blob_scan_complete"] is True
+
+
+def test_oci_layout_accepts_bound_docker_compatibility_manifest(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "hybrid-oci.tar"
+    config_digest, _diff_ids, descriptors = _oci_layout(image, _required())
+    manifest = json.dumps(
+        [
+            {
+                "Config": f"blobs/sha256/{config_digest}",
+                "Layers": [
+                    f"blobs/sha256/{descriptor['digest'].removeprefix('sha256:')}"
+                    for descriptor in descriptors
+                ],
+            }
+        ],
+        separators=(",", ":"),
+    ).encode()
+    _add_outer_file(image, "manifest.json", manifest)
+
+    result = SCAN.scan_oci_layout(image)
+
+    assert result["status"] == "passed"
+    assert result["archive_format"] == "oci-layout"
+
+
+def test_oci_layout_refuses_unbound_docker_compatibility_manifest(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "unbound-hybrid-oci.tar"
+    _config_digest, _diff_ids, descriptors = _oci_layout(image, _required())
+    manifest = json.dumps(
+        [
+            {
+                "Config": "blobs/sha256/" + "f" * 64,
+                "Layers": [
+                    f"blobs/sha256/{descriptor['digest'].removeprefix('sha256:')}"
+                    for descriptor in descriptors
+                ],
+            }
+        ],
+        separators=(",", ":"),
+    ).encode()
+    _add_outer_file(image, "manifest.json", manifest)
+
+    with pytest.raises(ValueError, match="config does not bind OCI graph"):
+        SCAN.scan_oci_layout(image)
 
 
 @pytest.mark.parametrize("name", ["oci-layout", "index.json"])
