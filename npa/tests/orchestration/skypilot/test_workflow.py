@@ -3007,6 +3007,96 @@ def test_libero_launch_binding_groups_task_rows_by_unique_job_id(monkeypatch) ->
     assert error == ""
 
 
+def test_libero_launch_binding_excludes_mixed_failed_historical_job(
+    monkeypatch,
+) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "SUCCEEDED",
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-1",
+            "status": "FAILED",
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "PENDING",
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert verified == "126"
+    assert plausible == ()
+    assert error == ""
+
+
+def test_libero_reconciliation_ignores_mixed_failed_historical_competitor(
+    monkeypatch,
+) -> None:
+    rows = [
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-0",
+            "status": "SUCCEEDED",
+        },
+        {
+            "job_id": 125,
+            "job_name": "exact-run",
+            "task_id": "task-1",
+            "status": "FAILED",
+        },
+        {
+            "job_id": 126,
+            "job_name": "exact-run",
+            "status": "PENDING",
+        },
+    ]
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=""
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+        allow_omitted_profile=True,
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+
+
 def test_libero_launch_binding_rejects_mismatched_optional_queue_profile(
     monkeypatch,
 ) -> None:

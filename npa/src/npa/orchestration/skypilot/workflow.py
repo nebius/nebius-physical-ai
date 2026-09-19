@@ -1885,6 +1885,49 @@ def _libero_owner_binding_payload(
     }
 
 
+def _group_libero_managed_job_rows(
+    rows: Sequence[Mapping[str, Any]], job_name: str
+) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    """Group same-name queue task rows by their immutable managed-job ID."""
+
+    grouped: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("job_name") or row.get("name") or "") != job_name:
+            continue
+        job_id = str(row.get("job_id") or row.get("id") or "")
+        if job_id.isdigit():
+            grouped.setdefault(job_id, []).append(row)
+    return {job_id: tuple(group) for job_id, group in grouped.items()}
+
+
+def _libero_managed_job_group_is_viable(
+    rows: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Treat any failed/cancelled task as making its whole managed job historical."""
+
+    return not any(
+        is_terminal_failure_job_status(str(row.get("status") or "UNKNOWN").upper())
+        for row in rows
+    )
+
+
+def _libero_managed_job_group_status(
+    rows: Sequence[Mapping[str, Any]],
+) -> str:
+    """Select a deterministic whole-job status with terminal failure precedence."""
+
+    statuses = [str(row.get("status") or "UNKNOWN").upper() for row in rows]
+    for status in statuses:
+        if is_terminal_failure_job_status(status):
+            return status
+    for status in statuses:
+        if status not in {"SUCCEEDED", "SUCCESS", "COMPLETED", "DONE"}:
+            return status
+    return statuses[-1] if statuses else "UNKNOWN"
+
+
 def _reconcile_managed_job_env(
     job_name: str,
     *,
@@ -1943,28 +1986,17 @@ def _reconcile_managed_job_env(
     workload_markers: dict[str, set[str]] = {}
     expected_profile_sha256 = str(expected_profile_sha256 or "").strip()
     expected_job_id = str(expected_job_id or "").strip()
-    all_matching_rows = [
-        row
-        for row in rows
-        if isinstance(row, Mapping)
-        and str(row.get("job_name") or row.get("name") or "") == job_name
-    ]
+    grouped_rows = _group_libero_managed_job_rows(rows, job_name)
+    all_matching_rows = [row for group in grouped_rows.values() for row in group]
     matching_rows = all_matching_rows
     if expected_job_id:
-        matching_rows = [
-            row
-            for row in matching_rows
-            if str(row.get("job_id") or row.get("id") or "") == expected_job_id
+        matching_rows = list(grouped_rows.get(expected_job_id, ()))
+        viable_other_ids = [
+            job_id
+            for job_id, group in grouped_rows.items()
+            if job_id != expected_job_id and _libero_managed_job_group_is_viable(group)
         ]
-        viable_other_rows = [
-            row
-            for row in all_matching_rows
-            if str(row.get("job_id") or row.get("id") or "") != expected_job_id
-            and not is_terminal_failure_job_status(
-                str(row.get("status") or "UNKNOWN").upper()
-            )
-        ]
-        if viable_other_rows and matching_rows:
+        if viable_other_ids and matching_rows:
             return ReconciliationEvidence(
                 ReconciliationState.AMBIGUOUS,
                 error=(
@@ -1972,7 +2004,7 @@ def _reconcile_managed_job_env(
                     "immutable ID beside its owner-bound job"
                 ),
             )
-        if viable_other_rows and not matching_rows:
+        if viable_other_ids and not matching_rows:
             return ReconciliationEvidence(
                 ReconciliationState.UNAVAILABLE,
                 error=(
@@ -1981,14 +2013,10 @@ def _reconcile_managed_job_env(
                 ),
             )
     elif require_owner_binding:
-        viable_rows = [
-            row
-            for row in matching_rows
-            if not is_terminal_failure_job_status(
-                str(row.get("status") or "UNKNOWN").upper()
-            )
-        ]
-        if viable_rows:
+        if any(
+            _libero_managed_job_group_is_viable(group)
+            for group in grouped_rows.values()
+        ):
             return ReconciliationEvidence(
                 ReconciliationState.UNAVAILABLE,
                 error=(
@@ -1997,61 +2025,65 @@ def _reconcile_managed_job_env(
                 ),
             )
         matching_rows = []
-    for row in rows:
-        if not isinstance(row, Mapping):
+    matching_ids = set(grouped_rows) if not expected_job_id else {expected_job_id}
+    for job_id in matching_ids:
+        group = grouped_rows.get(job_id, ())
+        if not group:
             continue
-        if row not in matching_rows:
-            continue
-        if expected_profile_sha256:
-            if owner_ledger_binding or allow_omitted_profile:
-                # The profile digest was atomically persisted with the immutable
-                # candidate ID before reconciliation.  SkyPilot's queue schema
-                # does not promise a custom digest field, so exact ID + name
-                # binding is the durable provider-independent observation.
-                if not expected_job_id:
+        for row in group:
+            if not isinstance(row, Mapping):
+                continue
+            if row not in matching_rows:
+                continue
+            if expected_profile_sha256:
+                if owner_ledger_binding or allow_omitted_profile:
+                    # The profile digest was atomically persisted with the immutable
+                    # candidate ID before reconciliation.  SkyPilot's queue schema
+                    # does not promise a custom digest field, so exact ID + name
+                    # binding is the durable provider-independent observation.
+                    if not expected_job_id:
+                        return ReconciliationEvidence(
+                            ReconciliationState.UNAVAILABLE,
+                            error=(
+                                "LIBERO owner-ledger binding has no immutable job ID; "
+                                "refusing adoption"
+                            ),
+                        )
+                    observed_profile_values = _managed_job_profile_values(row)
+                    if any(
+                        value != expected_profile_sha256
+                        for value in observed_profile_values
+                    ):
+                        return ReconciliationEvidence(
+                            ReconciliationState.UNAVAILABLE,
+                            error=(
+                                "existing LIBERO managed job exposes a conflicting "
+                                "executable profile digest; refusing adoption"
+                            ),
+                        )
+                else:
+                    observed_profile_sha256 = _managed_job_profile_digest(row)
+                    if observed_profile_sha256 != expected_profile_sha256:
+                        return ReconciliationEvidence(
+                            ReconciliationState.UNAVAILABLE,
+                            error=(
+                                "existing LIBERO managed job lacks the exact executable "
+                                "profile digest; refusing adoption"
+                            ),
+                        )
+                if not expected_job_id or not expected_profile_sha256:
                     return ReconciliationEvidence(
                         ReconciliationState.UNAVAILABLE,
                         error=(
-                            "LIBERO owner-ledger binding has no immutable job ID; "
-                            "refusing adoption"
+                            "existing LIBERO managed job lacks the exact owner-controlled "
+                            "profile binding; refusing adoption"
                         ),
                     )
-                observed_profile_values = _managed_job_profile_values(row)
-                if any(
-                    value != expected_profile_sha256
-                    for value in observed_profile_values
-                ):
-                    return ReconciliationEvidence(
-                        ReconciliationState.UNAVAILABLE,
-                        error=(
-                            "existing LIBERO managed job exposes a conflicting "
-                            "executable profile digest; refusing adoption"
-                        ),
-                    )
-            else:
-                observed_profile_sha256 = _managed_job_profile_digest(row)
-                if observed_profile_sha256 != expected_profile_sha256:
-                    return ReconciliationEvidence(
-                        ReconciliationState.UNAVAILABLE,
-                        error=(
-                            "existing LIBERO managed job lacks the exact executable "
-                            "profile digest; refusing adoption"
-                        ),
-                    )
-            if not expected_job_id or not expected_profile_sha256:
-                return ReconciliationEvidence(
-                    ReconciliationState.UNAVAILABLE,
-                    error=(
-                        "existing LIBERO managed job lacks the exact owner-controlled "
-                        "profile binding; refusing adoption"
-                    ),
-                )
-        job_id = str(row.get("job_id") or row.get("id") or "")
         if job_id.isdigit():
             matching.add(job_id)
-            statuses[job_id] = str(row.get("status") or "UNKNOWN").upper()
+            statuses[job_id] = _libero_managed_job_group_status(group)
             workload_markers.setdefault(job_id, set()).update(
-                _managed_job_workload_markers(row)
+                marker for row in group for marker in _managed_job_workload_markers(row)
             )
     if not matching:
         return ReconciliationEvidence(ReconciliationState.ABSENT)
@@ -2098,9 +2130,10 @@ def _libero_launch_binding_candidates(
     SkyPilot's all-jobs queue retains historical rows under a deterministic
     name.  A numeric launch result is therefore only authoritative when the
     queue has exactly one viable same-name immutable ID, every row for that ID
-    is consistent, and its ID is the returned ID.  Any optional provider
-    profile field must agree with the locally preflighted digest when present;
-    an omitted provider field is not evidence of failure.
+    is consistent, and its ID is the returned ID.  Viability is decided for the
+    whole managed job: any failed/cancelled task makes that ID historical.
+    Any optional provider profile field must agree with the locally preflighted
+    digest when present; an omitted provider field is not evidence of failure.
     All other plausible IDs are retained as indeterminate evidence rather than
     silently adopting one.
     """
@@ -2143,35 +2176,23 @@ def _libero_launch_binding_candidates(
             "preserving indeterminate state and refusing retry",
         )
 
-    named_rows = [
-        row
-        for row in rows
-        if isinstance(row, Mapping)
-        and str(row.get("job_name") or row.get("name") or "") == job_name
-        and str(row.get("job_id") or row.get("id") or "").isdigit()
-        and not is_terminal_failure_job_status(
-            str(row.get("status") or "UNKNOWN").upper()
-        )
-    ]
-    candidate_ids = tuple(
-        sorted(
-            {str(row.get("job_id") or row.get("id") or "") for row in named_rows},
-            key=int,
-        )
-    )
+    grouped_rows = _group_libero_managed_job_rows(rows, job_name)
+    all_candidate_ids = tuple(sorted(grouped_rows, key=int))
+    viable_groups = {
+        job_id: group
+        for job_id, group in grouped_rows.items()
+        if _libero_managed_job_group_is_viable(group)
+    }
+    candidate_ids = tuple(sorted(viable_groups, key=int))
     profile_conflicts = tuple(
         row
-        for row in named_rows
+        for row in viable_groups.get(parsed_id, ())
         if any(
             value != expected_profile_sha256
             for value in _managed_job_profile_values(row)
         )
     )
-    candidate_rows = [
-        row
-        for row in named_rows
-        if str(row.get("job_id") or row.get("id") or "") == parsed_id
-    ]
+    candidate_rows = viable_groups.get(parsed_id, ())
     if (
         parsed_id
         and candidate_ids == (parsed_id,)
@@ -2183,7 +2204,7 @@ def _libero_launch_binding_candidates(
 
     plausible_ids = tuple(
         sorted(
-            set(candidate_ids).union({parsed_id} if parsed_id else set()),
+            set(all_candidate_ids).union({parsed_id} if parsed_id else set()),
             key=int,
         )
     )
