@@ -50,7 +50,7 @@ npa studio demo final --open
 
 `brief` emits an authoring packet; it does not rewrite the storyboard or call a
 model. `draft` and `watch` make silent local scene previews. Scene hashes reuse
-unchanged visual work. `narrate` reuses speech whose wording and voice match;
+unchanged visual work. `narrate` reuses speech whose wording, voice, rate and pitch match;
 `final` reuses verified scene/audio caches and assembles the completed film.
 The final MP4, optional captions, offline player and provenance manifest are in
 `projects/demo/renders/final/`. File names are `film.mp4`, `film.srt` and
@@ -94,7 +94,21 @@ my-studio/
 }
 ```
 
-Optional `voice` selects the narration voice. Optional `music_path` selects a
+Optional `voice` selects the narration voice. `voice_rate` and `voice_pitch`
+adjust synthesized delivery, defaulting to `"+0%"` and `"+0Hz"`. Both require a
+signed integer with the shown unit. For example, add `"voice_rate": "+8%"` and
+`"voice_pitch": "+2Hz"` to the project for a slightly faster, brighter delivery,
+then run `npa studio demo narrate`. Rate and pitch are synthesis settings;
+listen to a preview and leave enough room for speech within each scene.
+
+Changing either setting invalidates synthesized speech while preserving visual
+caches. Existing manifests without these fields retain their neutral defaults.
+Supplied recordings with unchanged wording and file hashes stay untouched;
+`narrate --force` explicitly requests replacement with synthesized speech.
+The standalone `narrate.py` also accepts
+`--rate=+8% --pitch=+2Hz`; use the equals form for negative values.
+
+Optional `music_path` selects a
 local score covering the whole film. Relative paths resolve from their owning
 JSON file, so a project moves with its renderer and media. Recreate the virtual
 environment on the receiving machine. The generated `studio` launcher uses

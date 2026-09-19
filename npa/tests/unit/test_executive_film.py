@@ -560,15 +560,20 @@ def test_narration_generation_reuses_audio_until_words_change(
         (tmp_path / f"first.{suffix}").write_bytes(b"recording")
     record = _voice_record(scene, tmp_path, voice)
     args = SimpleNamespace(
-        output_dir=tmp_path, voice="voice-a", force=False, recorded=False
+        output_dir=tmp_path,
+        voice="voice-a",
+        force=False,
+        recorded=False,
+        rate="+0%",
+        pitch="+0Hz",
     )
     generated = []
 
-    async def generate(scene, directory, voice):
+    async def generate(scene, directory, voice, **settings):
         generated.append(scene["id"])
         for suffix in ["mp3", "srt"]:
             (directory / f"first.{suffix}").write_bytes(b"updated")
-        return _voice_record(scene, directory, voice)
+        return _voice_record(scene, directory, voice, **settings)
 
     monkeypatch.setattr(narrate, "_scene", generate)
     asyncio.run(narrate._update_scene(scene, args, record))

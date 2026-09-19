@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 
 from film_cache import _hash
 
@@ -13,19 +14,34 @@ def _voice_manifest(directory):
     return {record["scene"]: record for record in json.loads(path.read_text())}
 
 
-def _voice_record(scene, directory, voice):
+def _voice_settings(rate="+0%", pitch="+0Hz"):
+    for name, value, suffix in [("rate", rate, "%"), ("pitch", pitch, "Hz")]:
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[+-][0-9]+" + suffix, value
+        ):
+            raise ValueError(
+                f"Voice {name} must be a signed integer ending in {suffix}"
+            )
+    return {"rate": rate, "pitch": pitch}
+
+
+def _voice_record(scene, directory, voice, *, rate="+0%", pitch="+0Hz"):
     return {
         "scene": scene["id"],
         "voice": voice,
         "text_sha256": hashlib.sha256(scene["narration"].encode()).hexdigest(),
         "audio_sha256": _hash(directory / f"{scene['id']}.mp3"),
         "captions_sha256": _hash(directory / f"{scene['id']}.srt"),
+        **(_voice_settings(rate, pitch) if voice != "recorded" else {}),
     }
 
 
-def _voice_matches(scene, directory, record, voice=None):
+def _voice_matches(scene, directory, record, voice=None, *, rate=None, pitch=None):
     if not record or (voice is not None and record["voice"] != voice):
         return False
+    for name, requested, default in [("rate", rate, "+0%"), ("pitch", pitch, "+0Hz")]:
+        if requested is not None and record.get(name, default) != requested:
+            return False
     try:
         current = _voice_record(scene, directory, record["voice"])
     except FileNotFoundError:
