@@ -19,7 +19,7 @@ import re
 import os
 import subprocess
 import sys
-import urllib.request
+import http.client
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
@@ -58,26 +58,37 @@ _HF_REPO_ID = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 def check_model_accessible(
     model_id: str = DEFAULT_MODEL_ID, *, timeout: float = 15.0
 ) -> bool:
-    """Return True when the HuggingFace model repo resolves over the public API."""
+    """Return True when the HuggingFace model repo resolves over the public API.
+
+    The probe uses HTTPS against the fixed ``huggingface.co`` host and the
+    model id is validated as ``owner/name`` first, so a crafted id cannot
+    redirect the probe to another scheme or host.
+    """
     cleaned = _require_non_empty(model_id, "model_id")
     if not _HF_REPO_ID.match(cleaned):
         raise OpenVLAPipelineError(
             f"model_id {cleaned!r} is not a valid HuggingFace repo id (expected owner/name)"
         )
-    url = f"https://huggingface.co/api/models/{cleaned}"
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "npa-openvla-pipeline"}
-    )
+    # HTTPS against the fixed huggingface.co host; the validated repo id only
+    # ever lands in the request path, so it cannot alter the scheme or host.
+    connection = None
     try:
-        # URL is confined to the HuggingFace API host: the repo id is validated
-        # against _HF_REPO_ID above so it cannot alter the scheme or host.
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-            if response.status != 200:
-                return False
-            payload = json.loads(response.read().decode("utf-8"))
-            return payload.get("id") == model_id and payload.get("private") is False
+        connection = http.client.HTTPSConnection("huggingface.co", timeout=timeout)
+        connection.request(
+            "GET",
+            f"/api/models/{cleaned}",
+            headers={"User-Agent": "npa-openvla-pipeline"},
+        )
+        response = connection.getresponse()
+        if response.status != 200:
+            return False
+        payload = json.loads(response.read().decode("utf-8"))
+        return payload.get("id") == model_id and payload.get("private") is False
     except Exception:
         return False
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def require_model_accessible(model_id: str = DEFAULT_MODEL_ID) -> None:

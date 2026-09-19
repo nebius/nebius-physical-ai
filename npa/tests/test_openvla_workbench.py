@@ -29,7 +29,7 @@ def _toolref_stage_argv(name: str) -> list[str]:
     return [re.sub(r"{{(.*?)}}", r"DUMMY", a) for a in entry.argv_template]
 
 
-class _FakeResponse:
+class _FakeHTTPResponse:
     def __init__(self, status: int, payload: dict):
         self.status = status
         self._payload = payload
@@ -37,19 +37,29 @@ class _FakeResponse:
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, *exc):
-        return False
+class _FakeHTTPSConnection:
+    def __init__(self, status: int, payload: dict):
+        self.status = status
+        self.payload = payload
+
+    def request(self, method: str, path: str, headers=None) -> None:
+        assert method == "GET"
+        assert path.startswith("/api/models/")
+
+    def getresponse(self) -> _FakeHTTPResponse:
+        return _FakeHTTPResponse(self.status, self.payload)
+
+    def close(self) -> None:
+        pass
 
 
 def _fake_urlopen(status: int, payload: dict, monkeypatch):
-    def _urlopen(request, timeout=None):
-        assert "huggingface.co/api/models/" in request.full_url
-        return _FakeResponse(status, payload)
+    def _connect(host, timeout=None):
+        assert host == "huggingface.co"
+        return _FakeHTTPSConnection(status, payload)
 
-    monkeypatch.setattr(pipe.urllib.request, "urlopen", _urlopen)
+    monkeypatch.setattr(pipe.http.client, "HTTPSConnection", _connect)
 
 
 def test_train_argv_targets_upstream_finetune_script() -> None:
@@ -131,10 +141,10 @@ def test_check_model_accessible_http_error(monkeypatch) -> None:
 
 
 def test_check_model_accessible_network_failure(monkeypatch) -> None:
-    def _boom(request, timeout=None):
+    def _boom(host, timeout=None):
         raise OSError("no network")
 
-    monkeypatch.setattr(pipe.urllib.request, "urlopen", _boom)
+    monkeypatch.setattr(pipe.http.client, "HTTPSConnection", _boom)
     assert pipe.check_model_accessible(MODEL_ID) is False
 
 
