@@ -64,7 +64,7 @@ identities:
 4. Unresolvable → **write operations are refused** (`npa identity whoami`
    explains why); local read-only commands keep working.
 
-`npa agent auth --profile …` (`npa/cli/agent_auth.py`) remains the
+`npa agent auth-profile --profile …` (`npa/cli/agent_auth.py`) remains the
 human-login path; identity resolution sits on top of it, not beside it.
 
 ## 3. Run attribution
