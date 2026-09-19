@@ -20,8 +20,8 @@ The client uses a 90-second response-age safety deadline because a cold request
 can take tens of seconds even though warmed supported-GPU requests are normally tens of
 milliseconds. The reviewed `pi05_droid_jointpos_polaris` output contract is seven
 absolute arm joints plus one DROID gripper-position command. The pickup scenario
-selects Isaac's native Franka **Robotiq 2F-85** accessory and the DROID reset
-posture. Seven arm joints and the active `finger_joint` are bound by name;
+selects Isaac's native Franka **Robotiq 2F-85** accessory. Seven arm joints and
+the active `finger_joint` are bound by name;
 PhysX controls the passive mimic joints. The observed gripper angle is normalized
 from zero to pi/4 into DROID's `0=open, 1=closed` convention. Model commands are
 binarized at 0.5 and mapped back to that actuator angle. The older communication
@@ -39,7 +39,16 @@ Persisted results include the execution horizon and separate counts of returned
 and applied close-gripper targets, so discarded closures are visible in review.
 
 The manipulation scene is a lit tabletop with a reachable red cube and an open
-Franka in the DROID reset posture. Both policy views use Isaac Sim 6's supported
+Franka. The pickup's default `initial_posture=pregrasp` starts the fingers about
+18 cm above the cube center, with lateral alignment already established. This
+controlled starting condition isolates descent, grasp, and lift from the longer
+DROID approach. It does not establish success from arbitrary starting poses.
+`initial_posture=droid` retains the original wider approach. Results preserve
+the selected posture and exact initial arm joints. After the one initial reset,
+only validated OpenPI targets move the robot; there is no scripted reach or grasp.
+Native diagnostic physics and camera review validate the pregrasp reset, but a
+scripted mechanical lift is never reported as policy success.
+Both policy views use Isaac Sim 6's supported
 `isaacsim.sensors.experimental.rtx` authoring/runtime split: an independent
 `RtxCamera(tick_rate=15.0)` and `CameraSensor(annotators=["rgb"])` per view.
 After scene reset, the scenario commits timeline play with Isaac's public app

@@ -1713,6 +1713,9 @@ def openpi_franka_pickup_v3(
     control_steps: int = antioch.param(
         450, ge=10, description="Finite manipulation episode length in applied policy targets"
     ),
+    initial_posture: str = antioch.param(
+        "pregrasp", description="Fixed initial arm posture: pregrasp or droid"
+    ),
 ) -> None:
     """Evaluate measured approach and a sustained physical pickup.
 
@@ -1720,15 +1723,19 @@ def openpi_franka_pickup_v3(
         run: Antioch result and artifact handle.
         prompt: Instruction sent unchanged to the DROID policy.
         control_steps: Applied-target budget; exhaustion is a failed task.
+        initial_posture: Controlled pregrasp reset or the wider DROID starting pose.
     Returns:
         None.
     Raises:
         RuntimeError: The policy, camera, or evidence contract cannot be met.
     """
-    _run_openpi_episode(run, prompt, objective="pickup", control_steps=control_steps)
+    if initial_posture not in {"pregrasp", "droid"}:
+        raise ValueError("initial_posture must be pregrasp or droid")
+    _run_openpi_episode(run, prompt, objective="pickup", control_steps=control_steps,
+                       initial_posture=initial_posture)
 
 
-def _run_openpi_episode(run, prompt, *, objective, control_steps):
+def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_posture="droid"):
     from policy_episode import _PickupProgress, _PolicyEvidence, _ShowcaseRecording, _termination_reason, _CameraStartup
     import carb
     import numpy as np
@@ -1777,6 +1784,13 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
     import droid_scene
 
     droid = objective == "pickup"
+    if initial_posture not in {"pregrasp", "droid"} or (not droid and initial_posture != "droid"):
+        raise ValueError("Unsupported initial arm posture for this objective")
+    reset_joints = (droid_scene.PREGRASP_RESET_JOINTS
+                    if initial_posture == "pregrasp" else DROID_RESET_JOINTS)
+    run.add_result("initial_arm_posture", initial_posture)
+    run.add_result("initial_arm_joints", list(reset_joints))
+    run.add_result("post_reset_controller", "openpi_policy_only")
     robot = (droid_scene.create_robot(world) if droid else
              world.scene.add(Franka(prim_path="/World/Franka", name="franka")))
     world.scene.add(
@@ -1823,7 +1837,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps):
     render_settings = _configure_policy_rendering(carb.settings.get_settings())
     world.reset()
     if droid:
-        reset = np.asarray([*DROID_RESET_JOINTS, 0.0])
+        reset = np.asarray([*reset_joints, 0.0])
         robot.set_joint_positions(reset)
         robot.apply_policy_target(reset)
         for view in ("exterior", "wrist"):

@@ -582,11 +582,12 @@ def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
 
 @pytest.mark.parametrize("cold_seconds", [0, 320])
 @pytest.mark.parametrize(
-    "objective,steps,replies,grasp",
+    "objective,steps,replies,grasp,initial_posture",
     [
-        ("communication", 10, 2, False),
-        ("pickup", 30, 2, False),
-        ("pickup", 450, None, True),
+        ("communication", 10, 2, False, "droid"),
+        ("pickup", 30, 2, False, "droid"),
+        ("pickup", 30, 2, False, "pregrasp"),
+        ("pickup", 450, None, True, "droid"),
     ],
 )
 def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
@@ -597,6 +598,7 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     steps,
     replies,
     grasp,
+    initial_posture,
     cold_seconds,
 ):
     rr = pytest.importorskip("rerun")
@@ -639,8 +641,16 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     monkeypatch.setattr(episode, "_PolicyEvidence", lambda: recorder)
     run = _Run()
     scenario._run_openpi_episode(
-        run, "pick up the red cube", objective=objective, control_steps=steps
+        run, "pick up the red cube", objective=objective, control_steps=steps,
+        initial_posture=initial_posture,
     )
+    assert run.results["initial_arm_posture"] == initial_posture
+    assert run.results["post_reset_controller"] == "openpi_policy_only"
+    if initial_posture == "pregrasp":
+        from droid_scene import PREGRASP_RESET_JOINTS
+
+        np.testing.assert_allclose(world.robot.actions[0], [*PREGRASP_RESET_JOINTS, 0])
+        assert run.results["initial_arm_joints"] == list(PREGRASP_RESET_JOINTS)
     if grasp:
         assert 10 <= run.results["safe_targets_applied"] < steps
         assert run.results["termination_reason"] == "pickup_complete"

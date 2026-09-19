@@ -14,6 +14,14 @@ import math
 ARM_JOINT_NAMES = tuple(f"panda_joint{index}" for index in range(1, 8))
 MODEL_JOINT_NAMES = (*ARM_JOINT_NAMES, "finger_joint")
 GRIPPER_CLOSED_ANGLE = math.pi / 4
+# A fixed, collision-free reset above the cube, verified with native physics.
+# It defines a controlled pickup initial condition, not a controller or trajectory.
+# The open fingers remain approximately 18 cm above the cube center.
+PREGRASP_RESET_JOINTS = (
+    -0.05077540868198145, -0.05783148862296681, 0.05077240484677532,
+    -2.4232019767783046, 0.004187295087195224, 2.3654402068531453,
+    0.7823222921618791,
+)
 GRIPPER_ROOT = "/World/Franka/Robotiq_2F_85_edit/Robotiq_2F_85"
 GRIPPER_BASE = f"{GRIPPER_ROOT}/base_link"
 CONTACT_BODIES = tuple(f"{GRIPPER_ROOT}/{side}_inner_finger" for side in ("left", "right"))
