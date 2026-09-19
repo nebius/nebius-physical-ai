@@ -591,6 +591,49 @@ def test_robotwin_authorized_verifier_failure_is_not_reported_success(
     assert '"status": "ok"' not in capsys.readouterr().out
 
 
+def test_robotwin_authorized_verifier_malformed_receipt_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_module()
+    args = module._parse_args(_robotwin_args(module))
+    authorization = SimpleNamespace(
+        redactions=(),
+        bootstrap_image="private-image",
+        inner_launch_id="robotwin-inner-canary",
+    )
+    monkeypatch.setattr(module, "_required_postprocess_key", lambda *_a, **_k: None)
+    monkeypatch.setattr(module, "_scan_robotwin_image", lambda *_a, **_k: {})
+    monkeypatch.setattr(
+        module,
+        "_authorized_live_env",
+        lambda *_a, **_k: {"PATH": "/synthetic"},
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_robotwin_container_verify",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="{\n  \"status\": \"succeeded\",\n", stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="no complete JSON receipt"):
+        module._run_byof(
+            args,
+            authorization=authorization,
+            summary={},
+            source_secrets=None,
+            redactions=(),
+            docker_env={},
+            base_candidates=["unused"],
+            base_image="unused",
+            base_profile="prebuilt",
+            image="private-image",
+            registry="unused",
+            skip_build=True,
+            skip_push=True,
+        )
+
+
 @pytest.mark.parametrize("allocated_outer", [False, True])
 def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     monkeypatch, capsys, tmp_path, allocated_outer
@@ -600,6 +643,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     authorization = SimpleNamespace(
         redactions=(),
         context_sha256="c" * 64,
+        inner_launch_id="robotwin-inner-canary",
         project=payload["project"],
         profile=payload["nebius_profile"],
         kubeconfig=payload["kubeconfig"],
@@ -666,7 +710,17 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         seen_env.update(environment)
         assert authorization.bootstrap_image == payload["bootstrap_image"]
         return subprocess.CompletedProcess(
-            cmd, 0, stdout='{"status":"success"}\n', stderr=""
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "launch_id": authorization.inner_launch_id,
+                    "status": "succeeded",
+                    "returncode": 0,
+                },
+                indent=2,
+            ),
+            stderr="",
         )
 
     def fake_run(cmd, **kwargs):

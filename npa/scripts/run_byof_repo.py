@@ -568,17 +568,35 @@ def _dockerfile_text() -> str:
 
 
 def _parse_last_json(text: str) -> dict[str, Any] | None:
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
+    """Decode the final complete object embedded in mixed command output.
+
+    The verifier emits a pretty-printed receipt, so line-oriented parsing can
+    never recover its launch identity or terminal result.  Decode complete
+    JSON values instead and let the authorized RoboTwin path validate the
+    required receipt fields before recording a result.
+    """
+
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    index = 0
+    while index < len(text):
+        starts = [
+            position
+            for token in ("{", "[")
+            if (position := text.find(token, index)) >= 0
+        ]
+        if not starts:
+            break
+        start = min(starts)
         try:
-            payload = json.loads(line)
+            payload, end = decoder.raw_decode(text, start)
         except json.JSONDecodeError:
+            index = start + 1
             continue
         if isinstance(payload, dict):
-            return payload
-    return None
+            candidates.append(payload)
+        index = max(end, start + 1)
+    return candidates[-1] if candidates else None
 
 
 def _ubuntu_base_image_candidates() -> list[str]:
@@ -1511,7 +1529,26 @@ def _run_byof(
                 raise RuntimeError(
                     f"authorized RoboTwin verifier failed with exit {run_proc.returncode}"
                 )
-            parsed_run = _parse_last_json(sanitized_stdout) or {"status": "submitted"}
+            parsed_run = _parse_last_json(sanitized_stdout)
+            if authorization is not None:
+                if not isinstance(parsed_run, dict):
+                    raise RuntimeError(
+                        "authorized RoboTwin verifier returned no complete JSON receipt"
+                    )
+                if parsed_run.get("launch_id") != authorization.inner_launch_id:
+                    raise RuntimeError(
+                        "authorized RoboTwin verifier receipt launch identity mismatch"
+                    )
+                if (
+                    str(parsed_run.get("status", "")).strip().lower() != "succeeded"
+                    or type(parsed_run.get("returncode")) is not int
+                    or parsed_run.get("returncode") != 0
+                ):
+                    raise RuntimeError(
+                        "authorized RoboTwin verifier receipt was not successful"
+                    )
+            else:
+                parsed_run = parsed_run or {"status": "submitted"}
             summary["run"] = _redact_payload(parsed_run, effective_redactions)
             _postprocess_solution(args, postprocess_key, summary)
         else:
