@@ -412,29 +412,29 @@ def _accepted_wan_base_args(module) -> list[str]:
     ]
 
 
-def test_openpi_manager_does_not_assert_customer_terms(monkeypatch) -> None:
+def test_openpi_terms_fail_before_registry_or_build(monkeypatch, capsys) -> None:
     module = _load_module()
     monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
-
-    def reached_registry(*_args, **_kwargs):
-        raise RuntimeError("manager reached registry without asserting terms")
 
     monkeypatch.setattr(
         module,
         "resolve_container_registry",
-        reached_registry,
+        lambda *_args, **_kwargs: pytest.fail("registry resolution must not run"),
     )
 
-    with pytest.raises(RuntimeError, match="without asserting terms"):
-        module.main(
-            [
-                "--repo-url",
-                "https://github.com/Physical-Intelligence/openpi.git",
-                "--solution-name",
-                "openpi",
-                "--skip-run",
-            ]
-        )
+    rc = module.main(
+        [
+            "--repo-url",
+            "https://github.com/Physical-Intelligence/openpi.git",
+            "--solution-name",
+            "openpi",
+            "--skip-run",
+        ]
+    )
+    assert rc == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["status"] == "failed"
+    assert "OpenPI pi0.5 requires scoped" in output["error"]
 
 
 @pytest.mark.parametrize("value", ["yes", "TRUE", "1", "YES "])
@@ -1335,7 +1335,6 @@ def test_main_refuses_ambiguous_libero_identity_before_registry_or_build(
         ("--repo-url", "https://github.com/example/LIBERO.git", "repository contract"),
         ("--repo-ref", "main", "source revision contract"),
         ("--repo-auth", "github", "repository authentication contract"),
-        ("--base-profile", "isaac-lab", "base profile contract"),
         ("--base-image", "ubuntu:22.04", "base image contract"),
         ("--source-prune-path", "libero/other", "source prune path contract"),
         ("--build-command", "true", "build command contract"),

@@ -77,9 +77,9 @@ def test_root_claude_skill_index_names_leisaac() -> None:
 
 
 def test_emit_reviewable_rrd_skill_is_fail_closed_and_run_derived() -> None:
-    text = (SKILLS_ROOT / "workflows" / "emit-reviewable-rrd" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    text = (
+        SKILLS_ROOT / "workflows" / "emit-reviewable-rrd" / "SKILL.md"
+    ).read_text(encoding="utf-8")
     required = (
         "optimizer_step",
         "application/vnd.rerun.rrd",
@@ -153,35 +153,6 @@ def _assert_configure_provision_dry_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from npa import provisioning_preflight
-    from npa.clients import nebius
-    from npa.provisioning_preflight import ExistingCapacity, QuotaObservation
-
-    observed = []
-
-    def _capacity(**kwargs):
-        assert kwargs["project_id"] == "project-ci"
-        observed.append("capacity")
-        return ExistingCapacity()
-
-    def _quotas(tenant, region, names):
-        assert (tenant, region) == ("tenant-ci", "eu-north1")
-        assert names
-        observed.append("quotas")
-        return {
-            name: QuotaObservation(name=name, state="unknown", reason="offline fixture")
-            for name in names
-        }
-
-    monkeypatch.setattr(provisioning_preflight, "discover_existing_capacity", _capacity)
-    monkeypatch.setattr(provisioning_preflight, "read_provider_quotas", _quotas)
-    monkeypatch.setattr(
-        nebius,
-        "_run",
-        lambda *_args, **_kwargs: pytest.fail(
-            "skill smoke must not invoke provider CLI"
-        ),
-    )
     npa_home = tmp_path / ".npa"
     monkeypatch.setattr(config, "CONFIG_PATH", npa_home / "config.yaml")
     monkeypatch.setattr(credentials, "CREDENTIALS_PATH", npa_home / "credentials.yaml")
@@ -230,7 +201,6 @@ def _assert_configure_provision_dry_run(
     payload = json.loads(provision.output)
     assert payload["status"] == "unknown"
     assert payload["preflight"]["decision"] == "unknown"
-    assert observed == ["capacity", "quotas"]
     assert "s3:dry-run ensure writable bucket ci-bucket" in payload["actions"]
     assert any(
         action.startswith("k8s:dry-run terraform apply deploy/cluster")

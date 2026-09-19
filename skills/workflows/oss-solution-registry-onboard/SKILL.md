@@ -99,7 +99,6 @@ Read upstream README/docs/examples. Produce a capability table with columns:
 
 Use the project's own vocabulary. Examples of good ids:
 
-- LIBERO: `libero_spatial_bc_rnn_train_reload_heldout`
 - ManiSkill: `pickcube_cpu_step`, `pickcube_parallel_envs`
 - MuJoCo Playground: `mjx_cartpole_step`, `train_jax_ppo_cartpole_smoke`
 - RoboCasa: `kitchen_task_registration`, `download_kitchen_assets_lw`
@@ -107,6 +106,7 @@ Use the project's own vocabulary. Examples of good ids:
   `pi05_droid_jointpos_polaris_cross_pod_serve`,
   `pi05_droid_jointpos_polaris_lora_optimizer_smoke`,
   `pi05_droid_jointpos_polaris_heldout_evaluate`
+- LIBERO: `libero_spatial_bc_rnn_train_reload_heldout`
 - DROID: `rlds_config_generator_contract`, `droid_100_config_gen`
 
 ### 2. Choose a golden hello-world per accepted claim
@@ -313,26 +313,20 @@ Also hard-gated in the same smoke:
 - `pi05_droid_jointpos_polaris_direct_infer` (`create_trained_policy` + `policy.infer`)
 - finite joint-position action chunks shaped `[T>=5,8]` from both paths
 
-OpenPI four-mode live acceptance is currently unavailable. The payload-free image
-may be built and scanned, but this skill must not push, fetch, load, or execute the
-checkpoint/runtime. The legacy invalid-terms workload and
-`NPA_OPENPI_ACCEPT_GEMMA_TERMS` marker are refusal fixtures only, not authorization
-for the 27 objects / 12,434,530,837 bytes or any capability. A future customer-run
-authorization must be validated before any checkpoint operation; only then may a
-separate exact-digest B200 gate assess finite direct/cross-pod requests, disjoint
-training/held-out samples, and checkpoint readback.
+Four-mode live acceptance requires the canonical isolated B200 (`sm_100`) gate: build the
+pinned source, execute the declared editable-install and CUDA-compile commands,
+push it to the private project registry, resolve and pull the immutable digest,
+then run a separate invalid-terms workload that exits 64 before checkpoint/model
+loading. Only after that negative gate passes may accepted stages fetch the 27
+objects / 12,434,530,837 bytes at runtime. Direct and both cross-pod service
+requests must be finite `float64[T>=5,8]`. Training and held-out evaluation must
+consume machine-verifiably disjoint samples, and evaluation must consume the
+exact independently read-back training checkpoint.
 
-This checkpoint contains Gemma-derived material. The existing
-`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` marker is retained only for refusal fixtures
-and compatibility wiring; it is never customer acceptance evidence. Before any
-accepted checkpoint, a future customer-run authorization must bind direct,
-customer-controlled terms evidence. Until that migration is complete, every
-OpenPI checkpoint and capability remains unqualified and must not download, load,
-or execute. The payload-free OpenPI image may still be built and scanned without
-terms evidence; it must contain no checkpoint bytes. If a separately authorized customer-run checkpoint gate is used,
-forward the marker only through the secret channel and never bake or persist it
-(`Forward it only as a runtime secret`). The image contains the pinned
-Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
+This checkpoint contains Gemma-derived material. Require the exact run-scoped
+`NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` gate before build or download; forward it
+only through the secret channel and never bake/persist it. The image contains
+the pinned Apache-2.0 source and CUDA/JAX runtime, not checkpoint bytes. A tiny
 deterministic compatible dataset is valid only for the real optimizer and
 held-out offline operational gate. It is not convergence evidence. Do not claim
 physical Franka success, external Ingress, or robot success from offline
@@ -563,9 +557,7 @@ Build-only validation is not sufficient for registry admission.
 2. **BYOF package**
    - Use `npa/scripts/run_byof_repo.py` from the BYOF skill.
    - Pick `--base-profile ubuntu` for generic repos.
-   - Generic Isaac Lab/LeIsaac sim, datagen, and RL paths are refusal-only until a
-     generic customer/run authorization channel is implemented and validated; do
-     not select that profile or dispatch those workloads through this skill.
+   - Pick `--base-profile isaac-lab` for Isaac Lab/LeIsaac sim, datagen, or RL.
    - Use `--base-image <ref>` only when upstream runtime requirements demand it.
    - For registry candidates with documented install/run commands, prefer
      `--workload solution-smoke --build-command <install> --smoke-command <smoke>`
@@ -603,15 +595,13 @@ Build-only validation is not sufficient for registry admission.
      `~/.npa/config.yaml` and `~/.npa/credentials.yaml`.
    - Never hardcode infrastructure identifiers.
    - Validate the actual registry image inside the real E2E path.
-   - Run the relevant live path only for an authorized non-Isaac capability:
+   - Run the relevant live path:
      ```bash
      export NPA_E2E_PROJECT=<project-alias>
      export NPA_BYOF_LIVE_PIPELINE=1
      bash npa/scripts/verify_byof_onboarding_live.sh
      ```
-   - Generic Isaac/LeIsaac live validation is unavailable and must refuse until its
-     direct customer/run channel exists. For an authorized non-Isaac repo-specific
-     validation, set `NPA_BYOF_REPO_URL`,
+   - For repo-specific validation, set `NPA_BYOF_REPO_URL`,
      `NPA_BYOF_REPO_REF`, `NPA_BYOF_BASE_PROFILE`, and the matching live flags
      from `byof-onboard`.
 

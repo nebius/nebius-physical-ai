@@ -38,6 +38,7 @@ from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
     resolve_byof_profile_path,
 )
+from npa.workflows.byof.openpi import is_openpi_request, require_openpi_terms
 from npa.workflows.byof.postprocess import (
     PostprocessContext,
     has_registered_postprocess,
@@ -1275,6 +1276,25 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 1
+    if is_openpi_request(
+        solution_name=args.solution_name,
+        repo_url=args.repo_url,
+        smoke_command=args.smoke_command,
+    ):
+        try:
+            require_openpi_terms()
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "failed",
+                        "solution_name": args.solution_name or "openpi",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
+            return 1
     explicit_base = _normalize_optional(args.base_image)
     if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
         explicit_base = _libero_qualified_candidate(

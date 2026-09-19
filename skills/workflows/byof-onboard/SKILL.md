@@ -1,6 +1,6 @@
 ---
 name: byof-onboard
-description: Use when onboarding an OSS repo via BYOF — containerize on Ubuntu, or follow an explicitly customer-authorized Isaac Lab path, then push to an operator-controlled or authorized GHCR registry and smoke on live Kubernetes.
+description: Use when onboarding an OSS repo via BYOF — containerize on Ubuntu or Isaac Lab, push to an operator-controlled or authorized GHCR registry, and smoke on live Kubernetes.
 ---
 
 # BYOF Solution Onboard
@@ -13,7 +13,7 @@ in chat replies; point operators here.
 
 - Containerize a public GitHub/GitLab or private GitHub repo and push to an authorized registry
 - Onboard a new workbench solution (toolRef + workflow + live smoke)
-- LeIsaac validation (Isaac Lab base + datagen or RL) — refusal-only until a generic customer/run authorization channel exists
+- LeIsaac validation (Isaac Lab base + datagen or RL)
 - Generic Ubuntu BYOF (any OSS repo, no sim stack required)
 
 For **registry/catalog admission** of an OSS Physical AI solution, also load
@@ -53,50 +53,36 @@ Project resolution: `npa.workflows.byof.live.resolve_byof_project()` — never h
 | Profile | Flag | Default base | Use when |
 | --- | --- | --- | --- |
 | `ubuntu` | `--base-profile ubuntu` | `ubuntu:22.04` | Generic OSS repos; containerize + registry smoke |
-| `isaac-lab` | `--base-profile isaac-lab` | NPA Isaac Lab image | refusal-only until a generic customer/run authorization channel is implemented and validated |
+| `isaac-lab` | `--base-profile isaac-lab` | NPA Isaac Lab image | LeIsaac RL, datagen, Isaac tasks |
 | Custom | `--base-image <ref>` | (explicit) | Customer base images; overrides profile |
 
 Override Ubuntu default: `NPA_BYOF_UBUNTU_BASE_IMAGE` or `--base-image ubuntu:24.04`.
 
-The `isaac-lab` profile is not a generic runnable BYOF path. It used to bake NVIDIA
-Omniverse Kit, and the current image instead fetches Isaac Sim / Isaac Lab at first run
-under customer authorization. Until a generic customer/run-bound authorization channel
-is implemented and validated, generic Isaac runtime-fetch, execution, live-validation,
-and runtime-qualification claims are refusal-only; payload-clean image builds, byte
-scans, and publication checks may proceed under the ordinary licensing and security
-gates without fetching or executing Isaac.
+The `isaac-lab` profile **no longer implies `restricted`**. It used to bake NVIDIA
+Omniverse Kit, so anything built on it inherited a no-public-redistribution rule; the
+image now contains no NVIDIA Isaac bytes and fetches Isaac Sim / Isaac Lab at first run
+under the operator's own EULA acceptance, so a BYOF solution built on it can be `public`
+too — provided the solution's *own* dependencies allow it. Classify the result per
+`skills/atomic/solution-licensing/SKILL.md` before promoting it; inheritance is no longer
+the reason to say no, but it is also no longer a reason to skip the question.
 
 Two consequences worth knowing when your BYOF solution runs on the `isaac-lab` base:
 
 - Anything that imports `isaaclab`/`isaacsim` must run through `/isaac-sim/python.sh`
   (the value of `ISAAC_LAB_PYTHON`), which bootstraps Isaac on first use. Using a bare
   `python3` will not find Isaac.
-- Isaac execution requires an explicit `ACCEPT_EULA=Y` value from the
-  authenticated customer/run authorization. An unset or empty value is a
-  refusal; no NPA product, manager, or control-plane default may synthesize
-  acceptance. Use `--no-accept-eula` for an explicit opt-out, which exits 78
- before download. Isaac BYOF profiles may state `Y` only when dispatched under
- that customer-scoped authorization.
-
-The generic BYOF CLI and toolRef currently expose no generic customer-terms
-authorization-file input. Consequently every generic `isaac-lab`, LeIsaac, RL, and
-datagen runtime-fetch, execution, and live-qualification path is refusal-only until
-that owner-private, customer/run-bound input is added and validated. Payload-clean
-build, scan, and publication work remains allowed when it does not fetch, cache, or
-execute Isaac. Do not work around the missing channel by setting `Y` directly; the
-LIBERO authorization-file option is scoped to LIBERO and is not a generic Isaac
-acceptance mechanism. The Isaac cache-warming manifest is disabled for this path: do
-not pre-warm or share its cache, and do not perform a first-start fetch until a
-dedicated customer/run-bound authorization channel and fresh cache-scope validation
-exist.
+- An unset value follows NPA's product default and becomes NVIDIA's documented
+  `ACCEPT_EULA=Y`; Isaac BYOF profiles state `Y` explicitly. Use
+  `--no-accept-eula` for an explicit opt-out, which exits 78 before download.
+  First start downloads ~4.5 GB and
+  materialises ~10 GiB of cache; pre-warm it with
+  `npa/docker/workbench/common/warm-isaac-cache.yaml` if you are iterating.
 
 Every checked-in `byof*.yaml` declares `resources.*.image` from its own
 `config.base_image`. This preserves each solution's intended CUDA, Ubuntu, or
-tool image after removal of generic BYOF-to-Isaac image routing. Generic Isaac runtime
-runs are refusal-only; payload-clean build and scan paths may still inspect an
-explicitly selected image without starting Isaac. Do not dispatch
-`base_profile=isaac-lab` or `base_image=tool://isaac-lab` through this generic runtime
-path. Generic non-Isaac runs default to `ubuntu:22.04` and do not receive Isaac EULA
+tool image after removal of generic BYOF-to-Isaac image routing. For a generic
+Isaac run, set both `base_profile=isaac-lab` and `base_image=tool://isaac-lab`;
+generic non-Isaac runs default to `ubuntu:22.04` and do not receive Isaac EULA
 environment variables.
 
 ## Operator Entrypoint
@@ -179,18 +165,12 @@ Workloads:
 | --- | --- | --- |
 | `container-verify` | `ubuntu` or any | `byof-container-smoke-rtxpro.yaml` |
 | `solution-smoke` | `ubuntu` or custom | `byof-container-smoke-rtxpro.yaml` with `--smoke-command`, `--solution-name`, `--capability-name`, and `--smoke-artifact-name` |
-| `rl-train` | `isaac-lab` | refusal-only until the generic customer/run authorization channel is implemented and validated |
-| `datagen` | `isaac-lab` | refusal-only until the generic customer/run authorization channel is implemented and validated |
+| `rl-train` | `isaac-lab` | `isaac-lab-rl-train-rtxpro-smoke.yaml` |
+| `datagen` | `isaac-lab` | `byof-datagen-rtxpro-smoke.yaml` |
 
 Container layout: source repo cloned to `/opt/byof` + `npa_source_metadata.json`.
 Public metadata retains the source URL/ref. Private metadata contains only
 SHA-256 identities and private-source markers; image labels use placeholders.
-
-When one reviewed source subtree must not enter even a private image, pass its
-safe repository-relative path with `--source-prune-path`. The clone layer
-records the observed public commit, removes that subtree and `.git`, and fails
-closed if the path is missing. A later `rm` in `--build-command` is not an
-equivalent boundary because earlier image layers retain deleted bytes.
 
 ### LeRobot-dependent solutions
 
@@ -213,9 +193,7 @@ train/eval rather than wrapping LeRobot inside a BYOF image.
    npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/byof.yaml --json
    ```
 2. **Containerize** — `run_byof_repo.py` with `--base-profile ubuntu` and `--skip-run` for build-only.
-3. **Deploy + test** — `--workload container-verify` (Ubuntu). Generic Isaac
-   `rl-train` and `datagen` requests refuse until the customer/run authorization
-   channel is implemented and validated.
+3. **Deploy + test** — `--workload container-verify` (Ubuntu) or `--workload rl-train` / `datagen` (Isaac).
    For registry candidates that have documented upstream commands, use
    `--workload solution-smoke --build-command <install> --smoke-command <smoke>`
    with `--solution-name`, `--capability-name`, and
@@ -233,17 +211,11 @@ not raw `GET /api/...` paths.
 | Tier | Repo | Profile | Workload |
 | --- | --- | --- | --- |
 | Ubuntu OSS smoke | `https://github.com/githubtraining/hellogitworld.git` `master` | `ubuntu` | `container-verify` |
-| LeIsaac sim | `https://github.com/LightwheelAI/leisaac.git` `main` | `isaac-lab` | refusal-only until the generic customer/run authorization channel is implemented and validated |
+| LeIsaac sim | `https://github.com/LightwheelAI/leisaac.git` `main` | `isaac-lab` | `datagen` or `rl-train` |
 
 Override: `NPA_BYOF_REPO_URL`, `NPA_BYOF_REPO_REF`, `NPA_BYOF_BASE_PROFILE`.
 
 ## Live Verify
-
-The generic Isaac/LeIsaac live path is unavailable and refusal-only until the
-customer/run authorization channel is implemented and validated. Do not invoke an
-Isaac profile, LeIsaac workload, or GPU command for those Isaac-bound paths.
-The Ubuntu and other non-Isaac `solution-smoke` paths remain executable under
-their ordinary image, entitlement, and capability gates.
 
 ```bash
 export NPA_E2E_PROJECT=rtxpro
@@ -291,20 +263,9 @@ Full ladder: `docs/architecture/oss-onboarding-ladder.md`.
 - Ubuntu BYOF images install `python3` so container-verify / SkyPilot smokes can run metadata checks.
 - Ubuntu BYOF images include passwordless `sudo` for the `ubuntu` user so SkyPilot's
   apt/ssh runtime setup can succeed while the default runtime USER stays non-root.
-- Generated BYOF images bake and verify SkyPilot 0.12.2's synchronous package
-  capabilities (`rsync`, `curl`, `wget`, netcat, `gcc`, `patch`, `pciutils`,
-  FUSE, and `openssh-server`). On Ubuntu, `fuse3` is the real package provider
-  for the conflicting `fuse` capability. The image guard bypasses only
-  SkyPilot's initial redundant APT update and exact `fuse` install request, and
-  only after the complete set verifies; later workload APT commands use the
-  system package manager normally. Missing packages fail closed.
-- The generated `timeout` guard adds a kill-after escalation during SkyPilot
-  bootstrap and writes an explicit failure marker when a deadline expires. A
-  timeout is a bootstrap failure, never evidence that a solution smoke ran.
 - Ubuntu BYOF images create a writable `/workspace` directory for SkyPilot task
   scratch paths used by `byof-container-smoke-rtxpro.yaml`.
-- Ubuntu images cannot run LeIsaac datagen; the generic `isaac-lab`/LeIsaac path is
-  refusal-only pending the customer/run authorization channel.
+- Ubuntu images cannot run LeIsaac datagen; use `isaac-lab` profile for sim workloads.
 - GPU smokes may return `FAILED_PRECHECKS` when cluster capacity is tight; container tier is the gate for Ubuntu BYOF.
 - BYOF images use ad-hoc `npa-byof:<run-id>` tags; they are outside `golden_evals.yaml` until Tier 2 promotion.
 - A successful BYOF build is not sufficient for registry/catalog admission; test

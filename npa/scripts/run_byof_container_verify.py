@@ -134,7 +134,9 @@ LIBERO_RUNTIME_MANIFEST = (
 #: one solution is forwarded into every other BYOF run whenever it happens to be
 #: set in the operator's shell. A solution that is not listed forwards none.
 OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
+    "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
     "ltx2.5": (
+        "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         # The gated-repository entitlement, which the container requires for the
         # LTX source as well as the weights.
         "HF_TOKEN",

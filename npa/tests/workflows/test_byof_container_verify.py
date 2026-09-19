@@ -2706,7 +2706,7 @@ def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None
     assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="wan2.2") == []
 
 
-def test_manager_never_forwards_plain_vendor_terms_answers(monkeypatch) -> None:
+def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
@@ -2715,8 +2715,11 @@ def test_manager_never_forwards_plain_vendor_terms_answers(monkeypatch) -> None:
     assert module.resolve_secret_envs(None, solution_name="openpi") == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
     ]
-    assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="openpi") == []
+    assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="openpi") == [
+        "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
+    ]
 
 
 def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> None:
@@ -2745,7 +2748,7 @@ def test_one_solutions_operator_answers_do_not_widen_anothers(monkeypatch) -> No
 
     assert not [name for name in wan if name.startswith("NPA_LTX_")]
     assert "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS" not in ltx
-    assert "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS" not in ltx
+    assert "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS" in ltx
     # The entitlement the LTX container needs for both of its fetches.
     assert "HF_TOKEN" in ltx
     # A solution with no vendor answers of its own forwards none, including the
