@@ -993,7 +993,7 @@ containers:
       runs_as: ubuntu
       base_image: python:3.12-slim-bookworm (digest pinned)
       network: Operator-only pinned source, model and CUDA runtime fetch
-      external_fetch: [github, huggingface, pytorch-cu128]
+      external_fetch: [github, huggingface, pytorch-cu130]
       notes: >-
         Neutral bootstrap; no SAM source or weights are baked. HF_TOKEN and
         operator-provided source video required. GPU acceptance is deferred.

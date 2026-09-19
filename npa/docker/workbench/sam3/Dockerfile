@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HUB_DISABLE_TELEMETRY=1 \
     NPA_SAM3_CACHE=/workspace/.cache/npa/sam3
 
-COPY docker/workbench/sam3/bootstrap.lock /opt/npa/sam3/bootstrap.lock
+COPY docker/workbench/sam3/bootstrap-requirements.lock /opt/npa/sam3/bootstrap-requirements.lock
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg git openssh-server procps rsync sudo util-linux \
@@ -25,7 +25,7 @@ RUN apt-get update \
     && useradd -m -s /bin/bash -u 1000 ubuntu \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
-    && python -m pip install --no-cache-dir --require-hashes -r /opt/npa/sam3/bootstrap.lock \
+    && python -m pip install --no-cache-dir --require-hashes -r /opt/npa/sam3/bootstrap-requirements.lock \
     && rm -rf /root/.cache
 
 COPY docker/workbench/sam3/runtime.py /opt/npa/sam3/runtime.py

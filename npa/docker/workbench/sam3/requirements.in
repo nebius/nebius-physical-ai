@@ -1,9 +1,9 @@
 # Operator-only runtime; none of this closure is installed during image build.
-torch==2.10.0+cu128
-torchvision==0.25.0+cu128
+torch==2.13.0+cu130
+torchvision==0.28.0+cu130
 numpy==1.26.4
-setuptools==80.9.0
-wheel==0.45.1
+setuptools==84.0.0
+wheel==0.48.0
 timm==1.0.25
 tqdm==4.67.3
 ftfy==6.1.1

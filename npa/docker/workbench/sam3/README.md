@@ -56,6 +56,10 @@ closure with hashes; CUDA-enabled PyTorch is installed only at runtime. The
 runner uses the upstream `build_sam3_multiplex_video_predictor` API, without
 FlashAttention 3 or compilation, and does not download SAM 3.0 as a fallback.
 Source and output hashes plus model, dependency and GPU metadata are recorded.
+The runtime uses PyTorch 2.13 and setuptools 84 with security fixes. A checked
+compatibility patch replaces the removed `pkg_resources` tokenizer lookup with
+`importlib.resources`; original and patched file hashes are recorded in the
+pins and output provenance. No model computation is changed by that patch.
 
 Build through the repository's trusted `publish-public-images.yml` workflow.
 The canonical Dockerfile uses context `npa/`, and immutable development tags

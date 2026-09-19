@@ -1,6 +1,7 @@
 """Exercise SAM 3.1 access refusal, cache isolation and video-output contracts."""
 
 from contextlib import contextmanager
+import hashlib
 import importlib.util
 import json
 import os
@@ -171,6 +172,58 @@ def test_candidate_is_development_only():
         "/npa-sam3:dev-" + "a" * 40
     )
     assert json.loads((SOURCE / "pins.json").read_text())["model"] == "facebook/sam3.1"
+
+
+def test_compatibility_patch_refuses_unreviewed_source(tmp_path):
+    builder = tmp_path / "sam3/model_builder.py"
+    builder.parent.mkdir()
+    builder.write_text("unreviewed source")
+    with pytest.raises(RuntimeError, match="reviewed upstream source"):
+        runtime._patch_builder(tmp_path)
+    assert builder.read_text() == "unreviewed source"
+
+
+def test_compatibility_patch_resolves_the_same_tokenizer(tmp_path, monkeypatch):
+    package = tmp_path / "sam3"
+    package.mkdir()
+    (package / "__init__.py").touch()
+    asset = package / "assets/bpe_simple_vocab_16e6.txt.gz"
+    asset.parent.mkdir()
+    asset.write_bytes(b"tokenizer fixture")
+    call = 'pkg_resources.resource_filename(\n            "sam3", "assets/bpe_simple_vocab_16e6.txt.gz"\n        )'
+    original = "import pkg_resources\n" + "\n".join(
+        f"asset{i} = {call}" for i in range(3)
+    )
+    expected = original.replace(
+        "import pkg_resources", "from importlib.resources import files as package_files"
+    )
+    expected = expected.replace(
+        call,
+        'str(package_files("sam3").joinpath("assets/bpe_simple_vocab_16e6.txt.gz"))',
+    )
+    (package / "model_builder.py").write_text(original)
+    monkeypatch.setitem(
+        runtime.PINS,
+        "builder_original_sha256",
+        hashlib.sha256(original.encode()).hexdigest(),
+    )
+    monkeypatch.setitem(
+        runtime.PINS,
+        "builder_patched_sha256",
+        hashlib.sha256(expected.encode()).hexdigest(),
+    )
+    runtime._patch_builder(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    namespace = {}
+    exec(
+        compile((package / "model_builder.py").read_text(), "model_builder.py", "exec"),
+        namespace,
+    )
+    assert all(
+        Path(namespace[f"asset{i}"]).read_bytes() == b"tokenizer fixture"
+        for i in range(3)
+    )
+    sys.modules.pop("sam3", None)
 
 
 def test_real_overlay_encoding_preserves_frame_count(tmp_path):

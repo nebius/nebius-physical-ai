@@ -90,6 +90,30 @@ def _fetch_source(source: Path) -> None:
         raise RuntimeError("Fetched SAM source revision does not match the pin")
 
 
+def _patch_builder(source: Path) -> None:
+    builder = source / "sam3/model_builder.py"
+    if _sha256(builder) != PINS["builder_original_sha256"]:
+        raise RuntimeError(
+            "SAM model builder differs from the reviewed upstream source"
+        )
+    text = builder.read_text().replace(
+        "import pkg_resources\n",
+        "from importlib.resources import files as package_files\n",
+    )
+    # Setuptools 84 removes pkg_resources; resolve the same packaged BPE asset
+    # through Python's standard library without changing any model computation.
+    old = 'pkg_resources.resource_filename(\n            "sam3", "assets/bpe_simple_vocab_16e6.txt.gz"\n        )'
+    new = 'str(package_files("sam3").joinpath("assets/bpe_simple_vocab_16e6.txt.gz"))'
+    if text.count(old) != 3:
+        raise RuntimeError(
+            "SAM tokenizer resource calls differ from the reviewed patch"
+        )
+    patched = text.replace(old, new)
+    if hashlib.sha256(patched.encode()).hexdigest() != PINS["builder_patched_sha256"]:
+        raise RuntimeError("SAM compatibility patch differs from its recorded hash")
+    builder.write_text(patched)
+
+
 def _install_packages(destination: Path) -> None:
     python = str(destination / "venv/bin/python")
     _run(
@@ -111,7 +135,7 @@ def _install_packages(destination: Path) -> None:
             python,
             "--require-hashes",
             "--extra-index-url",
-            "https://download.pytorch.org/whl/cu128",
+            "https://download.pytorch.org/whl/cu130",
             "--index-strategy",
             "unsafe-best-match",
             str(HERE / "requirements.lock"),
@@ -133,6 +157,7 @@ def _install_packages(destination: Path) -> None:
 
 def _install(destination: Path) -> None:
     _fetch_source(destination / "source")
+    _patch_builder(destination / "source")
     _install_packages(destination)
     (destination / "receipt.json").write_text(
         json.dumps(

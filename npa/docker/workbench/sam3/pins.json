@@ -4,5 +4,7 @@
   "checkpoint": "sam3.1_multiplex.pt",
   "checkpoint_sha256": "0567debeec80ba4ac6369540c6c248025283cb3ff2b92827509e57e2b3541cb6",
   "source_url": "https://github.com/facebookresearch/sam3.git",
-  "source_revision": "2345a4ad109ac29c569da749c91d84f10dc08c40"
+  "source_revision": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+  "builder_original_sha256": "d71d6d3e485ec3eae48bbc2ba676f401b5853d65c4195a91d077b04da38121c2",
+  "builder_patched_sha256": "bde0602f9a3d9017ba258a1c24b618342c190b5c5b5c74621263d07634349fab"
 }
