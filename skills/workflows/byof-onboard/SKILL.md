@@ -241,8 +241,9 @@ Override: `NPA_BYOF_REPO_URL`, `NPA_BYOF_REPO_REF`, `NPA_BYOF_BASE_PROFILE`.
 
 The generic Isaac/LeIsaac live path is unavailable and refusal-only until the
 customer/run authorization channel is implemented and validated. Do not invoke an
-Isaac profile, LeIsaac workload, or GPU command from this skill; only the Ubuntu
-container-verify path is executable here.
+Isaac profile, LeIsaac workload, or GPU command for those Isaac-bound paths.
+The Ubuntu and other non-Isaac `solution-smoke` paths remain executable under
+their ordinary image, entitlement, and capability gates.
 
 ```bash
 export NPA_E2E_PROJECT=rtxpro
