@@ -268,3 +268,15 @@ otherwise fully controlled comparison, and it does not by itself establish
 the individual root cause of every one of the 155 pre-existing failures. All 3,460
 repository guardrail tests pass. `ruff check` is clean on every changed
 file.
+
+## Cleanup
+
+The dedicated validation project's real infrastructure has been torn down:
+GPU compute (both jobs) reached terminal `COMPLETED` state, and an
+independent post-completion inventory audit of that project found zero
+remaining jobs, endpoints, instances, disks, filesystems, snapshots, GPU
+clusters, Kubernetes clusters, or IP allocations. The project's writable
+object-storage bucket and its owned storage service account (including
+its access key) were then deleted and their absence independently
+verified through two separate provider queries. The project itself was
+retained, not deleted, per the task's scope.
