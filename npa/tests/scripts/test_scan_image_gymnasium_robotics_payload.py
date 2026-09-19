@@ -635,6 +635,7 @@ def test_oci_layout_accepts_bound_docker_compatibility_manifest(
         [
             {
                 "Config": f"blobs/sha256/{config_digest}",
+                "RepoTags": None,
                 "Layers": [
                     f"blobs/sha256/{descriptor['digest'].removeprefix('sha256:')}"
                     for descriptor in descriptors
@@ -660,6 +661,7 @@ def test_oci_layout_refuses_unbound_docker_compatibility_manifest(
         [
             {
                 "Config": "blobs/sha256/" + "f" * 64,
+                "RepoTags": None,
                 "Layers": [
                     f"blobs/sha256/{descriptor['digest'].removeprefix('sha256:')}"
                     for descriptor in descriptors
@@ -671,6 +673,45 @@ def test_oci_layout_refuses_unbound_docker_compatibility_manifest(
     _add_outer_file(image, "manifest.json", manifest)
 
     with pytest.raises(ValueError, match="config does not bind OCI graph"):
+        SCAN.scan_oci_layout(image)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["duplicate", "unexpected-field", "malformed-tags"],
+)
+def test_oci_layout_refuses_ambiguous_docker_compatibility_manifest(
+    tmp_path: Path, structural_scan: None, mutation: str
+) -> None:
+    image = tmp_path / f"ambiguous-hybrid-{mutation}.tar"
+    config_digest, _diff_ids, descriptors = _oci_layout(image, _required())
+    config_path = f"blobs/sha256/{config_digest}"
+    layer_paths = [
+        f"blobs/sha256/{descriptor['digest'].removeprefix('sha256:')}"
+        for descriptor in descriptors
+    ]
+    if mutation == "duplicate":
+        raw = (
+            '[{"Config":'
+            + json.dumps(config_path)
+            + ',"Config":'
+            + json.dumps(config_path)
+            + ',"RepoTags":null,"Layers":'
+            + json.dumps(layer_paths, separators=(",", ":"))
+            + "}]"
+        ).encode()
+    else:
+        entry = {
+            "Config": config_path,
+            "RepoTags": [1] if mutation == "malformed-tags" else None,
+            "Layers": layer_paths,
+        }
+        if mutation == "unexpected-field":
+            entry["Unexpected"] = True
+        raw = json.dumps([entry], separators=(",", ":")).encode()
+    _add_outer_file(image, "manifest.json", raw)
+
+    with pytest.raises(ValueError, match="hybrid Docker manifest"):
         SCAN.scan_oci_layout(image)
 
 

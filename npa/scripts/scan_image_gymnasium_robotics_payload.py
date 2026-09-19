@@ -1671,8 +1671,16 @@ def _validate_hybrid_docker_manifest(
         archive, "manifest.json", max_bytes=MAX_DOCKER_SAVE_METADATA_BYTES
     )
     _scan_decoded_member_bytes("hybrid Docker manifest", raw)
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("hybrid Docker manifest contains duplicate keys")
+            result[key] = value
+        return result
+
     try:
-        manifest = json.loads(raw)
+        manifest = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
     except json.JSONDecodeError as error:
         raise ValueError("hybrid Docker manifest is malformed") from error
     if not isinstance(manifest, list) or len(manifest) != 1:
@@ -1680,6 +1688,21 @@ def _validate_hybrid_docker_manifest(
     entry = manifest[0]
     if not isinstance(entry, dict):
         raise ValueError("hybrid Docker manifest entry must be an object")
+    if set(entry) != {"Config", "RepoTags", "Layers"}:
+        raise ValueError("hybrid Docker manifest schema is not exact")
+    repo_tags = entry["RepoTags"]
+    if repo_tags is not None:
+        if (
+            not isinstance(repo_tags, list)
+            or not repo_tags
+            or any(
+                not isinstance(tag, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9./:@_-]*", tag)
+                for tag in repo_tags
+            )
+            or len(set(repo_tags)) != len(repo_tags)
+        ):
+            raise ValueError("hybrid Docker manifest RepoTags are malformed")
     if _safe(str(entry.get("Config", ""))) != config_path:
         raise ValueError("hybrid Docker manifest config does not bind OCI graph")
     layers = entry.get("Layers")
