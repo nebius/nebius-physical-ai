@@ -1209,6 +1209,11 @@ class _ScanState:
     source_inventory: dict[str, dict[str, object]] = field(default_factory=dict)
     layer_payloads: list[dict[str, object]] = field(default_factory=list)
     layer_inventory: list[dict[str, object]] = field(default_factory=list)
+    layer_source_inventory: dict[int, dict[str, dict[str, object]]] = field(
+        default_factory=dict
+    )
+    layer_tracked: dict[int, dict[str, bytes]] = field(default_factory=dict)
+    contract: dict[str, object] = field(default_factory=dict)
     findings: list[dict[str, object]] = field(default_factory=list)
     entries: int = 0
     regular_files: int = 0
@@ -1222,36 +1227,97 @@ def _source_identity(row: dict[str, object]) -> str:
     ).hexdigest()
 
 
-def _layer_owner_rows(state: _ScanState, path: str) -> set[str]:
+def _layer_owner_rows(
+    state: _ScanState,
+    path: str,
+    source_inventory: dict[str, dict[str, object]],
+    tracked: dict[str, bytes],
+    payload: dict[str, object] | None = None,
+) -> set[str]:
     """Find package/source identities for one immutable layer payload."""
     owners: set[str] = set()
-    for identity, row in state.source_inventory.items():
-        if _source_artifact_binding(row, path):
+    standalone = _standalone_source_artifact_owner(state, path, payload, tracked)
+    if standalone is not None:
+        owners.add(standalone)
+    for identity, row in source_inventory.items():
+        if _source_artifact_owner(state, row, path, tracked, payload):
             owners.add(identity)
         name = str(row.get("name", ""))
-        if path in {
-            f"usr/share/doc/{name}/copyright",
-            f"usr/share/doc/{name}/changelog.Debian.gz",
-        }:
+        actual_sha, _ = _payload_identity(state, path, payload, tracked)
+        if path == f"usr/share/doc/{name}/copyright" and row.get(
+            "copyright_sha256"
+        ) == actual_sha:
             owners.add(identity)
-        if row.get("ecosystem") == "python" and ".dist-info/" in path:
-            package = _normalize_distribution(name)
-            dist_root = PurePosixPath(path).parent.name.removesuffix(".dist-info")
-            dist_name = _normalize_distribution(dist_root.rsplit("-", 1)[0])
-            if dist_name == package:
+        if row.get("ecosystem") == "python" and path == row.get("metadata_path"):
+            if row.get("metadata_sha256") == actual_sha:
                 owners.add(identity)
-    owners.update(_layer_dpkg_owners(state, path))
-    owners.update(_layer_python_owners(state, path))
-    owners.update(_layer_contract_owners(path))
+    owners.update(_layer_dpkg_owners(source_inventory, tracked, path))
+    owners.update(_layer_python_owners(source_inventory, tracked, path))
+    owners.update(_layer_contract_owners(state, path, payload, tracked))
     return owners
 
 
-def _layer_contract_owners(path: str) -> set[str]:
+def _payload_identity(
+    state: _ScanState,
+    path: str,
+    payload: dict[str, object] | None,
+    tracked: dict[str, bytes],
+) -> tuple[str | None, int | None]:
+    if payload is not None and payload.get("path") == path:
+        return str(payload.get("sha256")), int(payload.get("bytes", 0))
+    content = tracked.get(path)
+    if content is not None:
+        return hashlib.sha256(content).hexdigest(), len(content)
+    actual = state.files.get(path, {})
+    return actual.get("sha256"), actual.get("size")
+
+
+def _source_projection_owner(
+    state: _ScanState,
+    path: str,
+    payload: dict[str, object] | None,
+    tracked: dict[str, bytes],
+) -> bool:
+    projection = state.contract.get("source_projection", {})
+    inventory_path = str(projection.get("inventory_path", "")).lstrip("/")
+    root = str(projection.get("source_root", "")).strip("/")
+    raw = tracked.get(inventory_path)
+    if not inventory_path or not root or raw is None:
+        return False
+    try:
+        rows = json.loads(raw).get("files", [])
+    except (TypeError, ValueError):
+        return False
+    sha256, size = _payload_identity(state, path, payload, tracked)
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or not isinstance(row.get("path"), str):
+            continue
+        try:
+            projected = W.safe_name(str(row["path"]))
+        except W.ScanError:
+            continue
+        if f"{root}/{projected}" == path:
+            return row.get("sha256") == sha256 and row.get("bytes") == size
+    return False
+
+
+def _layer_contract_owners(
+    state: _ScanState,
+    path: str,
+    payload: dict[str, object] | None = None,
+    tracked: dict[str, bytes] | None = None,
+) -> set[str]:
     owners: set[str] = set()
-    if path.startswith("usr/share/doc/npa-habitat-sim/"):
-        owners.add("source:habitat-sim:repository")
-    if path.startswith("usr/src/habitat-sim/") or path.startswith("opt/npa-runtime/npa/"):
-        owners.add("source:habitat-sim:repository")
+    tracked = tracked or {}
+    actual_sha, _ = _payload_identity(state, path, payload, tracked)
+    expected = state.contract.get("required_final_file_sha256", {})
+    if expected.get("/" + path) == actual_sha:
+        owners.add("source:habitat-sim:contract")
+    binding = state.contract.get("executable_source_bindings", {}).get("/" + path)
+    if isinstance(binding, dict) and binding.get("sha256") == actual_sha:
+        owners.add("source:habitat-sim:executable")
+    if _source_projection_owner(state, path, payload, tracked):
+        owners.add("source:habitat-sim:projection")
     if path in {"var/lib/dpkg/status"} or path.startswith("var/lib/dpkg/info/"):
         owners.add("dpkg:database")
     if path in {
@@ -1260,19 +1326,56 @@ def _layer_contract_owners(path: str) -> set[str]:
         "etc/group",
         "etc/ssh/sshd_config.d/99-npa-worker.conf",
         "etc/sudoers.d/90-npa-skypilot",
+        "usr/share/doc/npa-habitat-sim/source-projection.json",
     }:
         owners.add("source:habitat-sim:runtime-contract")
-    source_root = "usr/share/doc/npa-habitat-sim/ubuntu-sources/"
-    if path.startswith(source_root):
-        parts = path.removeprefix(source_root).split("/", 1)
-        if len(parts) == 2 and parts[0] and parts[1]:
-            owners.add(f"source:{parts[0]}:artifact")
     return owners
 
 
-def _layer_dpkg_owners(state: _ScanState, path: str) -> set[str]:
+def _standalone_source_artifact_owner(
+    state: _ScanState,
+    path: str,
+    payload: dict[str, object] | None,
+    tracked: dict[str, bytes],
+) -> str | None:
+    if "/ubuntu-sources/" in path:
+        for dsc_path, dsc_payload in tracked.items():
+            if not dsc_path.endswith(".dsc"):
+                continue
+            fields = _debian_source_fields(dsc_payload)
+            if fields is None or not fields.get("Source") or not fields.get("Version"):
+                continue
+            row = {
+                "ecosystem": "dpkg",
+                "source": fields["Source"],
+                "source_version": fields["Version"],
+            }
+            if _source_artifact_binding(row, dsc_path) and (
+                path == dsc_path
+                or _debian_artifact_matches(state, row, path, tracked, payload)
+            ):
+                return f"source:{fields['Source']}:{fields['Version']}"
+    if "/python-sources/" in path and payload is not None:
+        parts = PurePosixPath(path).parts
+        try:
+            index = parts.index("python-sources")
+            package, version = parts[index + 1 : index + 3]
+        except (ValueError, IndexError):
+            return None
+        row = {"ecosystem": "python", "name": package, "version": version}
+        content = tracked.get(path)
+        if _source_artifact_binding(row, path) and _python_source_matches(row, content):
+            return f"python-source:{package}:{version}"
+    return None
+
+
+def _layer_dpkg_owners(
+    source_inventory: dict[str, dict[str, object]],
+    tracked: dict[str, bytes],
+    path: str,
+) -> set[str]:
     owners = set()
-    for list_path, payload in state.tracked.items():
+    for list_path, payload in tracked.items():
         if not list_path.startswith("var/lib/dpkg/info/") or not list_path.endswith(".list"):
             continue
         package = list_path.removeprefix("var/lib/dpkg/info/").removesuffix(".list")
@@ -1280,32 +1383,98 @@ def _layer_dpkg_owners(state: _ScanState, path: str) -> set[str]:
         paths = {line.lstrip("/") for line in payload.decode(errors="ignore").splitlines()}
         if path in paths:
             owners.update(
-                identity for identity, row in state.source_inventory.items()
+                identity
+                for identity, row in source_inventory.items()
                 if row.get("name") == package
+                and isinstance(row.get("source"), str)
+                and isinstance(row.get("source_version"), str)
             )
     return owners
 
 
-def _layer_python_owners(state: _ScanState, path: str) -> set[str]:
+def _layer_python_owners(
+    source_inventory: dict[str, dict[str, object]],
+    tracked: dict[str, bytes],
+    path: str,
+) -> set[str]:
     owners = set()
-    for record_path, payload in state.tracked.items():
+    for record_path, payload in tracked.items():
         if not record_path.endswith(".dist-info/RECORD"):
             continue
         for relative, _hash, _size in csv.reader(io.StringIO(payload.decode(errors="ignore"))):
             if _record_target(record_path, relative) != path:
                 continue
             metadata_path = record_path.removesuffix("RECORD") + "METADATA"
+            metadata_payload = tracked.get(metadata_path)
+            metadata_sha = (
+                hashlib.sha256(metadata_payload).hexdigest()
+                if metadata_payload is not None
+                else None
+            )
             owners.update(
-                identity for identity, row in state.source_inventory.items()
+                identity
+                for identity, row in source_inventory.items()
                 if row.get("metadata_path") == metadata_path
+                and row.get("metadata_sha256") == metadata_sha
             )
     return owners
+
+
+def _source_artifact_owner(
+    state: _ScanState,
+    row: dict[str, object],
+    path: str,
+    tracked: dict[str, bytes],
+    payload: dict[str, object] | None = None,
+) -> bool:
+    if not _source_artifact_binding(row, path):
+        return False
+    if row.get("ecosystem") == "python":
+        return _python_source_matches(row, tracked.get(path))
+    return _debian_artifact_matches(state, row, path, tracked, payload)
+
+
+def _debian_artifact_matches(
+    state: _ScanState,
+    row: dict[str, object],
+    path: str,
+    tracked: dict[str, bytes],
+    payload: dict[str, object] | None = None,
+) -> bool:
+    for dsc_path, dsc_payload in tracked.items():
+        if not dsc_path.endswith(".dsc") or not _source_artifact_binding(row, dsc_path):
+            continue
+        fields = _debian_source_fields(dsc_payload)
+        if not _dsc_identity_matches(row, fields):
+            continue
+        checksums = _source_checksum_rows(fields.get("Checksums-Sha256"), 64)
+        if checksums is None:
+            continue
+        if path == dsc_path:
+            return True
+        name = PurePosixPath(path).name
+        expected = checksums.get(name)
+        actual_sha, actual_size = _payload_identity(state, path, payload, tracked)
+        if expected is not None and actual_sha == expected[1] and actual_size == expected[0]:
+            return True
+        if path.endswith(".asc") and path.removesuffix(".asc") in {
+            f"{PurePosixPath(dsc_path).parent}/{candidate}" for candidate in checksums
+        }:
+            return actual_size is not None and actual_size > 0
+    return False
 
 
 def _source_layer_inventory(state: _ScanState) -> list[dict[str, object]]:
     inventory = []
     for payload in state.layer_payloads:
-        owners = _layer_owner_rows(state, str(payload["path"]))
+        layer = int(payload["layer"])
+        owners = _layer_owner_rows(
+            state,
+            str(payload["path"]),
+            state.layer_source_inventory.get(layer, {}),
+            state.layer_tracked.get(layer, {}),
+            payload,
+        )
         inventory.append({**payload, "owners": sorted(owners)})
     return inventory
 
@@ -1341,7 +1510,42 @@ def _record_source_population(state: _ScanState) -> None:
             ).get("sha256"),
         }
         state.source_inventory[_source_identity(row)] = row
+    for payload in state.layer_payloads:
+        layer = int(payload["layer"])
+        state.layer_source_inventory.setdefault(
+            layer, {key: dict(value) for key, value in state.source_inventory.items()}
+        )
+        state.layer_tracked.setdefault(layer, dict(state.tracked))
     state.layer_inventory = _source_layer_inventory(state)
+
+
+def _debian_artifact_filename_matches(source: str, version: str, name: str) -> bool:
+    if not name.startswith(f"{source}_") or not version:
+        return False
+    basename = name.removeprefix(f"{source}_")
+    suffixes = (
+        ".orig.tar.gz", ".debian.tar.xz", ".orig.tar.xz", ".orig.tar.bz2",
+        ".orig.tar", ".dsc", ".asc",
+    )
+    for suffix in suffixes:
+        if basename.endswith(suffix):
+            basename = basename[: -len(suffix)]
+            break
+    else:
+        return False
+    unepoch = version.split(":", 1)[-1]
+    upstream = unepoch.rsplit("-", 1)[0] if "-" in unepoch else unepoch
+    return basename in {unepoch, upstream}
+
+
+def _python_artifact_filename_matches(package: str, version: str, name: str) -> bool:
+    for suffix in (".tar.gz", ".tar.bz2", ".tar.xz", ".tar", ".zip", ".tgz"):
+        if name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            return _normalize_distribution(stem) == _normalize_distribution(
+                f"{package}-{version}"
+            )
+    return False
 
 
 def _source_artifact_binding(row: dict[str, object], path: str) -> bool:
@@ -1350,26 +1554,22 @@ def _source_artifact_binding(row: dict[str, object], path: str) -> bool:
     ecosystem = row.get("ecosystem")
     if ecosystem == "dpkg":
         source = row.get("source")
-        version = str(row.get("source_version", "")).split("-", 1)[0]
+        version = str(row.get("source_version", ""))
         prefix = f"usr/share/doc/npa-habitat-sim/ubuntu-sources/{source}/"
         return (
             isinstance(source, str)
             and path.startswith(prefix)
-            and name.startswith(f"{source}_")
-            and bool(version)
-            and version in name
+            and _debian_artifact_filename_matches(source, version, name)
         )
     if ecosystem == "python":
         package = _normalize_distribution(str(row.get("name", "")))
         version = str(row.get("version", ""))
         prefix = f"usr/share/doc/npa-habitat-sim/python-sources/{package}/{version}/"
-        normalized_name = _normalize_distribution(name)
         return (
             bool(package)
             and bool(version)
             and path.startswith(prefix)
-            and package in normalized_name
-            and version in name
+            and _python_artifact_filename_matches(package, version, name)
         )
     return False
 
@@ -1536,19 +1736,24 @@ def _archive_limits(payload: bytes) -> tuple[int, int, int]:
     )
 
 
-def _canonical_metadata_name(row: dict[str, object], name: str) -> bool:
-    root = _canonical_source_root(row)
+def _canonical_metadata_name(row: dict[str, object], name: str, root: str) -> bool:
     parts = PurePosixPath(name).parts
     return len(parts) == 2 and parts[0] == root and parts[1] in {"PKG-INFO", "METADATA"}
 
 
-def _canonical_source_root(row: dict[str, object]) -> str:
-    return f"{_normalize_distribution(str(row.get('name', '')))}-{row.get('version', '')}"
-
-
-def _canonical_source_member(row: dict[str, object], name: str) -> bool:
-    root = _canonical_source_root(row)
-    return name == root or name.startswith(root + "/")
+def _archive_root_identity(
+    row: dict[str, object], root: str, fields: dict[str, str] | None
+) -> bool:
+    if fields is None or "-" not in root:
+        return False
+    root_name, _, root_version = root.rpartition("-")
+    return (
+        _normalize_distribution(root_name) == _normalize_distribution(str(row.get("name", "")))
+        and root_version == str(row.get("version", ""))
+        and _normalize_distribution(fields.get("Name", ""))
+        == _normalize_distribution(str(row.get("name", "")))
+        and fields.get("Version") == str(row.get("version", ""))
+    )
 
 
 def _read_metadata(stream) -> bytes | None:
@@ -1559,7 +1764,13 @@ def _read_metadata(stream) -> bytes | None:
 def _archive_member_budget(
     row, name: str, size: int, state: dict[str, object], expanded_limit: int
 ) -> bool:
-    if not _safe_archive_name(name) or not _canonical_source_member(row, name):
+    if not _safe_archive_name(name):
+        return False
+    parts = PurePosixPath(name).parts
+    root = parts[0] if parts else ""
+    if state["root"] is None:
+        state["root"] = root
+    if state["root"] != root:
         return False
     names = state["names"]
     if name in names or size > SOURCE_ARCHIVE_MAX_MEMBER_BYTES:
@@ -1575,11 +1786,26 @@ def _archive_metadata_member(row, name: str, payload: bytes | None, state) -> bo
     if PurePosixPath(name).name not in {"PKG-INFO", "METADATA"}:
         state["source_files"] = int(state["source_files"]) + 1
         return True
-    if not _canonical_metadata_name(row, name) or state["metadata"] is not None:
+    if not _canonical_metadata_name(row, name, str(state["root"] or "")):
+        return False
+    if state["metadata"] is not None:
         return False
     if payload is None or _read_metadata(io.BytesIO(payload)) is None:
         return False
     state["metadata"] = payload
+    return True
+
+
+def _archive_directory_member(name: str, state: dict[str, object]) -> bool:
+    if not _safe_archive_name(name):
+        return False
+    parts = PurePosixPath(name).parts
+    root = parts[0] if parts else ""
+    if state["root"] is None:
+        state["root"] = root
+    if state["root"] != root or name in state["names"]:
+        return False
+    state["names"].add(name)
     return True
 
 
@@ -1600,7 +1826,11 @@ def _tar_archive_member(row, archive, member, state, expanded_limit) -> bool:
 def _zip_archive_member(row, archive, info, state, expanded_limit) -> bool:
     name = info.filename
     if info.is_dir() or name.endswith("/"):
-        return info.file_size == 0 and info.compress_size == 0
+        return (
+            info.file_size == 0
+            and info.compress_size == 0
+            and _archive_directory_member(name, state)
+        )
     if info.file_size and (
         not info.compress_size
         or info.file_size > info.compress_size * SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO
@@ -1614,15 +1844,22 @@ def _zip_archive_member(row, archive, info, state, expanded_limit) -> bool:
 
 
 def _archive_metadata_result(state: dict[str, object]) -> bytes | None:
-    if int(state["source_files"]) == 0:
+    metadata = state["metadata"]
+    if int(state["source_files"]) == 0 or metadata is None:
         return None
-    return state["metadata"]
+    fields = _python_metadata_fields(metadata)
+    if not _archive_root_identity(state["row"], str(state["root"] or ""), fields):
+        return None
+    return metadata
 
 
 def _tar_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | None:
     try:
         _, _, expanded_limit = _archive_limits(payload)
-        state = {"names": set(), "total": 0, "source_files": 0, "metadata": None}
+        state = {
+            "names": set(), "total": 0, "source_files": 0, "metadata": None,
+            "root": None, "row": row,
+        }
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
             for count, member in enumerate(archive, 1):
                 if count > SOURCE_ARCHIVE_MAX_MEMBERS or not _tar_archive_member(
@@ -1637,7 +1874,10 @@ def _tar_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | Non
 def _zip_archive_metadata(row: dict[str, object], payload: bytes) -> bytes | None:
     try:
         _, _, expanded_limit = _archive_limits(payload)
-        state = {"names": set(), "total": 0, "source_files": 0, "metadata": None}
+        state = {
+            "names": set(), "total": 0, "source_files": 0, "metadata": None,
+            "root": None, "row": row,
+        }
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             infos = archive.infolist()
             if not infos or len(infos) > SOURCE_ARCHIVE_MAX_MEMBERS:
@@ -1662,8 +1902,10 @@ def _python_source_matches(row: dict[str, object], payload: bytes | None) -> boo
         return False
     fields = _python_metadata_fields(metadata)
     return fields is not None and (
-        fields.get("Name"), fields.get("Version")
-    ) == (row.get("name"), row.get("version"))
+        _normalize_distribution(fields.get("Name", ""))
+        == _normalize_distribution(str(row.get("name", "")))
+        and fields.get("Version") == row.get("version")
+    )
 
 
 def _delivered_source_matches(
@@ -2034,6 +2276,7 @@ def _scan_layer(
         findings=state.findings,
         layer_payloads=state.layer_payloads,
         retained_bytes=state.retained_bytes,
+        contract=contract,
     )
     with tarfile.open(fileobj=_decoded(fd, row), mode="r|") as archive:
         for entry, member in enumerate(archive):
@@ -2228,6 +2471,7 @@ def _scan_layers(
     expected_native_closure_sha256: str,
 ) -> dict[str, object]:
     state = _ScanState()
+    state.contract = contract
     for layer, row in enumerate(layers):
         _scan_layer(fd, row, layer, contract, state)
         _record_source_population(state)

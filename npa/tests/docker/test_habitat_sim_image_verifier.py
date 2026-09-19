@@ -324,6 +324,83 @@ def test_layer_inventory_rejects_unowned_superseded_payload() -> None:
     }
 
 
+def test_layer_ownership_uses_the_snapshot_not_later_metadata() -> None:
+    payload = {
+        "layer": 0,
+        "entry": 1,
+        "path": "usr/share/doc/late/copyright",
+        "sha256": _digest(b"old bytes"),
+        "bytes": 9,
+    }
+    state = H._ScanState(
+        layer_payloads=[payload],
+        layer_source_inventory={0: {}},
+        layer_tracked={0: {}},
+        source_inventory={"late": {"ecosystem": "dpkg", "name": "late"}},
+    )
+    state.layer_inventory = H._source_layer_inventory(state)
+    assert state.layer_inventory[0]["owners"] == []
+
+
+def test_source_ownership_requires_content_bound_python_metadata() -> None:
+    row = {
+        "ecosystem": "python",
+        "name": "fixture",
+        "version": "1.0",
+        "metadata_path": "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/METADATA",
+        "metadata_sha256": _digest(b"expected metadata"),
+    }
+    tracked = {
+        "opt/venv/lib/python3.10/site-packages/fixture-1.0.dist-info/RECORD": b"fixture.py,,\n",
+        row["metadata_path"]: b"different metadata",
+    }
+    assert H._layer_python_owners({"id": row}, tracked, "opt/venv/lib/python3.10/site-packages/fixture.py") == set()
+
+
+def test_debian_epoch_filename_is_bound_to_normalized_source_identity() -> None:
+    row = {
+        "ecosystem": "dpkg",
+        "source": "fixture",
+        "source_version": "1:2.3-4",
+    }
+    base = "usr/share/doc/npa-habitat-sim/ubuntu-sources/fixture/"
+    assert H._source_artifact_binding(row, base + "fixture_2.3-4.dsc")
+    assert H._source_artifact_binding(row, base + "fixture_2.3.orig.tar.gz")
+    assert not H._source_artifact_binding(row, base + "fixture_1:2.3-4.dsc")
+    assert not H._source_artifact_binding(row, base + "other_2.3-4.dsc")
+    python_row = {"ecosystem": "python", "name": "fixture", "version": "1.0"}
+    python_base = "usr/share/doc/npa-habitat-sim/python-sources/fixture/1.0/"
+    assert H._source_artifact_binding(python_row, python_base + "fixture-1.0.tar.gz")
+    assert not H._source_artifact_binding(
+        python_row, python_base + "fixture-extra-1.0.tar.gz"
+    )
+
+
+def test_python_source_archive_accepts_normalized_root_and_rejects_ambiguous_root() -> None:
+    row = {"ecosystem": "python", "name": "PyYAML", "version": "6.0"}
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w") as archive:
+        metadata = b"Name: PyYAML\nVersion: 6.0\n"
+        info = tarfile.TarInfo("PyYAML-6.0/PKG-INFO")
+        info.size = len(metadata)
+        archive.addfile(info, io.BytesIO(metadata))
+        source = tarfile.TarInfo("PyYAML-6.0/yaml/__init__.py")
+        body = b"# inert source\n"
+        source.size = len(body)
+        archive.addfile(source, io.BytesIO(body))
+    assert H._python_source_matches(row, payload.getvalue())
+
+    ambiguous = io.BytesIO()
+    with tarfile.open(fileobj=ambiguous, mode="w") as archive:
+        info = tarfile.TarInfo("other-6.0/PKG-INFO")
+        info.size = len(metadata)
+        archive.addfile(info, io.BytesIO(metadata))
+        source = tarfile.TarInfo("other-6.0/source.py")
+        source.size = len(body)
+        archive.addfile(source, io.BytesIO(body))
+    assert not H._python_source_matches(row, ambiguous.getvalue())
+
+
 def test_source_metadata_accepts_clearsigned_dsc_and_repeated_python_fields() -> None:
     body = b"Source: fixture\nVersion: 1.0\nFiles:\n abc 1 fixture.tar\n"
     signed = (
@@ -1501,6 +1578,16 @@ def _cli_fixture(
     contract, entries = _fixture()
     manifest, source_inputs = _cli_source_manifest()
     manifest_sha256 = _digest(manifest)
+    VERIFIER._bind_provenance_files(
+        contract,
+        SOURCE_REVISION,
+        VERIFIER._parse_source_manifest(manifest),
+        manifest_sha256,
+        manifest,
+    )
+    expected_sources = VERIFIER._parse_source_manifest(manifest)
+    VERIFIER._bind_executable_sources(contract, expected_sources)
+    VERIFIER._bind_bootstrap_files(contract)
     provenance = VERIFIER._provenance_bytes(SOURCE_REVISION, manifest_sha256)
     provenance_entries = [
         file(
