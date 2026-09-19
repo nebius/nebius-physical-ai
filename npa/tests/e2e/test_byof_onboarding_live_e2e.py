@@ -1109,18 +1109,36 @@ def _gymnasium_admitted_volumes(spec: dict[str, object]) -> dict[str, object]:
 def _gymnasium_reviewed_pod_environment(
     env: dict[str, str], *, run_id: str,
 ) -> dict[str, str]:
-    """Build the reviewed task environment used to validate an admitted Pod."""
+    """Build expected controls from the same renderer that submits the task."""
+    from npa.scripts.run_byof_container_verify import render_workflow
+
+    output_root = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT", "").strip()
+    image = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE", "").strip()
+    assert output_root and image, "reviewed output root and image are required"
+    rendered = render_workflow(
+        GYMNASIUM_ROBOTICS_SPEC,
+        run_id=run_id,
+        output_root=output_root,
+        image=image,
+        solution_name="gymnasium-robotics",
+        capability_name="HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1",
+        smoke_artifact_name="gymnasium-robotics-smoke.json",
+    )
+    task_env = rendered[1].get("envs", {})
+    assert isinstance(task_env, dict), "rendered task environment must be a mapping"
     names = {
         "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
         "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT",
         "NPA_STORAGE_ENDPOINT", "S3_ENDPOINT_URL", "NPA_OUTPUT_PATH",
-        "NPA_OUTPUT_URI", "S3_OUTPUT_PATH", "NPA_WORKFLOW_RUN_PREFIX_URI",
-        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+        "NPA_OUTPUT_URI", "S3_OUTPUT_PATH", "S3_OUTPUT_PREFIX",
+        "NPA_WORKFLOW_RUN_PREFIX_URI", "NPA_S3_BUCKET", "S3_BUCKET", "NPA_S3_PREFIX",
     }
-    expected = {name: env[name] for name in names if env.get(name)}
-    output_root = env.get("NPA_BYOF_GYMNASIUM_ROBOTICS_OUTPUT_ROOT", "").strip()
-    if output_root:
-        expected["S3_OUTPUT_PREFIX"] = output_root.rstrip("/") + f"/{run_id}/"
+    expected = {
+        name: str(task_env[name]) for name in names if name in task_env
+    }
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+        if env.get(name):
+            expected[name] = env[name]
     return expected
 
 
@@ -1178,6 +1196,7 @@ def _gymnasium_pod_image_receipt(
     namespace: str,
     run_id: str,
     image: str,
+    expected_environment: dict[str, str] | None = None,
 ) -> dict[str, object]:
     expected_image = image.removeprefix("docker:")
     expected_digest = _immutable_image_digest(expected_image)
@@ -1239,7 +1258,7 @@ def _gymnasium_pod_image_receipt(
         ), "only the exact task container may request the one GPU"
         admitted_policy = _gymnasium_admitted_pod_policy(
             pod, namespace=namespace, run_id=run_id,
-            expected_environment=_gymnasium_reviewed_pod_environment(env, run_id=run_id),
+            expected_environment=expected_environment or {},
         )
         statuses = {
             item.get("name"): item
@@ -1589,6 +1608,7 @@ def test_live_gymnasium_robotics_exact_digest_capability(
                 namespace=namespace,
                 run_id=run_id,
                 image=os.environ["NPA_BYOF_GYMNASIUM_ROBOTICS_IMAGE"],
+                expected_environment=_gymnasium_reviewed_pod_environment(env, run_id=run_id),
             )
             returncode = proc.wait(timeout=GYMNASIUM_RUNNER_TIMEOUT_SECONDS)
             if returncode != 0:

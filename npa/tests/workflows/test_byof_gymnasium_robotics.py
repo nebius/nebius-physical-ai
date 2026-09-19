@@ -871,6 +871,21 @@ def test_gymnasium_configuration_refuses_duplicate_or_undeclared_pod_controls() 
         validate_gymnasium_task_configuration([task])
 
 
+def test_gymnasium_configuration_binds_bucket_and_prefix_controls() -> None:
+    task = _configuration_task()
+    expected = {"NPA_S3_BUCKET": "synthetic-bucket", "NPA_S3_PREFIX": "byof/run"}
+    task["envs"] = expected.copy()
+    task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"] = [
+        {"name": name, "value": value} for name, value in expected.items()
+    ]
+    assert validate_gymnasium_task_configuration([task])
+    for index in range(2):
+        mutated = json.loads(json.dumps(task))
+        mutated["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["env"][index]["value"] = "attacker"
+        with pytest.raises(ExecutionPreflightError, match="control environment"):
+            validate_gymnasium_task_configuration([mutated])
+
+
 @pytest.mark.parametrize("extra", [
     {"envs": {"SYNTHETIC_API_KEY": "not-a-credential"}},
     {"file_mounts": {"/synthetic/mount": "synthetic-local-input"}},

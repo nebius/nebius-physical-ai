@@ -122,7 +122,9 @@ def test_admitted_policy_accepts_only_reviewed_ipc_population(
         spec["containers"][0]["volumeMounts"] = [
             {"name": "dshm", "mountPath": "/dev/shm", "readOnly": False}
         ]
-    facts = live._gymnasium_admitted_pod_policy(pod, namespace=NAMESPACE, run_id=RUN_ID)
+    facts = live._gymnasium_admitted_pod_policy(
+        pod, namespace=NAMESPACE, run_id=RUN_ID, expected_environment={}
+    )
     assert facts["service_account"] == service_account
     assert facts["volumes"] == spec.get("volumes", [])
     assert facts["mounts"] == spec["containers"][0].get("volumeMounts", [])
@@ -221,7 +223,9 @@ def test_admitted_policy_refuses_terminating_identity() -> None:
     pod = _pod(image_id=f"containerd://{DIGEST}")
     pod["metadata"]["deletionTimestamp"] = "synthetic-termination"
     with pytest.raises(AssertionError, match="terminating"):
-        live._gymnasium_admitted_pod_policy(pod, namespace=NAMESPACE, run_id=RUN_ID)
+        live._gymnasium_admitted_pod_policy(
+            pod, namespace=NAMESPACE, run_id=RUN_ID, expected_environment={}
+        )
 
 
 @pytest.mark.parametrize(
@@ -296,7 +300,7 @@ def _synthetic_profile_receipt() -> dict[str, object]:
         "observed_digest": DIGEST,
         "observed_unix": 1,
         "admitted_pod_policy": live._gymnasium_admitted_pod_policy(
-            pod, namespace=NAMESPACE, run_id=RUN_ID
+            pod, namespace=NAMESPACE, run_id=RUN_ID, expected_environment={}
         ),
     }
 
