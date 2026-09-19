@@ -2406,6 +2406,114 @@ def test_libero_reconciliation_requires_exact_profile_digest(monkeypatch) -> Non
     assert evidence.job_id == "126"
 
 
+def test_libero_unverified_candidate_missing_from_queue_is_indeterminate(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]", stderr=""
+        ),
+    )
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+
+    assert observed.state is workflow_module.ReconciliationState.ABSENT
+    evidence = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding could not be verified",
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert evidence.job_id == "126"
+    assert "could not be verified" in evidence.error
+
+
+def test_libero_unverified_candidate_becomes_bound_only_after_exact_queue_row(
+    monkeypatch,
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "PENDING",
+        "schedule_state": "WAITING",
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+    observed = workflow_module._reconcile_managed_job_env(
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        expected_job_id="126",
+        require_owner_binding=True,
+    )
+    evidence = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding was initially unverified",
+    )
+
+    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.job_id == "126"
+    assert evidence.workload_observable is True
+    assert "initially unverified" in evidence.error
+
+
+def test_libero_persisted_unverified_candidate_preserves_binding_error(monkeypatch):
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_unverified_candidate_job_id": "126",
+                "libero_binding_error": "queue binding unavailable",
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error = workflow_module._load_libero_bound_job_id(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+    evidence = workflow_module._preserve_unverified_libero_candidate(
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.ABSENT
+        ),
+        expected_job_id=job_id,
+        binding_error=error,
+    )
+
+    assert job_id == "126"
+    assert "unverified candidate" in error
+    assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
+    assert evidence.job_id == "126"
+    assert "must not be treated as absence" in evidence.error
+
+
 def test_non_libero_reconciliation_ignores_ambient_libero_digest(monkeypatch) -> None:
     row = {"job_id": 126, "job_name": "exact-run", "status": "PENDING"}
     monkeypatch.setattr(

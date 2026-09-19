@@ -1147,6 +1147,7 @@ def submit_workflow(
         def _reconcile() -> ReconciliationEvidence:
             expected_profile_sha256 = ""
             expected_job_id = ""
+            binding_error = ""
             if libero_submission:
                 from npa.execution_preflight import libero_executable_profile_sha256
 
@@ -1160,19 +1161,21 @@ def submit_workflow(
                     )
                 if bound_libero_job_id or unverified_libero_job_id:
                     expected_job_id = bound_libero_job_id or unverified_libero_job_id
-                    binding_error = ""
+                    binding_error = (
+                        libero_binding_error if unverified_libero_job_id else ""
+                    )
                 else:
                     expected_job_id, binding_error = _load_libero_bound_job_id(
                         project=project,
                         run_id=run_id,
                         expected_profile_sha256=expected_profile_sha256,
                     )
-                if binding_error:
+                if binding_error and not expected_job_id:
                     return ReconciliationEvidence(
                         ReconciliationState.UNAVAILABLE,
                         error=binding_error,
                     )
-            return _reconcile_managed_job_env(
+            evidence = _reconcile_managed_job_env(
                 run_id,
                 env=env,
                 sky_executable=sky_executable,
@@ -1182,6 +1185,11 @@ def submit_workflow(
                 ),
                 expected_job_id=expected_job_id,
                 require_owner_binding=libero_submission,
+            )
+            return _preserve_unverified_libero_candidate(
+                evidence,
+                expected_job_id=expected_job_id,
+                binding_error=binding_error,
             )
 
         def _launch() -> tuple[
@@ -1938,6 +1946,41 @@ def _verified_libero_job_id(
     return ""
 
 
+def _preserve_unverified_libero_candidate(
+    evidence: ReconciliationEvidence,
+    *,
+    expected_job_id: str,
+    binding_error: str,
+) -> ReconciliationEvidence:
+    """Keep an unverified launch indeterminate until exact binding is observed."""
+
+    if not binding_error:
+        return evidence
+    job_id = str(expected_job_id or evidence.job_id or "").strip()
+    if not job_id:
+        return ReconciliationEvidence(
+            ReconciliationState.UNAVAILABLE,
+            error=binding_error,
+        )
+    if evidence.state is ReconciliationState.ABSENT:
+        return ReconciliationEvidence(
+            ReconciliationState.UNAVAILABLE,
+            job_id=job_id,
+            error=binding_error,
+        )
+    combined_error = "; ".join(
+        value for value in (binding_error, evidence.error) if value
+    )
+    return ReconciliationEvidence(
+        evidence.state,
+        job_id=evidence.job_id or job_id,
+        status=evidence.status,
+        workload_observable=evidence.workload_observable,
+        workload_evidence=evidence.workload_evidence,
+        error=combined_error,
+    )
+
+
 def _load_libero_bound_job_id(
     *, project: str, run_id: str, expected_profile_sha256: str
 ) -> tuple[str, str]:
@@ -1960,7 +2003,12 @@ def _load_libero_bound_job_id(
             launch.get("libero_unverified_candidate_job_id") or ""
         ).strip()
         if not job_id and unverified_candidate.isdigit():
-            return unverified_candidate, ""
+            return (
+                unverified_candidate,
+                "existing LIBERO launch ledger contains an unverified candidate "
+                f"job {unverified_candidate}; exact name/profile binding remains "
+                "unverified and must not be treated as absence",
+            )
         digest = str(launch.get("libero_profile_sha256") or "").strip()
         if not job_id.isdigit() or not re.fullmatch(r"[0-9a-f]{64}", digest):
             return "", "existing LIBERO launch ledger has no valid profile binding"
