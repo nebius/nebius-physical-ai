@@ -1166,7 +1166,10 @@ def submit_workflow(
                     binding_error = (
                         libero_binding_error if unverified_libero_job_id else ""
                     )
-                    owner_ledger_binding = bool(unverified_libero_job_id)
+                    # A launch-output candidate is not a durable owner binding.
+                    # It must still pass the provider's exact ID/name/profile
+                    # observation before reconciliation can adopt it.
+                    owner_ledger_binding = False
                 else:
                     (
                         expected_job_id,
@@ -1198,6 +1201,11 @@ def submit_workflow(
                 evidence,
                 expected_job_id=expected_job_id,
                 binding_error=binding_error,
+                binding_verified=(
+                    bool(binding_error)
+                    and not owner_ledger_binding
+                    and evidence.state is ReconciliationState.FOUND
+                ),
             )
 
         def _launch() -> tuple[
@@ -1778,6 +1786,9 @@ def _libero_owner_binding_payload(
 ) -> dict[str, str]:
     """Build the immutable local owner-ledger binding for one LIBERO attempt."""
 
+    if state not in {"candidate", "verified"}:
+        raise ValueError(f"unsupported LIBERO owner-binding state: {state!r}")
+
     return {
         "schema": LIBERO_OWNER_BINDING_SCHEMA,
         "run_id": str(run_id),
@@ -1785,6 +1796,11 @@ def _libero_owner_binding_payload(
         "job_id": str(job_id),
         "profile_sha256": str(profile_sha256),
         "state": str(state),
+        "evidence": (
+            "queue_exact_id_name_profile"
+            if state == "verified"
+            else "launch_output_unverified"
+        ),
     }
 
 
@@ -2023,6 +2039,7 @@ def _preserve_unverified_libero_candidate(
     *,
     expected_job_id: str,
     binding_error: str,
+    binding_verified: bool = False,
 ) -> ReconciliationEvidence:
     """Keep an unverified launch indeterminate until exact binding is observed."""
 
@@ -2034,18 +2051,26 @@ def _preserve_unverified_libero_candidate(
             ReconciliationState.UNAVAILABLE,
             error=binding_error,
         )
-    if evidence.state is ReconciliationState.ABSENT:
+    if binding_verified and evidence.state is ReconciliationState.FOUND:
         return ReconciliationEvidence(
-            ReconciliationState.UNAVAILABLE,
-            job_id=job_id,
-            error=binding_error,
+            evidence.state,
+            job_id=evidence.job_id or job_id,
+            status=evidence.status,
+            workload_observable=evidence.workload_observable,
+            workload_evidence=evidence.workload_evidence,
+            error=evidence.error,
         )
+    state = (
+        ReconciliationState.AMBIGUOUS
+        if evidence.state is ReconciliationState.AMBIGUOUS
+        else ReconciliationState.UNAVAILABLE
+    )
     combined_error = "; ".join(
         value for value in (binding_error, evidence.error) if value
     )
     return ReconciliationEvidence(
-        evidence.state,
-        job_id=evidence.job_id or job_id,
+        state,
+        job_id=job_id,
         status=evidence.status,
         workload_observable=evidence.workload_observable,
         workload_evidence=evidence.workload_evidence,
@@ -2086,6 +2111,13 @@ def _load_libero_owner_binding(
                     "existing LIBERO launch ledger has an invalid immutable owner binding",
                     False,
                 )
+            state = str(binding.get("state") or "").strip()
+            if state not in {"candidate", "verified"}:
+                return (
+                    "",
+                    "existing LIBERO launch ledger has an unsupported owner-binding state",
+                    False,
+                )
             if digest != expected_profile_sha256:
                 return (
                     "",
@@ -2093,13 +2125,27 @@ def _load_libero_owner_binding(
                     False,
                 )
             binding_error = str(launch.get("libero_binding_error") or "").strip()
-            if str(binding.get("state") or "") == "candidate" and not binding_error:
+            if state == "candidate":
+                if binding_error:
+                    return job_id, binding_error, False
                 binding_error = (
                     "existing LIBERO launch ledger contains an unverified candidate "
                     f"job {job_id}; exact name/profile binding remains unverified "
                     "and must not be treated as absence"
                 )
-            return job_id, binding_error, True
+                return job_id, binding_error, False
+            if (
+                binding.get("evidence") != "queue_exact_id_name_profile"
+                or binding_error
+                or str(launch.get("libero_candidate_job_id") or "").strip() != job_id
+                or str(launch.get("libero_profile_sha256") or "").strip() != digest
+            ):
+                return (
+                    "",
+                    "existing LIBERO verified owner binding lacks exact queue evidence",
+                    False,
+                )
+            return job_id, "", True
 
         # Preserve compatibility with the pre-binding ledger while keeping its
         # conservative queue-digest requirement. New launches always write the

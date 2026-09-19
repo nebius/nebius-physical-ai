@@ -2479,8 +2479,121 @@ def test_libero_owner_ledger_binding_validates_run_and_digest(monkeypatch) -> No
     )
 
     assert job_id == "126"
-    assert owner_binding is True
+    assert owner_binding is False
     assert error == "queue profile field unavailable"
+
+
+@pytest.mark.parametrize("state", ["", "unknown", "CANDIDATE"])
+def test_libero_owner_binding_rejects_unsupported_state(monkeypatch, state) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": state,
+                }
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == ""
+    assert owner_binding is False
+    assert "unsupported owner-binding state" in error
+
+
+def test_libero_verified_owner_binding_requires_queue_evidence(monkeypatch) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "verified",
+                },
+                "libero_candidate_job_id": "126",
+                "libero_profile_sha256": "a" * 64,
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == ""
+    assert owner_binding is False
+    assert "exact queue evidence" in error
+
+
+def test_libero_verified_owner_binding_requires_matching_launch_evidence(
+    monkeypatch,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    class Receipt:
+        outcome = "found"
+        payload = {
+            "launch": {
+                "libero_owner_binding": {
+                    "schema": workflow_module.LIBERO_OWNER_BINDING_SCHEMA,
+                    "run_id": "exact-run",
+                    "job_name": "exact-run",
+                    "job_id": "126",
+                    "profile_sha256": "a" * 64,
+                    "state": "verified",
+                    "evidence": "queue_exact_id_name_profile",
+                },
+                "libero_candidate_job_id": "126",
+                "libero_profile_sha256": "a" * 64,
+            }
+        }
+
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda _project, _run_id: Receipt(),
+    )
+
+    job_id, error, owner_binding = workflow_module._load_libero_owner_binding(
+        project="project",
+        run_id="exact-run",
+        expected_profile_sha256="a" * 64,
+    )
+
+    assert job_id == "126"
+    assert error == ""
+    assert owner_binding is True
 
 
 def test_libero_unverified_candidate_missing_from_queue_is_indeterminate(
@@ -2515,7 +2628,7 @@ def test_libero_unverified_candidate_missing_from_queue_is_indeterminate(
     assert "could not be verified" in evidence.error
 
 
-def test_libero_unverified_candidate_becomes_bound_only_after_exact_queue_row(
+def test_libero_unverified_candidate_never_adopts_without_explicit_verification(
     monkeypatch,
 ) -> None:
     row = {
@@ -2547,10 +2660,21 @@ def test_libero_unverified_candidate_becomes_bound_only_after_exact_queue_row(
         binding_error="launch binding was initially unverified",
     )
 
-    assert evidence.state is workflow_module.ReconciliationState.FOUND
+    assert evidence.state is workflow_module.ReconciliationState.UNAVAILABLE
     assert evidence.job_id == "126"
     assert evidence.workload_observable is True
     assert "initially unverified" in evidence.error
+
+    verified = workflow_module._preserve_unverified_libero_candidate(
+        observed,
+        expected_job_id="126",
+        binding_error="launch binding was initially unverified",
+        binding_verified=True,
+    )
+    assert verified.state is workflow_module.ReconciliationState.FOUND
+    assert verified.job_id == "126"
+    assert verified.workload_observable is True
+    assert verified.error == ""
 
 
 def test_libero_persisted_unverified_candidate_preserves_binding_error(monkeypatch):
