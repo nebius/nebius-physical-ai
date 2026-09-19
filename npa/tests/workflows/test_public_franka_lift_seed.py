@@ -54,7 +54,9 @@ def _video_bytes(tmp_path: Path, name: str) -> bytes:
         stream.pix_fmt = "yuv420p"
         for value in (25, 75, 125, 225):
             array = np.full((16, 16, 3), value, dtype=np.uint8)
-            for packet in stream.encode(av.VideoFrame.from_ndarray(array, format="rgb24")):
+            for packet in stream.encode(
+                av.VideoFrame.from_ndarray(array, format="rgb24")
+            ):
                 container.mux(packet)
         for packet in stream.encode():
             container.mux(packet)
@@ -74,7 +76,9 @@ def _fetcher(tmp_path: Path, *, revision: str = PUBLIC_FRANKA_LIFT_DATASET_REVIS
     payloads = {
         SOURCE_PATHS["metadata"]: json.dumps(info).encode(),
         SOURCE_PATHS["tasks"]: b'{"task_index":0,"task":"lift the cube"}\n',
-        SOURCE_PATHS["episodes"]: b'{"episode_index":0,"tasks":["lift the cube"],"length":3}\n',
+        SOURCE_PATHS[
+            "episodes"
+        ]: b'{"episode_index":0,"tasks":["lift the cube"],"length":3}\n',
         SOURCE_PATHS["actions"]: _parquet_bytes(),
         SOURCE_PATHS["main_video"]: _video_bytes(tmp_path, "main.mp4"),
         SOURCE_PATHS["wrist_video"]: _video_bytes(tmp_path, "wrist.mp4"),
@@ -113,9 +117,7 @@ def test_stage_public_franka_lift_derives_real_subset_counts_and_hashes(
     assert result["action_count"] == 3
     assert result["camera_observation_count"] == 4
     frame_names = sorted(
-        uri.rsplit("/", 1)[-1]
-        for uri in storage.objects
-        if "/frames/" in uri
+        uri.rsplit("/", 1)[-1] for uri in storage.objects if "/frames/" in uri
     )
     assert frame_names == [
         "camera-000.png",
@@ -142,8 +144,13 @@ def test_stage_public_franka_lift_derives_real_subset_counts_and_hashes(
         ("image", 2),
         ("image", 3),
     ]
-    assert manifest["source_provenance"]["repository"] == PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY
-    assert manifest["source_provenance"]["revision"] == PUBLIC_FRANKA_LIFT_DATASET_REVISION
+    assert (
+        manifest["source_provenance"]["repository"]
+        == PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY
+    )
+    assert (
+        manifest["source_provenance"]["revision"] == PUBLIC_FRANKA_LIFT_DATASET_REVISION
+    )
     assert manifest["source_contract"]["action"]["dimensions"] == 7
     assert manifest["source_contract"]["cameras"] == ["image", "wrist_image"]
     assert manifest["compatibility_boundary"]["canonical_action"]["dimensions"] == 8
@@ -152,7 +159,12 @@ def test_stage_public_franka_lift_derives_real_subset_counts_and_hashes(
         "side",
         "overhead",
     ]
-    assert manifest["compatibility_boundary"]["source_actions_reused_as_canonical_ppo_actions"] is False
+    assert (
+        manifest["compatibility_boundary"][
+            "source_actions_reused_as_canonical_ppo_actions"
+        ]
+        is False
+    )
     for record in manifest["source_provenance"]["objects"]:
         assert len(record["sha256"]) == 64
         assert record["bytes"] == len(storage.objects[record["uri"]])

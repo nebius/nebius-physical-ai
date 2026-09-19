@@ -30,7 +30,9 @@ def parse_appearance_profiles(value: str) -> list[dict[str, str]] | None:
     if not isinstance(profiles, list) or not profiles:
         raise ValueError("appearance_profiles_json must contain a non-empty array")
     normalized = [_validate_profile(profile) for profile in profiles]
-    identities = [tuple(profile[key] for key in APPEARANCE_FIELDS) for profile in normalized]
+    identities = [
+        tuple(profile[key] for key in APPEARANCE_FIELDS) for profile in normalized
+    ]
     if len(set(identities)) != len(identities):
         raise ValueError("appearance_profiles_json contains duplicate profiles")
     return normalized
@@ -38,8 +40,12 @@ def parse_appearance_profiles(value: str) -> list[dict[str, str]] | None:
 
 def _validate_profile(profile: Any) -> dict[str, str]:
     if not isinstance(profile, dict) or set(profile) != set(APPEARANCE_FIELDS):
-        raise ValueError("each appearance profile requires exactly " + ", ".join(APPEARANCE_FIELDS))
-    if any(not isinstance(value, str) or not value.strip() for value in profile.values()):
+        raise ValueError(
+            "each appearance profile requires exactly " + ", ".join(APPEARANCE_FIELDS)
+        )
+    if any(
+        not isinstance(value, str) or not value.strip() for value in profile.values()
+    ):
         raise ValueError("appearance profile values must be non-empty strings")
     return {key: profile[key].strip() for key in APPEARANCE_FIELDS}
 
@@ -55,7 +61,9 @@ def appearance_prompt(profile: dict[str, str], subject: str) -> str:
     Raises:
         KeyError: A required profile field is missing.
     """
-    requirements = "; ".join(f"{key.replace('_', ' ')}: {profile[key]}" for key in APPEARANCE_FIELDS)
+    requirements = "; ".join(
+        f"{key.replace('_', ' ')}: {profile[key]}" for key in APPEARANCE_FIELDS
+    )
     return (
         f"Photorealistic {subject}. Appearance requirements: {requirements}. "
         "Apply these consistently across the complete video and all generation windows. "

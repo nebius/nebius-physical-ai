@@ -14,40 +14,107 @@ from npa.orchestration.skypilot.controller_recovery_probe import verify_job
 @pytest.fixture
 def original(tmp_path):
     image = "example.invalid/worker@sha256:" + "a" * 64
-    config = yaml.safe_dump({"kubernetes": {"allowed_contexts": ["synthetic-context"]},
-                             "jobs": {"controller": {"resources": {"region": "synthetic-context"}}}})
-    resources = {"infra": "kubernetes/synthetic-context", "image_id": {"synthetic-context": "docker:" + image}}
-    dag = yaml.safe_dump({"resources": resources, "envs": {
-        "NPA_WORKFLOW_RUN_ID": "synthetic-run", "NPA_WORKFLOW_ATTEMPT_ID": "synthetic-attempt"}})
-    record = {"schema": "npa.workflow.controller-recovery.v1", "run_id": "synthetic-run",
-              "project": "synthetic-project", "workflow_s3_uri": "s3://example-bucket/run/npa-workflow",
-              "context": "synthetic-context", "namespace": "default", "controller": "synthetic-controller",
-              "controller_uid": "synthetic-controller-uid", "container": "controller", "job_id": 1,
-              "name": "synthetic-job", "user_hash": "synthetic-caller", "workspace": "default",
-              "attempt_id": "synthetic-attempt", "submitted_at": 1.25, "image": image,
-              "dag_yaml_content_sha256": hashlib.sha256(dag.encode()).hexdigest(),
-              "config_file_content_sha256": hashlib.sha256(config.encode()).hexdigest()}
-    job = {"spot_job_id": 1, "name": record["name"], "workspace": "default",
-           "user_hash": record["user_hash"], "dag_yaml_content": dag, "config_file_content": config}
-    task = {"spot_job_id": 1, "submitted_at": 1.25, "full_resources": json.dumps(resources),
-            "task_name": record["name"], "status": "RUNNING"}
+    config = yaml.safe_dump(
+        {
+            "kubernetes": {"allowed_contexts": ["synthetic-context"]},
+            "jobs": {"controller": {"resources": {"region": "synthetic-context"}}},
+        }
+    )
+    resources = {
+        "infra": "kubernetes/synthetic-context",
+        "image_id": {"synthetic-context": "docker:" + image},
+    }
+    dag = yaml.safe_dump(
+        {
+            "resources": resources,
+            "envs": {
+                "NPA_WORKFLOW_RUN_ID": "synthetic-run",
+                "NPA_WORKFLOW_ATTEMPT_ID": "synthetic-attempt",
+            },
+        }
+    )
+    record = {
+        "schema": "npa.workflow.controller-recovery.v1",
+        "run_id": "synthetic-run",
+        "project": "synthetic-project",
+        "workflow_s3_uri": "s3://example-bucket/run/npa-workflow",
+        "context": "synthetic-context",
+        "namespace": "default",
+        "controller": "synthetic-controller",
+        "controller_uid": "synthetic-controller-uid",
+        "container": "controller",
+        "job_id": 1,
+        "name": "synthetic-job",
+        "user_hash": "synthetic-caller",
+        "workspace": "default",
+        "attempt_id": "synthetic-attempt",
+        "submitted_at": 1.25,
+        "image": image,
+        "dag_yaml_content_sha256": hashlib.sha256(dag.encode()).hexdigest(),
+        "config_file_content_sha256": hashlib.sha256(config.encode()).hexdigest(),
+    }
+    job = {
+        "spot_job_id": 1,
+        "name": record["name"],
+        "workspace": "default",
+        "user_hash": record["user_hash"],
+        "dag_yaml_content": dag,
+        "config_file_content": config,
+    }
+    task = {
+        "spot_job_id": 1,
+        "submitted_at": 1.25,
+        "full_resources": json.dumps(resources),
+        "task_name": record["name"],
+        "status": "RUNNING",
+    }
     manifest = {"run_id": record["run_id"], "status": "FAILED"}
-    runtime = {"run_id": record["run_id"], "status": "failed", "waves": [{
-        "job_id": "1", "job_name": record["name"], "logical_launch_id": record["attempt_id"], "launch_sequence": 1}]}
-    controller = {"metadata": {"name": record["controller"], "namespace": "default", "uid": record["controller_uid"]},
-                  "spec": {"containers": [{"name": "controller"}]}, "status": {"phase": "Running"}}
-    worker = {"metadata": {"name": "synthetic-worker", "namespace": "default", "annotations": {
-        "skypilot-managed-job-id": "1", "skypilot-managed-job-name": record["name"]}},
-        "spec": {"containers": [{"image": image}]}, "status": {"phase": "Running", "containerStatuses": [{"imageID": image}]}}
+    runtime = {
+        "run_id": record["run_id"],
+        "status": "failed",
+        "waves": [
+            {
+                "job_id": "1",
+                "job_name": record["name"],
+                "logical_launch_id": record["attempt_id"],
+                "launch_sequence": 1,
+            }
+        ],
+    }
+    controller = {
+        "metadata": {
+            "name": record["controller"],
+            "namespace": "default",
+            "uid": record["controller_uid"],
+        },
+        "spec": {"containers": [{"name": "controller"}]},
+        "status": {"phase": "Running"},
+    }
+    worker = {
+        "metadata": {
+            "name": "synthetic-worker",
+            "namespace": "default",
+            "annotations": {
+                "skypilot-managed-job-id": "1",
+                "skypilot-managed-job-name": record["name"],
+            },
+        },
+        "spec": {"containers": [{"image": image}]},
+        "status": {"phase": "Running", "containerStatuses": [{"imageID": image}]},
+    }
     path = tmp_path / "recovery.json"
     path.write_text(json.dumps(record))
     path.chmod(0o600)
     return record, job, task, manifest, runtime, [controller, worker], path
 
 
-def test_stale_durable_failure_does_not_hide_live_original_controller(original, monkeypatch):
+def test_stale_durable_failure_does_not_hide_live_original_controller(
+    original, monkeypatch
+):
     record, job, task, manifest, runtime, pods, path = original
-    monkeypatch.setattr(recovery, "_read_ledger", lambda r: recovery.verify_ledger(r, manifest, runtime))
+    monkeypatch.setattr(
+        recovery, "_read_ledger", lambda r: recovery.verify_ledger(r, manifest, runtime)
+    )
     monkeypatch.setattr(recovery, "_inventory", lambda r: pods)
     monkeypatch.setattr(recovery, "_save_durable", lambda *a: None)
     requests = []
@@ -68,9 +135,17 @@ def test_stale_durable_failure_does_not_hide_live_original_controller(original, 
     assert result["cleanup_verified"] and requests == [False, True, False]
 
 
-@pytest.mark.parametrize("field,value", [("user_hash", "another-caller"), ("name", "another-job"),
-                                         ("workspace", "another-workspace"), ("spot_job_id", 2),
-                                         ("dag_yaml_content", "changed"), ("config_file_content", "changed")])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("user_hash", "another-caller"),
+        ("name", "another-job"),
+        ("workspace", "another-workspace"),
+        ("spot_job_id", 2),
+        ("dag_yaml_content", "changed"),
+        ("config_file_content", "changed"),
+    ],
+)
 def test_refuses_changed_original_caller_configuration_and_job(original, field, value):
     record, job, task, *_ = original
     job[field] = value
@@ -117,8 +192,14 @@ def test_diagnostics_failure_prevents_cancel(original, monkeypatch):
     monkeypatch.setattr(recovery, "_read_ledger", lambda r: None)
     monkeypatch.setattr(recovery, "_inventory", lambda r: pods)
     calls = []
-    monkeypatch.setattr(recovery, "_probe", lambda r, **kw: calls.append(kw) or {"status": "RUNNING"})
-    monkeypatch.setattr(recovery, "_save_evidence", lambda *a: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(
+        recovery, "_probe", lambda r, **kw: calls.append(kw) or {"status": "RUNNING"}
+    )
+    monkeypatch.setattr(
+        recovery,
+        "_save_evidence",
+        lambda *a: (_ for _ in ()).throw(OSError("disk full")),
+    )
     with pytest.raises(OSError):
         recovery.reconcile_controller(path, cancel=True)
     assert calls == [{}]
@@ -140,8 +221,14 @@ def test_durable_write_failure_prevents_native_cancellation(original, monkeypatc
     monkeypatch.setattr(recovery, "_read_ledger", lambda r: None)
     monkeypatch.setattr(recovery, "_inventory", lambda r: pods)
     calls = []
-    monkeypatch.setattr(recovery, "_probe", lambda r, **kw: calls.append(kw) or {"status": "RUNNING"})
-    monkeypatch.setattr(recovery, "_save_durable", lambda *a: (_ for _ in ()).throw(OSError("unavailable")))
+    monkeypatch.setattr(
+        recovery, "_probe", lambda r, **kw: calls.append(kw) or {"status": "RUNNING"}
+    )
+    monkeypatch.setattr(
+        recovery,
+        "_save_durable",
+        lambda *a: (_ for _ in ()).throw(OSError("unavailable")),
+    )
     with pytest.raises(OSError):
         recovery.reconcile_controller(path, cancel=True)
     assert calls == [{}]
@@ -153,7 +240,9 @@ def test_durable_receipt_requires_exact_readback():
     from unittest.mock import Mock
 
     client = Mock()
-    state = SimpleNamespace(prefix="synthetic", bucket="example-bucket", client=lambda: client)
+    state = SimpleNamespace(
+        prefix="synthetic", bucket="example-bucket", client=lambda: client
+    )
     client.get_object.return_value = {"Body": BytesIO(b"changed")}
     with pytest.raises(recovery.ControllerRecoveryError, match="read-back"):
         recovery._save_durable(state, "a" * 64, {"status": "RUNNING"})
@@ -168,9 +257,17 @@ def test_cli_storage_failure_is_sanitized_and_never_claims_cleanup(monkeypatch):
 
     app = typer.Typer()
     cli.register(app)
-    error = ClientError({"Error": {"Code": "Denied", "Message": "private storage coordinate"}}, "PutObject")
-    monkeypatch.setattr(cli, "reconcile_controller", lambda *a, **kw: (_ for _ in ()).throw(error))
+    error = ClientError(
+        {"Error": {"Code": "Denied", "Message": "private storage coordinate"}},
+        "PutObject",
+    )
+    monkeypatch.setattr(
+        cli, "reconcile_controller", lambda *a, **kw: (_ for _ in ()).throw(error)
+    )
     result = CliRunner().invoke(app, ["unused.json", "--cancel", "--json"])
     assert result.exit_code == 1
-    assert json.loads(result.stdout) == {"status": "VERIFICATION_UNAVAILABLE", "cleanup_verified": False}
+    assert json.loads(result.stdout) == {
+        "status": "VERIFICATION_UNAVAILABLE",
+        "cleanup_verified": False,
+    }
     assert "private storage coordinate" not in result.output

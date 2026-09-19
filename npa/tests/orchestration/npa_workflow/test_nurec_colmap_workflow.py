@@ -747,7 +747,8 @@ def _damage_nurec_frame_rows(chunks, damage):
         return [chunk for chunk in chunks if chunk is not target]
     if damage == "one_per_camera":
         return [
-            chunk for chunk in chunks
+            chunk
+            for chunk in chunks
             if not str(chunk.entity_path).startswith("/novel_view/")
             or chunk.to_record_batch().column("frame").to_pylist() == [0]
         ]
@@ -881,7 +882,8 @@ def test_live_rrd_rejects_unsampled_source_frame(
     """
     _write_sampled_nurec_rrd(downstream_run, monkeypatch, 0)
     extra = next(
-        chunk for chunk in _nurec_row_chunks(downstream_run)
+        chunk
+        for chunk in _nurec_row_chunks(downstream_run)
         if str(chunk.entity_path) == "/novel_view/camera1"
         and chunk.to_record_batch().column("frame").to_pylist() == [1]
     )
@@ -889,7 +891,8 @@ def test_live_rrd_rejects_unsampled_source_frame(
     chunks = _nurec_row_chunks(downstream_run)
     if replace:
         chunks = [
-            chunk for chunk in chunks
+            chunk
+            for chunk in chunks
             if str(chunk.entity_path) != "/novel_view/camera1"
             or chunk.to_record_batch().column("frame").to_pylist() != [10]
         ]

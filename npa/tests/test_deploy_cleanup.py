@@ -52,19 +52,27 @@ def test_classifier_returns_partial_for_tfstate_no_host(isolated_config: Path) -
     assert classify_alias_state("proj", "alias") == "partial"
 
 
-def test_classifier_returns_fully_deployed_for_tfstate_and_host(isolated_config: Path) -> None:
+def test_classifier_returns_fully_deployed_for_tfstate_and_host(
+    isolated_config: Path,
+) -> None:
     _write_config(isolated_config, {"ssh": {"host": "10.0.0.1"}})
 
     assert classify_alias_state("proj", "alias") == "fully_deployed"
 
 
-def test_classifier_returns_partial_for_entry_without_state_or_host(isolated_config: Path) -> None:
-    _write_config(isolated_config, {"app_status": "provisioning"}, terraform_state=False)
+def test_classifier_returns_partial_for_entry_without_state_or_host(
+    isolated_config: Path,
+) -> None:
+    _write_config(
+        isolated_config, {"app_status": "provisioning"}, terraform_state=False
+    )
 
     assert classify_alias_state("proj", "alias") == "partial"
 
 
-def test_classifier_defaults_to_fully_deployed_when_ambiguous(isolated_config: Path) -> None:
+def test_classifier_defaults_to_fully_deployed_when_ambiguous(
+    isolated_config: Path,
+) -> None:
     _write_config(isolated_config, {"ssh": {"host": "10.0.0.1"}}, terraform_state=False)
 
     assert classify_alias_state("proj", "alias") == "fully_deployed"

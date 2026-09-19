@@ -1,4 +1,5 @@
 """Exercise private upload permissions and failure cleanup over real SFTP."""
+
 from __future__ import annotations
 
 import io
@@ -18,10 +19,15 @@ from npa.clients.ssh import SSHClient, SSHError
 
 
 def _key():
-    encoded = Ed25519PrivateKey.generate().private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
-        serialization.NoEncryption(),
-    ).decode()
+    encoded = (
+        Ed25519PrivateKey.generate()
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.OpenSSH,
+            serialization.NoEncryption(),
+        )
+        .decode()
+    )
     return paramiko.Ed25519Key.from_private_key(io.StringIO(encoded))
 
 
@@ -36,10 +42,12 @@ def sftp_vm(tmp_path, monkeypatch):
     class Handle(paramiko.SFTPHandle):
         def write(self, offset, data):
             path = Path(self.filename)
-            state["writes"].append({
-                "parent_mode": stat.S_IMODE(path.parent.stat().st_mode),
-                "file_mode": stat.S_IMODE(path.stat().st_mode),
-            })
+            state["writes"].append(
+                {
+                    "parent_mode": stat.S_IMODE(path.parent.stat().st_mode),
+                    "file_mode": stat.S_IMODE(path.stat().st_mode),
+                }
+            )
             if state["fail"] == "write":
                 return paramiko.SFTP_FAILURE
             return super().write(offset, data)
@@ -97,14 +105,20 @@ def sftp_vm(tmp_path, monkeypatch):
             return paramiko.AUTH_SUCCESSFUL if key == user_key else paramiko.AUTH_FAILED
 
         def check_channel_request(self, kind, chanid):
-            return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+            return (
+                paramiko.OPEN_SUCCEEDED
+                if kind == "session"
+                else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+            )
 
     def connect(**_kwargs):
         local, remote = socket.socketpair()
         transport = paramiko.Transport(remote)
         transport.add_server_key(host_key)
         transport.set_subsystem_handler("sftp", paramiko.SFTPServer, Files)
-        thread = threading.Thread(target=lambda: transport.start_server(server=Server()))
+        thread = threading.Thread(
+            target=lambda: transport.start_server(server=Server())
+        )
         thread.start()
         client_transport = paramiko.Transport(local)
         client_transport.connect(hostkey=host_key, username="fixture", pkey=user_key)
@@ -127,16 +141,23 @@ def test_real_sftp_private_upload_is_atomic_and_private_during_every_write(sftp_
     ssh, root, state = sftp_vm
     target = root / "tmp/config"
     target.write_text("original")
-    assert ssh.upload_private_text("synthetic-value" * 100_000, "/tmp/config") == "/tmp/config"
+    assert (
+        ssh.upload_private_text("synthetic-value" * 100_000, "/tmp/config")
+        == "/tmp/config"
+    )
     assert target.read_text() == "synthetic-value" * 100_000
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
     assert state["writes"]
-    assert all(event == {"parent_mode": 0o700, "file_mode": 0o600} for event in state["writes"])
+    assert all(
+        event == {"parent_mode": 0o700, "file_mode": 0o600} for event in state["writes"]
+    )
     assert sorted(path.name for path in (root / "tmp").iterdir()) == ["config"]
 
 
 @pytest.mark.parametrize("failure", ["chmod", "write", "rename"])
-def test_real_sftp_upload_failure_preserves_existing_and_removes_staging(sftp_vm, failure):
+def test_real_sftp_upload_failure_preserves_existing_and_removes_staging(
+    sftp_vm, failure
+):
     ssh, root, state = sftp_vm
     target = root / "tmp/config"
     target.write_text("original")
@@ -160,7 +181,10 @@ def test_real_sftp_replaces_symlink_without_writing_its_target(sftp_vm):
 def test_real_sftp_refuses_attacker_precreated_staging_directory(sftp_vm, monkeypatch):
     ssh, root, state = sftp_vm
     from types import SimpleNamespace
-    monkeypatch.setattr("npa.clients.ssh.uuid.uuid4", lambda: SimpleNamespace(hex="collision"))
+
+    monkeypatch.setattr(
+        "npa.clients.ssh.uuid.uuid4", lambda: SimpleNamespace(hex="collision")
+    )
     malicious = root / "tmp/.npa-stage-collision"
     malicious.mkdir(mode=0o777)
     victim = root / "victim"
@@ -174,19 +198,25 @@ def test_real_sftp_refuses_attacker_precreated_staging_directory(sftp_vm, monkey
 
 
 @pytest.mark.parametrize("failure", ["", "write"])
-def test_real_sftp_token_file_is_private_and_removed_before_failed_exec(sftp_vm, failure):
+def test_real_sftp_token_file_is_private_and_removed_before_failed_exec(
+    sftp_vm, failure
+):
     ssh, root, state = sftp_vm
     ssh._config.tokens = {"HF_TOKEN": "synthetic-value"}
     state["fail"] = failure
     # The real SSH server refuses command execution after accepting SFTP.
     with pytest.raises((paramiko.SSHException, OSError)):
         ssh.run("true")
-    assert all(event == {"parent_mode": 0o700, "file_mode": 0o600} for event in state["writes"])
+    assert all(
+        event == {"parent_mode": 0o700, "file_mode": 0o600} for event in state["writes"]
+    )
     assert list((root / "tmp").iterdir()) == []
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_path, failure):
+def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(
+    tmp_path, failure
+):
     """Run the actual destination-filesystem installation shell locally."""
     import shlex
     import subprocess
@@ -212,7 +242,9 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_pat
 
         def upload_private_text(self, content, remote_path):
             assert stat.S_IMODE(Path(remote_path).parent.stat().st_mode) == 0o700
-            with open(os.open(remote_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w") as output:
+            with open(
+                os.open(remote_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w"
+            ) as output:
                 output.write(content)
 
         def run_or_raise(self, command, **_kwargs):
@@ -221,7 +253,9 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_pat
             # is unnecessary because this fixture owns its destination already.
             result = subprocess.run(
                 ["bash", "-c", 'sudo() { "$@"; }; export -f sudo; ' + command],
-                capture_output=True, text=True, check=False,
+                capture_output=True,
+                text=True,
+                check=False,
             )
             if result.returncode:
                 raise SSHError("synthetic install failure")
@@ -236,10 +270,14 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_pat
     }
     if failure:
         with pytest.raises(SSHError, match="install failure"):
-            write_remote_env_file(LocalSSH(), str(target), {"HF_TOKEN": "synthetic-value"}, **options)
+            write_remote_env_file(
+                LocalSSH(), str(target), {"HF_TOKEN": "synthetic-value"}, **options
+            )
         assert target.read_text() == "original"
     else:
-        write_remote_env_file(LocalSSH(), str(target), {"HF_TOKEN": "synthetic-value"}, **options)
+        write_remote_env_file(
+            LocalSSH(), str(target), {"HF_TOKEN": "synthetic-value"}, **options
+        )
         assert target.read_text() == "HF_TOKEN='synthetic-value'\n"
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
         script = shlex.split(commands[-1])[-1]
@@ -251,18 +289,27 @@ def test_persistent_env_install_uses_real_atomic_coreutils_and_cleans_up(tmp_pat
 
 def test_concurrent_real_sftp_uploads_publish_one_complete_file(sftp_vm):
     from concurrent.futures import ThreadPoolExecutor
+
     ssh, root, state = sftp_vm
     candidates = ["first-value" * 100_000, "second-value" * 100_000]
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(ssh.upload_private_text, value, "/tmp/config") for value in candidates]
+        futures = [
+            executor.submit(ssh.upload_private_text, value, "/tmp/config")
+            for value in candidates
+        ]
         assert [future.result() for future in futures] == ["/tmp/config", "/tmp/config"]
     assert (root / "tmp/config").read_text() in candidates
-    assert all(event == {"parent_mode": 0o700, "file_mode": 0o600} for event in state["writes"])
+    assert all(
+        event == {"parent_mode": 0o700, "file_mode": 0o600} for event in state["writes"]
+    )
     assert sorted(path.name for path in (root / "tmp").iterdir()) == ["config"]
 
 
-def test_legacy_distill_credentials_use_private_installer_and_preserve_env(monkeypatch, mocker):
+def test_legacy_distill_credentials_use_private_installer_and_preserve_env(
+    monkeypatch, mocker
+):
     import importlib
+
     monkeypatch.setenv("NPA_PROJECT_ID", "project-fixture")
     monkeypatch.setenv("NPA_S3_BUCKET", "bucket-fixture")
     distill = importlib.import_module("npa.workflows.distill_two_vm")
@@ -281,7 +328,9 @@ def test_legacy_distill_credentials_use_private_installer_and_preserve_env(monke
     ssh.run_or_raise.assert_not_called()
 
 
-def test_legacy_distill_rejects_multiline_docker_credential_before_install(monkeypatch, mocker):
+def test_legacy_distill_rejects_multiline_docker_credential_before_install(
+    monkeypatch, mocker
+):
     import importlib
 
     monkeypatch.setenv("NPA_PROJECT_ID", "project-fixture")
@@ -291,5 +340,7 @@ def test_legacy_distill_rejects_multiline_docker_credential_before_install(monke
     ssh.run.return_value = (0, "KEEP=literal\n", "")
     install = mocker.patch.object(distill, "write_remote_text_file")
     with pytest.raises(distill.TwoVMDistillError, match="newline or NUL"):
-        distill._write_s3_env(ssh, {"nebius_secret_key": "synthetic\nINJECTED=1"}, "fixture")
+        distill._write_s3_env(
+            ssh, {"nebius_secret_key": "synthetic\nINJECTED=1"}, "fixture"
+        )
     install.assert_not_called()

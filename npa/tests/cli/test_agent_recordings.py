@@ -5,8 +5,12 @@ from __future__ import annotations
 from npa.cli import agent_recordings as R
 
 # Minimal byte fixtures mimicking the entity-path strings embedded in .rrd files.
-_RUN_RRD = b"RRF2\x00...world/table.../heldout/per_env/env-0000.../rollout/0.../scores..."
-_GROOT_RRD = b"RRF2\x00...camera...metrics/loss...metrics/world_size...run/provenance..."
+_RUN_RRD = (
+    b"RRF2\x00...world/table.../heldout/per_env/env-0000.../rollout/0.../scores..."
+)
+_GROOT_RRD = (
+    b"RRF2\x00...camera...metrics/loss...metrics/world_size...run/provenance..."
+)
 _DEMO_RRD = b"RRF2\x00...world/franka/base.../franka/gripper...world/table...world/cube...demo/active_camera..."
 _EMPTY = b""
 
@@ -48,7 +52,10 @@ def test_unknown_geometry_only_is_not_run_and_not_demo():
 
 
 def test_run_recording_basename_is_filesystem_safe():
-    assert R.run_recording_basename("agent-run-1843d1e8b64d") == "agent-run-1843d1e8b64d.rrd"
+    assert (
+        R.run_recording_basename("agent-run-1843d1e8b64d")
+        == "agent-run-1843d1e8b64d.rrd"
+    )
     assert R.run_recording_basename("sim2real-2026:07") == "sim2real-2026:07.rrd"
     # Traversal / odd input is sanitized.
     assert "/" not in R.run_recording_basename("../../evil")

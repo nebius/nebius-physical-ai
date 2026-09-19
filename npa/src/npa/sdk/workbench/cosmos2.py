@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from npa.workflows.cosmos_split import Cosmos2TransferConfig, build_cosmos2_transfer_manifest
+from npa.workflows.cosmos_split import (
+    Cosmos2TransferConfig,
+    build_cosmos2_transfer_manifest,
+)
 
 
 def transfer(

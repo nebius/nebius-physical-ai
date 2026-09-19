@@ -28,8 +28,7 @@ DEFAULT_SAM2_MODEL = "facebook/sam2.1-hiera-tiny"
 DEFAULT_SAM2_REVISION = "de431c4043854a71d8101e17995dfe596bf101a5"
 SAM2_LICENSE = "Apache-2.0"
 SAM2_LICENSE_URL = (
-    "https://github.com/facebookresearch/sam2/blob/"
-    f"{SAM2_SOURCE_REVISION}/LICENSE"
+    f"https://github.com/facebookresearch/sam2/blob/{SAM2_SOURCE_REVISION}/LICENSE"
 )
 
 
@@ -67,9 +66,7 @@ class Sam2MaskConfig:
         if not 0.0 <= self.stability_threshold <= 1.0:
             raise Sam2MaskError("SAM2 stability threshold must be within 0..1")
         if not 0.0 < self.min_area_fraction < self.max_area_fraction <= 1.0:
-            raise Sam2MaskError(
-                "SAM2 area fractions must satisfy 0 < min < max <= 1"
-            )
+            raise Sam2MaskError("SAM2 area fractions must satisfy 0 < min < max <= 1")
         if not 1 <= self.max_objects <= 32:
             raise Sam2MaskError("SAM2 max_objects must be within 1..32")
 
@@ -164,16 +161,16 @@ def load_published_sam2_masks(
     try:
         object_count = int(manifest["object_count"])
         coverage = manifest["mask_coverage"]
-        coverage_values = [
-            float(coverage[name]) for name in ("mean", "min", "max")
-        ]
+        coverage_values = [float(coverage[name]) for name in ("mean", "min", "max")]
         runtime_seconds = float(manifest["runtime"]["seconds"])
         frames_per_second = float(manifest["runtime"]["frames_per_second"])
     except (KeyError, TypeError, ValueError) as exc:
         raise Sam2MaskError("published SAM2 manifest has invalid evidence") from exc
     if (
         not 1 <= object_count <= config.max_objects
-        or not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in coverage_values)
+        or not all(
+            math.isfinite(value) and 0.0 <= value <= 1.0 for value in coverage_values
+        )
         or not 0.0 < coverage_values[0] < 1.0
         or coverage_values[2] <= 0.0
         or coverage_values[1] >= 1.0
@@ -256,9 +253,7 @@ def publish_sam2_masks(
         json.dumps(published, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     try:
-        storage_client.upload_file(
-            str(result.manifest_path), published["manifest_uri"]
-        )
+        storage_client.upload_file(str(result.manifest_path), published["manifest_uri"])
     except Exception as exc:  # noqa: BLE001
         raise Sam2MaskError("could not publish the SAM2 mask manifest") from exc
     return published
@@ -370,24 +365,22 @@ def generate_sam2_video_masks(
             frame_masks[int(frame_index)] = combined.astype(bool)
 
     if set(frame_masks) != set(range(len(frame_paths))):
-        raise Sam2MaskError(
-            "SAM2 did not return an exact mask for every source frame"
-        )
+        raise Sam2MaskError("SAM2 did not return an exact mask for every source frame")
     coverage: list[float] = []
     for index in range(len(frame_paths)):
         mask = frame_masks[index]
         if mask.shape != (height, width):
             mask_image = Image.fromarray(mask.astype("uint8") * 255)
-            mask_image = mask_image.resize((width, height), resample=Image.Resampling.NEAREST)
+            mask_image = mask_image.resize(
+                (width, height), resample=Image.Resampling.NEAREST
+            )
             mask = np.asarray(mask_image) > 127
         coverage.append(float(mask.mean()))
         Image.fromarray(mask.astype("uint8") * 255).save(
             masks_dir / f"mask-{index:06d}.png"
         )
     if not coverage or not 0.0 < (sum(coverage) / len(coverage)) < 1.0:
-        raise Sam2MaskError(
-            "SAM2 produced an empty or all-frame-invalid mask contract"
-        )
+        raise Sam2MaskError("SAM2 produced an empty or all-frame-invalid mask contract")
     del predictor, inference_state, frame_masks
     torch.cuda.empty_cache()
 
@@ -532,9 +525,7 @@ def _verify_binary_mask(path: Path, *, width: int, height: int) -> None:
             image.verify()
         with Image.open(path) as image:
             if image.format != "PNG" or image.size != (width, height):
-                raise Sam2MaskError(
-                    "SAM2 masks do not match the manifest PNG geometry"
-                )
+                raise Sam2MaskError("SAM2 masks do not match the manifest PNG geometry")
             values = image.convert("L").getcolors(maxcolors=257)
     except Sam2MaskError:
         raise

@@ -18,10 +18,27 @@ def test_hardening_with_insights_validates_and_appends_insights_stages() -> None
     assert spec.name == "hardening-with-insights"
     assert spec.initial == "generate"
 
-    promote = [step.state for step in build_plan(spec, run_id="t", assume_decision="promote_checkpoint").steps]
-    assert promote == ["generate", "rank", "retrain", "evaluate", "decide", "publish", "aggregate", "dashboard"]
+    promote = [
+        step.state
+        for step in build_plan(
+            spec, run_id="t", assume_decision="promote_checkpoint"
+        ).steps
+    ]
+    assert promote == [
+        "generate",
+        "rank",
+        "retrain",
+        "evaluate",
+        "decide",
+        "publish",
+        "aggregate",
+        "dashboard",
+    ]
 
-    loop = [step.state for step in build_plan(spec, run_id="t", assume_decision="loop_back").steps]
+    loop = [
+        step.state
+        for step in build_plan(spec, run_id="t", assume_decision="loop_back").steps
+    ]
     assert loop[:2] == ["generate", "rank"]
     assert loop.count("retrain") == 3
     assert loop[-2:] == ["aggregate", "dashboard"]

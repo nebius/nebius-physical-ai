@@ -22,7 +22,9 @@ class _StubClient:
     def classify_queue_state(self, info: JobInfo) -> str:
         return self._queue_state or info.status
 
-    def get_job_logs(self, job_id: str, project_id: str, *, tail: int | None = None) -> str:
+    def get_job_logs(
+        self, job_id: str, project_id: str, *, tail: int | None = None
+    ) -> str:
         self.log_calls.append((job_id, project_id))
         if isinstance(self._logs, Exception):
             raise self._logs
@@ -31,7 +33,9 @@ class _StubClient:
 
 def test_queued_job_keeps_existing_capacity_hint_shape() -> None:
     client = _StubClient(queue_state="waiting_for_capacity")
-    payload = job_status_payload(client, _job("queued", queued_for_seconds=492), gpu_count=8)
+    payload = job_status_payload(
+        client, _job("queued", queued_for_seconds=492), gpu_count=8
+    )
 
     assert payload["status"] == "waiting_for_capacity"
     assert payload["queue_state_classification"] == "capacity"
@@ -77,14 +81,19 @@ def test_cancelled_job_gets_cancelled_hint_not_failed_hint() -> None:
     assert payload["hint"] == "Job was cancelled."
 
 
-def test_failed_log_fetch_falls_back_to_cached_message_without_hiding_the_error() -> None:
+def test_failed_log_fetch_falls_back_to_cached_message_without_hiding_the_error() -> (
+    None
+):
     client = _StubClient(logs=AuthError("403 forbidden"))
     info = _job("failed", log_tail="cached provider message")
 
     payload = job_status_payload(client, info)
 
     # The fetch failure must not be silently swallowed...
-    assert payload["log_fetch_error"] == {"error_type": "AuthError", "message": "403 forbidden"}
+    assert payload["log_fetch_error"] == {
+        "error_type": "AuthError",
+        "message": "403 forbidden",
+    }
     # ...nor mistaken for "the job produced no logs" (cached message is kept)...
     assert payload["log_tail"] == "cached provider message"
     assert payload["log_tail_source"] == "cached_provider_message"
@@ -112,7 +121,9 @@ def test_empty_log_fetch_falls_back_to_cached_message() -> None:
 
 
 def test_log_tail_is_redacted_before_display() -> None:
-    client = _StubClient(logs="starting job\nAWS_SECRET_ACCESS_KEY=super-secret-value\ndone")
+    client = _StubClient(
+        logs="starting job\nAWS_SECRET_ACCESS_KEY=super-secret-value\ndone"
+    )
     payload = job_status_payload(client, _job("failed"))
 
     assert "super-secret-value" not in payload["log_tail"]
@@ -131,7 +142,9 @@ def test_cached_fallback_log_tail_is_redacted_too() -> None:
 
 def test_pending_reason_is_redacted() -> None:
     client = _StubClient(logs="")
-    info = _job("failed", pending_reason="leaked NGC_API_KEY=nvapi-abcdefghijklmnop in reason")
+    info = _job(
+        "failed", pending_reason="leaked NGC_API_KEY=nvapi-abcdefghijklmnop in reason"
+    )
 
     payload = job_status_payload(client, info)
 

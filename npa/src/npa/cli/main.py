@@ -139,7 +139,8 @@ app.add_typer(workflow_shim_app, name="workflow", hidden=True)
 
 
 @app.command(
-    "studio", rich_help_panel="Platform utilities",
+    "studio",
+    rich_help_panel="Platform utilities",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
     add_help_option=False,
 )
@@ -738,9 +739,9 @@ def _generated_configure_bucket_name(tenant_id: str, project_id: str) -> str:
     """Return a fresh, globally collision-resistant configure bucket name."""
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dt%H%M%Sz")
-    identity = hashlib.sha256(
-        f"{tenant_id}\0{project_id}".encode("utf-8")
-    ).hexdigest()[:6]
+    identity = hashlib.sha256(f"{tenant_id}\0{project_id}".encode("utf-8")).hexdigest()[
+        :6
+    ]
     return f"npa-bucket-{timestamp}-{identity}-{secrets.token_hex(4)}"
 
 
@@ -799,8 +800,7 @@ def _provision_object_storage(
         bucket_name = _generated_configure_bucket_name(tenant_id, project_id)
         _generated_name = True
         typer.echo(
-            f"  No bucket name provided; generated fresh bucket name "
-            f"'{bucket_name}'."
+            f"  No bucket name provided; generated fresh bucket name '{bucket_name}'."
         )
 
     # Whether the named bucket already exists: True (reuse), False (create), or
@@ -1582,10 +1582,7 @@ def _run_interactive_configure(
             default=str(existing_stanza.get("project_id", ""))
             or current_profile_project,
         )
-        region_default = (
-            str(existing_stanza.get("region", ""))
-            or DEFAULT_REGION
-        )
+        region_default = str(existing_stanza.get("region", "")) or DEFAULT_REGION
         region = ask("Region", default=region_default)
 
     operation = current_operation()
@@ -1954,9 +1951,7 @@ def _run_interactive_configure(
         )
 
     storage_disposition = (
-        str(storage.get("_disposition") or "configured")
-        if storage
-        else "not selected"
+        str(storage.get("_disposition") or "configured") if storage else "not selected"
     )
     typer.echo(
         f"Summary: mode={'provision' if provision else 'project-only'}; "
@@ -2093,9 +2088,7 @@ def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
     from npa.workbench.nurec.nurec import check_ngc_image_access
 
     if not hf_token:
-        hf_summary = (
-            "HF token missing; gated model(s) unverified"
-        )
+        hf_summary = "HF token missing; gated model(s) unverified"
     else:
         try:
             identity = huggingface.validate_hf_identity(hf_token, timeout=2.0)
@@ -2193,8 +2186,7 @@ def _build_model_access_note(hf_token: str, ngc_key: str) -> str:
             "tags-403",
         }:
             ngc_summary = (
-                "NGC entitlement denied; NGC repository entitlement denied for: "
-                "nurec"
+                "NGC entitlement denied; NGC repository entitlement denied for: nurec"
             )
         else:
             ngc_summary = "NGC provider/network unavailable; access unverified"
@@ -2728,9 +2720,7 @@ def _run_known_project_configure(
             endpoint_url=str(existing_storage.get("endpoint_url") or "")
             or _endpoint_for_region(values["--region"]),
             access_key_id=str(existing_storage.get("aws_access_key_id") or ""),
-            secret_access_key=str(
-                existing_storage.get("aws_secret_access_key") or ""
-            ),
+            secret_access_key=str(existing_storage.get("aws_secret_access_key") or ""),
             region=values["--region"],
         )
         if probe.ok:
@@ -2851,7 +2841,9 @@ def _run_known_project_configure(
             "Project setup complete without object storage (--no-provision). "
             "Configure writable storage before agent or workflow submission."
         )
-    storage_disposition = str(storage.get("_disposition") or "configured") if storage else "not selected"
+    storage_disposition = (
+        str(storage.get("_disposition") or "configured") if storage else "not selected"
+    )
     typer.echo(
         f"Summary: mode={'provision' if provision else 'project-only'}; "
         f"project={alias}; storage={storage_disposition}; configuration=saved."
@@ -2929,9 +2921,7 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
             else ConfigureMode.GUIDANCE
         )
     )
-    if mode == ConfigureMode.DISPLAY and (
-        interactive is True or provision is not None
-    ):
+    if mode == ConfigureMode.DISPLAY and (interactive is True or provision is not None):
         raise typer.BadParameter(
             f"{mode.value} mode is read-only or self-contained and cannot be "
             "combined with interactive/provisioning options."
@@ -2965,15 +2955,17 @@ def _configure_mode(arguments: dict[str, Any]) -> ConfigureMode:
                 "Known-project flags select prompt-free setup; omit --interactive "
                 "or use --no-interactive."
             )
-        if any(str(arguments.get(name) or "").strip() for name in bucket_names) and provision is not True:
+        if (
+            any(str(arguments.get(name) or "").strip() for name in bucket_names)
+            and provision is not True
+        ):
             raise typer.BadParameter(
                 "--bucket-storage-class and --bucket-size-gb require explicit "
                 "--provision"
             )
     if mode == ConfigureMode.GUIDANCE and provision is True:
         raise typer.BadParameter(
-            "--provision requires either interactive setup or all known-project "
-            "flags."
+            "--provision requires either interactive setup or all known-project flags."
         )
     return mode
 
@@ -2998,9 +2990,7 @@ def _configure_impl(
 ) -> None:
     mode = _configure_mode(locals())
     effective_provision = (
-        bool(provision)
-        if provision is not None
-        else mode == ConfigureMode.INTERACTIVE
+        bool(provision) if provision is not None else mode == ConfigureMode.INTERACTIVE
     )
     if mode == ConfigureMode.SOURCE_URI:
         _store_src_s3_uri(src_s3_uri.strip())
@@ -3042,9 +3032,7 @@ def _configure_impl(
             typer.echo(f"Credential warning: {warning}", err=True)
 
     if mode == ConfigureMode.DISPLAY:
-        detected = [
-            name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)
-        ]
+        detected = [name for name in SUPPORTED_ENV_CREDENTIALS if os.environ.get(name)]
         if detected:
             typer.echo(
                 "Credential environment sources detected: " + ", ".join(detected),
@@ -3205,9 +3193,7 @@ def _transactional_configure(function):
             operation.record_config_mutation(
                 store="config.yaml",
                 fields=(
-                    ["default_project", f"projects.{alias}"]
-                    if alias
-                    else [mode.value]
+                    ["default_project", f"projects.{alias}"] if alias else [mode.value]
                 ),
             )
         with operation_context(operation):

@@ -43,12 +43,19 @@ def _nurec_run(root: Path) -> Path:
     """A synthetic run tree shaped exactly like the workflow's S3 layout."""
     # Real capture frames exported by export-ncore-benchmark-gt (JPEG, nested).
     for index in range(3):
-        _write_image(root / "input" / "camera_images" / "camera2" / f"00000{index}.jpg", (10, 20, 30))
+        _write_image(
+            root / "input" / "camera_images" / "camera2" / f"00000{index}.jpg",
+            (10, 20, 30),
+        )
     # Novel views rendered from the trained Gaussians (nre render -> <sensor>/<frame>).
     for index in range(4):
-        _write_image(root / "novel_views" / "camera2" / f"00000{index}.png", (40, 50, 60))
+        _write_image(
+            root / "novel_views" / "camera2" / f"00000{index}.png", (40, 50, 60)
+        )
     # NRE's own validation renders.
-    _write_image(root / "reconstruction" / "val" / "frame_000" / "rgb.png", (70, 80, 90))
+    _write_image(
+        root / "reconstruction" / "val" / "frame_000" / "rgb.png", (70, 80, 90)
+    )
     (root / "ncore").mkdir(parents=True, exist_ok=True)
     (root / "ncore" / "manifest.json").write_text(
         json.dumps(
@@ -157,7 +164,9 @@ def test_grouped_images_buckets_by_parent_directory(tmp_path: Path) -> None:
     assert set(groups) == {"camera1", "camera2", "frames"}
 
 
-def test_nurec_stage_docs_describe_the_capture_metrics_and_novel_views(tmp_path: Path) -> None:
+def test_nurec_stage_docs_describe_the_capture_metrics_and_novel_views(
+    tmp_path: Path,
+) -> None:
     run = _nurec_run(tmp_path / "run")
     stage_log: list[str] = []
 

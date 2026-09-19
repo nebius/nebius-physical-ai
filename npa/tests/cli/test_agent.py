@@ -505,7 +505,8 @@ def test_agent_stages_a_valid_local_cluster_identity_record(
     )
 
     content = agent_env_files._remote_cluster_state_content(
-        "agent-context", remote_kubeconfig_path="/home/agent/.npa/clusters/agent-context/kubeconfig"
+        "agent-context",
+        remote_kubeconfig_path="/home/agent/.npa/clusters/agent-context/kubeconfig",
     )
 
     assert json.loads(content) == {
@@ -1580,7 +1581,9 @@ def test_bootstrap_explicit_ingress_recovery_uses_only_supplied_cidrs(
 def test_bootstrap_explicit_ingress_recovery_is_noop_without_cidrs(monkeypatch) -> None:
     monkeypatch.setattr(
         "npa.cli.agent.ensure_ingress",
-        lambda **_kwargs: pytest.fail("bootstrap changed ingress without an explicit CIDR"),
+        lambda **_kwargs: pytest.fail(
+            "bootstrap changed ingress without an explicit CIDR"
+        ),
     )
 
     agent_module._ensure_bootstrap_ingress(
@@ -1616,25 +1619,32 @@ def test_bootstrap_refreshes_local_source_after_an_interrupted_prior_attempt() -
 
 
 def test_agent_ui_treats_restricted_tenant_listing_as_partial_access_notice() -> None:
-    ui = Path(agent_module.__file__).with_name("agent_ui.html").read_text(
-        encoding="utf-8"
+    ui = (
+        Path(agent_module.__file__)
+        .with_name("agent_ui.html")
+        .read_text(encoding="utf-8")
     )
 
     assert ".access-errors.is-notice" in ui
     assert "const tenantListingOnly" in ui
     assert "Tenant-wide project listing is restricted." in ui
-    assert "errorsHost.classList.toggle(\"is-notice\", limitedDiscovery)" in ui
+    assert 'errorsHost.classList.toggle("is-notice", limitedDiscovery)' in ui
 
 
 def test_agent_ui_opens_view_after_live_evidence_chat_action() -> None:
-    ui = Path(agent_module.__file__).with_name("agent_ui.html").read_text(
-        encoding="utf-8"
+    ui = (
+        Path(agent_module.__file__)
+        .with_name("agent_ui.html")
+        .read_text(encoding="utf-8")
     )
 
     assert "async function applyLiveEvidence(evidence)" in ui
     assert "await applyLiveEvidence(data.live_evidence);" in ui
-    assert "await activateMainTab(\"rerun\");" in ui
-    assert "await waitForRerunSuccess(String((simViz && simViz.camera) || \"workspace\"), {" in ui
+    assert 'await activateMainTab("rerun");' in ui
+    assert (
+        'await waitForRerunSuccess(String((simViz && simViz.camera) || "workspace"), {'
+        in ui
+    )
 
 
 def test_existing_agent_bootstrap_fails_closed_when_https_ingress_cannot_be_ensured() -> (
@@ -2525,8 +2535,14 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert '@app.post("/sim-viz/load-artifact")' in source
     # Every artifact must be directly downloadable: streaming download endpoint
     # + a per-artifact Download button wired to it.
-    assert '@app.get("/artifacts/download", operation_id="artifacts_download_get")' in source
-    assert '@app.head("/artifacts/download", operation_id="artifacts_download_head")' in source
+    assert (
+        '@app.get("/artifacts/download", operation_id="artifacts_download_get")'
+        in source
+    )
+    assert (
+        '@app.head("/artifacts/download", operation_id="artifacts_download_head")'
+        in source
+    )
     assert (
         'data-action="download-artifact"' in source
         or "data-action='download-artifact'" in source
@@ -3925,14 +3941,25 @@ def test_bootstrap_reuses_verified_previously_adopted_remote_owner(
         "workspace_label": "NPA Workbench",
         "bootstrap_timestamp": "2026-01-01T00:00:00Z",
     }
-    expected = {**persisted, "commit": "new-commit", "source_tree": "new-tree", "short_commit": "new-commit"}
+    expected = {
+        **persisted,
+        "commit": "new-commit",
+        "source_tree": "new-tree",
+        "short_commit": "new-commit",
+    }
 
     monkeypatch.setattr(agent_module, "SSHClient", lambda **_kwargs: object())
     monkeypatch.setattr(
         agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={})
     )
-    monkeypatch.setattr(agent_module, "read_remote_owner_if_present", lambda *_args, **_kwargs: dict(persisted))
-    monkeypatch.setattr(agent_module, "build_deployment_manifest", lambda **_kwargs: expected)
+    monkeypatch.setattr(
+        agent_module,
+        "read_remote_owner_if_present",
+        lambda *_args, **_kwargs: dict(persisted),
+    )
+    monkeypatch.setattr(
+        agent_module, "build_deployment_manifest", lambda **_kwargs: expected
+    )
 
     adopted = agent_module._adopt_legacy_bootstrap_identity(
         record={"deployment": persisted},
@@ -5233,7 +5260,9 @@ def test_agent_setup_renders_string_terraform_vars(monkeypatch, tmp_path) -> Non
 
 
 def test_agent_terraform_exposes_optional_public_ipv4_pool() -> None:
-    terraform_dir = Path(__file__).resolve().parents[2] / "src" / "npa" / "deploy" / "terraform"
+    terraform_dir = (
+        Path(__file__).resolve().parents[2] / "src" / "npa" / "deploy" / "terraform"
+    )
     main_tf = (terraform_dir / "main.tf").read_text(encoding="utf-8")
     variables_tf = (terraform_dir / "variables.tf").read_text(encoding="utf-8")
 

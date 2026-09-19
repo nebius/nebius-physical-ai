@@ -14,7 +14,9 @@ from npa.clients.serverless import (
 )
 
 
-def test_indeterminate_submission_surfaces_identity_fields_in_text_when_durable() -> None:
+def test_indeterminate_submission_surfaces_identity_fields_in_text_when_durable() -> (
+    None
+):
     exc = JobSubmissionIndeterminateError(
         "create_job lookup-by-name recovery failed after a response timeout",
         project_id="project-1",
@@ -52,7 +54,11 @@ def test_indeterminate_submission_surfaces_identity_fields_in_json() -> None:
 
 def test_indeterminate_submission_omits_blank_provider_job_id_line_in_text() -> None:
     exc = JobSubmissionIndeterminateError(
-        "message", project_id="project-1", job_name="train-1", provider_job_id="", durable=True,
+        "message",
+        project_id="project-1",
+        job_name="train-1",
+        provider_job_id="",
+        durable=True,
     )
 
     rendered = format_error_for_user(exc, output_format="text")
@@ -60,7 +66,9 @@ def test_indeterminate_submission_omits_blank_provider_job_id_line_in_text() -> 
     assert "Provider job ID" not in rendered
 
 
-def test_indeterminate_submission_does_not_promise_durable_reconnect_when_not_durable() -> None:
+def test_indeterminate_submission_does_not_promise_durable_reconnect_when_not_durable() -> (
+    None
+):
     """A non-durable call site has no journal; the guidance must not overclaim one."""
     exc = JobSubmissionIndeterminateError(
         "create_job lookup-by-name recovery failed after a response timeout",
@@ -80,8 +88,12 @@ def test_indeterminate_submission_does_not_promise_durable_reconnect_when_not_du
 
 def test_not_enough_resources_still_uses_its_own_formatter() -> None:
     exc = QuotaError(
-        "quota exceeded", project_id="project-1", platform="gpu-h200-sxm",
-        preset="1gpu-16vcpu-200gb", gpu_count=1, suggested_alternatives=["Retry later"],
+        "quota exceeded",
+        project_id="project-1",
+        platform="gpu-h200-sxm",
+        preset="1gpu-16vcpu-200gb",
+        gpu_count=1,
+        suggested_alternatives=["Retry later"],
     )
 
     rendered = format_error_for_user(exc, output_format="text")
@@ -101,7 +113,10 @@ def test_auth_error_still_uses_its_own_formatter() -> None:
 
 def test_endpoint_not_found_still_uses_its_own_formatter() -> None:
     exc = EndpointNotFoundError(
-        "not found", project_id="project-1", endpoint_name="my-endpoint", endpoint_id="endpoint-1"
+        "not found",
+        project_id="project-1",
+        endpoint_name="my-endpoint",
+        endpoint_id="endpoint-1",
     )
 
     rendered = format_error_for_user(exc, output_format="text")
@@ -145,10 +160,15 @@ def test_job_identity_error_falls_back_to_generic_serverless_formatter() -> None
     payload = json.loads(format_error_for_user(exc, output_format="json"))
 
     assert "unexpected job identity" in rendered
-    assert payload["message"] == "create_job returned an unexpected job identity or project"
+    assert (
+        payload["message"]
+        == "create_job returned an unexpected job identity or project"
+    )
 
 
-def test_transient_serverless_error_falls_back_to_generic_serverless_formatter() -> None:
+def test_transient_serverless_error_falls_back_to_generic_serverless_formatter() -> (
+    None
+):
     exc = TransientServerlessError("503 unavailable")
 
     rendered = format_error_for_user(exc, output_format="text")
@@ -158,7 +178,9 @@ def test_transient_serverless_error_falls_back_to_generic_serverless_formatter()
 
 def test_unrelated_exception_uses_generic_unexpected_formatter() -> None:
     rendered = format_error_for_user(ValueError("boom"), output_format="text")
-    payload = json.loads(format_error_for_user(ValueError("boom"), output_format="json"))
+    payload = json.loads(
+        format_error_for_user(ValueError("boom"), output_format="json")
+    )
 
     assert "Unexpected error" in rendered
     assert payload["error"] == "UnexpectedError"
@@ -169,5 +191,7 @@ def test_output_format_is_case_insensitive_and_defaults_to_text() -> None:
     exc = AuthError("401")
 
     assert "{" not in format_error_for_user(exc, output_format="TEXT")
-    assert json.loads(format_error_for_user(exc, output_format="JSON"))["error"] == "Auth"
+    assert (
+        json.loads(format_error_for_user(exc, output_format="JSON"))["error"] == "Auth"
+    )
     assert "{" not in format_error_for_user(exc, output_format="not-a-real-format")

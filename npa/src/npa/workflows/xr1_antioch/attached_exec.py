@@ -19,13 +19,22 @@ def run(command: list[str]) -> int:
         raise ValueError("An attached remote command is required")
     if version("antioch-sim") != "0.4.236":
         raise ValueError("This attachment adapter requires antioch-sim==0.4.236")
-    from antioch.cli.commands.service import default_service, run_door_session, run_service_command
+    from antioch.cli.commands.service import (
+        default_service,
+        run_door_session,
+        run_service_command,
+    )
     from antioch.cli.options import StreamMode
 
     session = run_door_session(())
     service = default_service(session, None, operation="execute")
     interrupted, exit_code = run_service_command(
-        session, service, command, stream=StreamMode.OFF, timeout_s=None, tty=False,
+        session,
+        service,
+        command,
+        stream=StreamMode.OFF,
+        timeout_s=None,
+        tty=False,
     )
     return 130 if interrupted else exit_code
 

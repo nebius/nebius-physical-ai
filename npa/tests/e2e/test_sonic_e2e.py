@@ -51,7 +51,15 @@ def test_sonic_e2e_config_shape() -> None:
     )
 
     assert SONIC_IMAGE.endswith("/npa-sonic:test-tag-amd64")
-    assert command[:7] == ["workbench", "sonic", "-p", PROJECT_ALIAS, "-n", WORKBENCH_NAME, "train"]
+    assert command[:7] == [
+        "workbench",
+        "sonic",
+        "-p",
+        PROJECT_ALIAS,
+        "-n",
+        WORKBENCH_NAME,
+        "train",
+    ]
     assert "--subnet-id" not in command
     assert command[command.index("--gpu-type") + 1] == "l40s"
     for flag in (
@@ -110,12 +118,20 @@ def test_sonic_serverless_train_smoke(tmp_path: Path) -> None:
 
     (artifacts_dir / "output-path.txt").write_text(output_path + "\n", encoding="utf-8")
     (artifacts_dir / "job-name.txt").write_text(job_name + "\n", encoding="utf-8")
-    (artifacts_dir / "submit-command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
+    (artifacts_dir / "submit-command.json").write_text(
+        json.dumps(command, indent=2) + "\n", encoding="utf-8"
+    )
 
     try:
-        submitted = _run_npa(command, timeout=int(os.environ.get("NPA_E2E_SONIC_SUBMIT_TIMEOUT", "600")))
-        (artifacts_dir / "submit-stdout.txt").write_text(submitted.stdout, encoding="utf-8")
-        (artifacts_dir / "submit-stderr.txt").write_text(submitted.stderr, encoding="utf-8")
+        submitted = _run_npa(
+            command, timeout=int(os.environ.get("NPA_E2E_SONIC_SUBMIT_TIMEOUT", "600"))
+        )
+        (artifacts_dir / "submit-stdout.txt").write_text(
+            submitted.stdout, encoding="utf-8"
+        )
+        (artifacts_dir / "submit-stderr.txt").write_text(
+            submitted.stderr, encoding="utf-8"
+        )
         assert submitted.returncode == 0, _format_result(submitted)
         payload = json.loads(submitted.stdout)
         assert payload["status"] == "submitted"
@@ -129,19 +145,31 @@ def test_sonic_serverless_train_smoke(tmp_path: Path) -> None:
         client = ServerlessClient()
         submitted_info = _wait_for_visible_job(client, project_id, job_id)
         _write_job_capture(project_id, submitted_info, artifacts_dir, label="submitted")
-        assert _submitted_subnet_id(submitted_info.raw), "submitted Job spec has no subnet_id"
+        assert _submitted_subnet_id(submitted_info.raw), (
+            "submitted Job spec has no subnet_id"
+        )
 
         final = _poll_job(client, project_id, job_id, artifacts_dir)
         assert final.status == "succeeded", final.raw
         _write_job_capture(project_id, final, artifacts_dir, label="final")
 
         local_dir = artifacts_dir / "s3"
-        _download_s3_prefix(output_path, local_dir, access_key, secret_key, endpoint_url)
-        assert {path.name for path in local_dir.iterdir() if path.is_file()} >= _expected_artifact_names()
+        _download_s3_prefix(
+            output_path, local_dir, access_key, secret_key, endpoint_url
+        )
+        assert {
+            path.name for path in local_dir.iterdir() if path.is_file()
+        } >= _expected_artifact_names()
 
-        smoke = json.loads((local_dir / "sonic_smoke_result.json").read_text(encoding="utf-8"))
-        summary = json.loads((local_dir / "sonic_train_summary.json").read_text(encoding="utf-8"))
-        checkpoint = json.loads((local_dir / "checkpoint_smoke.json").read_text(encoding="utf-8"))
+        smoke = json.loads(
+            (local_dir / "sonic_smoke_result.json").read_text(encoding="utf-8")
+        )
+        summary = json.loads(
+            (local_dir / "sonic_train_summary.json").read_text(encoding="utf-8")
+        )
+        checkpoint = json.loads(
+            (local_dir / "checkpoint_smoke.json").read_text(encoding="utf-8")
+        )
         assert smoke == summary
         _assert_summary(summary, job_name=job_name)
         assert checkpoint["format"] == "npa_sonic_serverless_smoke_v1"
@@ -217,7 +245,9 @@ def _submit_command(
     ]
 
 
-def _run_npa(args: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def _run_npa(
+    args: list[str], *, timeout: int = 120
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [_npa_executable(), *args],
         cwd=Path(__file__).resolve().parents[3],
@@ -248,7 +278,9 @@ def _wait_for_visible_job(client: ServerlessClient, project_id: str, job_id: str
     pytest.fail(f"Job {job_id} was not visible after submission: {last}")
 
 
-def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path):
+def _poll_job(
+    client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path
+):
     deadline = time.monotonic() + MAX_WAIT
     started = time.monotonic()
     last = None
@@ -263,12 +295,16 @@ def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_
         if current.status in {"succeeded", "failed", "cancelled"}:
             return current
         if started is not None and time.monotonic() - started > STARTING_WAIT:
-            pytest.fail(f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}")
+            pytest.fail(
+                f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}"
+            )
         time.sleep(POLL_INTERVAL)
     pytest.fail(f"Job {job_id} did not finish within {MAX_WAIT}s; last={last}")
 
 
-def _write_job_capture(project_id: str, info, artifacts_dir: Path, *, label: str) -> None:
+def _write_job_capture(
+    project_id: str, info, artifacts_dir: Path, *, label: str
+) -> None:
     (artifacts_dir / f"job-detail-{label}.json").write_text(
         json.dumps(info.raw, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -319,7 +355,9 @@ def _cleanup_job(project_id: str, ref: str, artifacts_dir: Path) -> None:
         timeout=60,
         check=False,
     )
-    (artifacts_dir / "cleanup-orphan-check.log").write_text(orphan.stdout, encoding="utf-8")
+    (artifacts_dir / "cleanup-orphan-check.log").write_text(
+        orphan.stdout, encoding="utf-8"
+    )
 
 
 def _download_s3_prefix(

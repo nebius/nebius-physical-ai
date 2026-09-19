@@ -19,10 +19,7 @@ def test_rerun_viewer_satisfies_skypilot_non_root_setup_contract() -> None:
     assert "USER ubuntu" in text
     assert "NPA_LIGHT_WORKBENCH_TOOL=rerun-viewer" in text
     assert "rm -f /etc/ssh/ssh_host_*" in text
-    assert (
-        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
-        in text
-    )
+    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
 
 
 def test_rerun_viewer_entrypoint_preserves_orchestrator_argv() -> None:

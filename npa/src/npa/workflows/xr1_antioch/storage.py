@@ -11,8 +11,15 @@ from urllib.parse import urlsplit
 
 def _relative(name: str) -> Path:
     path = PurePosixPath(name)
-    if (not name or path.is_absolute() or ".." in path.parts or "\\" in name
-            or "\x00" in name or path.as_posix() != name or name == "."):
+    if (
+        not name
+        or path.is_absolute()
+        or ".." in path.parts
+        or "\\" in name
+        or "\x00" in name
+        or path.as_posix() != name
+        or name == "."
+    ):
         raise ValueError("Artifact names must remain inside their selected directory")
     return Path(*path.parts)
 
@@ -30,8 +37,14 @@ class _Store:
         import boto3
 
         location = urlsplit(uri)
-        if (location.scheme != "s3" or not location.netloc or not location.path.strip("/")
-                or location.query or location.fragment or ".." in PurePosixPath(location.path).parts):
+        if (
+            location.scheme != "s3"
+            or not location.netloc
+            or not location.path.strip("/")
+            or location.query
+            or location.fragment
+            or ".." in PurePosixPath(location.path).parts
+        ):
             raise ValueError("XR1 artifacts require an explicit S3 run prefix")
         self.bucket, self.prefix = location.netloc, location.path.strip("/")
         self.client = boto3.client("s3", endpoint_url=os.environ["AWS_ENDPOINT_URL"])
@@ -60,12 +73,19 @@ class _Store:
                 continue
             name = path.relative_to(root).as_posix()
             digest = _sha256(path)
-            self.client.upload_file(str(path), self.bucket, self._key(name),
-                                    ExtraArgs={"Metadata": {"sha256": digest}})
+            self.client.upload_file(
+                str(path),
+                self.bucket,
+                self._key(name),
+                ExtraArgs={"Metadata": {"sha256": digest}},
+            )
             self.verify(name, digest)
             manifest[name] = {"sha256": digest, "bytes": path.stat().st_size}
-        self.client.put_object(Bucket=self.bucket, Key=self._key("manifest.json"),
-                               Body=json.dumps(manifest, sort_keys=True).encode())
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=self._key("manifest.json"),
+            Body=json.dumps(manifest, sort_keys=True).encode(),
+        )
         return manifest
 
     def verify(self, name: str, expected: str) -> None:

@@ -51,7 +51,11 @@ def _pod_payload(
                     "npa.nebius.com/probe-id": probe_id,
                 },
             },
-            "spec": {"containers": [{"image": image or f"registry.example/npa-fiftyone@{DIGEST}"}]},
+            "spec": {
+                "containers": [
+                    {"image": image or f"registry.example/npa-fiftyone@{DIGEST}"}
+                ]
+            },
             "status": (
                 {
                     "phase": "Failed",
@@ -77,7 +81,9 @@ def _pod_payload(
     )
 
 
-def _successful_runner(calls: list[list[str]], *, wait_error: str = "", delete_error: str = ""):
+def _successful_runner(
+    calls: list[list[str]], *, wait_error: str = "", delete_error: str = ""
+):
     def runner(argv, _env):
         calls.append(argv)
         action = argv[3]
@@ -90,7 +96,9 @@ def _successful_runner(calls: list[list[str]], *, wait_error: str = "", delete_e
                 argv, 0, _pod_payload(name, probe_id, failed=wait_error), ""
             )
         if action == "delete":
-            return subprocess.CompletedProcess(argv, int(bool(delete_error)), "", delete_error)
+            return subprocess.CompletedProcess(
+                argv, int(bool(delete_error)), "", delete_error
+            )
         raise AssertionError(argv)
 
     return runner
@@ -182,7 +190,9 @@ def test_probe_allows_cold_workbench_image_pull_to_finish() -> None:
     assert "--request-timeout=1800s" in observed[0]
 
 
-def test_vendor_probe_overrides_application_entrypoint_and_is_not_cached(tmp_path: Path) -> None:
+def test_vendor_probe_overrides_application_entrypoint_and_is_not_cached(
+    tmp_path: Path,
+) -> None:
     calls: list[list[str]] = []
     evidence = probe_image_capabilities(
         image=IMAGE,
@@ -212,10 +222,7 @@ def _bootstrap_environment(tmp_path: Path, *, uid: str = "0", apt_exit: int = 0)
     scripts = {
         "id": f"printf '%s\\n' {uid}\n",
         "sudo": "exit 1\n",
-        "apt-get": (
-            'printf "%s\\n" "$*" >> "$PROBE_APT_LOG"\n'
-            f"exit {apt_exit}\n"
-        ),
+        "apt-get": (f'printf "%s\\n" "$*" >> "$PROBE_APT_LOG"\nexit {apt_exit}\n'),
     }
     for name, script in scripts.items():
         path = directory / name
@@ -372,7 +379,9 @@ def test_terminal_timeout_is_indeterminate_and_still_cleans_up() -> None:
         digest=DIGEST,
         context="ctx-exact",
         runner=_successful_runner(calls),
-        terminal_observer=_terminal_observer("", "timed out waiting for terminal phase"),
+        terminal_observer=_terminal_observer(
+            "", "timed out waiting for terminal phase"
+        ),
         nonce_factory=lambda: "f" * 16,
     )
 
@@ -448,17 +457,27 @@ def test_cache_isolated_by_digest_and_contract_version(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("reference", "expected"),
     [
-        ("registry.example:5000/team/npa-tool:tag", "registry.example:5000/team/npa-tool"),
+        (
+            "registry.example:5000/team/npa-tool:tag",
+            "registry.example:5000/team/npa-tool",
+        ),
         ("[2001:db8::1]:5000/team/npa-tool:tag", "[2001:db8::1]:5000/team/npa-tool"),
-        (f"registry.example:5000/team/npa-tool:tag@{DIGEST}", "registry.example:5000/team/npa-tool"),
+        (
+            f"registry.example:5000/team/npa-tool:tag@{DIGEST}",
+            "registry.example:5000/team/npa-tool",
+        ),
         ("registry.example:5000/team/npa-tool", "registry.example:5000/team/npa-tool"),
     ],
 )
-def test_shared_oci_parser_handles_registry_ports_and_tags(reference: str, expected: str) -> None:
+def test_shared_oci_parser_handles_registry_ports_and_tags(
+    reference: str, expected: str
+) -> None:
     parsed = parse_oci_reference(reference)
     assert parsed.name == expected
     assert immutable_image_reference(reference, DIGEST) == f"{expected}@{DIGEST}"
-    assert is_trusted_npa_image(reference, allowed_registries=[expected.rsplit("/", 1)[0]])
+    assert is_trusted_npa_image(
+        reference, allowed_registries=[expected.rsplit("/", 1)[0]]
+    )
 
 
 @pytest.mark.parametrize(
@@ -468,8 +487,16 @@ def test_shared_oci_parser_handles_registry_ports_and_tags(reference: str, expec
         (f"ghcr.io/nebius/nebius-physical-ai/npa-tool@{DIGEST}", (), True),
         ("evil.example/nebius/nebius-physical-ai/npa-tool:tag", (), False),
         ("ghcr.io/foreign/npa-tool:tag", (), False),
-        ("registry.example:5000/team/npa-tool:tag", ("registry.example:5000/team",), True),
-        ("registry.example:5000/other/npa-tool:tag", ("registry.example:5000/team",), False),
+        (
+            "registry.example:5000/team/npa-tool:tag",
+            ("registry.example:5000/team",),
+            True,
+        ),
+        (
+            "registry.example:5000/other/npa-tool:tag",
+            ("registry.example:5000/team",),
+            False,
+        ),
         ("registry.example:5000/team/tool:tag", ("registry.example:5000/team",), False),
     ],
 )
@@ -550,7 +577,9 @@ def test_probe_retries_already_exists_with_a_new_nonce() -> None:
     def runner(argv, env):
         if argv[3] == "run" and argv[4].endswith("3" * 16):
             calls.append(argv)
-            return subprocess.CompletedProcess(argv, 1, "", "Error from server (AlreadyExists)")
+            return subprocess.CompletedProcess(
+                argv, 1, "", "Error from server (AlreadyExists)"
+            )
         return _successful_runner(calls)(argv, env)
 
     evidence = probe_image_capabilities(

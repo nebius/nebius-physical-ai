@@ -2988,9 +2988,7 @@ def find_run_sources_by_prefix_tree_across_buckets(
                 source_errors.append(
                     {
                         "bucket": bucket,
-                        "project_id": str(
-                            (bucket_projects or {}).get(bucket) or ""
-                        ),
+                        "project_id": str((bucket_projects or {}).get(bucket) or ""),
                         "code": "artifact_discovery_unavailable",
                         "message": "Run discovery is unavailable for this object storage resource.",
                     }
@@ -3010,9 +3008,12 @@ def find_run_sources_by_prefix_tree_across_buckets(
                 leaf = normalized_child.rsplit("/", 1)[-1]
                 if leaf == normalized_run:
                     source_parent = parent.strip("/")
-                    scope = "/".join(
-                        part for part in (source_parent, normalized_run) if part
-                    ) + "/"
+                    scope = (
+                        "/".join(
+                            part for part in (source_parent, normalized_run) if part
+                        )
+                        + "/"
+                    )
                     try:
                         response = s3.list_objects_v2(
                             Bucket=bucket, Prefix=scope, MaxKeys=1

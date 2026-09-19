@@ -31,16 +31,24 @@ def validate_manifest(request: ValidateRequest) -> ValidateResponse:
     except StorageAuthorizationError:
         raise
     except FileNotFoundError as exc:
-        raise DatasetValidationError(f"dataset manifest not found: {request.input_uri}") from exc
+        raise DatasetValidationError(
+            f"dataset manifest not found: {request.input_uri}"
+        ) from exc
     except Exception as exc:
-        raise DatasetValidationError(f"cannot read dataset manifest {request.input_uri}: {exc}") from exc
+        raise DatasetValidationError(
+            f"cannot read dataset manifest {request.input_uri}: {exc}"
+        ) from exc
 
     records = manifest.get("records")
     if not isinstance(records, list) or not records:
         raise DatasetValidationError("dataset manifest has no records")
 
     stats = manifest.get("quality_stats") or {}
-    quality_stats = QualityStats.model_validate(stats) if stats else QualityStats(record_count=len(records))
+    quality_stats = (
+        QualityStats.model_validate(stats)
+        if stats
+        else QualityStats(record_count=len(records))
+    )
 
     failed_checks: list[str] = []
 
@@ -48,10 +56,14 @@ def validate_manifest(request: ValidateRequest) -> ValidateResponse:
     missing = [
         str(record.get("record_id", f"#{index}"))
         for index, record in enumerate(records)
-        if not (record.get("record_id") and record.get("modality") and record.get("uri"))
+        if not (
+            record.get("record_id") and record.get("modality") and record.get("uri")
+        )
     ]
     if missing:
-        failed_checks.append(f"schema: {len(missing)} record(s) missing required fields")
+        failed_checks.append(
+            f"schema: {len(missing)} record(s) missing required fields"
+        )
 
     # Completeness check.
     mean_completeness = float(quality_stats.mean_completeness)
@@ -62,7 +74,9 @@ def validate_manifest(request: ValidateRequest) -> ValidateResponse:
 
     # Corruption check.
     record_count = len(records)
-    corruption_rate = round(quality_stats.corrupt_count / record_count, 4) if record_count else 0.0
+    corruption_rate = (
+        round(quality_stats.corrupt_count / record_count, 4) if record_count else 0.0
+    )
     if corruption_rate > request.max_corruption_rate:
         failed_checks.append(
             f"corruption: rate {corruption_rate} > max {request.max_corruption_rate}"
@@ -71,7 +85,11 @@ def validate_manifest(request: ValidateRequest) -> ValidateResponse:
     passed = not failed_checks
     manifest_sha = compute_manifest_sha256(
         "validate",
-        {"input_uri": request.input_uri, "record_count": record_count, "failed_checks": failed_checks},
+        {
+            "input_uri": request.input_uri,
+            "record_count": record_count,
+            "failed_checks": failed_checks,
+        },
     )
     report_uri = validation_report_uri(request.output_uri)
     report: dict[str, Any] = {

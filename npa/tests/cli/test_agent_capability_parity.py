@@ -53,7 +53,11 @@ def test_tools_catalog_reply_covers_full_catalog_families() -> None:
     assert "single-use confirmation" in reply.lower()
     assert "workflow submit" in reply.lower()
     assert "Families:" in reply
-    assert "sim2real" in reply.lower() or "token_factory" in reply.lower() or "cosmos" in reply.lower()
+    assert (
+        "sim2real" in reply.lower()
+        or "token_factory" in reply.lower()
+        or "cosmos" in reply.lower()
+    )
 
 
 def test_workflow_execute_guidance_matrix_describes_confirmed_agent_execution() -> None:
@@ -96,9 +100,13 @@ def test_workbench_family_capability_replies_ground_on_catalog() -> None:
 
 
 def test_new_workflow_intents_select_expected_templates() -> None:
-    loop = choose_workflow_template(user_text="loop gate", intent="create_loop_gate_workflow")
+    loop = choose_workflow_template(
+        user_text="loop gate", intent="create_loop_gate_workflow"
+    )
     assert loop["template"] == "loop-gate"
-    rl = choose_workflow_template(user_text="rl policy", intent="create_rl_policy_workflow")
+    rl = choose_workflow_template(
+        user_text="rl policy", intent="create_rl_policy_workflow"
+    )
     assert rl["template"] == "rl-policy-success"
 
 
@@ -107,7 +115,10 @@ def test_workflow_chat_reply_states_confirmed_submit_contract() -> None:
         "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata:\n  name: demo\n",
         {"ok": True, "status": "valid", "name": "demo", "states": ["a"]},
         template="two-step",
-        plan={"ok": True, "steps": [{"state": "a", "tool_ref": "workbench.sim2real.status"}]},
+        plan={
+            "ok": True,
+            "steps": [{"state": "a", "tool_ref": "workbench.sim2real.status"}],
+        },
         runnable=True,
     )
     assert "confirmation" in reply.lower()

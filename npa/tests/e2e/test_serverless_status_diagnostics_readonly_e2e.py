@@ -42,8 +42,13 @@ from urllib.parse import urlparse
 import pytest
 
 _REQUIRED_KEYS = (
-    "project_id", "project", "job_id", "expected_status",
-    "expected_marker", "output_uri", "min_artifact_count",
+    "project_id",
+    "project",
+    "job_id",
+    "expected_status",
+    "expected_marker",
+    "output_uri",
+    "min_artifact_count",
 )
 
 
@@ -61,7 +66,9 @@ def _config() -> dict:
 
 @pytest.mark.e2e_serverless
 @pytest.mark.public_inputs
-def test_status_reports_truthful_diagnostics_for_a_real_failed_job_with_real_checkpoint() -> None:
+def test_status_reports_truthful_diagnostics_for_a_real_failed_job_with_real_checkpoint() -> (
+    None
+):
     """Read-only: never submits, cancels, or deletes the job it observes."""
     config = _config()
 

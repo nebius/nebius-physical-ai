@@ -801,13 +801,17 @@ def _https_origin(url: str) -> tuple[str, int]:
     parsed = urlparse(url)
     try:
         if (
-            parsed.scheme != "https" or not parsed.hostname
-            or parsed.username is not None or parsed.password is not None
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
         ):
             raise ValueError("invalid HTTPS origin")
         return parsed.hostname.lower(), parsed.port or 443
     except ValueError as exc:
-        raise PaidfInputError("PAIDF starter downloads require an HTTPS URL without credentials") from exc
+        raise PaidfInputError(
+            "PAIDF starter downloads require an HTTPS URL without credentials"
+        ) from exc
 
 
 class _StarterRedirectHandler(HTTPRedirectHandler):
@@ -819,11 +823,15 @@ class _StarterRedirectHandler(HTTPRedirectHandler):
 
     def redirect_request(self, request, response, code, message, headers, newurl):
         origin = _https_origin(newurl)
-        redirected = super().redirect_request(request, response, code, message, headers, newurl)
+        redirected = super().redirect_request(
+            request, response, code, message, headers, newurl
+        )
         if redirected is not None:
             redirected.remove_header("Authorization")
             if self._token and origin == self._origin:
-                redirected.add_unredirected_header("Authorization", f"Bearer {self._token}")
+                redirected.add_unredirected_header(
+                    "Authorization", f"Bearer {self._token}"
+                )
         return redirected
 
 
@@ -865,7 +873,8 @@ def _fetch_starter(
     token_env = str(delivery.get("authentication_environment_variable") or "HF_TOKEN")
     token = (
         os.environ.get(token_env, "").strip()
-        if license_data.get("authentication_required") else ""
+        if license_data.get("authentication_required")
+        else ""
     )
     if license_data.get("authentication_required") and not token:
         raise PaidfInputError(
@@ -1125,9 +1134,7 @@ def _materialize_lerobot_episode(
             "could not validate the configured LeRobot meta/info.json contract"
         ) from exc
     if not isinstance(info, dict) or not isinstance(info.get("features"), dict):
-        raise PaidfInputError(
-            "LeRobot meta/info.json must contain a features mapping"
-        )
+        raise PaidfInputError("LeRobot meta/info.json must contain a features mapping")
     version_family = _lerobot_version_family(info)
     video_features = sorted(
         str(name)
@@ -1148,9 +1155,7 @@ def _materialize_lerobot_episode(
             "LeRobot total_episodes must be a positive integer"
         ) from exc
     if total_episodes < 1:
-        raise PaidfInputError(
-            "LeRobot total_episodes must be a positive integer"
-        )
+        raise PaidfInputError("LeRobot total_episodes must be a positive integer")
     if episode >= total_episodes:
         raise PaidfInputError(
             "the requested LeRobot episode is outside the declared dataset range"
@@ -1328,9 +1333,7 @@ def _read_lerobot_episode_record(
         except PaidfInputError:
             raise
         except Exception as exc:  # noqa: BLE001
-            raise PaidfInputError(
-                "could not read LeRobot v3 episode metadata"
-            ) from exc
+            raise PaidfInputError("could not read LeRobot v3 episode metadata") from exc
         finally:
             local.unlink(missing_ok=True)
         for row in rows:
@@ -1485,9 +1488,7 @@ def _trim_lerobot_episode(
         str(destination),
     ]
     try:
-        result = subprocess.run(
-            command, capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise PaidfInputError("could not extract the selected LeRobot episode") from exc
     if result.returncode != 0 or not destination.is_file():
@@ -1583,12 +1584,9 @@ def _assert_existing_matches(
         return
     existing_sha = str(existing.get("sha256") or "")
     requested_sha = str(requested.get("sha256") or "")
-    if (
-        not existing_sha
-        and (
-            existing.get("source_kind") == "lerobot_dataset"
-            or requested.get("source_kind") == "lerobot_dataset"
-        )
+    if not existing_sha and (
+        existing.get("source_kind") == "lerobot_dataset"
+        or requested.get("source_kind") == "lerobot_dataset"
     ):
         # _stage_file compares the selected bytes against the immutable staged
         # source without persisting the confidential digest.

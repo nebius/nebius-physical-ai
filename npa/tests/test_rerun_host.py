@@ -153,7 +153,9 @@ def test_s3_file_with_stale_metadata_reuploads(mocker) -> None:
     s3 = RerunHostFakeS3()
     s3.add("bucket", "path/input.rrd", body, {"sha256": "stale"})
 
-    host_recording("s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=RerunHostFakeS3())
+    host_recording(
+        "s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=RerunHostFakeS3()
+    )
 
     assert s3.put_calls == [("bucket", "path/input.rrd", {"sha256": sha})]
     assert s3.objects[("bucket", "path/input.rrd")]["Metadata"]["sha256"] == sha
@@ -166,7 +168,9 @@ def test_s3_file_with_missing_metadata_reuploads(mocker) -> None:
     s3 = RerunHostFakeS3()
     s3.add("bucket", "path/input.rrd", body)
 
-    host_recording("s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=RerunHostFakeS3())
+    host_recording(
+        "s3://bucket/path/input.rrd", s3_client=s3, host_s3_client=RerunHostFakeS3()
+    )
 
     assert s3.put_calls == [("bucket", "path/input.rrd", {"sha256": sha})]
 

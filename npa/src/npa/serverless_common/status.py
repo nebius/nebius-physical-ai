@@ -102,7 +102,9 @@ def _add_failure_diagnostics(
     """
     cached_log_tail = _bounded(redact_text(info.log_tail).strip(), _LOG_TAIL_CHAR_LIMIT)
     if info.pending_reason:
-        payload["pending_reason"] = _bounded(redact_text(info.pending_reason), _REASON_CHAR_LIMIT)
+        payload["pending_reason"] = _bounded(
+            redact_text(info.pending_reason), _REASON_CHAR_LIMIT
+        )
     if info.scheduling_state:
         payload["scheduling_state"] = info.scheduling_state
     try:
@@ -119,7 +121,9 @@ def _add_failure_diagnostics(
     else:
         redacted = _bounded(redact_text(fetched).strip(), _LOG_TAIL_CHAR_LIMIT)
         payload["log_tail"] = redacted or cached_log_tail
-        payload["log_tail_source"] = "job_logs" if redacted else "cached_provider_message"
+        payload["log_tail_source"] = (
+            "job_logs" if redacted else "cached_provider_message"
+        )
     payload["hint"] = (
         "Job was cancelled."
         if info.status == "cancelled"

@@ -89,7 +89,9 @@ def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
         "canonical",
         [
             canonical_rrd,
-            artifact("canonical", "cosmos_augmented/a/augmented_video.mp4", 200, "video"),
+            artifact(
+                "canonical", "cosmos_augmented/a/augmented_video.mp4", 200, "video"
+            ),
             artifact("canonical", "grade/quality_disposition.json", 50, "json"),
         ],
     )
@@ -1751,8 +1753,14 @@ def test_exact_prefix_tree_search_finds_nested_run_without_object_index() -> Non
     s3 = _PrefixAwareS3(
         [
             ("archive/older-run/report.json", "2026-08-01T00:00:00+00:00"),
-            (f"workflow-family/{run_id}/generated/report.json", "2026-08-02T00:00:00+00:00"),
-            (f"workflow-family/{run_id}/review/triage.json", "2026-08-02T00:01:00+00:00"),
+            (
+                f"workflow-family/{run_id}/generated/report.json",
+                "2026-08-02T00:00:00+00:00",
+            ),
+            (
+                f"workflow-family/{run_id}/review/triage.json",
+                "2026-08-02T00:01:00+00:00",
+            ),
         ]
     )
 

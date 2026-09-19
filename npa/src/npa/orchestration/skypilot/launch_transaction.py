@@ -168,11 +168,14 @@ class StabilityPolicy:
     def __post_init__(self) -> None:
         if self.required_successes < 2:
             raise ValueError("Kubernetes API stability requires at least two successes")
-        if min(
-            self.window_seconds,
-            self.sample_interval_seconds,
-            self.deadline_seconds,
-        ) < 0:
+        if (
+            min(
+                self.window_seconds,
+                self.sample_interval_seconds,
+                self.deadline_seconds,
+            )
+            < 0
+        ):
             raise ValueError("Kubernetes API stability durations must be non-negative")
 
 
@@ -236,7 +239,9 @@ class RecoveryPolicy:
             self.initial_backoff_seconds * self.multiplier ** max(sequence - 1, 0),
         )
         centered = max(0.0, min(1.0, random_value)) * 2.0 - 1.0
-        return max(0.0, min(self.cap_backoff_seconds, raw * (1 + centered * self.jitter_ratio)))
+        return max(
+            0.0, min(self.cap_backoff_seconds, raw * (1 + centered * self.jitter_ratio))
+        )
 
 
 @dataclass
@@ -286,25 +291,113 @@ class LaunchTransactionError(RuntimeError):
 
 
 _TERMINAL_PATTERNS: tuple[tuple[FailureCategory, tuple[str, ...]], ...] = (
-    (FailureCategory.IDENTITY, ("identity mismatch", "wrong context", "belongs to", "credential configuration changed after verification", "verified configuration changed on disk")),
-    (FailureCategory.CONTEXT, ("context does not exist", "context not found", "not found in kubeconfig", "invalid context", "invalid kube-context", "no current-context")),
-    (FailureCategory.RBAC, ("forbidden", "permission denied", "cannot list", "cannot get resource")),
-    (FailureCategory.AUTH, ("unauthorized", "authentication required", "authentication failed", "credentials expired", "invalid bearer token", "exec plugin")),
-    (FailureCategory.CERTIFICATE, ("certificate signed by unknown authority", "certificate has expired", "x509:")),
-    (FailureCategory.CONFIG, ("invalid kubeconfig", "failed to load kubeconfig", "no such file or directory", "executable file not found")),
-    (FailureCategory.SCHEMA, ("invalid pod_config", "validation error", "invalid yaml", "schema")),
-    (FailureCategory.CAPACITY, ("insufficient", "quota", "failed_prechecks", "no resource", "unschedulable")),
-    (FailureCategory.WORKLOAD, ("imagepull", "errimagepull", "failed_setup", "workload failed")),
+    (
+        FailureCategory.IDENTITY,
+        (
+            "identity mismatch",
+            "wrong context",
+            "belongs to",
+            "credential configuration changed after verification",
+            "verified configuration changed on disk",
+        ),
+    ),
+    (
+        FailureCategory.CONTEXT,
+        (
+            "context does not exist",
+            "context not found",
+            "not found in kubeconfig",
+            "invalid context",
+            "invalid kube-context",
+            "no current-context",
+        ),
+    ),
+    (
+        FailureCategory.RBAC,
+        ("forbidden", "permission denied", "cannot list", "cannot get resource"),
+    ),
+    (
+        FailureCategory.AUTH,
+        (
+            "unauthorized",
+            "authentication required",
+            "authentication failed",
+            "credentials expired",
+            "invalid bearer token",
+            "exec plugin",
+        ),
+    ),
+    (
+        FailureCategory.CERTIFICATE,
+        ("certificate signed by unknown authority", "certificate has expired", "x509:"),
+    ),
+    (
+        FailureCategory.CONFIG,
+        (
+            "invalid kubeconfig",
+            "failed to load kubeconfig",
+            "no such file or directory",
+            "executable file not found",
+        ),
+    ),
+    (
+        FailureCategory.SCHEMA,
+        ("invalid pod_config", "validation error", "invalid yaml", "schema"),
+    ),
+    (
+        FailureCategory.CAPACITY,
+        ("insufficient", "quota", "failed_prechecks", "no resource", "unschedulable"),
+    ),
+    (
+        FailureCategory.WORKLOAD,
+        ("imagepull", "errimagepull", "failed_setup", "workload failed"),
+    ),
 )
 _TRANSIENT_PATTERNS: tuple[tuple[FailureCategory, tuple[str, ...]], ...] = (
-    (FailureCategory.KUBERNETES_RATE_LIMIT, ("too many requests", "status code 429", "http 429")),
-    (FailureCategory.KUBERNETES_SERVER, ("status code 500", "status code 502", "status code 503", "status code 504", "internal server error", "service unavailable", "bad gateway", "gateway timeout")),
-    (FailureCategory.KUBERNETES_TRANSPORT, ("rpc error: code = internal desc = server closed the stream without sending trailers", "connection refused", "connection reset", "connection aborted", "unexpected eof", "eof", "tls handshake timeout", "temporary failure in name resolution", "no route to host", "network is unreachable", "i/o timeout", "dial tcp", "server closed idle connection")),
+    (
+        FailureCategory.KUBERNETES_RATE_LIMIT,
+        ("too many requests", "status code 429", "http 429"),
+    ),
+    (
+        FailureCategory.KUBERNETES_SERVER,
+        (
+            "status code 500",
+            "status code 502",
+            "status code 503",
+            "status code 504",
+            "internal server error",
+            "service unavailable",
+            "bad gateway",
+            "gateway timeout",
+        ),
+    ),
+    (
+        FailureCategory.KUBERNETES_TRANSPORT,
+        (
+            "rpc error: code = internal desc = server closed the stream without sending trailers",
+            "connection refused",
+            "connection reset",
+            "connection aborted",
+            "unexpected eof",
+            "eof",
+            "tls handshake timeout",
+            "temporary failure in name resolution",
+            "no route to host",
+            "network is unreachable",
+            "i/o timeout",
+            "dial tcp",
+            "server closed idle connection",
+        ),
+    ),
 )
 
 
 def classify_failure(
-    *, phase: str, stdout: str = "", stderr: str = "", exception: BaseException | None = None
+    *,
+    phase: str,
+    stdout: str = "",
+    stderr: str = "",
+    exception: BaseException | None = None,
 ) -> tuple[EvidenceState, FailureCategory]:
     """Classify only Kubernetes controller-bound transport errors as transient."""
 
@@ -335,7 +428,12 @@ def _redacted_argv(argv: Sequence[str]) -> tuple[str, ...]:
             hide_next = False
             continue
         redacted.append(str(value))
-        if value in {"--kubeconfig", "--token", "--certificate-authority", "--client-key"}:
+        if value in {
+            "--kubeconfig",
+            "--token",
+            "--certificate-authority",
+            "--client-key",
+        }:
             hide_next = True
     return tuple(redacted)
 
@@ -396,11 +494,15 @@ class KubectlApiProbe:
             raise
         except BaseException as exc:  # command boundary evidence
             state, category = classify_failure(phase="readiness", exception=exc)
-            return ProbeObservation(state, category, observed, now, redact_text(str(exc)))
+            return ProbeObservation(
+                state, category, observed, now, redact_text(str(exc))
+            )
         evidence = CommandEvidence(
             _redacted_argv(argv), result.returncode, result.stdout, result.stderr
         )
-        if result.returncode == 0 and str(result.stdout or "").strip().lower().startswith("ok"):
+        if result.returncode == 0 and str(
+            result.stdout or ""
+        ).strip().lower().startswith("ok"):
             return ProbeObservation(
                 EvidenceState.READY,
                 FailureCategory.NONE,
@@ -460,7 +562,10 @@ def wait_for_api_stability(
                     f"Kubernetes API stability {streak}/{policy.required_successes}; "
                     f"stable {stable_for:.1f}/{policy.window_seconds:.1f}s"
                 )
-            if streak >= policy.required_successes and stable_for >= policy.window_seconds:
+            if (
+                streak >= policy.required_successes
+                and stable_for >= policy.window_seconds
+            ):
                 return StabilityResult(
                     EvidenceState.READY,
                     FailureCategory.NONE,
@@ -567,7 +672,9 @@ def run_launch_transaction(
     readiness: Callable[[], StabilityResult],
     launch: Callable[[], Any],
     reconcile: Callable[[], ReconciliationEvidence],
-    classify_launch_error: Callable[[BaseException], tuple[EvidenceState, FailureCategory]],
+    classify_launch_error: Callable[
+        [BaseException], tuple[EvidenceState, FailureCategory]
+    ],
     recovery_policy: RecoveryPolicy = RecoveryPolicy(),
     lock_root: Path | None = None,
     clock: Callable[[], float] = time.monotonic,
@@ -624,7 +731,9 @@ def run_launch_transaction(
                 transaction.job_id = initial.job_id
                 transaction.recovery_decision = "adopt_existing"
                 if progress is not None:
-                    progress(f"reconciliation adopted exact managed job {initial.job_id}")
+                    progress(
+                        f"reconciliation adopted exact managed job {initial.job_id}"
+                    )
                 checkpoint()
                 return transaction
         if initial.state is not ReconciliationState.ABSENT:
@@ -700,15 +809,12 @@ def run_launch_transaction(
                 # absence as permission for a second provider submission.
                 reconciliation_sequence = 0
                 while (
-                    (
-                        after_success.state is ReconciliationState.ABSENT
-                        or (
-                            after_success.state is ReconciliationState.FOUND
-                            and is_terminal_failure_job_status(after_success.status)
-                        )
+                    after_success.state is ReconciliationState.ABSENT
+                    or (
+                        after_success.state is ReconciliationState.FOUND
+                        and is_terminal_failure_job_status(after_success.status)
                     )
-                    and clock() < deadline
-                ):
+                ) and clock() < deadline:
                     reconciliation_sequence += 1
                     delay = recovery_policy.delay(
                         reconciliation_sequence,
@@ -795,9 +901,7 @@ def run_launch_transaction(
                 transaction.existence = "indeterminate"
                 transaction.reconciliation_error = after_failure.error
                 transaction.recovery_decision = "block_indeterminate"
-                transaction.operator_remedy = (
-                    "Do not retry or cancel by name. Restore queue access and resume the same run."
-                )
+                transaction.operator_remedy = "Do not retry or cancel by name. Restore queue access and resume the same run."
                 checkpoint()
                 _raise_result(transaction)
             transaction.existence = "absent"
@@ -808,9 +912,7 @@ def run_launch_transaction(
                     else LaunchState.TERMINAL_FAILURE
                 )
                 transaction.recovery_decision = "verified_absent_no_retry"
-                transaction.operator_remedy = (
-                    "The exact job is verified absent; fix the terminal launch error before resuming."
-                )
+                transaction.operator_remedy = "The exact job is verified absent; fix the terminal launch error before resuming."
                 checkpoint()
                 _raise_result(transaction)
             transient_sequence += 1
@@ -820,10 +922,10 @@ def run_launch_transaction(
             )
             if now + delay > deadline:
                 transaction.state = LaunchState.TRANSIENT_API_FAILURE
-                transaction.recovery_decision = "recovery_deadline_exhausted_verified_absent"
-                transaction.operator_remedy = (
-                    "The exact job is verified absent. Resume the same run after the control plane recovers."
+                transaction.recovery_decision = (
+                    "recovery_deadline_exhausted_verified_absent"
                 )
+                transaction.operator_remedy = "The exact job is verified absent. Resume the same run after the control plane recovers."
                 checkpoint()
                 _raise_result(transaction)
             if progress is not None:

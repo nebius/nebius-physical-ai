@@ -29,7 +29,9 @@ class SensorSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     modalities: list[str] = Field(default_factory=list)
-    required_fields: list[str] = Field(default_factory=lambda: list(CANONICAL_REQUIRED_FIELDS))
+    required_fields: list[str] = Field(
+        default_factory=lambda: list(CANONICAL_REQUIRED_FIELDS)
+    )
     quality_thresholds: dict[str, float] = Field(default_factory=dict)
 
 

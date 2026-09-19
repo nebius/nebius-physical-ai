@@ -37,6 +37,8 @@ def _is_isaac_arena_request(argv: list[str]) -> bool:
     """True only for the dependency-minimal Arena worker command."""
 
     return tuple(argv[:2]) == _ISAAC_ARENA_PREFIX
+
+
 def _is_openarm_image_request(argv: list[str]) -> bool:
     """True only for OpenArm commands inside its dependency-minimal image."""
 

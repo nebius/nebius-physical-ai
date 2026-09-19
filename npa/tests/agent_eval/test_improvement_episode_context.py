@@ -13,7 +13,9 @@ from npa.agent_backend import trajectory
 def emission(monkeypatch):
     records = []
     monkeypatch.setattr(trajectory, "flush_outbox", lambda **kwargs: None)
-    monkeypatch.setattr(trajectory, "emit_trajectory", lambda **kwargs: records.append(kwargs))
+    monkeypatch.setattr(
+        trajectory, "emit_trajectory", lambda **kwargs: records.append(kwargs)
+    )
     return records
 
 
@@ -22,14 +24,19 @@ def test_nested_boundaries_restore_parent_and_clear_after_return(emission):
 
     @trajectory.goal_episode_boundary()
     def inner(payload):
-        contexts.append((trajectory.current_episode_id(), trajectory.current_session_id()))
+        contexts.append(
+            (trajectory.current_episode_id(), trajectory.current_session_id())
+        )
         return {"ok": True}
 
     @trajectory.goal_episode_boundary()
     def outer(payload):
         parent = (trajectory.current_episode_id(), trajectory.current_session_id())
         inner({"session_id": "inner-session"})
-        assert (trajectory.current_episode_id(), trajectory.current_session_id()) == parent
+        assert (
+            trajectory.current_episode_id(),
+            trajectory.current_session_id(),
+        ) == parent
         contexts.append(parent)
         return {"ok": True}
 
@@ -37,10 +44,14 @@ def test_nested_boundaries_restore_parent_and_clear_after_return(emission):
     assert contexts[0][0] != contexts[1][0]
     assert contexts[0][1] == "inner-session" and contexts[1][1] == "outer-session"
     assert trajectory.current_episode_id() == trajectory.current_session_id() == ""
-    assert {record["episode_id"] for record in emission} == {context[0] for context in contexts}
+    assert {record["episode_id"] for record in emission} == {
+        context[0] for context in contexts
+    }
 
 
-def test_product_and_emitter_failure_preserve_exception_and_reset_context(monkeypatch, emission):
+def test_product_and_emitter_failure_preserve_exception_and_reset_context(
+    monkeypatch, emission
+):
     original = RuntimeError("synthetic product failure")
 
     def failed_emitter(**kwargs):
@@ -67,10 +78,16 @@ def test_concurrent_threads_keep_distinct_episode_context(emission):
         episode = trajectory.current_episode_id()
         barrier.wait()
         assert trajectory.current_episode_id() == episode
-        return {"ok": True, "episode": episode, "session": trajectory.current_session_id()}
+        return {
+            "ok": True,
+            "episode": episode,
+            "session": trajectory.current_session_id(),
+        }
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(action, [{"session_id": "first"}, {"session_id": "second"}]))
+        results = list(
+            executor.map(action, [{"session_id": "first"}, {"session_id": "second"}])
+        )
     assert results[0]["episode"] != results[1]["episode"]
     assert [result["session"] for result in results] == ["first", "second"]
     assert trajectory.current_episode_id() == ""

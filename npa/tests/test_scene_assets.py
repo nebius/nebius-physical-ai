@@ -149,9 +149,7 @@ def test_parse_scene_spec_supports_multiple_objects_and_target() -> None:
         {"objects": [{"name": "x", "asset_source": "genesis_builtin"}]},  # missing path
         {"objects": [{"name": "x", "asset_source": "primitive", "primitive": "cone"}]},
         {
-            "objects": [
-                {"name": "t", "asset_source": "primitive", "role": "target"}
-            ]
+            "objects": [{"name": "t", "asset_source": "primitive", "role": "target"}]
         },  # no manipuland
         {
             "objects": [{"name": "x", "asset_source": "primitive"}],
@@ -540,7 +538,11 @@ def test_camera_names_defaults_and_custom() -> None:
                 }
             ],
             "cameras": {
-                "overhead": {"placement": "custom", "pos": [0, 0, 2], "look_at": [0, 0, 0]}
+                "overhead": {
+                    "placement": "custom",
+                    "pos": [0, 0, 2],
+                    "look_at": [0, 0, 0],
+                }
             },
         }
     )

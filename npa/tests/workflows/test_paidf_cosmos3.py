@@ -102,7 +102,9 @@ def test_prepare_input_selects_generic_lerobot_v2_and_v3(
             episodes / "file-000.parquet",
         )
     else:
-        source = dataset / "videos" / "chunk-000" / camera / f"episode_{episode:06d}.mp4"
+        source = (
+            dataset / "videos" / "chunk-000" / camera / f"episode_{episode:06d}.mp4"
+        )
     _tiny_video(source)
 
     result = c3.prepare_input(
@@ -211,7 +213,8 @@ def _generation_inputs(tmp_path: Path) -> dict[str, Path]:
 @requires_ffmpeg
 @pytest.mark.parametrize("prior_status", ["completed", "degraded"])
 def test_generate_variants_runs_real_runner_contract_and_changes_retry(
-    tmp_path: Path, prior_status: str,
+    tmp_path: Path,
+    prior_status: str,
 ) -> None:
     paths = _generation_inputs(tmp_path)
     storage = _MemoryStorage()
@@ -281,7 +284,10 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert generated_bytes != paths["source"].read_bytes()
     for variant in first["variants"]:
         assert storage.objects[variant["augmented_video_uri"]] == generated_bytes
-    assert metadata["published_video_sha256"] == hashlib.sha256(generated_bytes).hexdigest()
+    assert (
+        metadata["published_video_sha256"]
+        == hashlib.sha256(generated_bytes).hexdigest()
+    )
 
     (paths["scores"] / "cosmos_evaluator.json").write_text(
         json.dumps({"status": prior_status, "passed": False, "score": 0.4}),
@@ -453,9 +459,12 @@ def test_extract_frames_reports_missing_ffmpeg_as_domain_error(
         c3._extract_frames(tmp_path / "video.mp4", tmp_path / "frames")
 
 
-@pytest.mark.parametrize("source_weight", [-0.1, 0.2, 0.8, 1.0, 1.1, float("nan"), float("inf")])
+@pytest.mark.parametrize(
+    "source_weight", [-0.1, 0.2, 0.8, 1.0, 1.1, float("nan"), float("inf")]
+)
 def test_generate_variants_rejects_blending_before_storage_or_gpu(
-    monkeypatch: pytest.MonkeyPatch, source_weight: float,
+    monkeypatch: pytest.MonkeyPatch,
+    source_weight: float,
 ) -> None:
     def unexpected_work(*_args, **_kwargs):
         pytest.fail("invalid blend setting reached storage or GPU work")
@@ -464,10 +473,28 @@ def test_generate_variants_rejects_blending_before_storage_or_gpu(
     monkeypatch.setattr(c3, "_visible_gpu_ids", unexpected_work)
     with pytest.raises(c3.PaidfCosmos3Error, match="source_motion_weight must be 0"):
         c3.generate_variants(
-            "missing.mp4", "provenance.json", "captions/", "configs/",
-            "s3://example-bucket/out/", "scores/", "attempt.json",
-            "video2video", "Cosmos3-Nano", "prompt", "",
-            1, 5.0, 24, 1, 1, 1000, -0.5, 4, "latency", True, "test-run",
+            "missing.mp4",
+            "provenance.json",
+            "captions/",
+            "configs/",
+            "s3://example-bucket/out/",
+            "scores/",
+            "attempt.json",
+            "video2video",
+            "Cosmos3-Nano",
+            "prompt",
+            "",
+            1,
+            5.0,
+            24,
+            1,
+            1,
+            1000,
+            -0.5,
+            4,
+            "latency",
+            True,
+            "test-run",
             source_motion_weight=source_weight,
             generator=unexpected_work,
         )
@@ -667,70 +694,103 @@ def test_quality_route_fails_closed_on_malformed_disposition(
 def test_finalize_non_object_manifest_raises_domain_error(tmp_path: Path) -> None:
     root = tmp_path / "run"
     (root / "cosmos_augmented").mkdir(parents=True)
-    (root / "cosmos_augmented" / "manifest.json").write_text(
-        "[]", encoding="utf-8"
-    )
+    (root / "cosmos_augmented" / "manifest.json").write_text("[]", encoding="utf-8")
 
     with pytest.raises(c3.PaidfCosmos3Error, match="not a JSON object"):
         c3.finalize(str(root), str(root / "reports" / "final.json"))
 
 
 def _fanout_arguments(paths, count=3, parallelism=2):
-    configs = json.loads((paths['configs'] / 'manifest.json').read_text())
-    configs['augmentations'] = [
-        {'lighting': f'lighting {index}', 'prompt': f'Use lighting {index}.'}
+    configs = json.loads((paths["configs"] / "manifest.json").read_text())
+    configs["augmentations"] = [
+        {"lighting": f"lighting {index}", "prompt": f"Use lighting {index}."}
         for index in range(count)
     ]
-    (paths['configs'] / 'manifest.json').write_text(json.dumps(configs))
+    (paths["configs"] / "manifest.json").write_text(json.dumps(configs))
     return (
-        str(paths['source']), str(paths['provenance']), str(paths['captions']),
-        str(paths['configs']), 's3://example-bucket/fanout/', str(paths['scores']),
-        str(paths['attempt']), 'video2video', 'Cosmos3-Nano', 'Keep source motion.',
-        'distortion', 17, 5.0, 35, count, parallelism, 100, -0.5, 2, 'latency', True, 'fanout',
+        str(paths["source"]),
+        str(paths["provenance"]),
+        str(paths["captions"]),
+        str(paths["configs"]),
+        "s3://example-bucket/fanout/",
+        str(paths["scores"]),
+        str(paths["attempt"]),
+        "video2video",
+        "Cosmos3-Nano",
+        "Keep source motion.",
+        "distortion",
+        17,
+        5.0,
+        35,
+        count,
+        parallelism,
+        100,
+        -0.5,
+        2,
+        "latency",
+        True,
+        "fanout",
     )
 
 
 def _generated_fixture(kwargs, video):
-    artifact = Path(kwargs['output_path']) / kwargs['name'] / 'vision.mp4'
+    artifact = Path(kwargs["output_path"]) / kwargs["name"] / "vision.mp4"
     artifact.parent.mkdir(parents=True)
     shutil.copy2(video, artifact)
-    return {'output_path': str(artifact), 'output_bytes': artifact.stat().st_size}
+    return {"output_path": str(artifact), "output_bytes": artifact.stat().st_size}
 
 
 @requires_ffmpeg
-@pytest.mark.parametrize('failure_phase', ['generation', 'publication'])
-def test_fanout_retains_successful_variants_without_committing_failed_batch(tmp_path, monkeypatch, failure_phase):
+@pytest.mark.parametrize("failure_phase", ["generation", "publication"])
+def test_fanout_retains_successful_variants_without_committing_failed_batch(
+    tmp_path, monkeypatch, failure_phase
+):
     """Keep successful artifacts while refusing a partially failed batch."""
     paths = _generation_inputs(tmp_path)
     storage = _MemoryStorage()
-    video = _tiny_video(tmp_path / 'generated.mp4', color='red')
+    video = _tiny_video(tmp_path / "generated.mp4", color="red")
     publish = c3._publish_variant
 
     def generator(**kwargs):
-        if failure_phase == 'generation' and kwargs['name'] == 'variant-0001':
-            raise RuntimeError('private diagnostic must remain in stage logs')
+        if failure_phase == "generation" and kwargs["name"] == "variant-0001":
+            raise RuntimeError("private diagnostic must remain in stage logs")
         return _generated_fixture(kwargs, video)
 
     def publisher(**kwargs):
-        if failure_phase == 'publication' and kwargs['clip'] == 'variant-0001':
-            raise RuntimeError('private diagnostic must remain in stage logs')
+        if failure_phase == "publication" and kwargs["clip"] == "variant-0001":
+            raise RuntimeError("private diagnostic must remain in stage logs")
         return publish(**kwargs)
 
-    monkeypatch.setattr(c3, '_publish_variant', publisher)
-    with pytest.raises(c3.PaidfCosmos3Error, match='1 of 3 variants failed; 2 published variants retained'):
-        c3.generate_variants(*_fanout_arguments(paths), storage=storage,
-                            environ={'CUDA_VISIBLE_DEVICES': '0,1'}, generator=generator)
-    root = 's3://example-bucket/fanout/'
-    assert root + 'manifest.json' not in storage.objects
-    assert not paths['attempt'].exists()
-    progress = json.loads(storage.objects[root + 'generation-progress.json'])
-    assert progress['status'] == 'failed' and progress['requested_variant_count'] == 3
-    assert progress['published_variant_count'] == 2 and progress['failed_variant_count'] == 1
-    assert progress['failures'] == [{'clip': 'variant-0001', 'phase': failure_phase, 'error_type': 'RuntimeError'}]
-    assert 'private diagnostic' not in json.dumps(progress)
-    for clip in ('variant-0000', 'variant-0002'):
-        metadata = json.loads(storage.objects[root + clip + '/metadata.json'])
-        assert metadata['published_video_sha256'] == hashlib.sha256(video.read_bytes()).hexdigest()
+    monkeypatch.setattr(c3, "_publish_variant", publisher)
+    with pytest.raises(
+        c3.PaidfCosmos3Error,
+        match="1 of 3 variants failed; 2 published variants retained",
+    ):
+        c3.generate_variants(
+            *_fanout_arguments(paths),
+            storage=storage,
+            environ={"CUDA_VISIBLE_DEVICES": "0,1"},
+            generator=generator,
+        )
+    root = "s3://example-bucket/fanout/"
+    assert root + "manifest.json" not in storage.objects
+    assert not paths["attempt"].exists()
+    progress = json.loads(storage.objects[root + "generation-progress.json"])
+    assert progress["status"] == "failed" and progress["requested_variant_count"] == 3
+    assert (
+        progress["published_variant_count"] == 2
+        and progress["failed_variant_count"] == 1
+    )
+    assert progress["failures"] == [
+        {"clip": "variant-0001", "phase": failure_phase, "error_type": "RuntimeError"}
+    ]
+    assert "private diagnostic" not in json.dumps(progress)
+    for clip in ("variant-0000", "variant-0002"):
+        metadata = json.loads(storage.objects[root + clip + "/metadata.json"])
+        assert (
+            metadata["published_video_sha256"]
+            == hashlib.sha256(video.read_bytes()).hexdigest()
+        )
 
 
 @requires_ffmpeg
@@ -743,24 +803,32 @@ def test_fanout_publishes_completed_video_before_later_generation_finishes(tmp_p
     class ObservedStorage(_MemoryStorage):
         def upload_file(self, source, uri):
             result = super().upload_file(source, uri)
-            if uri.endswith('/variant-0000/metadata.json'):
+            if uri.endswith("/variant-0000/metadata.json"):
                 published.set()
             return result
 
     paths = _generation_inputs(tmp_path)
-    video = _tiny_video(tmp_path / 'generated.mp4', color='red')
+    video = _tiny_video(tmp_path / "generated.mp4", color="red")
     storage = ObservedStorage()
 
     def generator(**kwargs):
-        if kwargs['name'] == 'variant-0001':
-            assert published.wait(5), 'The earlier video was held until the whole batch finished'
+        if kwargs["name"] == "variant-0001":
+            assert published.wait(5), (
+                "The earlier video was held until the whole batch finished"
+            )
         return _generated_fixture(kwargs, video)
 
-    result = c3.generate_variants(*_fanout_arguments(paths, 2, 1), storage=storage,
-                                 environ={'CUDA_VISIBLE_DEVICES': '0'}, generator=generator)
-    assert result['variant_count'] == 2
-    progress = json.loads(storage.objects['s3://example-bucket/fanout/generation-progress.json'])
-    assert progress['status'] == 'completed' and progress['failed_variant_count'] == 0
+    result = c3.generate_variants(
+        *_fanout_arguments(paths, 2, 1),
+        storage=storage,
+        environ={"CUDA_VISIBLE_DEVICES": "0"},
+        generator=generator,
+    )
+    assert result["variant_count"] == 2
+    progress = json.loads(
+        storage.objects["s3://example-bucket/fanout/generation-progress.json"]
+    )
+    assert progress["status"] == "completed" and progress["failed_variant_count"] == 0
 
 
 def _uneven_generator(video):
@@ -772,17 +840,17 @@ def _uneven_generator(video):
     overlaps = []
 
     def generator(**kwargs):
-        gpu = kwargs['environ']['CUDA_VISIBLE_DEVICES']
-        name = kwargs['name']
+        gpu = kwargs["environ"]["CUDA_VISIBLE_DEVICES"]
+        name = kwargs["name"]
         with lock:
             active[gpu] = active.get(gpu, 0) + 1
             if active[gpu] > 1:
                 overlaps.append((name, gpu))
         try:
-            if name == 'variant-0000':
+            if name == "variant-0000":
                 first_started.set()
                 assert third_started.wait(5)
-            elif name == 'variant-0001':
+            elif name == "variant-0001":
                 assert first_started.wait(5)
             else:
                 third_started.set()
@@ -798,9 +866,13 @@ def _uneven_generator(video):
 def test_fanout_does_not_reuse_a_busy_gpu_when_variants_finish_out_of_order(tmp_path):
     """Keep one generation per GPU even when an earlier variant is slower."""
     paths = _generation_inputs(tmp_path)
-    video = _tiny_video(tmp_path / 'generated.mp4', color='red')
+    video = _tiny_video(tmp_path / "generated.mp4", color="red")
     generator, overlaps = _uneven_generator(video)
-    result = c3.generate_variants(*_fanout_arguments(paths), storage=_MemoryStorage(),
-                                 environ={'CUDA_VISIBLE_DEVICES': '0,1'}, generator=generator)
-    assert result['variant_count'] == 3 and result['variant_parallelism'] == 2
+    result = c3.generate_variants(
+        *_fanout_arguments(paths),
+        storage=_MemoryStorage(),
+        environ={"CUDA_VISIBLE_DEVICES": "0,1"},
+        generator=generator,
+    )
+    assert result["variant_count"] == 3 and result["variant_parallelism"] == 2
     assert overlaps == []

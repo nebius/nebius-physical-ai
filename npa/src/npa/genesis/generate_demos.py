@@ -95,8 +95,11 @@ def _load_teacher_policy(
                 "Checkpoint was trained with action_space=%s (num_actions=%d) "
                 "but the current env has act_dim=%d (action_space=%s). "
                 "Using the checkpoint's num_actions=%d for policy reconstruction.",
-                saved_space, num_actions, env.act_dim,
-                env.cfg.action_space, num_actions,
+                saved_space,
+                num_actions,
+                env.act_dim,
+                env.cfg.action_space,
+                num_actions,
             )
     else:
         logger.warning(
@@ -121,7 +124,9 @@ def _load_teacher_policy(
         init_noise_std=init_noise_std,
     ).to("cuda")
 
-    checkpoint = torch.load(str(checkpoint_path), map_location="cuda", weights_only=True)
+    checkpoint = torch.load(
+        str(checkpoint_path), map_location="cuda", weights_only=True
+    )
     actor_critic.load_state_dict(checkpoint["model_state_dict"])
     actor_critic.eval()
     return actor_critic
@@ -154,7 +159,8 @@ def eval_teacher(
         logger.info(
             "Checkpoint was trained with action_space=%s (caller passed %s). "
             "Using the checkpoint's value.",
-            saved_space, action_space,
+            saved_space,
+            action_space,
         )
         action_space = saved_space
 
@@ -198,7 +204,10 @@ def eval_teacher(
     rate = successes / n_envs
     logger.info(
         "Teacher eval (seed=%d): %d/%d succeeded (%.1f%%)",
-        seed, successes, n_envs, rate * 100,
+        seed,
+        successes,
+        n_envs,
+        rate * 100,
     )
     return rate
 
@@ -251,7 +260,8 @@ def generate_demos(
         logger.info(
             "Checkpoint was trained with action_space=%s (caller passed %s). "
             "Using the checkpoint's value.",
-            saved_space, action_space,
+            saved_space,
+            action_space,
         )
         action_space = saved_space
 
@@ -328,10 +338,26 @@ def generate_demos(
             # Record camera-only observations (what a real robot would see)
             if step % steps_per_frame == 0:
                 cam_obs = env.get_camera_obs()
-                ws_np = cam_obs["workspace"].cpu().numpy() if hasattr(cam_obs["workspace"], "cpu") else np.asarray(cam_obs["workspace"])
-                wr_np = cam_obs["wrist"].cpu().numpy() if hasattr(cam_obs["wrist"], "cpu") else np.asarray(cam_obs["wrist"])
-                jp_np = cam_obs["joint_pos"].cpu().numpy() if hasattr(cam_obs["joint_pos"], "cpu") else np.asarray(cam_obs["joint_pos"])
-                gs_np = cam_obs["gripper_state"].cpu().numpy() if hasattr(cam_obs["gripper_state"], "cpu") else np.asarray(cam_obs["gripper_state"])
+                ws_np = (
+                    cam_obs["workspace"].cpu().numpy()
+                    if hasattr(cam_obs["workspace"], "cpu")
+                    else np.asarray(cam_obs["workspace"])
+                )
+                wr_np = (
+                    cam_obs["wrist"].cpu().numpy()
+                    if hasattr(cam_obs["wrist"], "cpu")
+                    else np.asarray(cam_obs["wrist"])
+                )
+                jp_np = (
+                    cam_obs["joint_pos"].cpu().numpy()
+                    if hasattr(cam_obs["joint_pos"], "cpu")
+                    else np.asarray(cam_obs["joint_pos"])
+                )
+                gs_np = (
+                    cam_obs["gripper_state"].cpu().numpy()
+                    if hasattr(cam_obs["gripper_state"], "cpu")
+                    else np.asarray(cam_obs["gripper_state"])
+                )
                 state_np = np.concatenate([jp_np, gs_np], axis=-1)
                 act_np = actions.cpu().numpy()
 
@@ -385,13 +411,19 @@ def generate_demos(
             np.save(ep_dir / "obs_workspace.npy", np.stack(workspace_frames[i]))
             np.save(ep_dir / "obs_wrist.npy", np.stack(wrist_frames[i]))
             np.save(ep_dir / "state.npy", np.stack(state_frames[i]).astype(np.float32))
-            np.save(ep_dir / "actions.npy", np.stack(action_frames[i]).astype(np.float32))
+            np.save(
+                ep_dir / "actions.npy", np.stack(action_frames[i]).astype(np.float32)
+            )
 
             collected_episodes += 1
 
         logger.info(
             "Batch %d: %d/%d envs succeeded, total collected: %d/%d",
-            batch_num, batch_success, n_envs, collected_episodes, target_episodes,
+            batch_num,
+            batch_success,
+            n_envs,
+            collected_episodes,
+            target_episodes,
         )
 
         # In single-batch mode, stop after one batch regardless of success count
@@ -407,7 +439,9 @@ def generate_demos(
 
     # success_rate reflects actual teacher task completion, not how many
     # episodes were saved (which may include non-successes as fallback).
-    teacher_success_rate = total_successes / total_attempted if total_attempted > 0 else 0.0
+    teacher_success_rate = (
+        total_successes / total_attempted if total_attempted > 0 else 0.0
+    )
     includes_failures = collected_episodes > total_successes
 
     if includes_failures:
@@ -416,7 +450,9 @@ def generate_demos(
             "%d/%d succeeded).  The student will be trained on failure rollouts — "
             "this degrades distillation quality.  Increase teacher training iterations "
             "or tune the reward to improve task completion.",
-            teacher_success_rate * 100, total_successes, total_attempted,
+            teacher_success_rate * 100,
+            total_successes,
+            total_attempted,
         )
 
     result = {

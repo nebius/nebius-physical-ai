@@ -25,7 +25,9 @@ from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 BLUEPRINT = (
     Path(__file__).resolve().parents[4]
-    / "workflows" / "testing" / "physical-ai-data-factory.yaml"
+    / "workflows"
+    / "testing"
+    / "physical-ai-data-factory.yaml"
 )
 RUNNER = CliRunner()
 
@@ -122,9 +124,7 @@ def test_submit_can_supply_a_precomputed_segmentation_map() -> None:
 
 def test_depth_requires_precomputed_control_at_validation() -> None:
     with pytest.raises(NpaWorkflowError, match="depth control requires"):
-        merge_config_overrides(
-            load_spec(BLUEPRINT), {"augment_control": "depth"}
-        )
+        merge_config_overrides(load_spec(BLUEPRINT), {"augment_control": "depth"})
     spec = merge_config_overrides(
         load_spec(BLUEPRINT),
         {
@@ -139,7 +139,10 @@ def test_depth_requires_precomputed_control_at_validation() -> None:
     ("overrides", "match"),
     [
         ({"augment_control_weight": "1.1"}, "range 0.0-1.0"),
-        ({"augment_control": "edge", "augment_control_prompt": "arm"}, "not text-driven"),
+        (
+            {"augment_control": "edge", "augment_control_prompt": "arm"},
+            "not text-driven",
+        ),
         (
             {
                 "augment_mask_asset_uri": "s3://bucket/mask.mp4",
@@ -336,20 +339,27 @@ def test_submit_capacity_preflight_does_not_resolve_sky_for_cpu_only_spec(
 
     cpu_only = (
         Path(__file__).resolve().parents[4]
-        / "workflows" / "testing" / "token-factory-parallel-fanout.yaml"
+        / "workflows"
+        / "testing"
+        / "token-factory-parallel-fanout.yaml"
     )
     spec = load_spec(cpu_only)
     monkeypatch.setattr(
         workflow_cli,
         "_skypilot_allowed_nodes",
-        lambda **_kwargs: pytest.fail("CPU-only specs must not resolve SkyPilot affinity"),
+        lambda **_kwargs: pytest.fail(
+            "CPU-only specs must not resolve SkyPilot affinity"
+        ),
     )
 
-    assert workflow_cli._preflight_submit_gang_capacity(
-        spec,
-        context="",
-        allowed_nodes=None,
-    ) == []
+    assert (
+        workflow_cli._preflight_submit_gang_capacity(
+            spec,
+            context="",
+            allowed_nodes=None,
+        )
+        == []
+    )
 
 
 def test_checkpoint_preflight_uses_state_local_modality_overlay() -> None:
@@ -380,6 +390,7 @@ def test_validate_and_plan_resolve_state_local_control_tokens() -> None:
     plan = build_plan(spec, run_id="state-local-depth")
     augment = next(step for step in plan.steps if step.state == "augment")
     assert "depth" in augment.argv
+
 
 def test_the_control_prefix_is_a_sibling_of_the_augmented_clips() -> None:
     """Nesting it would make the evaluator read a control map as a variant."""

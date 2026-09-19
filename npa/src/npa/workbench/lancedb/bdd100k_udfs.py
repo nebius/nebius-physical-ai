@@ -55,7 +55,9 @@ def udf_person_bbox_area_pct(batch: pa.RecordBatch) -> pa.Array:
     widths = _column(batch, "width").to_pylist()
     heights = _column(batch, "height").to_pylist()
     values: list[float] = []
-    for row_categories, row_bboxes, width, height in zip(categories, bboxes, widths, heights, strict=True):
+    for row_categories, row_bboxes, width, height in zip(
+        categories, bboxes, widths, heights, strict=True
+    ):
         image_area = float(width or 0) * float(height or 0)
         if image_area <= 0.0:
             values.append(0.0)
@@ -77,7 +79,10 @@ def udf_person_bbox_area_pct(batch: pa.RecordBatch) -> pa.Array:
 
 def udf_dhash(batch: pa.RecordBatch) -> pa.Array:
     """Return a signed int64 difference hash for each row's image bytes."""
-    hashes = [_to_signed_int64(_dhash_bytes(bytes(raw))) for raw in _column(batch, "image_bytes").to_pylist()]
+    hashes = [
+        _to_signed_int64(_dhash_bytes(bytes(raw)))
+        for raw in _column(batch, "image_bytes").to_pylist()
+    ]
     return pa.array(hashes, type=pa.int64())
 
 
@@ -98,7 +103,10 @@ def udf_is_duplicate(
             values.append(False)
             continue
         current = _to_unsigned_int64(int(raw_hash))
-        duplicate = any(_hamming_distance(current, previous) <= hamming_threshold for previous in seen)
+        duplicate = any(
+            _hamming_distance(current, previous) <= hamming_threshold
+            for previous in seen
+        )
         values.append(duplicate)
         seen.append(current)
     return pa.array(values, type=pa.bool_())
@@ -139,7 +147,9 @@ def udf_clip_embedding(
         image_indexes.append(index)
 
     if images:
-        model, processor, torch, resolved_device = _clip_components(device=device, precision=precision)
+        model, processor, torch, resolved_device = _clip_components(
+            device=device, precision=precision
+        )
         inputs = processor(images=images, return_tensors="pt")
         inputs = {name: value.to(resolved_device) for name, value in inputs.items()}
         with torch.inference_mode():
@@ -201,11 +211,16 @@ BDD100K_UDFS: dict[str, UDFSpec] = {
 
 
 def _contains_category(batch: pa.RecordBatch, category: str) -> pa.Array:
-    values = [category in (row_categories or []) for row_categories in _column(batch, "ann_categories").to_pylist()]
+    values = [
+        category in (row_categories or [])
+        for row_categories in _column(batch, "ann_categories").to_pylist()
+    ]
     return pa.array(values, type=pa.bool_())
 
 
-def _contains_any_category(batch: pa.RecordBatch, categories: frozenset[str]) -> pa.Array:
+def _contains_any_category(
+    batch: pa.RecordBatch, categories: frozenset[str]
+) -> pa.Array:
     values = [
         any(category in categories for category in (row_categories or []))
         for row_categories in _column(batch, "ann_categories").to_pylist()
@@ -254,7 +269,9 @@ def _hamming_distance(left: int, right: int) -> int:
 _CLIP_CACHE: dict[tuple[str, str | None], tuple[Any, Any, Any, str]] = {}
 
 
-def _clip_components(*, device: str, precision: str | None) -> tuple[Any, Any, Any, str]:
+def _clip_components(
+    *, device: str, precision: str | None
+) -> tuple[Any, Any, Any, str]:
     key = (device, precision)
     cached = _CLIP_CACHE.get(key)
     if cached is not None:
@@ -267,7 +284,9 @@ def _clip_components(*, device: str, precision: str | None) -> tuple[Any, Any, A
         raise RuntimeError("clip_embedding requires torch and transformers") from exc
 
     _seed_clip_runtime(torch)
-    resolved_precision = precision or ("float16" if device.startswith("cuda") else "float32")
+    resolved_precision = precision or (
+        "float16" if device.startswith("cuda") else "float32"
+    )
     if resolved_precision not in {"float16", "float32"}:
         raise ValueError("precision must be 'float16' or 'float32'")
     model = CLIPModel.from_pretrained(CLIP_MODEL_NAME)
@@ -302,13 +321,19 @@ def _decode_image_bytes(raw: bytes) -> Image.Image:
 def _clip_vectors_to_array(values: list[list[float] | None] | np.ndarray) -> pa.Array:
     if isinstance(values, np.ndarray):
         if values.ndim != 2 or values.shape[1] != CLIP_EMBEDDING_DIM:
-            raise ValueError(f"clip_embedding vectors must have shape [N, {CLIP_EMBEDDING_DIM}]")
-        rows: list[list[float] | None] = [[float(value) for value in row] for row in values]
+            raise ValueError(
+                f"clip_embedding vectors must have shape [N, {CLIP_EMBEDDING_DIM}]"
+            )
+        rows: list[list[float] | None] = [
+            [float(value) for value in row] for row in values
+        ]
     else:
         rows = values
         for row in rows:
             if row is not None and len(row) != CLIP_EMBEDDING_DIM:
-                raise ValueError(f"clip_embedding vectors must have length {CLIP_EMBEDDING_DIM}")
+                raise ValueError(
+                    f"clip_embedding vectors must have length {CLIP_EMBEDDING_DIM}"
+                )
     return pa.array(rows, type=CLIP_OUTPUT_TYPE)
 
 
