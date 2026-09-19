@@ -455,8 +455,19 @@ jobs:
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
           if [ "$TOOL" = gymnasium-robotics ]; then
+            archive="$RUNNER_TEMP/${TOOL}.tar"
+            oci_members="$(tar -tf "$archive" | grep -Fx -c 'oci-layout' || true)"
+            docker_members="$(tar -tf "$archive" | grep -Fx -c 'manifest.json' || true)"
+            if [ "$oci_members" = 1 ] && [ "$docker_members" = 0 ]; then
+              gymnasium_scan_args=(--oci-layout "$archive")
+            elif [ "$oci_members" = 0 ] && [ "$docker_members" = 1 ]; then
+              gymnasium_scan_args=(--docker-save "$archive")
+            else
+              echo "ambiguous Gymnasium archive format" >&2
+              exit 1
+            fi
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
-              --oci-layout "$RUNNER_TEMP/${TOOL}.tar" \
+              "${gymnasium_scan_args[@]}" \
               --reviewed-graph-record \
               --output "$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
           fi
@@ -639,7 +650,8 @@ jobs:
             ] and
             .schema == "npa.gymnasium-robotics.payload-scan.v1" and
             .status == "passed" and
-            .archive_format == "oci-layout" and
+            ((.archive_format == "oci-layout" and (.ordered_layer_descriptors | length) == .layer_count) or
+             (.archive_format == "docker-save" and (.ordered_layer_descriptors | length) == 0)) and
             (.archive_sha256 | test("^[0-9a-f]{64}$")) and
             (.config_sha256 | test("^[0-9a-f]{64}$")) and
             (.layer_count > 0) and
@@ -647,7 +659,6 @@ jobs:
             (.ordered_layer_diff_ids | length) == .layer_count and
             (all(.ordered_layer_diff_ids[]; test("^sha256:[0-9a-f]{64}$"))) and
             .layer_count == (.ordered_layer_diff_ids | length) and
-            (.ordered_layer_descriptors | length) == 0 and
             .distributed_blob_scan_complete == true and
             (.nested_archive_member_count >= 0) and
             (.whiteout_entry_count >= 0) and
@@ -770,8 +781,19 @@ jobs:
             sleep 5
           done
           if [ "$TOOL" = gymnasium-robotics ]; then
+            archive="$RUNNER_TEMP/${TOOL}-pushed.tar"
+            oci_members="$(tar -tf "$archive" | grep -Fx -c 'oci-layout' || true)"
+            docker_members="$(tar -tf "$archive" | grep -Fx -c 'manifest.json' || true)"
+            if [ "$oci_members" = 1 ] && [ "$docker_members" = 0 ]; then
+              gymnasium_scan_args=(--oci-layout "$archive")
+            elif [ "$oci_members" = 0 ] && [ "$docker_members" = 1 ]; then
+              gymnasium_scan_args=(--docker-save "$archive")
+            else
+              echo "ambiguous pushed Gymnasium archive format" >&2
+              exit 1
+            fi
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
-              --oci-layout "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              "${gymnasium_scan_args[@]}" \
               --reviewed-graph-record \
               --output "$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
             payload="$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
@@ -789,7 +811,8 @@ jobs:
               ] and
               .schema == "npa.gymnasium-robotics.payload-scan.v1" and
               .status == "passed" and
-              .archive_format == "oci-layout" and
+            ((.archive_format == "oci-layout" and (.ordered_layer_descriptors | length) == .layer_count) or
+             (.archive_format == "docker-save" and (.ordered_layer_descriptors | length) == 0)) and
               (.archive_sha256 | test("^[0-9a-f]{64}$")) and
               (.config_sha256 | test("^[0-9a-f]{64}$")) and
               (.layer_count > 0) and
@@ -797,7 +820,6 @@ jobs:
               (.ordered_layer_diff_ids | length) == .layer_count and
               (all(.ordered_layer_diff_ids[]; test("^sha256:[0-9a-f]{64}$"))) and
               .layer_count == (.ordered_layer_diff_ids | length) and
-              (.ordered_layer_descriptors | length) == 0 and
               .distributed_blob_scan_complete == true and
               (.nested_archive_member_count >= 0) and
               (.whiteout_entry_count >= 0) and

@@ -131,9 +131,13 @@ def test_public_workflow_uses_hash_bound_graph_not_candidate_digests() -> None:
         in scanner_text
     )
     assert "--reviewed-graph-record" in text
-    assert text.count('--oci-layout "$RUNNER_TEMP/${TOOL}.tar"') == 1
-    assert text.count('--oci-layout "$RUNNER_TEMP/${TOOL}-pushed.tar"') == 1
+    assert text.count('gymnasium_scan_args=(--oci-layout "$archive")') == 2
+    assert text.count('gymnasium_scan_args=(--docker-save "$archive")') == 2
+    assert text.count('ambiguous Gymnasium archive format') == 1
+    assert text.count('ambiguous pushed Gymnasium archive format') == 1
     assert text.count('.archive_format == "oci-layout"') == 2
+    assert text.count('.archive_format == "docker-save"') == 2
+    assert text.count('(.ordered_layer_descriptors | length) == .layer_count') == 2
     assert "if args.reviewed_graph_record and (" in (
         SCANNER.read_text(encoding="utf-8")
     )
