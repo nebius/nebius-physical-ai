@@ -21,8 +21,11 @@ fixed-batch metric, fixed-RNG action, and existing-wrapper validation with the
 same explicit native BF16 correlation asset. The replay-selected model then
 completed the radio development cell at Q=0.10 with one success, versus stock's
 Q=0.40 with four successes on the same ten cases. Trash scored Q=0.30 versus
-stock's Q=0.366667, with two successes each. The other four matched cells and
-the six-task aggregate remain pending. See the
+stock's Q=0.366667, with two successes each. Shoes scored Q=0.43 versus stock's
+Q=0.44, with zero versus one success. Across all three trained tasks, selected
+Q=0.276667 regressed from stock's Q=0.402222, with three versus seven successes.
+The furniture transfer cell scored Q=0 for both models. The other two transfer
+cells and six-task aggregate remain pending. See the
 [experiment report](behavior-matched-results-2026-09-19.md).
 
 ## What is trained

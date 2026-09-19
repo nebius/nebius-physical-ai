@@ -7,12 +7,15 @@ That is **7,200 new planned optimizer updates**. The replay arm selected update
 training metric; it is not the challenge's task-completion score. The teacher
 control also selected update 3599, with its own conditioning loss **0.160796**.
 
-The replay-selected update 3599 completed two matched development cells. On the
-ten radio cases it scored mean Q **0.10** with **1/10** full successes, versus
-stock's Q **0.40** and **4/10** successes. On trash it scored **0.30** versus
-stock's **0.366667**, with **2/10** successes each. Four cells remain pending,
-so there is no six-task aggregate. The previous balanced fine-tune regressed, as
-documented in the [earlier comparison](behavior-followup-results-2026-09-18.md).
+The replay-selected update 3599 completed all three trained-task development
+cells. Their equal-task mean Q is **0.276667**, versus stock's **0.402222**,
+with **3 versus 7** full successes across the same thirty cases. Radio scored
+**0.10 versus 0.40**, trash **0.30 versus 0.366667**, and shoes **0.43 versus
+0.44**. This is a regression on the trained-task panel. The furniture transfer
+cell scored Q=0 for both models; two transfer cells remain pending, so there is
+no six-task aggregate. The previous balanced
+fine-tune regressed, as documented in the
+[earlier comparison](behavior-followup-results-2026-09-18.md).
 The matched experiment does not erase that result or establish an improvement.
 
 ## Experiment
@@ -66,13 +69,21 @@ comparison used the same stock cases listed below.
 | Turning on radio | Replay-selected update 3599 | 0.100000 | 1/10 | 29,962 |
 | Picking up trash | Stock | 0.366667 | 2/10 | 72,280 |
 | Picking up trash | Replay-selected update 3599 | 0.300000 | 2/10 | 73,119 |
+| Putting shoes on rack | Stock | 0.440000 | 1/10 | 115,199 |
+| Putting shoes on rack | Replay-selected update 3599 | 0.430000 | 0/10 | 115,900 |
+| Rearranging kitchen furniture | Stock | 0.000000 | 0/10 | 134,150 |
+| Rearranging kitchen furniture | Replay-selected update 3599 | 0.000000 | 0/10 | 134,150 |
 
 On radio, the selected model was better on zero paired cases, tied on seven,
 and worse on three. It scored zero on instances 311–319 and completed instance
 320 with Q=1.0 in 937 steps. On trash, it was better on two cases, tied on four,
-and worse on four. These are two trained tasks on reused development cases;
-they do not establish an unseen-test result or a three-task, six-task, or full
-challenge aggregate.
+and worse on four. On shoes, it was better on four cases, tied on one, and worse
+on five. Across the three trained tasks, six cases improved, twelve tied, and
+twelve worsened. Selected execution used 218,981 simulator steps versus stock's
+215,901. These are reused development cases; they do not establish an unseen-test
+result or a six-task or full challenge aggregate. The furniture transfer task
+tied on all ten cases, including simulator steps. The remaining transfer cells
+are setting the fire and cooking hot dogs.
 
 The candidate-cell, comparison, task-summary, and paired-case evidence have
 SHA-256 values `11bd401fed491e1caf388391963cba20d3952c6970d3392095e1fbfc4bc2e6eb`,
@@ -81,9 +92,15 @@ SHA-256 values `11bd401fed491e1caf388391963cba20d3952c6970d3392095e1fbfc4bc2e6eb
 and `52058598612125d908860c667476c7e2d90e31737a7be67b748f6d6a6361a7b2`,
 respectively, for the radio comparison. The trash candidate-cell SHA-256 is
 `6fba61fe05ea091536f88af8049517a5ed529ef86c1cf044a0d7ba8f2040dc0d`.
-The [partial-panel per-case CSV](behavior-matched-candidate-cases-partial-task0-task1-2026-09-19.csv)
-contains all twenty cases and their original metric identities; its SHA-256 is
-`c770e242e2cb6792c72391b229545742e4e1e8f8943f88f633cb82e0d08de177`.
+The shoes candidate-cell SHA-256 is
+`7b49d4a1c43e6011b0d297046008b104da6e6996c86f5bcbc6449c042dacf0c1`.
+The complete three-task comparison has SHA-256
+`9eeae6914477f1fc3d8cd51f580e227c11296d5175c897aa4151ec371bab8b26`.
+The furniture candidate-cell SHA-256 is
+`69c9d994910cee3ef96702074873f6f852289fcefa68dc14e8877a70cd27ada6`.
+The [partial-panel per-case CSV](behavior-matched-candidate-cases-partial-task0-task1-task22-task8-2026-09-19.csv)
+contains all forty completed cases and their original metric identities; its
+SHA-256 is `835b174118189240901e134c5e30a34f041081c0ba046322e8fd4f83d10994af`.
 The optional transition-refresh public module was not used for these cells and
 remains without a public GPU validation or rollout score.
 

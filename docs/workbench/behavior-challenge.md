@@ -16,8 +16,11 @@ existing serving wrapper agree after restoring that receipt-bound intermediate.
 The replay-selected model then completed the ten radio development cases with
 mean Q=0.10 and one full success, compared with stock's Q=0.40 and four
 successes on the same cases. Trash scored Q=0.30 versus stock's Q=0.366667,
-with two full successes each. The other four matched cells remain pending, so
-there is no six-task aggregate or policy-quality win claim.
+with two full successes each. Shoes scored Q=0.43 versus stock's Q=0.44, with
+zero versus one success. The three trained tasks average Q=0.276667 versus
+stock's Q=0.402222, with three versus seven full successes. Furniture scored Q=0
+for both models. Two transfer cells remain pending; there is no six-task
+aggregate or policy-quality win claim.
 
 **Earlier comparison, September 18:** the
 [76-rollout follow-up](behavior-followup-results-2026-09-18.md) scored the
@@ -89,9 +92,10 @@ timestamp and annotation-alignment audits. The separate
 freezes the parent task and stage modules while comparing teacher-bin and parent
 stage-replay action conditioning. Native GPU training and holdout selection
 completed for both arms. Selected-model serving validation passed; the first
-matched radio and trash cells regressed from stock's Q=0.40 and Q=0.366667 to
-Q=0.10 and Q=0.30, respectively. Four matched cells remain pending. The published
-RLC comparison below is a separate measured result.
+matched trained-task panel regressed from stock's Q=0.402222 to Q=0.276667,
+with seven versus three full successes. Furniture scored Q=0 for both models;
+two transfer cells remain pending.
+The published RLC comparison below is a separate measured result.
 
 `--policy-kind rlc` selects a development-only transfer of the published
 [RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
