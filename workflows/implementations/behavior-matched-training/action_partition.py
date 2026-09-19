@@ -51,11 +51,22 @@ class ExactPathSet:
 
 
 def freeze_filter():
-    """Return the native NNX filter that freezes everything outside the allowlist."""
+    """Select frozen parameters without selecting non-parameter model statistics.
+
+    Args:
+        None.
+
+    Returns:
+        An NNX filter matching parameters outside the action allowlist.
+
+    Raises:
+        ImportError: The native Flax runtime is unavailable.
+    """
 
     from flax import nnx
 
-    return nnx.Not(ExactPathSet(EXPECTED_TRAINABLE_PATHS))
+    # The native initializer also uses this filter to cast frozen weights to BF16.
+    return nnx.All(nnx.Param, nnx.Not(ExactPathSet(EXPECTED_TRAINABLE_PATHS)))
 
 
 def assert_partition(parameter_paths: Iterable[Path]) -> None:

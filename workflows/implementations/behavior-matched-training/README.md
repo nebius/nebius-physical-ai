@@ -28,5 +28,9 @@ The command sequence is:
 4. Run `evaluate_holdout.py`, then `export_selected.py`, for each arm.
 
 The repository does not include upstream source, weights, demonstrations,
-credentials, or runtime caches. Native GPU validation and official rollout
-evaluation remain pending; these helpers do not establish a policy gain.
+credentials, or runtime caches. Both matched training arms and their holdout
+selection completed on B200 GPUs. Serving consistency and official candidate
+rollout evaluation remain pending; these helpers do not establish a policy gain.
+The current freeze filter excludes non-parameter statistics from the native
+initializer's BF16 weight conversion. Completed checkpoints retain the earlier
+filter's behavior; see the training guide before reusing them.

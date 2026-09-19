@@ -11,9 +11,10 @@ and parameter partition:
 
 The implementation is in
 [`workflows/implementations/behavior-matched-training`](../../workflows/implementations/behavior-matched-training/).
-The native B200 preflight has passed checkpoint restoration, stage-inference
-consistency, and one discarded optimizer update. Full matched training and
-policy-improvement evaluation remain pending.
+Both matched arms completed 3,600 updates on B200 GPUs, scored six checkpoints
+on the fixed holdout, and exported a selected model. A subsequent serving
+consistency check found different loss metrics despite identical learned
+parameters. Serving validation and policy-improvement evaluation remain pending.
 
 ## What is trained
 
@@ -28,6 +29,13 @@ time MLP, and key/value transform. Vision, language, task selection, stage
 classification, gates, and fusion remain frozen. Stage and FAST auxiliary loss
 weights are zero. The released normalization statistics and 30-action targets
 remain unchanged.
+
+The freeze filter selects only `nnx.Param` leaves. The upstream initializer also
+uses this filter to cast frozen weights to BF16; selecting non-parameter state
+would round the correlation statistics stored as `nnx.Intermediate`. A pinned
+Flax test reproduced that behavior. This correction applies to future runs;
+the completed experiment used the earlier filter and remains recorded with its
+original checkpoint state and holdout scores.
 
 ## Runtime inputs
 
