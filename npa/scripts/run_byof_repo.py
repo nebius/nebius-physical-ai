@@ -83,6 +83,24 @@ CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
 ROBOTWIN_IMAGE_SCANNER = SCRIPT_DIR / "scan_image_robotwin_payload.py"
 BYOF_REPO_MOUNT = "/opt/byof"
 
+# These are ordinary execution prerequisites, not authorization or routing
+# inputs. Keep the allowlist explicit so authorized RoboTwin handoff does not
+# inherit ambient credentials, controller knobs, or output destinations.
+_ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LD_LIBRARY_PATH",
+    "LOGNAME",
+    "PATH",
+    "PYTHONPATH",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TMPDIR",
+    "USER",
+    "VIRTUAL_ENV",
+)
+
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_REPO_REF = "main"
 DEFAULT_UBUNTU_BASE_IMAGE = "ubuntu:22.04"
@@ -678,13 +696,20 @@ def _authorized_live_env(
     # already-authorized inner launch.
     env = {
         name: os.environ[name]
-        for name in (
-            "AWS_ACCESS_KEY_ID",
-            "AWS_SECRET_ACCESS_KEY",
-            "AWS_SESSION_TOKEN",
-        )
+        for name in _ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES
         if os.environ.get(name)
     }
+    env.update(
+        {
+            name: os.environ[name]
+            for name in (
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_SESSION_TOKEN",
+            )
+            if os.environ.get(name)
+        }
+    )
     endpoint = next(
         (
             os.environ[name]

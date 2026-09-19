@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import hashlib
 import json
 import os
 import subprocess
@@ -487,7 +486,25 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     monkeypatch, capsys, tmp_path, allocated_outer
 ) -> None:
     module = _load_module()
-    payload = _install_robotwin_context(module, monkeypatch, tmp_path)
+    payload = _robotwin_context()
+    authorization = SimpleNamespace(
+        redactions=(),
+        context_sha256="c" * 64,
+        project=payload["project"],
+        profile=payload["nebius_profile"],
+        kubeconfig=payload["kubeconfig"],
+        kubernetes_context=payload["kubernetes_context"],
+        skypilot_config_path=payload["skypilot_config_path"],
+        bootstrap_image=payload["bootstrap_image"],
+        bucket=payload["bucket"],
+        output_root=payload["output_root"],
+        run_id=payload["run_id"],
+    )
+    monkeypatch.setattr(
+        module, "_load_runtime_authorization", lambda _args: authorization
+    )
+    monkeypatch.setattr(module, "require_runtime_lock_complete", lambda value: value)
+    monkeypatch.setattr(module, "encode_runtime_authorization", lambda _value: "synthetic-runtime-auth")
     if allocated_outer:
         monkeypatch.setenv("NPA_WORKFLOW_RUN_ID", "synthetic-outer-run")
         monkeypatch.setenv("NPA_WORKFLOW_STATE", "synthetic-cpu-launcher")
@@ -517,33 +534,21 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
             "status": "pass",
         }
 
-    def fake_live_env(authorization, scan_evidence, *, project: str, image: str):
+    for name in module._ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES:
+        monkeypatch.setenv(name, f"/synthetic/{name.lower()}")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "authorized-storage-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "authorized-storage-secret")
+    real_live_env = module._authorized_live_env
+
+    def capture_live_env(authorization, scan_evidence, *, project: str, image: str):
         events.append("live-env")
         assert project == payload["project"]
         assert authorization.bootstrap_image == payload["bootstrap_image"]
         assert scan_evidence["report_sha256"] == "b" * 64
         assert image.endswith("@sha256:" + "a" * 64)
-        return {
-            "KUBECONFIG": str(payload["kubeconfig"]),
-            "KUBECONTEXT": str(payload["kubernetes_context"]),
-            "NPA_BYOF_K8S_CONTEXT": str(payload["kubernetes_context"]),
-            "NPA_BYOF_PROJECT": str(payload["project"]),
-            "NPA_NEBIUS_PROFILE": str(payload["nebius_profile"]),
-            "NEBIUS_PROFILE": str(payload["nebius_profile"]),
-            module.ROBOTWIN_CHILD_BUCKET_ENV: str(payload["bucket"]),
-            module.ROBOTWIN_CHILD_CONFIG_PATH_ENV: str(payload["skypilot_config_path"]),
-            module.ROBOTWIN_CHILD_IMAGE_ENV: image,
-            module.ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV: (
-                f"{payload['output_root']}/{payload['run_id']}/"
-            ),
-            module.ROBOTWIN_CHILD_OUTPUT_ROOT_ENV: str(payload["output_root"]),
-            module.ROBOTWIN_CHILD_RUN_ID_ENV: str(payload["run_id"]),
-            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": "b" * 64,
-            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": "3",
-            "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": hashlib.sha256(
-                json.dumps(payload, sort_keys=True).encode()
-            ).hexdigest(),
-        }
+        return real_live_env(
+            authorization, scan_evidence, project=project, image=image
+        )
 
     def fake_container_verify(cmd, *, authorization, environment):
         events.append("runner")
@@ -569,7 +574,7 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(module, "_scan_robotwin_image", fake_scan)
-    monkeypatch.setattr(module, "_authorized_live_env", fake_live_env)
+    monkeypatch.setattr(module, "_authorized_live_env", capture_live_env)
     monkeypatch.setattr(module, "_run_robotwin_container_verify", fake_container_verify)
     monkeypatch.setattr(module, "_run", fake_run)
 
@@ -577,6 +582,8 @@ def test_robotwin_public_path_reaches_scanner_and_runner_hermetically(
     assert events == ["scan", "live-env", "runner"]
     assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256"] == "b" * 64
     assert seen_env["NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"] == "3"
+    for name in module._ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES:
+        assert seen_env[name] == f"/synthetic/{name.lower()}"
     assert module.ROBOTWIN_RUNTIME_CONTEXT_ENV not in seen_env
     assert module.ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV not in seen_env
     for private_value in (
@@ -651,8 +658,22 @@ def test_robotwin_authorized_child_environment_drops_hostile_runtime_controls(
     monkeypatch, tmp_path
 ) -> None:
     module = _load_module()
-    _install_robotwin_context(module, monkeypatch, tmp_path)
-    authorization = module.load_runtime_authorization()
+    payload = _robotwin_context()
+    authorization = SimpleNamespace(
+        context_sha256="c" * 64,
+        project=payload["project"],
+        profile=payload["nebius_profile"],
+        kubeconfig=payload["kubeconfig"],
+        kubernetes_context=payload["kubernetes_context"],
+        skypilot_config_path=payload["skypilot_config_path"],
+        bootstrap_image=payload["bootstrap_image"],
+        bucket=payload["bucket"],
+        output_root=payload["output_root"],
+        run_id=payload["run_id"],
+    )
+    monkeypatch.setattr(
+        module, "encode_runtime_authorization", lambda _value: "synthetic-runtime-auth"
+    )
     for name, value in {
         "NPA_BYOF_DIRECT_LAUNCH": "1",
         "NPA_BYOF_INFRA": "k8s/unauthorized-context",
