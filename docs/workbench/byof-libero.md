@@ -108,15 +108,15 @@ arbitrary renamed, compiled, or subsequently whiteouted bytes are absent.
 Before LIBERO's first package-wide visibility change, the private destination
 must contain exactly the qualified untagged OCI graph and no unrelated version.
 The workflow still refuses the visibility change: repository workflow concurrency
-does not exclude other registry writers, and no registry-enforced exclusive-writer
-or atomic compare-and-set primitive is available. The ordinary publication path
-refuses every first publication before building or pushing, including an absent
-or empty private destination. A retained private package is preserved, never
-deleted merely because its tags or OCI subjects match a candidate. This workflow
-does not provide a separately authorized private staging operation.
-Consequently LIBERO is explicitly blocked and not completion-ready until a
-separately authorized transaction supplies that registry guarantee; no public
-development digest, anonymous pull, or B200 qualification is claimed here.
+does not exclude other registry writers, so the current source-only
+implementation refuses before any visibility PATCH or first publication,
+including an absent or empty private destination. A retained private package is
+preserved, never deleted merely because its tags or OCI subjects match a
+candidate. This is an implementation boundary for the current branch, not a
+permanent eligibility requirement: a later customer-scoped transaction may
+proceed only after exact graph preflight and must fail closed on any observed
+concurrent drift. No public development digest, anonymous pull, or B200
+qualification is claimed here.
 
 Requested and failed-build reconciliation may inspect package identity, graph,
 tags, and run-bound evidence, but it does not delete package versions or change
@@ -136,8 +136,9 @@ shadow day to the same epoch in its creation layer.
 The following is a future, separately authorized publication runbook; it is not
 an executable requirement or completion claim for this source-only phase. No
 public digest, anonymous-pull result, or B200 capability is implied until a
-customer-scoped authorization and an independently reviewed, registry-enforced
-first-publication transaction exist. If that transaction is not available, the
+customer-scoped authorization and an independently reviewed first-publication
+transaction with exact graph preflight and fail-closed drift handling exist. If
+that transaction is not available, the
 runbook remains deferred and the quarantined candidate remains unvalidated.
 
 When that later transaction is authorized, the trusted build must then:
