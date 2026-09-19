@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TextIO
 from urllib.parse import urlparse
 
@@ -72,7 +72,6 @@ GYMNASIUM_CLEANUP_TIMEOUT_SECONDS = 180
 GYMNASIUM_SKY_DOWN_TIMEOUT_SECONDS = 120
 GYMNASIUM_RUNNER_TIMEOUT_SECONDS = 1800
 GYMNASIUM_RUNNER_TERM_GRACE_SECONDS = 15
-GYMNASIUM_SHARED_MEMORY_MOUNT = str(PurePosixPath("/", "dev", "shm"))
 GYMNASIUM_CLEANUP_RESOURCES = (
     "roles",
     "rolebindings",
@@ -1101,7 +1100,7 @@ def _gymnasium_admitted_volumes(spec: dict[str, object]) -> dict[str, object]:
         assert mount.pop("readOnly") is False, "unexpected shared-memory mount mode"
     if "mountPropagation" in mount:
         assert mount.pop("mountPropagation") == "None", "mount propagation forbidden"
-    assert mount == {"name": "dshm", "mountPath": GYMNASIUM_SHARED_MEMORY_MOUNT}, (
+    assert mount == {"name": "dshm", "mountPath": "/dev/shm"}, (
         "admitted Pod has an unapproved mount population"
     )
     return {"volumes": volumes, "mounts": mounts}

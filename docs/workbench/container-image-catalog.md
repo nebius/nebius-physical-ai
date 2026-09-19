@@ -28,12 +28,13 @@ development-build path for byte and capability validation.
 
 The combined public plan and accepted-release manifest were verified against
 GHCR without credentials on **2026-09-17**. All **34 current release tags**
-matched their recorded digests; independent manifest and OCI config reads
-confirmed `linux/amd64` runtime metadata. This read-only audit includes both
-Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table references
-(33 then-current pins and 11 historical aliases); historical aliases were not
-re-audited on September 17. Capability results below remain tied to their
-original exact-digest evidence.
+matched their recorded digests; the complete manifest contains **37 accepted
+references**, including historical aliases. Independent manifest and OCI config
+reads confirmed `linux/amd64` runtime metadata. This read-only audit includes
+both Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table
+references (33 then-current pins and 11 historical aliases); historical aliases
+were not re-audited on September 17. Capability results below remain tied to
+their original exact-digest evidence.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible

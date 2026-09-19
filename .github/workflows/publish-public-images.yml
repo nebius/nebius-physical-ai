@@ -392,12 +392,18 @@ jobs:
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
           fi
           metadata_args=()
+          secret_args=()
           if [[ "$TOOL" == gymnasium-robotics ]]; then
             metadata_args=(--metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json")
+            # The neutral Dockerfile verifies bootstrap downloads against the
+            # runner's public CA bundle through a BuildKit secret. It never
+            # enters an image layer or the public workflow artifacts.
+            secret_args=(--secret id=npa_host_ca_bundle,src=/etc/ssl/certs/ca-certificates.crt)
           fi
           docker buildx build \
             --load \
             "${metadata_args[@]}" \
+            "${secret_args[@]}" \
             --file "$DOCKERFILE" \
             "${build_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
@@ -604,22 +610,37 @@ jobs:
         run: |
           set -euo pipefail
           metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
-          config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
-          test "$config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          metadata_config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
+          test "$metadata_config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          config_sha256="${metadata_config_digest#sha256:}"
+          expected_layer_diff_ids="$(docker image inspect --format '{{json .RootFS.Layers}}' "$IMAGE")"
           payload="$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
           test -s "$payload"
-          jq --arg config_digest "$config_digest" -e '
+          jq --arg config_sha256 "$config_sha256" --argjson expected_layer_diff_ids "$expected_layer_diff_ids" -e '
+            (keys_unsorted | sort) == [
+              "accepted_manifest_present", "archive_format", "archive_sha256",
+              "config_sha256", "distributed_blob_scan_complete", "final_entry_count",
+              "final_regular_file_count", "layer_count", "layer_member_count",
+              "nested_archive_member_count", "ordered_layer_descriptors",
+              "ordered_layer_diff_ids", "release_authorized", "runtime_cache_entry_count",
+              "schema", "shadow_asset_count", "status", "unresolved_findings",
+              "upstream_runtime_payload_count", "whiteout_entry_count",
+              "whiteout_metadata_sha256"
+            ] and
             .schema == "npa.gymnasium-robotics.payload-scan.v1" and
             .status == "passed" and
             .archive_format == "docker-save" and
             (.archive_sha256 | test("^[0-9a-f]{64}$")) and
-            .config_sha256 == $config_digest and
+            .config_sha256 == $config_sha256 and
             (.layer_count > 0) and
             (.layer_member_count > 0) and
             (.ordered_layer_diff_ids | length) == .layer_count and
             (all(.ordered_layer_diff_ids[]; test("^sha256:[0-9a-f]{64}$"))) and
+            .ordered_layer_diff_ids == $expected_layer_diff_ids and
+            .layer_count == ($expected_layer_diff_ids | length) and
             (.ordered_layer_descriptors | length) == 0 and
             .distributed_blob_scan_complete == true and
+            (.nested_archive_member_count >= 0) and
             (.whiteout_entry_count >= 0) and
             (.whiteout_metadata_sha256 | test("^[0-9a-f]{64}$")) and
             (.final_entry_count > 0) and
@@ -749,6 +770,44 @@ jobs:
               --expected-config-sha256 "$config_digest" \
               --expected-layer-diff-ids-json "$layer_diff_ids" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
+            payload="$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
+            test -s "$payload"
+            jq --arg config_sha256 "$config_digest" --argjson expected_layer_diff_ids "$layer_diff_ids" -e '
+              (keys_unsorted | sort) == [
+                "accepted_manifest_present", "archive_format", "archive_sha256",
+                "config_sha256", "distributed_blob_scan_complete", "final_entry_count",
+                "final_regular_file_count", "layer_count", "layer_member_count",
+                "nested_archive_member_count", "ordered_layer_descriptors",
+                "ordered_layer_diff_ids", "release_authorized", "runtime_cache_entry_count",
+                "schema", "shadow_asset_count", "status", "unresolved_findings",
+                "upstream_runtime_payload_count", "whiteout_entry_count",
+                "whiteout_metadata_sha256"
+              ] and
+              .schema == "npa.gymnasium-robotics.payload-scan.v1" and
+              .status == "passed" and
+              .archive_format == "docker-save" and
+              (.archive_sha256 | test("^[0-9a-f]{64}$")) and
+              .config_sha256 == $config_sha256 and
+              (.layer_count > 0) and
+              (.layer_member_count > 0) and
+              (.ordered_layer_diff_ids | length) == .layer_count and
+              (all(.ordered_layer_diff_ids[]; test("^sha256:[0-9a-f]{64}$"))) and
+              .ordered_layer_diff_ids == $expected_layer_diff_ids and
+              .layer_count == ($expected_layer_diff_ids | length) and
+              (.ordered_layer_descriptors | length) == 0 and
+              .distributed_blob_scan_complete == true and
+              (.nested_archive_member_count >= 0) and
+              (.whiteout_entry_count >= 0) and
+              (.whiteout_metadata_sha256 | test("^[0-9a-f]{64}$")) and
+              (.final_entry_count > 0) and
+              (.final_regular_file_count > 0) and
+              .unresolved_findings == 0 and
+              .upstream_runtime_payload_count == 0 and
+              .shadow_asset_count == 0 and
+              .runtime_cache_entry_count == 0 and
+              .accepted_manifest_present == false and
+              .release_authorized == false
+            ' "$payload" >/dev/null
           fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \

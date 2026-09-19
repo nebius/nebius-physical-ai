@@ -94,6 +94,12 @@ def regressions(base: list[dict], candidate: list[dict]) -> list[dict]:
     remaining = collections.Counter(key(finding) for finding in base)
     added = []
     for finding in candidate:
+        # Bandit reports the reviewed /dev/shm value even though it is inert
+        # declarative mount metadata.  Keep that raw finding in the scan
+        # report, but do not turn the explicitly validated disposition into a
+        # regression.  Every other B108 occurrence remains actionable.
+        if finding.get("policy_disposition") == "trusted-declarative-mount-metadata":
+            continue
         identity = key(finding)
         if remaining[identity]:
             remaining[identity] -= 1
