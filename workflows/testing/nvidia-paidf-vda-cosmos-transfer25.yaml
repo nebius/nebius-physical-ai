@@ -277,15 +277,15 @@ config:
   refinement_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/refinement.json"
   segmentation_uri: "s3://{{config.bucket}}/{{config.prefix}}/segmentation/"
   quality_disposition_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json"
-  augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/selection/"
   labeled_augmented_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_augmented/"
   # lance_uri = the dataset the curate stage declares as its input (its `inputs:`
   # block references {{config.lance_uri}}). The "lance" name is a LanceDB-era
   # carryover from the AV/BDD100K curation pipelines; this video blueprint has no
-  # LanceDB table, so it simply points at the augmented set (same prefix as
-  # augment_uri) -- i.e. "the data to curate". The curate stage itself runs a
-  # real FiftyOne Brain review over augment_uri.
-  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  # LanceDB table, so accepted-only stages point it at the independently
+  # hard-passing selection. The immutable ranking pool remains under
+  # cosmos_augmented/ for terminal review and rejected-candidate evidence.
+  lance_uri: "s3://{{config.bucket}}/{{config.prefix}}/selection/"
   # Cosmos Curator writes its own canonical tree (clips/ metas/v0/ processed_videos/)
   # under curated_clips_uri, and its summary under curator_report_uri; the FiftyOne
   # review stage reads that summary and merges it into the curation report.
@@ -804,7 +804,7 @@ states:
       the same hosted VLM so the amplified dataset ships fully labeled.
     needs: [require-accepted-quality]
     params:
-      augmented_frames_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
+      augmented_frames_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/"
     resources: cpu
     run:
       shell: >
@@ -834,7 +834,7 @@ states:
       upstream curator cannot run or publish its output.
     needs: [annotate-augmented]
     params:
-      augment_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
+      augment_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/"
     toolRef: workbench.cosmos_curate.curate
     resources: cpu
     inputs:
@@ -859,8 +859,8 @@ states:
       FiftyOne review.
     needs: [cosmos-curate]
     params:
-      augment_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
-      lance_uri: "{{config.augment_uri}}iteration-{{loop.grade}}/"
+      augment_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/"
+      lance_uri: "{{config.selection_uri}}iteration-{{loop.grade}}/"
     toolRef: workbench.fiftyone.curate_augmented
     resources: cpu
     inputs:
@@ -897,7 +897,8 @@ states:
       shell: >
         python3 -c "from npa.workflows.data_factory_stages import finalize;
         finalize('{{config.run_root_uri}}', '{{config.finalize_report_uri}}',
-        upstream_variant='cosmos-transfer2.5', run_id='{{run.id}}')"
+        upstream_variant='cosmos-transfer2.5', run_id='{{run.id}}',
+        selection_uri='{{config.selection_uri}}iteration-{{loop.grade}}/')"
     outputs:
       - uri: "{{config.finalize_report_uri}}"
         schema: npa.sim2real.e2e_report.v1

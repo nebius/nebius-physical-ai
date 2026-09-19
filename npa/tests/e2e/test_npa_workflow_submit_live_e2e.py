@@ -671,11 +671,17 @@ def _assert_recorded_video(batches, video, alignment):
 
     blobs, timestamps = [], []
     for batch in batches:
+        is_playback_timeline = "video_time" in batch.schema.names
         for name in batch.schema.names:
             for row in batch.column(name).to_pylist():
                 if row and name == "AssetVideo:blob":
                     blobs.append(bytes(row[0]))
-                if row and "VideoFrameReference" in name and "timestamp" in name:
+                if (
+                    row
+                    and is_playback_timeline
+                    and "VideoFrameReference" in name
+                    and "timestamp" in name
+                ):
                     timestamps.extend(row)
     assert len(blobs) == 1
     assert hashlib.sha256(blobs[0]).hexdigest() == alignment["generated_sha256"]

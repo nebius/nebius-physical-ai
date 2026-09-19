@@ -1303,12 +1303,15 @@ def generate_configs(
         RuntimeError: Requested fixture creation or artifact publication fails.
     """
     from npa.workflows.data_factory_appearance import (
-        appearance_prompt, parse_appearance_profiles,
+        appearance_prompt,
+        parse_appearance_profiles,
     )
 
     custom_profiles = parse_appearance_profiles(appearance_profiles_json)
     if custom_profiles and quality_anchor_uri:
-        raise ValueError("custom appearance profiles cannot be combined with a quality anchor")
+        raise ValueError(
+            "custom appearance profiles cannot be combined with a quality anchor"
+        )
     try:
         n = int(n_augmentations)
     except (TypeError, ValueError):
@@ -1338,9 +1341,7 @@ def generate_configs(
         profile_table = APPEARANCE_PROFILES
     selected_profiles = custom_profiles or profile_table
     if custom_profiles:
-        variables = {
-            key: list(values) for key, values in APPEARANCE_VARIABLES.items()
-        }
+        variables = {key: list(values) for key, values in APPEARANCE_VARIABLES.items()}
         for profile in custom_profiles:
             for key, value in profile.items():
                 if value not in variables[key]:
@@ -1353,8 +1354,7 @@ def generate_configs(
     anchor = _derive_quality_anchor(quality_anchor_uri)
     if anchor and normalized_prompt_policy in source_fidelity_policies:
         if any(
-            value not in variables[key]
-            for key, value in anchor["variables"].items()
+            value not in variables[key] for key, value in anchor["variables"].items()
         ):
             anchor = None
     if anchor:
@@ -2915,19 +2915,16 @@ def _replay_committed_candidate_selection(
     if (
         not isinstance(source_manifest, dict)
         or not isinstance(ranking, dict)
-        or report.get("ranking_pool_inventory_sha256")
-        != _inventory_digest(source_rows)
+        or report.get("ranking_pool_inventory_sha256") != _inventory_digest(source_rows)
         or report.get("ranking_report_sha256") != _payload_sha256(ranking)
-        or manifest.get("source_manifest_sha256")
-        != _payload_sha256(source_manifest)
+        or manifest.get("source_manifest_sha256") != _payload_sha256(source_manifest)
         or float(report.get("threshold", -1.0)) != _quality_threshold(threshold)
     ):
         raise CandidateSelectionLockError(
             "candidate selection inputs differ from the committed generation"
         )
     attempt_rows = {
-        str(row["key"]): row
-        for row in _inventory_rows(str(commit["attempt_uri"]))
+        str(row["key"]): row for row in _inventory_rows(str(commit["attempt_uri"]))
     }
     if _inventory_digest(list(attempt_rows.values())) != commit.get(
         "attempt_inventory_sha256"
@@ -3406,6 +3403,7 @@ def finalize(
     *,
     upstream_variant: str = "",
     run_id: str = "",
+    selection_uri: str = "",
 ) -> dict[str, Any]:
     """Aggregate the run's stage artifacts into a real final report."""
     keys = _list_keys(run_root_uri)
@@ -3477,6 +3475,17 @@ def finalize(
                 if segment and segment != "_attempts":
                     aug_clips.add(segment)
         n_variants = len(aug_clips)
+    if selection_uri:
+        selected = _committed_augment_manifest(selection_uri, listed_keys=keys)
+        if selected is None:
+            raise RuntimeError(
+                "PAIDF accepted finalization requires a committed hard-pass selection"
+            )
+        n_variants = int(selected.get("variant_count", 0) or 0)
+        if n_variants <= 0:
+            raise RuntimeError(
+                "PAIDF accepted finalization requires at least one hard-pass candidate"
+            )
     lineage_key = next(
         (key for key in keys if key.endswith("/input/leisaac-lineage.json")), ""
     )

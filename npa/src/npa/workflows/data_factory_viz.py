@@ -447,6 +447,7 @@ def build_run_rrd(
         review = _PaidfReview(local, input_uri)
         captions = _load_captions(local, review=review)
         input_root = local / "input"
+        raw_input_provenance = _read_json(input_root / "provenance.json")
         input_provenance = review.read(input_root / "provenance.json", "input")
         source_kind = (
             str(input_provenance.get("source_kind") or "")
@@ -483,7 +484,11 @@ def build_run_rrd(
         stage_docs = _load_stage_docs(local, review=review)
         media_evidence = _source_fidelity_media_evidence(
             local,
-            input_provenance=input_provenance,
+            # Internal synchronization checks need the source-derived policy and
+            # temporal map. The portable review projection intentionally omits
+            # those nested runtime details, so using it here silently disabled
+            # the evidence panel for real source-fidelity runs.
+            input_provenance=raw_input_provenance,
             variant_records=variant_records,
         )
         if media_evidence:
@@ -1386,6 +1391,11 @@ def _candidate_disposition_document(
 ) -> str:
     """Truthful per-candidate disposition shown beside its actual media."""
     evaluation = _candidate_evaluation(local, iteration, clip, review)
+    candidate_status = (
+        "ACCEPTED"
+        if quality_status == "ACCEPTED" and evaluation.get("passed") is True
+        else "REJECTED"
+    )
     summary = review.payload(
         {
             "candidate_id": candidate_id,
@@ -1394,6 +1404,7 @@ def _candidate_disposition_document(
             "run_disposition": quality_status,
             "promotion_eligible": quality_status == "ACCEPTED"
             and evaluation.get("passed") is True,
+            "candidate_disposition": candidate_status.lower(),
             **_candidate_quality_fields(evaluation),
             "source_comparison_entity": "source/* or conditioning/derived",
             "output_media_entity": f"augmented/{candidate_id}",
@@ -1407,7 +1418,7 @@ def _candidate_disposition_document(
         if isinstance(source, dict) and "source_report" in source
     ]
     return (
-        f"# {quality_status} — candidate `{review.identity(candidate_id)}`\n\n"
+        f"# {candidate_status} — candidate `{review.identity(candidate_id)}`\n\n"
         + "This panel is review evidence only. Rejected media is never relabeled, "
         "curated, finalized, or promoted. Compare it directly with the source or "
         "conditioning entities on the shared timeline.\n\n"

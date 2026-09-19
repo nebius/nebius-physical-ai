@@ -249,8 +249,9 @@ def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
     assert corrected_quality_seed["augmentations"][1]["surface_finish"] == (
         "matte low-gloss work-surface finish"
     )
-    assert "matte low-gloss work-surface finish" in (
-        corrected_quality_seed["augmentations"][1]["prompt"]
+    assert (
+        "matte low-gloss work-surface finish"
+        in (corrected_quality_seed["augmentations"][1]["prompt"])
     )
 
 
@@ -611,8 +612,7 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
             for key in copied_keys
         )
         assert any(
-            "/_attempts/fence-1/candidate-a/metadata.json" in key
-            for key in copied_keys
+            "/_attempts/fence-1/candidate-a/metadata.json" in key for key in copied_keys
         )
     assert not any("candidate-b/" in row["key"] for row in destination_rows)
 
@@ -699,9 +699,7 @@ def test_candidate_selection_lock_heartbeats_during_slow_object_operation(
         )
         selection_uri = "s3://synthetic/run/selection/slow-copy/"
         monkeypatch.setattr(dfs, "_storage", lambda: storage)
-        monkeypatch.setattr(
-            dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15
-        )
+        monkeypatch.setattr(dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15)
 
         with dfs._candidate_selection_destination_lock(selection_uri) as acquired:
             initial_etag = acquired["etag"]
@@ -1790,9 +1788,7 @@ def test_quality_disposition_preserves_per_criterion_evaluator_evidence(
             "passed": True,
             "passed_checks": 4,
             "total_checks": 4,
-            "checks": [
-                {"variable": "background", "score": 1.0, "passed": True}
-            ],
+            "checks": [{"variable": "background", "score": 1.0, "passed": True}],
         },
         "hallucination": {"passed": True, "score": 0.91},
         "temporal_consistency": {"passed": False, "score": 0.42},
@@ -1817,9 +1813,10 @@ def test_quality_disposition_preserves_per_criterion_evaluator_evidence(
     assert result["criterion_evidence"] == [
         {"clip_id": "candidate-0", "score": 0.81, "passed": True, **criteria}
     ]
-    assert json.loads(disposition.read_text())["criterion_evidence"] == result[
-        "criterion_evidence"
-    ]
+    assert (
+        json.loads(disposition.read_text())["criterion_evidence"]
+        == result["criterion_evidence"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -2484,6 +2481,35 @@ def test_finalize_counts_only_latest_append_only_augmentation_iteration(
 
     assert report["multiply_mode"] == "multi-variant"
     assert report["variant_count"] == 2
+
+
+def test_finalize_counts_only_committed_hard_pass_selection(monkeypatch) -> None:
+    root = "s3://b/physical-ai-data-factory/run1/"
+    keys = [
+        "physical-ai-data-factory/run1/cosmos_augmented/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/rejected/augmented_video.mp4",
+        "physical-ai-data-factory/run1/cosmos_augmented/accepted/augmented_video.mp4",
+        "physical-ai-data-factory/run1/selection/iteration-1/manifest.json",
+        "physical-ai-data-factory/run1/selection/iteration-1/accepted/augmented_video.mp4",
+    ]
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: list(keys))
+    monkeypatch.setattr(
+        dfs,
+        "_committed_augment_manifest",
+        lambda uri, **_kwargs: (
+            {"variant_count": 1} if "/selection/" in uri else {"variant_count": 2}
+        ),
+    )
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+
+    report = dfs.finalize(
+        root,
+        root + "reports/final.json",
+        selection_uri=root + "selection/iteration-1/",
+    )
+
+    assert report["multiply_mode"] == "single-variant"
+    assert report["variant_count"] == 1
 
 
 def test_finalize_publishes_latest_iteration_at_canonical_contract_paths(
