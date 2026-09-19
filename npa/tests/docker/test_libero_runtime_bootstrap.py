@@ -1284,7 +1284,27 @@ def test_source_archives_become_identity_checked_hash_locked_wheels(
     )
 
     def fake_run(command, **_kwargs):
-        assert command[2:4] == ["pip", "wheel"]
+        assert command[0] == "/usr/bin/bwrap"
+        assert "--unshare-all" in command
+        assert "--uid" in command and command[command.index("--uid") + 1] == "65534"
+        assert "--gid" in command and command[command.index("--gid") + 1] == "65534"
+        python_index = command.index("/npa-build/venv/bin/python")
+        assert command[python_index:] == [
+            "/npa-build/venv/bin/python",
+            "-m",
+            "pip",
+            "wheel",
+            "--no-deps",
+            "--no-build-isolation",
+            "--require-hashes",
+            "--no-index",
+            "--find-links",
+            "/npa-build/input",
+            "--wheel-dir",
+            "/npa-build/output",
+            "-r",
+            "/npa-build/source-requirements.txt",
+        ]
         build_wheelhouse.mkdir(mode=0o700, exist_ok=True)
         wheel = build_wheelhouse / "fixture_source-1.0-py3-none-any.whl"
         with zipfile.ZipFile(wheel, "w") as archive:
@@ -2685,7 +2705,7 @@ def test_failed_conditional_output_put_never_claims_or_deletes_existing_object(
     assert attempted == {}
 
 
-def test_successful_put_without_identity_headers_is_recovered_for_cleanup(
+def test_successful_put_without_identity_headers_refuses_without_claiming_ownership(
     monkeypatch,
 ):
     module = _load_module()
@@ -2723,7 +2743,7 @@ def test_successful_put_without_identity_headers_is_recovered_for_cleanup(
         )
 
     monkeypatch.setattr(module, "_sigv4_request", request)
-    with pytest.raises(module.BootstrapRefusal, match="immutable creation identity"):
+    with pytest.raises(module.BootstrapRefusal, match="cleanup ownership is incomplete"):
         module._verified_output_put(
             endpoint="https://storage.fixture.invalid",
             bucket="fixture-bucket",
@@ -2733,8 +2753,36 @@ def test_successful_put_without_identity_headers_is_recovered_for_cleanup(
             digest=digest,
             attempted=attempted,
         )
-    assert calls == ["PUT", "HEAD"]
-    assert attempted["byof/run/artifact.json"]["version_id"] == "recovered-version"
+    assert calls == ["PUT"]
+    assert attempted == {}
+
+
+def test_ambiguous_put_failure_refuses_without_unversioned_recovery(
+    monkeypatch,
+):
+    module = _load_module()
+    attempted: dict[str, dict[str, object]] = {}
+    object_key = "byof/run/artifact.json"
+    calls: list[str] = []
+
+    def request(method, *_args, **_kwargs):
+        calls.append(method)
+        raise module.BootstrapRefusal("output storage PUT request failed")
+
+    monkeypatch.setattr(module, "_sigv4_request", request)
+    key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+    with pytest.raises(module.BootstrapRefusal, match=key_hash):
+        module._verified_output_put(
+            endpoint="https://storage.fixture.invalid",
+            bucket="fixture-bucket",
+            object_key=object_key,
+            name="artifact.json",
+            payload=b"immutable\n",
+            digest=hashlib.sha256(b"immutable\n").hexdigest(),
+            attempted=attempted,
+        )
+    assert calls == ["PUT"]
+    assert attempted == {}
 
 
 def test_output_cleanup_preserves_replacement_between_head_and_delete(

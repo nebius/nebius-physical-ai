@@ -155,6 +155,8 @@ REVIEWED_SOURCE_BUILD_NAMES = frozenset(
         "robomimic",
     }
 )
+SOURCE_BUILD_SANDBOX = Path("/usr/bin/bwrap")
+SOURCE_BUILD_UID = 65534
 RUNTIME_EXECUTION_GROUP = "npa-libero-exec"
 RUNTIME_EXECUTION_USER = "npa-libero-exec"
 RUNTIME_SUPERVISOR_USER = "ubuntu"
@@ -1860,9 +1862,79 @@ def _build_source_wheels(
     source_lock = build_wheelhouse.parent / ".source-requirements.txt"
     source_lock.write_text("\n".join(source_lines) + "\n", encoding="utf-8")
     os.chmod(source_lock, 0o400)
-    _run(
-        [
-            pip,
+    sandbox = SOURCE_BUILD_SANDBOX
+    try:
+        sandbox_info = sandbox.stat()
+    except OSError as exc:
+        raise BootstrapRefusal("source runtime build sandbox is unavailable") from exc
+    if (
+        not stat.S_ISREG(sandbox_info.st_mode)
+        or sandbox_info.st_uid != 0
+        or stat.S_IMODE(sandbox_info.st_mode) & 0o022
+        or not stat.S_IMODE(sandbox_info.st_mode) & 0o111
+    ):
+        raise BootstrapRefusal("source runtime build sandbox is not trusted")
+    wheelhouse = wheelhouse.resolve(strict=True)
+    build_wheelhouse = build_wheelhouse.resolve(strict=True)
+    source_lock = source_lock.resolve(strict=True)
+    venv = Path(pip).resolve().parent.parent
+    sandbox_command = [
+        str(sandbox),
+        "--die-with-parent",
+        "--unshare-all",
+        "--new-session",
+        "--clearenv",
+        "--uid",
+        str(SOURCE_BUILD_UID),
+        "--gid",
+        str(SOURCE_BUILD_UID),
+        "--tmpfs",
+        "/",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+    ]
+    for system_path in ("/bin", "/etc", "/lib", "/lib64", "/sbin", "/usr"):
+        if Path(system_path).exists():
+            sandbox_command.extend(("--ro-bind", system_path, system_path))
+    sandbox_command.extend(
+        (
+            "--dir",
+            "/npa-build",
+            "--dir",
+            "/tmp/home",
+            "--ro-bind",
+            str(wheelhouse),
+            "/npa-build/input",
+            "--ro-bind",
+            str(source_lock),
+            "/npa-build/source-requirements.txt",
+            "--ro-bind",
+            str(venv),
+            "/npa-build/venv",
+            "--bind",
+            str(build_wheelhouse),
+            "/npa-build/output",
+            "--setenv",
+            "HOME",
+            "/tmp/home",
+            "--setenv",
+            "PATH",
+            "/npa-build/venv/bin:/usr/local/bin:/usr/bin:/bin",
+            "--setenv",
+            "TMPDIR",
+            "/tmp",
+            "--setenv",
+            "PIP_NO_CACHE_DIR",
+            "1",
+            "--setenv",
+            "PIP_DISABLE_PIP_VERSION_CHECK",
+            "1",
+            "--setenv",
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
+            "/npa-build/venv/bin/python",
             "-m",
             "pip",
             "wheel",
@@ -1871,14 +1943,14 @@ def _build_source_wheels(
             "--require-hashes",
             "--no-index",
             "--find-links",
-            str(wheelhouse),
+            "/npa-build/input",
             "--wheel-dir",
-            str(build_wheelhouse),
+            "/npa-build/output",
             "-r",
-            str(source_lock),
-        ],
-        environment=environment,
+            "/npa-build/source-requirements.txt",
+        )
     )
+    _run(sandbox_command, environment=environment)
     wheels = sorted(path for path in build_wheelhouse.iterdir() if path.is_file())
     if len(wheels) != len(source_artifacts) or any(
         path.suffix != ".whl" for path in wheels
@@ -3021,35 +3093,20 @@ def _verified_output_put(
             payload=payload,
             extra_headers={"if-none-match": "*", "x-amz-checksum-sha256": checksum},
         )
-    except Exception:
-        _recover_ambiguous_output_put(
-            url=url,
-            payload=payload,
-            digest=digest,
-            checksum=checksum,
-            attempted=attempted,
-            object_key=object_key,
-        )
+    except BootstrapRefusal as exc:
+        if str(exc) == "output storage PUT request failed":
+            key_hash = hashlib.sha256(object_key.encode()).hexdigest()
+            raise BootstrapRefusal(
+                "output storage PUT outcome is ambiguous; immutable ownership "
+                f"identity unavailable for key hash {key_hash}"
+            ) from exc
         raise
     version_id = created_headers.get("x-amz-version-id", "")
     etag = created_headers.get("etag", "")
     if not version_id or re.fullmatch(r'"[^\"]+"', etag) is None:
-        # A successful PUT can omit immutable identity headers. Recover the
-        # object through a bounded HEAD before refusing so rollback can delete
-        # exactly the object that was created.
-        if not _recover_ambiguous_output_put(
-            url=url,
-            payload=payload,
-            digest=digest,
-            checksum=checksum,
-            attempted=attempted,
-            object_key=object_key,
-        ):
-            raise BootstrapRefusal(
-                "output storage did not return immutable creation identity"
-            )
         raise BootstrapRefusal(
-            "output storage did not return immutable creation identity"
+            "output storage PUT succeeded without immutable creation identity; "
+            "cleanup ownership is incomplete"
         )
     attempted[object_key] = {
         "size_bytes": len(payload),
@@ -3092,51 +3149,6 @@ def _cleanup_object_etag(
     if observed_size != size_bytes or re.fullmatch(r'"[^"]+"', etag) is None:
         return ""
     return etag
-
-
-def _recover_ambiguous_output_put(
-    *,
-    url: str,
-    payload: bytes,
-    digest: str,
-    checksum: str,
-    attempted: dict[str, dict[str, Any]],
-    object_key: str,
-) -> bool:
-    """Record an exactly identifiable object after an ambiguous PUT failure."""
-
-    try:
-        status, headers, _ = _sigv4_request(
-            "HEAD",
-            url,
-            extra_headers={"x-amz-checksum-mode": "ENABLED"},
-            expected_statuses=frozenset({200, 404}),
-        )
-    except (BootstrapRefusal, OSError, ValueError):
-        return False
-    if status != 200:
-        return False
-    try:
-        observed_size = int(headers.get("content-length", "-1"))
-    except ValueError:
-        return False
-    version_id = headers.get("x-amz-version-id", "")
-    etag = headers.get("etag", "")
-    if (
-        observed_size != len(payload)
-        or headers.get("x-amz-checksum-sha256") != checksum
-        or not version_id
-        or re.fullmatch(r'"[^\"]+"', etag) is None
-        or hashlib.sha256(payload).hexdigest() != digest
-    ):
-        return False
-    attempted[object_key] = {
-        "size_bytes": len(payload),
-        "checksum": checksum,
-        "etag": etag,
-        "version_id": version_id,
-    }
-    return True
 
 
 def _cleanup_output_attempts(
