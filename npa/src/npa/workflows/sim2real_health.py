@@ -675,8 +675,11 @@ def run_checks_concurrently(
         One result per thunk, in the same order as ``thunks``.
 
     Raises:
-        Exception: Whatever the first thunk (by ``thunks`` order) raised;
-            matches the semantics of a plain serial list comprehension.
+        Exception: Whatever the first thunk (by ``thunks`` order) raised.
+            Only this exception *selection* matches a plain serial list
+            comprehension; unlike serial execution, every thunk still runs
+            to completion (the executor joins all of them before this
+            propagates), even the ones after the one whose exception wins.
     """
 
     if len(thunks) <= 1:
