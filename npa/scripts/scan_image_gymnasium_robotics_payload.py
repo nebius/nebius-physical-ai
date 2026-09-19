@@ -946,11 +946,19 @@ def _nested_archive_members(
     )
     if archive_like:
         budget.account_archive(path, len(content))
-        _scan_archive_representation_bytes(
-            f"raw archive member: {path}",
-            content,
-            allowed_system_wheel_path=allowed_system_wheel_path,
-        )
+        if is_tar:
+            # A raw TAR stream is a structural container: its complete bytes
+            # remain hash-bound and its headers/padding/member bodies are
+            # inspected below.  Do not regex-scan the concatenated stream,
+            # because trusted base-layer member bytes can span TAR records;
+            # per-member decoded checks remain the credential/vendor gate.
+            _scan_raw_blob_bytes(f"raw archive member: {path}", content)
+        else:
+            _scan_archive_representation_bytes(
+                f"raw archive member: {path}",
+                content,
+                allowed_system_wheel_path=allowed_system_wheel_path,
+            )
     else:
         _scan_decoded_member_bytes(
             f"decoded member: {path}",
@@ -1630,7 +1638,10 @@ def _oci_blob(
         raise ValueError(f"OCI {label} descriptor does not bind its blob")
     referenced.add(name)
     if digest not in graph_budget.validated_blobs:
-        _scan_decoded_member_bytes(f"raw OCI {label} blob", raw)
+        if media_type in OCI_LAYER_MEDIA_TYPES:
+            _scan_raw_blob_bytes(f"raw OCI {label} blob", raw)
+        else:
+            _scan_decoded_member_bytes(f"raw OCI {label} blob", raw)
         _nested_archive_members(
             f"raw OCI {label} blob", raw, budget=nested_budget
         )

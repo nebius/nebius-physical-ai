@@ -475,10 +475,13 @@ def _oci_layout(
         _tar_bytes({"etc/neutral-base": b"base"}),
         _tar_bytes(files),
     ]
-    compressed = [
-        _gzip_layer(raw_layers[0]),
-        _gzip_layer(raw_layers[1], filename=layer_filename) + layer_suffix,
-    ]
+    if layer_media_type == "application/vnd.oci.image.layer.v1.tar":
+        compressed = raw_layers
+    else:
+        compressed = [
+            _gzip_layer(raw_layers[0]),
+            _gzip_layer(raw_layers[1], filename=layer_filename) + layer_suffix,
+        ]
     descriptors = [
         _oci_descriptor(content, layer_media_type) for content in compressed
     ]
@@ -1002,6 +1005,24 @@ def test_oci_layout_scans_raw_gzip_header_without_echo(
     assert marker not in str(captured.value)
 
 
+def test_oci_layout_scans_uncompressed_layer_members_without_whole_tar_regex(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    marker = b"api" + b"_key=" + (b"x" * 16)
+    image = tmp_path / "uncompressed-layer.tar"
+    _oci_layout(
+        image,
+        {"neutral.txt": marker},
+        layer_media_type="application/vnd.oci.image.layer.v1.tar",
+    )
+
+    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+        SCAN.scan_oci_layout(image)
+    message = str(captured.value)
+    assert "raw OCI manifest layer 0:0:1 blob:neutral.txt" in message
+    assert marker.decode() not in message
+
+
 def test_container_archive_symlink_is_refused(
     tmp_path: Path, structural_scan: None
 ) -> None:
@@ -1147,7 +1168,7 @@ def test_secret_in_tar_member_padding_refuses_without_echo() -> None:
     padding_start = member.offset_data + member.size
     content[padding_start : padding_start + len(marker)] = marker
 
-    with pytest.raises(ValueError, match="forbidden secret signature") as captured:
+    with pytest.raises(ValueError, match="nonzero tar member padding") as captured:
         SCAN._nested_archive_members("nested.tar", bytes(content))
     assert marker.decode() not in str(captured.value)
 
