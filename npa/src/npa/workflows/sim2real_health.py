@@ -598,7 +598,9 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             remedy="Confirm RBAC allows listing nodes to verify schedulable GPU capacity.",
             details=(_short(nodes.stderr or nodes.stdout),),
         )
-    node_count, gpu_total, gpu_products = _count_schedulable_gpus(nodes.stdout, gpu_resource)
+    node_count, gpu_total, gpu_products = _count_schedulable_gpus(
+        nodes.stdout, gpu_resource
+    )
     if gpu_total <= 0:
         return CheckResult(
             name="cluster",
@@ -613,21 +615,37 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             ),
         )
     requested_product = config.k8s_gpu_product
-    if requested_product and requested_product not in gpu_products:
-        available = ", ".join(sorted(gpu_products)) if gpu_products else "none detected"
-        return CheckResult(
-            name="cluster",
-            status=FAIL,
-            summary=(
-                f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
-                f"but none match the requested product {requested_product!r}."
-            ),
-            remedy=(
-                f"Available GPU products: {available}. Update k8s_gpu_product in "
-                "the sim2real config to match, or provision nodes with the "
-                "requested accelerator."
-            ),
-        )
+    if requested_product:
+        if not gpu_products:
+            return CheckResult(
+                name="cluster",
+                status=WARN,
+                summary=(
+                    f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
+                    "but no nvidia.com/gpu.product labels were detected, so the "
+                    f"requested product {requested_product!r} could not be verified."
+                ),
+                remedy=(
+                    "Ensure the NVIDIA k8s-device-plugin labels GPU nodes with "
+                    "nvidia.com/gpu.product, or clear k8s_gpu_product in the "
+                    "sim2real config to skip product matching."
+                ),
+            )
+        if requested_product not in gpu_products:
+            available = ", ".join(sorted(gpu_products))
+            return CheckResult(
+                name="cluster",
+                status=FAIL,
+                summary=(
+                    f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
+                    f"but none match the requested product {requested_product!r}."
+                ),
+                remedy=(
+                    f"Available GPU products: {available}. Update k8s_gpu_product in "
+                    "the sim2real config to match, or provision nodes with the "
+                    "requested accelerator."
+                ),
+            )
     return CheckResult(
         name="cluster",
         status=PASS,
@@ -638,7 +656,9 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
     )
 
 
-def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, int, set[str]]:
+def _count_schedulable_gpus(
+    nodes_json: str, gpu_resource: str
+) -> tuple[int, int, set[str]]:
     import json
 
     try:
