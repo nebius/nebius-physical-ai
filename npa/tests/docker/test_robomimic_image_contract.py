@@ -195,7 +195,7 @@ def test_build_helper_defaults_local_and_uses_only_committed_context() -> None:
     )
     assert "docker image rm" not in text
     assert "docker container create --name" in text
-    assert "docker container rm" in text
+    assert "docker container rm --volumes" in text
     assert "/run/user/$(id -u)" not in text
     assert 'local target_name="$1" inherited_directory_fd=9' in text
     assert '9<&"${receipt_dir_fd}"' in text
@@ -530,6 +530,7 @@ case "${action}" in
           exit 80
         fi
         lock_id="$(printf '%s' "${transaction}|${image_id}" | sha256sum | cut -d ' ' -f 1)"
+        mkdir -- "${FAKE_DOCKER_VOLUME_STATE}"
         printf '%s\n' "${lock_id}" > "${FAKE_DOCKER_LOCK_STATE}/id"
         printf '%s\n' "${lock_name}" > "${FAKE_DOCKER_LOCK_STATE}/name"
         printf '%s\n' "${transaction}" > "${FAKE_DOCKER_LOCK_STATE}/transaction"
@@ -550,9 +551,17 @@ case "${action}" in
           "$(cat "${FAKE_DOCKER_LOCK_STATE}/image")"
         ;;
       rm)
+        remove_volumes=0
+        if [[ "$1" == "--volumes" ]]; then
+          remove_volumes=1
+          shift
+        fi
         reference="$1"
         [[ -d "${FAKE_DOCKER_LOCK_STATE}" ]] || exit 1
         [[ "${reference}" == "$(cat "${FAKE_DOCKER_LOCK_STATE}/id")" ]] || exit 1
+        if [[ "${remove_volumes}" -eq 1 ]]; then
+          /usr/bin/rm -rf -- "${FAKE_DOCKER_VOLUME_STATE}"
+        fi
         /usr/bin/rm -rf -- "${FAKE_DOCKER_LOCK_STATE}"
         printf '%s:released\n' "${FAKE_CALLER_UID:-same-uid}" \
           >> "${FAKE_DOCKER_LOCK_RECORD}"
@@ -619,6 +628,7 @@ exec /usr/bin/rm "$@"
         "FAKE_DOCKER_CONTEXT_RECORD": str(tmp_path / "context-path"),
         "FAKE_DOCKER_ACTION_RECORD": str(tmp_path / "docker-actions"),
         "FAKE_DOCKER_LOCK_STATE": str(tmp_path / "daemon-lock"),
+        "FAKE_DOCKER_VOLUME_STATE": str(tmp_path / "daemon-volume"),
         "FAKE_DOCKER_LOCK_RECORD": str(tmp_path / "daemon-lock-actions"),
         "FAKE_FSYNC_RECORD": str(tmp_path / "fsync-actions"),
         "FAKE_FSYNC_FAILURE_MARKER": str(tmp_path / "fsync-failure-marker"),
@@ -736,7 +746,7 @@ def test_terminal_fence_reconciliation_recovers_only_exact_dead_owner(
     module.reconcile(path, record["revision"], record["tag"])
 
     assert state["reads"] == 6
-    assert removed == [["docker", "container", "rm", record["lock_id"]]]
+    assert removed == [["docker", "container", "rm", "--volumes", record["lock_id"]]]
     assert path.read_bytes() == original
     state["lock_id"] = "d" * 64
     with pytest.raises(ValueError, match="lock changed"):
@@ -988,6 +998,7 @@ def test_build_helper_records_immutable_id_in_owner_only_receipt(
     assert receipt["transaction_evidence_disposition"] == (
         "cleanup-pending-terminal-result"
     )
+    assert not (tmp_path / "daemon-volume").exists()
     _assert_cleanup_receipt(
         receipt_dir, image_id, status="completed", disposition="removed"
     )
@@ -1368,6 +1379,7 @@ def test_build_helper_records_id_and_retains_context_on_signal(
     assert len(list(temp_root.glob("npa-robomimic-context.*"))) == 1
     _assert_failure_receipt(receipt_dir, image_id, reason="signal-TERM")
     assert not tag_state.exists()
+    assert not (tmp_path / "daemon-volume").exists()
     assert "rm" not in _docker_actions(tmp_path)
 
 

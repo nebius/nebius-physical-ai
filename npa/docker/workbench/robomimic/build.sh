@@ -652,7 +652,7 @@ def reconcile(path, revision, tag):
     require_daemon_binding(record)
     # The terminal fence follows synchronous completion of every tag writer.
     # Only this immutable stopped lock object can be removed; never a tag/image.
-    subprocess.run(["docker", "container", "rm", record["lock_id"]],
+    subprocess.run(["docker", "container", "rm", "--volumes", record["lock_id"]],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     print("reconciled exact owner-terminal tag mutex; no image or tag modified")
 
@@ -731,7 +731,7 @@ release_tag_lock() {
   [[ "${tag_lock_held}" -eq 1 ]] || return 0
   inspect_tag_lock "${tag_lock_id}" "${context_anchor}/release-lock.out" \
     "${context_anchor}/release-lock.err" || return 1
-  docker container rm "${tag_lock_id}" \
+  docker container rm --volumes "${tag_lock_id}" \
     > "${context_anchor}/release-lock-rm.out" \
     2> "${context_anchor}/release-lock-rm.err" || return 1
   tag_lock_acquisition_attempted=0
