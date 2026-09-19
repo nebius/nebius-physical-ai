@@ -989,7 +989,6 @@ def main() -> None:
     training = _reload_checkpoint(train_root, dataset, valid_keys, training_text)
     result = _build_result(
         context,
-        dataset,
         demo_keys,
         sample_counts,
         (action_min, action_max),

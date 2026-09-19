@@ -1720,6 +1720,27 @@ def test_changed_trust_boundary_functions_remain_reviewable() -> None:
         assert max(lengths.values()) < 40, {relative_path: lengths}
 
 
+def test_smoke_result_builder_call_matches_signature() -> None:
+    tree = ast.parse((IMAGE_ROOT / "smoke.py").read_text(encoding="utf-8"))
+    definitions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_build_result"
+    ]
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_build_result"
+    ]
+    assert len(definitions) == 1
+    assert len(definitions[0].args.args) == 6
+    assert len(calls) == 1
+    assert len(calls[0].args) == 6
+    assert not calls[0].keywords
+
+
 def test_dataset_notice_binds_exact_official_license_metadata() -> None:
     text = "\n".join(
         path.read_text(encoding="utf-8")
