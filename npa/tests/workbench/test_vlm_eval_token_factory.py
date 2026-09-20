@@ -304,6 +304,26 @@ def test_compare_judges_rejects_markdown_fenced_json_without_repair(
     assert report.secondary.result is not None
 
 
+def test_compare_judges_types_non_string_content_and_runs_both_judges(
+    monkeypatch, tmp_path
+) -> None:
+    invalid = _completion(
+        model="MiniMaxAI/MiniMax-M3",
+        content={"success": True, "score": 0.9, "rationale": "not a string"},
+    )
+    secondary = _completion(model="openbmb/MiniCPM-V-4_5")
+
+    report, requests, _frame = _run_judge_comparison(
+        monkeypatch, tmp_path, [invalid, secondary]
+    )
+
+    assert len(requests) == 2
+    assert report.status == "judge_error"
+    assert report.primary.error is not None
+    assert report.primary.error.error_type == "response_contract_error"
+    assert report.secondary.result is not None
+
+
 def test_compare_judges_retains_http_error_body_and_request_id(
     monkeypatch, tmp_path
 ) -> None:
@@ -378,6 +398,7 @@ def test_compare_judges_retains_http_error_body_and_request_id(
 @pytest.mark.parametrize(
     ("body", "message"),
     [
+        ("", "non-JSON"),
         ("not-json", "non-JSON"),
         ('["not","an","object"]', "non-object"),
     ],

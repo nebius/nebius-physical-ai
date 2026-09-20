@@ -1146,6 +1146,8 @@ def _strict_comparison_verdict(
     response: _VlmBackendResponse,
 ) -> VlmStructuredResponse:
     choice, message = _response_choice_and_content(response.data)
+    if not isinstance(message, str):
+        raise VlmEvalError("Hosted VLM response content must be a JSON string")
     if _deframe_json_text(message)[1]:
         raise VlmEvalError(
             "Paired judge response must be bare JSON without a Markdown fence"
@@ -2657,77 +2659,101 @@ def _post_with_readiness_retry(
     response_sink: Callable[[_VlmBackendResponse], None] | None = None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None = None,
 ) -> _VlmBackendResponse:
-    """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
-
-    A self-hosted vLLM server started alongside the eval job needs minutes to
-    load weights; retry transient connection failures with backoff up to the
-    readiness deadline so a cold start is a bounded wait, not an instant
-    connection-refused. Hosted (``api``) backends are expected to be up and fail
-    fast. This lives in the request path so callers that stub
-    ``_call_openai_compatible`` in tests never incur the wait.
-    """
-
+    """POST while tolerating bounded self-hosted model warmup."""
     is_self_hosted = backend == "self-hosted"
     ready_timeout = _ready_timeout_s()
     deadline = time.monotonic() + (ready_timeout if is_self_hosted else 0.0)
     started_at = time.monotonic()
     delay = 2.0
-    last_conn_error = ""
     while True:
         try:
-            with httpx.Client(timeout=timeout_s) as client:
-                response = client.post(url, headers=headers, json=request)
-                _retain_response(
-                    _backend_response_from_http(
-                        response,
-                        data={},
-                        started_at=started_at,
-                    ),
-                    response_sink,
-                )
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    captured = _captured_http_response(response, started_at=started_at)
-                    _retain_response(captured, error_response_sink)
-                    detail = captured.raw_body.strip().replace("\n", " ")[:1000]
-                    suffix = f" response={detail}" if detail else ""
-                    raise VlmEvalError(
-                        f"VLM backend request failed: {exc}{suffix}"
-                    ) from exc
-                try:
-                    data = response.json()
-                except ValueError as exc:
-                    captured = _captured_http_response(response, started_at=started_at)
-                    _retain_response(captured, error_response_sink)
-                    raise VlmEvalError(
-                        "VLM backend returned non-JSON response"
-                    ) from exc
-                if not isinstance(data, dict):
-                    captured = _captured_http_response(response, started_at=started_at)
-                    _retain_response(captured, error_response_sink)
-                    raise VlmEvalError(
-                        "VLM backend returned a non-object JSON response"
-                    )
-                return _backend_response_from_http(
-                    response,
-                    data=data,
-                    started_at=started_at,
-                )
+            return _post_backend_once(
+                url=url,
+                headers=headers,
+                request=request,
+                timeout_s=timeout_s,
+                started_at=started_at,
+                response_sink=response_sink,
+                error_response_sink=error_response_sink,
+            )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            last_conn_error = str(exc) or exc.__class__.__name__
             if is_self_hosted and time.monotonic() < deadline:
                 time.sleep(delay)
                 delay = min(delay * 1.5, 15.0)
                 continue
-            if is_self_hosted:
-                raise VlmEvalError(
-                    f"VLM backend not ready at {url} after {ready_timeout:.0f}s "
-                    f"(last: {last_conn_error})"
-                ) from exc
-            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+            raise _connection_failure(url, ready_timeout, is_self_hosted, exc) from exc
         except httpx.HTTPError as exc:
             raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
+
+
+def _post_backend_once(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    timeout_s: float,
+    started_at: float,
+    response_sink: Callable[[_VlmBackendResponse], None] | None,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> _VlmBackendResponse:
+    with httpx.Client(timeout=timeout_s) as client:
+        response = client.post(url, headers=headers, json=request)
+        observed = _backend_response_from_http(response, data={}, started_at=started_at)
+        _retain_response(observed, response_sink)
+        _raise_for_backend_status(response, started_at, error_response_sink)
+        data = _decode_backend_json(response, started_at, error_response_sink)
+        return _backend_response_from_http(
+            response,
+            data=data,
+            started_at=started_at,
+        )
+
+
+def _raise_for_backend_status(
+    response: Any,
+    started_at: float,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        detail = captured.raw_body.strip().replace("\n", " ")[:1000]
+        suffix = f" response={detail}" if detail else ""
+        raise VlmEvalError(f"VLM backend request failed: {exc}{suffix}") from exc
+
+
+def _decode_backend_json(
+    response: Any,
+    started_at: float,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except ValueError as exc:
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        raise VlmEvalError("VLM backend returned non-JSON response") from exc
+    if not isinstance(data, dict):
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        raise VlmEvalError("VLM backend returned a non-object JSON response")
+    return data
+
+
+def _connection_failure(
+    url: str,
+    ready_timeout: float,
+    is_self_hosted: bool,
+    error: httpx.HTTPError,
+) -> VlmEvalError:
+    if not is_self_hosted:
+        return VlmEvalError(f"VLM backend request failed: {error}")
+    detail = str(error) or error.__class__.__name__
+    return VlmEvalError(
+        f"VLM backend not ready at {url} after {ready_timeout:.0f}s (last: {detail})"
+    )
 
 
 def _captured_http_response(
@@ -2749,7 +2775,9 @@ def _backend_response_from_http(
     data: dict[str, Any],
     started_at: float,
 ) -> _VlmBackendResponse:
-    raw_body = getattr(response, "text", "") or _canonical_json(data)
+    raw_body = getattr(response, "text", None)
+    if raw_body is None:
+        raw_body = _canonical_json(data)
     response_headers = getattr(response, "headers", {})
     return _VlmBackendResponse(
         data=data,
