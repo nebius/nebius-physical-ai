@@ -1602,7 +1602,9 @@ def _discard_oci_timestamp(record: dict[str, object]) -> None:
     if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
         raise ValueError("invalid canonical OCI timestamp")
     try:
-        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # Python 3.10 cannot parse every allowed fractional width. The regex
+        # already validates the fraction; validate calendar/time without it.
+        datetime.fromisoformat(re.sub(r"\.[0-9]{1,9}", "", value).replace("Z", "+00:00"))
     except ValueError as error:
         raise ValueError("invalid canonical OCI timestamp") from error
 

@@ -1304,7 +1304,8 @@ def test_canonical_oci_timestamps_reject_arbitrary_content(
         SCAN._canonical_config_sha256(config)
 
 
-def test_canonical_closure_permits_only_timestamp_and_revision_changes() -> None:
+@pytest.mark.parametrize("fractional_width", range(1, 10))
+def test_canonical_closure_permits_only_timestamp_and_revision_changes(fractional_width: int) -> None:
     config = {
         "config": {
             "Labels": {"org.opencontainers.image.revision": "a" * 40},
@@ -1315,8 +1316,9 @@ def test_canonical_closure_permits_only_timestamp_and_revision_changes() -> None
         "created": "2026-09-19T00:00:00Z",
     }
     expected = SCAN._canonical_config_sha256(config)
-    config["created"] = "2026-09-20T00:00:00.123456789Z"
-    config["history"][0]["created"] = "2026-09-20T00:00:00.123456789Z"
+    timestamp = f"2026-09-20T00:00:00.{'123456789'[:fractional_width]}Z"
+    config["created"] = timestamp
+    config["history"][0]["created"] = timestamp
     config["config"]["Labels"]["org.opencontainers.image.revision"] = "b" * 40
     assert SCAN._canonical_config_sha256(config) == expected
     config["config"]["User"] = "root"
