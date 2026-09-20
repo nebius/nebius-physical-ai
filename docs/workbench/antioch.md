@@ -274,6 +274,14 @@ while legacy machine, tunnel, or cached endpoint state is rejected.
 so independent Antioch stages cannot collide. `adapter_image` must be an immutable
 digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.
 
+`initial_posture` selects `pregrasp` (default) or the original `droid` reset.
+`camera_mounts` selects `native_wide` (default) or `droid_reference`. These public
+experiment choices are validated and forwarded through supported scenario
+parameter overrides on initial dispatch and recovery. The scenario persists the
+selected posture, initial joints, rig name, and exact camera calibration; a
+successful pregrasp run does not prove the wider approach. See the
+[live example](../../npa/examples/antioch-openpi-live/README.md) for rig details.
+
 The default MK8s reference is `openpi_franka_pickup_v3`. It distinguishes
 communication from measured manipulation: 5 cm of end-effector approach,
 bilateral finger contact, and 5 cm of lift held continuously for one simulation

@@ -69,6 +69,8 @@ class ClusterLiveConfig(BaseModel):
     antioch_project_id_file: str
     adapter_replicas: int = Field(default=1, ge=0, le=1)
     scenario_timeout_seconds: int = Field(default=14_400, ge=60)
+    initial_posture: Literal["pregrasp", "droid"] = "pregrasp"
+    camera_mounts: Literal["native_wide", "droid_reference"] = "native_wide"
     kubelet_source_cidrs: list[str] = Field(min_length=1)
 
     @field_validator(
@@ -243,6 +245,10 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
             SCENARIO,
             "--scenario-timeout-seconds",
             str(config.scenario_timeout_seconds),
+            "--initial-posture",
+            config.initial_posture,
+            "--camera-mounts",
+            config.camera_mounts,
             "--owner-identity",
             config.identity,
             "--health-port",

@@ -71,6 +71,44 @@ def test_cluster_live_requires_digest_pinned_adapter(tmp_path: Path) -> None:
         _config(tmp_path, adapter_image="registry.invalid/npa-antioch:latest")
 
 
+@pytest.mark.parametrize("field", ["initial_posture", "camera_mounts"])
+def test_cluster_live_rejects_unrecognized_experiment_choices(tmp_path: Path, field: str) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _config(tmp_path, **{field: "unreviewed"})
+
+
+def test_cluster_experiment_choices_reach_vendor_process(tmp_path: Path, monkeypatch) -> None:
+    config = _config(tmp_path, initial_posture="droid", camera_mounts="droid_reference")
+    manifests = cluster_deploy.build_public_manifests(config)
+    containers = manifests["adapter_deployment"]["spec"]["template"]["spec"]["containers"]
+    command = next(item["command"] for item in containers if item["name"] == "antioch-controller")
+    args = cluster_runtime.build_parser().parse_args(command[3:])
+    executable = tmp_path / "vendor-client"
+    executable.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > vendor-arguments\n')
+    executable.chmod(0o700)
+    monkeypatch.setattr(cluster_runtime, "_cancel_remote_live_runs", lambda *_a, **_k: None)
+    vendor = cluster_runtime._launch_vendor_successor(
+        object(), executable=executable, runtime=tmp_path, project_id="project-for-test",
+        scenario=args.scenario, timeout_seconds=args.scenario_timeout_seconds,
+        initial_posture=args.initial_posture, camera_mounts=args.camera_mounts,
+    )
+    assert vendor.process.wait(timeout=5) == 0
+    vendor._drain.join(timeout=5)
+    received = (tmp_path / "vendor-arguments").read_text().splitlines()
+    assert received.count("--set") == 2
+    assert received.count("--scenario") == 1
+    assert received[-4:] == ["--set", "initial_posture=droid", "--set", "camera_mounts=droid_reference"]
+
+
+def test_pickup_parameters_do_not_leak_to_other_scenarios() -> None:
+    command = cluster_runtime._scenario_command(Path("antioch"), "communication", 60,
+                                               "pregrasp", "native_wide")
+    assert "--set" not in command
+    with pytest.raises(ValueError, match="require the pickup scenario"):
+        cluster_runtime._scenario_command(Path("antioch"), "communication", 60,
+                                         "droid", "native_wide")
+
+
 @pytest.mark.parametrize(
     "profile", ["", "production profile", "https://antioch.invalid"]
 )
@@ -1470,6 +1508,23 @@ def test_pickup_acceptance_requires_physics_and_matching_archive():
     with pytest.raises(cluster_runtime.AntiochLiveError, match='archive'):
         cluster_runtime._completed_poc_evidence(
             record, scenario='openpi_franka_pickup_v3', scenario_run_id='owned-run')
+
+
+@pytest.mark.parametrize("field,wrong_value", [
+    ("initial_arm_posture", "pregrasp"), ("policy_camera_mounts", "native_wide"),
+    ("post_reset_controller", "scripted"), ("initial_arm_posture", None),
+])
+def test_durable_pickup_must_match_requested_experiment(tmp_path, field, wrong_value):
+    record = _passed_pickup_record()
+    record["results"].update(initial_arm_posture="droid", policy_camera_mounts="droid_reference",
+                             post_reset_controller="openpi_policy_only")
+    cli = SimpleNamespace(show=lambda *_a, **_k: record)
+    arguments = dict(runtime=tmp_path, scenario="openpi_franka_pickup_v3",
+                     scenario_run_id="owned-run", initial_posture="droid", camera_mounts="droid_reference")
+    assert cluster_runtime._wait_for_completed_poc_record(cli, **arguments)["pickup_verified"]
+    record["results"][field] = wrong_value
+    with pytest.raises(cluster_runtime.AntiochLiveError, match="requested|policy-only"):
+        cluster_runtime._wait_for_completed_poc_record(cli, **arguments)
 
 
 @pytest.mark.parametrize('key,value', [

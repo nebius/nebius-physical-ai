@@ -48,6 +48,19 @@ the selected posture and exact initial arm joints. After the one initial reset,
 only validated OpenPI targets move the robot; there is no scripted reach or grasp.
 Native diagnostic physics and camera review validate the pregrasp reset, but a
 scripted mechanical lift is never reported as policy success.
+
+The private cluster runtime config now forwards `initial_posture` and
+`camera_mounts` to the scenario through the supported CLI parameter overrides.
+Defaults remain `pregrasp` and `native_wide`. To evaluate the wider approach with
+the earlier reference rig, set `initial_posture` to `droid` and `camera_mounts`
+to `droid_reference` in that config. Direct scenario dispatch accepts the same
+choices through `--set initial_posture=droid --set camera_mounts=droid_reference`.
+Unknown choices fail validation before dispatch. Results retain both the rig
+name and its exact fixed calibration. The reference option restores the
+0.05/0.57/0.66 m exterior mount and converted native wrist mount with a 2.8 mm
+lens. Its earlier camera evidence predates the full-horizon control fix;
+this combination still needs live pickup validation. Selecting it does not
+change the task, model, action mapping, or success checks.
 Both policy views use Isaac Sim 6's supported
 `isaacsim.sensors.experimental.rtx` authoring/runtime split: an independent
 `RtxCamera(tick_rate=15.0)` and `CameraSensor(annotators=["rgb"])` per view.

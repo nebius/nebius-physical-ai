@@ -46,6 +46,37 @@ CAMERA_CALIBRATION = {
         "focal_length": 2.1,
     },
 }
+DROID_REFERENCE_CALIBRATION = {
+    "exterior": {
+        "position": (0.05, 0.57, 0.66),
+        "quaternion_wxyz": (-0.393, -0.195, 0.399, 0.805),
+        "focal_length": 2.1,
+    },
+    "wrist": {
+        # Convert the reference mount into the native accessory's +Z tool basis.
+        # This is the previously rendered reference mount, not object tracking.
+        "position": (0.074, -0.031, 0.011),
+        "quaternion_wxyz": (0.110288973, 0.692134004, 0.704152674, 0.113823876),
+        "focal_length": 2.8,
+    },
+}
+
+
+def camera_calibration(mounts="native_wide"):
+    """Resolve one fixed camera rig without changing process-global calibration.
+
+    Args:
+        mounts: Named native wide or converted DROID reference mount pair.
+    Returns:
+        Independent per-view calibration dictionaries.
+    Raises:
+        ValueError: The requested mount pair is unsupported.
+    """
+    choices = {"native_wide": CAMERA_CALIBRATION,
+               "droid_reference": DROID_REFERENCE_CALIBRATION}
+    if mounts not in choices:
+        raise ValueError("camera_mounts must be native_wide or droid_reference")
+    return {view: values.copy() for view, values in choices[mounts].items()}
 
 
 def joint_indices(names):
@@ -115,21 +146,43 @@ def create_robot(world):
     return DroidRobot(articulation, end_effector)
 
 
-def optical_config(view):
+def optical_config(view, mounts="native_wide"):
+    """Resolve optical settings from the same rig used to author the camera.
+
+    Args:
+        view: Exterior or wrist camera name.
+        mounts: Named fixed calibration pair.
+    Returns:
+        Lens, aperture, clipping and exposure settings in Isaac units.
+    Raises:
+        ValueError: The mount pair is unsupported.
+        KeyError: The camera view is unsupported.
+    """
     return {
-        "focal_length": CAMERA_CALIBRATION[view]["focal_length"],
+        "focal_length": camera_calibration(mounts)[view]["focal_length"],
         "horizontal_aperture": 5.376, "vertical_aperture": 3.024,
         "clipping_range": (0.01, 100.0), "focus_distance": 28.0, "f_stop": 0.0,
     }
 
 
-def configure_camera(stage, view):
-    """Author fixed camera extrinsics; the wrist camera inherits the rigid body."""
+def configure_camera(stage, view, mounts="native_wide"):
+    """Author a fixed mount; the wrist camera inherits the rigid body.
+
+    Args:
+        stage: Active USD stage containing the camera prim.
+        view: Exterior or wrist camera name.
+        mounts: Named fixed calibration pair.
+    Returns:
+        None.
+    Raises:
+        ValueError: The mount pair is unsupported.
+        KeyError: The camera view is unsupported.
+    """
     import numpy as np
     from pxr import Gf, UsdGeom
 
     prim = stage.GetPrimAtPath(CAMERA_PATHS[view])
-    values = CAMERA_CALIBRATION[view]
+    values = camera_calibration(mounts)[view]
     transform = UsdGeom.Xformable(prim)
     transform.ClearXformOpOrder()
     quaternion = np.asarray(values["quaternion_wxyz"], dtype=np.float64)
@@ -140,7 +193,7 @@ def configure_camera(stage, view):
     matrix.SetTranslateOnly(Gf.Vec3d(*values["position"]))
     transform.AddTransformOp().Set(matrix)
     camera = UsdGeom.Camera(prim)
-    config = optical_config(view)
+    config = optical_config(view, mounts)
     camera.CreateFocalLengthAttr().Set(config["focal_length"])
     camera.CreateHorizontalApertureAttr().Set(config["horizontal_aperture"])
     camera.CreateVerticalApertureAttr().Set(config["vertical_aperture"])

@@ -120,3 +120,22 @@ def test_completed_pickup_checks_and_evidence_persist(tmp_path, monkeypatch) -> 
     assert reread["results"]["checks"] == record["results"]["checks"]
     assert reread["artifacts"]["policy-evidence.zip"] == record["artifacts"]["policy-evidence.zip"]
     assert reread["artifacts"]["showcase-frames.zip"] == recording
+
+
+def test_completed_pickup_matches_requested_configuration(tmp_path, monkeypatch) -> None:
+    """Verify selected starting conditions on a saved run from the current adapter."""
+    run_id = os.environ.get("NPA_ANTIOCH_COMPLETED_PICKUP_SCENARIO_ID", "").strip()
+    if not run_id:
+        pytest.skip("set NPA_ANTIOCH_COMPLETED_PICKUP_SCENARIO_ID for pickup verification")
+    config = load_private_config(RUNTIME_CONFIG)
+    monkeypatch.setenv("ANTIOCH_ENV", config.antioch_deployment_profile)
+    cli = AntiochCli(ensure_runtime(), config_dir=config.antioch_config_dir)
+    record = cli.show(tmp_path, kind="scenario", remote_id=run_id)
+    assert record["project_id"] == Path(config.antioch_project_id_file).read_text().strip()
+    evidence = _completed_poc_evidence(
+        record, scenario="openpi_franka_pickup_v3", scenario_run_id=run_id,
+        initial_posture=config.initial_posture, camera_mounts=config.camera_mounts,
+    )
+    assert evidence["pickup_verified"] is True
+    assert len(record["results"]["initial_arm_joints"]) == 7
+    assert set(record["results"]["policy_camera_calibration"]) == {"exterior", "wrist"}

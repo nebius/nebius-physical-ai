@@ -152,6 +152,25 @@ def _sanitized_metric_line(line: bytes) -> str:
     return f"NPA_OPENPI_METRICS {' '.join(fields)}" if fields else ""
 
 
+def _scenario_command(
+    executable: Path, scenario: str, timeout_seconds: int,
+    initial_posture: str, camera_mounts: str,
+) -> list[str]:
+    """Keep public experiment choices typed and separate from private bundles."""
+    if initial_posture not in {"pregrasp", "droid"}:
+        raise ValueError("Unsupported initial_posture")
+    if camera_mounts not in {"native_wide", "droid_reference"}:
+        raise ValueError("Unsupported camera_mounts")
+    command = [str(executable), "scenario", "run", "--scenario", scenario,
+               "--timeout", str(timeout_seconds), "--stream", "--verbose"]
+    if scenario == "openpi_franka_pickup_v3":
+        command.extend(["--set", f"initial_posture={initial_posture}",
+                        "--set", f"camera_mounts={camera_mounts}"])
+    elif (initial_posture, camera_mounts) != ("pregrasp", "native_wide"):
+        raise ValueError("Pickup parameters require the pickup scenario")
+    return command
+
+
 @dataclass
 class VendorStreamProcess:
     """One directly-owned foreground Antioch stream client and its drain."""
@@ -171,20 +190,13 @@ class VendorStreamProcess:
         runtime: Path,
         scenario: str,
         timeout_seconds: int,
+        initial_posture: str = "pregrasp",
+        camera_mounts: str = "native_wide",
     ) -> "VendorStreamProcess":
         started = time.monotonic()
         process = subprocess.Popen(
-            [
-                str(executable),
-                "scenario",
-                "run",
-                "--scenario",
-                scenario,
-                "--timeout",
-                str(timeout_seconds),
-                "--stream",
-                "--verbose",
-            ],
+            _scenario_command(executable, scenario, timeout_seconds,
+                              initial_posture, camera_mounts),
             cwd=runtime,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -506,7 +518,8 @@ def _integer_result(results: dict[str, Any], name: str, *, minimum: int) -> int:
 
 
 def _completed_poc_evidence(
-    record: dict[str, Any], *, scenario: str, scenario_run_id: str
+    record: dict[str, Any], *, scenario: str, scenario_run_id: str,
+    initial_posture: str | None = None, camera_mounts: str | None = None,
 ) -> dict[str, Any]:
     """Validate the durable terminal record before retiring live compute."""
 
@@ -551,6 +564,7 @@ def _completed_poc_evidence(
         )
     if scenario == "openpi_franka_pickup_v3":
         _validate_pickup_record(record, results, passed)
+        _validate_pickup_configuration(results, initial_posture, camera_mounts)
     evidence = {
         "scenario_run_id": scenario_run_id,
         "run_phase": "completed",
@@ -567,6 +581,16 @@ def _completed_poc_evidence(
     if scenario == "openpi_franka_pickup_v3":
         evidence["pickup_verified"] = True
     return evidence
+
+
+def _validate_pickup_configuration(results, initial_posture, camera_mounts) -> None:
+    """Prevent a passed record from qualifying a different requested experiment."""
+    for result_name, expected in (("initial_arm_posture", initial_posture),
+                                  ("policy_camera_mounts", camera_mounts)):
+        if expected is not None and results.get(result_name) != expected:
+            raise AntiochLiveError(f"completed pickup does not match requested {result_name}")
+    if initial_posture is not None and results.get("post_reset_controller") != "openpi_policy_only":
+        raise AntiochLiveError("completed pickup does not establish policy-only control")
 
 
 def _validate_pickup_record(record, results, passed) -> None:
@@ -622,6 +646,8 @@ def _wait_for_completed_poc_record(
     runtime: Path,
     scenario: str,
     scenario_run_id: str,
+    initial_posture: str | None = None,
+    camera_mounts: str | None = None,
 ) -> dict[str, Any]:
     """Wait briefly for the clean foreground exit to become durable."""
 
@@ -631,7 +657,8 @@ def _wait_for_completed_poc_record(
         record = cli.show(runtime, kind="scenario", remote_id=scenario_run_id)
         if record.get("phase") == "completed":
             return _completed_poc_evidence(
-                record, scenario=scenario, scenario_run_id=scenario_run_id
+                record, scenario=scenario, scenario_run_id=scenario_run_id,
+                initial_posture=initial_posture, camera_mounts=camera_mounts,
             )
         if attempt + 1 < COMPLETION_POLL_ATTEMPTS:
             time.sleep(COMPLETION_POLL_SECONDS)
@@ -729,6 +756,8 @@ def _launch_vendor_successor(
     project_id: str,
     scenario: str,
     timeout_seconds: int,
+    initial_posture: str = "pregrasp",
+    camera_mounts: str = "native_wide",
 ) -> VendorStreamProcess:
     """Prove exact absence before starting one foreground successor."""
 
@@ -744,6 +773,8 @@ def _launch_vendor_successor(
         runtime=runtime,
         scenario=scenario,
         timeout_seconds=timeout_seconds,
+        initial_posture=initial_posture,
+        camera_mounts=camera_mounts,
     )
 
 
@@ -868,6 +899,8 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
             project_id=project_id,
             scenario=args.scenario,
             timeout_seconds=args.scenario_timeout_seconds,
+            initial_posture=args.initial_posture,
+            camera_mounts=args.camera_mounts,
         )
         supervisor_started = time.monotonic()
         last_restage = supervisor_started
@@ -888,6 +921,8 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
                     runtime=runtime,
                     scenario=args.scenario,
                     scenario_run_id=last_run_id,
+                    initial_posture=args.initial_posture,
+                    camera_mounts=args.camera_mounts,
                 )
                 _write_state(
                     state_path,
@@ -1094,6 +1129,8 @@ def run_cluster(args: argparse.Namespace) -> NoReturn:
                         project_id=project_id,
                         scenario=args.scenario,
                         timeout_seconds=args.scenario_timeout_seconds,
+                        initial_posture=args.initial_posture,
+                        camera_mounts=args.camera_mounts,
                     )
                 supervisor_started = time.monotonic()
                 last_restage = supervisor_started
@@ -1257,6 +1294,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--stop-file", default="/var/run/npa-antioch/stop")
     run.add_argument("--scenario", default="openpi_franka_pickup_v3")
     run.add_argument("--scenario-timeout-seconds", type=int, default=14_400)
+    run.add_argument("--initial-posture", choices=("pregrasp", "droid"), default="pregrasp")
+    run.add_argument(
+        "--camera-mounts", choices=("native_wide", "droid_reference"), default="native_wide"
+    )
     run.add_argument("--owner-identity", required=True)
     run.add_argument("--health-port", type=int, default=18_080)
     run.add_argument("--session-poll-seconds", type=float, default=SESSION_POLL_SECONDS)

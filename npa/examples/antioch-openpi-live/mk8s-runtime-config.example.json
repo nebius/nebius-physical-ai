@@ -23,5 +23,7 @@
   "antioch_project_id_file": "/path/to/mode-0600-project-id",
   "adapter_replicas": 1,
   "scenario_timeout_seconds": 14400,
+  "initial_posture": "pregrasp",
+  "camera_mounts": "native_wide",
   "kubelet_source_cidrs": ["192.0.2.10/32"]
 }

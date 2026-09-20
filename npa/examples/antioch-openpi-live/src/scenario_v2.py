@@ -1716,6 +1716,9 @@ def openpi_franka_pickup_v3(
     initial_posture: str = antioch.param(
         "pregrasp", description="Fixed initial arm posture: pregrasp or droid"
     ),
+    camera_mounts: str = antioch.param(
+        "native_wide", description="Fixed camera rig: native_wide or droid_reference"
+    ),
 ) -> None:
     """Evaluate measured approach and a sustained physical pickup.
 
@@ -1724,6 +1727,7 @@ def openpi_franka_pickup_v3(
         prompt: Instruction sent unchanged to the DROID policy.
         control_steps: Applied-target budget; exhaustion is a failed task.
         initial_posture: Controlled pregrasp reset or the wider DROID starting pose.
+        camera_mounts: Named fixed calibration for both policy cameras.
     Returns:
         None.
     Raises:
@@ -1731,11 +1735,14 @@ def openpi_franka_pickup_v3(
     """
     if initial_posture not in {"pregrasp", "droid"}:
         raise ValueError("initial_posture must be pregrasp or droid")
+    if camera_mounts not in {"native_wide", "droid_reference"}:
+        raise ValueError("camera_mounts must be native_wide or droid_reference")
     _run_openpi_episode(run, prompt, objective="pickup", control_steps=control_steps,
-                       initial_posture=initial_posture)
+                       initial_posture=initial_posture, camera_mounts=camera_mounts)
 
 
-def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_posture="droid"):
+def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_posture="droid",
+                       camera_mounts="native_wide"):
     from policy_episode import _PickupProgress, _PolicyEvidence, _ShowcaseRecording, _termination_reason, _CameraStartup
     import carb
     import numpy as np
@@ -1841,11 +1848,11 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
         robot.set_joint_positions(reset)
         robot.apply_policy_target(reset)
         for view in ("exterior", "wrist"):
-            droid_scene.configure_camera(world.stage, view)
+            droid_scene.configure_camera(world.stage, view, camera_mounts)
         exterior_pose = droid_scene.camera_pose(world.stage, "exterior")
         wrist_pose = droid_scene.camera_pose(world.stage, "wrist")
-        exterior_optics = droid_scene.optical_config("exterior")
-        wrist_optics = droid_scene.optical_config("wrist")
+        exterior_optics = droid_scene.optical_config("exterior", camera_mounts)
+        wrist_optics = droid_scene.optical_config("wrist", camera_mounts)
     else:
         robot.set_joint_positions(
             np.asarray([*DROID_RESET_JOINTS, GRIPPER_JOINT_MAX, GRIPPER_JOINT_MAX]))
@@ -2695,7 +2702,8 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
         run.add_result("robot_embodiment", "franka_robotiq_2f85" if droid else "stock_panda")
         if droid:
             run.add_result("policy_joint_names", list(droid_scene.MODEL_JOINT_NAMES))
-            run.add_result("policy_camera_calibration", droid_scene.CAMERA_CALIBRATION)
+            run.add_result("policy_camera_mounts", camera_mounts)
+            run.add_result("policy_camera_calibration", droid_scene.camera_calibration(camera_mounts))
             run.add_result("policy_image_content_rows", [49, 175])
             run.add_result("policy_native_resolution_hw", list(droid_scene.NATIVE_POLICY_RESOLUTION))
         run.add_result("minimum_end_effector_cube_distance_m",

@@ -46,6 +46,29 @@ def _rgb(*, target_size=16, shifted=False):
     return np.roll(image, 31, axis=1) if shifted else image
 
 
+def test_camera_rig_selection_keeps_optics_and_calibration_consistent(modules):
+    from droid_scene import camera_calibration, optical_config
+
+    native = camera_calibration()
+    reference = camera_calibration("droid_reference")
+    assert reference["exterior"]["position"] == (0.05, 0.57, 0.66)
+    assert reference["wrist"]["focal_length"] == 2.8
+    assert native["wrist"]["focal_length"] == 2.1
+    for view in ("exterior", "wrist"):
+        assert optical_config(view, "droid_reference")["focal_length"] == reference[view]["focal_length"]
+    reference["wrist"]["focal_length"] = 100
+    assert camera_calibration("droid_reference")["wrist"]["focal_length"] == 2.8
+    assert camera_calibration() == native
+
+
+@pytest.mark.parametrize("field", ["initial_posture", "camera_mounts"])
+def test_pickup_rejects_unknown_experiment_before_simulation(modules, monkeypatch, field):
+    scenario, _episode = modules
+    monkeypatch.setattr(scenario, "_run_openpi_episode", lambda *_a, **_k: pytest.fail("started"))
+    with pytest.raises(ValueError, match=field):
+        scenario.openpi_franka_pickup_v3(object(), **{field: "unreviewed"})
+
+
 def test_wrist_aim_gives_near_gripper_and_distant_cube_equal_angular_space(modules):
     scenario, _episode = modules
     eye = np.array([0.0, 0.0, 0.0])
@@ -478,8 +501,10 @@ def _install_fake_camera_scene(scenario, monkeypatch, world):
         return body
 
     monkeypatch.setattr(droid_scene, "create_robot", create_droid)
-    def configure_camera(*_args):
+    world.camera_mounts = []
+    def configure_camera(_stage, _view, mounts):
         assert world.reset_complete, "Sensor reset must precede fixed camera calibration"
+        world.camera_mounts.append(mounts)
 
     monkeypatch.setattr(droid_scene, "configure_camera", configure_camera)
     monkeypatch.setattr(droid_scene, "camera_pose", lambda *_args: (0, 0, 1))
@@ -590,6 +615,7 @@ def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
         ("pickup", 450, None, True, "droid"),
     ],
 )
+@pytest.mark.parametrize("camera_mounts", ["native_wide", "droid_reference"])
 def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     modules,
     monkeypatch,
@@ -600,6 +626,7 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     grasp,
     initial_posture,
     cold_seconds,
+    camera_mounts,
 ):
     rr = pytest.importorskip("rerun")
     scenario, episode = modules
@@ -642,10 +669,16 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     run = _Run()
     scenario._run_openpi_episode(
         run, "pick up the red cube", objective=objective, control_steps=steps,
-        initial_posture=initial_posture,
+        initial_posture=initial_posture, camera_mounts=camera_mounts,
     )
     assert run.results["initial_arm_posture"] == initial_posture
     assert run.results["post_reset_controller"] == "openpi_policy_only"
+    if objective == "pickup":
+        from droid_scene import camera_calibration
+
+        assert world.camera_mounts == [camera_mounts, camera_mounts]
+        assert run.results["policy_camera_mounts"] == camera_mounts
+        assert run.results["policy_camera_calibration"] == camera_calibration(camera_mounts)
     if initial_posture == "pregrasp":
         from droid_scene import PREGRASP_RESET_JOINTS
 
