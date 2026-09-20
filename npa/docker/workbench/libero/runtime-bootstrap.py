@@ -103,6 +103,11 @@ AUTHENTICATED_CALLER_TRUST_ROOT = Path(
     "/run/npa/libero/authenticated-caller-public-key.b64"
 )
 AUTHENTICATED_CALLER_TRUST_ROOT_OWNER_UID = 0
+# Customer signer roots are provisioned outside the control-plane assertion
+# path.  A missing or mutable registration is a hard refusal before cache or
+# network effects; the caller assertion cannot select or create this root.
+CUSTOMER_SIGNER_REGISTRY_ROOT = Path("/run/npa/libero/customer-signer-roots")
+CUSTOMER_SIGNER_REGISTRY_OWNER_UID = 0
 CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
 AUTHENTICATED_CALLER_NAMESPACE = b"npa.libero.authenticated-caller"
 OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE = b"npa.libero.output-storage-authorization"
@@ -1933,6 +1938,16 @@ def _trusted_output_storage_authorization_public_key() -> bytes:
     return storage_key
 
 
+def _trusted_customer_signer_public_key(customer_identity_sha256: str) -> bytes:
+    if not _is_hex(customer_identity_sha256, 64):
+        raise BootstrapRefusal("customer signer trust root is invalid")
+    return _trusted_public_key(
+        CUSTOMER_SIGNER_REGISTRY_ROOT / f"{customer_identity_sha256}.b64",
+        owner_uid=CUSTOMER_SIGNER_REGISTRY_OWNER_UID,
+        label="customer signer trust root",
+    )
+
+
 def _verify_customer_authorization_signature(
     payload: dict[str, Any],
     signature_record: dict[str, Any],
@@ -1953,6 +1968,11 @@ def _verify_customer_authorization_signature(
         or not hmac.compare_digest(claimed_fingerprint, authenticated_signer_sha256)
     ):
         raise BootstrapRefusal("customer signer identity differs")
+    registered_key = _trusted_customer_signer_public_key(
+        str(payload.get("customer_identity_sha256") or "")
+    )
+    if not hmac.compare_digest(public_key, registered_key):
+        raise BootstrapRefusal("customer signer trust root differs")
     try:
         signature = base64.b64decode(
             str(signature_record.get("signature_b64") or ""), validate=True
@@ -2294,6 +2314,9 @@ def _validate_customer_authorization_bytes(
             "customer-authorization trust root is unavailable",
             "customer-authorization trust root is mutable or invalid",
             "customer-authorization trust root is invalid",
+            "customer signer trust root is unavailable",
+            "customer signer trust root is mutable or invalid",
+            "customer signer trust root is invalid",
         }:
             raise
         raise CustomerAcceptanceRequired("authorization_signature_invalid") from exc

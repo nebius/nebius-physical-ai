@@ -226,6 +226,15 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
     authorization["customer_signer_public_key_b64"] = module.base64.b64encode(
         customer_public_key
     ).decode("ascii")
+    customer_signer_registry = tmp_path / "customer-signer-roots"
+    customer_signer_registry.mkdir(mode=0o755)
+    customer_signer_root = customer_signer_registry / (
+        authorization["customer_identity_sha256"] + ".b64"
+    )
+    customer_signer_root.write_bytes(module.base64.b64encode(customer_public_key))
+    customer_signer_root.chmod(0o444)
+    module.CUSTOMER_SIGNER_REGISTRY_ROOT = customer_signer_registry
+    module.CUSTOMER_SIGNER_REGISTRY_OWNER_UID = os.getuid()
     storage_signer = Ed25519PrivateKey.generate()
     storage_public_key = storage_signer.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
@@ -342,6 +351,7 @@ def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, obje
         "storage_private_key": storage_signer,
         "storage_public_key": storage_public_key,
         "customer_signer_sha256": _sha(customer_public_key),
+        "customer_signer_registry": customer_signer_root,
         "caller_bytes": caller_bytes,
         "caller_assertion_path": caller_assertion_path,
         "caller_trust_root": caller_trust_root,
@@ -1015,7 +1025,22 @@ def test_customer_authorization_payload_cannot_substitute_authenticated_signer(
             Path(args.authorization),
             args.authorization_sha256,
             json.loads(Path(args.manifest).read_text(encoding="utf-8")),
+        module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+    )
+
+
+def test_customer_authorization_requires_external_signer_registration(tmp_path) -> None:
+    module, args, fixture = _fixture(tmp_path)
+    fixture["customer_signer_registry"].unlink()
+    with pytest.raises(
+        module.CustomerAcceptanceRequired, match="authorization signature invalid"
+    ):
+        module._validate_customer_authorization_bytes(
+            Path(args.authorization).read_bytes(),
+            args.authorization_sha256,
+            json.loads(Path(args.manifest).read_text(encoding="utf-8")),
             module.EXPECTED_RUNTIME_MANIFEST_SHA256,
+            authenticated_signer_sha256=fixture["customer_signer_sha256"],
         )
 
 

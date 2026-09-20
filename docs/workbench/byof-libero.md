@@ -25,8 +25,11 @@ to the customer and run. NPA may authenticate the caller, transport the signed
 evidence, and validate it, but neither the manager nor control plane accepts,
 acknowledges, issues, or signs the customer's terms assertion. The verifier
 uses only the public key embedded in that signed evidence and the caller-bound
-fingerprint; there is no second transported public-key file or alternate trust
-source. Private signing material, customer identity,
+fingerprint, and requires that key to match an immutable customer-signer
+registration provisioned outside the NPA control plane; there is no second
+transported public-key file or alternate trust source. A missing or mutable
+registration refuses before cache or network effects. Private signing material,
+customer identity,
 credentials, acceptance records, terms payloads, and runtime payloads are never
 baked into the neutral image. Image qualification carries no customer signer
 fingerprint; signer trust is supplied owner-private and checked only at runtime.
