@@ -1036,21 +1036,6 @@ class SkyPilotWaveExecutor:
         if store is None or not attempt.logical_launch_id:
             return False
         claimed_reuse = attempt.recovery_decision == "reuse_completed_wave"
-        event: Mapping[str, Any] | None = None
-        for candidate in reversed(SupervisorLedger(store).events()):
-            identity = candidate.get("attempt_identity")
-            recovery = candidate.get("recovery")
-            if not isinstance(identity, Mapping) or not isinstance(recovery, Mapping):
-                continue
-            if (
-                candidate.get("phase") == "cancellation"
-                and identity.get("logical_attempt_id") == attempt.logical_launch_id
-                and recovery.get("action") == "reuse_completed_wave"
-            ):
-                event = candidate
-                break
-        if event is None and not claimed_reuse:
-            return False
 
         def block(reason: str) -> bool:
             attempt.status = "failed"
@@ -1067,6 +1052,36 @@ class SkyPilotWaveExecutor:
             attempt.supervisor_blocks_cancellation = True
             self.ledger.record(attempt)
             return True
+
+        try:
+            events = SupervisorLedger(store).events(attempt.logical_launch_id)
+        except Exception as exc:  # noqa: BLE001 - history uncertainty fails closed
+            return block(
+                f"wave {attempt.key}: immutable output-reuse history is "
+                f"unavailable: {sanitize_reason(exc)}"
+            )
+        event: Mapping[str, Any] | None = None
+        for candidate in reversed(events):
+            if candidate.get("phase") != "cancellation":
+                continue
+            identity = candidate.get("attempt_identity")
+            recovery = candidate.get("recovery")
+            cancellation = candidate.get("cancellation")
+            identity_matches = isinstance(identity, Mapping) and (
+                identity.get("logical_attempt_id") == attempt.logical_launch_id
+            )
+            provider_matches = isinstance(cancellation, Mapping) and (
+                cancellation.get("provider_job_id") == attempt.job_id
+            )
+            if not identity_matches and not provider_matches:
+                continue
+            if not isinstance(recovery, Mapping) or (
+                recovery.get("action") == "reuse_completed_wave"
+            ):
+                event = candidate
+                break
+        if event is None and not claimed_reuse:
+            return False
 
         if event is None:
             return block(
@@ -1127,12 +1142,18 @@ class SkyPilotWaveExecutor:
             or str(cancellation.get("status") or "").lower()
             not in {"cancelled", "canceled"}
             or not is_terminal(terminal_status)
+            or recovery.get("action") != "reuse_completed_wave"
             or recovery.get("reason_code") != "DECLARED_OUTPUTS_VALID"
         ):
             return block(
                 f"wave {attempt.key}: immutable output-reuse cancellation is not "
                 "exactly verified terminal"
             )
+        # Provider terminality is factual once the exact cancellation event is
+        # validated, even if current object-store evidence blocks completion.
+        attempt.sky_status = terminal_status
+        attempt.cancellation_state = "verified"
+        attempt.cancellation_error = ""
 
         expected_outputs = sorted(
             uri for output in attempt.outputs if (uri := _declared_output_uri(output))

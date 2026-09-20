@@ -475,12 +475,19 @@ class SupervisorLedger:
             key, body, content_type="application/json"
         )
 
-    def events(self) -> list[dict[str, Any]]:
+    def events(self, logical_attempt_id: str = "") -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
-        for key in self.store.list_artifacts("npa-workflow/supervisor/attempts"):
+        prefix = "npa-workflow/supervisor/attempts"
+        if logical_attempt_id:
+            prefix = f"{prefix}/{_safe_component(logical_attempt_id)}"
+        for key in self.store.list_artifacts(prefix):
             try:
                 payload = json.loads(self.store.read_artifact(key))
-            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+            except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+                if logical_attempt_id:
+                    raise RuntimeError(
+                        f"immutable supervisor event is unreadable: {key}"
+                    ) from exc
                 continue
             if (
                 isinstance(payload, dict)

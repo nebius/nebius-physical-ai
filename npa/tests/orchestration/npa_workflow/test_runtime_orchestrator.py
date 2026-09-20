@@ -4420,19 +4420,22 @@ def test_resume_reuses_output_complete_wave_after_driver_crash(
 
 
 @pytest.mark.parametrize("output_state", ["missing", "unavailable"])
+@pytest.mark.parametrize("crash_before_runtime_record", [True, False])
 def test_resume_blocks_output_reuse_when_artifacts_cannot_be_revalidated(
     tmp_path: Path,
     mocker,
     runtime_sdk_submission,
     output_state: str,
+    crash_before_runtime_record: bool,
 ) -> None:
-    run_id = f"rt-output-reuse-{output_state}"
+    boundary = "before-record" if crash_before_runtime_record else "after-record"
+    run_id = f"rt-output-reuse-{output_state}-{boundary}"
     spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
         tmp_path,
         mocker,
         runtime_sdk_submission,
         run_id=run_id,
-        crash_before_runtime_record=False,
+        crash_before_runtime_record=crash_before_runtime_record,
     )
     submitter = FakeSubmitter()
 
@@ -4467,6 +4470,8 @@ def test_resume_blocks_output_reuse_when_artifacts_cannot_be_revalidated(
     assert blocked_attempt.attempt == crashed_attempt["attempt"]
     assert blocked_attempt.recovery_decision == "reuse_completed_wave"
     assert blocked_attempt.supervisor_blocks_cancellation
+    assert blocked_attempt.sky_status == "CANCELLED"
+    assert blocked_attempt.cancellation_state == "verified"
 
     # Once authoritative output access returns, another resume terminalizes the
     # same exact attempt rather than assigning a replacement identity.
@@ -4492,14 +4497,24 @@ def test_resume_blocks_output_reuse_when_artifacts_cannot_be_revalidated(
 
 
 @pytest.mark.parametrize(
-    "tamper",
-    ["missing_event", "inexact_cancellation", "identity_mismatch", "output_mismatch"],
+    ("tamper", "crash_before_runtime_record"),
+    [
+        ("missing_event", False),
+        ("inexact_cancellation", False),
+        ("identity_mismatch", False),
+        ("output_mismatch", False),
+        ("malformed_recovery", True),
+        ("malformed_identity", True),
+        ("invalid_json", True),
+        ("event_read_failure", True),
+    ],
 )
 def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
     tmp_path: Path,
     mocker,
     runtime_sdk_submission,
     tamper: str,
+    crash_before_runtime_record: bool,
 ) -> None:
     run_id = f"rt-output-reuse-tamper-{tamper}"
     spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
@@ -4507,7 +4522,7 @@ def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
         mocker,
         runtime_sdk_submission,
         run_id=run_id,
-        crash_before_runtime_record=False,
+        crash_before_runtime_record=crash_before_runtime_record,
     )
     cancellation_keys = []
     for key, body in store.objects.items():
@@ -4523,14 +4538,30 @@ def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
     event_key = cancellation_keys[0]
     if tamper == "missing_event":
         del store.objects[event_key]
+    elif tamper == "invalid_json":
+        store.objects[event_key] = b"{invalid"
+    elif tamper == "event_read_failure":
+        original_reader = store._reader
+        assert original_reader is not None
+
+        def fail_event_read(bucket: str, key: str):
+            if key == event_key:
+                raise PermissionError("supervisor event read denied")
+            return original_reader(bucket, key)
+
+        mocker.patch.object(store, "_reader", side_effect=fail_event_read)
     else:
         payload = json.loads(store.objects[event_key])
         if tamper == "inexact_cancellation":
             payload["cancellation"]["exact"] = False
         elif tamper == "identity_mismatch":
             payload["attempt_identity"]["image_digest"] = "sha256:" + "d" * 64
-        else:
+        elif tamper == "output_mismatch":
             payload["outputs"]["valid"] = []
+        elif tamper == "malformed_recovery":
+            payload["recovery"] = ["reuse_completed_wave"]
+        else:
+            payload["attempt_identity"] = ["malformed"]
         store.objects[event_key] = json.dumps(payload).encode()
 
     submitter = FakeSubmitter()
@@ -4562,6 +4593,52 @@ def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
     assert blocked.status == "failed"
     assert blocked.recovery_decision == "reuse_completed_wave"
     assert blocked.supervisor_blocks_cancellation
+
+
+def test_resume_ignores_unrelated_malformed_supervisor_history(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    run_id = "rt-output-reuse-unrelated-malformed-event"
+    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        run_id=run_id,
+        crash_before_runtime_record=True,
+    )
+    store.objects[
+        f"{store.prefix}/npa-workflow/supervisor/attempts/"
+        "unrelated/cancellation-deadbeef.json"
+    ] = b"{invalid"
+    submitter = FakeSubmitter()
+
+    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
+        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
+
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        submitter=submitter,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: True,
+        store=store,
+        reconcile_fn=unexpected_reconcile,
+    )
+
+    assert resumed.execute(gate)["status"] == "ok"
+    assert submitter.calls == []
+    adopted = resumed.attempts[-1]
+    assert adopted.attempt == crashed_attempt["attempt"]
+    assert adopted.sky_status == "CANCELLED"
+    assert adopted.recovery_decision == "reuse_completed_wave"
 
 
 def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
