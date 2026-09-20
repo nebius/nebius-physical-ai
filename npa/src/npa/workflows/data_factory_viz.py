@@ -1043,15 +1043,20 @@ def _load_stage_docs(
     except Exception:  # noqa: BLE001
         _cosmos_evaluator_result_filename = "cosmos_evaluator.json"
     try:
-        from npa.workbench.vlm_eval import RESULT_FILENAME as _vlm_result_filename
+        from npa.workbench.vlm_eval import (
+            LEGACY_RESULT_FILENAME as _legacy_vlm_result_filename,
+            RESULT_FILENAME as _vlm_result_filename,
+        )
     except Exception:  # noqa: BLE001
-        _vlm_result_filename = "vlm_eval_stub.json"
+        _vlm_result_filename = "vlm_eval.json"
+        _legacy_vlm_result_filename = "vlm_eval_stub.json"
     for name in (
         _cosmos_evaluator_result_filename,
         _vlm_result_filename,
-        "vlm_eval.json",
+        _legacy_vlm_result_filename,
     ):
-        ev = review.read(grade_dir / name, "evaluator")
+        report_path = grade_dir / name
+        ev = review.read(report_path, "evaluator")
         if isinstance(ev, dict):
             grade_docs.append(
                 _json_block("Evaluator — integrity and appearance checks", ev)
@@ -1059,6 +1064,9 @@ def _load_stage_docs(
             stage_log.append(
                 f"grade: score={ev.get('score')}, status={ev.get('status', 'n/a')}"
             )
+            break
+        # Do not display stale legacy data when a canonical report is malformed.
+        if report_path.is_file():
             break
     dec = review.read(grade_dir / "decision.json", "quality")
     if isinstance(dec, dict):

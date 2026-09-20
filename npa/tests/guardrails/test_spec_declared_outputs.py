@@ -4,8 +4,9 @@ Three separate live runs were needed to learn this lesson three times:
 
 * `sonic eval` was handed ``--output json`` (a format word to a path option), so the
   result landed in a relative ``json/`` directory inside the pod (EVIDENCE §R5);
-* `vlm-eval run` writes ``<prefix>/vlm_eval_stub.json`` while four specs declared
-  ``<prefix>/report.json`` (run ``npa-wf-cpu-vlm-eval-token-factory-736df0b1``);
+* `vlm-eval run` historically wrote ``<prefix>/vlm_eval_stub.json`` while four
+  specs declared ``<prefix>/report.json`` (run
+  ``npa-wf-cpu-vlm-eval-token-factory-736df0b1``);
 * `mjlab eval` writes ``<prefix>/mjlab_eval.json`` while two specs declared
   ``<prefix>/report.json``.
 * Cosmos Transfer live job 339 reported SUCCEEDED for historical stages,
@@ -51,6 +52,10 @@ def _checked_specs() -> tuple[Path, ...]:
 #: toolRef prefix -> (argv flag naming the output prefix, dotted `result_uri_for`).
 RESULT_URI_TOOLS: dict[str, tuple[str, str]] = {
     "workbench.vlm_eval.run": (
+        "--output-path",
+        "npa.workbench.vlm_eval:result_uri_for",
+    ),
+    "workbench.vlm_eval.judge_against_plan": (
         "--output-path",
         "npa.workbench.vlm_eval:result_uri_for",
     ),

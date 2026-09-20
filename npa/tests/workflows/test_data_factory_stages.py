@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import io
 import json
 from pathlib import Path
@@ -9,6 +10,11 @@ from pathlib import Path
 import pytest
 import typer
 
+from npa.workbench.vlm_eval import (
+    LEGACY_RESULT_FILENAME,
+    RESULT_FILENAME,
+    evaluate_stub,
+)
 from npa.workflows import data_factory_stages as dfs
 
 
@@ -1161,16 +1167,89 @@ def test_prepare_refinement_never_overwrites_conflicting_attempt_history(
 
 
 def test_grade_gate_promotes_above_threshold(tmp_path: Path) -> None:
-    scores = tmp_path / "vlm_eval_stub.json"
-    scores.write_text(json.dumps({"status": "completed", "score": 0.8, "passed": True}))
+    scores = tmp_path / RESULT_FILENAME
+    result = evaluate_stub(
+        input_path="rollout",
+        output_path=str(tmp_path),
+        score=0.8,
+        success_threshold=0.5,
+    )
+    scores.write_text(json.dumps(asdict(result)))
     decision_path = tmp_path / "decision.json"
-    decision = dfs.grade_gate(str(scores), str(decision_path), threshold=0.5)
+    decision = dfs.grade_gate(str(tmp_path), str(decision_path), threshold=0.5)
     assert decision == "promote_checkpoint"
     assert json.loads(decision_path.read_text())["decision"] == "promote_checkpoint"
 
 
+def test_grade_gate_rejects_inconsistent_vlm_status(tmp_path: Path) -> None:
+    scores = tmp_path / RESULT_FILENAME
+    scores.write_text(json.dumps({"status": "passed", "score": 0.9, "passed": False}))
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "loop_back"
+
+
+def test_grade_gate_identifies_vlm_result_at_explicit_custom_path(
+    tmp_path: Path,
+) -> None:
+    custom = tmp_path / "custom-score.json"
+    result = evaluate_stub(
+        input_path="rollout",
+        output_path=str(custom),
+        score=0.9,
+        success_threshold=0.5,
+    )
+    custom.write_text(json.dumps(asdict(result)))
+
+    decision = dfs.grade_gate(
+        str(custom), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "promote_checkpoint"
+
+
+def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
+    tmp_path: Path,
+) -> None:
+    legacy = tmp_path / LEGACY_RESULT_FILENAME
+    result = evaluate_stub(
+        input_path="historical-rollout",
+        output_path=str(tmp_path),
+        score=0.8,
+        success_threshold=0.5,
+    )
+    legacy.write_text(json.dumps(asdict(result)))
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "promote_checkpoint"
+
+
+def test_grade_gate_does_not_fall_back_from_malformed_canonical_vlm_result(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / RESULT_FILENAME).write_text('{"status": "passed"')
+    (tmp_path / LEGACY_RESULT_FILENAME).write_text(
+        json.dumps({"status": "passed", "score": 0.95, "passed": True})
+    )
+    decision_path = tmp_path / "decision.json"
+
+    decision = dfs.grade_gate(str(tmp_path), str(decision_path), threshold=0.5)
+    payload = json.loads(decision_path.read_text())
+
+    assert decision == "loop_back"
+    assert payload["score"] == 0.0
+    assert payload["report_status"] == "missing"
+    assert payload["report_sha256"] == ""
+
+
 def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
-    scores = tmp_path / "vlm_eval_stub.json"
+    scores = tmp_path / RESULT_FILENAME
     scores.write_text(json.dumps({"score": 0.1}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
@@ -1185,7 +1264,7 @@ def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
 def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> None:
     """The blueprint interpolates a quoted config.grade_threshold; grade_gate must
     cast a str threshold (and fall back to 0.5 on a non-numeric value)."""
-    scores = tmp_path / "vlm_eval_stub.json"
+    scores = tmp_path / RESULT_FILENAME
     scores.write_text(json.dumps({"status": "completed", "score": 0.6, "passed": True}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
@@ -1489,7 +1568,7 @@ def test_grade_gate_malformed_authoritative_report_fails_closed(
     """A present but malformed newest report must not promote from stale data."""
 
     (tmp_path / "cosmos_evaluator.json").write_text(json.dumps({"score": "n/a"}))
-    (tmp_path / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.9}))
+    (tmp_path / LEGACY_RESULT_FILENAME).write_text(json.dumps({"score": 0.9}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
@@ -1498,6 +1577,18 @@ def test_grade_gate_malformed_authoritative_report_fails_closed(
         dfs.grade_gate(str(tmp_path), str(tmp_path / "d.json"), threshold=0.5)
         == "loop_back"
     )
+
+
+def test_grade_gate_rejects_vlm_status_on_cosmos_report(tmp_path: Path) -> None:
+    (tmp_path / "cosmos_evaluator.json").write_text(
+        json.dumps({"status": "passed", "score": 0.9, "passed": True})
+    )
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "loop_back"
 
 
 def test_download_json_missing_exact_file_does_not_substitute(
@@ -1517,7 +1608,7 @@ def test_download_json_missing_exact_file_does_not_substitute(
 
     monkeypatch.setattr(dfs, "_storage", lambda: _FakeStorage())
     with pytest.raises(FileNotFoundError):
-        dfs._download_json("s3://bucket/grade/vlm_eval_stub.json")
+        dfs._download_json(f"s3://bucket/grade/{RESULT_FILENAME}")
 
 
 def test_grade_gate_missing_eval_loops_not_reads_decision(

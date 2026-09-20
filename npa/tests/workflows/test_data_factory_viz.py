@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from npa.workbench.vlm_eval import LEGACY_RESULT_FILENAME, RESULT_FILENAME
 from npa.workflows.data_factory_viz import (
     DataFactoryVizError,
     _committed_variant_dirs,
@@ -326,6 +327,49 @@ def test_load_stage_docs_covers_all_pipeline_stages(tmp_path: Path) -> None:
     assert "aggregate score is below threshold" in docs["pipeline/3_grade"]
 
 
+@pytest.mark.parametrize(
+    "result_filename",
+    (RESULT_FILENAME, LEGACY_RESULT_FILENAME),
+    ids=("canonical-vlm-result", "legacy-vlm-result"),
+)
+def test_load_stage_docs_reads_current_and_historical_vlm_results(
+    tmp_path: Path, result_filename: str
+) -> None:
+    from npa.workflows.data_factory_viz import _load_stage_docs
+
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    (grade / result_filename).write_text(json.dumps({"score": 0.4}))
+
+    assert '"score": 0.4' in _load_stage_docs(tmp_path)["pipeline/3_grade"]
+
+
+def test_load_stage_docs_prefers_canonical_vlm_result(tmp_path: Path) -> None:
+    from npa.workflows.data_factory_viz import _load_stage_docs
+
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    (grade / RESULT_FILENAME).write_text(json.dumps({"score": 0.4}))
+    (grade / LEGACY_RESULT_FILENAME).write_text(json.dumps({"score": 0.9}))
+
+    report = _load_stage_docs(tmp_path)["pipeline/3_grade"]
+    assert '"score": 0.4' in report
+    assert '"score": 0.9' not in report
+
+
+def test_load_stage_docs_does_not_mask_malformed_canonical_vlm_result(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.data_factory_viz import _load_stage_docs
+
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    (grade / RESULT_FILENAME).write_text("{")
+    (grade / LEGACY_RESULT_FILENAME).write_text(json.dumps({"score": 0.9}))
+
+    assert "pipeline/3_grade" not in _load_stage_docs(tmp_path)
+
+
 def test_stage_docs_select_latest_append_only_refinement_iteration(
     tmp_path: Path,
 ) -> None:
@@ -381,7 +425,7 @@ def test_build_run_rrd_logs_pipeline_docs(tmp_path: Path, monkeypatch) -> None:
     _write_png(aug / "frame-00000.png", (11, 22, 33))
     (aug / "metadata.json").write_text('{"variables": {"cloth_color": "blue"}}')
     (run / "grade").mkdir(parents=True)
-    (run / "grade" / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.9}))
+    (run / "grade" / RESULT_FILENAME).write_text(json.dumps({"score": 0.9}))
 
     import rerun as rr
 

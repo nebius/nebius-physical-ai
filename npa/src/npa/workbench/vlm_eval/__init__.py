@@ -51,7 +51,10 @@ DEFAULT_RUBRIC = (
     "intermediate values for partial progress. Penalize unsafe, incomplete, "
     "or ambiguous outcomes."
 )
-RESULT_FILENAME = "vlm_eval_stub.json"
+#: Backend-neutral result name. The payload distinguishes fixtures from inference.
+RESULT_FILENAME = "vlm_eval.json"
+#: Read-only compatibility for bundles created before RESULT_FILENAME was neutral.
+LEGACY_RESULT_FILENAME = "vlm_eval_stub.json"
 #: The aggregate report a rollout-SET evaluation writes. Named for compatibility with
 #: the retired sim-to-real-loop.yaml, whose readers key off this filename.
 LOOP_REPORT_FILENAME = "task_success_report.json"

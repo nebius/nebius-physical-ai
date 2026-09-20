@@ -193,7 +193,7 @@ _NESTED_KEYS = [
     "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/scene/frame_000.png",
     "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/augment/frame-00000.png",
     "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/gate/decision.json",
-    "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/scores/vlm_eval_stub.json",
+    "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/scores/vlm_eval.json",
 ]
 
 

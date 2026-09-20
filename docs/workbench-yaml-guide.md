@@ -65,7 +65,7 @@ states:
     inputs:
       - uri: "{{config.rollouts_uri}}"
     outputs:
-      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+      - uri: "{{config.scores_uri}}vlm_eval.json"
         schema: npa.workbench.vlm_eval.report.v1
     terminal: true
 ```
