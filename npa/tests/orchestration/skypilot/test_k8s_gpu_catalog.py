@@ -1010,6 +1010,78 @@ def test_gang_capacity_waits_for_unbound_pending_gpu_demand() -> None:
         )
 
 
+def test_gang_capacity_ignores_pending_pods_for_other_accelerators() -> None:
+    # Stale pending pods pinned to a different accelerator (an L40S zombie and a
+    # RTX PRO 6000 pod) can never bind to the B200 node, so they must not block a
+    # B200 gang that has a free compatible node.
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={},
+        nodes=(_node("a", product="B200"),),
+        unbound_pending_gpu_pods=2,
+        unbound_pending_gpu_requests=2,
+        unbound_pending_gpu_selectors=(
+            ("L40S", 1),
+            ("NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition", 1),
+        ),
+    )
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory, accelerator="B200:1", node_count=1
+    )
+    assert evidence["compatible_free_nodes"] == 1
+
+
+def test_gang_capacity_blocks_unconstrained_pending_pod() -> None:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
+
+    # A pending pod that pins no accelerator could land on the B200 node, so it
+    # still makes free capacity indeterminate (fail closed).
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={},
+        nodes=(_node("a", product="B200"),),
+        unbound_pending_gpu_pods=1,
+        unbound_pending_gpu_requests=1,
+        unbound_pending_gpu_selectors=(("", 1),),
+    )
+    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod"):
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="B200:1", node_count=1
+        )
+
+
+def test_gang_capacity_blocks_pending_pod_for_same_accelerator() -> None:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
+
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={},
+        nodes=(_node("a", product="B200"),),
+        unbound_pending_gpu_pods=1,
+        unbound_pending_gpu_requests=1,
+        unbound_pending_gpu_selectors=(("B200", 1),),
+    )
+    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod"):
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="B200:1", node_count=1
+        )
+
+
 def test_gang_capacity_applies_profile_node_selector_and_required_affinity() -> None:
     def labelled(name: str, zone: str, pool: str) -> KubernetesGpuNode:
         return KubernetesGpuNode(

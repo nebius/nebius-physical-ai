@@ -438,6 +438,12 @@ class KubernetesGpuInventory:
     nodes: tuple[KubernetesGpuNode, ...] = ()
     unbound_pending_gpu_pods: int = 0
     unbound_pending_gpu_requests: int = 0
+    # One (accelerator-product-selector, gpu_count) entry per unbound pending GPU
+    # pod. An empty product means the pod pins no accelerator and could land on
+    # any GPU node. Used to scope contention to the requested accelerator instead
+    # of blocking on unrelated pending demand (e.g. a stale L40S pod versus a
+    # B200 gang).
+    unbound_pending_gpu_selectors: tuple[tuple[str, int], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         product = (
@@ -464,6 +470,9 @@ class KubernetesGpuInventory:
             "nodes": [node.to_dict() for node in self.nodes],
             "unbound_pending_gpu_pods": self.unbound_pending_gpu_pods,
             "unbound_pending_gpu_requests": self.unbound_pending_gpu_requests,
+            "unbound_pending_gpu_selectors": [
+                list(entry) for entry in self.unbound_pending_gpu_selectors
+            ],
         }
 
 
@@ -663,6 +672,7 @@ def discover_kubernetes_gpu_inventory(
         committed_by_node: dict[str, tuple[int, int, int, int, int]] = {}
         unbound_pending_gpu_pods = 0
         unbound_pending_gpu_requests = 0
+        unbound_pending_gpu_selectors: list[tuple[str, int]] = []
         for pod in pod_payload.get("items", []):
             node_name, gpu, cpu, memory, pod_slots, storage = _pod_commitment(pod)
             if node_name:
@@ -681,6 +691,16 @@ def discover_kubernetes_gpu_inventory(
                 # still free for a new gang.
                 unbound_pending_gpu_pods += 1
                 unbound_pending_gpu_requests += gpu
+                selector = (pod.get("spec") or {}).get("nodeSelector") or {}
+                product = ""
+                if isinstance(selector, dict):
+                    product = str(
+                        selector.get("nvidia.com/gpu.product")
+                        or selector.get("skypilot.co/accelerator")
+                        or selector.get("nebius.com/gpu-name")
+                        or ""
+                    )
+                unbound_pending_gpu_selectors.append((product, gpu))
     except (OSError, ValueError, subprocess.SubprocessError, KubernetesGpuCatalogError):
         return KubernetesGpuInventory(
             context,
@@ -848,6 +868,7 @@ def discover_kubernetes_gpu_inventory(
         nodes=tuple(sorted(node_records, key=lambda item: item.name)),
         unbound_pending_gpu_pods=unbound_pending_gpu_pods,
         unbound_pending_gpu_requests=unbound_pending_gpu_requests,
+        unbound_pending_gpu_selectors=tuple(unbound_pending_gpu_selectors),
     )
 
 
@@ -1027,12 +1048,36 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
             "aggregate capacity on one node cannot satisfy multiple gang ranks."
         )
     if inventory.unbound_pending_gpu_pods:
-        raise PendingGpuPlacementError(
-            "free shared GPU capacity is indeterminate: Kubernetes has "
-            f"{inventory.unbound_pending_gpu_pods} active unbound GPU pod(s) "
-            f"requesting {inventory.unbound_pending_gpu_requests} GPU(s); wait for "
-            "authoritative placement or remove only the owned pending workload"
-        )
+        # Only pending GPU pods that could actually land on a node compatible
+        # with this gang's accelerator make free capacity indeterminate. A pod
+        # that pins a different, non-alias accelerator (e.g. a stale L40S pod
+        # versus a B200 gang) can never bind to the requested nodes, so it must
+        # not block an otherwise-satisfiable request on a shared cluster. A pod
+        # that pins no accelerator could land anywhere and still counts.
+        selectors = inventory.unbound_pending_gpu_selectors
+        if selectors:
+            wanted = _normalize(shape.accelerator.name)
+            aliases = next(
+                (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
+                frozenset({wanted}),
+            )
+            contending = [
+                (product, count)
+                for product, count in selectors
+                if not _normalize(product) or _normalize(product) in aliases
+            ]
+            pending_pods = len(contending)
+            pending_requests = sum(count for _, count in contending)
+        else:
+            pending_pods = inventory.unbound_pending_gpu_pods
+            pending_requests = inventory.unbound_pending_gpu_requests
+        if pending_pods:
+            raise PendingGpuPlacementError(
+                "free shared GPU capacity is indeterminate: Kubernetes has "
+                f"{pending_pods} active unbound GPU pod(s) that could contend for "
+                f"{shape.accelerator.name} requesting {pending_requests} GPU(s); wait "
+                "for authoritative placement or remove only the owned pending workload"
+            )
 
 
 def preflight_kubernetes_gpu_gang(
