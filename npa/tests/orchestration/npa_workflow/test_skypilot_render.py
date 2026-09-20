@@ -1289,6 +1289,69 @@ def test_post_launch_corrupt_receipt_does_not_hide_exact_job_identity(
     assert receipt_path.read_bytes() == corrupt_body
 
 
+def test_post_launch_receipt_warning_redacts_plain_resolved_secret(mocker) -> None:
+    from dataclasses import replace
+
+    from npa.orchestration.npa_workflow import submission_state, submit_credentials
+
+    _patch_npa_submit_preflight(mocker)
+    plain_secret = "hunter2"
+    real_update = submission_state.update_submission_state
+    real_resolve = submit_credentials.resolve_submit_credentials
+
+    def resolve_with_plain_secret(**kwargs):
+        resolved = real_resolve(**kwargs)
+        return replace(
+            resolved,
+            secret_values={
+                **resolved.secret_values,
+                "SYNTHETIC_PLAIN_SECRET": plain_secret,
+            },
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        side_effect=resolve_with_plain_secret,
+    )
+
+    def fail_accepted_launch(project, run_id, updates, **kwargs):
+        launch = updates.get("launch")
+        if isinstance(launch, dict) and launch.get("state") == "submitted":
+            raise ValueError(f"login failed for password {plain_secret}")
+        return real_update(project, run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_accepted_launch,
+    )
+
+    def fake_submit(_path, _run_id, **kwargs):
+        kwargs["transaction_recorder"]({"state": "submitted", "job_id": "42"})
+        return WorkflowResult(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            launch_transaction={"state": "submitted", "job_id": "42"},
+        )
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = _invoke_npa_submit(
+        "npa-submit-plain-secret-warning",
+        json_output=True,
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "SUBMITTED"
+    assert payload["job_id"] == "42"
+    assert payload["submission_warnings"]
+    assert plain_secret not in f"{result.stdout}\n{result.stderr}"
+
+
 @pytest.mark.parametrize(
     ("state", "job_id", "run_id"),
     [

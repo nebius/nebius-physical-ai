@@ -1125,6 +1125,15 @@ def submit_cmd(
     resolved_secret_key = str(
         getattr(submit_credentials, "secret_access_key", "") or ""
     )
+    submission_redaction_secrets = tuple(
+        value
+        for value in (
+            *submit_credentials.secret_values.values(),
+            resolved_access_key,
+            resolved_secret_key,
+        )
+        if value
+    )
     if resolved_access_key:
         extra_env.setdefault("AWS_ACCESS_KEY_ID", resolved_access_key)
     if resolved_secret_key:
@@ -2350,7 +2359,9 @@ def submit_cmd(
                 }
                 if not accepted or not str(payload.get("job_id") or "").strip():
                     raise
-                warning = _submission_receipt_warning(exc)
+                warning = _submission_receipt_warning(
+                    exc, secrets=submission_redaction_secrets
+                )
                 if warning not in submission_warnings:
                     submission_warnings.append(warning)
 
@@ -2460,6 +2471,7 @@ def submit_cmd(
                         }
                     },
                     locked=True,
+                    secrets=submission_redaction_secrets,
                 )
                 if warning and warning not in submission_warnings:
                     submission_warnings.append(warning)
@@ -2887,8 +2899,12 @@ def _sanitized_failure_reason(
     return sanitize_reason(redact_text(str(exc), secrets))
 
 
-def _submission_receipt_warning(exc: BaseException) -> str:
-    return "submission receipt was not updated: " + _sanitized_failure_reason(exc)
+def _submission_receipt_warning(
+    exc: BaseException, *, secrets: Sequence[str] = ()
+) -> str:
+    return "submission receipt was not updated: " + _sanitized_failure_reason(
+        exc, secrets=secrets
+    )
 
 
 def _try_optional_submission_update(
@@ -2897,6 +2913,7 @@ def _try_optional_submission_update(
     updates: Mapping[str, object],
     *,
     locked: bool = False,
+    secrets: Sequence[str] = (),
 ) -> str:
     from npa.orchestration.npa_workflow.submission_state import (
         update_submission_state,
@@ -2905,7 +2922,7 @@ def _try_optional_submission_update(
     try:
         update_submission_state(project, run_id, updates, locked=locked)
     except (OSError, ValueError) as exc:
-        return _submission_receipt_warning(exc)
+        return _submission_receipt_warning(exc, secrets=secrets)
     return ""
 
 
@@ -2936,7 +2953,10 @@ def _load_paidf_artifact(
             "verified": False,
         }
         warning = _try_optional_submission_update(
-            project or "default", run_id, {"artifact_load": result}
+            project or "default",
+            run_id,
+            {"artifact_load": result},
+            secrets=tuple((credential_values or {}).values()),
         )
         if warning:
             result["receipt_warning"] = warning
@@ -2973,7 +2993,10 @@ def _load_paidf_artifact(
             "verified": False,
         }
         warning = _try_optional_submission_update(
-            project or "default", run_id, {"artifact_load": result}
+            project or "default",
+            run_id,
+            {"artifact_load": result},
+            secrets=tuple((credential_values or {}).values()),
         )
         if warning:
             result["receipt_warning"] = warning

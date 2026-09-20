@@ -221,6 +221,12 @@ def test_optional_handoff_redacts_storage_failure_detail(
             )
         ),
     )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError(f"receipt failed for password {credential_secret}")
+        ),
+    )
 
     result = _load_paidf_artifact(
         project="demo",
@@ -230,12 +236,14 @@ def test_optional_handoff_redacts_storage_failure_detail(
     )
 
     detail = str(result["detail"])
+    receipt_warning = str(result["receipt_warning"])
     assert result["status"] == "partial"
     assert query_secret not in detail
     assert assignment_secret not in detail
     assert credential_secret not in detail
     assert "https://storage.invalid/object?<redacted>" in detail
     assert "custom_secret=<redacted>" in detail
+    assert credential_secret not in receipt_warning
 
 
 def test_submission_receipt_warning_redacts_failure_context() -> None:
@@ -244,17 +252,21 @@ def test_submission_receipt_warning_redacts_failure_context() -> None:
     query_secret = "synthetic-warning-query"
     assignment_secret = "synthetic-warning-assignment"
     token_secret = "hf_syntheticwarningtoken"
+    plain_credential = "hunter2"
 
     warning = _submission_receipt_warning(
         ValueError(
             "write failed at "
             f"https://storage.invalid/receipt?token={query_secret} "
-            f"custom_secret={assignment_secret} {token_secret}"
-        )
+            f"custom_secret={assignment_secret} {token_secret} "
+            f"login failed for password {plain_credential}"
+        ),
+        secrets=(plain_credential,),
     )
 
     assert query_secret not in warning
     assert assignment_secret not in warning
     assert token_secret not in warning
+    assert plain_credential not in warning
     assert "https://storage.invalid/receipt?<redacted>" in warning
     assert "custom_secret=<redacted>" in warning
