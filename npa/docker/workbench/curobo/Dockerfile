@@ -6,6 +6,9 @@ FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707e
 ARG NPA_SOURCE_SHA
 # Build-only commit epoch makes pip emit reproducible PEP 552 checked-hash pyc.
 ARG SOURCE_DATE_EPOCH
+# Keep the complete Ubuntu package closure immutable. Changing this date changes
+# public image bytes and requires a new complete-byte policy review.
+ARG UBUNTU_SNAPSHOT=20260920T000000Z
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-b300-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
@@ -25,8 +28,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]]
-RUN rm -f /etc/apt/sources.list.d/*.list \
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
+    && [[ "$UBUNTU_SNAPSHOT" == "20260920T000000Z" ]]
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+       'Types: deb' \
+       "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
+       'Suites: noble noble-updates noble-security' \
+       'Components: main universe restricted multiverse' \
+       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+       'Check-Valid-Until: no' \
+       > /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \

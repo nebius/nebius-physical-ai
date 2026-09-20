@@ -66,7 +66,12 @@ def test_dockerfile_validates_build_only_epoch_before_any_install(epoch):
     start = text.index("RUN [[")
     end = text.index("\nRUN ", start)
     instruction = text[start + 4 : end]
-    env = {**os.environ, "NPA_SOURCE_SHA": "a" * 40, "SOURCE_DATE_EPOCH": epoch}
+    env = {
+        **os.environ,
+        "NPA_SOURCE_SHA": "a" * 40,
+        "SOURCE_DATE_EPOCH": epoch,
+        "UBUNTU_SNAPSHOT": "20260920T000000Z",
+    }
     result = subprocess.run(
         ["bash", "-c", instruction],
         env=env,
