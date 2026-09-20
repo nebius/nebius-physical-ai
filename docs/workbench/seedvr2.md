@@ -61,6 +61,11 @@ The Python SDK exposes `probe`, `restore`, `verify`, and `review`.
   against fixed sizes and SHA-256 hashes before inference.
 - No weights, input videos, output videos, credentials, or populated model
   cache are baked into the image.
+- Source builds record bounded compiler fanout in OCI labels. The reviewed
+  defaults are two outer FlashAttention jobs with one NVCC thread each and two
+  Apex jobs; `build.sh` exposes positive-integer overrides for a differently
+  sized trusted builder. Python dependency installation, FlashAttention
+  compilation, and Apex compilation are separate cacheable layers.
 
 The optional service requires `SEEDVR2_TOKEN` and explicit
 `SEEDVR2_ALLOWED_S3_ROOTS`. It serializes GPU operations and removes storage and

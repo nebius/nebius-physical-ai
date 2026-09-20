@@ -7,14 +7,34 @@ REPO_ROOT="$(cd "$NPA_ROOT/.." && pwd)"
 NPA_PYTHON="${NPA_PYTHON_BIN:-$NPA_ROOT/.venv/bin/python}"
 REGISTRY=""
 PUSH=0
+FLASH_ATTN_MAX_JOBS="${NPA_SEEDVR2_FLASH_ATTN_MAX_JOBS:-2}"
+FLASH_ATTN_NVCC_THREADS="${NPA_SEEDVR2_FLASH_ATTN_NVCC_THREADS:-1}"
+APEX_MAX_JOBS="${NPA_SEEDVR2_APEX_MAX_JOBS:-2}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --registry) REGISTRY="${2:?}"; shift 2 ;;
+    --flash-attn-max-jobs) FLASH_ATTN_MAX_JOBS="${2:?}"; shift 2 ;;
+    --flash-attn-nvcc-threads) FLASH_ATTN_NVCC_THREADS="${2:?}"; shift 2 ;;
+    --apex-max-jobs) APEX_MAX_JOBS="${2:?}"; shift 2 ;;
     --push) PUSH=1; shift ;;
-    -h|--help) echo "Usage: $0 [--registry HOST/PATH] [--push]"; exit 0 ;;
+    -h|--help)
+      echo "Usage: $0 [--registry HOST/PATH] [--flash-attn-max-jobs N] [--flash-attn-nvcc-threads N] [--apex-max-jobs N] [--push]"
+      exit 0
+      ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
+done
+
+for setting in \
+  "flash-attn-max-jobs=$FLASH_ATTN_MAX_JOBS" \
+  "flash-attn-nvcc-threads=$FLASH_ATTN_NVCC_THREADS" \
+  "apex-max-jobs=$APEX_MAX_JOBS"; do
+  value="${setting#*=}"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
+    echo "${setting%%=*} must be a positive integer" >&2
+    exit 2
+  }
 done
 
 SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -78,6 +98,9 @@ env -u HF_TOKEN -u NGC_API_KEY -u NVIDIA_API_KEY -u NEBIUS_IAM_TOKEN \
     --tag "$IMAGE" \
     --build-arg "NPA_SOURCE_SHA=$SOURCE_SHA" \
     --build-arg "SOURCE_DATE_EPOCH=$SOURCE_EPOCH" \
+    --build-arg "FLASH_ATTN_MAX_JOBS=$FLASH_ATTN_MAX_JOBS" \
+    --build-arg "FLASH_ATTN_NVCC_THREADS=$FLASH_ATTN_NVCC_THREADS" \
+    --build-arg "APEX_MAX_JOBS=$APEX_MAX_JOBS" \
     --label "org.opencontainers.image.source=https://github.com/nebius/nebius-physical-ai" \
     --load --provenance=false "$BUILD_CONTEXT"
 

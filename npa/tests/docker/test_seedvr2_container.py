@@ -60,6 +60,36 @@ def test_seedvr2_build_and_entrypoint_scripts_are_executable() -> None:
     )
 
 
+def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
+    build_script = (DOCKER_DIR / "build.sh").read_text()
+
+    assert "ARG FLASH_ATTN_MAX_JOBS=2" in dockerfile
+    assert "ARG FLASH_ATTN_NVCC_THREADS=1" in dockerfile
+    assert "ARG APEX_MAX_JOBS=2" in dockerfile
+    assert 'MAX_JOBS="${FLASH_ATTN_MAX_JOBS}"' in dockerfile
+    assert 'NVCC_THREADS="${FLASH_ATTN_NVCC_THREADS}"' in dockerfile
+    assert 'MAX_JOBS="${APEX_MAX_JOBS}"' in dockerfile
+    assert 'npa.build.flash-attn.max-jobs="${FLASH_ATTN_MAX_JOBS}"' in dockerfile
+    assert (
+        'npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}"' in dockerfile
+    )
+    assert "MAX_JOBS=8" not in dockerfile
+
+    assert '--build-arg "FLASH_ATTN_MAX_JOBS=$FLASH_ATTN_MAX_JOBS"' in build_script
+    assert (
+        '--build-arg "FLASH_ATTN_NVCC_THREADS=$FLASH_ATTN_NVCC_THREADS"' in build_script
+    )
+    assert '--build-arg "APEX_MAX_JOBS=$APEX_MAX_JOBS"' in build_script
+
+    requirements_end = dockerfile.index(
+        "RUN curl --fail --location \\\n"
+        '      "https://files.pythonhosted.org/packages/source/f/flash-attn/'
+    )
+    assert "seedvr2-requirements.lock" in dockerfile[:requirements_end]
+    assert "flash-attn.tar.gz" not in dockerfile[:requirements_end]
+
+
 def test_seedvr2_golden_eval_runs_real_gpu_capability() -> None:
     golden = load_manifest()["seedvr2"].golden_eval
     assert golden.gpu == "required"

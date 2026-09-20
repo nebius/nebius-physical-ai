@@ -9,12 +9,18 @@ ARG APEX_SOURCE_REF=8a6508aaad6e75a2b939e33f308cd63d745d97f1
 ARG APEX_SOURCE_SHA256=59b3e915823a2f41fec7f8cb20b4a558c9658839709f171953c1f6c16a8975f8
 ARG FLASH_ATTN_VERSION=2.8.3.post1
 ARG FLASH_ATTN_SHA256=55d5103ed846da8b56e0797acf4bde07dee4b1c7e8907fcfc6699c203030c348
+ARG FLASH_ATTN_MAX_JOBS=2
+ARG FLASH_ATTN_NVCC_THREADS=1
+ARG APEX_MAX_JOBS=2
 
 LABEL npa.tool="seedvr2" \
       npa.version="0.1.0-cu130-unbuilt" \
       npa.source.repo="https://github.com/ByteDance-Seed/SeedVR" \
       npa.source.ref="${SEEDVR2_SOURCE_REF}" \
       npa.weights="operator-runtime-fetch" \
+      npa.build.flash-attn.max-jobs="${FLASH_ATTN_MAX_JOBS}" \
+      npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
+      npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause"
 
@@ -28,7 +34,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_SKIP_EAGER_IMPORTS=1 \
     NPA_LIGHT_WORKBENCH_TOOL=seedvr2 \
     TORCH_CUDA_ARCH_LIST=9.0 \
-    MAX_JOBS=8 \
     PATH=/opt/npa-venv/bin:/opt/seedvr2-venv/bin:${PATH}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -54,25 +59,31 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
 COPY docker/workbench/seedvr2/requirements.lock /tmp/seedvr2-requirements.lock
 RUN python3.12 -m venv /opt/seedvr2-venv \
     && pip install --no-cache-dir --upgrade 'pip==26.2.1' \
-    && pip install --no-cache-dir --require-hashes -r /tmp/seedvr2-requirements.lock \
-    && curl --fail --location \
+    && pip install --no-cache-dir --require-hashes -r /tmp/seedvr2-requirements.lock
+
+RUN curl --fail --location \
       "https://files.pythonhosted.org/packages/source/f/flash-attn/flash_attn-${FLASH_ATTN_VERSION}.tar.gz" \
       -o /tmp/flash-attn.tar.gz \
     && echo "${FLASH_ATTN_SHA256}  /tmp/flash-attn.tar.gz" | sha256sum -c - \
     && FLASH_ATTENTION_FORCE_BUILD=TRUE \
+      MAX_JOBS="${FLASH_ATTN_MAX_JOBS}" \
+      NVCC_THREADS="${FLASH_ATTN_NVCC_THREADS}" \
       pip install --no-cache-dir --no-index --no-build-isolation --no-deps \
       /tmp/flash-attn.tar.gz \
-    && curl --fail --location \
+    && rm -f /tmp/flash-attn.tar.gz
+
+RUN curl --fail --location \
       "https://codeload.github.com/NVIDIA/apex/tar.gz/${APEX_SOURCE_REF}" \
       -o /tmp/apex.tar.gz \
     && echo "${APEX_SOURCE_SHA256}  /tmp/apex.tar.gz" | sha256sum -c - \
     && mkdir /tmp/apex \
     && tar -xzf /tmp/apex.tar.gz --strip-components=1 -C /tmp/apex \
-    && APEX_CPP_EXT=1 APEX_CUDA_EXT=1 \
+    && APEX_CPP_EXT=1 APEX_CUDA_EXT=1 MAX_JOBS="${APEX_MAX_JOBS}" \
       pip install --no-cache-dir --no-index --no-build-isolation --no-deps \
       /tmp/apex \
-    && pip check \
-    && python - <<'PY'
+    && rm -rf /tmp/apex /tmp/apex.tar.gz
+
+RUN pip check && python - <<'PY'
 import torch
 import torchvision
 from apex.normalization import FusedLayerNorm, FusedRMSNorm
