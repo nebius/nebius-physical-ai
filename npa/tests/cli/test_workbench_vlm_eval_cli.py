@@ -293,7 +293,7 @@ def test_workbench_vlm_eval_compare_judges_rejects_same_model(
 
 def _preference_cli_images(tmp_path, *, private_names=False):
     first_name = "private-baseline-name.png" if private_names else "first.png"
-    second_name = "private-candidate-name.png" if private_names else "second.png"
+    second_name = "private-second-name.png" if private_names else "second.png"
     first = tmp_path / first_name
     second = tmp_path / second_name
     Image.new("RGB", (8, 8), "red").save(first)
