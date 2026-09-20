@@ -6,6 +6,7 @@ entrypoint that drives the real component:
 * ``check``       - NGC container pullability, HF dataset download rights, RT-core GPU
 * ``fetch``       - download + unpack real NCore V4 shards from a PhysicalAI dataset
 * ``convert-colmap`` - Apache-2.0 NVIDIA NCore ingestion of S3 COLMAP captures
+* ``audit-colmap`` - independent post-S3 full-member and V4 read-back
 * ``reconstruct`` - NRE 3DGUT training -> renderable ``usd-out/last.usdz`` + metrics
 * ``render``      - ``nre render`` novel views (rig-offset, NOT training views)
 * ``visualize``   - build ``reports/sim2real.rrd`` via the tested viz module
@@ -302,6 +303,102 @@ def convert_colmap_cmd(
             "error": "Invalid conversion options: " + ", ".join(fields),
         }
     except NcoreConversionError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    _finish_nurec_result(result, output)
+
+
+@app.command("audit-colmap")
+@json_stdout_contract
+def audit_colmap_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="Exact S3 URI of the original COLMAP ZIP."
+    ),
+    conversion_path: str = typer.Option(
+        ...,
+        "--conversion-path",
+        help="Exact immutable S3 prefix produced by convert-colmap.",
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Fresh S3 object for the independent audit JSON.",
+    ),
+    expected_archive_sha256: str = typer.Option(
+        ...,
+        "--expected-archive-sha256",
+        help="Lowercase SHA-256 of the unchanged source ZIP.",
+    ),
+    cache_dir: Path = typer.Option(
+        DEFAULT_COLMAP_CACHE_DIR,
+        "--cache-dir",
+        help="Private source staging parent (current user, mode 0700, no symlinks).",
+    ),
+    scratch_dir: Path = typer.Option(
+        DEFAULT_COLMAP_SCRATCH_DIR,
+        "--scratch-dir",
+        help="Private conversion read-back parent (current user, mode 0700, no symlinks).",
+    ),
+    dataset_root: str = typer.Option(
+        ".", "--dataset-root", help="Exact relative dataset directory in the ZIP."
+    ),
+    colmap_dir: str = typer.Option(
+        "sparse/0", "--colmap-dir", help="Relative COLMAP model directory."
+    ),
+    images_dir: str = typer.Option(
+        "images", "--images-dir", help="Relative source images directory."
+    ),
+    masks_dir: str = typer.Option(
+        "", "--masks-dir", help="Relative masks directory; empty means none."
+    ),
+    rig_mode: str = typer.Option(
+        "derive", "--rig-mode", help="Expected conversion rig mode."
+    ),
+    reference_camera: str = typer.Option(
+        "", "--reference-camera", help="Expected rig reference camera."
+    ),
+    include_downsampled_images: bool = typer.Option(
+        True,
+        "--include-downsampled-images/--no-include-downsampled-images",
+        help="Require the same downsampled-camera setting as conversion.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Re-download and independently decode an immutable NCore V4 conversion."""
+    from pydantic import ValidationError
+    from npa.workbench.nurec.ncore_audit import (
+        ColmapAuditRequest,
+        NcoreAuditError,
+        audit_colmap_conversion,
+    )
+
+    output = output_format
+    try:
+        result = audit_colmap_conversion(
+            ColmapAuditRequest(
+                input_path=input_path,
+                conversion_path=conversion_path,
+                output_path=output_path,
+                expected_archive_sha256=expected_archive_sha256,
+                cache_dir=cache_dir,
+                scratch_dir=scratch_dir,
+                dataset_root=dataset_root,
+                colmap_dir=colmap_dir,
+                images_dir=images_dir,
+                masks_dir=masks_dir,
+                rig_mode=rig_mode,
+                reference_camera=reference_camera,
+                include_downsampled_images=include_downsampled_images,
+            )
+        )
+    except ValidationError as exc:
+        fields = sorted({str(error["loc"][0]) for error in exc.errors()})
+        result = {
+            "status": "failed",
+            "error": "Invalid audit options: " + ", ".join(fields),
+        }
+    except NcoreAuditError as exc:
         result = {"status": "failed", "error": str(exc)}
     _finish_nurec_result(result, output)
 
@@ -606,6 +703,7 @@ def reconstruct_cmd(
             ncore_json=resolved_json,
             dry_run=dry_run,
             export_gt=export_gt,
+            gt_frame_step=gt_frame_step,
         )
     except (NurecError, OSError) as exc:
         _finish_nurec_result({"status": "failed", "errors": [str(exc)]}, output)

@@ -711,6 +711,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NGC_API_KEY"),
         image_overrides=(
             ("workbench.nurec.convert_colmap", "ncore"),
+            ("workbench.nurec.audit_colmap", "ncore"),
             ("workbench.nurec.visualize", "rerun-viewer"),
         ),
         notes=(

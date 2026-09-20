@@ -71,7 +71,8 @@ COPY src/npa/cli/nurec/__init__.py /opt/npa/src/npa/cli/nurec/__init__.py
 COPY src/npa/workbench/__init__.py /opt/npa/src/npa/workbench/__init__.py
 COPY src/npa/workbench/ncore_staging.py /opt/npa/src/npa/workbench/ncore_staging.py
 COPY src/npa/workbench/nurec/__init__.py src/npa/workbench/nurec/nurec.py \
-     src/npa/workbench/nurec/colmap.py src/npa/workbench/nurec/ncore_rig.py /opt/npa/src/npa/workbench/nurec/
+     src/npa/workbench/nurec/colmap.py src/npa/workbench/nurec/ncore_audit.py \
+     src/npa/workbench/nurec/ncore_rig.py /opt/npa/src/npa/workbench/nurec/
 COPY src/npa/workflows/__init__.py src/npa/workflows/ncore.py src/npa/workflows/ncore_runtime.py /opt/npa/src/npa/workflows/
 # The existing renderer invokes npa.cli.entry.main; both aliases use the same
 # narrow adapter, while the public repository CLI/SDK remain unchanged.

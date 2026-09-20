@@ -1226,6 +1226,7 @@ def _download_nurec_proof(client: Any, bucket: str, root: str, local: Path) -> N
             "source/attribution.json",
             "ncore/sequence/conversion.json",
             "ncore/sequence/npa-rig.json",
+            "evidence/ncore-conversion-audit.json",
         )
     ]
     for page in client.get_paginator("list_objects_v2").paginate(
@@ -1537,6 +1538,45 @@ def _assert_nurec_conversion_report(report: dict) -> None:
     assert counts["points"] + report["source"]["origin_points_filtered"] == 163453
 
 
+def _assert_nurec_conversion_audit(local: Path, report: dict) -> None:
+    import hashlib
+
+    audit = json.loads((local / "evidence/ncore-conversion-audit.json").read_text())
+    assert audit["format"] == "npa_ncore_colmap_conversion_audit_v1"
+    assert audit["status"] == "pass"
+    assert audit["converter_revision"] == report["converter"]["revision"]
+    assert audit["source"]["archive_sha256"] == NUREC_COLMAP_SHA256
+    assert audit["source"]["counts"] == {
+        "images": 518,
+        "cameras": 3,
+        "poses": 518,
+        "points": 163453,
+    }
+    assert audit["conversion"]["counts"] == report["counts"]
+    assert (
+        audit["conversion"]["origin_points_filtered"]
+        == report["source"]["origin_points_filtered"]
+    )
+    assert (
+        audit["conversion"]["report_sha256"]
+        == hashlib.sha256(
+            (local / "ncore/sequence/conversion.json").read_bytes()
+        ).hexdigest()
+    )
+    assert all(
+        audit["conversion"][field] is True
+        for field in (
+            "all_members_reopened",
+            "member_hashes_verified",
+            "calibration_verified",
+            "poses_verified",
+            "finite_geometry",
+        )
+    )
+    assert audit["s3_readback"]["stable_listing"] is True
+    assert audit["s3_readback"]["object_count"] == len(audit["s3_readback"]["objects"])
+
+
 def _assert_nurec_conversion_members(
     client: Any, bucket: str, sequence: str, report: dict, meta: dict
 ) -> None:
@@ -1593,6 +1633,7 @@ def assert_nurec_colmap_live_outputs(
     with tempfile.TemporaryDirectory(prefix="npa-colmap-readback-") as directory:
         local = Path(directory)
         _download_nurec_proof(client, bucket, root, local)
+        _assert_nurec_conversion_audit(local, report)
         _assert_nurec_downstream_proof(
             local, recording_id=root.rstrip("/").split("/")[-1]
         )

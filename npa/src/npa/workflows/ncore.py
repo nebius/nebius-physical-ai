@@ -12,12 +12,13 @@ from pathlib import Path
 
 def application():
     import typer
-    from npa.cli.nurec import convert_colmap_cmd
+    from npa.cli.nurec import audit_colmap_cmd, convert_colmap_cmd
 
     root = typer.Typer(no_args_is_help=True)
     workbench = typer.Typer(no_args_is_help=True)
     nurec = typer.Typer(no_args_is_help=True)
     nurec.command("convert-colmap")(convert_colmap_cmd)
+    nurec.command("audit-colmap")(audit_colmap_cmd)
     workbench.add_typer(nurec, name="nurec")
     root.add_typer(workbench, name="workbench")
     return root

@@ -65,12 +65,13 @@ def test_conversion_hands_exact_portable_sequence_to_existing_nre():
     plan = build_plan(spec, run_id="colmap-test")
     assert [step.state for step in plan.steps] == [
         "convert",
+        "audit",
         "reconstruct",
         "render",
         "visualize",
         "finalize",
     ]
-    convert, reconstruct, render, visualize, finalize = plan.steps
+    convert, audit, reconstruct, render, visualize, finalize = plan.steps
     from npa.workbench.ncore_staging import (
         DEFAULT_COLMAP_CACHE_DIR,
         DEFAULT_COLMAP_SCRATCH_DIR,
@@ -81,6 +82,15 @@ def test_conversion_hands_exact_portable_sequence_to_existing_nre():
     assert convert.argv[:4] == ["npa", "workbench", "nurec", "convert-colmap"]
     output = _flag(convert.argv, "--output-path")
     assert output.endswith("/ncore/sequence/")
+    assert audit.argv[:4] == ["npa", "workbench", "nurec", "audit-colmap"]
+    assert _flag(audit.argv, "--conversion-path") == output
+    assert (
+        _flag(audit.argv, "--expected-archive-sha256")
+        == "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
+    )
+    assert _flag(audit.argv, "--output-path").endswith(
+        "/evidence/ncore-conversion-audit.json"
+    )
     assert _flag(reconstruct.argv, "--ncore-uri") == output
     assert {item["uri"] for item in convert.outputs} == {
         output + "sequence.json",
@@ -106,6 +116,7 @@ def test_cpu_converter_and_proprietary_rtx_stages_are_separate():
     spec = yaml.safe_load(SPEC.read_text())
     states, resources = spec["states"], spec["resources"]
     assert "accelerators" not in resources[states["convert"]["resources"]]
+    assert "accelerators" not in resources[states["audit"]["resources"]]
     for state in ("reconstruct", "render"):
         profile = resources[states[state]["resources"]]
         assert profile["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
@@ -116,6 +127,7 @@ def test_cpu_converter_and_proprietary_rtx_stages_are_separate():
     assert "HF_TOKEN" not in case.secret_envs
     assert case.image_tool == ""
     assert dict(case.image_overrides)["workbench.nurec.convert_colmap"] == "ncore"
+    assert dict(case.image_overrides)["workbench.nurec.audit_colmap"] == "ncore"
 
 
 def test_render_keeps_converter_digest_and_nre_runtime_in_their_own_stages(
@@ -135,21 +147,26 @@ def test_render_keeps_converter_digest_and_nre_runtime_in_their_own_stages(
         run_id="render-colmap",
         options=SkypilotRenderOptions(
             registry="registry.example",
-            image_overrides={"workbench.nurec.convert_colmap": converter},
+            image_overrides={
+                "workbench.nurec.convert_colmap": converter,
+                "workbench.nurec.audit_colmap": converter,
+            },
             materialize_registry_secrets=False,
         ),
     )
     tasks = [doc for doc in yaml.safe_load_all(rendered) if doc and "run" in doc]
-    assert len(tasks) == 5
+    assert len(tasks) == 6
     assert tasks[0]["resources"]["image_id"] == "docker:" + converter
-    assert "accelerators" not in tasks[0]["resources"]
-    for task in tasks[1:3]:
+    assert tasks[1]["resources"]["image_id"] == "docker:" + converter
+    for task in tasks[:2]:
+        assert "accelerators" not in task["resources"]
+    for task in tasks[2:4]:
         assert task["resources"]["image_id"] == "docker:" + NRE_IMAGE
         assert (
             task["resources"]["accelerators"]
             == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
         )
-    assert "npa-rerun-viewer" in tasks[3]["resources"]["image_id"]
+    assert "npa-rerun-viewer" in tasks[4]["resources"]["image_id"]
 
 
 @pytest.mark.parametrize("local", [False, True])
@@ -319,6 +336,11 @@ def test_live_output_verifier_rejects_subset_or_corrupt_conversion(
     )
     monkeypatch.setattr(
         helpers,
+        "_assert_nurec_conversion_audit",
+        lambda *args, **kwargs: reached.append("audit"),
+    )
+    monkeypatch.setattr(
+        helpers,
         "_assert_nurec_downstream_proof",
         lambda *args, **kwargs: reached.append("decode"),
     )
@@ -329,7 +351,7 @@ def test_live_output_verifier_rejects_subset_or_corrupt_conversion(
             )
     else:
         helpers.assert_nurec_colmap_live_outputs(bucket="unit-bucket", run_id="unit")
-    assert reached == ([] if failure else ["download", "decode"])
+    assert reached == ([] if failure else ["download", "audit", "decode"])
 
 
 # These are synthetic format fixtures, not GPU reconstruction acceptance evidence.
@@ -606,6 +628,48 @@ def _publish_synthetic_conversion(root, helpers):
         for name in ("sequence.json", "camera.zarr.itar", "npa-rig.json")
     ]
     path.write_text(json.dumps(report))
+    _write_proof_document(
+        root,
+        "evidence/ncore-conversion-audit.json",
+        {
+            "format": "npa_ncore_colmap_conversion_audit_v1",
+            "status": "pass",
+            "converter_revision": report["converter"]["revision"],
+            "source": {
+                "archive_sha256": helpers.NUREC_COLMAP_SHA256,
+                "counts": {
+                    "images": 518,
+                    "cameras": 3,
+                    "poses": 518,
+                    "points": 163453,
+                },
+            },
+            "conversion": {
+                "report_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "counts": report["counts"],
+                "origin_points_filtered": 0,
+                "all_members_reopened": True,
+                "member_hashes_verified": True,
+                "calibration_verified": True,
+                "poses_verified": True,
+                "finite_geometry": True,
+            },
+            "s3_readback": {
+                "stable_listing": True,
+                "object_count": 5,
+                "objects": [
+                    {"path": name}
+                    for name in (
+                        ".npa-colmap-claim.json",
+                        "camera.zarr.itar",
+                        "conversion.json",
+                        "npa-rig.json",
+                        "sequence.json",
+                    )
+                ],
+            },
+        },
+    )
 
 
 @pytest.fixture

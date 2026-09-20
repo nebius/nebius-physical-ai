@@ -8,13 +8,13 @@ separate proprietary operations.
 ## Narrow dependency boundary
 
 The image carries CPython/Debian bootstrap tools, the pinned official NCore
-converter/V4 reader Python source, trueprice's COLMAP reader, and 19 NPA source
+converter/V4 reader Python source, trueprice's COLMAP reader, and 20 NPA source
 files (including two compatibility aliases). It does not install the NPA Python
-distribution. `npa.workflows.ncore` registers the existing
-`npa.cli.nurec.convert_colmap_cmd` callback; conversion, path validation, JSON
-output, rig derivation, full sequence validation, and immutable S3 publication
-continue to use the existing shared implementation. Public CLI and SDK source
-outside the image is unchanged.
+distribution. `npa.workflows.ncore` registers the existing conversion callback
+and the independent post-S3 audit callback. Conversion, path validation, JSON
+output, rig derivation, full sequence validation, immutable S3 publication, and
+fresh-prefix read-back continue to use the shared implementation. Public CLI and
+SDK expose the same two operations.
 
 The explicit `COPY` list is the NPA import closure: package initializers,
 `_sdk`, `errors`, `lifecycle_intent`, `clients.storage`, `cli.path_contract`, the
@@ -230,9 +230,10 @@ it is not evidence for a newly built image;
 any mismatch must be resolved against real bytes, never skipped. Runtime
 artifacts need their own recorded hashes, license/security review and successful
 cold/warm execution. Import checks cannot replace complete real-capture
-conversion, independent image/calibration/pose/point decoding, immutable S3
-handoff and the existing NRE RTX consumer. Quarantine, immutable image override
-and anonymous digest pullability requirements remain unchanged.
+conversion, the separate audit command's independent
+image/calibration/pose/point decoding from an enumerated immutable S3 handoff,
+and the existing NRE RTX consumer. Quarantine, immutable image override and
+anonymous digest pullability requirements remain unchanged.
 
 The acceptance record also binds source camera/frame inventories to native NRE
 loaded-frame counts, eligible training/validation splits, the resolved config,

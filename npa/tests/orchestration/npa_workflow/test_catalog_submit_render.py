@@ -32,6 +32,9 @@ def _prepare_catalog_workflow(spec_path):
         image_overrides["workbench.nurec.convert_colmap"] = (
             f"{TEST_REGISTRY}/npa-ncore@sha256:{'0' * 64}"
         )
+        image_overrides["workbench.nurec.audit_colmap"] = (
+            f"{TEST_REGISTRY}/npa-ncore@sha256:{'0' * 64}"
+        )
 
     return prepare_npa_workflow_for_submit(
         spec_path,

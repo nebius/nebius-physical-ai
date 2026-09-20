@@ -32,6 +32,7 @@ from npa.workbench.model_cache import (
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.nurec.convert_colmap": "ncore",
+    "workbench.nurec.audit_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
     "workbench.vlm_eval": "cosmos",

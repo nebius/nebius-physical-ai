@@ -63,7 +63,8 @@ owns the complete stage graph:
 
 ```mermaid
 flowchart LR
-    C[COLMAP to NCore / CPU] --> N[NRE reconstruct / RTX PRO 6000]
+    C[COLMAP to NCore / CPU] --> A[Independent S3/V4 audit / CPU]
+    A --> N[NRE reconstruct / RTX PRO 6000]
     N --> R[NRE novel views / RTX PRO 6000]
     R --> V[Rerun / CPU]
     V --> F[Finalize / CPU]
@@ -71,10 +72,14 @@ flowchart LR
 
 Each state runs in a separate pod. `workbench.nurec.convert_colmap` publishes
 `sequence.json`, every referenced `.zarr.itar` shard, `npa-rig.json` and
-`conversion.json` directly under `config.ncore_sequence_uri`. That exact prefix,
-including its trailing slash, is passed to the existing reconstruction command
-as `--ncore-uri`. No extra source-directory or `sequence/` suffix is appended
-by conversion.
+`conversion.json` directly under `config.ncore_sequence_uri`.
+`workbench.nurec.audit_colmap` then independently lists that prefix, downloads
+the original ZIP and every published object, rejects changed/extra objects,
+recomputes hashes, and reopens every V4 image, calibration, pose and sparse
+point. It writes a separate non-overwriting audit JSON. Only after that gate
+does the exact sequence prefix, including its trailing slash, pass to
+reconstruction as `--ncore-uri`. No extra source-directory or `sequence/`
+suffix is appended.
 
 Use a fresh output prefix for each conversion. A provider-conditional permanent
 claim prevents overlapping writers or replacement of an earlier generation.
@@ -170,6 +175,13 @@ npa workbench nurec convert-colmap \
   --output-path 's3://<bucket>/<run-prefix>/ncore/sequence/' \
   --dataset-root struktur28 --colmap-dir sparse/0 --images-dir images \
   --rig-mode derive --output-format json
+
+npa workbench nurec audit-colmap \
+  --input-path 's3://<bucket>/<source-prefix>/struktur28_colmap.zip' \
+  --conversion-path 's3://<bucket>/<run-prefix>/ncore/sequence/' \
+  --output-path 's3://<bucket>/<run-prefix>/evidence/ncore-conversion-audit.json' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --dataset-root struktur28 --rig-mode derive --output-format json
 ```
 
 `--input-path` also accepts an S3 dataset prefix. `--cache-dir` and
@@ -207,13 +219,14 @@ npa workbench workflow submit workflows/testing/nurec-colmap-reconstruct.yaml \
   --var 'bucket=<bucket>' --var 'prefix=<run-prefix>' \
   --var 'colmap_input_uri=s3://<bucket>/<source-prefix>/struktur28_colmap.zip' \
   --image-override 'workbench.nurec.convert_colmap=<registry>/npa-ncore@sha256:<digest>' \
+  --image-override 'workbench.nurec.audit_colmap=<registry>/npa-ncore@sha256:<same-digest>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env NGC_API_KEY
 ```
 
 The digest above is an explicit placeholder, not a published or accepted image.
-Keep the NCore image override scoped to conversion; the NRE resource profiles
-and Rerun image serve different stages.
+Keep the same exact NCore image override scoped to conversion and its audit; the
+NRE resource profiles and Rerun image serve different stages.
 
 ## Live-matrix coverage and acceptance
 
@@ -235,10 +248,11 @@ configuration. The public source does not require `HF_TOKEN`. Clear generic
 accelerator remaps/forced GPU settings: the matrix rejects them for this case
 to preserve CPU conversion and the explicit RTX resource request.
 
-After terminal success the matrix checks all conversion-member hashes and
-sizes against S3, the full source counts, attribution, and downstream final
-accounting, metrics and RRD presence. These checks complement the converter's
-full V4 decode; they do not establish rendering quality. The RRD retains the
+After terminal success the matrix requires the separate post-S3 audit, checks
+all conversion-member hashes and sizes, rejects extra or changed objects,
+matches the full source counts and attribution, and verifies downstream final
+accounting, metrics and RRD presence. These checks do not establish rendering
+quality. The RRD retains the
 producer's effective frame selection, resize and JPEG quality settings in
 `provenance/rrd_review`. Readback derives the selected camera/frame identities
 from the ordered source render paths, requires each selected identity exactly

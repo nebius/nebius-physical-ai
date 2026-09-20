@@ -108,6 +108,7 @@ Every stage is a real command; nothing here is a manifest stub.
 ```bash
 npa workbench nurec check       # NGC pullability + HF download rights + RT-core GPU
 npa workbench nurec convert-colmap # CPU: official Apache-2.0 COLMAP -> NCore V4
+npa workbench nurec audit-colmap # CPU: independent post-S3 object/V4 read-back
 npa workbench nurec fetch       # real NCore V4 shards + derived rig pose edge
 npa workbench nurec reconstruct # NRE 3DGUT training -> renderable USDZ + metrics
 npa workbench nurec render      # `nre render` novel views (rig offset, not training views)
@@ -165,6 +166,11 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
   `59c698d206da92b406a4f72619fce3b3a2c64bfd`, with its pinned MIT
   trueprice/pycolmap reader. Scope the immutable development image override to
   `workbench.nurec.convert_colmap`; no accepted/public availability is implied.
+- Use the same immutable development image for both
+  `workbench.nurec.convert_colmap` and `workbench.nurec.audit_colmap`. The audit
+  re-lists the fresh prefix, downloads every object plus the original ZIP,
+  rejects changed or extra members, and independently reopens every V4 image,
+  calibration, pose and point before NRE starts.
 - Preserve virtual per-camera **1 FPS** timestamps as photographic ordering,
   not synchronized capture time. Sparse SfM points are not physical LiDAR.
   Record upstream's near-origin point filtering and any derived rig changes.

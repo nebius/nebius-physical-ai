@@ -862,7 +862,8 @@ def container_image_for_tool(
     if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
         raise ValueError(
             "NCore has no accepted release image. Supply the validated immutable "
-            "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
+            "image for both workbench.nurec.convert_colmap and "
+            "workbench.nurec.audit_colmap with --image-override "
             "or explicitly select a dev-<full-source-sha> tag for validation."
         )
     if tool == "sonic":
