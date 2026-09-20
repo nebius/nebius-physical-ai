@@ -1,6 +1,6 @@
 # VLM eval artifact naming: reviewer-safe evidence
 
-This report covers candidate `bce99bfdb`. Raw media, provider responses and
+This report covers implementation head `2b575e364`. Raw media, provider responses and
 request identifiers, source paths, and operational logs remain in
 access-controlled evidence. No source image or video is published here.
 
@@ -17,7 +17,7 @@ access-controlled evidence. No source image or video is published here.
 | Usage | 2,023 prompt tokens, 130 completion tokens, 2,153 total tokens |
 | Latency | 2.962663 seconds |
 | Smoke (not workload proof) | 114 onboarding smoke tests passed |
-| Independent review | Two changes-required rounds closed; exact candidate is `review-ready` with no findings |
+| Independent review | Two implementation rounds, the B108 regression, and the SDK export repair are `review-ready` with no findings |
 | Remaining gate | Draft PR and remote exact-current-head CI |
 
 The exact code head also passed 445 focused tests with 1 live-GPU test skipped,
@@ -37,6 +37,7 @@ specs.
 | Historical bundle | Legacy-only result remains readable |
 | Canonical plus legacy | Canonical result wins |
 | Malformed canonical plus valid legacy | Fails closed; stale legacy data is not substituted |
+| Fail-closed mutation (`break` → `continue`) | The B108 regression fails with `promote_checkpoint`, proving the gate is load-bearing |
 | Gate status vocabulary | VLM `passed` and Cosmos `completed` remain producer-specific; one producer cannot promote with the other's status |
 
 No compatibility alias is written. The old filename is a reader fallback only,
@@ -74,6 +75,18 @@ scope, stale historical wording, and missing write/loop/toolRef regressions.
 After those were fixed, a second review found that the first status fix accepted
 a union of both producers' vocabularies. Producer-specific validation and
 negative controls closed it. Final review reported no findings.
+
+A later mutation review found that the grade gate's malformed-canonical control
+used a stale legacy fixture that could not actually promote, so changing the
+fail-closed `break` to `continue` survived the suite. The corrected B108 control
+uses a valid stale passing VLM result and catches that mutation: correct code
+loops back with no authoritative report hash, while the mutation promotes at
+`0.95`. Independent review of exact commit `cc5abb9e5` reported no findings.
+
+The expanded suite then found that the two filename strings had been added to
+the module's callable-only SDK export list. Commit `2b575e364` keeps both direct
+imports available to internal readers while removing them from `__all__`; all
+28 exported SDK entries are callable. Independent review reported no findings.
 
 ## Reproduction boundary
 
