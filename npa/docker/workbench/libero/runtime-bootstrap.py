@@ -4599,7 +4599,8 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
 
 
 def _run_output_root(run_id: str) -> Path:
-    return Path(f"/workspace/byof-runs/{run_id}")
+    # Keep the executable profile in the run root, outside the output inventory.
+    return Path(f"/workspace/byof-runs/{run_id}/output")
 
 
 def _bootstrap_receipt_path(cache_root: Path, run_id: str) -> Path:

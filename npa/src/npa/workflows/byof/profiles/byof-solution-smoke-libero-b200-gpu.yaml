@@ -82,10 +82,11 @@ setup: |
   chmod 0600 "${authorization}"
   test "$(sha256sum "${authorization}" | cut -d ' ' -f 1)" = \
     "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256}"
-  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  run_root="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  output_dir="${run_root}/output"
   install -d -m 1770 "${output_dir}"
   chgrp npa-libero-exec "${output_dir}"
-  profile_path="${output_dir}/.npa-executable-profile.json"
+  profile_path="${run_root}/.npa-executable-profile.json"
   test ! -e "${profile_path}"
   profile_partial="${profile_path}.partial"
   printf '%s' "${NPA_LIBERO_EXECUTABLE_PROFILE_B64}" | base64 -d > "${profile_partial}"
@@ -125,7 +126,7 @@ setup: |
 run: |
   set -euo pipefail
   unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64
-  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}/output"
   export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
   /usr/bin/nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
   /usr/bin/nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1

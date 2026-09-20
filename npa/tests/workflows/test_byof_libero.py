@@ -307,6 +307,16 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert ".render(" not in profile
 
 
+def test_libero_profile_keeps_executable_profile_outside_output_inventory() -> None:
+    profile = PROFILE_PATH.read_text(encoding="utf-8")
+    assert 'run_root="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"' in profile
+    assert 'output_dir="${run_root}/output"' in profile
+    assert 'profile_path="${run_root}/.npa-executable-profile.json"' in profile
+    assert 'export NPA_SMOKE_OUTPUT_DIR="${output_dir}"' in profile
+    bootstrap = (IMAGE_ROOT / "runtime-bootstrap.py").read_text(encoding="utf-8")
+    assert 'return Path(f"/workspace/byof-runs/{run_id}/output")' in bootstrap
+
+
 def test_libero_workload_requires_pod_identity_and_independent_build_lineage() -> None:
     smoke = _smoke_source()
 
