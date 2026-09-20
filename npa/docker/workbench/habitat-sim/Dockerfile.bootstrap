@@ -93,6 +93,10 @@ RUN mkdir -p /usr/share/doc/npa-habitat-sim && \
 # come from signed metadata in the same immutable official Ubuntu snapshot.
 FROM bootstrap AS source-delivery
 COPY docker/workbench/habitat-sim/bootstrap_sources.py /tmp/bootstrap_sources.py
+# This discarded stage downloads exact corresponding sources through signed APT
+# metadata in this same instruction; it intentionally installs no binary package.
+# Only verified source archives and their manifest reach the final image.
+# trivy:ignore:AVD-DS-0017
 RUN apt-get update && python3 /tmp/bootstrap_sources.py fetch /usr/share/doc/npa-habitat-sim
 
 FROM bootstrap AS runtime
@@ -135,6 +139,9 @@ LABEL npa.tool="habitat-sim" npa.version="0.3.3-public-unbuilt" \
       org.opencontainers.image.licenses="MIT AND LicenseRef-Ubuntu-Package-Notices" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 USER ubuntu
+# Read-only probe of the SkyPilot passwordless_root_exemption in packaging-contract.yaml.
+# No installation or file mutation runs through sudo in this instruction.
+# trivy:ignore:AVD-DS-0010
 RUN test "$(id -u)" = 1000 && sudo -n true && \
     /usr/bin/python3 -m npa.workflows.habitat_sim_smoke --help >/dev/null
 ENTRYPOINT ["/usr/local/bin/npa-habitat-bootstrap"]
