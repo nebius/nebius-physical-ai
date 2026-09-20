@@ -18,6 +18,12 @@ selector also runs on Token Factory, allowing a complete live-tested pipeline
 with only the Token Factory key. It exports training data, rejected candidates,
 and per-call provenance rather than returning only a chat response.
 
+The [robot SDG extension](../workbench/token-factory-robot-sdg.md) applies routing
+to physical scene planning, executes real MuJoCo Fetch demonstrations, and
+exports synchronized RGB, joint state and actions as LeRobot v3. Physics checks
+judge episode success independently of the model. Its gallery plays the actual
+recorded camera videos.
+
 Real Token Factory requests have produced positive provider cache counters on
 both models. Live Jev inference still requires a TypeSafe key; transport and
 agent wiring tests do not establish routing accuracy. Keep the feature opt-in

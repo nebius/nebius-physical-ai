@@ -321,7 +321,7 @@ def test_jev_is_optional_but_explicit_selection_requires_its_key(tmp_path, monke
         sdg(_request(tmp_path, router="jev"))
 
 
-def test_cli_requires_s3_handoffs_and_emits_one_json_failure_document():
+def test_cli_requires_s3_handoffs_and_emits_one_json_failure_document(tmp_path):
     result = CliRunner().invoke(
         app,
         [
@@ -329,7 +329,7 @@ def test_cli_requires_s3_handoffs_and_emits_one_json_failure_document():
             "token-factory",
             "sdg",
             "--input-path",
-            "/tmp/seeds.jsonl",
+            str(tmp_path / "seeds.jsonl"),
             "--output-path",
             "s3://example-bucket/sdg",
             "--output-format",

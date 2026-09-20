@@ -208,6 +208,16 @@ For artifact conversion and sharing, see the
 
 ## Developing and testing npa
 
+Build actual RGB/action robot demonstrations with
+[robot SDG and LeRobot export](../docs/workbench/token-factory-robot-sdg.md).
+`npa workbench token-factory robot-sdg` uses S3 handoffs; the SDK's `robot_sdg`
+accepts local paths. Install `npa[robot-sdg]` and `ffmpeg`. The default router
+is Token Factory, and the simulator seed defaults to zero. Set
+`NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE=1` and `NPA_LEROBOT_PROOF_PYTHON` to a native
+LeRobot 0.5.1 interpreter to run live simulation and dataset validation. Optional
+`NPA_ROBOT_SDG_OUTPUT_DIR` preserves the run in a new local directory. These
+environment variables are unset by default; the simulator uses no physical robot.
+
 Build synthetic instruction datasets with the
 [automatically routed Token Factory SDG pipeline](../docs/workbench/token-factory-sdg.md).
 `npa workbench token-factory sdg` accepts S3 input/output paths; the SDK accepts

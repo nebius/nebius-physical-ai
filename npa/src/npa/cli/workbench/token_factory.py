@@ -14,6 +14,8 @@ from rich.console import Console
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.lifecycle_intent import json_stdout_contract
 from npa.workbench.token_factory.sdg import SdgRequest, run_sdg
+from npa.workbench.token_factory.robot_sdg import RobotSdgRequest, run_robot_sdg
+from npa.clients.storage import StorageError
 
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
@@ -66,6 +68,7 @@ NPA_WORKFLOWS = Path("workflows/testing")
 CAPTION_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-caption.yaml"
 GENERATE_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-generate.yaml"
 SDG_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-sdg.yaml"
+ROBOT_SDG_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-robot-sdg.yaml"
 REASON_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-cosmos-reason.yaml"
 VLM_EVAL_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-token-factory.yaml"
 
@@ -76,6 +79,68 @@ class OutputFormat(str, Enum):
 
     def __str__(self) -> str:
         return self.value
+
+
+@app.command("robot-sdg")
+@json_stdout_contract
+def robot_sdg_cmd(
+    input_path: str = typer.Option(..., "--input-path", help="S3 JSONL scene seeds."),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Empty S3 prefix for LeRobot data and recorded videos.",
+    ),
+    router: str = typer.Option(
+        "token_factory",
+        "--router",
+        help="Scene planning selector: token_factory or jev.",
+    ),
+    seed: int = typer.Option(0, "--seed", help="Initial simulator RNG seed."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate seeds without inference or simulation."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", "--output", help="Output format."
+    ),
+) -> None:
+    """Generate real simulated robot episodes with RGB and actions in LeRobot format.
+
+    Args:
+        input_path: S3 id/prompt scene seeds.
+        output_path: New S3 run prefix.
+        router: token_factory by default; jev requires a TypeSafe key.
+        seed: Reproducible initial simulation seed.
+        dry_run: Validate input without hosted inference or simulation.
+        output_format: Human-readable text or a single JSON result.
+    Returns:
+        None; emits the physics-checked dataset manifest.
+    Raises:
+        typer.Exit: Configuration, simulation, or publication failed.
+    """
+    try:
+        validate_read_path(input_path, tool="token-factory robot-sdg", allow_hf=False)
+        validate_write_path(output_path, tool="token-factory robot-sdg", required=True)
+        result = run_robot_sdg(
+            RobotSdgRequest(
+                input_path=input_path,
+                output_path=output_path,
+                router=router,
+                seed=seed,
+                dry_run=dry_run,
+            )
+        )
+    except (
+        ValueError,
+        OSError,
+        RuntimeError,
+        StorageError,
+        TokenFactoryToolError,
+        TokenFactoryError,
+    ) as exc:
+        _fail(str(exc))
+    _emit(result, output_format)
+    if result["status"] == "failed":
+        raise typer.Exit(1)
 
 
 @app.command("sdg")
@@ -561,6 +626,7 @@ def status_cmd(
             "caption_workflow": str(CAPTION_WORKFLOW_PATH),
             "generate_workflow": str(GENERATE_WORKFLOW_PATH),
             "sdg_workflow": str(SDG_WORKFLOW_PATH),
+            "robot_sdg_workflow": str(ROBOT_SDG_WORKFLOW_PATH),
             "reason_workflow": str(REASON_WORKFLOW_PATH),
             "vlm_eval_workflow": str(VLM_EVAL_WORKFLOW_PATH),
         },
@@ -600,6 +666,12 @@ def list_cmd(
                     "kind": "synthetic-data",
                     "default_router": "token_factory",
                 },
+                {
+                    "name": "robot-sdg",
+                    "kind": "robot-demonstrations",
+                    "default_router": "token_factory",
+                    "dataset_format": "LeRobotDataset v3.0",
+                },
                 {"name": "batch-status", "kind": "text-batch"},
                 {
                     "name": "reason",
@@ -626,6 +698,7 @@ def workflow_cmd(
             "caption_workflow": str(CAPTION_WORKFLOW_PATH),
             "generate_workflow": str(GENERATE_WORKFLOW_PATH),
             "sdg_workflow": str(SDG_WORKFLOW_PATH),
+            "robot_sdg_workflow": str(ROBOT_SDG_WORKFLOW_PATH),
             "reason_workflow": str(REASON_WORKFLOW_PATH),
             "vlm_eval_workflow": str(VLM_EVAL_WORKFLOW_PATH),
         },

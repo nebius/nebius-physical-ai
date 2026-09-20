@@ -2308,6 +2308,22 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.token_factory.robot_sdg": ToolEntry(
+        name="workbench.token_factory.robot_sdg",
+        description="Route robot scene planning to open-weight models and record physics-checked RGB/action LeRobot episodes.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "token-factory",
+            "robot-sdg",
+            "--input-path",
+            "{{config.prompts_uri}}",
+            "--output-path",
+            "{{config.robot_sdg_output_uri}}",
+            "--output-format",
+            "json",
+        ],
+    ),
     "workbench.token_factory.sdg": ToolEntry(
         name="workbench.token_factory.sdg",
         description="Automatically route, generate, review, and export synthetic instruction data with hosted open-weight models.",

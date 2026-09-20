@@ -1,5 +1,8 @@
 # Synthetic training data with automatic Token Factory routing
 
+For robot camera/state/action demonstrations in LeRobot format, use
+[robot SDG](token-factory-robot-sdg.md). This page covers text instruction data.
+
 This pipeline turns JSONL seeds into reviewed instruction/answer training data.
 The default path uses hosted open-weight models for routing, generation, and
 review. It runs through the SDK on a developer machine or through the workbench

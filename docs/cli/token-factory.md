@@ -10,6 +10,7 @@ Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
 Options
 --help  Show this message and exit.
 Commands
+robot-sdg  Generate real simulated robot episodes with RGB and actions in LeRobot format.
 sdg  Generate a reviewed instruction dataset using automatic open-weight routing.
 caption  Caption a folder of images with a hosted Token Factory vision model.
 generate  Generate completions for each prompt in a JSONL/text file.
@@ -33,6 +34,7 @@ workflow  Show the checked-in Token Factory npa.workflow specs.
 
 | Command | Description |
 | --- | --- |
+| `robot-sdg` | Generate real simulated robot episodes with RGB and actions in LeRobot format. |
 | `sdg` | Generate a reviewed instruction dataset using automatic open-weight routing. |
 | `caption` | Caption a folder of images with a hosted Token Factory vision model. |
 | `generate` | Generate completions for each prompt in a JSONL/text file. |
@@ -49,7 +51,7 @@ workflow  Show the checked-in Token Factory npa.workflow specs.
 
 ```bash
 npa workbench token-factory --help
-npa workbench token-factory sdg --help
+npa workbench token-factory robot-sdg --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `token-factory`.

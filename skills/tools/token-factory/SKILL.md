@@ -5,6 +5,23 @@ description: Use for zero-GPU hosted inference through Nebius Token Factory — 
 
 # Token Factory (zero-GPU hosted inference)
 
+## Robot demonstration SDG
+
+For robot training data, use `npa workbench token-factory robot-sdg`, not the
+text-only `sdg` command. It routes declarative scene planning through hosted
+Lightning/MiniMax, executes real MuJoCo Fetch pick-and-place, records workspace
+and wrist RGB with aligned joint state/actions, and exports accepted episodes
+through the LeRobot v3 adapter. Physics state and contact checks judge success;
+model text cannot declare an episode successful.
+
+Install `npa[robot-sdg]` and `ffmpeg`. The public CLI uses S3 input/output paths;
+the shared SDK `robot_sdg(RobotSdgRequest(...))` also accepts local files. Outputs
+must be new. Open `index.html` for real videos, and validate the dataset with the
+native LeRobot reader. The simulator uses a scripted teacher with privileged
+state; do not describe the output as physical robot capture, learned-policy
+performance, or photorealistic video. See `docs/workbench/token-factory-robot-sdg.md`
+for the supported scene contract, live test, and workflow prerequisites.
+
 Nebius Token Factory is an OpenAI-compatible hosted-inference API for open text
 and vision models. It is the cheapest tier in the workbench that produces a real
 artifact: **no cluster, no GPU, no provisioning**. Reach for it before standing up
@@ -225,9 +242,10 @@ npa workbench workflow submit <spec.yaml> --secret-env NEBIUS_TOKEN_FACTORY_KEY
 toolRefs: `workbench.token_factory.caption`, `.generate`, `.batch_generate`,
 `.reason`, `.triage` (digest a run's textual artifacts into a triage report).
 
-`npa workbench token-factory workflow` prints five:
+`npa workbench token-factory workflow` prints six:
 `token-factory-caption.yaml`, `token-factory-generate.yaml`,
-`token-factory-cosmos-reason.yaml`, `token-factory-sdg.yaml`, and `vlm-eval-token-factory.yaml`. Several
+`token-factory-cosmos-reason.yaml`, `token-factory-sdg.yaml`,
+`token-factory-robot-sdg.yaml`, and `vlm-eval-token-factory.yaml`. Several
 more are checked in but not listed by that command, so do not treat its output as
 the full inventory:
 

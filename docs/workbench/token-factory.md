@@ -2,6 +2,10 @@
 
 [Workbench docs](README.md)
 
+For robot demonstrations with actual camera video and actions, use
+[robot SDG and LeRobot export](token-factory-robot-sdg.md). `robot-sdg` routes
+scene planning through Token Factory, then runs MuJoCo and physics acceptance.
+
 Token Factory provides hosted text generation, image captioning, and scene
 reasoning. Use these capabilities to annotate inputs or interpret results from
 your Nebius GPU workloads. Direct CLI calls run from your machine; the
@@ -41,6 +45,7 @@ catalog. The implementation defaults below are not guaranteed to be available:
 | `reason` | `MiniMaxAI/MiniMax-M3` |
 | `batch-generate` | `openai/gpt-oss-120b` |
 | `sdg` | Lightning router; Lightning or MiniMax generator; MiniMax reviewer |
+| `robot-sdg` | Lightning router; Lightning or MiniMax scene planner; MuJoCo physics judge |
 
 NPA reads `NEBIUS_TOKEN_FACTORY_KEY` from the environment or
 `tokens.NEBIUS_TOKEN_FACTORY_KEY` in `~/.npa/credentials.yaml`. Keep the file
