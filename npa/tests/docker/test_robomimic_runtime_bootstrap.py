@@ -1503,6 +1503,7 @@ def test_runtime_install_invokes_only_bound_wheel_installer(
         tmp_path / "requirements.txt",
         installer,
         {},
+        Path("/opt/runtime/python"),
     )
     assert result == stage / "site-packages"
     assert len(calls) == 1
@@ -1877,6 +1878,35 @@ def test_runtime_verifier_accepts_record_authenticated_fetched_site_packages(
     rows.append("demo-1.0.dist-info/RECORD,,")
     (dist / "RECORD").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
+    members = {}
+    for path in sorted(site_root.rglob("*")):
+        if path.is_dir():
+            continue
+        relative = path.relative_to(site_root).as_posix()
+        members[relative] = {
+            "type": "file",
+            "size": path.stat().st_size,
+            "sha256": _sha(path),
+            "mode": path.stat().st_mode & 0o777,
+        }
+    proof_body = {
+        "schema": "npa.robomimic.runtime-fetch-proof.v1",
+        "runtime_lock_sha256": _sha(lock_path),
+        "runtime_inventory_sha256": _sha(inventory_path),
+        "artifacts": {"demo": {"version": "1.0"}},
+        "members": members,
+    }
+    proof_encoded = json.dumps(
+        proof_body, sort_keys=True, separators=(",", ":")
+    ).encode()
+    proof = {
+        **proof_body,
+        "proof_sha256": hashlib.sha256(proof_encoded).hexdigest(),
+    }
+    proof_path = runtime_root / verifier.RUNTIME_FETCH_PROOF_NAME
+    proof_path.write_text(json.dumps(proof, sort_keys=True) + "\n", encoding="utf-8")
+    proof_path.chmod(0o444)
+
     monkeypatch.setattr(
         verifier,
         "_runtime_artifact_closure",
@@ -1891,6 +1921,84 @@ def test_runtime_verifier_accepts_record_authenticated_fetched_site_packages(
 
     assert proof["artifact_count"] == 1
     assert proof["payload_file_count"] == 1
+
+
+def test_runtime_verifier_requires_durable_fetch_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["fetch"] = {
+        "credential_env": "HF_TOKEN",
+        "site_packages": "payload/lib/python3.11/site-packages",
+        "installer": _runtime_installer(),
+    }
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    (runtime_root / "payload/lib/python3.11/site-packages").mkdir(parents=True)
+    monkeypatch.setattr(
+        verifier,
+        "_runtime_artifact_closure",
+        lambda _lock, _inventory: ({"demo": {"version": "1.0"}}, 0),
+    )
+
+    with pytest.raises(verifier.VerificationError, match="proof"):
+        verifier.verify_external_runtime(
+            runtime_root=runtime_root,
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=_sha(inventory_path),
+            require_read_only_mount=False,
+        )
+
+
+def test_runtime_fetch_proof_rejects_digest_mismatch(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    body = {
+        "schema": "npa.robomimic.runtime-fetch-proof.v1",
+        "runtime_lock_sha256": "a" * 64,
+        "runtime_inventory_sha256": "b" * 64,
+        "artifacts": {"demo": {"version": "1.0"}},
+        "members": {
+            "demo.py": {
+                "type": "file",
+                "size": 5,
+                "sha256": hashlib.sha256(b"safe\n").hexdigest(),
+                "mode": 0o644,
+            }
+        },
+    }
+    proof = {**body, "proof_sha256": "0" * 64}
+    path = runtime_root / verifier.RUNTIME_FETCH_PROOF_NAME
+    path.write_text(json.dumps(proof), encoding="utf-8")
+    path.chmod(0o444)
+    with pytest.raises(verifier.VerificationError, match="digest mismatch"):
+        verifier._read_runtime_fetch_proof(
+            runtime_root, body["artifacts"], "a" * 64, "b" * 64
+        )
+
+
+def test_runtime_scripts_relocate_to_stable_interpreter(tmp_path: Path) -> None:
+    stage = tmp_path / "site"
+    stage.mkdir()
+    script = stage / "demo"
+    temporary_interpreter = tmp_path / "transaction/bin/python"
+    temporary_interpreter.parent.mkdir(parents=True)
+    script.write_bytes(f"#!{temporary_interpreter}\nprint('ok')\n".encode())
+    script.chmod(0o644)
+    verifier._relocate_runtime_scripts(
+        stage,
+        temporary_interpreter,
+        Path("/opt/npa-runtime/robomimic/payload/bin/python"),
+    )
+    assert script.read_bytes() == (
+        b"#!/opt/npa-runtime/robomimic/payload/bin/python\nprint('ok')\n"
+    )
+    assert script.stat().st_mode & 0o777 == 0o755
 
 
 def test_bootstrap_cleans_snapshot_when_import_gate_fails(tmp_path: Path) -> None:

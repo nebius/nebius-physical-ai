@@ -94,6 +94,7 @@ RUNTIME_FETCH_ALLOWED_HOSTS = frozenset().union(
     *RUNTIME_FETCH_CREDENTIAL_HOSTS.values(),
 )
 RUNTIME_FETCH_MANIFEST_MAX_BYTES = 4 * 1024 * 1024
+RUNTIME_FETCH_PROOF_NAME = ".runtime-fetch-proof.json"
 RUNTIME_FETCH_DEFAULT_DENYLIST = (
     r"(?i)(?:^|/)(?:\.aws|\.ssh|credentials?|secrets?)(?:/|$)"
 )
@@ -1737,6 +1738,7 @@ def _wheel_expected_inventory(
     directory: str,
     installed_root: Path | None,
     interpreter: str = BAKED_INSTALLER_EXECUTABLE,
+    record_sink: dict[str, bytes] | None = None,
 ) -> dict:
     record_name = f"{directory}/RECORD"
     if record_name not in members:
@@ -1758,9 +1760,10 @@ def _wheel_expected_inventory(
         _add_inventory_member(result, name, entry)
         record_paths[name] = "../../" + name
     if installed_root is None:
-        result[record_name] = _file_identity(
-            _installed_record_bytes(result, record_name, record_paths)
-        )
+        record_bytes = _installed_record_bytes(result, record_name, record_paths)
+        if record_sink is not None:
+            record_sink[record_name] = record_bytes
+        result[record_name] = _file_identity(record_bytes)
     else:
         result[record_name] = _authenticated_installed_record(
             installed_root / record_name, result, record_name, record_paths
@@ -2538,7 +2541,10 @@ def _verify_fetched_record_tree(stage: Path, artifacts: dict) -> int:
 
 
 def _runtime_expected_inventory(
-    wheelhouse: Path, artifacts: dict, interpreter: Path
+    wheelhouse: Path,
+    artifacts: dict,
+    interpreter: Path,
+    record_sink: dict[str, bytes] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Derive runtime bytes from locked wheel members before invoking pip."""
 
@@ -2554,7 +2560,7 @@ def _runtime_expected_inventory(
         members = _wheel_members(raw)
         directory = _wheel_distribution(members, name, str(artifact["version"]))
         wheel_expected = _wheel_expected_inventory(
-            members, directory, None, str(interpreter)
+            members, directory, None, str(interpreter), record_sink
         )
         for relative, entry in wheel_expected.items():
             _add_inventory_member(expected, relative, entry)
@@ -2596,6 +2602,22 @@ def _verify_runtime_expected_tree(
             or stat.S_IMODE(member.stat().st_mode) != entry["mode"]
         ):
             raise VerificationError("runtime installed member differs from wheel proof")
+
+
+def _relocate_runtime_scripts(
+    stage: Path, temporary_interpreter: Path, final_interpreter: Path
+) -> None:
+    """Replace only pip-generated temporary shebangs with the stable runtime path."""
+
+    old = b"#!" + str(temporary_interpreter).encode("ascii") + b"\n"
+    new = b"#!" + str(final_interpreter).encode("ascii") + b"\n"
+    for path in stage.rglob("*"):
+        if path.is_dir():
+            continue
+        raw = _immutable_bytes(path, RUNTIME_OBJECT_MAX_BYTES)
+        if raw.startswith(old):
+            path.write_bytes(new + raw[len(old) :])
+            path.chmod(0o755)
 
 
 def _runtime_subprocess_env() -> dict[str, str]:
@@ -2649,6 +2671,8 @@ def _install_runtime_artifacts(
     requirement_file: Path,
     installer: dict[str, str | int],
     expected: dict[str, dict[str, Any]],
+    final_interpreter: Path,
+    record_sink: dict[str, bytes] | None = None,
 ) -> Path:
     staged_site = stage / "site-packages"
     staged_site.mkdir(mode=0o700)
@@ -2665,8 +2689,19 @@ def _install_runtime_artifacts(
     )
     if install.returncode != 0:
         raise VerificationError("runtime wheel installation failed")
+    _relocate_runtime_scripts(staged_site, interpreter, final_interpreter)
+    _rewrite_runtime_records(staged_site, record_sink or {})
     _verify_runtime_expected_tree(staged_site, expected)
     return staged_site
+
+
+def _rewrite_runtime_records(stage: Path, records: dict[str, bytes]) -> None:
+    for relative, raw in records.items():
+        path = stage / relative
+        if path.is_symlink() or not path.is_file():
+            raise VerificationError("runtime installed RECORD is absent")
+        path.write_bytes(raw)
+        path.chmod(0o644)
 
 
 def _runtime_installer_command(
@@ -2802,21 +2837,81 @@ def _publish_fetched_runtime(
     runtime_lock_path: Path,
     expected_inventory_sha256: str,
     artifacts: dict,
+    expected: dict[str, dict[str, Any]],
     lock: dict,
     lock_hash: str,
     inventory_sha256: str,
     denylist_source: str,
     before_publish: Any,
 ) -> dict[str, Any]:
+    return _publish_runtime_contents(
+        {
+            "staged_site": staged_site,
+            "site_root": site_root,
+            "runtime_root": runtime_root,
+            "runtime_lock_path": runtime_lock_path,
+            "expected_inventory_sha256": expected_inventory_sha256,
+            "artifacts": artifacts,
+            "expected": expected,
+            "lock": lock,
+            "lock_hash": lock_hash,
+            "inventory_sha256": inventory_sha256,
+            "denylist_source": denylist_source,
+            "before_publish": before_publish,
+        }
+    )
+
+
+def _publish_runtime_contents(context: dict[str, Any]) -> dict[str, Any]:
+    staged_site = context["staged_site"]
+    site_root = context["site_root"]
+    runtime_root = context["runtime_root"]
+    runtime_lock_path = context["runtime_lock_path"]
+    expected_inventory_sha256 = context["expected_inventory_sha256"]
+    artifacts = context["artifacts"]
+    expected = context["expected"]
+    lock = context["lock"]
+    lock_hash = context["lock_hash"]
+    inventory_sha256 = context["inventory_sha256"]
+    denylist_source = context["denylist_source"]
+    before_publish = context["before_publish"]
     record_count = _verify_fetched_record_tree(staged_site, artifacts)
     before_publish()
-    proof = _publish_and_verify_runtime(
+    proof_path = runtime_root / RUNTIME_FETCH_PROOF_NAME
+    proof_sha256 = _write_runtime_fetch_proof(
+        proof_path, expected, artifacts, lock_hash, inventory_sha256
+    )
+    proof = _publish_verified_runtime(
         staged_site=staged_site,
         site_root=site_root,
         runtime_root=runtime_root,
         runtime_lock_path=runtime_lock_path,
         expected_inventory_sha256=expected_inventory_sha256,
+        proof_path=proof_path,
+        proof_sha256=proof_sha256,
     )
+    return _runtime_fetch_result(
+        lock,
+        artifacts,
+        lock_hash,
+        inventory_sha256,
+        record_count,
+        proof_sha256,
+        denylist_source,
+        proof,
+    )
+
+
+def _runtime_fetch_result(
+    lock: dict,
+    artifacts: dict,
+    lock_hash: str,
+    inventory_sha256: str,
+    record_count: int,
+    proof_sha256: str,
+    denylist_source: str,
+    proof: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "schema": "npa.robomimic.runtime-fetch.v1",
         "runtime_id": lock["runtime_id"],
@@ -2824,10 +2919,75 @@ def _publish_fetched_runtime(
         "runtime_inventory_sha256": inventory_sha256,
         "artifact_count": len(artifacts),
         "record_count": record_count,
+        "fetched_proof_sha256": proof_sha256,
         "denylist": denylist_source,
         "installed_runtime_verified": True,
         "runtime_verification": proof,
     }
+
+
+def _publish_verified_runtime(
+    *,
+    staged_site: Path,
+    site_root: Path,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    proof_path: Path,
+    proof_sha256: str,
+) -> dict[str, Any]:
+    try:
+        return _publish_and_verify_runtime(
+            staged_site=staged_site,
+            site_root=site_root,
+            runtime_root=runtime_root,
+            runtime_lock_path=runtime_lock_path,
+            expected_inventory_sha256=expected_inventory_sha256,
+        )
+    except BaseException:
+        _remove_runtime_fetch_proof(proof_path, proof_sha256)
+        raise
+
+
+def _write_runtime_fetch_proof(
+    path: Path,
+    expected: dict[str, dict[str, Any]],
+    artifacts: dict,
+    lock_hash: str,
+    inventory_sha256: str,
+) -> str:
+    if path.exists() or path.is_symlink():
+        raise VerificationError("runtime fetch proof already exists")
+    body = {
+        "schema": "npa.robomimic.runtime-fetch-proof.v1",
+        "runtime_lock_sha256": lock_hash,
+        "runtime_inventory_sha256": inventory_sha256,
+        "artifacts": artifacts,
+        "members": expected,
+    }
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    envelope = {**body, "proof_sha256": hashlib.sha256(encoded).hexdigest()}
+    encoded_envelope = (json.dumps(envelope, sort_keys=True) + "\n").encode()
+    try:
+        with path.open("xb") as handle:
+            handle.write(encoded_envelope)
+        path.chmod(0o444)
+    except OSError as exc:
+        raise VerificationError("runtime fetch proof publication failed") from exc
+    return envelope["proof_sha256"]
+
+
+def _remove_runtime_fetch_proof(path: Path, expected_sha256: str) -> None:
+    try:
+        if path.is_symlink() or not path.is_file():
+            return
+        if _sha256(path) != expected_sha256:
+            raise VerificationError(
+                "runtime fetch proof identity changed during cleanup"
+            )
+        path.unlink()
+    except OSError as exc:
+        raise VerificationError("runtime fetch proof cleanup failed") from exc
 
 
 def _publish_and_verify_runtime(
@@ -2863,7 +3023,7 @@ def _runtime_fetch_install(
     before_request: Any,
 ) -> dict[str, Any]:
     context = _runtime_install_context(plan)
-    staged_site = _stage_runtime_install_from_context(
+    staged_site, expected = _stage_runtime_install_from_context(
         context, runtime_root, runtime_lock_path, wheelhouse, stage, before_request
     )
     return _runtime_install_result(
@@ -2874,6 +3034,7 @@ def _runtime_fetch_install(
         site_root=context["site_root"],
         artifacts=context["artifacts"],
         denylist_source=context["denylist_source"],
+        expected=expected,
     )
 
 
@@ -2903,7 +3064,7 @@ def _stage_runtime_install_from_context(
     wheelhouse: Path,
     stage: Path,
     before_request: Any,
-) -> Path:
+) -> tuple[Path, dict[str, dict[str, Any]]]:
     credential_env = context["credential_env"]
     return _stage_runtime_install(
         runtime_root=runtime_root,
@@ -2941,6 +3102,7 @@ def _runtime_install_result(
     site_root: Path,
     artifacts: dict,
     denylist_source: str,
+    expected: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "staged_site": staged_site,
@@ -2950,11 +3112,11 @@ def _runtime_install_result(
         "site_root": site_root,
         "artifacts": artifacts,
         "denylist_source": denylist_source,
+        "expected": expected,
     }
 
 
 def _prepare_verified_runtime(
-    *,
     runtime_root: Path,
     runtime_lock_path: Path,
     expected_inventory_sha256: str,
@@ -2970,7 +3132,9 @@ def _prepare_verified_runtime(
     )
     verified_runtime = stage / "verified-runtime"
     verified_runtime.mkdir(mode=0o700)
-    _copy_runtime_inventory(runtime_root, verified_runtime, expected_inventory_sha256)
+    _copy_runtime_inventory(
+        runtime_root, verified_runtime, expected_inventory_sha256, runtime_lock_path
+    )
     verify_external_runtime(
         runtime_root=verified_runtime,
         runtime_lock_path=runtime_lock_path,
@@ -2992,23 +3156,53 @@ def _stage_runtime_install(
     wheelhouse: Path,
     stage: Path,
     before_request: Any,
-) -> Path:
+) -> tuple[Path, dict[str, dict[str, Any]]]:
     before_request()
     interpreter = _prepare_verified_runtime(
-        runtime_root=runtime_root,
-        runtime_lock_path=runtime_lock_path,
-        expected_inventory_sha256=expected_inventory_sha256,
-        stage=stage,
+        runtime_root, runtime_lock_path, expected_inventory_sha256, stage
     )
     before_request()
+    inputs = _prepare_runtime_install_inputs(
+        wheelhouse,
+        artifacts,
+        installer,
+        credential_env,
+        credential,
+        before_request,
+        runtime_root,
+    )
+    requirement_file, expected, records, final_interpreter = inputs
+    before_request()
+    return _install_runtime_artifacts(
+        interpreter,
+        wheelhouse,
+        stage,
+        requirement_file,
+        installer,
+        expected,
+        final_interpreter,
+        records,
+    )
+
+
+def _prepare_runtime_install_inputs(
+    wheelhouse: Path,
+    artifacts: dict,
+    installer: dict[str, str | int],
+    credential_env: str,
+    credential: str,
+    before_request: Any,
+    runtime_root: Path,
+) -> tuple[Path, dict[str, dict[str, Any]], dict[str, bytes], Path]:
     requirement_file = _download_runtime_artifacts(
         wheelhouse, artifacts, installer, credential_env, credential, before_request
     )
-    expected = _runtime_expected_inventory(wheelhouse, artifacts, interpreter)
-    before_request()
-    return _install_runtime_artifacts(
-        interpreter, wheelhouse, stage, requirement_file, installer, expected
+    final_interpreter = runtime_root / "payload" / "bin" / "python"
+    records: dict[str, bytes] = {}
+    expected = _runtime_expected_inventory(
+        wheelhouse, artifacts, final_interpreter, records
     )
+    return requirement_file, expected, records, final_interpreter
 
 
 def _runtime_fetch_operation(
@@ -3036,6 +3230,7 @@ def _runtime_fetch_operation(
         runtime_lock_path=runtime_lock_path,
         expected_inventory_sha256=expected_inventory_sha256,
         artifacts=prepared["artifacts"],
+        expected=prepared["expected"],
         lock=prepared["lock"],
         lock_hash=prepared["lock_hash"],
         inventory_sha256=prepared["inventory_sha256"],
@@ -3131,7 +3326,15 @@ def _runtime_declared_objects(
         _extend_fetched_runtime_directories(
             runtime_root, payload_root, fetched_site_root, allowed_directories
         )
-    allowed_objects = declared | allowed_directories | {".ready.json", "inventory.json"}
+    allowed_objects = (
+        declared
+        | allowed_directories
+        | {
+            ".ready.json",
+            "inventory.json",
+            RUNTIME_FETCH_PROOF_NAME,
+        }
+    )
     if fetched_site_root is not None:
         allowed_objects.update(
             path.relative_to(runtime_root).as_posix()
@@ -3176,9 +3379,11 @@ def _verify_runtime_object_types(
         if relative in allowed_directories:
             if not stat.S_ISDIR(mode) or path.is_symlink():
                 raise VerificationError(f"runtime directory is not regular: {relative}")
-        elif relative in {".ready.json", "inventory.json"} and (
-            not stat.S_ISREG(mode) or path.is_symlink()
-        ):
+        elif relative in {
+            ".ready.json",
+            "inventory.json",
+            RUNTIME_FETCH_PROOF_NAME,
+        } and (not stat.S_ISREG(mode) or path.is_symlink()):
             raise VerificationError(f"runtime metadata is not regular: {relative}")
     declared = set(files) | set(links)
     if fetched_site_root is not None:
@@ -3257,7 +3462,9 @@ def _verify_external_runtime(
     )
     artifacts, artifact_payload_bytes = _runtime_artifact_closure(lock, inventory)
     files, links, payload_bytes = _checked_payload_entries(inventory)
-    fetched_site_root = _runtime_fetched_site_root(runtime_root, inventory, artifacts)
+    fetched_site_root = _runtime_fetched_site_root(
+        runtime_root, inventory, artifacts, lock_hash, inventory_sha256
+    )
     _verify_runtime_object_types(runtime_root, files, links, fetched_site_root)
     _verify_runtime_member_content(runtime_root, files, links)
     return {
@@ -3277,7 +3484,11 @@ def _verify_external_runtime(
 
 
 def _runtime_fetched_site_root(
-    runtime_root: Path, inventory: dict, artifacts: dict
+    runtime_root: Path,
+    inventory: dict,
+    artifacts: dict,
+    lock_hash: str,
+    inventory_sha256: str,
 ) -> Path | None:
     fetch = inventory.get("fetch")
     if fetch is None:
@@ -3287,11 +3498,78 @@ def _runtime_fetched_site_root(
     site_packages = _runtime_fetch_site_packages(fetch.get("site_packages"))
     candidate_site_root = runtime_root / site_packages
     if not candidate_site_root.exists() and not candidate_site_root.is_symlink():
-        return None
+        raise VerificationError("fetched site-packages is absent")
     if not candidate_site_root.is_dir() or candidate_site_root.is_symlink():
         raise VerificationError("fetched site-packages is not a directory")
+    expected = _read_runtime_fetch_proof(
+        runtime_root, artifacts, lock_hash, inventory_sha256
+    )
+    _verify_runtime_expected_tree(candidate_site_root, expected)
     _verify_fetched_record_tree(candidate_site_root, artifacts)
     return candidate_site_root
+
+
+def _read_runtime_fetch_proof(
+    runtime_root: Path,
+    artifacts: dict,
+    lock_hash: str,
+    inventory_sha256: str,
+) -> dict[str, dict[str, Any]]:
+    proof_path = runtime_root / RUNTIME_FETCH_PROOF_NAME
+    try:
+        if proof_path.stat().st_mode & 0o222:
+            raise VerificationError("runtime fetch proof is writable")
+    except OSError as exc:
+        raise VerificationError("runtime fetch proof is unavailable") from exc
+    proof, _raw = _bounded_json_object(
+        proof_path,
+        maximum_size=RUNTIME_METADATA_MAX_BYTES,
+        require_single_link=True,
+    )
+    if proof.get("schema") != "npa.robomimic.runtime-fetch-proof.v1":
+        raise VerificationError("runtime fetch proof schema mismatch")
+    if proof.get("runtime_lock_sha256") != lock_hash:
+        raise VerificationError("runtime fetch proof lock mismatch")
+    if proof.get("runtime_inventory_sha256") != inventory_sha256:
+        raise VerificationError("runtime fetch proof inventory mismatch")
+    if proof.get("artifacts") != artifacts:
+        raise VerificationError("runtime fetch proof artifact closure mismatch")
+    expected_digest = proof.get("proof_sha256")
+    body = {key: value for key, value in proof.items() if key != "proof_sha256"}
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    if expected_digest != hashlib.sha256(encoded).hexdigest():
+        raise VerificationError("runtime fetch proof digest mismatch")
+    return _validate_runtime_fetch_members(proof.get("members"))
+
+
+def _validate_runtime_fetch_members(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict) or not value:
+        raise VerificationError("runtime fetch proof members are invalid")
+    if len(value) > RUNTIME_PAYLOAD_MAX_ENTRY_COUNT:
+        raise VerificationError("runtime fetch proof member count exceeds limit")
+    result: dict[str, dict[str, Any]] = {}
+    total = 0
+    for relative, entry in value.items():
+        _installed_member_path(relative)
+        if not isinstance(entry, dict) or entry.get("type") != "file":
+            raise VerificationError("runtime fetch proof member type is invalid")
+        size, digest, mode = entry.get("size"), entry.get("sha256"), entry.get("mode")
+        if not isinstance(size, int) or size < 0 or not isinstance(digest, str):
+            raise VerificationError("runtime fetch proof member identity is invalid")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest) or not isinstance(mode, int):
+            raise VerificationError("runtime fetch proof member identity is invalid")
+        if mode & ~0o777 or mode == 0:
+            raise VerificationError("runtime fetch proof member mode is invalid")
+        total += size
+        if total > RUNTIME_PAYLOAD_MAX_BYTES:
+            raise VerificationError("runtime fetch proof bytes exceed limit")
+        result[relative] = {
+            "type": "file",
+            "size": size,
+            "sha256": digest,
+            "mode": mode,
+        }
+    return result
 
 
 def verify_external_runtime(
@@ -3459,28 +3737,54 @@ def _copy_bounded_regular_file(
 
 
 def _copy_runtime_inventory(
-    source: Path, staging: Path, expected_inventory_sha256: str
+    source: Path,
+    staging: Path,
+    expected_inventory_sha256: str,
+    runtime_lock_path: Path,
 ) -> None:
     """Copy only manager-bound runtime objects into a private staging tree."""
 
-    _copy_bounded_regular_file(
-        source / ".ready.json",
-        staging / ".ready.json",
-        expected_size=None,
-        expected_sha256=None,
-        maximum_size=RUNTIME_METADATA_MAX_BYTES,
-    )
-    _copy_bounded_regular_file(
-        source / "inventory.json",
-        staging / "inventory.json",
-        expected_size=None,
-        expected_sha256=expected_inventory_sha256,
-        maximum_size=RUNTIME_METADATA_MAX_BYTES,
-    )
+    _copy_runtime_metadata(source, staging, expected_inventory_sha256)
     inventory, _inventory_bytes = _bounded_json_object(
         staging / "inventory.json", maximum_size=RUNTIME_METADATA_MAX_BYTES
     )
+    lock, lock_hash = _runtime_lock_metadata(runtime_lock_path)
+    artifacts, _ = _runtime_artifact_closure(lock, inventory)
+    fetched_site_root = _runtime_fetched_site_root(
+        source, inventory, artifacts, lock_hash, expected_inventory_sha256
+    )
     files, links, _payload_bytes = _checked_payload_entries(inventory)
+    _copy_declared_runtime_objects(source, staging, files, links)
+    if fetched_site_root is not None:
+        _copy_fetched_runtime(
+            source,
+            staging,
+            fetched_site_root,
+            artifacts,
+            lock_hash,
+            expected_inventory_sha256,
+        )
+
+
+def _copy_runtime_metadata(
+    source: Path, staging: Path, expected_inventory_sha256: str
+) -> None:
+    for name, digest in (
+        (".ready.json", None),
+        ("inventory.json", expected_inventory_sha256),
+    ):
+        _copy_bounded_regular_file(
+            source / name,
+            staging / name,
+            expected_size=None,
+            expected_sha256=digest,
+            maximum_size=RUNTIME_METADATA_MAX_BYTES,
+        )
+
+
+def _copy_declared_runtime_objects(
+    source: Path, staging: Path, files: dict, links: dict
+) -> None:
     for relative, entry in files.items():
         source_path = source / relative
         destination = staging / relative
@@ -3495,6 +3799,46 @@ def _copy_runtime_inventory(
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.symlink_to(entry["target"])
+
+
+def _runtime_lock_metadata(runtime_lock_path: Path) -> tuple[dict, str]:
+    lock_bytes = _immutable_bytes(runtime_lock_path, RUNTIME_METADATA_MAX_BYTES)
+    try:
+        lock = json.loads(lock_bytes.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise VerificationError("runtime lock metadata is invalid") from exc
+    if not isinstance(lock, dict):
+        raise VerificationError("runtime lock metadata is invalid")
+    return lock, hashlib.sha256(lock_bytes).hexdigest()
+
+
+def _copy_fetched_runtime(
+    source: Path,
+    staging: Path,
+    fetched_site_root: Path,
+    artifacts: dict,
+    lock_hash: str,
+    inventory_sha256: str,
+) -> None:
+    expected = _read_runtime_fetch_proof(source, artifacts, lock_hash, inventory_sha256)
+    proof_source = source / RUNTIME_FETCH_PROOF_NAME
+    _copy_bounded_regular_file(
+        proof_source,
+        staging / RUNTIME_FETCH_PROOF_NAME,
+        expected_size=None,
+        expected_sha256=None,
+        maximum_size=RUNTIME_METADATA_MAX_BYTES,
+    )
+    for relative, entry in expected.items():
+        source_path = fetched_site_root / relative
+        destination = staging / source_path.relative_to(source)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        _copy_bounded_regular_file(
+            source_path,
+            destination,
+            expected_size=entry["size"],
+            expected_sha256=entry["sha256"],
+        )
 
 
 def _remove_snapshot_write_bits(snapshot: Path) -> None:
@@ -3584,7 +3928,9 @@ def _prepare_runtime_snapshot(
     expected_inventory_sha256: str,
     staging: Path,
 ) -> dict[str, Any]:
-    _copy_runtime_inventory(runtime_root, staging, expected_inventory_sha256)
+    _copy_runtime_inventory(
+        runtime_root, staging, expected_inventory_sha256, runtime_lock_path
+    )
     snapshot_proof = verify_external_runtime(
         runtime_root=staging,
         runtime_lock_path=runtime_lock_path,

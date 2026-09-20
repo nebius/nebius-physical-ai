@@ -40,10 +40,11 @@ that hash and the customer entitlement. When explicitly enabled with
 `NPA_ROBOMIMIC_RUNTIME_FETCH=1`, the bootstrap fetches the inventory's exact
 wheel URLs from the pinned official hosts. Public PyPI/PyTorch hosts are always
 anonymous; a bearer credential is sent only to its explicitly bound Hugging
-Face or NVIDIA NGC origin. The customer's `HF_TOKEN` or `NGC_API_KEY` is
-revalidated immediately before every request, installation, and publication,
-and is never logged. Every wheel hash and size is checked, installation uses no
-index or dependency resolution, and every installed `RECORD` is validated
+Face or NVIDIA NGC origin. Entitlement is revalidated immediately before every
+request, installation, and publication; the bound credential is captured for
+that transaction and never logged. Every wheel hash and size is checked,
+installation uses no index or dependency resolution, and every installed
+`RECORD` is validated
 before publishing the site-packages tree. `NPA_ROBOMIMIC_CUSTOMER_DENYLIST`
 is an explicit customer runtime input; unset means the built-in safe path
 denylist is used. The fetch phase is separate from the final read-only snapshot

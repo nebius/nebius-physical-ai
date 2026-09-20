@@ -33,6 +33,7 @@ customer-owned runtime volume. The customer supplies the exact official wheel
 URLs, credential and independently selected inventory; the bootstrap downloads
 into a private temporary wheelhouse, sends credentials only to their bound
 vendor origin, revalidates entitlement before every request/install/publish,
+captures the bound credential only for that transaction and never logs it,
 verifies each hash and size, installs with no dependency resolution, and checks
 every installed `RECORD` before publication into the runtime cache. The public
 image therefore contains no Python wheel bytes; a future authorized runtime
