@@ -2308,6 +2308,22 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "json",
         ],
     ),
+    "workbench.token_factory.sdg": ToolEntry(
+        name="workbench.token_factory.sdg",
+        description="Automatically route, generate, review, and export synthetic instruction data with hosted open-weight models.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "token-factory",
+            "sdg",
+            "--input-path",
+            "{{config.prompts_uri}}",
+            "--output-path",
+            "{{config.sdg_output_uri}}",
+            "--output-format",
+            "json",
+        ],
+    ),
     "workbench.token_factory.batch_generate": ToolEntry(
         name="workbench.token_factory.batch_generate",
         description="Generate text completions through Token Factory batch inference (zero-GPU).",

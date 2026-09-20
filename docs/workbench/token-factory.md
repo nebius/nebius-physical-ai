@@ -7,6 +7,11 @@ reasoning. Use these capabilities to annotate inputs or interpret results from
 your Nebius GPU workloads. Direct CLI calls run from your machine; the
 checked-in NPA workflows run their calling stages on Kubernetes CPUs.
 
+For seed-to-training-data generation, use the
+[automatically routed SDG pipeline](token-factory-sdg.md). It selects a hosted
+open-weight generator per seed, reviews candidates, and exports training JSONL
+with separate rejection and provenance artifacts.
+
 The public defaults were migrated after the August 2026 model retirements. See
 [the verification report](token-factory-deprecation-verification.md) for exact
 IDs, observed provider differences, explicit override behavior, and vendor terms.
@@ -35,6 +40,7 @@ catalog. The implementation defaults below are not guaranteed to be available:
 | `caption` | `MiniMaxAI/MiniMax-M3` |
 | `reason` | `MiniMaxAI/MiniMax-M3` |
 | `batch-generate` | `openai/gpt-oss-120b` |
+| `sdg` | Lightning router; Lightning or MiniMax generator; MiniMax reviewer |
 
 NPA reads `NEBIUS_TOKEN_FACTORY_KEY` from the environment or
 `tokens.NEBIUS_TOKEN_FACTORY_KEY` in `~/.npa/credentials.yaml`. Keep the file
@@ -44,7 +50,9 @@ mode `0600`. The default API URL is
 
 ## Generate and inspect artifacts
 
-These commands accept local paths or `s3://` URIs. Direct S3 calls require
+The generation, captioning, and reasoning commands below accept local paths or
+`s3://` URIs. The new `sdg` CLI uses S3 handoffs; its SDK also supports local
+development files. Direct S3 calls require
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and the correct `AWS_ENDPOINT_URL`
 in the process environment; their storage client does not load those values
 from the NPA credential file. Supply them through your protected credential

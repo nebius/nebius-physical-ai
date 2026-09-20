@@ -11,6 +11,10 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.cli.path_contract import validate_read_path, validate_write_path
+from npa.lifecycle_intent import json_stdout_contract
+from npa.workbench.token_factory.sdg import SdgRequest, run_sdg
+
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
     DEFAULT_BATCH_MODEL,
@@ -61,6 +65,7 @@ console = Console(stderr=True)
 NPA_WORKFLOWS = Path("workflows/testing")
 CAPTION_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-caption.yaml"
 GENERATE_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-generate.yaml"
+SDG_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-sdg.yaml"
 REASON_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-cosmos-reason.yaml"
 VLM_EVAL_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-token-factory.yaml"
 
@@ -68,6 +73,75 @@ VLM_EVAL_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-token-factory.yaml"
 class OutputFormat(str, Enum):
     text = "text"
     json = "json"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@app.command("sdg")
+@json_stdout_contract
+def sdg_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 JSONL file of id/prompt seeds."
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="S3 prefix for dataset, rejections, provenance, and report.",
+    ),
+    context_path: str = typer.Option(
+        "",
+        "--context-path",
+        help="Optional S3 UTF-8 reference text shared across seeds.",
+    ),
+    router: str = typer.Option(
+        "token_factory", "--router", help="Automatic selector: token_factory or jev."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate input without inference or artifact writes."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", "--output", help="Output format."
+    ),
+) -> None:
+    """Generate a reviewed instruction dataset using automatic open-weight routing.
+
+    Args:
+        input_path: S3 seed JSONL.
+        output_path: S3 output prefix.
+        context_path: Optional shared reference text in S3.
+        router: token_factory by default; jev additionally needs a TypeSafe key.
+        dry_run: Read and validate inputs without provider inference.
+        output_format: Human-readable text or one JSON document.
+    Returns:
+        None; emits the pipeline manifest.
+    Raises:
+        typer.Exit: Input is invalid or the run failed to produce a usable dataset.
+    """
+    try:
+        validate_read_path(input_path, tool="token-factory sdg", allow_hf=False)
+        validate_write_path(output_path, tool="token-factory sdg", required=True)
+        if context_path:
+            validate_read_path(
+                context_path,
+                tool="token-factory sdg",
+                option="--context-path",
+                allow_hf=False,
+            )
+        result = run_sdg(
+            SdgRequest(
+                input_path=input_path,
+                output_path=output_path,
+                context_path=context_path,
+                router=router,
+                dry_run=dry_run,
+            )
+        )
+    except (ValueError, OSError, TokenFactoryToolError, TokenFactoryError) as exc:
+        _fail(str(exc))
+    _emit(result, output_format)
+    if result["status"] == "failed":
+        raise typer.Exit(1)
 
 
 @app.command("caption")
@@ -486,6 +560,7 @@ def status_cmd(
             "default_batch_model": DEFAULT_BATCH_MODEL,
             "caption_workflow": str(CAPTION_WORKFLOW_PATH),
             "generate_workflow": str(GENERATE_WORKFLOW_PATH),
+            "sdg_workflow": str(SDG_WORKFLOW_PATH),
             "reason_workflow": str(REASON_WORKFLOW_PATH),
             "vlm_eval_workflow": str(VLM_EVAL_WORKFLOW_PATH),
         },
@@ -520,6 +595,11 @@ def list_cmd(
                     "kind": "text-batch",
                     "default_model": DEFAULT_BATCH_MODEL,
                 },
+                {
+                    "name": "sdg",
+                    "kind": "synthetic-data",
+                    "default_router": "token_factory",
+                },
                 {"name": "batch-status", "kind": "text-batch"},
                 {
                     "name": "reason",
@@ -545,6 +625,7 @@ def workflow_cmd(
         {
             "caption_workflow": str(CAPTION_WORKFLOW_PATH),
             "generate_workflow": str(GENERATE_WORKFLOW_PATH),
+            "sdg_workflow": str(SDG_WORKFLOW_PATH),
             "reason_workflow": str(REASON_WORKFLOW_PATH),
             "vlm_eval_workflow": str(VLM_EVAL_WORKFLOW_PATH),
         },

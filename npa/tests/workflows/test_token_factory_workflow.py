@@ -59,6 +59,11 @@ def _profile(spec, step) -> dict:
             ("--input-path", "--output-path", "--model", "--max-tokens"),
         ),
         (
+            "token-factory-sdg.yaml",
+            "npa workbench token-factory sdg",
+            ("--input-path", "--output-path", "--output-format"),
+        ),
+        (
             "token-factory-cosmos-reason.yaml",
             "npa workbench token-factory reason",
             ("--input-path", "--output-path"),

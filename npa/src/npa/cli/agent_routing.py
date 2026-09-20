@@ -349,8 +349,11 @@ def usage_summary(data: Any) -> dict[str, int]:
         return {}
     summary: dict[str, int] = {}
     for key in (
-        "prompt_tokens", "completion_tokens", "total_tokens",
-        "prompt_cache_hit_tokens", "prompt_cache_miss_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "prompt_cache_hit_tokens",
+        "prompt_cache_miss_tokens",
     ):
         value = usage.get(key)
         if isinstance(value, bool):

@@ -12,6 +12,12 @@ provider tests. The router runs before final text generation and preserves
 existing grounded, explicit-model, vision, and authorization behavior. Direct
 HTTP avoids adding LangChain to the workbench's runtime dependencies.
 
+The [SDG pipeline](../workbench/token-factory-sdg.md) uses this integration as an
+optional selector before hosted open-weight generation and review. Its default
+selector also runs on Token Factory, allowing a complete live-tested pipeline
+with only the Token Factory key. It exports training data, rejected candidates,
+and per-call provenance rather than returning only a chat response.
+
 Real Token Factory requests have produced positive provider cache counters on
 both models. Live Jev inference still requires a TypeSafe key; transport and
 agent wiring tests do not establish routing accuracy. Keep the feature opt-in

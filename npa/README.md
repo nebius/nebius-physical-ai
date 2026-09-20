@@ -208,6 +208,14 @@ For artifact conversion and sharing, see the
 
 ## Developing and testing npa
 
+Build synthetic instruction datasets with the
+[automatically routed Token Factory SDG pipeline](../docs/workbench/token-factory-sdg.md).
+`npa workbench token-factory sdg` accepts S3 input/output paths; the SDK accepts
+local files for development. Routing defaults to Token Factory's hosted Lightning
+model, with Lightning/MiniMax generation and MiniMax review. Optional `--router jev`
+requires a separate TypeSafe key. `NPA_TOKEN_FACTORY_SDG_LIVE=1` opts into paid live
+pipeline tests; it defaults to unset.
+
 The optional [Jev model router](../docs/workbench/jev-routing.md) selects between
 eligible Token Factory text models in agent chat. `NPA_AGENT_MODEL_ROUTER=jev`
 enables it during agent deployment/bootstrap; it defaults to unset.

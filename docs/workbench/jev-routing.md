@@ -1,5 +1,10 @@
 # Jev model routing with Token Factory
 
+To turn model routing into a synthetic-data pipeline, use
+[Token Factory SDG](token-factory-sdg.md). It adds seed classification, generation,
+review, and dataset export. Its default router also runs on Token Factory;
+`--router jev` retains the TypeSafe option described here.
+
 The agent can use TypeSafe Jev to choose between the eligible Token Factory
 text models before generating an answer. This is an opt-in experimental path.
 It keeps grounded answers, explicit model choices, vision requests, and tool
