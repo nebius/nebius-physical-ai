@@ -18,9 +18,9 @@ EXPECTED_ASSET_LOCK = "e22eb62fc690a5e1d1ea931bab950392ca480caf3d51c7f16fd8cb413
 SHA256_CHUNK_BYTES = 1024 * 1024
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
-    "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
-    "corresponding-source.lock.json": "10ea8843b7b68c70b38a137a1683f46fcb6de8517d1863684f5419b21145967a",
-    "runtime-fetch-manifest.json": "08a628dd444d52dcaa7e60b41f1b416a42a4a7b85cde6dce0ab0887f1ea78f17",
+    "apt-runtime.lock.json": "edcfbf171c6d13b2bfddabc596c0adc29bda8bebd696ec497be6265d863c28b2",
+    "corresponding-source.lock.json": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
+    "runtime-fetch-manifest.json": "72597bda8363f54ef1d243d6f8b2a7660aebdaf54875fd161b11b0097444f957",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
     "runtime-bootstrap.py": "d4b8b2e04d054d8e055b0310f70117e88bf4ed9a9299e23b35acdebb9e0a7687",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
@@ -89,13 +89,13 @@ EXPECTED_LOCK_FILENAMES = frozenset(
 )
 EXPECTED_FIXED_FILE_SHA256 = {
     "opt/npa/gymnasium-robotics/build.sh": (
-        "f5d17e186cada2b3b268676448a7122f4d9daabee886cc37c9265a990eb2cb06"
+        "9d161ffbe37b8c06a187262a1161472368fd38a26bd329e73c6c771b4b1953ae"
     ),
     "usr/local/bin/npa-gymnasium-entrypoint": (
-        "f5d17e186cada2b3b268676448a7122f4d9daabee886cc37c9265a990eb2cb06"
+        "9d161ffbe37b8c06a187262a1161472368fd38a26bd329e73c6c771b4b1953ae"
     ),
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": (
-        "0b6c38b84bf8e386cfaba6caf50634a99e8c1804efec433608ad6438cd5b3d9e"
+        "ceadc24b4d3dc6d1e3a8b3e0e69135b95aea5d57b0e51b6998682ec1e9d64acf"
     ),
     "usr/share/doc/npa-gymnasium-robotics/REDISTRIBUTION.md": (
         "20b5a9d2ea09d0ffb8a737336b52dbeceb7b06c579fbaf12d6f73eac44df5de7"

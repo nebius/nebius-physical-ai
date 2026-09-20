@@ -9,35 +9,35 @@
           "role": "signed_snapshot_indices"
         },
         {
-          "count": 142,
-          "manifest_sha256": "0b237d9533999d9ee81e6aa623e6e637ddaeabe80b758e965a4abc939c756d30",
+          "count": 173,
+          "manifest_sha256": "f4afff7e4736e9ca98e557abce5449c4a23d11d50320747515dcec1b0f1d9e3e",
           "role": "binary_archives"
         },
         {
-          "count": 318,
-          "manifest_sha256": "ce96f665e5bb9c6eb4d7a3d780e7e4b17f09e809572e2851804a2599a88ae9dd",
-          "package_count": 102,
+          "count": 370,
+          "manifest_sha256": "b8392e81d4eb99bcbddaed95fed2cecf17afb10d4508d1652c619b6f2b16d199",
+          "package_count": 117,
           "role": "source_archives"
         },
         {
-          "count": 142,
-          "manifest_sha256": "447d0590a4b7bb21ef3e4492e74991d41f69ae51a100b1ac21355a283d54e09b",
+          "count": 173,
+          "manifest_sha256": "f9d3b25a115b1ca79d20f533ca3cc1bb3679b02f32fd00aed7a571b2a75704c9",
           "role": "installed_copyrights"
         }
       ],
       "binary_component": "ubuntu-neutral-bootstrap-closure",
-      "binary_manifest_sha256": "e5e25fc8ac5570ebf90aa6a73d71243d611fba80d90e49ef2c9485bdc647a505",
-      "build_materials_sha256": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
+      "binary_manifest_sha256": "a6aa62688771732686c8f74ac73487f0532c4c238d874ad3ce99df47590d4b7e",
+      "build_materials_sha256": "edcfbf171c6d13b2bfddabc596c0adc29bda8bebd696ec497be6265d863c28b2",
       "required_artifact_roles": [
         "binary_manifest",
         "build_materials",
         "source_manifest"
       ],
-      "source_manifest_sha256": "ce96f665e5bb9c6eb4d7a3d780e7e4b17f09e809572e2851804a2599a88ae9dd"
+      "source_manifest_sha256": "b8392e81d4eb99bcbddaed95fed2cecf17afb10d4508d1652c619b6f2b16d199"
     }
   ],
   "public_corresponding_source_delivery": "runtime-fetch-operator-owned",
-  "reason": "Installed Ubuntu package bytes map to exact source packages and 318 artifacts in the signed immutable snapshot; restricted Gymnasium-Robotics source, assets and wheels stay outside the public image and are fetched only into the operator-owned runtime cache after the customer's existing upstream notice and acceptance process.",
+  "reason": "Installed Ubuntu package bytes map to exact source packages and 370 artifacts in the signed immutable snapshot; restricted Gymnasium-Robotics source, assets and wheels stay outside the public image and are fetched only into the operator-owned runtime cache after the customer's existing upstream notice and acceptance process.",
   "runtime_fetched_material_excluded": [
     "gymnasium-robotics-source",
     "shadow-hand-assets",

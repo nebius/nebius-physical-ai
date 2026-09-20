@@ -22,15 +22,19 @@ accompany runtime-fetched material.
   `13827e9ee56f097f57acf69ae52b078f9839682d`: Apache-2.0. Exact wheel,
   license, and third-party-notice hashes are recorded in `source-lock.json`.
 - Ubuntu Noble neutral-bootstrap packages: mixed free-software licenses. The
-  exact signed `20260905T000000Z` snapshot maps all 142 installed binary
-  packages to 102 source packages, 318 source artifacts, and 142 installed
+  exact signed `20260905T000000Z` snapshot maps all 173 installed binary
+  packages to 117 source packages, 370 source artifacts, and 173 installed
   copyright files in `apt-runtime.lock.json`. The public image carries only
   this mapped neutral bootstrap closure; restricted workload material remains
   runtime-fetch-only. The requested
   neutral set includes Ubuntu's system `python3-boto3` only for
   trusted receipt, summary, and artifact bookkeeping; it is not a fetched
   workload wheel and carries no permission for runtime-fetched material.
+  Ubuntu libglvnd supplies the generic EGL/OpenGL dispatch libraries through
+  `libegl1`, `libopengl0`, and `libglvnd0`; Ubuntu's required Mesa dependencies
+  remain in this same signed binary/source/copyright closure. These are generic
+  free-software libraries, not the injected NVIDIA driver implementation.
 
-No NVIDIA redistributable runtime is included. NVIDIA EGL/GL libraries are
+No NVIDIA driver runtime is included. NVIDIA vendor EGL/GL libraries are
 supplied by the assigned GPU node at run time and must be observed, never
 copied into the image, runtime cache, or output artifact.

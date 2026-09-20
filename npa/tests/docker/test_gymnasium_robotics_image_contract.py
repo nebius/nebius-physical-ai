@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -76,6 +77,11 @@ def test_repository_locks_are_complete_exact_and_machine_readable() -> None:
     requirements = (IMAGE / "requirements.lock").read_text()
     assert "# status: complete" in requirements
     assert requirements.count("--hash=sha256:") == 19
+    fetch = json.loads((IMAGE / "runtime-fetch-manifest.json").read_text())["runtime_fetch"]
+    for key in ("source_lock", "corresponding_source_lock"):
+        assert fetch[key + "_sha256"] == hashlib.sha256(
+            (IMAGE / fetch[key]).read_bytes()
+        ).hexdigest()
 
 
 def test_image_build_accepts_only_the_exact_complete_pre_network_locks() -> None:
@@ -92,6 +98,24 @@ def test_image_build_accepts_only_the_exact_complete_pre_network_locks() -> None
     )
     assert "EXPECTED_FINAL_PACKAGE_MANIFEST_SHA256" in script
     assert "https://snapshot.ubuntu.com/ubuntu/20260905T000000Z" in script
+
+
+def test_egl_runtime_has_generic_loaders_in_the_pinned_ubuntu_closure() -> None:
+    lock = json.loads((IMAGE / "apt-runtime.lock.json").read_text())
+    requested = {entry["package"] for entry in lock["requested_runtime_packages"]}
+    assert {"libegl1", "libopengl0"} <= requested
+    binaries = {entry["package"]: entry for entry in lock["resolved_binary_packages"]}
+    sources = {
+        (entry["package"], entry["version"])
+        for entry in lock["resolved_source_packages"]
+    }
+    # PyOpenGL's EGL backend loads both EGL and OpenGL through GLVND. Driver
+    # injection supplies the vendor implementation, not these generic loaders.
+    for name in ("libegl1", "libopengl0", "libglvnd0"):
+        package = binaries[name]
+        assert package["source_package"] == "libglvnd"
+        assert (package["source_package"], package["source_version"]) in sources
+        assert package["copyright_sha256"]
 
 
 def test_apt_reads_only_the_ephemeral_world_readable_ca_secret() -> None:

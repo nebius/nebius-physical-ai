@@ -11,7 +11,7 @@
     "source_lock": "source-lock.json",
     "source_lock_sha256": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
     "corresponding_source_lock": "corresponding-source.lock.json",
-    "corresponding_source_lock_sha256": "10ea8843b7b68c70b38a137a1683f46fcb6de8517d1863684f5419b21145967a",
+    "corresponding_source_lock_sha256": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
     "delivery": "operator-owned-runtime-cache",
     "official_origins": [
       "https://codeload.github.com",
