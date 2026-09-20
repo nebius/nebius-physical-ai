@@ -196,6 +196,18 @@ def test_seedvr2_service_environment_is_hash_locked() -> None:
     assert "--hash=sha256:" in service_lock
     assert "--require-hashes" in dockerfile
     assert str(CONTAINER_TEMP_ROOT / "seedvr2-service.lock") in dockerfile
+    verifier = "/usr/bin/python3.12 -I -S /opt/npa-tools/verify_no_weight_payloads.py"
+    assert "verify_no_weight_payloads.py" in dockerfile
+    assert (
+        "/opt/npa-venv/bin/python /opt/npa-tools/verify_no_weight_payloads.py"
+        not in dockerfile
+    )
+    assert dockerfile.index("--run-id image-build --dry-run") < dockerfile.index(
+        verifier
+    )
+    assert dockerfile.index("rm -rf /root/.cache") < dockerfile.index(verifier)
+    assert "/usr/share/doc/npa-seedvr2/weight-payload-scan.json" in dockerfile
+    assert 'test -z "$(find /opt/npa-src /opt/npa-venv' not in dockerfile
     assert "--no-build-isolation /opt/npa-src" in dockerfile
     assert "'uvicorn==" not in dockerfile
 

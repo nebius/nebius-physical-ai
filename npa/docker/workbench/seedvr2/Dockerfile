@@ -197,6 +197,7 @@ PY
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 COPY docker/workbench/seedvr2/service-requirements.lock /tmp/seedvr2-service.lock
+COPY --chmod=0555 docker/workbench/seedvr2/verify_no_weight_payloads.py /opt/npa-tools/verify_no_weight_payloads.py
 RUN python3.12 -m venv /opt/npa-venv \
     && /opt/npa-venv/bin/pip install --no-cache-dir --require-hashes \
       -r /tmp/seedvr2-service.lock \
@@ -210,9 +211,8 @@ RUN python3.12 -m venv /opt/npa-venv \
     && find /opt/seedvr2-venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && rm -rf /root/.cache /tmp/apex /tmp/*.tar.gz /tmp/pip-* \
-    && test -z "$(find /opt/npa-src /opt/npa-venv \
-      \( -iname '*.pth' -o -iname '*.pt' -o -iname '*.safetensors' \
-         -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)"
+    && /usr/bin/python3.12 -I -S /opt/npa-tools/verify_no_weight_payloads.py \
+      > /usr/share/doc/npa-seedvr2/weight-payload-scan.json
 
 ARG NPA_SOURCE_SHA
 ARG SOURCE_DATE_EPOCH
