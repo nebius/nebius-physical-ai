@@ -383,10 +383,10 @@ jobs:
             }
             build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")
           fi
-          if [[ "$TOOL" == curobo ]]; then
-            curobo_source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
-            [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
-            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
+          if [[ "$TOOL" == curobo || "$TOOL" == seedvr2 ]]; then
+            source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
+            [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
+            build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
           fi
           docker buildx build \
             --load \
