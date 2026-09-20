@@ -538,6 +538,73 @@ def status_key(prefix: str) -> str:
     return f"{base}/npa-workflow/status.json"
 
 
+def s3_prefix_has_nonempty_object(
+    client: Any,
+    *,
+    bucket: str,
+    prefix: str,
+) -> bool:
+    """Return whether any object below an exact S3 prefix has content.
+
+    Directory markers are zero-byte objects that sort before their descendants.
+    Inspect every list page so a marker cannot hide a real declared output.
+    Malformed pagination is storage uncertainty and raises instead of claiming
+    absence.
+    """
+
+    continuation_token = ""
+    seen_tokens: set[str] = set()
+    while True:
+        request: dict[str, object] = {
+            "Bucket": bucket,
+            "Prefix": prefix,
+            "MaxKeys": 1000,
+        }
+        if continuation_token:
+            request["ContinuationToken"] = continuation_token
+        response = client.list_objects_v2(**request)
+        if not isinstance(response, Mapping):
+            raise RuntimeError("S3 prefix listing returned a malformed response")
+        contents = response.get("Contents") or []
+        if not isinstance(contents, list):
+            raise RuntimeError("S3 prefix listing returned malformed object records")
+        for item in contents:
+            if not isinstance(item, Mapping) or "Size" not in item:
+                raise RuntimeError(
+                    "S3 prefix listing returned an object without a valid Size"
+                )
+            object_key = item.get("Key")
+            if not isinstance(object_key, str) or not object_key.startswith(prefix):
+                raise RuntimeError(
+                    "S3 prefix listing returned an object outside the requested prefix"
+                )
+            try:
+                size = int(item["Size"])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "S3 prefix listing returned an object without a valid Size"
+                ) from exc
+            if size < 0:
+                raise RuntimeError(
+                    "S3 prefix listing returned an object without a valid Size"
+                )
+            if size > 0:
+                return True
+        truncated = response.get("IsTruncated", False)
+        if not isinstance(truncated, bool):
+            raise RuntimeError("S3 prefix listing returned malformed pagination")
+        if not truncated:
+            return False
+        next_token = str(response.get("NextContinuationToken") or "")
+        if not next_token or next_token in seen_tokens:
+            raise RuntimeError(
+                "S3 prefix listing returned a truncated page without a new "
+                "continuation token"
+            )
+        seen_tokens.add(next_token)
+        continuation_token = next_token
+
+
 class RunStateStore:
     """Persist workflow run manifests (mock ``reader``/``writer`` in unit tests)."""
 
@@ -586,12 +653,10 @@ class RunStateStore:
         )._s3
         try:
             if uri.endswith("/"):
-                response = client.list_objects_v2(
-                    Bucket=parsed.netloc, Prefix=key, MaxKeys=1
-                )
-                return any(
-                    int(item.get("Size") or 0) > 0
-                    for item in response.get("Contents", [])
+                return s3_prefix_has_nonempty_object(
+                    client,
+                    bucket=parsed.netloc,
+                    prefix=key,
                 )
             response = client.head_object(Bucket=parsed.netloc, Key=key)
             return int(response.get("ContentLength") or 0) > 0

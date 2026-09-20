@@ -53,6 +53,7 @@ from npa.orchestration.npa_workflow.interpreter import (
 from npa.orchestration.npa_workflow.run_state import (
     RunStateStore,
     RuntimeRunState,
+    s3_prefix_has_nonempty_object,
     store_for_config,
     utc_now,
 )
@@ -127,11 +128,10 @@ def s3_artifact_exists(uri: str) -> bool:
     key = parsed.path.lstrip("/")
     try:
         if uri.endswith("/"):
-            response = client.list_objects_v2(
-                Bucket=parsed.netloc, Prefix=key, MaxKeys=1
-            )
-            return any(
-                int(item.get("Size") or 0) > 0 for item in response.get("Contents", [])
+            return s3_prefix_has_nonempty_object(
+                client,
+                bucket=parsed.netloc,
+                prefix=key,
             )
         response = client.head_object(Bucket=parsed.netloc, Key=key)
         return int(response.get("ContentLength") or 0) > 0
