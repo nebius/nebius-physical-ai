@@ -1448,7 +1448,12 @@ def verification_archive_digest(verification):
     require(verification.get("valid") is True, "verification_did_not_pass")
     schema = verification.get("schema_version")
     require(
-        schema in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"),
+        schema
+        in (
+            "npa.curobo.image-verification.v1",
+            "npa.docker-save.image-verification.v1",
+            "npa.ncore.oci-verification.v1",
+        ),
         "verification_schema",
     )
     return verification[

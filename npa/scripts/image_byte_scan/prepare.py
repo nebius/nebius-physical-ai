@@ -115,7 +115,11 @@ def authorize(args, directory):
     W.require(
         report.get("valid") is True
         and report.get("schema_version")
-        in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"),
+        in (
+            "npa.curobo.image-verification.v1",
+            "npa.docker-save.image-verification.v1",
+            "npa.ncore.oci-verification.v1",
+        ),
         "accepted_graph_report_required",
     )
     W.require(
