@@ -163,8 +163,8 @@ and you report numeric results from running it.
   ```
   The hermetic safety-contract tests in the same file run under plain
   `pytest` with no env vars and never touch the network. See
-  `test_config.py::test_forget_project_preserves_concurrent_write` for the
-  separate concurrent-write proof this test does not repeat.
+  `tests/cli/test_cleanup_teardown.py` for the separate credential-pruning
+  failure and concurrent-write checks.
 - If a full live run is genuinely infeasible in the environment, say so
   explicitly and still commit the `plan_only` live-matrix entry — never silently
   ship smoke-only.

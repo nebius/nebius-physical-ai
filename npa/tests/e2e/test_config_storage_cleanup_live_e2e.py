@@ -3,10 +3,9 @@
 Shells out to the real `npa` CLI (pinned `PYTHONPATH`/`sys.executable`) to
 delete one root-provisioned disposable bucket and storage service account,
 verifying provider-side absence afterward. It proves one real deletion cycle
-happened; it is not concurrency coverage -- see
-`npa/tests/test_config.py::test_forget_project_preserves_concurrent_write`
-and `::test_concurrent_processes_do_not_lose_terraform_state_removals` for the
-deterministic interleaving/race proof.
+happened. Separate credential-pruning concurrency coverage lives in
+`npa/tests/cli/test_cleanup_teardown.py` as
+`test_bucket_prune_survives_a_concurrent_unrelated_project_write`.
 
 Env contract (every variable is required for the live path; anything missing
 or unsafe makes the test skip before importing npa or running any command):
