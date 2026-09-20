@@ -158,6 +158,13 @@ The workflow attempt then completes as `succeeded`, while `sky_status` retains
 the exact terminal provider state observed during cancellation verification
 (for example `CANCELLED`, `FAILED`, or a terminal `SUCCEEDED` race). Workflow
 completion never rewrites that provider evidence.
+The verified cancellation and output-reuse decision are also written as an
+immutable supervisor event before the mutable runtime attempt is terminalized.
+If the driver stops between those writes, resume binds that event to the exact
+attempt identity, revalidates every declared output, and completes the same
+attempt without submitting replacement work. Missing, malformed, mismatched,
+or temporarily unreadable evidence remains blocked and retryable under the
+same run ID.
 Valid outputs from a provider-succeeded attempt are reused only when the
 recorded workflow, source, and image identities still match the requested run.
 Missing or changed immutable identity evidence blocks reuse and requires the

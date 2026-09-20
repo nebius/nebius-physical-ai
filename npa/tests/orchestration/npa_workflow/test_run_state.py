@@ -258,7 +258,7 @@ def test_unknown_prelaunch_decision_without_launch_identity_is_resolved() -> Non
     assert state.in_flight_wave("001|serial|:train:-") is None
 
 
-def test_completed_recovery_decision_is_not_in_flight() -> None:
+def test_output_reuse_pending_terminalization_remains_in_flight() -> None:
     from npa.orchestration.npa_workflow.run_state import RuntimeRunState
 
     state = RuntimeRunState(workflow="demo", run_id="run-1")
@@ -274,7 +274,9 @@ def test_completed_recovery_decision_is_not_in_flight() -> None:
         }
     )
 
-    assert state.in_flight_wave("001|serial|:train:-") is None
+    record = state.in_flight_wave("001|serial|:train:-")
+    assert record is not None
+    assert record["recovery_decision"] == "reuse_completed_wave"
 
 
 def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:

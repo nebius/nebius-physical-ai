@@ -4280,6 +4280,337 @@ def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
     )
 
 
+def _crashed_output_reuse_case(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+    *,
+    run_id: str,
+    crash_before_runtime_record: bool,
+) -> tuple[Any, Any, MemoryStore, dict[str, Any]]:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    class SimulatedPowerLoss(BaseException):
+        pass
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id=run_id, assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    store = MemoryStore()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING", "CANCELLED"]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=[],
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=store,
+    )
+    executor._submitter = None
+    original_record = executor.ledger.record
+    crashed = False
+
+    def crash_at_reuse_record(attempt) -> None:
+        nonlocal crashed
+        if (
+            not crashed
+            and attempt.recovery_decision == "reuse_completed_wave"
+            and attempt.status == "running"
+        ):
+            crashed = True
+            if not crash_before_runtime_record:
+                original_record(attempt)
+            # A real power loss cannot run the in-process abort handler.
+            executor._abort_wave = lambda *_args, **_kwargs: None
+            raise SimulatedPowerLoss
+        original_record(attempt)
+
+    mocker.patch.object(executor.ledger, "record", side_effect=crash_at_reuse_record)
+
+    # The unit harness may surface the injected process death as a failed step
+    # after the abort hook is disabled; only durable state crosses the restart.
+    with pytest.raises((SimulatedPowerLoss, NpaWorkflowError)):
+        executor.execute(gate)
+
+    state = store.read_runtime_state()
+    assert state is not None
+    crashed_attempt = state.waves[-1]
+    assert crashed
+    assert runtime_sdk_submission.job.call_count == 2
+    assert any(
+        event["phase"] == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+        for event in SupervisorLedger(store).events()
+    )
+    return spec, gate, store, crashed_attempt
+
+
+@pytest.mark.parametrize("crash_before_runtime_record", [True, False])
+def test_resume_reuses_output_complete_wave_after_driver_crash(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+    crash_before_runtime_record: bool,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    run_id = (
+        "rt-output-reuse-crash-before-record"
+        if crash_before_runtime_record
+        else "rt-output-reuse-crash-after-record"
+    )
+    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        run_id=run_id,
+        crash_before_runtime_record=crash_before_runtime_record,
+    )
+
+    submitter = FakeSubmitter()
+    reconciled: list[tuple[str, str]] = []
+
+    def reconcile(name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled.append((name, job_id))
+        return ManagedJobEvidence("found", job_id=job_id, status="CANCELLED")
+
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: True,
+        store=store,
+        reconcile_fn=reconcile,
+    )
+
+    assert resumed.execute(gate)["status"] == "ok"
+    adopted = resumed.attempts[-1]
+    assert submitter.calls == []
+    assert adopted.attempt == crashed_attempt["attempt"]
+    assert adopted.status == "succeeded"
+    assert adopted.sky_status == "CANCELLED"
+    assert adopted.cancellation_state == "verified"
+    assert adopted.recovery_decision == "reuse_completed_wave"
+    assert adopted.adopted and adopted.replayed
+    assert len(reconciled) <= 1
+
+
+@pytest.mark.parametrize("output_state", ["missing", "unavailable"])
+def test_resume_blocks_output_reuse_when_artifacts_cannot_be_revalidated(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+    output_state: str,
+) -> None:
+    run_id = f"rt-output-reuse-{output_state}"
+    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        run_id=run_id,
+        crash_before_runtime_record=False,
+    )
+    submitter = FakeSubmitter()
+
+    def check_output(_uri: str) -> bool:
+        if output_state == "unavailable":
+            raise RuntimeError("object store unavailable")
+        return False
+
+    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
+        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
+
+    blocked = _executor(
+        spec,
+        run_id=run_id,
+        submitter=submitter,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=check_output,
+        store=store,
+        reconcile_fn=unexpected_reconcile,
+    )
+
+    with pytest.raises(NpaWorkflowError, match="declared output"):
+        blocked.execute(gate)
+    assert submitter.calls == []
+    blocked_attempt = blocked.attempts[-1]
+    assert blocked_attempt.attempt == crashed_attempt["attempt"]
+    assert blocked_attempt.recovery_decision == "reuse_completed_wave"
+    assert blocked_attempt.supervisor_blocks_cancellation
+
+    # Once authoritative output access returns, another resume terminalizes the
+    # same exact attempt rather than assigning a replacement identity.
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        submitter=submitter,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: True,
+        store=store,
+        reconcile_fn=unexpected_reconcile,
+    )
+    assert resumed.execute(gate)["status"] == "ok"
+    assert submitter.calls == []
+    assert resumed.attempts[-1].attempt == crashed_attempt["attempt"]
+    assert resumed.attempts[-1].sky_status == "CANCELLED"
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["missing_event", "inexact_cancellation", "identity_mismatch", "output_mismatch"],
+)
+def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+    tamper: str,
+) -> None:
+    run_id = f"rt-output-reuse-tamper-{tamper}"
+    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        run_id=run_id,
+        crash_before_runtime_record=False,
+    )
+    cancellation_keys = []
+    for key, body in store.objects.items():
+        if "/supervisor/attempts/" not in key:
+            continue
+        payload = json.loads(body)
+        if (
+            payload.get("phase") == "cancellation"
+            and (payload.get("recovery") or {}).get("action") == "reuse_completed_wave"
+        ):
+            cancellation_keys.append(key)
+    assert len(cancellation_keys) == 1
+    event_key = cancellation_keys[0]
+    if tamper == "missing_event":
+        del store.objects[event_key]
+    else:
+        payload = json.loads(store.objects[event_key])
+        if tamper == "inexact_cancellation":
+            payload["cancellation"]["exact"] = False
+        elif tamper == "identity_mismatch":
+            payload["attempt_identity"]["image_digest"] = "sha256:" + "d" * 64
+        else:
+            payload["outputs"]["valid"] = []
+        store.objects[event_key] = json.dumps(payload).encode()
+
+    submitter = FakeSubmitter()
+
+    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
+        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
+
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        submitter=submitter,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: True,
+        store=store,
+        reconcile_fn=unexpected_reconcile,
+    )
+
+    with pytest.raises(NpaWorkflowError, match="output-reuse"):
+        resumed.execute(gate)
+    assert submitter.calls == []
+    blocked = resumed.attempts[-1]
+    assert blocked.attempt == crashed_attempt["attempt"]
+    assert blocked.status == "failed"
+    assert blocked.recovery_decision == "reuse_completed_wave"
+    assert blocked.supervisor_blocks_cancellation
+
+
+def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    run_id = "rt-output-reuse-runtime-identity-mismatch"
+    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        run_id=run_id,
+        crash_before_runtime_record=False,
+    )
+    state = store.read_runtime_state()
+    assert state is not None
+    state.waves[-1]["immutable_identity"]["image_digest"] = "sha256:" + "d" * 64
+    store.write_runtime_state(state)
+    submitter = FakeSubmitter()
+
+    def unexpected_reconcile(_name: str, *, job_id: str = "") -> None:
+        raise AssertionError(f"provider reconciliation was not expected for {job_id}")
+
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        submitter=submitter,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            resume=True,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: True,
+        store=store,
+        reconcile_fn=unexpected_reconcile,
+    )
+
+    with pytest.raises(NpaWorkflowError, match="runtime output-reuse identity"):
+        resumed.execute(gate)
+    assert submitter.calls == []
+    blocked = resumed.attempts[-1]
+    assert blocked.attempt == crashed_attempt["attempt"]
+    assert blocked.recovery_decision == "reuse_completed_wave"
+    assert blocked.supervisor_blocks_cancellation
+
+
 def test_runtime_preserves_unverified_output_reuse_cancellation(
     tmp_path: Path,
     mocker,

@@ -1022,6 +1022,175 @@ class SkyPilotWaveExecutor:
             recovery_resumed=bool(record.get("recovery_resumed", False)),
         )
 
+    def _resume_durable_output_reuse(self, attempt: WaveAttempt) -> bool:
+        """Finish an output-complete attempt across the supervisor/runtime seam.
+
+        The supervisor cancellation event is immutable and is written before the
+        mutable runtime ledger can terminalize the attempt. A process loss between
+        those writes must not turn verified completion into replacement work.
+        """
+
+        from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+        store = self.ledger.store
+        if store is None or not attempt.logical_launch_id:
+            return False
+        claimed_reuse = attempt.recovery_decision == "reuse_completed_wave"
+        event: Mapping[str, Any] | None = None
+        for candidate in reversed(SupervisorLedger(store).events()):
+            identity = candidate.get("attempt_identity")
+            recovery = candidate.get("recovery")
+            if not isinstance(identity, Mapping) or not isinstance(recovery, Mapping):
+                continue
+            if (
+                candidate.get("phase") == "cancellation"
+                and identity.get("logical_attempt_id") == attempt.logical_launch_id
+                and recovery.get("action") == "reuse_completed_wave"
+            ):
+                event = candidate
+                break
+        if event is None and not claimed_reuse:
+            return False
+
+        def block(reason: str) -> bool:
+            attempt.status = "failed"
+            attempt.error_category = "controller"
+            attempt.error = reason
+            attempt.reconciliation_error = reason
+            # Keep this decision explicitly in-flight so every later resume
+            # rechecks the immutable event instead of applying terminal retry.
+            attempt.recovery_decision = "reuse_completed_wave"
+            attempt.operator_remedy = (
+                "Restore authoritative supervisor and object-store evidence, then "
+                "resume the same run ID; do not launch replacement work."
+            )
+            attempt.supervisor_blocks_cancellation = True
+            self.ledger.record(attempt)
+            return True
+
+        if event is None:
+            return block(
+                f"wave {attempt.key}: durable output-reuse decision has no matching "
+                "immutable supervisor cancellation event"
+            )
+
+        identity = event.get("attempt_identity")
+        cancellation = event.get("cancellation")
+        recovery = event.get("recovery")
+        outputs = event.get("outputs")
+        if not all(
+            isinstance(item, Mapping)
+            for item in (identity, cancellation, recovery, outputs)
+        ):
+            return block(
+                f"wave {attempt.key}: immutable output-reuse event is incomplete"
+            )
+        assert isinstance(identity, Mapping)
+        assert isinstance(cancellation, Mapping)
+        assert isinstance(recovery, Mapping)
+        assert isinstance(outputs, Mapping)
+
+        expected_identity = {
+            "runtime": "skypilot",
+            "run_id": self.run_id,
+            "attempt": attempt.attempt,
+            "logical_attempt_id": attempt.logical_launch_id,
+            "provider_job_id": attempt.job_id,
+            "provider_job_name": attempt.job_name,
+            "workflow_sha256": _workflow_identity(self.spec),
+            "source_sha256": _source_identity(),
+            "image_digest": _image_identity(self.render_options),
+        }
+        if any(
+            not expected or identity.get(name) != expected
+            for name, expected in expected_identity.items()
+        ):
+            return block(
+                f"wave {attempt.key}: immutable output-reuse identity does not "
+                "match the current attempt"
+            )
+        if any(
+            getattr(attempt, name) != expected_identity[name]
+            for name in ("workflow_sha256", "source_sha256", "image_digest")
+        ):
+            return block(
+                f"wave {attempt.key}: runtime output-reuse identity does not "
+                "match the current workflow, source, and image"
+            )
+
+        terminal_status = str(
+            cancellation.get("provider_terminal_status") or ""
+        ).upper()
+        if (
+            cancellation.get("exact") is not True
+            or cancellation.get("provider_job_id") != attempt.job_id
+            or str(cancellation.get("status") or "").lower()
+            not in {"cancelled", "canceled"}
+            or not is_terminal(terminal_status)
+            or recovery.get("reason_code") != "DECLARED_OUTPUTS_VALID"
+        ):
+            return block(
+                f"wave {attempt.key}: immutable output-reuse cancellation is not "
+                "exactly verified terminal"
+            )
+
+        expected_outputs = sorted(
+            uri for output in attempt.outputs if (uri := _declared_output_uri(output))
+        )
+        event_declared = sorted(str(uri) for uri in outputs.get("declared") or [])
+        event_valid = sorted(str(uri) for uri in outputs.get("valid") or [])
+        if (
+            len(expected_outputs) != len(attempt.outputs)
+            or not expected_outputs
+            or outputs.get("status") != "valid"
+            or outputs.get("missing")
+            or event_declared != expected_outputs
+            or event_valid != expected_outputs
+        ):
+            return block(
+                f"wave {attempt.key}: immutable output-reuse artifact evidence "
+                "does not match current declared outputs"
+            )
+        try:
+            outputs_valid = self._outputs_exist(attempt.outputs)
+        except Exception as exc:  # noqa: BLE001 - storage uncertainty fails closed
+            return block(
+                f"wave {attempt.key}: declared output revalidation is unavailable: "
+                f"{sanitize_reason(exc)}"
+            )
+        if not outputs_valid:
+            return block(
+                f"wave {attempt.key}: declared outputs no longer validate for "
+                "durable output reuse"
+            )
+
+        attempt.status = "succeeded"
+        attempt.sky_status = terminal_status
+        attempt.cancellation_state = "verified"
+        attempt.cancellation_error = ""
+        attempt.recovery_decision = "reuse_completed_wave"
+        attempt.replayed = True
+        attempt.adopted = True
+        attempt.ended_at = utc_now()
+        attempt.error = ""
+        attempt.primary_error = ""
+        attempt.reconciliation_error = ""
+        attempt.reconciliation.append(
+            {
+                "outcome": "completed",
+                "source": "immutable_supervisor_output_reuse",
+                "provider_terminal_status": terminal_status,
+                "declared_outputs_valid": True,
+                "checked_at": utc_now(),
+            }
+        )
+        self.ledger.record(attempt)
+        self._log(
+            f"wave {attempt.key}: resumed immutable output-reuse completion for "
+            f"exact job {attempt.job_id}; no replacement attempt submitted"
+        )
+        return True
+
     def _reconcile_in_flight(
         self,
         key: str,
@@ -1051,6 +1220,9 @@ class SkyPilotWaveExecutor:
         attempt.outputs = [dict(item) for step in steps for item in step.outputs]
         attempt.adopted = True
         self.attempts.append(attempt)
+
+        if self._resume_durable_output_reuse(attempt):
+            return attempt
 
         evidence = self._reconcile_exact(job_name, job_id)
         outcome = str(getattr(evidence, "outcome", "") or "")
