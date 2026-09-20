@@ -774,10 +774,13 @@ def list_resolved_artifacts(
         and _has_unambiguous_parent_run_root(state, run_id=resolution.run_id)
     )
     uses_run_root_layout = (
-        resolution.workflow_name == PAIDF_WORKFLOW_NAME
-        or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
-        or has_pending_declarative_control_prefix
-        or has_declarative_control_prefix
+        has_pending_declarative_control_prefix
+        if resolution.manifest_pending
+        else (
+            resolution.workflow_name == PAIDF_WORKFLOW_NAME
+            or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
+            or has_declarative_control_prefix
+        )
     )
     if not uses_run_root_layout:
         from npa.orchestration.skypilot.workflow_state import list_artifacts
