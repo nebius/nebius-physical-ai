@@ -237,6 +237,26 @@ def test_build_fiftyone_dataset_prefers_canonical_vlm_result() -> None:
     assert dataset["summary"]["grade_score"] == 0.25
 
 
+def test_build_fiftyone_dataset_does_not_mask_malformed_canonical_vlm_result() -> None:
+    run = "paidf-malformed-canonical-grade"
+    base = f"checkpoints/physical-ai-data-factory/{run}"
+    canonical = f"{base}/grade/{RESULT_FILENAME}"
+    legacy = f"{base}/grade/{LEGACY_RESULT_FILENAME}"
+    calls: list[str] = []
+
+    def read_json(key: str) -> dict | None:
+        calls.append(key)
+        return {"score": 0.9} if key == legacy else None
+
+    dataset = build_fiftyone_dataset(
+        [legacy, canonical], run_id=run, read_json=read_json
+    )
+
+    assert canonical in calls
+    assert legacy not in calls
+    assert dataset["summary"]["grade_score"] is None
+
+
 def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:
     run = "paidf-fo"
     base = f"checkpoints/physical-ai-data-factory/{run}"

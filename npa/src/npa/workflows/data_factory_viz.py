@@ -1055,7 +1055,8 @@ def _load_stage_docs(
         _vlm_result_filename,
         _legacy_vlm_result_filename,
     ):
-        ev = review.read(grade_dir / name, "evaluator")
+        report_path = grade_dir / name
+        ev = review.read(report_path, "evaluator")
         if isinstance(ev, dict):
             grade_docs.append(
                 _json_block("Evaluator — integrity and appearance checks", ev)
@@ -1063,6 +1064,9 @@ def _load_stage_docs(
             stage_log.append(
                 f"grade: score={ev.get('score')}, status={ev.get('status', 'n/a')}"
             )
+            break
+        # Do not display stale legacy data when a canonical report is malformed.
+        if report_path.is_file():
             break
     dec = review.read(grade_dir / "decision.json", "quality")
     if isinstance(dec, dict):

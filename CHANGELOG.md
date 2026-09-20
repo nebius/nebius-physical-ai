@@ -182,10 +182,11 @@ under `npa/src/npa/workflows/skypilot/`.
   server, and it is registered in the live matrix as a `cpu` case.
 - **`outputs:` declarations corrected in eight specs (eleven stages).** A stage can
   succeed while writing its result somewhere other than the URI the spec declares —
-  `vlm-eval` writes `vlm_eval_stub.json`, `mjlab eval` writes `mjlab_eval.json`, the
-  Cosmos reasoner writes `scene_reasoning.json`, and several specs declared
-  `report.json` / `plan.json`. `test_spec_declared_outputs.py` now compares every
-  stage's declared artifact against the tool's own `*_result_uri_for()` helper.
+  before the neutral result-name migration, `vlm-eval` wrote
+  `vlm_eval_stub.json`; `mjlab eval` writes `mjlab_eval.json`, the Cosmos reasoner
+  writes `scene_reasoning.json`, and several specs declared `report.json` /
+  `plan.json`. `test_spec_declared_outputs.py` now compares every stage's declared
+  artifact against the tool's own `*_result_uri_for()` helper.
 - `npa workbench {mjlab,retargeting,token-factory,vlm-eval} workflow|status` print
   npa.workflow spec paths instead of raw SkyPilot template paths, and
   `vlm-eval workflow|status` gain a `token_factory_workflow` key. A guardrail asserts

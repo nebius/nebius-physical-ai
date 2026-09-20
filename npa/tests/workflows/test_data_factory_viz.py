@@ -357,6 +357,19 @@ def test_load_stage_docs_prefers_canonical_vlm_result(tmp_path: Path) -> None:
     assert '"score": 0.9' not in report
 
 
+def test_load_stage_docs_does_not_mask_malformed_canonical_vlm_result(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.data_factory_viz import _load_stage_docs
+
+    grade = tmp_path / "grade"
+    grade.mkdir()
+    (grade / RESULT_FILENAME).write_text("{")
+    (grade / LEGACY_RESULT_FILENAME).write_text(json.dumps({"score": 0.9}))
+
+    assert "pipeline/3_grade" not in _load_stage_docs(tmp_path)
+
+
 def test_stage_docs_select_latest_append_only_refinement_iteration(
     tmp_path: Path,
 ) -> None:

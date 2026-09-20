@@ -337,7 +337,7 @@ def _put_immutable_json(payload: dict[str, Any], uri: str, *, label: str) -> str
 
 
 def _quality_gate_contract(report: dict[str, Any], threshold: float) -> dict[str, Any]:
-    """Evaluate the one authoritative completed/hard-check/score contract."""
+    """Evaluate the authoritative terminal-status/hard-check/score contract."""
 
     score = float(report.get("score", 0.0))
     if not math.isfinite(score):
@@ -347,9 +347,12 @@ def _quality_gate_contract(report: dict[str, Any], threshold: float) -> dict[str
     if raw_passed is not None and not isinstance(raw_passed, bool):
         raise TypeError("expected 'passed' to be a boolean")
     hard_checks_passed = raw_passed is True
+    status_matches = status == "completed" or status == (
+        "passed" if hard_checks_passed else "needs_iteration"
+    )
     decision = (
         "promote_checkpoint"
-        if status == "completed" and hard_checks_passed and score >= threshold
+        if status_matches and hard_checks_passed and score >= threshold
         else "loop_back"
     )
     return {

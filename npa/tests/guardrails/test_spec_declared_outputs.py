@@ -55,6 +55,10 @@ RESULT_URI_TOOLS: dict[str, tuple[str, str]] = {
         "--output-path",
         "npa.workbench.vlm_eval:result_uri_for",
     ),
+    "workbench.vlm_eval.judge_against_plan": (
+        "--output-path",
+        "npa.workbench.vlm_eval:result_uri_for",
+    ),
     "workbench.vlm_eval.loop": (
         "--output-path",
         "npa.workbench.vlm_eval:loop_report_uri_for",

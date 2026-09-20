@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import io
 import json
 from pathlib import Path
@@ -9,7 +10,11 @@ from pathlib import Path
 import pytest
 import typer
 
-from npa.workbench.vlm_eval import LEGACY_RESULT_FILENAME, RESULT_FILENAME
+from npa.workbench.vlm_eval import (
+    LEGACY_RESULT_FILENAME,
+    RESULT_FILENAME,
+    evaluate_stub,
+)
 from npa.workflows import data_factory_stages as dfs
 
 
@@ -1163,18 +1168,41 @@ def test_prepare_refinement_never_overwrites_conflicting_attempt_history(
 
 def test_grade_gate_promotes_above_threshold(tmp_path: Path) -> None:
     scores = tmp_path / RESULT_FILENAME
-    scores.write_text(json.dumps({"status": "completed", "score": 0.8, "passed": True}))
+    result = evaluate_stub(
+        input_path="rollout",
+        output_path=str(tmp_path),
+        score=0.8,
+        success_threshold=0.5,
+    )
+    scores.write_text(json.dumps(asdict(result)))
     decision_path = tmp_path / "decision.json"
     decision = dfs.grade_gate(str(tmp_path), str(decision_path), threshold=0.5)
     assert decision == "promote_checkpoint"
     assert json.loads(decision_path.read_text())["decision"] == "promote_checkpoint"
 
 
+def test_grade_gate_rejects_inconsistent_vlm_status(tmp_path: Path) -> None:
+    scores = tmp_path / RESULT_FILENAME
+    scores.write_text(json.dumps({"status": "passed", "score": 0.9, "passed": False}))
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "loop_back"
+
+
 def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
     tmp_path: Path,
 ) -> None:
     legacy = tmp_path / LEGACY_RESULT_FILENAME
-    legacy.write_text(json.dumps({"status": "completed", "score": 0.8, "passed": True}))
+    result = evaluate_stub(
+        input_path="historical-rollout",
+        output_path=str(tmp_path),
+        score=0.8,
+        success_threshold=0.5,
+    )
+    legacy.write_text(json.dumps(asdict(result)))
 
     decision = dfs.grade_gate(
         str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5

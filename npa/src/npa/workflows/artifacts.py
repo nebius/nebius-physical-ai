@@ -3447,8 +3447,10 @@ def build_fiftyone_dataset(
         _LEGACY_VLM_RESULT_FILENAME = "vlm_eval_stub.json"
     grade: dict[str, Any] = {}
     for _grade_name in (_VLM_RESULT_FILENAME, _LEGACY_VLM_RESULT_FILENAME):
-        grade = read_json(json_rel.get(f"grade/{_grade_name}", "")) or {}
-        if grade:
+        grade_key = json_rel.get(f"grade/{_grade_name}", "")
+        grade = read_json(grade_key) or {}
+        # A present canonical object is authoritative even when it is malformed.
+        if grade or grade_key:
             break
     decision = read_json(json_rel.get("grade/decision.json", "")) or {}
     curation = read_json(json_rel.get("curation/report.json", "")) or {}
