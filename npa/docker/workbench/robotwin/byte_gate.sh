@@ -132,5 +132,13 @@ except Exception:
     summary = {"diagnostic": "unavailable"}
 print("RoboTwin byte gate diagnostic: " + json.dumps(summary, sort_keys=True))
 PY
+  if [[ -n "${ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL:-}" ]]; then
+    # Even unexpected library diagnostics must never expose the signed URL.
+    if npa/.venv/bin/python npa/docker/workbench/robotwin/private_failure_upload.py "$phase" >/dev/null 2>&1; then
+      echo 'RoboTwin private failure evidence upload completed'
+    else
+      echo 'RoboTwin private failure evidence upload failed'
+    fi
+  fi
   exit "$scan_status"
 fi

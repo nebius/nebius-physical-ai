@@ -443,6 +443,7 @@ jobs:
         env:
           CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
           INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
+          ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
         run: |
           set -euo pipefail
           npa/.venv/bin/python - <<'PY'
@@ -698,6 +699,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
           INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
+          ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
