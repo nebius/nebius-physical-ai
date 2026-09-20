@@ -53,6 +53,7 @@ PLATFORM_SECRET_ENV = {
     "AWS_SESSION_TOKEN",
 }
 MAX_PRIVATE_RECEIPT_BYTES = 1024 * 1024
+PUBLIC_HABITAT_REPOSITORY = "ghcr.io/nebius/nebius-physical-ai/npa-habitat-sim"
 RFC3339_UTC = re.compile(
     r"[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
     r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?Z"
@@ -154,6 +155,26 @@ def _assert_private_image(receipt: dict[str, object]) -> None:
         "authenticated_pull_succeeded": True,
     }
     assert evidence["anonymous_status"] in {401, 403}
+
+
+def _assert_image(receipt: dict[str, object]) -> None:
+    image = str(receipt["image"])
+    if not image.startswith(PUBLIC_HABITAT_REPOSITORY + "@"):
+        _assert_private_image(receipt)
+        return
+    assert DIGEST.fullmatch(image)
+    assert re.fullmatch(r"[0-9a-f]{40}", str(receipt["head"]))
+    assert receipt["registry"] == PUBLIC_HABITAT_REPOSITORY.rsplit("/", 1)[0]
+    evidence, _path, payload = _private_json(receipt["registry_evidence"]["path"])
+    assert hashlib.sha256(payload).hexdigest() == receipt["registry_evidence"]["sha256"]
+    assert evidence == {
+        "schema_version": "npa.registry.public-development-pull.v1",
+        "image": image,
+        "development_image": PUBLIC_HABITAT_REPOSITORY + ":dev-" + str(receipt["head"]),
+        "resolved_digest": image.rsplit("@", 1)[1],
+        "oci_revision": receipt["head"],
+        "anonymous_pull_succeeded": True,
+    }
 
 
 def _assert_provider_binding(receipt: dict[str, object]) -> dict[str, object]:
@@ -303,7 +324,8 @@ def _canonical_skypilot_task(
     assert hashlib.sha256(task["setup"].encode()).hexdigest() == plan["setup_sha256"]
     assert hashlib.sha256(task["run"].encode()).hexdigest() == plan["run_sha256"]
     assert "Habitat-Sim refuses a Python source overlay" in task["setup"]
-    assert "/opt/venv/bin/python" in task["setup"]
+    assert "/usr/local/bin/python3" in task["setup"]
+    assert "/usr/local/libexec/npa-habitat-runtime" in task["setup"]
     assert (
         " ".join(
             str(item) for item in _expected_plan_argv(plan, receipt, plan["output_uri"])
@@ -458,7 +480,7 @@ def _private_receipt() -> dict[str, object]:
         "accelerator": "RTX PRO 6000 Blackwell",
         "gpu_count": 1,
     }
-    _assert_private_image(receipt)
+    _assert_image(receipt)
     _assert_provider_binding(receipt)
     return receipt
 

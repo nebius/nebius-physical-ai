@@ -1608,30 +1608,23 @@ def _vllm_install_setup(model: str) -> str:
 
 HABITAT_SIM_IMMUTABLE_SETUP = (
     "set -euo pipefail\n"
-    "test -x /opt/venv/bin/python\n"
+    "test -x /usr/local/bin/python3\n"
+    "test -x /usr/local/libexec/npa-habitat-runtime\n"
     "test ! -e /tmp/npa-src -a ! -e /tmp/npa-src-overlay\n"
     'test -z "${NPA_SRC_S3_URI:-}" -a -z "${NPA_SRC_OVERLAY:-}"\n'
     'case "${PYTHONPATH:-}" in ""|/opt/npa-runtime) ;; '
     '*) echo "Habitat-Sim refuses a Python source overlay" >&2; exit 70 ;; esac\n'
-    'export PATH="/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n'
+    'export PATH="/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"\n'
     "export PYTHONPATH=/opt/npa-runtime\n"
-    "cd /usr/share/doc/npa-habitat-sim/npa-source-provenance\n"
-    "sha256sum -c npa-source-manifest.sha256 >/dev/null\n"
-    "cmp inputs/src/npa/__init__.py /opt/npa-runtime/npa/__init__.py\n"
-    "cmp inputs/src/npa/workflows/__init__.py /opt/npa-runtime/npa/workflows/__init__.py\n"
-    "cmp inputs/src/npa/workflows/habitat_sim_smoke.py /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py\n"
-    "cmp inputs/docker/workbench/habitat-sim/entrypoint.sh /usr/local/bin/npa-habitat-entrypoint\n"
-    "/opt/venv/bin/python - <<'PY'\n"
-    "from importlib.metadata import version\n"
+    "/usr/bin/python3 /usr/share/doc/npa-habitat-sim/bootstrap_sources.py verify /usr/share/doc/npa-habitat-sim\n"
+    "/usr/bin/python3 - <<'PY'\n"
     "from pathlib import Path\n"
-    "import habitat_sim, npa, npa.workflows.habitat_sim_smoke as smoke, sys\n"
-    "assert Path(sys.executable).resolve() == Path('/opt/venv/bin/python').resolve()\n"
-    "assert Path(habitat_sim.__file__).resolve().is_relative_to('/opt/venv')\n"
+    "import npa, npa.workflows.habitat_sim_smoke as smoke\n"
     "assert Path(npa.__file__).resolve() == Path('/opt/npa-runtime/npa/__init__.py')\n"
     "assert Path(smoke.__file__).resolve() == Path('/opt/npa-runtime/npa/workflows/habitat_sim_smoke.py')\n"
-    "assert version('habitat-sim') == '0.3.3'\n"
+    "smoke._source_provenance()\n"
     "PY\n"
-    "printf '%s\\n' /opt/venv/bin/python > /tmp/npa-python\n"
+    "printf '%s\\n' /usr/local/bin/python3 > /tmp/npa-python\n"
     "printf '%s\\n' /opt/npa-runtime > /tmp/npa-baked-pythonpath\n"
 )
 

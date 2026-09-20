@@ -18,6 +18,7 @@ import yaml
 from npa.deploy.images import container_image_for_tool
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.skypilot_render import (
+    HABITAT_SIM_IMMUTABLE_SETUP,
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
     render_skypilot_yaml,
@@ -160,7 +161,7 @@ def test_renderer_preserves_the_exact_one_rtx_habitat_placement() -> None:
     assert "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in rendered
 
 
-def test_renderer_uses_only_the_baked_habitat_runtime(monkeypatch) -> None:
+def test_renderer_uses_the_neutral_bootstrap_runtime_shim(monkeypatch) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://fixture/source-overlay")
     monkeypatch.setenv("NPA_SRC_OVERLAY", "1")
     spec = load_spec(WORKFLOW)
@@ -176,8 +177,11 @@ def test_renderer_uses_only_the_baked_habitat_runtime(monkeypatch) -> None:
     task = list(yaml.safe_load_all(rendered))[1]
     assert task["envs"].get("NPA_SRC_S3_URI") is None
     assert task["envs"].get("NPA_SRC_OVERLAY") is None
-    assert "/opt/venv/bin/python" in task["setup"]
-    assert "sha256sum -c npa-source-manifest.sha256" in task["setup"]
+    assert "/usr/local/bin/python3" in task["setup"]
+    assert "/usr/local/libexec/npa-habitat-runtime" in task["setup"]
+    assert "bootstrap_sources.py verify" in task["setup"]
+    assert "/opt/venv" not in task["setup"]
+    assert "import habitat_sim" not in task["setup"]
     assert "pip install" not in task["setup"]
     assert "/" + "tmp/npa-src-overlay" in task["setup"]
 
@@ -874,11 +878,7 @@ def _bound_live_fixture(tmp_path: Path):
         },
         "submission_id": "skypilot-task-fixture",
     }
-    setup = (
-        "set -euo pipefail\n"
-        "echo 'Habitat-Sim refuses a Python source overlay' >/dev/null\n"
-        "test -x /opt/venv/bin/python\n"
-    )
+    setup = HABITAT_SIM_IMMUTABLE_SETUP
     run = (
         "set -euo pipefail\n"
         + " ".join(
@@ -1165,6 +1165,35 @@ def test_live_receipt_binds_private_image_and_strict_provider_readback(
         }
         with pytest.raises(AssertionError):
             LIVE._assert_private_image(receipt)
+
+
+@pytest.mark.parametrize("changed", [None, "image", "development_image", "resolved_digest", "oci_revision", "anonymous_pull_succeeded"])
+def test_public_live_image_requires_anonymous_exact_head_evidence(tmp_path, changed):
+    receipt = _live_receipt(tmp_path)
+    receipt["head"] = "b" * 40
+    receipt["registry"] = "ghcr.io/nebius/nebius-physical-ai"
+    receipt["image"] = LIVE.PUBLIC_HABITAT_REPOSITORY + "@sha256:" + "a" * 64
+    evidence = {
+        "schema_version": "npa.registry.public-development-pull.v1",
+        "image": receipt["image"],
+        "development_image": LIVE.PUBLIC_HABITAT_REPOSITORY + ":dev-" + receipt["head"],
+        "resolved_digest": "sha256:" + "a" * 64,
+        "oci_revision": receipt["head"],
+        "anonymous_pull_succeeded": True,
+    }
+    if changed:
+        evidence[changed] = False if changed == "anonymous_pull_succeeded" else "wrong-identity"
+    path = Path(receipt["registry_evidence"]["path"])
+    path.write_text(json.dumps(evidence))
+    receipt["registry_evidence"]["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if changed:
+        with pytest.raises(AssertionError):
+            LIVE._assert_image(receipt)
+    else:
+        LIVE._assert_image(receipt)
+        path.write_text(path.read_text() + " ")
+        with pytest.raises(AssertionError):
+            LIVE._assert_image(receipt)
 
 
 def test_provider_binding_requires_ready_transaction_fresh_readback(tmp_path) -> None:
