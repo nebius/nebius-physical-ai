@@ -331,6 +331,7 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     # tests must not make one (tests of the probe itself inject a connector).
     monkeypatch.setenv("NPA_SSH_EGRESS_PROBE", "off")
 
+    import npa.cli.agent_env_files
     import npa.cli.cluster.terraform_lifecycle
     import npa.cli.skypilot
     import npa.clients.config
@@ -338,9 +339,18 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     import npa.cluster.state
     import npa.controller_ownership
     import npa.deploy.provisioner
+    import npa.deploy.ssh_trust
+    import npa.orchestration.npa_workflow.first_run_state
     import npa.orchestration.skypilot._bin
+    import npa.workbench.access_approval
 
     npa_dir = home / ".npa"
+    # The bases matter as much as the paths derived from them: cleanup.py reads
+    # `NPA_CONFIG_DIR` directly and seeds it into a subprocess environment, so
+    # leaving it unpatched hands the operator's real directory to a child
+    # process during a unit test.
+    monkeypatch.setattr(npa.clients.config, "NPA_CONFIG_DIR", npa_dir)
+    monkeypatch.setattr(npa.clients.credentials, "NPA_CONFIG_DIR", npa_dir)
     monkeypatch.setattr(npa.clients.config, "CONFIG_PATH", npa_dir / "config.yaml")
     monkeypatch.setattr(
         npa.clients.credentials, "CREDENTIALS_PATH", npa_dir / "credentials.yaml"
@@ -348,6 +358,8 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
     monkeypatch.setattr(
         npa.controller_ownership, "CONFIG_PATH", npa_dir / "config.yaml"
     )
+    monkeypatch.setattr(npa.cli.agent_env_files, "CONFIG_PATH", npa_dir / "config.yaml")
+    monkeypatch.setattr(npa.deploy.provisioner, "_NPA_CONFIG_DIR", npa_dir)
     monkeypatch.setattr(
         npa.orchestration.skypilot._bin, "CONFIG_PATH", npa_dir / "config.yaml"
     )
@@ -368,6 +380,20 @@ def isolate_home_config(monkeypatch, tmp_path_factory, request):
         "_DEFAULT_SKYPILOT_BIN",
         npa_dir / "skypilot-venv" / "bin" / "sky",
     )
+    monkeypatch.setattr(npa.deploy.ssh_trust, "NPA_CONFIG_DIR", npa_dir)
+    monkeypatch.setattr(
+        npa.workbench.access_approval,
+        "DEFAULT_STATE_PATH",
+        npa_dir / "access-approvals.json",
+    )
+    # first_run_state writes a ledger entry per workflow run. Before these were
+    # repointed the unit suite created real entries under the operator's
+    # ~/.npa/workflow-runs; test_home_config_isolation.py keeps that from
+    # regressing.
+    first_run_state = npa.orchestration.npa_workflow.first_run_state
+    monkeypatch.setattr(first_run_state, "_NPA_CONFIG_DIR", npa_dir)
+    monkeypatch.setattr(first_run_state, "DEFAULT_ROOT", npa_dir / "workflow-runs")
+    monkeypatch.setattr(first_run_state, "LEGACY_PATH", npa_dir / "paidf-first-run-id")
 
 
 def _is_huggingface_url(url: object) -> bool:
