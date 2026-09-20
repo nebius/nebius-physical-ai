@@ -32,9 +32,11 @@ def named(name):
 
 def curobo_block(name):
     script = named(name)["run"]
+    start = script.index("payload_binding=()")
     opening = 'if [ "$TOOL" = curobo ]; then\n'
-    start = script.index(opening)
-    end = script.index("\nfi", start) + len("\nfi")
+    first = script.index(opening, start)
+    second = script.index(opening, first + len(opening))
+    end = script.index("\nfi", second) + len("\nfi")
     return script[start:end]
 
 
@@ -112,7 +114,24 @@ if os.environ.get("FAIL_OPERATION") == operation:
 if script == "verify_image.py":
     assert pathlib.Path(option("--docker-save")).read_bytes() == b"saved image"
     assert option("--expected-image-id") == "sha256:" + "a" * 64
-    pathlib.Path(option("--json")).write_text(json.dumps({"valid": True, "expected_image_id": option("--expected-image-id")}))
+    pathlib.Path(option("--json")).write_text(json.dumps({
+        "valid": True,
+        "expected_image_id": option("--expected-image-id"),
+        "image_config_digest": option("--expected-image-id"),
+        "image_manifest_digest": None,
+    }))
+elif script == "scan_image_omniverse_payload.py":
+    assert pathlib.Path(option("--tarball")).read_bytes() == b"saved image"
+    if os.environ["TOOL"] == "curobo":
+        graph = pathlib.Path(option("--verification-report"))
+        assert json.loads(graph.read_text())["valid"] is True
+        if "-pushed" in option("--tarball"):
+            assert option("--expected-manifest-digest") == "sha256:" + "b" * 64
+            assert option("--registry-image") == "local-image@" + "sha256:" + "b" * 64
+        else:
+            assert "--expected-manifest-digest" not in args
+            assert "--registry-image" not in args
+    pathlib.Path(option("--json")).write_text('{"verdict":"clean"}')
 elif operation == "authorize":
     root = pathlib.Path(option("--analysis-root"))
     archive = pathlib.Path(option("--archive"))
@@ -174,6 +193,7 @@ print(json.loads(pathlib.Path(sys.argv[3]).read_text())["expected_image_id"])
         "PATH": str(binary) + os.pathsep + os.defpath,
         "TOOL": "curobo",
         "IMAGE": "local-image",
+        "DIGEST": "sha256:" + "b" * 64,
         "RUNNER_TEMP": str(runtime),
         "CUROBO_BYTE_GATE_ROOT": str(analysis),
         "CUROBO_PUBLIC_NATIVE_POLICY_SHA256": yaml.safe_load(PUBLISH.read_text())[
@@ -190,7 +210,14 @@ print(json.loads(pathlib.Path(sys.argv[3]).read_text())["expected_image_id"])
     "step_name,phase,suffix", [(PRE, "pre", ""), (POST, "post", "-pushed")]
 )
 @pytest.mark.parametrize(
-    "failure", ["", "verify_image.py", "authorize", "scan_image_bytes.py"]
+    "failure",
+    [
+        "",
+        "verify_image.py",
+        "scan_image_omniverse_payload.py",
+        "authorize",
+        "scan_image_bytes.py",
+    ],
 )
 def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
     shell_environment, step_name, phase, suffix, failure
@@ -200,7 +227,7 @@ def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
     original.write_bytes(b"saved image")
     env["FAIL_OPERATION"] = failure
     # The post-push block receives the already resolved immutable reference.
-    script = 'set -euo pipefail\nexact="local-image@sha256:fixture"\n'
+    script = 'set -euo pipefail\nexact="local-image@' + "sha256:" + "b" * 64 + '"\n'
     script += curobo_block(step_name) + '\nprintf "gate completed\\n"\n'
     result = subprocess.run(
         ["bash", "-c", script],
@@ -213,7 +240,12 @@ def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
     calls = [
         json.loads(line) for line in Path(env["GATE_LOG"]).read_text().splitlines()
     ]
-    expected = ["verify_image.py", "authorize", "scan_image_bytes.py"]
+    expected = [
+        "verify_image.py",
+        "scan_image_omniverse_payload.py",
+        "authorize",
+        "scan_image_bytes.py",
+    ]
     if failure:
         assert result.returncode == 17, result.stderr
         assert "gate completed" not in result.stdout
@@ -221,7 +253,9 @@ def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
             : expected.index(failure) + 1
         ]
         retained = (
-            original if failure == "verify_image.py" else analysis / phase / "image.tar"
+            original
+            if failure in {"verify_image.py", "scan_image_omniverse_payload.py"}
+            else analysis / phase / "image.tar"
         )
         assert retained.read_bytes() == b"saved image"
     else:
@@ -245,9 +279,11 @@ def test_actual_publication_block_retains_failed_inputs_and_stops_later_actions(
 def test_other_images_do_not_enter_curobo_policy_or_native_scan(
     shell_environment, step_name
 ):
-    checkout, _, _, env = shell_environment
+    checkout, runtime, _, env = shell_environment
     env["TOOL"] = "unrelated-image"
     del env["CUROBO_BYTE_GATE_ROOT"]
+    (runtime / "unrelated-image.tar").write_bytes(b"saved image")
+    (runtime / "unrelated-image-pushed.tar").write_bytes(b"saved image")
     result = subprocess.run(
         ["bash", "-euc", curobo_block(step_name)],
         cwd=checkout,
@@ -257,7 +293,10 @@ def test_other_images_do_not_enter_curobo_policy_or_native_scan(
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert not Path(env["GATE_LOG"]).exists()
+    calls = [
+        json.loads(line) for line in Path(env["GATE_LOG"]).read_text().splitlines()
+    ]
+    assert [call["operation"] for call in calls] == ["scan_image_omniverse_payload.py"]
 
 
 def test_required_policy_precedes_build_and_secret_environment_is_scoped():

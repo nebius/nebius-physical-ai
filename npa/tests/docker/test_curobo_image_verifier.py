@@ -26,6 +26,14 @@ SPEC = importlib.util.spec_from_file_location(
 )
 VERIFIER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFIER)
+PAYLOAD_SPEC = importlib.util.spec_from_file_location(
+    "curobo_payload_binding",
+    ROOT / "npa/scripts/scan_image_omniverse_payload.py",
+)
+assert PAYLOAD_SPEC and PAYLOAD_SPEC.loader
+PAYLOAD_SCANNER = importlib.util.module_from_spec(PAYLOAD_SPEC)
+sys.modules[PAYLOAD_SPEC.name] = PAYLOAD_SCANNER
+PAYLOAD_SPEC.loader.exec_module(PAYLOAD_SCANNER)
 
 
 def digest(data):
@@ -161,6 +169,28 @@ def test_complete_image_binds_config_all_diff_ids_and_independent_bytes(
     assert report["regular_files_read"] == 10
     assert report["content_bytes_read"] == sum(len(row[1]) for row in payload[1])
     assert report["docker_save_sha256"] == digest((tmp_path / "image.tar").read_bytes())
+
+
+def test_classic_verifier_report_drives_truthful_payload_identity(tmp_path, payload):
+    contract, entries, _ = payload
+    archive, image_id = save_image(tmp_path, [entries])
+    graph = VERIFIER.verify_image(
+        archive, expected_image_id=image_id, contract=contract
+    )
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(graph))
+
+    report = PAYLOAD_SCANNER.scan(
+        None,
+        archive,
+        verification_report=graph_path,
+    )
+
+    assert graph["image_manifest_digest"] is None
+    assert report.clean
+    assert report.digest == graph["image_config_digest"]
+    assert report.archive_binding["archive_format"] == "docker-save-classic"
+    assert report.archive_binding["content_identity_kind"] == "image-config-digest"
 
 
 def test_normal_root_and_system_links_are_never_extracted_or_followed(
@@ -450,6 +480,19 @@ def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes(
     )
     assert '--docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar"' in commands[second:]
     assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 2
+    assert commands.count("--verification-report") >= 4
+    assert (
+        '--verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"'
+        in commands[:push]
+    )
+    assert "--expected-manifest-digest" not in commands[:push]
+    assert "--registry-image" not in commands[:push]
+    assert (
+        '--verification-report "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json"'
+        in commands[push:]
+    )
+    assert '--registry-image "$exact"' in commands[push:]
+    assert '--expected-manifest-digest "$DIGEST"' in commands[push:]
 
 
 def test_no_member_size_cap_and_no_required_file_sample(tmp_path, payload):

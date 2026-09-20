@@ -21,6 +21,25 @@ layer, including files subsequently deleted, plus raw archive headers, logical
 names, optional gzip headers, and padding. It never extracts image members into
 the host filesystem. Unsupported layer encodings or ambiguous archives fail.
 
+The restricted-payload scan of a cuRobo tarball is also bound to that graph
+verification. Run `verify_image.py` first and pass its successful report with
+`--verification-report`. Before it can emit a clean JSON report, the scanner
+rehashes the tarball and report and requires their config and complete ordered
+layer graph to agree. A containerd save cites its verified OCI manifest digest;
+a classic Docker save, which contains no registry manifest object, truthfully
+cites its verified image-config digest.
+
+For the post-push scan, also pass the exact digest-qualified image with
+`--registry-image` and the independently obtained digest with
+`--expected-manifest-digest`. The scanner fetches that exact manifest, verifies
+its raw digest, config and layer population against the saved archive, and
+requires Docker's pulled exact-digest image to expose the same config and rootfs
+diff-ID sequence. OCI saves additionally require exact layer descriptors.
+Classic saves bind registry descriptor order through Docker's successful
+exact-digest pull and the config's ordered diff IDs. Reports contain hashes and
+identity kinds, never registry credentials. A changed archive, report, config,
+layer graph, or registry manifest fails before payload classification.
+
 ## Policy and dependencies
 
 CI requires `CUSTOMER_DENYLIST` from the repository secret store;
@@ -166,3 +185,9 @@ complete scans. It obtains no approval hash from an unreviewed file at runtime.
 A failed policy gate stops subsequent publication actions and retains failed
 inputs for private investigation. Confidentiality configuration remains required
 before building; exact public native content cannot authorize denied identifiers.
+
+Catalog remediation does not amend an existing image digest or make an old scan
+fresh. Preserve the original failed report and ledger unchanged. After an
+independent review confirms the exact source head and catalog bindings, rerun the
+complete-byte scanner on the same archive with a new authorization; only that
+fresh result may produce a policy-acceptance receipt.
