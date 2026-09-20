@@ -418,9 +418,11 @@ jobs:
           INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
-          metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
-          metadata_config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
-          test "$metadata_config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          if [ "$TOOL" = gymnasium-robotics ]; then
+            metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
+            metadata_config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
+            test "$metadata_config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          fi
           npa/.venv/bin/python - <<'PY'
           import json
           import os

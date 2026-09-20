@@ -118,6 +118,7 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
     )
     first_step = text.rfind("      - name:", 0, first_scan)
     first_step_text = text[first_step:first_scan]
+    assert 'if [ "$TOOL" = gymnasium-robotics ]; then' in first_step_text
     assert 'metadata_config_digest="$(jq -er' in first_step_text
     assert 'containerimage.config.digest' in first_step_text
     first_output = text.index(
