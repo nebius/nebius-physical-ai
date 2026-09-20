@@ -2850,6 +2850,77 @@ def test_execute_and_upload_holds_descriptor_and_cache_lock_through_readback(
     assert not protected_authorization.exists()
 
 
+def _valid_upload_payloads(module, run_id: str) -> dict[str, bytes]:
+    digest = "a" * 64
+    metadata = {
+        "schema": "npa.libero.runtime-cache.v1",
+        "solution": "libero",
+        "manifest_sha256": digest,
+        "customer_authorization_sha256": digest,
+        "customer_identity_sha256": digest,
+        "run_id": run_id,
+        "runtime_requirements_sha256": digest,
+        "governing_terms_sha256": digest,
+        "governing_terms_count": 1,
+        "source_revision": "source-revision",
+        "source_tree": digest,
+        "source_license_sha256": digest,
+        "runtime_artifact_count": 135,
+        "demonstration_sha256": digest,
+        "demonstration_size_bytes": 10,
+        "task_bddl_sha256": digest,
+        "task_initial_states_sha256": digest,
+        "language_model_revision": "model-revision",
+        "render_assets_present": False,
+        "git_objects_present": False,
+        "cache_uploaded": False,
+        "content_inventory_sha256": digest,
+        "content_inventory_entry_count": 3,
+    }
+    smoke = {
+        "schema": "npa.workbench.libero.bc-smoke.v1",
+        "status": "passed",
+        "exit_status": 0,
+        "solution": "libero",
+        "capability": "libero_spatial_bc_rnn_train_reload_heldout",
+        "capabilities_exercised": ["libero_spatial_bc_rnn_train_reload_heldout"],
+        "source": {"repository": "https://example.invalid/libero", "revision": "r", "license": "MIT"},
+        "dataset": {
+            "repository": "dataset",
+            "revision": "r",
+            "suite": "libero_spatial",
+            "task": "task",
+            "task_description": "description",
+            "url": "https://example.invalid/data",
+            "expected_sha256": digest,
+            "expected_size_bytes": 10,
+            "license": "CC-BY-4.0",
+            "attribution": "LIBERO",
+        },
+        "task_language_model": {"repository": "model", "revision": "r", "license": "Apache-2.0", "delivery": "runtime_fetch"},
+    }
+    summary = {
+        "status": "success",
+        "tool": "byof",
+        "workload": "solution-smoke-libero-b200",
+        "run_id": run_id,
+        "image": "registry.invalid/libero@sha256:" + digest,
+        "solution_name": "libero",
+        "capability_name": "libero_spatial_bc_rnn_train_reload_heldout",
+        "smoke_artifact_name": "libero-smoke.json",
+        "smoke_exit_code": 0,
+        "runtime_cache_uploaded": False,
+        "rendering_invoked": False,
+        "created_unix": 1.0,
+    }
+    return {
+        "libero-smoke.json": json.dumps(smoke).encode(),
+        "npa_byof_summary.json": json.dumps(summary).encode(),
+        "npa_runtime_bootstrap.json": json.dumps({"schema": metadata["schema"], "solution": metadata["solution"], "status": "ready", "run_id": run_id, "manifest_sha256": digest}).encode(),
+        "npa_runtime_metadata.json": json.dumps(metadata).encode(),
+    }
+
+
 @pytest.mark.parametrize(
     "failure",
     [None, "artifact-put", "receipt-put", "delete", "absence"],
@@ -2858,14 +2929,17 @@ def test_output_upload_is_commit_last_and_cleans_exact_failed_transaction(
     monkeypatch, tmp_path, failure
 ) -> None:
     module, _args, fixture = _fixture(tmp_path)
-    # This test isolates transaction ordering; schema/parser hostile cases are
-    # covered separately so the fixture can use compact synthetic bytes.
-    monkeypatch.setattr(module, "_canonical_output_payload", lambda _name, payload: payload)
     output = tmp_path / "output"
     output.mkdir(mode=0o700)
-    for name in set(module.OUTPUT_SIZE_LIMITS) - {"npa_byof_summary.json"}:
-        (output / name).write_bytes(f"fixture:{name}\n".encode())
     run_id = fixture["run_id"]
+    payloads = _valid_upload_payloads(module, run_id)
+    for name in module.OUTPUT_SIZE_LIMITS:
+        if name == "npa_byof_summary.json":
+            continue
+        if name in payloads:
+            (output / name).write_bytes(payloads[name])
+        else:
+            (output / name).write_bytes(f"fixture:{name}\n".encode())
     monkeypatch.setenv("NPA_BYOF_RUN_ID", run_id)
     monkeypatch.setenv("S3_OUTPUT_PREFIX", f"s3://fixture-bucket/byof/{run_id}/")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.fixture.invalid")

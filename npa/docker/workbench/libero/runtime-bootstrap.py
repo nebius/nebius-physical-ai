@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import http.client
 import json
+import math
 import os
 import pwd
 import re
@@ -322,6 +323,7 @@ _OUTPUT_JSON_TOP_LEVEL_KEYS = {
             "image",
             "run_id",
             "runtime_cache_uploaded",
+            "rendering_invoked",
             "smoke_artifact_name",
             "smoke_exit_code",
             "solution_name",
@@ -374,6 +376,7 @@ _OUTPUT_JSON_TOP_LEVEL_KEYS = {
             "language_model_revision",
             "manifest_sha256",
             "render_assets_present",
+            "run_id",
             "runtime_artifact_count",
             "runtime_requirements_sha256",
             "schema",
@@ -403,6 +406,309 @@ _OUTPUT_JSON_REQUIRED_KEYS = {
 _EMBEDDED_OUTPUT_KEYS = frozenset(
     {"payload", "raw", "raw_bytes", "source_bytes", "checkpoint_bytes", "artifact_bytes"}
 )
+
+
+def _output_object(
+    fields: dict[str, tuple], required: frozenset[str]
+) -> tuple[str, dict[str, tuple], frozenset[str]]:
+    return ("object", fields, required)
+
+
+_STRING = ("string",)
+_BOOL = ("bool",)
+_INTEGER = ("integer",)
+_NUMBER = ("number",)
+_HEX64 = ("hex64",)
+_SMOKE_SOURCE = _output_object(
+    {
+        key: _STRING
+        for key in (
+            "repository",
+            "revision",
+            "license",
+            "observed_revision",
+            "source_prune_path",
+        )
+    }
+    | {
+        key: _BOOL
+        for key in ("source_prune_path_absent", "git_objects_absent", "layer_scan_required_before_live_use")
+    },
+    frozenset({"repository", "revision", "license"}),
+)
+_SMOKE_DATASET = _output_object(
+    {
+        key: _STRING
+        for key in (
+            "repository",
+            "revision",
+            "suite",
+            "task",
+            "task_description",
+            "url",
+            "license",
+            "attribution",
+            "dataset_bddl_path",
+        )
+    }
+    | {
+        key: _HEX64 for key in ("expected_sha256", "observed_sha256")
+    }
+    | {
+        key: _INTEGER
+        for key in ("expected_size_bytes", "observed_size_bytes", "demo_count", "sample_count")
+    }
+    | {"downloaded_this_run": _BOOL},
+    frozenset(
+        {
+            "repository",
+            "revision",
+            "suite",
+            "task",
+            "task_description",
+            "url",
+            "expected_sha256",
+            "expected_size_bytes",
+            "license",
+            "attribution",
+        }
+    ),
+)
+_LANGUAGE_MODEL_FILE = _output_object(
+    {"expected_size_bytes": _INTEGER, "expected_sha256": _HEX64, "observed_sha256": _HEX64},
+    frozenset({"expected_size_bytes", "expected_sha256", "observed_sha256"}),
+)
+_SMOKE_LANGUAGE_MODEL = _output_object(
+    {
+        "repository": _STRING,
+        "revision": _STRING,
+        "license": _STRING,
+        "delivery": _STRING,
+        "source_path": _STRING,
+        "source_sha256": _HEX64,
+        "files": ("map", _LANGUAGE_MODEL_FILE, 16),
+        "embedding_method": _STRING,
+        "embedding_shape": ("integer_array", 8),
+        "embedding_dtype": _STRING,
+        "embedding_finite": _BOOL,
+        "downloaded_this_run": _BOOL,
+        "cache_uploaded": _BOOL,
+    },
+    frozenset({"repository", "revision", "license", "delivery"}),
+)
+_SMOKE_TASK_ASSETS = _output_object(
+    {"bddl_path": _STRING, "bddl_sha256": _HEX64, "initial_states_path": _STRING, "initial_states_sha256": _HEX64, "source_license": _STRING},
+    frozenset({"bddl_path", "bddl_sha256", "initial_states_path", "initial_states_sha256", "source_license"}),
+)
+_SMOKE_SPLIT = _output_object(
+    {
+        "strategy": _STRING,
+        "seed": _INTEGER,
+        "disjoint": _BOOL,
+        "train_demo_count": _INTEGER,
+        "heldout_demo_count": _INTEGER,
+        "train_demo_ids_sha256": _HEX64,
+        "heldout_demo_ids_sha256": _HEX64,
+        "train_sample_count": _INTEGER,
+        "heldout_sample_count": _INTEGER,
+    },
+    frozenset(
+        {
+            "strategy", "seed", "disjoint", "train_demo_count", "heldout_demo_count",
+            "train_demo_ids_sha256", "heldout_demo_ids_sha256", "train_sample_count", "heldout_sample_count",
+        }
+    ),
+)
+_SMOKE_TRAINING = _output_object(
+    {
+        "algorithm": _STRING,
+        "optimizer": _STRING,
+        "optimizer_steps": _INTEGER,
+        "requested_optimizer_steps": _INTEGER,
+        "parameter_max_abs_delta": _NUMBER,
+        "first_loss": _NUMBER,
+        "final_loss": _NUMBER,
+        "all_losses_finite": _BOOL,
+        "sequence_length": _INTEGER,
+        "task_embedding": _STRING,
+    },
+    frozenset({"algorithm", "optimizer", "optimizer_steps", "requested_optimizer_steps", "parameter_max_abs_delta", "first_loss", "final_loss", "all_losses_finite", "sequence_length", "task_embedding"}),
+)
+_SMOKE_HELDOUT = _output_object(
+    {"negative_log_likelihood": _NUMBER, "evaluated_sample_count": _INTEGER, "partition": _STRING},
+    frozenset({"negative_log_likelihood", "evaluated_sample_count", "partition"}),
+)
+_SMOKE_CHECKPOINT = _output_object(
+    {"file": _STRING, "sha256": _HEX64, "saved_with": _STRING, "reloaded_with": _STRING, "strict_state_dict_load": _BOOL},
+    frozenset({"file", "sha256", "saved_with", "reloaded_with", "strict_state_dict_load"}),
+)
+_SMOKE_RELOADED = _output_object(
+    {"shape": ("integer_array", 8), "dtype": _STRING, "finite": _BOOL, "prediction_sha256": _HEX64, "value_min": _NUMBER, "value_max": _NUMBER, "evaluated_sample_count": _INTEGER},
+    frozenset({"shape", "dtype", "finite", "prediction_sha256", "value_min", "value_max", "evaluated_sample_count"}),
+)
+_SMOKE_RUNTIME = _output_object(
+    {
+        "gpu_model": _STRING,
+        "gpu_architecture": _STRING,
+        "compute_capability": ("integer_array", 2),
+        "gpu_count": _INTEGER,
+        "torch_cuda_arch_list": ("string_array", 32),
+        "nvidia_smi": ("string_array", 8),
+        "pod_observed_image_digest": _STRING,
+        "observation_method": _STRING,
+        "pod_name_sha256": _HEX64,
+        "namespace_sha256": _HEX64,
+        "pod_uid_sha256": _HEX64,
+        "node_name_sha256": _HEX64,
+        "actual_service_account": _STRING,
+        "service_account_uid_sha256": _HEX64,
+        "controller_service_account_separated": _BOOL,
+        "host_architecture": _STRING,
+    },
+    frozenset({"gpu_model", "gpu_architecture", "compute_capability", "gpu_count", "torch_cuda_arch_list", "nvidia_smi"}),
+)
+_SMOKE_BUILD = _output_object(
+    {
+        "runtime_metadata": ("runtime_metadata",),
+        "accepted_canonical_build_metadata_sha256": _HEX64,
+        "base_image_digest": _STRING,
+        "base_rootfs_material_digest": _STRING,
+        "base_image_digest_pinned": _BOOL,
+        "base_image_provenance": _STRING,
+        "dataset_delivery": _STRING,
+        "weights_delivery": _STRING,
+        "render_assets_present_in_final_filesystem": _BOOL,
+        "render_assets_removed_path": _STRING,
+        "git_objects_present_in_final_filesystem": _BOOL,
+        "independent_oci_layer_scan_required_before_live_use": _BOOL,
+    },
+    frozenset({"runtime_metadata", "accepted_canonical_build_metadata_sha256", "base_image_digest", "base_rootfs_material_digest", "base_image_digest_pinned", "base_image_provenance", "dataset_delivery", "weights_delivery", "render_assets_present_in_final_filesystem", "render_assets_removed_path", "git_objects_present_in_final_filesystem", "independent_oci_layer_scan_required_before_live_use"}),
+)
+_SMOKE_BOUNDARIES = _output_object(
+    {"cache": _STRING, "output": _STRING, "cache_uploaded": _BOOL, "rendering_invoked": _BOOL},
+    frozenset({"cache", "output", "cache_uploaded", "rendering_invoked"}),
+)
+_RUNTIME_METADATA_FIELDS = {
+    "schema": _STRING,
+    "solution": _STRING,
+    "manifest_sha256": _HEX64,
+    "customer_authorization_sha256": _HEX64,
+    "customer_identity_sha256": _HEX64,
+    "run_id": _STRING,
+    "runtime_requirements_sha256": _HEX64,
+    "governing_terms_sha256": _HEX64,
+    "governing_terms_count": _INTEGER,
+    "source_revision": _STRING,
+    "source_tree": _HEX64,
+    "source_license_sha256": _HEX64,
+    "runtime_artifact_count": _INTEGER,
+    "demonstration_sha256": _HEX64,
+    "demonstration_size_bytes": _INTEGER,
+    "task_bddl_sha256": _HEX64,
+    "task_initial_states_sha256": _HEX64,
+    "language_model_revision": _STRING,
+    "render_assets_present": _BOOL,
+    "git_objects_present": _BOOL,
+    "cache_uploaded": _BOOL,
+    "content_inventory_sha256": _HEX64,
+    "content_inventory_entry_count": _INTEGER,
+}
+_RUNTIME_METADATA_SCHEMA = _output_object(_RUNTIME_METADATA_FIELDS, frozenset(_RUNTIME_METADATA_FIELDS))
+_RUNTIME_BOOTSTRAP_FIELDS = {
+    **_RUNTIME_METADATA_FIELDS,
+    "status": _STRING,
+    "cache_path": _STRING,
+    "governing_terms_fetched_this_invocation": _BOOL,
+    "warm_reuse": _BOOL,
+}
+_RUNTIME_BOOTSTRAP_SCHEMA = _output_object(
+    _RUNTIME_BOOTSTRAP_FIELDS,
+    frozenset({"schema", "solution", "run_id", "manifest_sha256"}),
+)
+_OUTPUT_SCHEMAS = {
+    "libero-smoke.json": _output_object(
+        {
+            "schema": _STRING,
+            "status": _STRING,
+            "exit_status": _INTEGER,
+            "solution": _STRING,
+            "capability": _STRING,
+            "capabilities_exercised": ("string_array", 16),
+            "source": _SMOKE_SOURCE,
+            "dataset": _SMOKE_DATASET,
+            "task_language_model": _SMOKE_LANGUAGE_MODEL,
+            "sample_count": _INTEGER,
+            "task_assets": _SMOKE_TASK_ASSETS,
+            "split": _SMOKE_SPLIT,
+            "training": _SMOKE_TRAINING,
+            "heldout_metrics": _SMOKE_HELDOUT,
+            "checkpoint": _SMOKE_CHECKPOINT,
+            "reloaded_action": _SMOKE_RELOADED,
+            "runtime": _SMOKE_RUNTIME,
+            "build": _SMOKE_BUILD,
+            "boundaries": _SMOKE_BOUNDARIES,
+            "deferred": ("string_array", 16),
+            "error": _output_object({"type": _STRING, "message": _STRING}, frozenset({"type", "message"})),
+        },
+        frozenset({"schema", "status", "exit_status", "solution", "capability", "capabilities_exercised", "source", "dataset", "task_language_model"}),
+    ),
+    "npa_byof_summary.json": _output_object(
+        {"status": _STRING, "tool": _STRING, "workload": _STRING, "run_id": _STRING, "image": _STRING, "solution_name": _STRING, "capability_name": _STRING, "smoke_artifact_name": _STRING, "smoke_exit_code": _INTEGER, "runtime_cache_uploaded": _BOOL, "rendering_invoked": _BOOL, "created_unix": _NUMBER},
+        frozenset({"status", "tool", "workload", "run_id", "image", "solution_name", "capability_name", "smoke_artifact_name", "smoke_exit_code", "runtime_cache_uploaded", "rendering_invoked", "created_unix"}),
+    ),
+    "npa_runtime_bootstrap.json": _RUNTIME_BOOTSTRAP_SCHEMA,
+    "npa_runtime_metadata.json": _RUNTIME_METADATA_SCHEMA,
+}
+
+
+def _validate_output_value(value: Any, spec: tuple, *, path: str) -> None:
+    kind = spec[0]
+    if kind == "string":
+        valid = isinstance(value, str) and len(value) <= 4096
+    elif kind == "bool":
+        valid = isinstance(value, bool)
+    elif kind == "integer":
+        valid = isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 2**63 - 1
+    elif kind == "number":
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
+    elif kind == "hex64":
+        valid = isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+    elif kind == "object":
+        _validate_output_object(value, spec[1], spec[2], path=path)
+        return
+    elif kind == "runtime_metadata":
+        _validate_output_object(value, _RUNTIME_METADATA_FIELDS, frozenset(_RUNTIME_METADATA_FIELDS), path=path)
+        return
+    elif kind == "map":
+        valid = isinstance(value, dict) and len(value) <= spec[2]
+        if valid:
+            for key, child in value.items():
+                if not isinstance(key, str) or re.fullmatch(r"[A-Za-z0-9._-]{1,128}", key) is None:
+                    raise BootstrapRefusal(f"output JSON schema is invalid:{path}.{key}")
+                _validate_output_value(child, spec[1], path=f"{path}.{key}")
+        if not valid:
+            raise BootstrapRefusal(f"output JSON schema is invalid:{path}")
+        return
+    elif kind in {"string_array", "integer_array"}:
+        valid = isinstance(value, list) and len(value) <= spec[1]
+        if valid:
+            child_kind = "string" if kind == "string_array" else "integer"
+            for index, child in enumerate(value):
+                _validate_output_value(child, (child_kind,), path=f"{path}[{index}]")
+        if not valid:
+            raise BootstrapRefusal(f"output JSON schema is invalid:{path}")
+        return
+    else:
+        raise BootstrapRefusal(f"output JSON schema has unsupported type:{kind}")
+    if not valid:
+        raise BootstrapRefusal(f"output JSON schema is invalid:{path}")
+
+
+def _validate_output_object(value: Any, fields: dict[str, tuple], required: frozenset[str], *, path: str) -> None:
+    if not isinstance(value, dict) or set(value) - set(fields) or not required <= set(value):
+        raise BootstrapRefusal(f"output JSON schema is not closed:{path}")
+    for key, child in value.items():
+        _validate_output_value(child, fields[key], path=f"{path}.{key}")
 
 
 def _reject_embedded_output(value: Any, *, path: str) -> None:
@@ -436,6 +742,8 @@ def _canonical_output_payload(name: str, payload: bytes) -> bytes:
     _reject_embedded_output(value, path=name)
     if set(value) - allowed or not required <= set(value):
         raise BootstrapRefusal(f"output JSON schema is not closed:{name}")
+    schema = _OUTPUT_SCHEMAS[name]
+    _validate_output_object(value, schema[1], schema[2], path=name)
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
