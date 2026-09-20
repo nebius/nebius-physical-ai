@@ -262,24 +262,32 @@ validation with `umask 022` if this keeps coming back.\
 
 
 def _scan_inputs() -> list[Path]:
-    """Return the roots and files ``image_byte_scan`` opens under its own rules.
+    """Return exactly the paths whose mode ``image_byte_scan`` rejects.
 
-    Directory modes alone are not enough. One `0664` file inside the scanner
-    package raises `input_permissions`, and that is the state a new file lands
-    in under `umask 002` once the directories are already fixed. This mirrors
-    ``core.source_bindings``; keep it in step with that function, including its
-    suffix filter, which is what keeps `__pycache__` out of the result.
+    Only two kinds qualify, and the distinction matters because getting it wrong
+    turns a diagnostic into a stricter gate. ``authorized_roots`` stats the
+    trusted root itself, and ``private_path`` stats each source file; both walk
+    the intervening directories for symlinks only and never look at their modes.
+    So a group-writable `npa/` or `npa/scripts/image_byte_scan/` is a checkout
+    the production scanner accepts, and listing those here would abort
+    collection for a state that binds successfully.
+
+    Directory modes alone would also be insufficient in the other direction: one
+    `0664` file inside the scanner package raises `input_permissions`, and that
+    is where a new file lands under `umask 002` after the directories are fixed.
+
+    This mirrors ``core.source_bindings``; keep it in step with that function,
+    including its suffix filter, which is what keeps `__pycache__` out of the
+    result. ``test_scan_input_closure_matches_production`` fails when it drifts.
 
     Returns:
-        Every path whose mode the scanner will check.
+        The trusted root and every source file whose mode the scanner checks.
     """
 
     folder = _CHECKOUT / "npa/scripts/image_byte_scan"
     suffixes = {".py", ".go", ".mod", ".sum", ".json", ".md"}
     inputs = [
         _CHECKOUT,
-        _CHECKOUT / "npa",
-        folder,
         _CHECKOUT / ".gitleaks.toml",
         _CHECKOUT / "npa/scripts/scan_image_bytes.py",
         _CHECKOUT / "npa/tests/docker/test_image_byte_go_build.py",
