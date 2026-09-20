@@ -462,11 +462,11 @@ def test_concurrent_processes_do_not_lose_terraform_state_removals(
 
     N real, independently-launched interpreters each clear a distinct
     project's ``terraform_state`` at (as close as the OS scheduler allows)
-    the same time. The buggy implementation reads its stale snapshot before
-    almost any writer has taken the lock, so whichever writer's turn comes
-    last wins and every earlier writer's removal is reverted: only one (or a
-    few) of the N removals survive. The fix reads fresh state under the same
-    ``flock`` every time, so all N must survive regardless of ordering.
+    the same time. OS scheduling may serialize even an unlocked implementation,
+    so this stress test can pass on the buggy code. The deterministic
+    interleaving tests above provide the reliable regression checks; this case
+    additionally exercises real process and file-lock behavior. All N removals
+    must survive regardless of ordering.
     """
     process_count = 8
     projects = {
@@ -489,16 +489,18 @@ def test_concurrent_processes_do_not_lose_terraform_state_removals(
         "config.clear_terraform_state_for_bucket(sys.argv[1])\n"
     )
 
-    procs = [
-        subprocess.Popen([sys.executable, "-c", script, f"bucket-{i}"], env=env)
-        for i in range(process_count)
-    ]
+    procs = []
     try:
+        for i in range(process_count):
+            procs.append(
+                subprocess.Popen([sys.executable, "-c", script, f"bucket-{i}"], env=env)
+            )
         returncodes = [proc.wait(timeout=60) for proc in procs]
     finally:
         for proc in procs:
             if proc.poll() is None:
                 proc.kill()
+                proc.wait(timeout=60)
     assert returncodes == [0] * process_count
 
     saved = yaml.safe_load(isolated_config.read_text())
