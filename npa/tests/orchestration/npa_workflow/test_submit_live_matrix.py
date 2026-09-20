@@ -229,6 +229,15 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         )
 
 
+def test_evo_byof_case_discloses_the_nested_runner_boundary() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "byof-evo.yaml")
+
+    assert case.tier == "cpu"
+    assert case.plan_only
+    assert "inner SkyPilot launch" in case.plan_only_justification
+    assert not case.secret_envs
+
+
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
     incomplete = {
         "adversarial-scenario-hardening.yaml",

@@ -305,13 +305,18 @@ Hard-gate capability:
 The same smoke evaluates the pinned upstream KITTI 00 ground truth, ORB, and
 S-PTAM examples. Treat those as representative compatibility and reviewability
 evidence, not as threshold calibration or proof of navigation success. Retain
-each error distribution, trajectory-input hash, plot hash, and decode result.
-The live-qualified candidate passed the digest-pinned CPU Kubernetes pull and
-execution path, all four frozen gate controls, ten independent archive decodes,
-and calibrated hosted-VLM review of the exact matched and APE plots. Its
-operator-built image remains unpublished. Before registry admission, require
-independent review of the candidate commit and retained evidence; a later
-conveyance still needs an explicit GPL compliance decision.
+each error distribution, trajectory-input hash, native plot hash, derived
+review-plot hash, and decode result. The live-qualified candidate passed the
+digest-pinned CPU Kubernetes pull and execution path, all four frozen gate
+controls, and ten independent archive decodes. Its first unlabeled APE visual
+review was invalidated when exact-prompt ORB/S-PTAM cross-swaps false-passed;
+retain that failure. The corrected smoke preserves each native map and emits a
+hash-linked review copy with visible estimate/reference identity. Require
+identify-first cross-swap calibration with zero false positives before scoring
+those final plots. The operator-built image remains unpublished. Before
+registry admission, require independent review of the candidate commit and
+retained evidence; a later conveyance still needs an explicit GPL compliance
+decision.
 
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 

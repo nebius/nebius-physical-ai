@@ -1123,11 +1123,12 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "cpu",
         plan_only=True,
         plan_only_justification=(
-            "delegated BYOF build, push, pull, and native smoke execution require "
-            "an operator-owned registry"
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
         ),
         notes=(
-            "The operator-built GPL candidate passed a retained digest-pinned CPU "
+            "The direct BYOF runner owns real build/push/pull execution. The "
+            "operator-built GPL candidate passed a retained digest-pinned CPU "
             "Kubernetes qualification; it is not a published matrix image."
         ),
     ),

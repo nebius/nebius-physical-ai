@@ -55,7 +55,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
-| evo | `evo_ape` / `evo_rpe` / `evo_traj` | **live-qualified candidate** | Digest-pinned CPU Kubernetes execution passed 2 positive and 2 negative controls, decoded 10 native result archives, retained matched KITTI plots, and passed calibrated hosted-VLM review; registry admission remains a maintainer decision |
+| evo | `evo_ape` / `evo_rpe` / `evo_traj` | **live-qualified candidate** | Digest-pinned CPU Kubernetes execution passed 2 positive and 2 negative controls, decoded 10 native result archives, preserved native KITTI plots plus hash-linked labeled review copies, and passed identify-first hosted-VLM review after exact-prompt cross-swap controls; registry admission remains a maintainer decision |
 | Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
 | Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
 | Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
@@ -174,12 +174,16 @@ ORB or S-PTAM estimates. Representative KITTI metrics are reported as observed
 and are not tuned to the synthetic control threshold. Passing the gate does not
 establish navigation success, robot safety, sensor accuracy, or generalization
 to another trajectory format. The live qualification retained ten decoded
-archives and exact plot hashes, matched the local generated-image metrics,
-passed a four-case hosted-VLM calibration with zero classification errors, and
-received passing final review for the matched and per-estimate plots. A
-complete-byte restricted-payload scan also found no hits across 22,826 image
-entries. This remains an operator-built candidate, not a published NPA image;
-registry admission and future conveyance remain maintainer decisions.
+archives and exact plot hashes and matched the local generated-image metrics.
+An exact-prompt ORB/S-PTAM cross-swap probe invalidated the first unlabeled
+per-estimate visual review with two false positives. That failed evidence is
+preserved. The corrected run keeps each native map and emits a hash-linked
+review copy with the estimate and reference visibly named; identify-first
+cross-swap calibration then had zero false positives, and both final live plots
+scored 0.95 with no critical defect. A complete-byte restricted-payload scan
+also found no hits across 22,826 image entries. This remains an operator-built
+candidate, not a published NPA image; registry admission and future conveyance
+remain maintainer decisions.
 
 ### Open Dreamer (world model, 2-GPU minimum)
 
