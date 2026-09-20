@@ -362,7 +362,7 @@ def test_api_result_retains_recomputable_secret_free_evidence(
 
     evidence = result.evidence
     assert evidence is not None
-    assert evidence.schema_version == "npa_vlm_eval_evidence_v1"
+    assert evidence.schema_version == "npa_vlm_eval_evidence_v2"
     assert evidence.request.endpoint_role == "hosted-api"
     assert len(evidence.request.frames) == 1
     assert result.rubric == "Require visible green pixels."
@@ -380,6 +380,21 @@ def test_api_result_retains_recomputable_secret_free_evidence(
     assert frame_evidence.label == "frame.png"
     assert frame_evidence.sha256 == hashlib.sha256(submitted.data).hexdigest()
     assert (frame_evidence.width, frame_evidence.height) == (12, 9)
+    assert frame_evidence.source_kind == "image-sequence"
+    assert frame_evidence.source_index == 0
+    assert frame_evidence.source_count == 1
+    assert frame_evidence.source_timestamp_s is None
+    assert evidence.request.request_manifest["sampling"] == {
+        "strategy": "keyframes",
+        "max_frames": 4,
+        "selected_count": 1,
+        "source_kind": "image-sequence",
+        "source_count": 1,
+        "selected_indices": [0],
+        "selected_timestamps_s": [None],
+        "coverage_complete": True,
+        "timestamps_complete": None,
+    }
 
     manifest_json = vlm_eval._canonical_json(evidence.request.request_manifest)
     assert (
@@ -404,6 +419,47 @@ def test_api_result_retains_recomputable_secret_free_evidence(
         == hashlib.sha256(raw_response.encode()).hexdigest()
     )
     json.dumps(asdict(result))
+
+
+def test_api_result_retains_image_sequence_sampling_coverage(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    rollout = tmp_path / "rollout"
+    rollout.mkdir()
+    for index in range(5):
+        Image.new("RGB", (8, 8), (index * 20, 0, 0)).save(
+            rollout / f"frame-{index:03d}.png"
+        )
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **kwargs: _completion(model="vendor/served-vision"),
+    )
+
+    result = evaluate_vlm(
+        input_path=str(rollout),
+        output_path=str(tmp_path / "evaluation.json"),
+        backend="api",
+        model="vendor/explicit-alias",
+        endpoint_url="https://example.test/v1",
+        task="Identify visible sequence changes.",
+        frame_selection="keyframes",
+        max_frames=3,
+    )
+
+    assert result.evidence is not None
+    frames = result.evidence.request.frames
+    assert [frame.source_index for frame in frames] == [0, 2, 4]
+    assert [frame.source_count for frame in frames] == [5, 5, 5]
+    sampling = result.evidence.request.request_manifest["sampling"]
+    assert sampling["selected_indices"] == [0, 2, 4]
+    assert sampling["source_count"] == 5
+    assert sampling["selected_count"] == 3
+    assert sampling["max_frames"] == 3
+    assert sampling["coverage_complete"] is True
 
 
 def test_api_result_surfaces_provider_success_score_contradiction(
