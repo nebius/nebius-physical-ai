@@ -215,10 +215,20 @@ def _source_identity() -> str:
 
 
 def _image_identity(render_options: SkypilotRenderOptions) -> str:
-    """Recompute the exact digest-set identity selected for current rendering."""
+    """Recompute the exact reference-to-image bindings selected for rendering."""
 
-    digest_material = "\0".join(
-        sorted(str(value) for value in render_options.image_digest_pins.values())
+    bindings = sorted(
+        (str(reference), str(resolved))
+        for reference, resolved in render_options.image_digest_pins.items()
+    )
+    digest_material = json.dumps(
+        {
+            "bindings": bindings,
+            "schema": "npa.workflow.image-pin-bindings/v2",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
     )
     return hashlib.sha256(digest_material.encode("utf-8")).hexdigest()
 

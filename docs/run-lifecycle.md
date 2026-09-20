@@ -169,6 +169,11 @@ Valid outputs from a provider-succeeded attempt are reused only when the
 recorded workflow, source, and image identities still match the requested run.
 Missing or changed immutable identity evidence blocks reuse and requires the
 recorded identity to be restored or a new run ID to be started.
+Image identity binds each preflight input reference to its resolved immutable
+image, independent of mapping order; the same digest set assigned to different
+references is a different identity. Older runtime records whose image identity
+was derived from digest values alone cannot prove those bindings and therefore
+require a new run ID rather than an unsafe compatibility guess.
 
 ## Reading status
 

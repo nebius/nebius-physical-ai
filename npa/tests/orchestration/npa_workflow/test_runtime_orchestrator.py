@@ -466,6 +466,7 @@ def _executor(
     output_checker: Any | None = None,
     use_default_output_checker: bool = False,
     reconcile_fn: Any | None = None,
+    render_options: SkypilotRenderOptions | None = None,
 ) -> SkyPilotWaveExecutor:
     opts = options or RuntimeOptions(poll_seconds=0, max_wait_seconds=60)
     ledger = RuntimeLedger(
@@ -491,7 +492,8 @@ def _executor(
     return SkyPilotWaveExecutor(
         spec,
         run_id=run_id,
-        render_options=SkypilotRenderOptions(
+        render_options=render_options
+        or SkypilotRenderOptions(
             image_overrides={"*": "cr.example/x@sha256:" + "c" * 64}
         ),
         options=opts,
@@ -1364,7 +1366,11 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
 
 
-def _completed_replay_case(tmp_path: Path) -> tuple[Any, MemoryStore]:
+def _completed_replay_case(
+    tmp_path: Path,
+    *,
+    render_options: SkypilotRenderOptions | None = None,
+) -> tuple[Any, MemoryStore]:
     spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
     store = MemoryStore()
     first = _executor(
@@ -1374,6 +1380,7 @@ def _completed_replay_case(tmp_path: Path) -> tuple[Any, MemoryStore]:
         status_fn=FakeStatus(["SUCCEEDED"]),
         output_checker=lambda _uri: True,
         store=store,
+        render_options=render_options,
     )
     first_report = run_workflow_runtime(
         spec,
@@ -1383,6 +1390,117 @@ def _completed_replay_case(tmp_path: Path) -> tuple[Any, MemoryStore]:
     )
     assert first_report.status == "succeeded"
     return spec, store
+
+
+def _image_pin_bindings() -> dict[str, str]:
+    return {
+        "cr.example/tool-a:latest": "cr.example/tool-a@sha256:" + "a" * 64,
+        "cr.example/tool-b:latest": "cr.example/tool-b@sha256:" + "b" * 64,
+    }
+
+
+def _image_pin_options(bindings: dict[str, str]) -> SkypilotRenderOptions:
+    return SkypilotRenderOptions(
+        image_overrides={"*": "cr.example/x@sha256:" + "c" * 64},
+        image_digest_pins=bindings,
+    )
+
+
+@pytest.mark.parametrize("change", ["swap", "rename", "add", "remove"])
+def test_image_identity_binds_digest_pins_to_reference_keys(change: str) -> None:
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+
+    bindings = _image_pin_bindings()
+    if change == "swap":
+        changed = {
+            "cr.example/tool-a:latest": bindings["cr.example/tool-b:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-a:latest"],
+        }
+    elif change == "rename":
+        changed = {
+            "cr.example/tool-a-renamed:latest": bindings["cr.example/tool-a:latest"],
+            "cr.example/tool-b:latest": bindings["cr.example/tool-b:latest"],
+        }
+    elif change == "add":
+        changed = {
+            **bindings,
+            "cr.example/tool-c:latest": "cr.example/tool-c@sha256:" + "c" * 64,
+        }
+    else:
+        changed = {"cr.example/tool-a:latest": bindings["cr.example/tool-a:latest"]}
+
+    expected = _image_identity(_image_pin_options(bindings))
+    reordered = _image_identity(
+        _image_pin_options(dict(reversed(list(bindings.items()))))
+    )
+    actual = _image_identity(_image_pin_options(changed))
+
+    assert reordered == expected
+    assert actual != expected
+
+
+def test_completed_replay_rejects_swapped_image_pin_bindings(tmp_path: Path) -> None:
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path,
+        render_options=_image_pin_options(bindings),
+    )
+    swapped = {
+        "cr.example/tool-a:latest": bindings["cr.example/tool-b:latest"],
+        "cr.example/tool-b:latest": bindings["cr.example/tool-a:latest"],
+    }
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        options=options,
+        output_checker=lambda _uri: True,
+        store=store,
+        render_options=_image_pin_options(swapped),
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_accepts_reordered_image_pin_bindings(tmp_path: Path) -> None:
+    bindings = _image_pin_bindings()
+    spec, store = _completed_replay_case(
+        tmp_path,
+        render_options=_image_pin_options(bindings),
+    )
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        options=options,
+        output_checker=lambda _uri: True,
+        store=store,
+        render_options=_image_pin_options(dict(reversed(list(bindings.items())))),
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+
+    assert report.status == "succeeded"
+    assert report.waves[0]["replayed"] is True
+    assert submitter.calls == []
 
 
 @pytest.mark.parametrize(
