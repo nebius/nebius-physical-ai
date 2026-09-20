@@ -3,9 +3,10 @@ kind: Workflow
 metadata:
   name: byof-evo
   description: >
-    Registry-candidate BYOF workflow for evo odometry and SLAM trajectory
-    evaluation. Runs native APE, RPE, and trajectory plotting on frozen
-    positive/negative controls and the pinned upstream KITTI examples.
+    Plan-only registry-candidate definition for evo odometry and SLAM
+    trajectory evaluation; execute it through the direct BYOF runner. Runs
+    native APE, RPE, and trajectory plotting on frozen positive/negative
+    controls and the pinned upstream KITTI examples.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/MichaelGrupp/evo.git"
@@ -50,6 +51,11 @@ config:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    def stable_path(path: Path) -> str:
+        if path.is_absolute() and path.is_relative_to(output_dir):
+            return path.relative_to(output_dir).as_posix()
+        return path.as_posix()
 
     def write_tum(path: Path, lateral_offset) -> None:
         rows = []
@@ -97,6 +103,9 @@ config:
             info = json.loads(archive.read("info.json"))
             stats = json.loads(archive.read("stats.json"))
             errors = np.load(io.BytesIO(archive.read("error_array.npy")))
+        for key in ("ref_name", "est_name"):
+            if isinstance(info.get(key), str):
+                info[key] = stable_path(Path(info[key]))
         if errors.size == 0 or not np.isfinite(errors).all():
             raise RuntimeError(f"{path.name} has invalid error array")
         recomputed_rmse = float(np.sqrt(np.mean(np.square(errors))))
@@ -159,7 +168,7 @@ config:
             )
             canvas.save(destination)
         return {
-            "source_path": str(source),
+            "source_path": stable_path(source),
             "source_sha256": sha256(source),
             "heading": heading,
             **inspect_plot(destination),
@@ -393,7 +402,7 @@ config:
         raise RuntimeError(f"trajectory gate controls failed: {controls}")
 
     input_hashes = {
-        str(path): sha256(path)
+        stable_path(path): sha256(path)
         for path in (
             reference,
             exact,
@@ -405,17 +414,30 @@ config:
             kitti_sptam,
         )
     }
+    image_reference = os.environ["BYOF_IMAGE"]
+    execution_identity = {
+        "run_id": os.environ["NPA_BYOF_RUN_ID"],
+        "image_reference": image_reference,
+        "image_digest": (
+            image_reference.split("@", 1)[1]
+            if "@sha256:" in image_reference
+            else None
+        ),
+    }
     capture_manifest = {
         "schema": "npa.evo.capture-manifest.v1",
+        "execution": execution_identity,
         "source_trajectory_hashes": input_hashes,
         "plot_mode": {"synthetic": "xy", "kitti": "xz"},
         "captures": {
             "synthetic_controls": {
-                "path": str(plots_dir / "synthetic_controls_trajectories.png"),
+                "path": stable_path(
+                    plots_dir / "synthetic_controls_trajectories.png"
+                ),
                 **synthetic_plot,
             },
             "kitti_matched": {
-                "path": str(matched_plot_path),
+                "path": stable_path(matched_plot_path),
                 **matched_plot,
             },
             "kitti_orb_ape": orb_review_plot,
@@ -431,8 +453,10 @@ config:
     )
 
     result = {
+        "schema": "npa.evo.trajectory-evaluation.v1",
         "solution": "evo",
         "capability": "evo_ape_rpe_trajectory_evaluation",
+        "execution": execution_identity,
         "capabilities_exercised": [
             "evo_ape",
             "evo_rpe",
@@ -500,10 +524,11 @@ config:
   wait_timeout: 21600
   poll_interval: 60
 
-  output_root: s3://{{config.bucket}}/oss-solutions/evo/{{run.id}}
-  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
-  dataset_uri: "{{config.output_root}}/evo_trajectory_evaluation.json"
-  checkpoint_uri: "{{config.output_root}}/capture-manifest.json"
+  # Both direct and workflow-worker BYOF runtimes append the run id.
+  output_root: s3://{{config.bucket}}/oss-solutions/evo
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+  dataset_uri: "{{config.output_root}}/{{run.id}}/evo_trajectory_evaluation.json"
+  checkpoint_uri: "{{config.output_root}}/{{run.id}}/capture-manifest.json"
 resources:
   cpu:
     cloud: kubernetes
@@ -519,6 +544,8 @@ states:
     toolRef: workbench.byof.repo
     resources: cpu
     outputs:
-      - uri: "{{config.summary_uri}}"
-        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.dataset_uri}}"
+        schema: npa.evo.trajectory-evaluation.v1
+      - uri: "{{config.checkpoint_uri}}"
+        schema: npa.evo.capture-manifest.v1
     terminal: true

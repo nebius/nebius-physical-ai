@@ -162,7 +162,8 @@ Python package are GPL-3.0-or-later. This is an operator-built BYOF candidate,
 not a published NPA image; any future conveyance must preserve the GPL license
 and corresponding-source obligations. The
 [independently audited CPU workload proof](https://github.com/nebius/nebius-physical-ai/blob/899caeab007bd2d55221ff3bc7b195f02a828c11/docs/testing/evidence/evo-proof/README.md)
-publishes sanitized metrics, controls, hardware applicability, visual-review
+and its [payload-scan scope correction](https://github.com/nebius/nebius-physical-ai/pull/584#issuecomment-5747248494)
+publish sanitized metrics, controls, hardware applicability, visual-review
 failures, and current merge blockers without live infrastructure identifiers.
 
 | Capability | Status | Upstream basis |
@@ -183,8 +184,9 @@ per-estimate visual review with two false positives. That failed evidence is
 preserved. The corrected run keeps each native map and emits a hash-linked
 review copy with the estimate and reference visibly named; identify-first
 cross-swap calibration then had zero false positives, and both final live plots
-scored 0.95 with no critical defect. A complete-byte restricted-payload scan
-also found no hits across 22,826 image entries. This remains an operator-built
+scored 0.95 with no critical defect. A complete filesystem/layer-history
+restricted-payload scan found no hits across 22,826 image entries; complete
+archive-byte accounting is not claimed. This remains an operator-built
 candidate, not a published NPA image; registry admission and future conveyance
 remain maintainer decisions.
 
