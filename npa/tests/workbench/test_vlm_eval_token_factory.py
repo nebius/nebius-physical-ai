@@ -571,16 +571,16 @@ def test_compare_judges_rejects_mismatched_shared_frame_evidence(
         )
 
 
-def test_compare_judges_requires_canonical_artifact_filename() -> None:
+def test_compare_judges_requires_canonical_artifact_filename(tmp_path) -> None:
     from npa.workbench import vlm_eval
 
     assert vlm_eval.judge_comparison_result_uri_for("s3://bucket/private/") == (
         "s3://bucket/private/vlm_judge_disagreement.json"
     )
-    canonical = "/tmp/vlm_judge_disagreement.json"
+    canonical = str(tmp_path / "vlm_judge_disagreement.json")
     assert vlm_eval.judge_comparison_result_uri_for(canonical) == canonical
     with pytest.raises(VlmEvalError, match="filename must be"):
-        vlm_eval.judge_comparison_result_uri_for("/tmp/other.json")
+        vlm_eval.judge_comparison_result_uri_for(str(tmp_path / "other.json"))
 
 
 @pytest.mark.parametrize(
