@@ -85,6 +85,22 @@ def packet():
             "cues": [{"id": "cue-001"}, {"id": "cue-002"}]}
 
 
+def test_summary_preserves_illustrative_assessment_order(review):
+    cue_ids = [f"cue-{index:03d}" for index in range(1, 7)]
+    packet = {"packet_sha256": "packet", "video_sha256": "film", "scope": "frames",
+              "cues": [{"id": identifier} for identifier in cue_ids]}
+    assessment = _complete(review, packet)
+    by_id = {item["id"]: item for item in assessment["cues"]}
+    verdicts = {"cue-006": "aligned", "cue-003": "illustrative", "cue-005": "illustrative",
+                "cue-001": "mismatch", "cue-004": "uncertain", "cue-002": "not_reviewed"}
+    assessment["cues"] = [{**by_id[identifier], "verdict": verdict}
+                          for identifier, verdict in verdicts.items()]
+    report = review._assess(packet, assessment)
+    assert report["illustrative_cues"] == ["cue-003", "cue-005"]
+    assert report["problem_cues"] == ["cue-001", "cue-004"]
+    assert report["pending_cues"] == ["cue-002"] and report["status"] == "needs_revision"
+
+
 @pytest.mark.parametrize("verdict,status", [
     ("aligned", "reviewed"), ("illustrative", "reviewed"),
     ("mismatch", "needs_revision"), ("uncertain", "needs_revision"), ("not_reviewed", "pending"),
@@ -92,6 +108,8 @@ def packet():
 def test_timing_never_substitutes_for_explicit_judgment(review, packet, verdict, status):
     report = review._assess(packet, _complete(review, packet, verdict))
     assert report["status"] == status
+    expected = ["cue-001", "cue-002"] if verdict == "illustrative" else []
+    assert report["illustrative_cues"] == expected
     assert report["timing_is_not_semantic_evidence"] is True
 
 
@@ -148,6 +166,22 @@ def test_strict_default_is_pending_and_does_not_call_a_model(review, media, tmp_
     with pytest.raises(SystemExit) as stopped:
         review._main()
     assert stopped.value.code == 1
+
+
+def test_strict_accepts_illustrative_and_serializes_exact_summary(
+    review, media, tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setattr(review, "_arguments", lambda: _options(tmp_path, media))
+    monkeypatch.setattr(
+        review, "_selected_assessment",
+        lambda args, packet, directory: _complete(review, packet, "illustrative"),
+    )
+    review._main()
+    summary = json.loads(capsys.readouterr().out)
+    saved = json.loads((Path(summary["review_directory"]) / "review.json").read_text())
+    assert summary["illustrative_cues"] == ["cue-001"]
+    assert saved["illustrative_cues"] == ["cue-001"]
+    assert summary["status"] == saved["status"] == "reviewed"
 
 
 def test_film_changed_during_model_review_keeps_report_pending(review, media, tmp_path, monkeypatch):

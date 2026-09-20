@@ -84,7 +84,10 @@ Override these with `--video` and `--captions`. `--output-dir` defaults to
 `renders/review`; each packet gets a directory named by its SHA-256. The packet
 binds the video, captions, optional shot list, transcript and sampled frame bytes.
 Older packets remain available after an edit. Reports identify the reviewer,
-method, visible content and reasoning for every cue.
+method, visible content and reasoning for every cue. The summary lists
+`illustrative_cues` separately from `problem_cues` and `pending_cues`, preserving
+assessment order so accepted partial-overlap judgments are visible without
+changing review status.
 Reopening the same packet reuses its assessment; `--judge` explicitly requests
 a new model review.
 

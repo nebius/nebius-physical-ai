@@ -61,12 +61,14 @@ def _assess(packet, assessment):
             raise ValueError("Every judgment needs visible content and reasoning")
     reviewed = [item for item in judgments if item["verdict"] != "not_reviewed"]
     reviewer = _reviewer(assessment, reviewed)
+    illustrative = [item["id"] for item in judgments if item["verdict"] == "illustrative"]
     problems = [item["id"] for item in judgments if item["verdict"] in {"mismatch", "uncertain"}]
     pending = [item["id"] for item in judgments if item["verdict"] == "not_reviewed"]
     status = "needs_revision" if problems else "pending" if pending else "reviewed"
     return {"packet_sha256": packet["packet_sha256"], "video_sha256": packet["video_sha256"],
             "status": status, "reviewer": reviewer, "cue_count": len(judgments),
-            "problem_cues": problems, "pending_cues": pending, "cues": judgments,
+            "illustrative_cues": illustrative, "problem_cues": problems,
+            "pending_cues": pending, "cues": judgments,
             "scope": packet["scope"], "timing_is_not_semantic_evidence": True}
 
 
