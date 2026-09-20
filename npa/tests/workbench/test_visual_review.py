@@ -275,6 +275,19 @@ def _request(
     )
 
 
+def _paired_attempts(tmp_path: Path) -> tuple[visual_review._AttemptSpec, ...]:
+    request = _request(tmp_path, paired=True)
+    result_uri = vlm_eval.visual_review_result_uri_for(request.output_path)
+    return visual_review._prepare_context(request, result_uri).attempts
+
+
+def _paired_completions() -> list[dict]:
+    return [
+        _completion(_paired_payload(current_is_A=True)),
+        _completion(_paired_payload(current_is_A=False)),
+    ]
+
+
 @pytest.mark.parametrize("status", visual_review._TASK_STATUSES)
 def test_parser_accepts_every_task_status(status: str) -> None:
     payload = _single_payload()
@@ -560,6 +573,17 @@ def test_parser_rejects_cross_field_and_dimension_overlap() -> None:
     with pytest.raises(vlm_eval.VlmVisualReviewError, match="enum"):
         _parse_single(payload)
 
+    payload = _single_payload()
+    payload["arm"]["artifact_fidelity"]["issues"] = [
+        {
+            "category": "temporal_defect",
+            "severity": "minor",
+            "assertion": _assertion("A0001"),
+        }
+    ]
+    with pytest.raises(vlm_eval.VlmVisualReviewError, match="empty issue list"):
+        _parse_single(payload)
+
 
 def _parse_single(payload: dict):
     return vlm_eval.parse_visual_review_response(
@@ -762,6 +786,27 @@ def test_paired_review_counterbalances_and_maps_visible_improvement(
     assert len(report.baseline_comparison.observations) == 2
     assert report.current_review.task_evidence.visible_status == "complete"
     assert report.baseline_review.task_evidence.visible_status == "partial"
+
+
+def test_paired_request_rejects_neutral_marker_order_mutation(tmp_path: Path) -> None:
+    attempts = list(_paired_attempts(tmp_path))
+    request = deepcopy(attempts[0].request)
+    content = request["messages"][0]["content"]
+    content[1], content[3] = content[3], content[1]
+    attempts[0] = replace(attempts[0], request=request)
+
+    with pytest.raises(vlm_eval.VlmVisualReviewError, match="marker order"):
+        visual_review._assert_neutral_attempts(attempts)
+
+
+def test_paired_request_rejects_nonimage_setting_mutation(tmp_path: Path) -> None:
+    attempts = list(_paired_attempts(tmp_path))
+    request = deepcopy(attempts[1].request)
+    request["temperature"] = 0.5
+    attempts[1] = replace(attempts[1], request=request)
+
+    with pytest.raises(vlm_eval.VlmVisualReviewError, match="beyond image ordering"):
+        visual_review._assert_neutral_attempts(attempts)
 
 
 def _request_arm_hashes(request: dict) -> dict[str, list[str]]:
@@ -1060,10 +1105,7 @@ def test_two_s3_callers_make_at_most_two_paired_attempts(
         **{**asdict(base), "output_path": "s3://private-bucket/review/"}
     )
     storage = _ConditionalStorage()
-    responses = [
-        _completion(_paired_payload(current_is_A=True)),
-        _completion(_paired_payload(current_is_A=False)),
-    ]
+    responses = _paired_completions()
     response_lock = threading.Lock()
     calls = 0
 
@@ -1493,6 +1535,7 @@ def test_report_finalizer_is_private_and_rejects_forged_reports(
         replace(report, objective_evidence_status="verified"),
         replace(report, result_uri="s3://forged/report.json"),
         replace(report, current_review=forged_review),
+        replace(report, attempt_count=report.attempt_count + 1),
     ]
     for value in forged:
         with pytest.raises(vlm_eval.VlmVisualReviewError):
