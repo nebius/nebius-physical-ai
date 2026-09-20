@@ -4748,3 +4748,58 @@ def _clamp_score(value: Any) -> float:
 def _deterministic_score(*parts: str) -> float:
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
     return int(digest[:8], 16) / 0xFFFFFFFF
+
+
+from .visual_review import (  # noqa: E402
+    DEFAULT_VISUAL_REVIEW_RUBRIC as DEFAULT_VISUAL_REVIEW_RUBRIC,
+    VISUAL_REVIEW_RESULT_FILENAME as VISUAL_REVIEW_RESULT_FILENAME,
+    VISUAL_REVIEW_SCHEMA_VERSION as VISUAL_REVIEW_SCHEMA_VERSION,
+    VlmVisualArmReview,
+    VlmVisualArtifactFidelity,
+    VlmVisualArtifactIssue,
+    VlmVisualAssertion,
+    VlmVisualBaselineComparison,
+    VlmVisualComparisonAssertion,
+    VlmVisualImpressiveness,
+    VlmVisualMappedComparisonAssertion,
+    VlmVisualPairComparison,
+    VlmVisualPairedVerdict,
+    VlmVisualReviewError as VlmVisualReviewError,
+    VlmVisualReviewFailure,
+    VlmVisualReviewOutcome,
+    VlmVisualReviewReport,
+    VlmVisualReviewRequest,
+    VlmVisualReviewability,
+    VlmVisualSingleVerdict,
+    VlmVisualSourceManifest,
+    VlmVisualTaskEvidence,
+    VlmVisualUsefulness,
+    parse_visual_review_response,
+    review_visual,
+    visual_review_result_uri_for,
+)
+
+__all__ += [
+    "VlmVisualArmReview",
+    "VlmVisualArtifactFidelity",
+    "VlmVisualArtifactIssue",
+    "VlmVisualAssertion",
+    "VlmVisualBaselineComparison",
+    "VlmVisualComparisonAssertion",
+    "VlmVisualImpressiveness",
+    "VlmVisualMappedComparisonAssertion",
+    "VlmVisualPairComparison",
+    "VlmVisualPairedVerdict",
+    "VlmVisualReviewFailure",
+    "VlmVisualReviewOutcome",
+    "VlmVisualReviewReport",
+    "VlmVisualReviewRequest",
+    "VlmVisualReviewability",
+    "VlmVisualSingleVerdict",
+    "VlmVisualSourceManifest",
+    "VlmVisualTaskEvidence",
+    "VlmVisualUsefulness",
+    "parse_visual_review_response",
+    "review_visual",
+    "visual_review_result_uri_for",
+]

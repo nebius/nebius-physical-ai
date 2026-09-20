@@ -7,6 +7,15 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM rich visual reviews remain separate from gates
+
+- New API-only `vlm-eval review-visual` CLI and SDK surfaces write a private,
+  schema-validated `vlm_visual_review.json`. Single reviews use one neutral
+  request; paired reviews reverse neutral A/B order and escalate errors,
+  uncertainty, order effects, or material dimension disagreement. The record is
+  audit-only, retains objective and matched-view references as unverified
+  metadata, and never changes the normalized task-completion score or gate.
+
 ### VLM rollout gates require visible terminal evidence
 
 - The default rollout rubric no longer treats likely progress as completion

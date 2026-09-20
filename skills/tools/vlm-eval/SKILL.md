@@ -1,14 +1,15 @@
 ---
 name: vlm-eval
-description: Use to score rollouts with a vision-language model and turn the score into a pipeline gate — single rollout, prefix-wide loop, rubric/threshold benchmark sweeps, backend selection (self-hosted, api, stub), and judging against a plan an earlier stage wrote.
+description: Use to score and gate rollouts, or create a separate audit-only rich visual review — single rollout, prefix-wide loop, benchmark sweeps, hosted/self-hosted backends, and plan-aware judging.
 ---
 
-# VLM eval (scoring rollouts and gating pipelines)
+# VLM eval (scoring, gates, and audit-only visual review)
 
 `vlm-eval` answers "did this rollout complete the task?" as a number, then turns
 that number into a gate. It is the judging half of the loop whose generating half
 is Cosmos/Genesis/Isaac rollouts and whose reasoning half is
-`skills/tools/token-factory/SKILL.md`.
+`skills/tools/token-factory/SKILL.md`. Its separate `review-visual` path creates
+a non-gating rich record for visual audit.
 
 ## Pick the right command
 
@@ -21,6 +22,9 @@ npa workbench vlm-eval compare-judges --input-path <one-rollout> \
 npa workbench vlm-eval compare-preference \
   --baseline-path <image-a> --candidate-path <image-b> \
   --output-path <private-prefix> --task <task> --rubric <rubric>
+npa workbench vlm-eval review-visual \
+  --input-path <visual-artifact> --baseline-path <matched-artifact> \
+  --output-path <private-prefix> --model <hosted-model> --task <neutral-task>
 npa workbench vlm-eval status
 npa workbench vlm-eval list
 npa workbench vlm-eval workflow
@@ -125,6 +129,42 @@ Task and rubric text containing `baseline` or `candidate` is rejected before
 transport. Telling the model not to follow image text is not a defense against
 in-image instructions. Its CLI summary omits paths, prompts, visible support,
 uncertainty, request IDs, and raw responses.
+
+`review-visual` is a separate API-only, audit-only rich record. It writes only
+the canonical `vlm_visual_review.json` under a prefix, or accepts that exact
+filename; reject another explicit JSON filename before transport. It never
+changes `VlmEvalResult`, the normalized score, `passed`, or a workflow gate.
+The private report separates visible task evidence, content fidelity,
+reviewability, subjective impressiveness, and a Physical AI usefulness
+hypothesis. Code fixes `deployment_status=audit_only`,
+`score_gate_affected=false`, the normalized score to null, and usefulness to
+`hypothesis_only`.
+
+Single mode makes one request over neutral set A and records comparison status
+`not_provided`. Supplying `--baseline-path` makes two separately journaled
+requests with the sources reversed behind neutral A/B labels. Only two
+high-confidence, non-unresolved outcomes that agree on the mapped comparison
+and every material dimension can produce an eligible comparison; otherwise
+escalate. There are no hosted retries. The CLI prints only `schema_version`,
+`status`, `escalation_required`, `attempt_count`, and `model`; never print
+paths, prompts, references, raw responses, rationale, request IDs, endpoints,
+or credentials.
+
+Load objective locators only through `--objective-evidence-path` and optional
+producer matched-view metadata through `--matched-view-map-path`. Retain both
+privately as unverified metadata; never send either to the provider or convert
+them into visual proof. Keep `current`, `baseline`, and `candidate` out of the
+provider-facing task, rubric, and model text. The Python surface
+`npa.sdk.workbench.vlm_eval.review_visual` takes the same options and returns
+only after the core backend has finalized the canonical report.
+
+Treat every rich record as a review aid, not qualification. Frame citations are
+syntactic provenance and require pixel-first human checking. Pixels cannot
+establish hidden simulator state, objective completion, geometry accuracy,
+physical correctness, release mechanics, stability, measured downstream
+benefit, policy success, or robot safety. Matched-view metadata does not prove
+registration, and instructions embedded in images remain an input-integrity
+risk.
 
 ## Scoring controls that actually change the verdict
 
