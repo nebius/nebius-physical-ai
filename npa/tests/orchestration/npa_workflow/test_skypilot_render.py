@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -20,10 +21,12 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     assert_no_unresolved_placeholders,
     normalize_resources,
     plan_image_pull_secrets,
+    plan_images,
     render_skypilot_yaml,
     resolve_task_image,
     tool_image_key,
     tool_requires_staged_npa_source,
+    validate_image_override_selectors,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import (
@@ -1070,6 +1073,66 @@ def test_resolve_task_image_uses_override() -> None:
         options=SkypilotRenderOptions(image_overrides={"*": "cr.example/custom:1"}),
     )
     assert image == "cr.example/custom:1"
+
+
+def test_resolve_task_image_rejects_glob_like_override_selector() -> None:
+    with pytest.raises(NpaWorkflowRenderError, match="bare '\\*'"):
+        resolve_task_image(
+            "workbench.fiftyone.curate_augmented",
+            {},
+            options=SkypilotRenderOptions(
+                image_overrides={"workbench.*": "cr.example/custom:1"}
+            ),
+        )
+
+
+@pytest.mark.parametrize("boundary", ["plan-images", "pull-secrets", "render"])
+def test_unmatched_image_override_selector_fails_before_output(boundary: str) -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="unmatched-image-override")
+    options = SkypilotRenderOptions(
+        image_overrides={"workbench.vlm_eval.rnu": "cr.example/custom:1"},
+        materialize_registry_secrets=False,
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="matched no workflow toolRef"):
+        if boundary == "plan-images":
+            plan_images(
+                spec,
+                plan.steps,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+        elif boundary == "pull-secrets":
+            plan_image_pull_secrets(
+                spec,
+                plan.steps,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+        else:
+            render_skypilot_yaml(
+                spec,
+                plan,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+
+
+def test_image_override_selector_validation_uses_every_spec_state() -> None:
+    spec = SimpleNamespace(
+        states={
+            "selected": SimpleNamespace(tool_ref="workbench.fiftyone.app"),
+            "alternate": SimpleNamespace(tool_ref="workbench.vlm_eval.run"),
+        }
+    )
+
+    validate_image_override_selectors(
+        spec,
+        SkypilotRenderOptions(
+            image_overrides={"workbench.vlm_eval": "cr.example/alternate:1"}
+        ),
+    )
 
 
 def test_first_party_image_rejects_uid_zero_pod_override(

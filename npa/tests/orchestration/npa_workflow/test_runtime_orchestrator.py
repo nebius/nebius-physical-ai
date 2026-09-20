@@ -1617,10 +1617,7 @@ def test_completed_replay_rejects_changed_image_selection(
 def test_completed_replay_accepts_reordered_image_selection(tmp_path: Path) -> None:
     pins = _image_pin_bindings()
     references = list(pins)
-    overrides = {
-        "workbench.train": references[0],
-        "*": references[1],
-    }
+    overrides = {"*": references[1]}
     spec, store = _completed_replay_case(
         tmp_path,
         render_options=_image_selection_options(overrides, pins=pins),

@@ -175,6 +175,9 @@ reference to its resolved immutable image. Mapping order does not matter, but
 changing any assignment changes identity. Older value-only or pin-only runtime
 identities cannot prove the complete selection and therefore require a new run
 ID rather than an unsafe compatibility guess.
+Image override selectors must be an exact `toolRef`, a boundary-safe family
+prefix such as `workbench.fiftyone`, or the bare `*`. Glob-like and unmatched
+selectors fail before rendering so a typo cannot silently run a catalog image.
 
 ## Reading status
 
