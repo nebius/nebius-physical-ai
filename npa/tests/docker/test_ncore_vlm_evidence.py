@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import argparse
+from io import BytesIO
 import json
 from pathlib import Path
 import sys
+import urllib.error
 
 from PIL import Image
 import pytest
@@ -86,6 +89,8 @@ def test_one_shot_call_retains_exact_transport_without_labels(
     result = vlm_evidence._call_once(
         root=root,
         attempt_id="opaque-case",
+        freeze_sha256="a" * 64,
+        purpose="calibration",
         frame_records=records,
         task="Review visible coherence.",
         rubric="Use visible pixels only.",
@@ -102,6 +107,8 @@ def test_one_shot_call_retains_exact_transport_without_labels(
         vlm_evidence._call_once(
             root=root,
             attempt_id="opaque-case",
+            freeze_sha256="a" * 64,
+            purpose="calibration",
             frame_records=records,
             task="Review visible coherence.",
             rubric="Use visible pixels only.",
@@ -121,6 +128,8 @@ def test_one_shot_call_rejects_served_model_drift(monkeypatch, tmp_path: Path) -
         vlm_evidence._call_once(
             root=root,
             attempt_id="opaque-case",
+            freeze_sha256="a" * 64,
+            purpose="calibration",
             frame_records=records,
             task="Review visible coherence.",
             rubric="Use visible pixels only.",
@@ -142,3 +151,89 @@ def test_block_control_is_deterministic_and_nonidentical(tmp_path: Path) -> None
     assert first == second
     assert first[0] != vlm_evidence._image_bytes(source)[0]
     assert vlm_evidence._indices(10) == [0, 3, 6, 9]
+
+
+def test_http_error_retains_status_and_response_without_retry(
+    monkeypatch, tmp_path: Path
+) -> None:
+    root, records = _root(tmp_path)
+    calls = 0
+
+    def fail(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        raise urllib.error.HTTPError(
+            vlm_evidence.ENDPOINT,
+            429,
+            "limited",
+            {},
+            BytesIO(b'{"error":"limited"}'),
+        )
+
+    monkeypatch.setattr(vlm_evidence.urllib.request, "urlopen", fail)
+
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="HTTP error"):
+        vlm_evidence._call_once(
+            root=root,
+            attempt_id="opaque-case",
+            freeze_sha256="a" * 64,
+            purpose="calibration",
+            frame_records=records,
+            task="Review visible coherence.",
+            rubric="Use visible pixels only.",
+            api_key="secret-not-retained",
+        )
+
+    assert calls == 1
+    attempt = root / "transport/opaque-case"
+    assert (attempt / "response.json").read_bytes() == b'{"error":"limited"}'
+    outcome = json.loads((attempt / "outcome.json").read_text())
+    assert outcome["http_status"] == 429
+    assert outcome["status"] == "response_failed"
+
+
+def test_final_rejects_passing_calibration_from_another_freeze(
+    monkeypatch, tmp_path: Path
+) -> None:
+    root, records = _root(tmp_path)
+    labels = {
+        f"case-{index}": {
+            "role": "positive" if index < 2 else "negative",
+            "expected_label": index < 2,
+        }
+        for index in range(4)
+    }
+    vlm_evidence._write_json(root / "labels.json", {"cases": labels})
+    manifest = {
+        "case_order": list(labels),
+        "label_commitment_sha256": vlm_evidence._sha_file(root / "labels.json"),
+        "final_frames": records,
+        "final_task_sha256": "b" * 64,
+        "rubric_sha256": "c" * 64,
+    }
+    calibration = {
+        "format": vlm_evidence.CALIBRATION_FORMAT,
+        "status": "pass",
+        "freeze_sha256": "0" * 64,
+        "model": vlm_evidence.MODEL,
+        "served_model": vlm_evidence.MODEL,
+        "threshold": vlm_evidence.THRESHOLD,
+        "total": 4,
+        "attempt_count": 4,
+        "one_shot": True,
+        "true_positives": 2,
+        "true_negatives": 2,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "results": [],
+    }
+    vlm_evidence._write_json(root / "calibration.json", calibration)
+    monkeypatch.setattr(vlm_evidence, "_verified_freeze", lambda _args: manifest)
+    args = argparse.Namespace(
+        evidence_root=root,
+        freeze_sha256="a" * 64,
+        calibration_sha256=vlm_evidence._sha_file(root / "calibration.json"),
+    )
+
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="contract differs"):
+        vlm_evidence.final(args)

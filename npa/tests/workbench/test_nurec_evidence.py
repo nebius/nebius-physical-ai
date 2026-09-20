@@ -241,3 +241,29 @@ def test_render_receipt_rejects_uniform_visual_control(tmp_path: Path) -> None:
 
     assert receipt["status"] == "failed"
     assert receipt["output"]["nonuniform_frames"] is False
+
+
+def test_render_receipt_requires_a_decodable_video(tmp_path: Path) -> None:
+    usdz = tmp_path / "last.usdz"
+    usdz.write_bytes(b"trained-scene")
+    output = tmp_path / "render"
+    output.mkdir()
+    _rgb(output / "000000.png")
+
+    receipt = evidence.write_render_receipt(
+        receipt_path=output / "nre-render.json",
+        artifact_path=usdz,
+        output_dir=output,
+        nre_image=NRE_IMAGE,
+        command=["/app/run", "render"],
+        render_exit_code=0,
+        novel_view=True,
+        rig_translation_offset="0.0,0.25,0.0",
+        rig_rotation_offset="0.0,0.0,0.0",
+        gpu_names=["NVIDIA L40S"],
+    )
+
+    assert receipt["status"] == "failed"
+    assert receipt["output"]["video_count"] == 0
+    assert receipt["output"]["all_videos_decoded"] is False
+    assert receipt["output"]["decoded_video_frames"] == 0

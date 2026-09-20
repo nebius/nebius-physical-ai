@@ -44,6 +44,10 @@ PUBLICATION_CLAIM = ".npa-colmap-claim.json"
 class NcoreConversionError(NurecError, NpaError):
     """The source, runtime, output verification, or publication failed."""
 
+    def __init__(self, message: str, *, phase: str = "") -> None:
+        super().__init__(message)
+        self.phase = phase
+
 
 def _relative(value: str, *, allow_dot: bool = False) -> Path:
     # UPath also interprets protocols: reject those before constructing any path.
@@ -1041,7 +1045,8 @@ def convert_colmap(
                     and archive_hash != request.expected_archive_sha256
                 ):
                     raise NcoreConversionError(
-                        "source archive SHA-256 differs from the required digest"
+                        "source archive SHA-256 differs from the required digest",
+                        phase="source_digest_pre_extract",
                     )
                 extract_colmap_zip(archive, staged)
             else:

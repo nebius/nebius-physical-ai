@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -12,6 +13,7 @@ from typing import Any, Mapping, Sequence
 from npa.errors import NpaError
 
 
+logger = logging.getLogger(__name__)
 RECONSTRUCTION_RECEIPT_FORMAT = "npa_nurec_reconstruction_receipt_v1"
 RENDER_RECEIPT_FORMAT = "npa_nurec_render_receipt_v1"
 
@@ -73,6 +75,10 @@ def validate_runtime_attestation(
         "observed_image_digest",
         "gpu_names",
         "gpu_count",
+        "managed_job_name_sha256",
+        "managed_job_id_sha256",
+        "context_sha256",
+        "namespace_sha256",
         "stages",
     }:
         raise NurecEvidenceError("runtime attestation has an invalid schema")
@@ -100,6 +106,12 @@ def validate_runtime_attestation(
         "gpu_names",
         "gpu_count",
         "resource_identity_sha256",
+        "pod_identity_sha256",
+        "managed_job_name_sha256",
+        "managed_job_id_sha256",
+        "task_cluster_sha256",
+        "context_sha256",
+        "namespace_sha256",
         "control_plane_record_sha256",
         "container_state",
         "receipt_sha256",
@@ -122,11 +134,31 @@ def validate_runtime_attestation(
             raise NurecEvidenceError("runtime stage image or GPU differs")
         for field in (
             "resource_identity_sha256",
+            "pod_identity_sha256",
+            "managed_job_name_sha256",
+            "managed_job_id_sha256",
+            "task_cluster_sha256",
+            "context_sha256",
+            "namespace_sha256",
             "control_plane_record_sha256",
             "receipt_sha256",
         ):
             if re.fullmatch(r"[0-9a-f]{64}", str(stage.get(field) or "")) is None:
                 raise NurecEvidenceError("runtime stage identity hash differs")
+        for field in (
+            "managed_job_name_sha256",
+            "managed_job_id_sha256",
+            "context_sha256",
+            "namespace_sha256",
+        ):
+            if stage.get(field) != payload.get(field):
+                raise NurecEvidenceError("runtime stage run binding differs")
+    if len(
+        {stages[stage_name]["pod_identity_sha256"] for stage_name in required}
+    ) != len(required) or len(
+        {stages[stage_name]["task_cluster_sha256"] for stage_name in required}
+    ) != len(required):
+        raise NurecEvidenceError("runtime stages did not use distinct pods and tasks")
     return payload
 
 
@@ -429,7 +461,7 @@ def _decode_video(path: Path) -> dict[str, Any]:
             try:
                 reader.close()
             except Exception:
-                pass
+                logger.debug("Could not close NRE evidence video reader", exc_info=True)
 
 
 def write_render_receipt(
@@ -479,8 +511,11 @@ def write_render_receipt(
     inventory = sorted(
         [*frames, *videos], key=lambda item: (item["path"], item["sha256"])
     )
-    complete = bool(frames) and all(
-        item["finite_pixels"] and item["nonuniform"] for item in frames
+    complete = (
+        bool(frames)
+        and bool(videos)
+        and all(item["finite_pixels"] and item["nonuniform"] for item in frames)
+        and all(item["decoded_frames"] > 0 for item in videos)
     )
     requested_digest = _requested_digest(nre_image)
     gpu = _gpu_record(gpu_names)
@@ -516,7 +551,8 @@ def write_render_receipt(
             "inventory_sha256": _canonical_sha(inventory),
             "inventory": inventory,
             "all_frames_decoded": bool(frames),
-            "all_videos_decoded": all(item["decoded_frames"] > 0 for item in videos),
+            "all_videos_decoded": bool(videos)
+            and all(item["decoded_frames"] > 0 for item in videos),
             "decoded_video_frames": sum(item["decoded_frames"] for item in videos),
             "finite_pixels": bool(frames)
             and all(item["finite_pixels"] for item in frames),

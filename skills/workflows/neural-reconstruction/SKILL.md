@@ -108,10 +108,14 @@ Every stage is a real command; nothing here is a manifest stub.
 ```bash
 npa workbench nurec check       # NGC pullability + HF download rights + RT-core GPU
 npa workbench nurec probe-storage # S3 conditional write/read/list/delete preflight
-npa workbench nurec observe-runtime # control-plane pod image/GPU observation
+npa workbench nurec stage-source # conditional source staging + exact read-back
+npa workbench nurec control-source # pre-extraction wrong-hash / zero-output control
+npa workbench nurec observe-runtime # exact-job/stage-bound pod image/GPU observation
 npa workbench nurec bundle-runtime # bind reconstruct + render pod receipts
 npa workbench nurec convert-colmap # CPU: official Apache-2.0 COLMAP -> NCore V4
 npa workbench nurec audit-colmap # CPU: independent post-S3 object/V4 read-back
+npa workbench nurec audit-qualification # bind native receipts, media, USDZ, metrics, RRD
+npa workbench nurec cleanup-qualification # cancel, terminality, down, local/orphan audit
 npa workbench nurec fetch       # real NCore V4 shards + derived rig pose edge
 npa workbench nurec reconstruct # NRE 3DGUT training -> renderable USDZ + metrics
 npa workbench nurec render      # `nre render` novel views (rig offset, not training views)

@@ -16,14 +16,35 @@ IMAGE = (
 DIGEST = IMAGE.split("@", 1)[1]
 
 
-def _runner(*, image_id: str = IMAGE, gpu_limit: str = "1", gpu_label: str = ""):
+def _runner(
+    *,
+    image_id: str = IMAGE,
+    gpu_limit: str = "1",
+    gpu_label: str = "",
+    managed_job_name: str = "private-run",
+    managed_job_id: str = "42",
+):
     def run(command, **kwargs):
         assert kwargs["check"] is False
         assert kwargs["timeout"] == 120
         resource = command[command.index("get") + 1]
         if resource == "pod":
+            pod_name = command[command.index("pod") + 1]
+            stage = "render" if "render" in pod_name else "reconstruct"
             payload = {
-                "metadata": {"uid": "pod-uid-private"},
+                "metadata": {
+                    "name": pod_name,
+                    "uid": f"pod-uid-{stage}",
+                    "annotations": {
+                        "skypilot-managed-job-name": managed_job_name,
+                        "skypilot-managed-job-id": managed_job_id,
+                    },
+                    "labels": {
+                        "skypilot-cluster-name": (
+                            f"{stage}-{managed_job_id}-privatehash"
+                        )
+                    },
+                },
                 "spec": {
                     "nodeName": "node-private",
                     "containers": [
@@ -68,6 +89,8 @@ def _observe(tmp_path: Path, stage: str) -> tuple[dict, Path]:
         namespace="private-namespace",
         container_name="ray-node",
         expected_image=IMAGE,
+        managed_job_name="private-run",
+        managed_job_id="42",
         output_path=path,
         context="private-context",
         runner=_runner(),
@@ -109,6 +132,10 @@ def test_observe_and_bundle_two_control_plane_stage_identities(
         (_runner(image_id="containerd://sha256:" + "0" * 64), "digest differs"),
         (_runner(gpu_limit="2"), "one-GPU"),
         (_runner(gpu_label="NVIDIA-H100-80GB-HBM3"), "RTX PRO 6000"),
+        (
+            _runner(gpu_label="NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"),
+            "Server Edition",
+        ),
     ],
 )
 def test_observation_rejects_wrong_runtime_identity(
@@ -121,11 +148,73 @@ def test_observation_rejects_wrong_runtime_identity(
             namespace="private-namespace",
             container_name="ray-node",
             expected_image=IMAGE,
+            managed_job_name="private-run",
+            managed_job_id="42",
             output_path=tmp_path / "receipt.json",
+            context="private-context",
             runner=runner,
         )
 
     assert not (tmp_path / "receipt.json").exists()
+
+
+def test_observation_rejects_unrelated_managed_job(tmp_path: Path) -> None:
+    with pytest.raises(
+        runtime_attestation.NurecRuntimeAttestationError,
+        match="not bound",
+    ):
+        runtime_attestation.observe_kubernetes_stage(
+            stage="reconstruct",
+            pod_name="private-reconstruct-pod",
+            namespace="private-namespace",
+            container_name="ray-node",
+            expected_image=IMAGE,
+            managed_job_name="private-run",
+            managed_job_id="42",
+            output_path=tmp_path / "receipt.json",
+            context="private-context",
+            runner=_runner(managed_job_id="41"),
+        )
+
+
+def test_observation_discovers_only_exact_managed_job_stage(tmp_path: Path) -> None:
+    exact = _runner()
+
+    def runner(command, **kwargs):
+        resource = command[command.index("get") + 1]
+        if resource != "pods":
+            return exact(command, **kwargs)
+        pod_command = [
+            *command[: command.index("get") + 1],
+            "pod",
+            "private-reconstruct-pod",
+            "--output",
+            "json",
+        ]
+        pod = json.loads(exact(pod_command, **kwargs).stdout)
+        unrelated = json.loads(json.dumps(pod))
+        unrelated["metadata"]["uid"] = "unrelated"
+        unrelated["metadata"]["annotations"]["skypilot-managed-job-id"] = "41"
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps({"items": [unrelated, pod]}), ""
+        )
+
+    receipt = runtime_attestation.observe_kubernetes_stage(
+        stage="reconstruct",
+        namespace="private-namespace",
+        container_name="ray-node",
+        expected_image=IMAGE,
+        managed_job_name="private-run",
+        managed_job_id="42",
+        output_path=tmp_path / "receipt.json",
+        context="private-context",
+        max_wait_seconds=1,
+        poll_seconds=0.1,
+        runner=runner,
+    )
+
+    assert receipt["status"] == "pass"
+    assert receipt["managed_job_id_sha256"]
 
 
 def test_bundle_rejects_reused_single_stage(tmp_path: Path) -> None:

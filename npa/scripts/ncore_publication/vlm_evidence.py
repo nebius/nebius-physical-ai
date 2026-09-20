@@ -9,10 +9,13 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
+import re
 import secrets
 import stat
 import tempfile
 from typing import Any
+import urllib.error
 import urllib.request
 
 from PIL import Image
@@ -26,14 +29,17 @@ from npa.workbench.nurec.colmap import (
 )
 
 
-FREEZE_FORMAT = "npa_ncore_vlm_freeze_v1"
-CALIBRATION_FORMAT = "npa_ncore_vlm_calibration_v1"
-FINAL_FORMAT = "npa_ncore_vlm_final_v1"
+FREEZE_FORMAT = "npa_ncore_vlm_freeze_v2"
+CALIBRATION_FORMAT = "npa_ncore_vlm_calibration_v2"
+FINAL_FORMAT = "npa_ncore_vlm_final_v2"
+ATTEMPT_FORMAT = "npa_ncore_vlm_attempt_v2"
+TRANSPORT_FORMAT = "npa_ncore_vlm_transport_manifest_v2"
 MODEL = "openbmb/MiniCPM-V-4_5"
 ENDPOINT = "https://api.tokenfactory.nebius.com/v1/chat/completions"
 THRESHOLD = 0.8
 FRAME_COUNT = 4
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+_ATTEMPT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
 class VlmEvidenceError(RuntimeError):
@@ -154,6 +160,7 @@ def _block_corrupt(selected: list[Path]) -> list[bytes]:
     controls = []
     for path in selected:
         try:
+            original, _ = _image_bytes(path)
             with Image.open(path) as source:
                 image = source.convert("RGB")
                 boxes = [
@@ -175,10 +182,40 @@ def _block_corrupt(selected: list[Path]) -> list[bytes]:
 
                 stream = BytesIO()
                 transformed.save(stream, format="PNG")
-                controls.append(stream.getvalue())
+                body = stream.getvalue()
+                if body == original:
+                    raise VlmEvidenceError(
+                        "block control is pixel-identical to its positive source"
+                    )
+                controls.append(body)
         except Exception as exc:
+            if isinstance(exc, VlmEvidenceError):
+                raise
             raise VlmEvidenceError("block control generation failed") from exc
     return controls
+
+
+def _render_trajectory(render_dir: Path, camera: str) -> tuple[str, list[Path]]:
+    relative = PurePosixPath(str(camera))
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+    ):
+        raise VlmEvidenceError("render camera must be a safe relative directory")
+    directory = render_dir.joinpath(*relative.parts)
+    if directory.is_symlink() or not directory.is_dir():
+        raise VlmEvidenceError("render camera directory is missing")
+    frames = sorted(
+        path
+        for path in directory.iterdir()
+        if path.is_file()
+        and not path.is_symlink()
+        and path.suffix.lower() in IMAGE_SUFFIXES
+    )
+    if len(frames) < FRAME_COUNT:
+        raise VlmEvidenceError("render camera trajectory needs at least four frames")
+    return relative.as_posix(), frames
 
 
 def freeze(args: argparse.Namespace) -> dict[str, Any]:
@@ -242,10 +279,8 @@ def freeze(args: argparse.Namespace) -> dict[str, Any]:
             "frames": _write_case(root, case_id, frames),
         }
         labels[case_id] = {"role": role, "expected_label": expected}
-    render_frames = sorted(
-        path
-        for path in args.render_dir.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
+    render_camera, render_frames = _render_trajectory(
+        args.render_dir, args.render_camera
     )
     final_records = []
     final_dir = root / "final"
@@ -261,12 +296,34 @@ def freeze(args: argparse.Namespace) -> dict[str, Any]:
                 "bytes": len(body),
                 "order": order,
                 "source_index": source_index,
+                "source_sha256": _sha_file(render_frames[source_index]),
             }
         )
+    final_frame_manifest_path = root / "final-frame-manifest.json"
+    _write_json(
+        final_frame_manifest_path,
+        {
+            "format": "npa_ncore_vlm_final_frames_v1",
+            "render_camera_sha256": _sha_bytes(render_camera.encode()),
+            "render_inventory_sha256": _sha_bytes(
+                _canonical(
+                    [
+                        {
+                            "sha256": _sha_file(path),
+                            "bytes": path.stat().st_size,
+                        }
+                        for path in render_frames
+                    ]
+                )
+            ),
+            "frames": final_records,
+        },
+    )
     label_path = root / "labels.json"
     _write_json(label_path, {"cases": labels})
     manifest = {
         "format": FREEZE_FORMAT,
+        "schedule_id": secrets.token_hex(16),
         "source_archive_sha256": args.source_sha256,
         "render_inventory_sha256": _sha_bytes(
             _canonical(
@@ -287,6 +344,7 @@ def freeze(args: argparse.Namespace) -> dict[str, Any]:
         "case_order": case_order,
         "cases": cases,
         "label_commitment_sha256": _sha_file(label_path),
+        "final_frame_manifest_sha256": _sha_file(final_frame_manifest_path),
         "final_frames": final_records,
     }
     manifest_path = root / "freeze.json"
@@ -295,6 +353,7 @@ def freeze(args: argparse.Namespace) -> dict[str, Any]:
         "status": "ok",
         "freeze_sha256": _sha_file(manifest_path),
         "label_commitment_sha256": manifest["label_commitment_sha256"],
+        "final_frame_manifest_sha256": manifest["final_frame_manifest_sha256"],
         "cases": len(cases),
         "final_frames": len(final_records),
     }
@@ -317,11 +376,28 @@ def _call_once(
     *,
     root: Path,
     attempt_id: str,
+    freeze_sha256: str,
+    purpose: str,
     frame_records: list[dict[str, Any]],
     task: str,
     rubric: str,
     api_key: str,
 ) -> dict[str, Any]:
+    if _ATTEMPT_ID.fullmatch(attempt_id) is None:
+        raise VlmEvidenceError("attempt ID is invalid")
+    if purpose not in {"calibration", "final"}:
+        raise VlmEvidenceError("attempt purpose is invalid")
+    ledger_path = root / "attempt-ledger" / f"{attempt_id}.json"
+    _write_json(
+        ledger_path,
+        {
+            "format": ATTEMPT_FORMAT,
+            "status": "committed",
+            "attempt_id": attempt_id,
+            "purpose": purpose,
+            "freeze_sha256": freeze_sha256,
+        },
+    )
     attempt_root = root / "transport" / attempt_id
     attempt_root.mkdir(mode=0o700, parents=True)
     frames = []
@@ -356,6 +432,8 @@ def _call_once(
         {
             "status": "started",
             "attempt_id": attempt_id,
+            "purpose": purpose,
+            "freeze_sha256": freeze_sha256,
             "endpoint_sha256": _sha_bytes(ENDPOINT.encode()),
             "model": MODEL,
             "prompt_sha256": _sha_bytes(prompt.encode()),
@@ -377,6 +455,21 @@ def _call_once(
         with urllib.request.urlopen(request, timeout=120) as response:
             status_code = int(response.status)
             response_bytes = response.read()
+    except urllib.error.HTTPError as exc:
+        response_bytes = exc.read()
+        _write_private(attempt_root / "response.json", response_bytes)
+        _write_json(
+            attempt_root / "outcome.json",
+            {
+                "status": "response_failed",
+                "error_class": "HTTPError",
+                "http_status": int(exc.code),
+                "response_sha256": _sha_bytes(response_bytes),
+            },
+        )
+        raise VlmEvidenceError(
+            "hosted VLM returned an HTTP error; retry is prohibited"
+        ) from exc
     except Exception as exc:
         _write_json(
             attempt_root / "outcome.json",
@@ -445,6 +538,8 @@ def _call_once(
     result = {
         "status": "complete",
         "attempt_id": attempt_id,
+        "purpose": purpose,
+        "freeze_sha256": freeze_sha256,
         "http_status": status_code,
         "requested_model": MODEL,
         "served_model": served_model,
@@ -471,9 +566,213 @@ def _verified_freeze(args: argparse.Namespace) -> dict[str, Any]:
         manifest.get("format") != FREEZE_FORMAT
         or manifest.get("model") != MODEL
         or manifest.get("threshold") != THRESHOLD
+        or re.fullmatch(r"[0-9a-f]{32}", str(manifest.get("schedule_id") or "")) is None
     ):
         raise VlmEvidenceError("freeze manifest contract differs")
+    case_order = manifest.get("case_order")
+    cases = manifest.get("cases")
+    if (
+        not isinstance(case_order, list)
+        or len(case_order) != 4
+        or len(set(case_order)) != 4
+        or not all(isinstance(item, str) for item in case_order)
+        or not isinstance(cases, dict)
+        or set(cases) != set(case_order)
+    ):
+        raise VlmEvidenceError("freeze calibration cases differ")
+    for case_id in case_order:
+        case = cases[case_id]
+        if not isinstance(case, dict):
+            raise VlmEvidenceError("freeze calibration case differs")
+        _verified_frames(args.evidence_root, case.get("frames"))
+    final_frames = _verified_frames(args.evidence_root, manifest.get("final_frames"))
+    final_manifest_path = args.evidence_root / "final-frame-manifest.json"
+    if _sha_file(final_manifest_path) != manifest.get("final_frame_manifest_sha256"):
+        raise VlmEvidenceError("final frame manifest hash differs")
+    final_manifest = _load_json(final_manifest_path)
+    if (
+        final_manifest.get("format") != "npa_ncore_vlm_final_frames_v1"
+        or final_manifest.get("frames") != final_frames
+        or final_manifest.get("render_inventory_sha256")
+        != manifest.get("render_inventory_sha256")
+    ):
+        raise VlmEvidenceError("final frame manifest contract differs")
     return manifest
+
+
+def _verified_frames(root: Path, records: Any) -> list[dict[str, Any]]:
+    if not isinstance(records, list) or len(records) != FRAME_COUNT:
+        raise VlmEvidenceError("frozen frame records differ")
+    verified = []
+    for order, record in enumerate(records):
+        if (
+            not isinstance(record, dict)
+            or record.get("order") != order
+            or not isinstance(record.get("path"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256") or "")) is None
+            or type(record.get("bytes")) is not int
+            or record["bytes"] <= 0
+        ):
+            raise VlmEvidenceError("frozen frame record differs")
+        relative = PurePosixPath(record["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise VlmEvidenceError("frozen frame path is unsafe")
+        path = root.joinpath(*relative.parts)
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or path.stat().st_size != record["bytes"]
+            or _sha_file(path) != record["sha256"]
+        ):
+            raise VlmEvidenceError("frozen frame bytes differ")
+        verified.append(record)
+    return verified
+
+
+def _verified_transport(
+    root: Path,
+    *,
+    attempt_id: str,
+    freeze_sha256: str,
+    purpose: str,
+) -> dict[str, Any]:
+    ledger = _load_json(root / "attempt-ledger" / f"{attempt_id}.json")
+    if ledger != {
+        "format": ATTEMPT_FORMAT,
+        "status": "committed",
+        "attempt_id": attempt_id,
+        "purpose": purpose,
+        "freeze_sha256": freeze_sha256,
+    }:
+        raise VlmEvidenceError("VLM attempt ledger differs")
+    attempt_root = root / "transport" / attempt_id
+    files = {
+        path.name
+        for path in attempt_root.iterdir()
+        if path.is_file() and not path.is_symlink()
+    }
+    if files != {"attempt.json", "request.json", "response.json", "outcome.json"}:
+        raise VlmEvidenceError("completed VLM transport file set differs")
+    attempt = _load_json(attempt_root / "attempt.json")
+    outcome = _load_json(attempt_root / "outcome.json")
+    if (
+        attempt.get("status") != "started"
+        or attempt.get("attempt_id") != attempt_id
+        or attempt.get("purpose") != purpose
+        or attempt.get("freeze_sha256") != freeze_sha256
+        or outcome.get("status") != "complete"
+        or outcome.get("attempt_id") != attempt_id
+        or outcome.get("purpose") != purpose
+        or outcome.get("freeze_sha256") != freeze_sha256
+        or outcome.get("requested_model") != MODEL
+        or outcome.get("served_model") != MODEL
+        or outcome.get("http_status") != 200
+        or attempt.get("request_sha256") != _sha_file(attempt_root / "request.json")
+        or outcome.get("request_sha256") != attempt.get("request_sha256")
+        or outcome.get("response_sha256") != _sha_file(attempt_root / "response.json")
+        or outcome.get("prompt_sha256") != attempt.get("prompt_sha256")
+        or outcome.get("frame_sha256") != attempt.get("frame_sha256")
+    ):
+        raise VlmEvidenceError("completed VLM transport binding differs")
+    return outcome
+
+
+def _exact_attempt_set(root: Path, expected: set[str]) -> None:
+    for directory_name in ("attempt-ledger", "transport"):
+        directory = root / directory_name
+        if directory.is_symlink() or not directory.is_dir():
+            raise VlmEvidenceError("VLM attempt evidence directory is missing")
+        entries = list(directory.iterdir())
+        if any(
+            path.is_symlink()
+            or (
+                not path.is_file()
+                if directory_name == "attempt-ledger"
+                else not path.is_dir()
+            )
+            or (directory_name == "attempt-ledger" and path.suffix != ".json")
+            for path in entries
+        ):
+            raise VlmEvidenceError("VLM attempt evidence contains an invalid entry")
+        observed = {
+            path.stem if directory_name == "attempt-ledger" else path.name
+            for path in entries
+        }
+        if observed != expected:
+            raise VlmEvidenceError("VLM attempt schedule differs")
+
+
+def _verified_calibration(
+    root: Path,
+    *,
+    manifest: dict[str, Any],
+    freeze_sha256: str,
+    calibration_sha256: str,
+) -> dict[str, Any]:
+    path = root / "calibration.json"
+    if _sha_file(path) != calibration_sha256:
+        raise VlmEvidenceError("calibration SHA-256 differs")
+    calibration = _load_json(path)
+    case_order = manifest["case_order"]
+    labels_path = root / "labels.json"
+    if _sha_file(labels_path) != manifest.get("label_commitment_sha256"):
+        raise VlmEvidenceError("private label commitment differs")
+    labels = _load_json(labels_path).get("cases")
+    results = calibration.get("results")
+    if (
+        calibration.get("format") != CALIBRATION_FORMAT
+        or calibration.get("status") != "pass"
+        or calibration.get("freeze_sha256") != freeze_sha256
+        or calibration.get("model") != MODEL
+        or calibration.get("served_model") != MODEL
+        or calibration.get("threshold") != THRESHOLD
+        or calibration.get("total") != len(case_order)
+        or calibration.get("attempt_count") != len(case_order)
+        or calibration.get("one_shot") is not True
+        or not isinstance(labels, dict)
+        or not isinstance(results, list)
+        or [item.get("case_id") for item in results if isinstance(item, dict)]
+        != case_order
+    ):
+        raise VlmEvidenceError("calibration contract differs")
+    _exact_attempt_set(root, set(case_order))
+    derived = []
+    for result in results:
+        case_id = result["case_id"]
+        label = labels.get(case_id)
+        outcome = _verified_transport(
+            root,
+            attempt_id=case_id,
+            freeze_sha256=freeze_sha256,
+            purpose="calibration",
+        )
+        if (
+            not isinstance(label, dict)
+            or type(label.get("expected_label")) is not bool
+            or result.get("expected_label") is not label["expected_label"]
+            or result.get("predicted_label")
+            is not (float(outcome["score"]) >= THRESHOLD)
+            or result.get("transport_sha256")
+            != _sha_file(root / "transport" / case_id / "outcome.json")
+        ):
+            raise VlmEvidenceError("calibration result binding differs")
+        derived.append(
+            (bool(result["expected_label"]), bool(result["predicted_label"]))
+        )
+    counts = (
+        sum(expected and predicted for expected, predicted in derived),
+        sum(not expected and not predicted for expected, predicted in derived),
+        sum(not expected and predicted for expected, predicted in derived),
+        sum(expected and not predicted for expected, predicted in derived),
+    )
+    if counts != (2, 2, 0, 0) or counts != (
+        calibration.get("true_positives"),
+        calibration.get("true_negatives"),
+        calibration.get("false_positives"),
+        calibration.get("false_negatives"),
+    ):
+        raise VlmEvidenceError("calibration did not pass")
+    return calibration
 
 
 def calibrate(args: argparse.Namespace) -> dict[str, Any]:
@@ -500,6 +799,8 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
         result = _call_once(
             root=args.evidence_root,
             attempt_id=case_id,
+            freeze_sha256=args.freeze_sha256,
+            purpose="calibration",
             frame_records=case["frames"],
             task=task,
             rubric=rubric,
@@ -538,8 +839,18 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
         "true_negatives": tn,
         "false_positives": fp,
         "false_negatives": fn,
+        "attempt_count": len(results),
+        "one_shot": True,
         "results": results,
     }
+    _exact_attempt_set(args.evidence_root, set(manifest["case_order"]))
+    for case_id in manifest["case_order"]:
+        _verified_transport(
+            args.evidence_root,
+            attempt_id=case_id,
+            freeze_sha256=args.freeze_sha256,
+            purpose="calibration",
+        )
     path = args.evidence_root / "calibration.json"
     _write_json(path, payload)
     return {"status": "ok", "verdict": payload["status"], "sha256": _sha_file(path)}
@@ -548,19 +859,12 @@ def calibrate(args: argparse.Namespace) -> dict[str, Any]:
 def final(args: argparse.Namespace) -> dict[str, Any]:
     _private_root(args.evidence_root, existing=True)
     manifest = _verified_freeze(args)
-    calibration_path = args.evidence_root / "calibration.json"
-    if _sha_file(calibration_path) != args.calibration_sha256:
-        raise VlmEvidenceError("calibration SHA-256 differs")
-    calibration = _load_json(calibration_path)
-    if (
-        calibration.get("format") != CALIBRATION_FORMAT
-        or calibration.get("status") != "pass"
-        or (calibration.get("true_positives"), calibration.get("true_negatives"))
-        != (2, 2)
-        or (calibration.get("false_positives"), calibration.get("false_negatives"))
-        != (0, 0)
-    ):
-        raise VlmEvidenceError("calibration did not pass")
+    _verified_calibration(
+        args.evidence_root,
+        manifest=manifest,
+        freeze_sha256=args.freeze_sha256,
+        calibration_sha256=args.calibration_sha256,
+    )
     task = args.final_task.read_text(encoding="utf-8").strip()
     rubric = args.rubric.read_text(encoding="utf-8").strip()
     if _sha_file(args.final_task) != manifest.get("final_task_sha256") or _sha_file(
@@ -573,28 +877,41 @@ def final(args: argparse.Namespace) -> dict[str, Any]:
     result = _call_once(
         root=args.evidence_root,
         attempt_id="final-one-shot",
+        freeze_sha256=args.freeze_sha256,
+        purpose="final",
         frame_records=manifest["final_frames"],
         task=task,
         rubric=rubric,
         api_key=api_key,
     )
+    expected_attempts = {*manifest["case_order"], "final-one-shot"}
+    _exact_attempt_set(args.evidence_root, expected_attempts)
+    _verified_transport(
+        args.evidence_root,
+        attempt_id="final-one-shot",
+        freeze_sha256=args.freeze_sha256,
+        purpose="final",
+    )
     transport_records = []
-    transport_root = args.evidence_root / "transport"
-    for path in sorted(transport_root.rglob("*")):
-        if path.is_file() and not path.is_symlink():
-            transport_records.append(
-                {
-                    "path": path.relative_to(args.evidence_root).as_posix(),
-                    "sha256": _sha_file(path),
-                    "bytes": path.stat().st_size,
-                }
-            )
+    for evidence_dir in ("attempt-ledger", "transport"):
+        evidence_root = args.evidence_root / evidence_dir
+        for path in sorted(evidence_root.rglob("*")):
+            if path.is_file() and not path.is_symlink():
+                transport_records.append(
+                    {
+                        "path": path.relative_to(args.evidence_root).as_posix(),
+                        "sha256": _sha_file(path),
+                        "bytes": path.stat().st_size,
+                    }
+                )
     transport_manifest_path = args.evidence_root / "transport-manifest.json"
     _write_json(
         transport_manifest_path,
         {
-            "format": "npa_ncore_vlm_transport_manifest_v1",
-            "attempts": len(manifest["case_order"]) + 1,
+            "format": TRANSPORT_FORMAT,
+            "freeze_sha256": args.freeze_sha256,
+            "attempt_ids": sorted(expected_attempts),
+            "attempts": len(expected_attempts),
             "files": transport_records,
         },
     )
@@ -603,12 +920,14 @@ def final(args: argparse.Namespace) -> dict[str, Any]:
         "status": "pass" if result["score"] >= THRESHOLD else "failed",
         "freeze_sha256": args.freeze_sha256,
         "calibration_sha256": args.calibration_sha256,
+        "final_frame_manifest_sha256": manifest["final_frame_manifest_sha256"],
         "model": MODEL,
         "served_model": result["served_model"],
         "threshold": THRESHOLD,
         "score": result["score"],
         "rationale": result["rationale"],
-        "one_shot": True,
+        "attempt_count": len(expected_attempts),
+        "one_shot": len(expected_attempts) == len(manifest["case_order"]) + 1,
         "transport_sha256": _sha_file(
             args.evidence_root / "transport/final-one-shot/outcome.json"
         ),
@@ -630,6 +949,11 @@ def _parser() -> argparse.ArgumentParser:
     freeze_parser.add_argument("--colmap-dir", default="sparse/0")
     freeze_parser.add_argument("--images-dir", default="images")
     freeze_parser.add_argument("--render-dir", type=Path, required=True)
+    freeze_parser.add_argument(
+        "--render-camera",
+        required=True,
+        help="One relative camera directory whose ordered frames form the final case.",
+    )
     freeze_parser.add_argument("--rubric", type=Path, required=True)
     freeze_parser.add_argument("--calibration-task", type=Path, required=True)
     freeze_parser.add_argument("--final-task", type=Path, required=True)

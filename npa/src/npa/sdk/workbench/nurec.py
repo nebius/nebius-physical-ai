@@ -106,15 +106,66 @@ def probe_storage(prefix: str, receipt_path: Path | str) -> dict[str, Any]:
     return probe_s3_handoff(prefix, Path(receipt_path))
 
 
+def control_source(
+    input_path: str,
+    output_path: str,
+    *,
+    expected_archive_sha256: str,
+    receipt_path: Path | str,
+    cache_dir: Path | str = DEFAULT_COLMAP_CACHE_DIR,
+    scratch_dir: Path | str = DEFAULT_COLMAP_SCRATCH_DIR,
+) -> dict[str, Any]:
+    """Prove a wrong source hash is rejected before extraction and publication."""
+    from npa.workbench.nurec.colmap import ColmapConversionRequest
+    from npa.workbench.nurec.source_control import run_wrong_source_control
+
+    request = ColmapConversionRequest(
+        input_path=input_path,
+        output_path=output_path,
+        expected_archive_sha256=expected_archive_sha256,
+        cache_dir=Path(cache_dir),
+        scratch_dir=Path(scratch_dir),
+    )
+    return run_wrong_source_control(
+        request,
+        expected_archive_sha256=expected_archive_sha256,
+        receipt_path=Path(receipt_path),
+    )
+
+
+def stage_source(
+    source_path: Path | str,
+    output_path: str,
+    *,
+    expected_archive_sha256: str,
+    receipt_path: Path | str,
+    scratch_dir: Path | str = DEFAULT_COLMAP_SCRATCH_DIR,
+) -> dict[str, Any]:
+    """Conditionally stage and independently read back a pinned source ZIP."""
+    from npa.workbench.nurec.source_staging import stage_source_archive
+
+    return stage_source_archive(
+        Path(source_path),
+        output_path,
+        expected_sha256=expected_archive_sha256,
+        receipt_path=Path(receipt_path),
+        scratch_dir=Path(scratch_dir),
+    )
+
+
 def observe_runtime(
     *,
     stage: str,
-    pod_name: str,
     namespace: str,
     expected_image: str,
+    managed_job_name: str,
+    managed_job_id: str,
+    context: str,
     receipt_path: Path | str,
+    pod_name: str = "",
     container_name: str = "ray-node",
-    context: str = "",
+    max_wait_seconds: float = 0,
+    poll_seconds: float = 5,
     kubectl_bin: str = "kubectl",
 ) -> dict[str, Any]:
     """Observe one NRE stage image/GPU identity through Kubernetes."""
@@ -126,8 +177,12 @@ def observe_runtime(
         namespace=namespace,
         container_name=container_name,
         expected_image=expected_image,
+        managed_job_name=managed_job_name,
+        managed_job_id=managed_job_id,
         output_path=Path(receipt_path),
         context=context,
+        max_wait_seconds=max_wait_seconds,
+        poll_seconds=poll_seconds,
         kubectl_bin=kubectl_bin,
     )
 
@@ -143,6 +198,70 @@ def bundle_runtime(
     return bundle_runtime_attestations(
         reconstruct_path=Path(reconstruct_receipt),
         render_path=Path(render_receipt),
+        output_path=Path(receipt_path),
+    )
+
+
+def cleanup_qualification(
+    *,
+    run_id: str,
+    job_id: str,
+    context: str,
+    namespace: str,
+    storage_prefix: str,
+    local_image: str,
+    builder: str,
+    build_receipt: Path | str,
+    source_sha: str,
+    receipt_path: Path | str,
+    isolated_config_dir: Path | str | None = None,
+    config_path: Path | str | None = None,
+    sky_bin: str | None = None,
+    docker_bin: str = "docker",
+    kubectl_bin: str = "kubectl",
+) -> dict[str, Any]:
+    """Cancel/down the exact run and prove owned local runtime absence."""
+    from npa.workbench.nurec.qualification_cleanup import (
+        cleanup_qualification as run,
+    )
+
+    return run(
+        run_id=run_id,
+        job_id=job_id,
+        context=context,
+        namespace=namespace,
+        storage_prefix=storage_prefix,
+        local_image=local_image,
+        builder=builder,
+        build_receipt_path=Path(build_receipt),
+        source_sha=source_sha,
+        output_path=Path(receipt_path),
+        isolated_config_dir=(
+            Path(isolated_config_dir) if isolated_config_dir is not None else None
+        ),
+        config_path=Path(config_path) if config_path is not None else None,
+        sky_bin=sky_bin,
+        docker_bin=docker_bin,
+        kubectl_bin=kubectl_bin,
+    )
+
+
+def audit_qualification(
+    root: Path | str,
+    *,
+    recording_id: str,
+    expected_image: str,
+    expected_source_sha256: str,
+    receipt_path: Path | str,
+) -> dict[str, Any]:
+    """Reopen and byte-bind the complete downloaded NCore/NRE qualification."""
+    from npa.workbench.nurec.qualification_audit import audit_qualification as run
+
+    return run(
+        Path(root),
+        recording_id=recording_id,
+        expected_image=expected_image,
+        expected_source_sha256=expected_source_sha256,
         output_path=Path(receipt_path),
     )
 
@@ -181,8 +300,11 @@ status = make_cli_wrapper(
 
 __all__ = [
     "audit_colmap",
+    "audit_qualification",
     "bundle_runtime",
     "check",
+    "cleanup_qualification",
+    "control_source",
     "convert_colmap",
     "fetch",
     "finalize",
@@ -190,6 +312,7 @@ __all__ = [
     "probe_storage",
     "reconstruct",
     "render",
+    "stage_source",
     "status",
     "visualize",
 ]

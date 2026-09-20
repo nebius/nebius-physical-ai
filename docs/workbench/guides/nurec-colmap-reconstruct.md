@@ -182,6 +182,19 @@ npa workbench nurec probe-storage \
   --prefix 's3://<bucket>/<fresh-run-prefix>/' \
   --receipt-path '<private-evidence>/s3-handoff-probe.json' \
   --output-format json
+
+npa workbench nurec stage-source \
+  --source-path '<private>/struktur28_colmap.zip' \
+  --output-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --receipt-path '<private-evidence>/source-staging.json' --output-format json
+
+# Run before the positive conversion; the dedicated prefix must stay empty.
+npa workbench nurec control-source \
+  --input-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
+  --output-path 's3://<bucket>/<run>/controls/wrong-source/' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --receipt-path '<private-evidence>/wrong-source.json' --output-format json
 ```
 
 Pre-publication qualification does not push the candidate converter merely to
@@ -208,11 +221,13 @@ capture its exact control-plane identity and bind both receipts:
 
 ```bash
 npa workbench nurec observe-runtime --stage reconstruct \
-  --pod-name '<exact-pod>' --namespace '<namespace>' \
+  --managed-job-name '<run-id>' --managed-job-id '<submit-job-id>' \
+  --context '<exact-context>' --namespace '<namespace>' \
   --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
   --receipt-path '<private-evidence>/reconstruct-runtime.json' --output-format json
 npa workbench nurec observe-runtime --stage render \
-  --pod-name '<exact-pod>' --namespace '<namespace>' \
+  --managed-job-name '<run-id>' --managed-job-id '<submit-job-id>' \
+  --context '<exact-context>' --namespace '<namespace>' \
   --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
   --receipt-path '<private-evidence>/render-runtime.json' --output-format json
 npa workbench nurec bundle-runtime \
@@ -221,10 +236,15 @@ npa workbench nurec bundle-runtime \
   --receipt-path '<private-evidence>/nre-runtime.json' --output-format json
 ```
 
+Start both observers immediately after submit; they discover only pods whose
+SkyPilot job annotations and stage cluster label match the exact returned job
+ID. The bundle rejects reused pod/task identities.
+
 Visual review uses the committed one-shot harness only after objective workload
 checks pass. `freeze` deterministically selects two source-camera positives,
 builds uniform and fixed 32-pixel block-rotation negatives, and selects four
-novel-view frames by index. Independently review its owner-only label commitment
+novel-view frames by index from one explicitly selected camera trajectory.
+Independently review its owner-only label commitment
 before `calibrate`; run `final` once only when calibration has TP=2, TN=2,
 FP=0, and FN=0:
 
@@ -233,6 +253,7 @@ npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py freeze \
   --source-zip '<private>/struktur28_colmap.zip' \
   --source-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
   --render-dir '<read-back>/novel_views' \
+  --render-camera '<one-camera-directory>' \
   --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
   --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt \
   --final-task npa/scripts/ncore_publication/vlm-final-task-v2.txt \
@@ -251,7 +272,9 @@ npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py final \
 
 The harness makes no retries, requires exact served-model identity, writes an
 immutable attempt marker before every call, and retains request/response bytes,
-prompt/frame hashes, HTTP/finish/usage metadata, and a transport manifest.
+prompt/frame hashes, HTTP status/body on failures, finish/usage metadata, and a
+transport manifest. Final execution re-derives the complete attempt set and
+rejects a calibration from any other freeze.
 
 The converter image fetches its immutable, hash-locked Python dependencies on
 first use. Downloads require no artificial credential gate. A writable cache
@@ -273,7 +296,28 @@ npa workbench nurec audit-colmap \
   --output-path 's3://<bucket>/<run-prefix>/evidence/ncore-conversion-audit.json' \
   --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
   --dataset-root struktur28 --rig-mode derive --output-format json
+
+npa workbench nurec audit-qualification \
+  --root '<private-complete-S3-readback>' --recording-id '<run-id>' \
+  --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
+  --expected-source-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --receipt-path '<private-evidence>/qualification-audit.json' --output-format json
+
+npa workbench nurec cleanup-qualification \
+  --run-id '<run-id>' --job-id '<submit-job-id>' \
+  --context '<exact-context>' --namespace '<namespace>' \
+  --storage-prefix 's3://<bucket>/<run>/' \
+  --local-image '<exact-local-candidate-ref>' --builder '<run-owned-builder>' \
+  --build-receipt '<private-analysis>/build/build.json' \
+  --source-sha '<reviewed-40-character-commit>' \
+  --isolated-config-dir '<private-sky-state>' \
+  --receipt-path '<private-evidence>/cleanup.json' --output-format json
 ```
+
+Cleanup always asks for exact managed-job cancellation, waits for terminal or
+absent state, and only then downs run compute. It retains the shared controller
+and declared evidence prefix, removes the loaded candidate and run-owned
+builder, and fails if an exact-job pod remains active.
 
 `--input-path` also accepts an S3 dataset prefix. `--cache-dir` and
 `--scratch-dir` select private local staging parents, defaulting to

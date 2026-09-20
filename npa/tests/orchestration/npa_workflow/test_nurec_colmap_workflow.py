@@ -493,6 +493,20 @@ def downstream_run(tmp_path, helpers):
             image = Image.new("RGB", (32, 24), (30 + index * 20, 40, 60))
             image.putpixel((0, 0), (200, 100, 20))
             image.save(directory / f"{index:06}.png")
+    import imageio_ffmpeg
+
+    writer = imageio_ffmpeg.write_frames(
+        str(root / "novel_views/camera1/novel.mp4"),
+        (32, 24),
+        fps=2,
+        codec="libx264",
+        pix_fmt_in="rgb24",
+        pix_fmt_out="yuv420p",
+    )
+    writer.send(None)
+    writer.send(bytes((30, 40, 60)) * (32 * 24))
+    writer.send(bytes((50, 40, 60)) * (32 * 24))
+    writer.close()
     return root
 
 
@@ -511,7 +525,7 @@ def _write_native_receipts(root):
     stages = {}
     for index, stage in enumerate(("reconstruct", "render"), start=1):
         stages[stage] = {
-            "format": "npa_nurec_kubernetes_runtime_stage_v1",
+            "format": "npa_nurec_kubernetes_runtime_stage_v2",
             "status": "pass",
             "source": "kubernetes_control_plane",
             "stage": stage,
@@ -520,6 +534,12 @@ def _write_native_receipts(root):
             "gpu_names": gpu,
             "gpu_count": 1,
             "resource_identity_sha256": f"{index}" * 64,
+            "pod_identity_sha256": f"{index + 2}" * 64,
+            "managed_job_name_sha256": "5" * 64,
+            "managed_job_id_sha256": "6" * 64,
+            "task_cluster_sha256": f"{index + 6}" * 64,
+            "context_sha256": "9" * 64,
+            "namespace_sha256": "a" * 64,
             "control_plane_record_sha256": f"{index + 2}" * 64,
             "container_state": "terminated_zero",
             "receipt_sha256": f"{index + 4}" * 64,
@@ -528,13 +548,17 @@ def _write_native_receipts(root):
         root,
         "evidence/nre-runtime.json",
         {
-            "format": "npa_nurec_runtime_attestation_v2",
+            "format": "npa_nurec_runtime_attestation_v3",
             "status": "pass",
             "source": "kubernetes_control_plane",
             "requested_image": image,
             "observed_image_digest": image.split("@", 1)[1],
             "gpu_names": gpu,
             "gpu_count": 1,
+            "managed_job_name_sha256": "5" * 64,
+            "managed_job_id_sha256": "6" * 64,
+            "context_sha256": "9" * 64,
+            "namespace_sha256": "a" * 64,
             "stages": stages,
         },
     )
@@ -584,6 +608,49 @@ def test_actual_usdz_aggregated_metrics_media_and_rrd_pass(helpers, downstream_r
     helpers._assert_nurec_downstream_proof(
         downstream_run, recording_id=downstream_run.name
     )
+
+
+def test_production_qualification_audit_binds_complete_readback(
+    helpers, downstream_run
+):
+    import hashlib
+
+    from npa.workbench.nurec.qualification_audit import audit_qualification
+
+    _write_synthetic_usdz(downstream_run / "reconstruction/last.usdz")
+    _write_native_receipts(downstream_run)
+    _write_proof_rrd(downstream_run)
+    conversion = downstream_run / "ncore/sequence/conversion.json"
+    _write_proof_document(
+        downstream_run,
+        "evidence/ncore-conversion-audit.json",
+        {
+            "format": "npa_ncore_colmap_conversion_audit_v1",
+            "status": "pass",
+            "source": {"archive_sha256": helpers.NUREC_COLMAP_SHA256},
+            "conversion": {
+                "report_sha256": hashlib.sha256(conversion.read_bytes()).hexdigest()
+            },
+        },
+    )
+    receipt_path = downstream_run / "evidence/qualification.json"
+
+    receipt = audit_qualification(
+        downstream_run,
+        recording_id=downstream_run.name,
+        expected_image=(
+            "nvcr.io/nvidia/nre/nre-ga@"
+            "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+        ),
+        expected_source_sha256=helpers.NUREC_COLMAP_SHA256,
+        output_path=receipt_path,
+    )
+
+    assert receipt["status"] == "pass"
+    assert receipt["render"]["video_count"] == 1
+    assert receipt["render"]["decoded_video_frames"] == 2
+    assert receipt["rrd"]["lineage_verified"] is True
+    assert json.loads(receipt_path.read_text()) == receipt
 
 
 @pytest.mark.parametrize(

@@ -461,10 +461,14 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
         wrapper = getattr(sdk, verb)
         if verb in {
             "audit_colmap",
+            "audit_qualification",
             "bundle_runtime",
+            "cleanup_qualification",
+            "control_source",
             "convert_colmap",
             "observe_runtime",
             "probe_storage",
+            "stage_source",
         }:
             # Evidence capabilities use shared workbench modules directly; their
             # behavior is covered by focused CLI/SDK and receipt tests.

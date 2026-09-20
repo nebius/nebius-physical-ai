@@ -126,12 +126,17 @@
   "qualification_controls": {
     "status": null,
     "s3_probe_receipt_sha256": null,
+    "source_staging_receipt_sha256": null,
     "wrong_source_receipt_sha256": null,
-    "wrong_source_exit_code": null,
+    "wrong_source_format": null,
+    "wrong_source_failure_phase": null,
+    "wrong_source_native_started": null,
+    "control_command_exit_code": null,
     "wrong_source_output_objects": null
   },
   "rtx_proof": {
     "status": null,
+    "qualification_audit_format": null,
     "report_sha256": null,
     "conversion_report_sha256": null,
     "conversion_audit_sha256": null,
@@ -153,6 +158,8 @@
     "render_sha256": null,
     "render_bytes": null,
     "decoded_frames": null,
+    "video_count": null,
+    "decoded_video_frames": null,
     "finite_pixels": null,
     "novel_view": null,
     "observed_metrics": {
@@ -181,6 +188,7 @@
       "false_negatives": null,
       "final_score": null,
       "final_passed": null,
+      "attempt_count": null,
       "one_shot": null,
       "claim": null
     },
@@ -213,8 +221,13 @@
     }
   },
   "cleanup": {
+    "format": null,
     "status": null,
     "receipt_sha256": null,
+    "build_receipt_sha256": null,
+    "storage_inventory_sha256": null,
+    "storage_objects": null,
+    "active_job_pods": null,
     "jobs_terminal_or_absent": null,
     "cancel_before_destroy": null,
     "controller_disposition": null,

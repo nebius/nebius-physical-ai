@@ -546,23 +546,32 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
 
     controls = record(payload, "qualification_controls")
     equal(controls, "status", "pass")
-    for field in ("s3_probe_receipt_sha256", "wrong_source_receipt_sha256"):
+    for field in (
+        "s3_probe_receipt_sha256",
+        "source_staging_receipt_sha256",
+        "wrong_source_receipt_sha256",
+    ):
         match(controls, field, r"[0-9a-f]{64}")
-    require(
-        count(controls, "wrong_source_exit_code", 1) > 0,
-        "wrong-source nonzero exit",
-    )
+    equal(controls, "wrong_source_format", "npa_ncore_wrong_source_control_v1")
+    equal(controls, "wrong_source_failure_phase", "source_digest_pre_extract")
+    equal(controls, "wrong_source_native_started", False)
+    equal(controls, "control_command_exit_code", 0)
     equal(controls, "wrong_source_output_objects", 0)
 
     proof = record(payload, "rtx_proof")
     equal(proof, "status", "pass")
+    equal(
+        proof,
+        "qualification_audit_format",
+        "npa_ncore_qualification_audit_v1",
+    )
     equal(proof, "conversion_report_sha256", conversion["report_sha256"])
     equal(proof, "conversion_audit_sha256", conversion["audit_sha256"])
     equal(proof, "converted_inventory_sha256", conversion["converted_inventory_sha256"])
     equal(proof, "nre_image", NCORE_ACCEPTED_NRE_IMAGE)
     equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
     match(proof, "runtime_image_attestation_sha256", r"[0-9a-f]{64}")
-    equal(proof, "runtime_attestation_format", "npa_nurec_runtime_attestation_v2")
+    equal(proof, "runtime_attestation_format", "npa_nurec_runtime_attestation_v3")
     equal(proof, "runtime_attested_stages", ["reconstruct", "render"])
     equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
     equal(proof, "gpu_count", 1)
@@ -573,6 +582,8 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         "usdz_bytes",
         "render_bytes",
         "decoded_frames",
+        "video_count",
+        "decoded_video_frames",
     ):
         count(proof, field, 1)
     for field in ("report_sha256", "usdz_sha256", "render_sha256"):
@@ -605,12 +616,12 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(
         visual,
         "calibration_task_sha256",
-        "b72beeaab6d47bad1e6080edefb40975c0e259dd03b6d713534f105d5844af10",
+        "1eac4c5ef02ef5b8a17084b1474fa04df7d0025c07e5ee117dbbdd2c16d466d9",
     )
     equal(
         visual,
         "task_sha256",
-        "9587ae239e2a6bd99e61fd2942fbb63f643373407b41a31b81f05cc11ff1d26c",
+        "f82c6312fb76b41116fcf68f224533f40178ce770ad8cdf4a8d0706b314377a7",
     )
     for field in (
         "control_manifest_sha256",
@@ -635,6 +646,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         "VLM final score",
     )
     equal(visual, "final_passed", True)
+    equal(visual, "attempt_count", 5)
     equal(visual, "one_shot", True)
     equal(visual, "claim", "visual_coherence_only")
     from npa.deploy.ncore_acceptance import (
@@ -645,8 +657,16 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     validate_full_input_proof(conversion, proof)
     validate_selected_base_scan(payload)
     cleanup = record(payload, "cleanup")
+    equal(cleanup, "format", "npa_ncore_qualification_cleanup_v1")
     equal(cleanup, "status", "pass")
-    match(cleanup, "receipt_sha256", r"[0-9a-f]{64}")
+    for field in (
+        "receipt_sha256",
+        "build_receipt_sha256",
+        "storage_inventory_sha256",
+    ):
+        match(cleanup, field, r"[0-9a-f]{64}")
+    count(cleanup, "storage_objects", 1)
+    equal(cleanup, "active_job_pods", 0)
     equal(cleanup, "jobs_terminal_or_absent", True)
     equal(cleanup, "cancel_before_destroy", True)
     require(
@@ -654,15 +674,20 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         in {"retained_not_owned", "destroyed_by_owner", "not_present"},
         "controller disposition",
     )
-    for field in (
+    require(
+        cleanup.get("storage_disposition")
+        in {"removed", "retained_declared", "not_present"},
         "storage_disposition",
+    )
+    require(
+        cleanup.get("registry_disposition")
+        in {"not_present", "not_created_local_oci_route"},
         "registry_disposition",
+    )
+    require(
+        cleanup.get("local_runtime_disposition") in {"removed", "not_present"},
         "local_runtime_disposition",
-    ):
-        require(
-            cleanup.get(field) in {"removed", "retained_declared", "not_present"},
-            field,
-        )
+    )
     equal(cleanup, "orphan_count", 0)
     return payload
 

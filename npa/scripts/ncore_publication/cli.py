@@ -53,6 +53,11 @@ def _parser():
         help="Private Docker/containers registry auth file; publish only",
     )
     parser.add_argument(
+        "--acceptance",
+        type=Path,
+        help="External immutable accepted-manifest JSON; required for publish.",
+    )
+    parser.add_argument(
         "--policy-mode", choices=("ci-regex", "exact-literals"), default="ci-regex"
     )
     parser.add_argument(
@@ -99,6 +104,21 @@ def _inputs(args):
         W.require(args.authfile is not None, "private_registry_authfile_required")
         args.authfile = args.authfile.absolute()
         P.binding(args.authfile)
+        W.require(
+            getattr(args, "acceptance", None) is not None,
+            "external_acceptance_required",
+        )
+        args.acceptance = args.acceptance.absolute()
+        W.require(
+            args.acceptance.is_relative_to(args.analysis_root),
+            "acceptance_outside_private_root",
+        )
+        P.binding(args.acceptance)
+    else:
+        W.require(
+            getattr(args, "acceptance", None) is None,
+            "acceptance_is_publish_only",
+        )
     _keyring_input(args)
 
 
@@ -417,6 +437,7 @@ def _check_or_publish(args):
             build,
             graph,
             file_sha(evidence_manifest),
+            getattr(args, "acceptance", None),
         )
         transfer = args.output_dir / "transfer"
         transfer.mkdir(mode=0o700)
@@ -463,9 +484,21 @@ def _gate_evidence_manifest(directory, source_sha, build, graph):
     return output
 
 
-def _require_accepted_publication(source_sha, build, graph, evidence_manifest_sha256):
+def _require_accepted_publication(
+    source_sha,
+    build,
+    graph,
+    evidence_manifest_sha256,
+    acceptance_path=None,
+):
     """Refuse every registry write until exact workload acceptance is committed."""
-    accepted = images.ncore_accepted_image_manifest()
+    accepted = (
+        images.validate_ncore_accepted_image_manifest(
+            W.bound_json(P.binding(Path(acceptance_path)))
+        )
+        if acceptance_path is not None
+        else images.ncore_accepted_image_manifest()
+    )
     expected = {
         "development_sha": source_sha,
         "oci_digest": build["image_digest"],

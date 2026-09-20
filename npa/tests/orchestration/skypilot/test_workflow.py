@@ -1758,6 +1758,38 @@ def test_cancel_workflow_never_downs_cluster_before_terminal_observation(
     assert [call[1] for call in calls] == ["jobs"]
 
 
+def test_cancel_workflow_never_treats_failed_controller_as_job_terminality(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status",
+        lambda *_args, **_kwargs: type(
+            "Observed", (), {"status": "FAILED_CONTROLLER"}
+        )(),
+    )
+
+    result = cancel_workflow_job(
+        sky_bin=str(sky_bin),
+        job_id="42",
+        run_id="isolated-run",
+        timeout=0,
+        poll_seconds=0,
+    )
+
+    assert result["terminal_status"] == "FAILED_CONTROLLER"
+    assert result["terminal_confirmed"] is False
+    assert result["down_attempted"] is False
+    assert [call[1] for call in calls] == ["jobs"]
+
+
 def test_workflow_status_treats_real_empty_queue_as_verified_absence(
     monkeypatch, tmp_path
 ) -> None:

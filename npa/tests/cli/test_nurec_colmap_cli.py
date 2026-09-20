@@ -151,8 +151,14 @@ def test_runtime_observer_cli_forwards_exact_pod_identity(monkeypatch, tmp_path)
             "reconstruct",
             "--pod-name",
             "exact-pod",
+            "--managed-job-name",
+            "exact-run",
+            "--managed-job-id",
+            "42",
             "--namespace",
             "exact-namespace",
+            "--context",
+            "exact-context",
             "--expected-image",
             "registry/image@sha256:" + "a" * 64,
             "--receipt-path",
@@ -165,6 +171,9 @@ def test_runtime_observer_cli_forwards_exact_pod_identity(monkeypatch, tmp_path)
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["evidence_status"] == "pass"
     assert seen[0]["pod_name"] == "exact-pod"
+    assert seen[0]["managed_job_name"] == "exact-run"
+    assert seen[0]["managed_job_id"] == "42"
+    assert seen[0]["context"] == "exact-context"
     assert seen[0]["output_path"] == receipt
 
 

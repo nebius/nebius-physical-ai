@@ -409,6 +409,122 @@ def audit_colmap_cmd(
     _finish_nurec_result(result, output)
 
 
+@app.command("control-source")
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def control_source_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="Exact S3 URI of the pinned source ZIP."
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Fresh S3 prefix that must remain empty during the wrong-hash control.",
+    ),
+    expected_archive_sha256: str = typer.Option(
+        ..., "--expected-archive-sha256", help="Known correct source ZIP SHA-256."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private local control receipt."
+    ),
+    cache_dir: Path = typer.Option(
+        DEFAULT_COLMAP_CACHE_DIR, "--cache-dir", help="Private source staging parent."
+    ),
+    scratch_dir: Path = typer.Option(
+        DEFAULT_COLMAP_SCRATCH_DIR, "--scratch-dir", help="Private scratch parent."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Prove a wrong source digest fails before extraction with zero S3 outputs."""
+    from pydantic import ValidationError
+    from npa.workbench.nurec.colmap import ColmapConversionRequest
+    from npa.workbench.nurec.source_control import (
+        NcoreSourceControlError,
+        run_wrong_source_control,
+    )
+
+    try:
+        request = ColmapConversionRequest(
+            input_path=input_path,
+            output_path=output_path,
+            expected_archive_sha256=expected_archive_sha256,
+            cache_dir=cache_dir,
+            scratch_dir=scratch_dir,
+        )
+        evidence = run_wrong_source_control(
+            request,
+            expected_archive_sha256=expected_archive_sha256,
+            receipt_path=receipt_path,
+        )
+        result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}
+    except ValidationError as exc:
+        fields = sorted({str(error["loc"][0]) for error in exc.errors()})
+        result = {
+            "status": "failed",
+            "error": "Invalid source control options: " + ", ".join(fields),
+        }
+    except NcoreSourceControlError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private source control evidence could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
+@app.command("stage-source")
+@intent_boundary(OperationIntent.MUTATE)
+@json_stdout_contract
+def stage_source_cmd(
+    source_path: Path = typer.Option(
+        ..., "--source-path", help="Private local pinned source ZIP."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Fresh exact run-owned S3 source object."
+    ),
+    expected_archive_sha256: str = typer.Option(
+        ..., "--expected-archive-sha256", help="Required source ZIP SHA-256."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private local staging receipt."
+    ),
+    scratch_dir: Path = typer.Option(
+        DEFAULT_COLMAP_SCRATCH_DIR,
+        "--scratch-dir",
+        help="Private staging parent for independent S3 read-back.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Conditionally stage and independently read back the pinned source ZIP."""
+    from npa.workbench.nurec.source_staging import (
+        NcoreSourceStagingError,
+        stage_source_archive,
+    )
+
+    try:
+        evidence = stage_source_archive(
+            source_path,
+            output_path,
+            expected_sha256=expected_archive_sha256,
+            receipt_path=receipt_path,
+            scratch_dir=scratch_dir,
+        )
+        result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}
+    except NcoreSourceStagingError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private source staging evidence could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
 @app.command("probe-storage")
 @intent_boundary(OperationIntent.MUTATE)
 @json_stdout_contract
@@ -450,7 +566,17 @@ def probe_storage_cmd(
 @json_stdout_contract
 def observe_runtime_cmd(
     stage: str = typer.Option(..., "--stage", help="reconstruct or render."),
-    pod_name: str = typer.Option(..., "--pod-name", help="Exact Kubernetes pod name."),
+    pod_name: str = typer.Option(
+        "",
+        "--pod-name",
+        help="Exact Kubernetes pod name; empty discovers the uniquely bound stage pod.",
+    ),
+    managed_job_name: str = typer.Option(
+        ..., "--managed-job-name", help="Exact fresh workflow run / managed-job name."
+    ),
+    managed_job_id: str = typer.Option(
+        ..., "--managed-job-id", help="Exact numeric managed-job ID returned by submit."
+    ),
     namespace: str = typer.Option(
         ..., "--namespace", help="Exact Kubernetes namespace."
     ),
@@ -463,7 +589,16 @@ def observe_runtime_cmd(
     receipt_path: Path = typer.Option(
         ..., "--receipt-path", help="Fresh private local stage receipt."
     ),
-    context: str = typer.Option("", "--context", help="Optional kubectl context."),
+    context: str = typer.Option(..., "--context", help="Exact kubectl context."),
+    max_wait_seconds: float = typer.Option(
+        0,
+        "--max-wait-seconds",
+        min=0,
+        help="Wait for the exact stage pod; 0 waits without a deadline.",
+    ),
+    poll_seconds: float = typer.Option(
+        5, "--poll-seconds", min=0.1, help="Seconds between pod discovery polls."
+    ),
     kubectl_bin: str = typer.Option("kubectl", "--kubectl-bin"),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format: text or json."
@@ -482,8 +617,12 @@ def observe_runtime_cmd(
             namespace=namespace,
             container_name=container_name,
             expected_image=expected_image,
+            managed_job_name=managed_job_name,
+            managed_job_id=managed_job_id,
             output_path=receipt_path,
             context=context,
+            max_wait_seconds=max_wait_seconds,
+            poll_seconds=poll_seconds,
             kubectl_bin=kubectl_bin,
         )
         result = {**result, "evidence_status": result["status"], "status": "ok"}
@@ -533,6 +672,130 @@ def bundle_runtime_cmd(
         result = {
             "status": "failed",
             "error": "private runtime receipt could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
+@app.command("audit-qualification")
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def audit_qualification_cmd(
+    root: Path = typer.Option(
+        ..., "--root", help="Private local read-back of the complete run prefix."
+    ),
+    recording_id: str = typer.Option(
+        ..., "--recording-id", help="Exact workflow run / Rerun recording ID."
+    ),
+    expected_image: str = typer.Option(
+        ..., "--expected-image", help="Expected immutable NRE image digest."
+    ),
+    expected_source_sha256: str = typer.Option(
+        ..., "--expected-source-sha256", help="Expected pinned source ZIP SHA-256."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private objective audit receipt."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Reopen and byte-bind native NRE, media, USDZ, metrics, and RRD evidence."""
+    from npa.workbench.nurec.qualification_audit import (
+        NcoreQualificationAuditError,
+        audit_qualification,
+    )
+
+    try:
+        evidence = audit_qualification(
+            root,
+            recording_id=recording_id,
+            expected_image=expected_image,
+            expected_source_sha256=expected_source_sha256,
+            output_path=receipt_path,
+        )
+        result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}
+    except NcoreQualificationAuditError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private qualification audit evidence could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
+@app.command("cleanup-qualification")
+@intent_boundary(OperationIntent.DESTROY)
+@json_stdout_contract
+def cleanup_qualification_cmd(
+    run_id: str = typer.Option(..., "--run-id", help="Exact fresh workflow run ID."),
+    job_id: str = typer.Option(
+        ..., "--job-id", help="Exact managed-job ID returned by submit."
+    ),
+    context: str = typer.Option(..., "--context", help="Exact kubectl context."),
+    namespace: str = typer.Option(..., "--namespace", help="Exact pod namespace."),
+    storage_prefix: str = typer.Option(
+        ..., "--storage-prefix", help="Exact retained run evidence S3 prefix."
+    ),
+    local_image: str = typer.Option(
+        ..., "--local-image", help="Exact local candidate image reference to remove."
+    ),
+    builder: str = typer.Option(
+        ..., "--builder", help="Exact run-owned buildx builder to remove."
+    ),
+    build_receipt: Path = typer.Option(
+        ..., "--build-receipt", help="Private committed local-only OCI build receipt."
+    ),
+    source_sha: str = typer.Option(
+        ..., "--source-sha", help="Exact reviewed source commit."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private aggregate cleanup receipt."
+    ),
+    isolated_config_dir: Path | None = typer.Option(
+        None, "--isolated-config-dir", help="Exact isolated SkyPilot state directory."
+    ),
+    config_path: Path | None = typer.Option(
+        None, "--config-path", help="Exact SkyPilot global config path."
+    ),
+    sky_bin: str = typer.Option("", "--sky-bin", help="Pinned SkyPilot executable."),
+    docker_bin: str = typer.Option("docker", "--docker-bin"),
+    kubectl_bin: str = typer.Option("kubectl", "--kubectl-bin"),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Cancel before destroy and prove no owned compute/local runtime remains."""
+    from npa.workbench.nurec.qualification_cleanup import (
+        NcoreQualificationCleanupError,
+        cleanup_qualification,
+    )
+
+    try:
+        evidence = cleanup_qualification(
+            run_id=run_id,
+            job_id=job_id,
+            context=context,
+            namespace=namespace,
+            storage_prefix=storage_prefix,
+            local_image=local_image,
+            builder=builder,
+            build_receipt_path=build_receipt,
+            source_sha=source_sha,
+            output_path=receipt_path,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+            sky_bin=sky_bin or None,
+            docker_bin=docker_bin,
+            kubectl_bin=kubectl_bin,
+        )
+        result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}
+    except NcoreQualificationCleanupError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private qualification cleanup evidence could not be written",
         }
     _finish_nurec_result(result, output_format)
 

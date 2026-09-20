@@ -521,6 +521,48 @@ def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
         cli._require_accepted_publication(SHA, build, graph, "0" * 64)
 
 
+def test_publication_can_consume_external_acceptance_at_exact_candidate(
+    monkeypatch, tmp_path
+):
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    build = {"image_digest": "sha256:" + "b" * 64, "archive_sha256": "e" * 64}
+    evidence_manifest_sha256 = "f" * 64
+    accepted = {
+        "development_sha": SHA,
+        "oci_digest": build["image_digest"],
+        "amd64_manifest": graph["image_manifest_digest"],
+        "config_digest": graph["image_config_digest"],
+        "prepublication": {
+            "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": evidence_manifest_sha256,
+        },
+    }
+    path = tmp_path / "accepted.json"
+    path.write_text(json.dumps(accepted))
+    monkeypatch.setattr(
+        cli.images, "validate_ncore_accepted_image_manifest", lambda value: value
+    )
+    monkeypatch.setattr(
+        cli.images,
+        "ncore_accepted_image_manifest",
+        lambda: pytest.fail("in-tree post-run mutation was consulted"),
+    )
+
+    with W.authorized_roots(tmp_path, ROOT):
+        result = cli._require_accepted_publication(
+            SHA,
+            build,
+            graph,
+            evidence_manifest_sha256,
+            path,
+        )
+
+    assert result == accepted
+
+
 def test_gate_evidence_manifest_binds_every_existing_gate_artifact(private):
     directory = private / "gates"
     (directory / "bytes").mkdir(parents=True)
