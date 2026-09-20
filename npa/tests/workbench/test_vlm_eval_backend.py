@@ -170,8 +170,18 @@ def test_parse_structured_response_clamps_score() -> None:
     )
 
     assert parsed.success is True
+    assert parsed.success_provided is True
     assert parsed.score == 1.0
     assert parsed.rationale == "clear completion"
+
+
+def test_parse_structured_response_marks_score_derived_success() -> None:
+    parsed = parse_structured_response(
+        '{"score": 0.7, "rationale": "partial completion"}'
+    )
+
+    assert parsed.success is True
+    assert parsed.success_provided is False
 
 
 def test_mocked_self_hosted_endpoint_returns_structured_score(
@@ -210,6 +220,35 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
         "rationale": "mocked endpoint saw the expected frame sequence",
     }
     assert 0.0 <= structured["score"] <= 1.0
+
+
+def test_self_hosted_omitted_success_is_not_reported_as_provider_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rollout = _write_image_rollout(tmp_path / "rollout", [(20, 120, 40)])
+    completion = {
+        "model": "deployed-model-revision",
+        "choices": [
+            {"message": {"content": '{"score":0.7,"rationale":"partial completion"}'}}
+        ],
+    }
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: completion
+    )
+
+    result = evaluate_vlm(
+        input_path=str(rollout),
+        output_path=str(tmp_path / "result.json"),
+        task="identify visible task progress",
+        backend="self-hosted",
+        success_threshold=0.8,
+    )
+
+    assert result.score == 0.7
+    assert result.passed is False
+    assert result.provider_success is None
+    assert result.provider_success_matches_score_gate is None
+    assert result.evidence is not None
 
 
 def test_http_status_error_includes_bounded_server_detail(

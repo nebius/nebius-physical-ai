@@ -221,6 +221,7 @@ class VlmStructuredResponse:
     success: bool
     score: float
     rationale: str
+    success_provided: bool = True
     served_model: str | None = None
     evidence: VlmEvaluationEvidence | None = None
     parser_version: str = SELF_HOSTED_RESPONSE_PARSER_VERSION
@@ -716,11 +717,13 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
     if "rationale" not in payload:
         raise VlmEvalError("VLM response JSON must include rationale")
     score = _clamp_score(payload["score"])
-    success = _coerce_bool(payload.get("success", score >= 0.5))
+    success_provided = "success" in payload
+    success = _coerce_bool(payload["success"]) if success_provided else score >= 0.5
     return VlmStructuredResponse(
         success=success,
         score=score,
         rationale=str(payload["rationale"]),
+        success_provided=success_provided,
         parser_version=_parser_version(SELF_HOSTED_RESPONSE_PARSER_VERSION, deframed),
     )
 
@@ -1047,7 +1050,11 @@ def _result_from_structured(
 ) -> VlmEvalResult:
     score = round(_clamp_score(structured.score), 4)
     passed = score >= success_threshold
-    provider_success = structured.success if structured.evidence is not None else None
+    provider_success = (
+        structured.success
+        if structured.evidence is not None and structured.success_provided
+        else None
+    )
     provider_success_matches_score_gate = (
         provider_success == passed if provider_success is not None else None
     )
