@@ -1,0 +1,235 @@
+{
+  "scope": "One frozen rubric, six calibration cases from one scene; this is not a general model ranking.",
+  "acceptance_gate": "failed_calibration_do_not_use",
+  "attempts": 18,
+  "parse_failures": 0,
+  "models": {
+    "MiniMaxAI/MiniMax-M3": {
+      "correct": 4,
+      "cases": 6,
+      "false_accepts_on_rejection_controls": 2,
+      "rejection_controls": 3,
+      "qualified_as_acceptance_gate": false
+    },
+    "google/gemma-3-27b-it": {
+      "correct": 2,
+      "cases": 6,
+      "false_accepts_on_rejection_controls": 3,
+      "rejection_controls": 3,
+      "qualified_as_acceptance_gate": false
+    },
+    "openbmb/MiniCPM-V-4_5": {
+      "correct": 2,
+      "cases": 6,
+      "false_accepts_on_rejection_controls": 3,
+      "rejection_controls": 3,
+      "qualified_as_acceptance_gate": false
+    }
+  },
+  "selected_records": [
+    {
+      "case_id": "C1_candidate_accept",
+      "expected_label": "accept",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "3e6db8b8269adaf34f5feb7f5879f800db7eb6203cfddbde7102a7a94983df2f",
+      "raw_response_sha256": "819e904c41f69d2b0855fe824cb40dd34f2325b978c05e836202ccdf957390ca",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C1_candidate_accept",
+      "expected_label": "accept",
+      "model": "openbmb/MiniCPM-V-4_5",
+      "returned_model": "openbmb/MiniCPM-V-4_5",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "3e6db8b8269adaf34f5feb7f5879f800db7eb6203cfddbde7102a7a94983df2f",
+      "raw_response_sha256": "f0c688973b328a31868f75f0f2a9714bb65ec00a99eadc751d026432534dcf6a",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C1_candidate_accept",
+      "expected_label": "accept",
+      "model": "google/gemma-3-27b-it",
+      "returned_model": "google/gemma-3-27b-it",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "3e6db8b8269adaf34f5feb7f5879f800db7eb6203cfddbde7102a7a94983df2f",
+      "raw_response_sha256": "a0eb85906446b7ec79863b885c316a0e3c1cd6d6c6f15338913f5e451848dd79",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C2_baseline_invented",
+      "expected_label": "reject_invented_surface",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "verdict": "reject_invented_surface",
+      "parse_status": "ok",
+      "frame_sha256": "cbc93b25db6c32f109ff365a0ce21d260e21d3d744a821125895c5ef61f94bd7",
+      "raw_response_sha256": "62f1abfe7a619c99539509b39c5350e528734eeb172dff0a3e2d0f966350b106",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C2_baseline_invented",
+      "expected_label": "reject_invented_surface",
+      "model": "openbmb/MiniCPM-V-4_5",
+      "returned_model": "openbmb/MiniCPM-V-4_5",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "cbc93b25db6c32f109ff365a0ce21d260e21d3d744a821125895c5ef61f94bd7",
+      "raw_response_sha256": "0cd8a20d567fe802d787b7eadc1b252a78de5daa511bc6066550dc0798c2fff4",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C2_baseline_invented",
+      "expected_label": "reject_invented_surface",
+      "model": "google/gemma-3-27b-it",
+      "returned_model": "google/gemma-3-27b-it",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "cbc93b25db6c32f109ff365a0ce21d260e21d3d744a821125895c5ef61f94bd7",
+      "raw_response_sha256": "a2db5eab49739c1a187920ff347b81fda5ad61bfadf2c9bc311bf904a38e618f",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C3_misaligned",
+      "expected_label": "reject_misaligned",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "32316b89ab53fe6c0bbb6f47afa9cb5c0b84e031c91cebfeaac638b1f2abf7bf",
+      "raw_response_sha256": "15d3b4a9477bb0b891a1ee59dcc776635fbc2f16cd7ebffe3c1fb9398773dc52",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C3_misaligned",
+      "expected_label": "reject_misaligned",
+      "model": "openbmb/MiniCPM-V-4_5",
+      "returned_model": "openbmb/MiniCPM-V-4_5",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "32316b89ab53fe6c0bbb6f47afa9cb5c0b84e031c91cebfeaac638b1f2abf7bf",
+      "raw_response_sha256": "ec685ed38869a90465ea64a978074730768043952e604f5582e2ba4f955b66f0",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C3_misaligned",
+      "expected_label": "reject_misaligned",
+      "model": "google/gemma-3-27b-it",
+      "returned_model": "google/gemma-3-27b-it",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "32316b89ab53fe6c0bbb6f47afa9cb5c0b84e031c91cebfeaac638b1f2abf7bf",
+      "raw_response_sha256": "0c16212f943ddf805958bdfd322b861a82e2a9da62af3a71807d0b03ff10645f",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C4_nocrop_bridge",
+      "expected_label": "reject_invented_surface",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "f0c83ac875202dc081045f6e1f1971b834b8e119fdd6d48fb7847efab1b452ce",
+      "raw_response_sha256": "462c66d8280dcbb92738bf38e9863e98740eabe4457cddd04d822d18fca858a1",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C4_nocrop_bridge",
+      "expected_label": "reject_invented_surface",
+      "model": "openbmb/MiniCPM-V-4_5",
+      "returned_model": "openbmb/MiniCPM-V-4_5",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "f0c83ac875202dc081045f6e1f1971b834b8e119fdd6d48fb7847efab1b452ce",
+      "raw_response_sha256": "b50c4816090d1bb12477acafd45ebbe8ea230949aa14057ea43f70058b8c86be",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C4_nocrop_bridge",
+      "expected_label": "reject_invented_surface",
+      "model": "google/gemma-3-27b-it",
+      "returned_model": "google/gemma-3-27b-it",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "f0c83ac875202dc081045f6e1f1971b834b8e119fdd6d48fb7847efab1b452ce",
+      "raw_response_sha256": "aef6df3aa60e7dcfd28d0f63ce7a7250b6ed76efe4ac89d7e3103651d9976077",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C5_blank",
+      "expected_label": "inconclusive",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "verdict": "inconclusive",
+      "parse_status": "ok",
+      "frame_sha256": "f79fd03b42960aa88ec3f41ea403288480a34ccda06a0f1d1eabcd861ca2482e",
+      "raw_response_sha256": "dbe15942502165b0745f7b9ff393f1ae48ef390f2d2753b95cab626e60c5f51e",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C5_blank",
+      "expected_label": "inconclusive",
+      "model": "openbmb/MiniCPM-V-4_5",
+      "returned_model": "openbmb/MiniCPM-V-4_5",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "f79fd03b42960aa88ec3f41ea403288480a34ccda06a0f1d1eabcd861ca2482e",
+      "raw_response_sha256": "ee634396a4dbfe69357cdf6752683e8c0f6c644099af9b0a62b354dd1e644df5",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C5_blank",
+      "expected_label": "inconclusive",
+      "model": "google/gemma-3-27b-it",
+      "returned_model": "google/gemma-3-27b-it",
+      "verdict": "reject_invented_surface",
+      "parse_status": "ok",
+      "frame_sha256": "f79fd03b42960aa88ec3f41ea403288480a34ccda06a0f1d1eabcd861ca2482e",
+      "raw_response_sha256": "082bf9f369903b24d2c63fa33cf549b06852a40716f25990cf7c14f1a1e81449",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C6_candidate_holes_opposite",
+      "expected_label": "accept",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "0ef20daa5237630a1c0a109eafb6259b717800aeb4b62246bf278518f212b624",
+      "raw_response_sha256": "82b416ffc591ae5ea352bb79541155f8a9bd410c4e2bd2605600aafed3771613",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C6_candidate_holes_opposite",
+      "expected_label": "accept",
+      "model": "openbmb/MiniCPM-V-4_5",
+      "returned_model": "openbmb/MiniCPM-V-4_5",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "0ef20daa5237630a1c0a109eafb6259b717800aeb4b62246bf278518f212b624",
+      "raw_response_sha256": "b2e6b06e2e0d4c5555d2e80075bef5970db1e8dc3cc22fb2fbf6be7d23071690",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    },
+    {
+      "case_id": "C6_candidate_holes_opposite",
+      "expected_label": "accept",
+      "model": "google/gemma-3-27b-it",
+      "returned_model": "google/gemma-3-27b-it",
+      "verdict": "accept",
+      "parse_status": "ok",
+      "frame_sha256": "0ef20daa5237630a1c0a109eafb6259b717800aeb4b62246bf278518f212b624",
+      "raw_response_sha256": "60a76c159ddec525b5a06b1ba268179a4ed3ee556a2c47231ea5733f49c7155d",
+      "rubric_sha256": "e5ff6c43c22825bb27e740203c0c03e61be340d5866beb022df13ab8d533cf08"
+    }
+  ],
+  "source_attempts_sha256": "7301422d5fe8c86d0750c0106d093de60a75963dd0bffc57be9b3af23c59ae3e",
+  "limitations": [
+    "Raw provider responses, endpoint locations, and request metadata are not included.",
+    "The blank C5 image is omitted because it has no entry in the retained capture manifests.",
+    "Calibration labels are test labels, not an approval of geometry or physical AI usefulness."
+  ]
+}

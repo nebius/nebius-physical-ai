@@ -1,0 +1,197 @@
+{
+  "scope": "Retained CPU renders of PLY outputs; not Rerun UI screenshots.",
+  "png_bytes_modified": false,
+  "input_source": {
+    "public_source_url": "https://github.com/isl-org/open3d_downloads/releases/download/20220301-data/DemoICPPointClouds.zip",
+    "archive_sha256": "b94e0146c1d48c5edfc11af71b4af39ffca604485668c55a127c3b43203a6bd5",
+    "archive_md5": "596cffe5f9c587045e7397ad70754de9",
+    "archive_bytes": 10829466,
+    "fragments": [
+      {
+        "filename": "cloud_bin_0.pcd",
+        "bytes": 6362965,
+        "sha256": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+        "matches_retained_run_input": true
+      },
+      {
+        "filename": "cloud_bin_1.pcd",
+        "bytes": 4410901,
+        "sha256": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+        "matches_retained_run_input": true
+      },
+      {
+        "filename": "cloud_bin_2.pcd",
+        "bytes": 6124949,
+        "sha256": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+        "matches_retained_run_input": true
+      }
+    ],
+    "other_entries": [
+      "init.log"
+    ]
+  },
+  "frames": [
+    {
+      "file": "images/baseline_scan_and_surface__overview.png",
+      "sha256": "cbc93b25db6c32f109ff365a0ce21d260e21d3d744a821125895c5ef61f94bd7",
+      "bytes": 115012,
+      "resolution": [
+        960,
+        720
+      ],
+      "viewpoint": "overview",
+      "source_capture_manifest": "capture-manifest.json",
+      "source_capture_manifest_sha256": "15769607e34e89a903fdaa1e57a560f4b7e973ff081c2e3e203617386453be51",
+      "source_layers": [
+        {
+          "artifact_role": "mesh-baseline/mesh.ply",
+          "sha256": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f"
+        },
+        {
+          "artifact_role": "multiway/fused.ply",
+          "sha256": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"
+        }
+      ]
+    },
+    {
+      "file": "images/candidate_scan_and_surface__overview.png",
+      "sha256": "3e6db8b8269adaf34f5feb7f5879f800db7eb6203cfddbde7102a7a94983df2f",
+      "bytes": 109402,
+      "resolution": [
+        960,
+        720
+      ],
+      "viewpoint": "overview",
+      "source_capture_manifest": "capture-manifest.json",
+      "source_capture_manifest_sha256": "15769607e34e89a903fdaa1e57a560f4b7e973ff081c2e3e203617386453be51",
+      "source_layers": [
+        {
+          "artifact_role": "mesh/mesh.ply",
+          "sha256": "8984b079d6b7fca1adacd3c3046f38e80e69b338423c9dbe0cc95f2300ee7ca4"
+        },
+        {
+          "artifact_role": "multiway/fused.ply",
+          "sha256": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"
+        }
+      ]
+    },
+    {
+      "file": "images/baseline_scan_and_surface__opposite.png",
+      "sha256": "4ad19bcdacb978cf267fbbd0974d71c6fa9d58c9a580d10683307449e7a0b05a",
+      "bytes": 150151,
+      "resolution": [
+        960,
+        720
+      ],
+      "viewpoint": "opposite",
+      "source_capture_manifest": "capture-manifest.json",
+      "source_capture_manifest_sha256": "15769607e34e89a903fdaa1e57a560f4b7e973ff081c2e3e203617386453be51",
+      "source_layers": [
+        {
+          "artifact_role": "mesh-baseline/mesh.ply",
+          "sha256": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f"
+        },
+        {
+          "artifact_role": "multiway/fused.ply",
+          "sha256": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"
+        }
+      ]
+    },
+    {
+      "file": "images/candidate_scan_and_surface__opposite.png",
+      "sha256": "0ef20daa5237630a1c0a109eafb6259b717800aeb4b62246bf278518f212b624",
+      "bytes": 144126,
+      "resolution": [
+        960,
+        720
+      ],
+      "viewpoint": "opposite",
+      "source_capture_manifest": "capture-manifest.json",
+      "source_capture_manifest_sha256": "15769607e34e89a903fdaa1e57a560f4b7e973ff081c2e3e203617386453be51",
+      "source_layers": [
+        {
+          "artifact_role": "mesh/mesh.ply",
+          "sha256": "8984b079d6b7fca1adacd3c3046f38e80e69b338423c9dbe0cc95f2300ee7ca4"
+        },
+        {
+          "artifact_role": "multiway/fused.ply",
+          "sha256": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"
+        }
+      ]
+    },
+    {
+      "file": "images/observed_scan_only__overview.png",
+      "sha256": "d8886d7ebe79db6ecd59efe93c3203ba9b170c9d5bd8a339e3034f03c3ca6acb",
+      "bytes": 68173,
+      "resolution": [
+        960,
+        720
+      ],
+      "viewpoint": "overview",
+      "source_capture_manifest": "capture-manifest.json",
+      "source_capture_manifest_sha256": "15769607e34e89a903fdaa1e57a560f4b7e973ff081c2e3e203617386453be51",
+      "source_layers": [
+        {
+          "artifact_role": "multiway/fused.ply",
+          "sha256": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"
+        }
+      ]
+    },
+    {
+      "file": "images/C3_misaligned__overview.png",
+      "sha256": "32316b89ab53fe6c0bbb6f47afa9cb5c0b84e031c91cebfeaac638b1f2abf7bf",
+      "bytes": 136023,
+      "resolution": [
+        960,
+        720
+      ],
+      "viewpoint": "overview",
+      "source_capture_manifest": "controls-capture-manifest.json",
+      "source_capture_manifest_sha256": "0c496874e82708ec528745c954caa0c4c9a4560e466822962167c68032671905",
+      "source_layers": [
+        {
+          "artifact_role": "misaligned_mesh.ply",
+          "sha256": "600d1bac5fbf4301fd535282cd6026bd9001de216b281004ec1895009fbe2aad"
+        },
+        {
+          "artifact_role": "misaligned_fused.ply",
+          "sha256": "eecb3bb7b3b7700f8be5f3c5469cbc7abab2910050baf23ac68893d6e52ade20"
+        }
+      ]
+    },
+    {
+      "file": "images/C4_nocrop__overview.png",
+      "sha256": "f0c83ac875202dc081045f6e1f1971b834b8e119fdd6d48fb7847efab1b452ce",
+      "bytes": 118289,
+      "resolution": [
+        960,
+        720
+      ],
+      "viewpoint": "overview",
+      "source_capture_manifest": "controls-capture-manifest.json",
+      "source_capture_manifest_sha256": "0c496874e82708ec528745c954caa0c4c9a4560e466822962167c68032671905",
+      "source_layers": [
+        {
+          "artifact_role": "nocrop_mesh.ply",
+          "sha256": "b62e824ffa9aaa352313f7060e4eb30708a005c4aa09523ed984672257e4c3d1"
+        },
+        {
+          "artifact_role": "multiway/fused.ply",
+          "sha256": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"
+        }
+      ]
+    }
+  ],
+  "attribution_file": "ATTRIBUTION.md",
+  "acceptance": "pending",
+  "source_hash_consistency": {
+    "current_remote_baseline_matches_retained_source": true,
+    "current_remote_fused_scan_matches_retained_source": true,
+    "current_remote_candidate_matches_retained_source": false,
+    "retained_candidate_sha256": "8984b079d6b7fca1adacd3c3046f38e80e69b338423c9dbe0cc95f2300ee7ca4",
+    "current_remote_candidate_sha256": "131e9963abfcb66968a0b299413ff2cba19f60ccd266d8e77e945a4a1e7cc6fd",
+    "consequence": "These frames cannot substantiate an exact-current-candidate or current-PR-head claim.",
+    "retained_main_view_source_hashes_agree_with_independent_report": true,
+    "controls_source_hash_scope": "Control layer hashes are recorded by the controls capture manifest; the independent objective report does not include their source PLY hashes."
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "evidence_scope": "Retained historical comparison; not exact-current-head validation.",
+  "distance_units": "source scan coordinate units",
+  "acceptance": "pending",
+  "baseline": {
+    "vertices": 18413,
+    "triangles": 36660,
+    "surface_area": 22.244988164110595,
+    "unsupported_area_fraction": 0.5273236836683344,
+    "sample_to_surface_p95": 0.022179409861564636,
+    "sample_to_surface_rmse": 0.010787513107061386,
+    "fraction_within_voxel": 0.9927456237186564,
+    "fraction_within_two_voxels": 0.9996845923355937,
+    "samples": 6341
+  },
+  "candidate": {
+    "vertices": 14736,
+    "triangles": 28205,
+    "surface_area": 10.513916884399496,
+    "unsupported_area_fraction": 0.0,
+    "sample_to_surface_p95": 0.022179409861564636,
+    "sample_to_surface_rmse": 0.010834470391273499,
+    "fraction_within_voxel": 0.9927456237186564,
+    "fraction_within_two_voxels": 0.9996845923355937,
+    "samples": 6341
+  },
+  "held_out": [
+    {
+      "baseline": {
+        "fraction_within_voxel": 0.8834033613445378,
+        "median_distance": 0.006582621484994888,
+        "p95_distance": 0.13320808112621307,
+        "triangles": 26870
+      },
+      "candidate": {
+        "fraction_within_voxel": 0.8508403361344538,
+        "median_distance": 0.006840888410806656,
+        "p95_distance": 0.24850930273532867,
+        "triangles": 19745
+      },
+      "held_out_fragment": "cloud_bin_0",
+      "median_delta": 0.0002582669258117676,
+      "train_points": 4197
+    },
+    {
+      "baseline": {
+        "fraction_within_voxel": 0.9610185476265325,
+        "median_distance": 0.006276275962591171,
+        "p95_distance": 0.0374416746199131,
+        "triangles": 28851
+      },
+      "candidate": {
+        "fraction_within_voxel": 0.9327255580006287,
+        "median_distance": 0.006525903474539518,
+        "p95_distance": 0.07196248322725296,
+        "triangles": 23207
+      },
+      "held_out_fragment": "cloud_bin_1",
+      "median_delta": 0.0002496275119483471,
+      "train_points": 4826
+    },
+    {
+      "baseline": {
+        "fraction_within_voxel": 0.9335009140767825,
+        "median_distance": 0.007783007808029652,
+        "p95_distance": 0.05872269719839096,
+        "triangles": 27082
+      },
+      "candidate": {
+        "fraction_within_voxel": 0.8551188299817185,
+        "median_distance": 0.00922088697552681,
+        "p95_distance": 0.16361908614635468,
+        "triangles": 18629
+      },
+      "held_out_fragment": "cloud_bin_2",
+      "median_delta": 0.001437879167497158,
+      "train_points": 3950
+    }
+  ],
+  "source_report_sha256": "b99fe910f96026de23f5ec91977c6f6999a64f4be084c94586fcc6db19197e1e",
+  "source_artifact_hashes": {
+    "mesh-baseline/mesh.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
+    "mesh/mesh.ply": "8984b079d6b7fca1adacd3c3046f38e80e69b338423c9dbe0cc95f2300ee7ca4",
+    "multiway/fused.ply": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52"
+  }
+}
