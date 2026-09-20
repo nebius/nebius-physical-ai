@@ -4115,13 +4115,25 @@ def _post_backend_once(
         response = client.post(url, headers=headers, **kwargs)
         observed = _backend_response_from_http(response, data={}, started_at=started_at)
         _retain_response(observed, response_sink)
-        _raise_for_backend_status(response, started_at, error_response_sink)
-        data = _decode_backend_json(response, started_at, error_response_sink)
-        return _backend_response_from_http(
-            response,
-            data=data,
-            started_at=started_at,
+        consistent_error_sink = _response_sink_with_latency(
+            observed.latency_s, error_response_sink
         )
+        _raise_for_backend_status(response, started_at, consistent_error_sink)
+        data = _decode_backend_json(response, started_at, consistent_error_sink)
+        return replace(observed, data=data)
+
+
+def _response_sink_with_latency(
+    latency_s: float,
+    sink: Callable[[_VlmBackendResponse], None] | None,
+) -> Callable[[_VlmBackendResponse], None] | None:
+    if sink is None:
+        return None
+
+    def retain(response: _VlmBackendResponse) -> None:
+        sink(replace(response, latency_s=latency_s))
+
+    return retain
 
 
 def _raise_for_backend_status(
