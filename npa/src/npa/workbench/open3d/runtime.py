@@ -34,6 +34,7 @@ from .artifacts import (
     validate_mesh,
     validate_pose_graph,
     validate_result,
+    validate_overlay_matches_crop,
     validate_support,
     verify_rerun_recording,
 )
@@ -585,6 +586,13 @@ def visualize(request: RunRequest) -> dict[str, Any]:
                 "fused_path": str(fused),
                 "mesh_path": str(mesh),
                 "uncropped_mesh_path": str(uncropped),
+                # The overlay must reproduce the crop that actually ran, not the
+                # default. Without these two the recording would draw "removed"
+                # surface at a threshold the reconstruct never used.
+                "support_distance_factor": report.get("support_distance_factor"),
+                "unsupported_vertices_removed": report.get(
+                    "unsupported_vertices_removed"
+                ),
                 "voxel_size": manifest.voxel_size,
             },
             root,
@@ -594,6 +602,7 @@ def visualize(request: RunRequest) -> dict[str, Any]:
         verify_rerun_recording(recording)
         result = json.loads((output / "runner.json").read_text())
         result["schema_version"] = "npa.open3d.recording.v1"
+        validate_overlay_matches_crop(result, report)
         payload = recording.read_bytes()
         if sha256_bytes(payload) != result["sha256"]:
             raise Open3dError("recording does not match its reported digest")

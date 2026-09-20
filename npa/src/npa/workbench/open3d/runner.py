@@ -762,6 +762,11 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
         if payload.get("uncropped_mesh_path")
         else None
     )
+    # The overlay has to redraw the crop that ran. A path being present says only
+    # that an uncropped mesh was published, which reconstruct does unconditionally,
+    # so it cannot stand in for "a crop happened at this threshold".
+    support_factor = float(payload.get("support_distance_factor") or 0.0)
+    vertices_cropped = int(payload.get("unsupported_vertices_removed") or 0)
     voxel = float(payload.get("voxel_size") or 0.05)
     recording_path = output / "point_cloud.rrd"
     recording = rr.RecordingStream("npa.open3d", recording_id=run_id)
@@ -825,9 +830,18 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                 "vertex_count": int(len(mesh.vertices)),
                 "triangle_count": int(len(mesh.triangles)),
             }
-            if uncropped_path is not None:
+            if (
+                uncropped_path is not None
+                and support_factor > 0.0
+                and vertices_cropped > 0
+            ):
                 removed_triangles = _log_removed_surface(
-                    o3d, rr, recording, uncropped_path, fused, voxel
+                    o3d,
+                    rr,
+                    recording,
+                    uncropped_path,
+                    fused,
+                    voxel * support_factor,
                 )
         up = _up_axis(o3d, fused, voxel)
         camera = _camera(fused, up["up"])
@@ -878,11 +892,18 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
     }
 
 
-def _log_removed_surface(o3d, rr, recording, uncropped_path: Path, cloud, voxel: float):
+def _log_removed_surface(o3d, rr, recording, uncropped_path: Path, cloud, limit: float):
     """Log the surface the support crop removed, so the crop is auditable.
 
     Showing what was taken out is the difference between a defensible cleanup and
     a flattering camera angle. It is off by default and has its own tab.
+
+    ``limit`` is the distance reconstruct actually cropped at, ``voxel`` times the
+    support factor, and not the bare voxel. Thresholding here at anything else
+    paints an overlay that contradicts the mesh beside it: at factor 2.0 the
+    surface between one and two voxels of a sample is kept in ``mesh.ply`` yet
+    would be drawn as removed. Every published number would still be right, which
+    is exactly what makes that failure hard to catch from evidence alone.
     """
 
     import numpy as np
@@ -893,7 +914,7 @@ def _log_removed_surface(o3d, rr, recording, uncropped_path: Path, cloud, voxel:
     vertices = np.asarray(full.vertices)
     distances = _sample_distances(o3d, cloud, vertices)
     keep = np.asarray(full.triangles)[
-        distances[np.asarray(full.triangles)].max(axis=1) > voxel
+        distances[np.asarray(full.triangles)].max(axis=1) > limit
     ]
     if len(keep) == 0:
         return 0

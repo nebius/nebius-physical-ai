@@ -25,6 +25,7 @@ from npa.workbench.open3d.artifacts import (
     sha256_bytes,
     summarize,
     validate_mesh,
+    validate_overlay_matches_crop,
     validate_pair,
     validate_pose_graph,
     validate_registration_result,
@@ -868,3 +869,130 @@ def test_runner_failure_surfaces_the_upstream_log_tail(tmp_path, monkeypatch) ->
     monkeypatch.setattr(runtime.subprocess, "run", fake_run)
     with pytest.raises(Open3dError, match="KDTree radius must be positive"):
         runtime._run_runner("register", {}, tmp_path, "run-1")
+
+
+def _visualize_payload(monkeypatch, tmp_path, *, factor, cropped) -> dict:
+    """Drive `visualize` far enough to capture the payload it hands the runner."""
+
+    manifest = {
+        "fragments": [
+            _fragment("a", sha256_bytes(b"scan-a")),
+            _fragment("b", sha256_bytes(b"scan-b")),
+        ],
+        "voxel_size": 0.05,
+    }
+    documents = {
+        "s3://example-bucket/mesh/result.json": {
+            "schema_version": "npa.open3d.reconstruction.v1",
+            "registration_path": "s3://example-bucket/graph",
+            "support_distance_factor": factor,
+            "unsupported_vertices_removed": cropped,
+        },
+        "s3://example-bucket/graph/result.json": {
+            "input_path": "s3://example-bucket/prepared"
+        },
+        "s3://example-bucket/graph/pose_graph.json": {"nodes": []},
+        "s3://example-bucket/prepared/manifest.json": manifest,
+    }
+
+    def read(uri: str) -> bytes:
+        if uri in documents:
+            return canonical(documents[uri])
+        if uri.endswith("a.ply"):
+            return b"scan-a"
+        if uri.endswith("b.ply"):
+            return b"scan-b"
+        return b"artifact-bytes"
+
+    captured: dict = {}
+
+    def capture(kind, payload, root, run_id):
+        captured.update(payload)
+        raise Open3dError("stop after the payload is built")
+
+    for name in ("validate_read_path", "validate_write_path", "authorize_uri"):
+        monkeypatch.setattr(runtime, name, lambda *a, **k: None)
+    monkeypatch.setattr(runtime, "read_bytes_uri", read)
+    monkeypatch.setattr(runtime, "_run_runner", capture)
+    with pytest.raises(Open3dError, match="stop after the payload"):
+        runtime.visualize(
+            runtime.RunRequest(
+                input_path="s3://example-bucket/mesh",
+                output_path="s3://example-bucket/reports",
+                run_id="r",
+            )
+        )
+    return captured
+
+
+def test_visualize_tells_the_runner_which_threshold_the_crop_used(
+    monkeypatch, tmp_path
+) -> None:
+    """The overlay must redraw the crop that ran, not the default.
+
+    Without the factor the recording would paint surface between one and two
+    voxels of a sample as removed at factor 2.0, while `mesh.ply` kept it: the
+    right view wrong and every published number still right.
+    """
+
+    payload = _visualize_payload(monkeypatch, tmp_path, factor=2.0, cropped=3677)
+    assert payload["support_distance_factor"] == 2.0
+    assert payload["unsupported_vertices_removed"] == 3677
+
+
+def test_visualize_passes_a_disabled_crop_through_as_disabled(
+    monkeypatch, tmp_path
+) -> None:
+    """`mesh_uncropped.ply` is written unconditionally, so its path proves nothing.
+
+    A factor-0 run must not draw a "removed" overlay for surface it kept.
+    """
+
+    payload = _visualize_payload(monkeypatch, tmp_path, factor=0.0, cropped=0)
+    assert payload["support_distance_factor"] == 0.0
+    assert payload["unsupported_vertices_removed"] == 0
+    assert payload["uncropped_mesh_path"]
+
+
+def _crop_reports(*, shown, factor=1.0, cropped=3677, kept=28208, full=36660):
+    return (
+        {"unsupported_triangles_shown": shown},
+        {
+            "support_distance_factor": factor,
+            "unsupported_vertices_removed": cropped,
+            "mesh": {"triangle_count": kept},
+            "mesh_uncropped": {"triangle_count": full},
+        },
+    )
+
+
+def test_overlay_must_show_exactly_the_triangles_the_crop_removed() -> None:
+    recording, reconstruction = _crop_reports(shown=36660 - 28208)
+    validate_overlay_matches_crop(recording, reconstruction)
+
+
+def test_an_overlay_at_a_different_threshold_is_caught_by_arithmetic() -> None:
+    """The failure this exists for: right numbers, wrong view.
+
+    A bare-voxel threshold against a factor-2.0 crop draws more triangles than the
+    crop removed, and nothing else in the report changes.
+    """
+
+    recording, reconstruction = _crop_reports(shown=12000, factor=2.0)
+    with pytest.raises(Open3dError, match="not showing the crop that ran"):
+        validate_overlay_matches_crop(recording, reconstruction)
+
+
+def test_a_run_that_cropped_nothing_must_draw_nothing() -> None:
+    recording, reconstruction = _crop_reports(shown=8452, factor=0.0, cropped=0)
+    with pytest.raises(Open3dError, match="cropped nothing"):
+        validate_overlay_matches_crop(recording, reconstruction)
+    recording, reconstruction = _crop_reports(shown=0, factor=0.0, cropped=0)
+    validate_overlay_matches_crop(recording, reconstruction)
+
+
+def test_overlay_check_requires_the_counts_it_compares() -> None:
+    with pytest.raises(Open3dError, match="how many unsupported triangles"):
+        validate_overlay_matches_crop({}, {"support_distance_factor": 1.0})
+    with pytest.raises(Open3dError, match="support_distance_factor"):
+        validate_overlay_matches_crop({"unsupported_triangles_shown": 0}, {})

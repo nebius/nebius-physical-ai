@@ -306,6 +306,45 @@ def validate_mesh(mesh: Any) -> None:
         raise Open3dError("mesh must carry a sha256 digest")
 
 
+def validate_overlay_matches_crop(recording: Any, reconstruction: Any) -> None:
+    """Hold the "removed surface" overlay to the crop it claims to show.
+
+    The overlay redraws the crop from the uncropped mesh, so it can silently use a
+    different threshold than the reconstruction did and still leave every published
+    number correct — the view is wrong and nothing else is. Tying the triangle count
+    it logged to the triangles the crop actually removed turns that into an
+    arithmetic disagreement a reviewer can see, instead of something only found by
+    reading both functions side by side.
+    """
+
+    if not isinstance(recording, dict) or not isinstance(reconstruction, dict):
+        raise Open3dError("overlay check needs both the recording and mesh reports")
+    shown = recording.get("unsupported_triangles_shown")
+    if not isinstance(shown, int) or shown < 0:
+        raise Open3dError(
+            "recording does not report how many unsupported triangles it drew"
+        )
+    factor = reconstruction.get("support_distance_factor")
+    if not isinstance(factor, int | float):
+        raise Open3dError("reconstruction does not record its support_distance_factor")
+    if factor <= 0 or not reconstruction.get("unsupported_vertices_removed"):
+        if shown:
+            raise Open3dError(
+                "recording drew removed surface for a run that cropped nothing; the "
+                "overlay and the published mesh disagree"
+            )
+        return
+    kept = (reconstruction.get("mesh") or {}).get("triangle_count")
+    full = (reconstruction.get("mesh_uncropped") or {}).get("triangle_count")
+    if not isinstance(kept, int) or not isinstance(full, int):
+        raise Open3dError("reconstruction does not record both triangle counts")
+    if shown != full - kept:
+        raise Open3dError(
+            f"recording drew {shown} unsupported triangles but the crop removed "
+            f"{full - kept}; the overlay is not showing the crop that ran"
+        )
+
+
 def validate_support(report: Any, *, voxel_size: float) -> None:
     """Check the support/coverage pair a reconstruction publishes about itself.
 
