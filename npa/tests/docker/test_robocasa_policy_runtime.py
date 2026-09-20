@@ -91,7 +91,9 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     start = next(
-        index for index, line in enumerate(lines) if line.startswith("RUN apt-get update")
+        index
+        for index, line in enumerate(lines)
+        if line.startswith("RUN apt-get update")
     )
     end = start
     while lines[end].rstrip().endswith("\\"):
