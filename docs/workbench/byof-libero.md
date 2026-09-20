@@ -259,12 +259,13 @@ any replacement or foreign Pod is a hard failure. Every
 namespace/object UID, inventory, and payload permission is bound to the prepared
 execution-integrity record. The isolated namespace inventory includes ConfigMaps as well
 as Secrets, Pods, Services, accounts, Roles, and RoleBindings. Kubernetes automatically
-injects one `kube-root-ca.crt` ConfigMap; that exact object is the sole allowed
-ConfigMap exception. The manager records its namespace/object UID and a canonical
-metadata/data SHA-256, requires the expected system-owned shape (no workload owner
-reference and only the `ca.crt` data key), and checks it is unchanged at every inventory
-boundary. Any additional ConfigMap, changed label/ownership/data, or missing root-CA
-object is fail-closed. The canonical
+injects one `kube-root-ca.crt` ConfigMap. Pre-submission inventory permits exactly
+that system ConfigMap and the immutable storage-verification ConfigMap. It
+requires namespace-bound object UIDs, only the `ca.crt` data key and no workload
+owner reference for the root CA, and the exact qualified key for storage
+verification. Canonical metadata/data hashes join the pre-submission inventory
+receipt. Missing or additional ConfigMaps and invalid data refuse launch. These
+sampled records do not themselves prove run-long isolation. The canonical
 external RBAC inventory binds every allowed broad discovery/self-review grant,
 including binding and referenced-role UIDs and rules, so later RBAC drift changes
 the accepted infrastructure hash. The payload reads its own Pod and bound JWT

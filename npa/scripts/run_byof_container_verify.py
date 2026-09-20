@@ -901,7 +901,7 @@ def _libero_namespaced_inventory(
             LIBERO_CONTROLLER_ROLE_BINDING,
         },
         "secrets": set(),
-        "configmaps": {LIBERO_STORAGE_VERIFICATION_CONFIGMAP},
+        "configmaps": {"kube-root-ca.crt", LIBERO_STORAGE_VERIFICATION_CONFIGMAP},
         "services": set(),
     }
     for kind, expected_names in expected.items():
@@ -928,7 +928,26 @@ def _libero_namespaced_inventory(
             )
         inventory[kind] = names
         if kind == "configmaps":
-            _verify_libero_storage_configmap(items[0])
+            records = []
+            for item in items:
+                metadata = item.get("metadata") or {}
+                if metadata["name"] == LIBERO_STORAGE_VERIFICATION_CONFIGMAP:
+                    _verify_libero_storage_configmap(item)
+                else:
+                    data = item.get("data")
+                    if (
+                        metadata.get("ownerReferences")
+                        or not isinstance(data, dict)
+                        or set(data) != {"ca.crt"}
+                        or not isinstance(data["ca.crt"], str)
+                        or not data["ca.crt"].strip()
+                        or item.get("binaryData")
+                    ):
+                        raise RuntimeError("LIBERO root-CA ConfigMap has an unexpected shape")
+                if not metadata.get("uid") or metadata.get("namespace") != namespace:
+                    raise RuntimeError("LIBERO ConfigMap has no namespace-bound UID")
+                records.append(_sha256_json({"metadata": metadata, "data": item.get("data"), "immutable": item.get("immutable")}))
+            inventory["configmap_records"] = sorted(records)
     return inventory
 
 

@@ -1496,7 +1496,7 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
             "skypilot-service-account-role-binding",
         ],
         "secrets": [],
-        "configmaps": [module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP],
+        "configmaps": ["kube-root-ca.crt", module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP],
         "services": [],
     }
 
@@ -1508,9 +1508,13 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
 
     def kubectl_json(arguments, **_kwargs):
         if arguments[-1] == "configmaps":
-            return {"items": [{"metadata": {"name": module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP},
-                               "immutable": True,
-                               "data": {"output-storage-authorization-public-key.b64": module.base64.b64encode(storage_key).decode()}}]}
+            return {"items": [
+                {"metadata": {"name": "kube-root-ca.crt", "namespace": namespace, "uid": "root-ca-uid"},
+                 "data": {"ca.crt": "synthetic public certificate"}},
+                {"metadata": {"name": module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP, "namespace": namespace, "uid": "storage-key-uid"},
+                 "immutable": True,
+                 "data": {"output-storage-authorization-public-key.b64": module.base64.b64encode(storage_key).decode()}},
+            ]}
         kind = arguments[-1]
         return {"items": [{"metadata": {"name": name}} for name in expected[kind]]}
 
@@ -1518,6 +1522,7 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
     inventory = module._libero_namespaced_inventory(
         Path("/private/payload-kubeconfig"), "payload-context", namespace
     )
+    assert len(inventory.pop("configmap_records")) == 2
     assert inventory == expected
 
     expected["services"] = ["selector-trap"]
