@@ -205,45 +205,16 @@ def test_multiline_build_history_fetches_are_refused(
     assert kind in _kinds(scanner.scan(rootfs, {"history": [{"created_by": history}]}))
 
 
-def test_phase_a_cli_refuses_before_any_candidate_can_pass(tmp_path: Path) -> None:
-    rootfs = _tar(
-        tmp_path / "rootfs.tar",
-        {"opt/npa/robotwin/REDISTRIBUTION.md": b"NPA bootstrap notice"},
-    )
+def test_payload_cli_scans_neutral_bytes_without_a_prebuild_policy_hold(tmp_path: Path) -> None:
+    rootfs = _tar(tmp_path / "rootfs.tar", {"opt/npa/robotwin/notice.txt": b"neutral"})
     output = tmp_path / "report.json"
-    assert scanner.main(["--rootfs-tar", str(rootfs), "--output", str(output)]) == 2
-    assert not output.exists()
+    assert scanner.main(["--rootfs-tar", str(rootfs), "--output", str(output)]) == 0
+    assert json.loads(output.read_text())["status"] == "pass"
 
 
-def test_complete_looking_policy_cannot_activate_unimplemented_verification(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    policy = tmp_path / "policy.json"
-    policy.write_text(
-        json.dumps(
-            {
-                "schema_version": "npa.image-native-content-policy.v1",
-                "detector_identity": {
-                    "config_sha256": "a" * 64,
-                    "helper_sha256": "b" * 64,
-                },
-                "entries": [{"untrusted": "catalog-entry"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(scanner, "PUBLIC_POLICY_PATH", policy)
-    monkeypatch.setattr(
-        scanner,
-        "docker_save_material",
-        lambda *_args, **_kwargs: pytest.fail(
-            "unimplemented exact-content policy reached candidate bytes"
-        ),
-    )
-    image = tmp_path / "candidate.tar"
-    image.write_bytes(b"not-an-image")
-
-    assert scanner.main(["--docker-save", str(image)]) == 2
+def test_audited_public_bytes_refuse_any_drift(tmp_path: Path) -> None:
+    rootfs = _tar(tmp_path / "rootfs.tar", {"usr/bin/ssh": b"changed-public-binary"})
+    assert "audited_literal_byte_drift" in _kinds(scanner.scan(rootfs, {}))
 
 
 def test_private_image_stdin_reader_remains_byte_bounded(

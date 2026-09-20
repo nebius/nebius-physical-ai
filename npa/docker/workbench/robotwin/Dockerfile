@@ -3,8 +3,8 @@ FROM python:3.12.14-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08
 
 # Neutral public-development recipe. This exact official Ubuntu base and the
 # snapshot-locked Ubuntu main closure contain no RoboTwin/NVIDIA/runtime data.
-# The trusted build entrypoint remains fail-closed while the native-byte policy
-# is unresolved; this Dockerfile is not a publication or runtime-use grant.
+# Publication requires the source annex, exact native-byte policy and every
+# trusted image gate; this recipe does not authorize runtime vendor use.
 FROM ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986 AS runtime
 
 ARG NPA_SOURCE_SHA
@@ -100,7 +100,7 @@ COPY --chmod=0755 docker/workbench/robotwin/smoke.sh /opt/npa/robotwin/smoke.sh
 LABEL org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       org.nebius.npa.source-sha="${NPA_SOURCE_SHA}" \
       org.nebius.npa.payload="zero-vendor-payload" \
-      org.nebius.npa.publication-state="neutral-recipe-unbuilt-quarantined"
+      org.nebius.npa.publication-state="neutral-bootstrap-runtime-disabled"
 
 # TEST: exercise the declared non-root SkyPilot bootstrap contract, remove all
 # generated host keys, and prove the real runtime gate still refuses before work.

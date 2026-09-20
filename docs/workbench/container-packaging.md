@@ -11,14 +11,15 @@ to preserve the exact buildx index through local gates and anonymous readback.
 NCore remains quarantined pending its independent RTX acceptance.
 
 RoboTwin's `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` entry is a
-zero-vendor-payload recipe, not an available image. It pins an official Ubuntu
+zero-vendor-payload bootstrap with a working neutral build. It pins an official Ubuntu
 22.04 linux/amd64 manifest plus a signed immutable Jammy snapshot with 84 exact
 binary packages, 63 corresponding source packages, and a complete-empty public
 Python application lock. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python
 application runtime, assets, caches, credentials, and outputs stay runtime-side.
-The trusted build path still refuses before Docker because the native-content
-policy is unresolved, and publication quarantine remains until exact OCI scans
-plus the separate legal and RTX gates pass. The bounded
+The trusted public development workflow requires its exact native content policy,
+complete-byte and payload scans, security gates, and public corresponding-source
+annex before push. Supported release quarantine remains until the separate real
+RTX capability passes. The bounded
 operator statement is `noncommercial` validation/evaluation, not a general use
 grant; public artifacts use exact-revision payload probes, while gated artifacts
 require the customer's runtime-only credential and an exact entitlement probe
@@ -82,7 +83,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
-| `npa-robotwin` | `robotwin/Dockerfile` | resolved neutral recipe, still unbuilt/quarantined; CPU refusal only |
+| `npa-robotwin` | `robotwin/Dockerfile` | neutral development bootstrap; supported release quarantined; CPU refusal verified |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |

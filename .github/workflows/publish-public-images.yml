@@ -130,11 +130,6 @@ jobs:
                   raise SystemExit("lerobot_version is not supported by the packaged manifest")
           matrix = []
           for tool in build_tools:
-              if tool == "robotwin":
-                  raise SystemExit(
-                      "robotwin: native-content policy and built-byte evidence are incomplete; "
-                      "public development build is quarantined"
-                  )
               key = tool if tool in entries else f"sim2real-{tool}"
               entry = entries.get(key)
               if not isinstance(entry, dict) or entry.get("redistribution") != "public":
@@ -208,6 +203,8 @@ jobs:
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       LEROBOT_VERSION: ${{ matrix.lerobot_version }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      NPA_DOCKER_SOCKET: /var/run/docker.sock
+      ROBOTWIN_PUBLIC_NATIVE_POLICY_SHA256: df720d408e03ad08dea051b31af6755159cfffc6276cbb7fa60bd1ec0a37236a
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
@@ -217,8 +214,24 @@ jobs:
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          # Both complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}
+          # The complete-byte paths require the verified CPython 3.12 wheel.
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robotwin') && '3.12' || '3.11' }}
+
+      - name: Preserve the RoboTwin attested OCI graph in Docker
+        if: matrix.tool == 'robotwin'
+        id: robotwin-docker
+        uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          version: v29.1.3
+          set-host: true
+          context: robotwin-publication
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+
+      - name: Select the isolated RoboTwin Docker socket
+        if: matrix.tool == 'robotwin'
+        env:
+          ROBOTWIN_DOCKER_SOCKET: ${{ steps.robotwin-docker.outputs.sock }}
+        run: echo "NPA_DOCKER_SOCKET=$ROBOTWIN_DOCKER_SOCKET" >> "$GITHUB_ENV"
 
       - name: Install NPA validation environment
         run: |
@@ -282,6 +295,23 @@ jobs:
             --tools-receipt "$scan_root/tools/dependency-receipt.json" \
             --native-receipt "$scan_root/native/dependencies.json" \
             --output-dir "$scan_root/integration-checks"
+
+      - name: Prepare RoboTwin byte tools and require its public source annex
+        if: matrix.tool == 'robotwin'
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/robotwin-byte-gate.XXXXXXXX")"
+          echo "ROBOTWIN_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
+          npa/.venv/bin/python npa/docker/workbench/robotwin/source_annex.py --verify-public "$DEVELOPMENT_SHA"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" --output-dir "$scan_root/integration-checks"
 
       - name: Prepare NCore native scanners and separate source inputs
         if: matrix.tool == 'ncore'
@@ -393,6 +423,9 @@ jobs:
             [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
           fi
+          if [[ "$TOOL" == robotwin ]]; then
+            build_args+=(--provenance=mode=max --sbom=true)
+          fi
           docker buildx build \
             --load \
             --file "$DOCKERFILE" \
@@ -405,8 +438,8 @@ jobs:
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
         if: matrix.tool != 'ncore'
         env:
-          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
           npa/.venv/bin/python - <<'PY'
@@ -472,6 +505,10 @@ jobs:
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
           fi
+          if [ "$TOOL" = robotwin ]; then
+            # robotwin-publication-gate: payload and complete-byte results are both mandatory.
+            bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE" pre
+          fi
           if [ "$TOOL" = ltx2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_ltx_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -524,7 +561,7 @@ jobs:
           # gives this mandatory gate no practical analysis deadline.
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$NPA_DOCKER_SOCKET:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
@@ -547,7 +584,7 @@ jobs:
           set -euo pipefail
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$NPA_DOCKER_SOCKET:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$RUNNER_TEMP:/output" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
@@ -656,8 +693,8 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
@@ -692,6 +729,9 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = robotwin ]; then
+            bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" post
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \

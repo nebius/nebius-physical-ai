@@ -1,6 +1,6 @@
 # RoboTwin bootstrap redistribution boundary
 
-This unbuilt recipe is designed to contain only an unmodified official Ubuntu
+This bootstrap contains only an unmodified official Ubuntu
 base layer, exact unmodified Ubuntu `main` packages, and NPA-authored bootstrap
 files. It does not contain RoboTwin, CuRobo, CUDA, cuDNN, PyTorch CUDA, SAPIEN,
 MPLib, Warp, asset, cache, credential, or output bytes.
@@ -13,12 +13,22 @@ each component's license in force. `npa-robotwin` does not use an Ubuntu mark in
 its software title or imply Canonical endorsement; Ubuntu is referenced only to
 identify the unchanged base and package origin.
 
-The recipe is deliberately unbuilt and publication-quarantined. The trusted
-build path refuses before Docker while the exact native-content policy remains
-unresolved. Exact OCI bytes must later pass license, source-availability, SBOM,
-provenance, vulnerability, secret, complete-byte, and RoboTwin-specific scans.
-Redistributability of a future neutral bootstrap is separate from permission to
-run the runtime-fetched components.
+The neutral bootstrap builds without customer runtime credentials. The trusted
+public development workflow requires the exact public-content policies, complete
+native byte scan, payload scan, license/security/SBOM gates, and a publicly
+available corresponding-source annex before pushing any image. Supported release
+promotion remains quarantined until the separate real RTX capability gate passes.
+
+The source annex includes 280 hash- and size-locked official archives covering
+91 source package versions across every Ubuntu ancestor and installed layer.
+`source_annex.py --output-dir DIR` reproduces the archive from
+`corresponding-sources.json`; `source-bundle.json` binds its deterministic bytes.
+It is delivered as `robotwin-corresponding-sources.tar` under the public
+`robotwin-sources-dev-<full-source-sha>` GitHub prerelease. The accompanying
+`source-manifest.json` binds that revision; the publication receipt adds the
+resulting image digest. Retain the annex for as long as its image is retained.
+Package-specific licenses and build instructions are included in those complete
+upstream source archives. Runtime-fetched vendor components are separate.
 
 The operator's exact `noncommercial` statement is recorded once for this
 bounded manager run and is compatible only with CuRobo v0.7.8 noncommercial

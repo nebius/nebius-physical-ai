@@ -137,17 +137,16 @@ operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
 ## Unbuilt BYOF bootstrap candidates excluded from publication
 
-RoboTwin 2.0 is intentionally absent from the public image table. Its
-`npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` candidate is a planned public
-zero-vendor-payload bootstrap, not a published image. The recipe now pins one
-official Ubuntu 22.04 linux/amd64 manifest and one signed immutable Jammy
-snapshot closure (75 exact binary packages, 57 source packages, zero Python
-application artifacts). Runtime delivery remains disabled, and the trusted build
-path refuses before Docker while the native-content policy is unresolved.
-RoboTwin, CuRobo, CUDA/cuDNN, simulator packages, assets, caches, credentials,
-and outputs remain outside the planned image. No exact built image, byte scan,
-SBOM, provenance,
-anonymous-pull result, or RTX result exists. The independent runtime-use and
+RoboTwin 2.0 remains absent from the supported public image table. Its
+`npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` release candidate stays quarantined
+pending real RTX capability. The neutral bootstrap builds from an official Ubuntu
+base and 84 exact snapshot packages with zero Python application distributions.
+Trusted full-SHA development publication requires complete-byte and payload
+scans, all security gates, and an anonymously verified corresponding-source annex.
+The annex covers 91 source package versions across the base and installed layers.
+Runtime vendor payload, assets, customer credentials, and outputs stay outside
+the neutral image. No real RTX result is claimed.
+The independent runtime-use and
 output-rights decisions, bounded run-scoped `noncommercial` statement,
 customer-owned runtime credential/exact payload-probe contract, isolated
 ephemeral-cache default, and exact-digest RTX PRO 6000 gate are documented in

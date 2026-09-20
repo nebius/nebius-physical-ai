@@ -28,7 +28,6 @@ context="$(mktemp -d "${TMPDIR:-/tmp}/npa-robotwin-context.XXXXXXXX")"
 trap 'rm -rf -- "$context"' EXIT
 git -C "$REPO_ROOT" archive "$SOURCE_SHA" \
   npa/docker/workbench/robotwin \
-  npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap.json \
   | tar -x --same-permissions -C "$context"
 context_root="$context/npa"
 context_image_root="$context_root/docker/workbench/robotwin"
@@ -37,7 +36,6 @@ context_image_root="$context_root/docker/workbench/robotwin"
   "$context_image_root/runtime-lock.json" \
   "$context_image_root/apt-packages.lock" \
   "$context_image_root/runtime-requirements.lock" \
-  "$context/npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap.json" \
   "$context_image_root/Dockerfile" <<'PY'
 import hashlib
 import json
@@ -47,8 +45,7 @@ import sys
 runtime = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 apt_path = Path(sys.argv[2])
 requirements_path = Path(sys.argv[3])
-policy = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
-dockerfile = Path(sys.argv[5]).read_text(encoding="utf-8")
+dockerfile = Path(sys.argv[4]).read_text(encoding="utf-8")
 
 
 def digest(path: Path) -> str:
@@ -105,21 +102,12 @@ manifest = base.get("manifest_digest") if isinstance(base, dict) else None
 if not isinstance(manifest, str) or f"FROM ubuntu:22.04@{manifest}" not in dockerfile:
     raise SystemExit("RoboTwin neutral build refused: Dockerfile/base lock mismatch")
 
-# Exact native allowlisting is derived from a reviewed candidate-byte population.
-# Until that separately scoped policy exists, stop before Docker and network.
-identities = policy.get("detector_identity")
-if (
-    policy.get("schema_version") != "npa.image-native-content-policy.v1"
-    or not isinstance(identities, dict)
-    or not policy.get("entries")
-    or any(value == "UNRESOLVED-PHASE-A" for value in identities.values())
-):
-    raise SystemExit(
-        "RoboTwin neutral build refused: native-content policy is unresolved"
-    )
+
 PY
 
-# Unreachable until the separately reviewed native-content policy is complete.
-docker buildx build --platform linux/amd64 --load \
+# A local build supplies bytes for inspection; every publication gate runs before push.
+docker buildx build --platform linux/amd64 --load --provenance=mode=max --sbom=true \
+  --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+  --label "org.opencontainers.image.source=https://github.com/nebius/nebius-physical-ai" \
   --build-arg "NPA_SOURCE_SHA=$SOURCE_SHA" --tag "$IMAGE" \
   --file "$context_image_root/Dockerfile" "$context_root"

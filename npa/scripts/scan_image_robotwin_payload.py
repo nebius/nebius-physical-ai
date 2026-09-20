@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed when a RoboTwin bootstrap contains any runtime/vendor payload."""
+"""Scan RoboTwin payload boundaries; publication also requires the native byte gate."""
 
 from __future__ import annotations
 
@@ -179,11 +179,11 @@ MAX_OCI_LAYER_MEMBERS = 2_000_000
 MAX_OCI_FLATTENED_BYTES = 64 * 1024 * 1024 * 1024
 REGISTRY_TIMEOUT_SECONDS = 60
 PUBLIC_IMAGE_REPOSITORY = "ghcr.io/nebius/nebius-physical-ai/npa-robotwin"
-PUBLIC_POLICY_PATH = (
+PUBLIC_PAYLOAD_POLICY_PATH = (
     Path(__file__).resolve().parent
     / "image_byte_scan"
     / "public_policies"
-    / "robotwin-bootstrap.json"
+    / "robotwin-bootstrap-payload.json"
 )
 MANIFEST_ACCEPT = ", ".join(
     (
@@ -827,7 +827,10 @@ def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
     with walker.payload_policy(
         forbidden_paths=FORBIDDEN_PATHS,
         forbidden_history=FORBIDDEN_HISTORY,
-        audited_secret_files={},
+        audited_secret_files={
+            row["path"]: row["sha256"]
+            for row in json.loads(PUBLIC_PAYLOAD_POLICY_PATH.read_text())["files"]
+        },
         audited_libraries={},
         secret_content=SECRET_CONTENT,
         forbidden_elf_dependency=FORBIDDEN_ELF_DEPENDENCY,
@@ -865,44 +868,6 @@ def _is_public_image_reference(value: str) -> bool:
     )
 
 
-def _require_complete_exact_content_policy() -> None:
-    """Refuse all candidate bytes until the reviewed exact-content set exists.
-
-    Deny-patterns cannot prove that arbitrarily renamed or re-encoded upstream
-    source and private evidence are absent.  Publication therefore requires an
-    exact-content catalog whose detector bindings and entries are completed
-    from genuine built bytes.  Phase A intentionally has no such evidence.
-    """
-
-    raw = PUBLIC_POLICY_PATH.read_bytes()
-    if len(raw) > 1024 * 1024:
-        raise RuntimeError("RoboTwin exact-content policy is invalid")
-    try:
-        policy = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("RoboTwin exact-content policy is invalid") from exc
-    identity = policy.get("detector_identity") if isinstance(policy, dict) else None
-    entries = policy.get("entries") if isinstance(policy, dict) else None
-    complete = (
-        policy.get("schema_version") == "npa.image-native-content-policy.v1"
-        and isinstance(identity, dict)
-        and set(identity) == {"config_sha256", "helper_sha256"}
-        and all(
-            re.fullmatch(r"[0-9a-f]{64}", str(identity.get(name) or ""))
-            for name in ("config_sha256", "helper_sha256")
-        )
-        and isinstance(entries, list)
-        and bool(entries)
-    )
-    if not complete:
-        raise RuntimeError("RoboTwin exact-content policy is incomplete")
-    # Merely filling the catalog cannot enable publication.  The RoboTwin
-    # wrapper does not yet execute and verify the shared fresh-native policy
-    # against the same candidate bytes, so no representation-independent
-    # absence claim exists.  Activation requires a separately reviewed code
-    # change after genuine built bytes are available.
-    raise RuntimeError("RoboTwin exact-content verification is unavailable")
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -926,7 +891,6 @@ def main(argv: list[str] | None = None) -> int:
 
     selected_image = args.image
     try:
-        _require_complete_exact_content_policy()
         if args.image_stdin:
             selected_image = _read_image_stdin()
         with tempfile.TemporaryDirectory(prefix="npa-robotwin-byte-scan-") as tmp:

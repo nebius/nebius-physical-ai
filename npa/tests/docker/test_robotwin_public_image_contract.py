@@ -299,7 +299,7 @@ def test_build_script_passes_the_dockerfile_source_sha_argument() -> None:
     assert '--build-arg "NPA_SOURCE_SHA=$SOURCE_SHA"' in build
     assert '--build-arg "SOURCE_SHA=$SOURCE_SHA"' not in build
     assert 'git -C "$REPO_ROOT" archive "$SOURCE_SHA"' in build
-    assert build.index("native-content policy is unresolved") < build.index(
+    assert build.index("apt closure count mismatch") < build.index(
         "docker buildx build"
     )
 
@@ -392,15 +392,13 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert f'= "{requirements_sha256}";' in requirements_guard
 
 
-def test_publication_workflow_refuses_robotwin_before_build_selection() -> None:
+def test_publication_workflow_requires_robotwin_byte_gate() -> None:
     workflow = (ROOT / ".github/workflows/publish-public-images.yml").read_text()
-    guard = 'if tool == "robotwin":'
-    matrix_append = "matrix.append({"
-    assert workflow.index(guard) < workflow.index(matrix_append)
-    assert "native-content policy and built-byte evidence are incomplete" in workflow
+    assert "robotwin-publication-gate" in workflow
+    assert "robotwin_verification.py" in (IMAGE_ROOT / "byte_gate.sh").read_text()
 
 
-def test_build_refuses_unresolved_native_policy_before_docker(tmp_path: Path) -> None:
+def test_build_reaches_docker_with_locked_neutral_inputs(tmp_path: Path) -> None:
     marker = tmp_path / "docker-invoked"
     fake_docker = tmp_path / "docker"
     fake_docker.write_text(
@@ -425,17 +423,21 @@ def test_build_refuses_unresolved_native_policy_before_docker(tmp_path: Path) ->
         text=True,
         check=False,
     )
-    assert completed.returncode == 1
-    assert "native-content policy is unresolved" in completed.stderr
-    assert not marker.exists()
+    assert completed.returncode == 99
+    assert marker.exists()
 
 
-def test_public_native_policy_is_intentionally_unusable_until_byte_review() -> None:
+def test_public_native_policy_binds_actual_reviewed_content() -> None:
     policy = json.loads(
         (
             ROOT / "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap.json"
         ).read_text()
     )
     assert policy["schema_version"] == "npa.image-native-content-policy.v1"
-    assert policy["entries"] == []
-    assert set(policy["detector_identity"].values()) == {"UNRESOLVED-PHASE-A"}
+    assert len(policy["entries"]) == 7
+    assert all(re.fullmatch("[0-9a-f]{64}", value) for value in policy["detector_identity"].values())
+    for entry in policy["entries"]:
+        assert entry["operational_credential"] is False
+        for name in ("public_provenance", "semantic_proof"):
+            proof = entry[name]
+            assert hashlib.sha256((ROOT / proof["path"]).read_bytes()).hexdigest() == proof["sha256"]

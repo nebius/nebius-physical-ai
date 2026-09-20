@@ -1,0 +1,374 @@
+{
+  "schema_version": "npa.robotwin.public-content-proof.v1",
+  "source_commit": "92d5ec41fca6bc705127f25a83081a529878dc8e",
+  "content": [
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "dcadda7f0f82c54ca157b6ca0a5fdc8e1128db4d778109c8e197e2f84c2ac9ba",
+      "record_bytes": 2008512,
+      "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.31.0",
+      "semantic_role": "cryptographic-self-test",
+      "reason": "Static asymmetric cryptography test keys from gnutls-3.7.3/lib/crypto-selftests-pk.c. Exact first key-body lines in the shipped ELF match this official source; the functions import these constants into temporary test objects for known-answer self-tests, then deinitialize them. These are not operational credentials.",
+      "base_manifest_digest": "sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986",
+      "source": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "native_findings": [
+        {
+          "end_line": 3615,
+          "rule_id": "private-key",
+          "start_line": 3611
+        },
+        {
+          "end_line": 3619,
+          "rule_id": "private-key",
+          "start_line": 3616
+        },
+        {
+          "end_line": 3623,
+          "rule_id": "private-key",
+          "start_line": 3620
+        },
+        {
+          "end_line": 3624,
+          "rule_id": "private-key",
+          "start_line": 3624
+        },
+        {
+          "end_line": 3624,
+          "rule_id": "private-key",
+          "start_line": 3624
+        },
+        {
+          "end_line": 3628,
+          "rule_id": "private-key",
+          "start_line": 3624
+        },
+        {
+          "end_line": 3629,
+          "rule_id": "private-key",
+          "start_line": 3629
+        },
+        {
+          "end_line": 3629,
+          "rule_id": "private-key",
+          "start_line": 3629
+        },
+        {
+          "end_line": 3648,
+          "rule_id": "private-key",
+          "start_line": 3629
+        },
+        {
+          "end_line": 3675,
+          "rule_id": "private-key",
+          "start_line": 3649
+        }
+      ],
+      "source_package": {
+        "name": "gnutls28",
+        "version": "3.7.3-4ubuntu1.9",
+        "artifacts": [
+          {
+            "name": "gnutls28_3.7.3.orig.tar.xz",
+            "size": 6119292,
+            "sha256": "fc59c43bc31ab20a6977ff083029277a31935b8355ce387b634fa433f8f6c49a",
+            "path": "pool/main/g/gnutls28/gnutls28_3.7.3.orig.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/g/gnutls28/gnutls28_3.7.3.orig.tar.xz"
+          },
+          {
+            "name": "gnutls28_3.7.3.orig.tar.xz.asc",
+            "size": 833,
+            "sha256": "a2f95ac5d7dd951bddef01ec9930616dd1a5226173b3dc7896b3bed411c91d9a",
+            "path": "pool/main/g/gnutls28/gnutls28_3.7.3.orig.tar.xz.asc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/g/gnutls28/gnutls28_3.7.3.orig.tar.xz.asc"
+          },
+          {
+            "name": "gnutls28_3.7.3-4ubuntu1.9.debian.tar.xz",
+            "size": 127136,
+            "sha256": "dab5939b10476b56358262432f40191a5ecee941d1cda16f9ec1dd3e3ceb6314",
+            "path": "pool/main/g/gnutls28/gnutls28_3.7.3-4ubuntu1.9.debian.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/g/gnutls28/gnutls28_3.7.3-4ubuntu1.9.debian.tar.xz"
+          },
+          {
+            "name": "gnutls28_3.7.3-4ubuntu1.9.dsc",
+            "size": 3575,
+            "sha256": "dcf44b5f38fb5044aaea929fc0a89744f3e86ceee8733f6781f86fd0c35e56c8",
+            "path": "pool/main/g/gnutls28/gnutls28_3.7.3-4ubuntu1.9.dsc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/g/gnutls28/gnutls28_3.7.3-4ubuntu1.9.dsc"
+          }
+        ]
+      },
+      "matched_source_member": {
+        "path": "gnutls-3.7.3/lib/crypto-selftests-pk.c",
+        "sha256": "c3d79122e072177f55dc30a98f68b949c0f36f6159a363aae9512a22a9280ed0"
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "617f5ce256d6a64a0afbe4bde4f90b363144d9be4d0ce2cad8f3e530d2d4691e",
+      "record_bytes": 21606,
+      "path": "var/lib/dpkg/info/libc6:amd64.md5sums",
+      "semantic_role": "package-integrity-metadata",
+      "reason": "The detector matches part of a hexadecimal MD5 in a dpkg file-checksum record for gconv/SHIFT_JISX0213.so; no infrastructure identifier or credential is present.",
+      "base_manifest_digest": "sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986",
+      "source": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "native_findings": [
+        {
+          "end_line": 257,
+          "rule_id": "nebius-generic-id",
+          "start_line": 257
+        }
+      ],
+      "source_package": {
+        "name": "glibc",
+        "version": "2.35-0ubuntu3.14",
+        "artifacts": [
+          {
+            "name": "glibc_2.35.orig.tar.xz",
+            "size": 18165952,
+            "sha256": "5123732f6b67ccd319305efd399971d58592122bcc2a6518a1bd2510dd0cf52e",
+            "path": "pool/main/g/glibc/glibc_2.35.orig.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/g/glibc/glibc_2.35.orig.tar.xz"
+          },
+          {
+            "name": "glibc_2.35.orig.tar.xz.asc",
+            "size": 833,
+            "sha256": "853aaaf17d7366817e814057a467625ee7c0b26240e8b878db0f33c389c7bcb6",
+            "path": "pool/main/g/glibc/glibc_2.35.orig.tar.xz.asc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/g/glibc/glibc_2.35.orig.tar.xz.asc"
+          },
+          {
+            "name": "glibc_2.35-0ubuntu3.14.debian.tar.xz",
+            "size": 954688,
+            "sha256": "670206faef3f6baa3bbee01128c2a496d6aa5559c636fc6809ff111b2fd73ef4",
+            "path": "pool/main/g/glibc/glibc_2.35-0ubuntu3.14.debian.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260901T000000Z/pool/main/g/glibc/glibc_2.35-0ubuntu3.14.debian.tar.xz"
+          },
+          {
+            "name": "glibc_2.35-0ubuntu3.14.dsc",
+            "size": 8888,
+            "sha256": "664a969f5ee1041221a3771e8a2956124a54ec40948287c34991a0a87d0fa0a4",
+            "path": "pool/main/g/glibc/glibc_2.35-0ubuntu3.14.dsc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260901T000000Z/pool/main/g/glibc/glibc_2.35-0ubuntu3.14.dsc"
+          }
+        ]
+      }
+    },
+    {
+      "record_kind": "logical_tar_path",
+      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
+      "record_bytes": 49,
+      "path": "var/lib/dpkg/info/libgssapi-krb5-2:amd64.triggers", "source_scan_note": "gitleaks:allow=public-package-path-metadata",
+      "semantic_role": "public-package-path-metadata",
+      "reason": "This exact public dpkg trigger filename names an Ubuntu package. The generic API-key detector matches package-name text; it contains no credential value.",
+      "base_manifest_digest": "sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986",
+      "source": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "native_findings": [
+        {
+          "end_line": 0,
+          "rule_id": "generic-api-key",
+          "start_line": 0
+        }
+      ],
+      "source_package": {
+        "name": "krb5",
+        "version": "1.19.2-2ubuntu0.8",
+        "artifacts": [
+          {
+            "name": "krb5_1.19.2.orig.tar.gz",
+            "size": 8741053,
+            "sha256": "10453fee4e3a8f8ce6129059e5c050b8a65dab1c257df68b99b3112eaa0cdf6a",
+            "path": "pool/main/k/krb5/krb5_1.19.2.orig.tar.gz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/k/krb5/krb5_1.19.2.orig.tar.gz"
+          },
+          {
+            "name": "krb5_1.19.2-2ubuntu0.8.debian.tar.xz",
+            "size": 125888,
+            "sha256": "d0bc0c4e76c742fec17b99b3ed8a552065ad57c6145c28a3b29b42514a8f1f05",
+            "path": "pool/main/k/krb5/krb5_1.19.2-2ubuntu0.8.debian.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/k/krb5/krb5_1.19.2-2ubuntu0.8.debian.tar.xz"
+          },
+          {
+            "name": "krb5_1.19.2-2ubuntu0.8.dsc",
+            "size": 3652,
+            "sha256": "bdaa65dac1bfbc45d98e296bf28d0dbf7f18f6776b567372595d17e7c3bda61b",
+            "path": "pool/main/k/krb5/krb5_1.19.2-2ubuntu0.8.dsc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/k/krb5/krb5_1.19.2-2ubuntu0.8.dsc"
+          }
+        ]
+      }
+    },
+    {
+      "record_kind": "logical_tar_path",
+      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
+      "record_bytes": 45,
+      "path": "var/lib/dpkg/info/libkeyutils1:amd64.triggers", "source_scan_note": "gitleaks:allow=public-package-path-metadata",
+      "semantic_role": "public-package-path-metadata",
+      "reason": "This exact public dpkg trigger filename names an Ubuntu package. The generic API-key detector matches package-name text; it contains no credential value.",
+      "base_manifest_digest": "sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986",
+      "source": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "native_findings": [
+        {
+          "end_line": 0,
+          "rule_id": "generic-api-key",
+          "start_line": 0
+        }
+      ],
+      "source_package": {
+        "name": "keyutils",
+        "version": "1.6.1-2ubuntu3",
+        "artifacts": [
+          {
+            "name": "keyutils_1.6.1-2ubuntu3.dsc",
+            "size": 2203,
+            "sha256": "6ce03824add78e1dc385723ce354a5513eb1ab4b83643e91e9b2c64f81112f9d",
+            "path": "pool/main/k/keyutils/keyutils_1.6.1-2ubuntu3.dsc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/k/keyutils/keyutils_1.6.1-2ubuntu3.dsc"
+          },
+          {
+            "name": "keyutils_1.6.1.orig.tar.bz2",
+            "size": 97232,
+            "sha256": "c8b15722ae51d95b9ad76cc6d49a4c2cc19b0c60f72f61fb9bf43eea7cbd64ce",
+            "path": "pool/main/k/keyutils/keyutils_1.6.1.orig.tar.bz2",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/k/keyutils/keyutils_1.6.1.orig.tar.bz2"
+          },
+          {
+            "name": "keyutils_1.6.1-2ubuntu3.debian.tar.xz",
+            "size": 18936,
+            "sha256": "e9e8992edcc28599fb59ca1dc9ecbfb6b35175fb712f86b13bf4dc35397631f9",
+            "path": "pool/main/k/keyutils/keyutils_1.6.1-2ubuntu3.debian.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/k/keyutils/keyutils_1.6.1-2ubuntu3.debian.tar.xz"
+          }
+        ]
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "688a3ffddc3cfb1277c333679ba75ff0946406d93238bf74b75977a23af16025",
+      "record_bytes": 30406,
+      "path": "opt/npa/robotwin/apt-packages.lock",
+      "semantic_role": "package-integrity-metadata",
+      "reason": "Matches are inside exact SHA-256 copyright digests for libsemanage-common and libsemanage2, verified against public Ubuntu package archives. They are package-integrity metadata, not infrastructure identifiers.",
+      "base_manifest_digest": null,
+      "source": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "native_findings": [
+        {
+          "end_line": 66,
+          "rule_id": "nebius-generic-id",
+          "start_line": 66
+        },
+        {
+          "end_line": 67,
+          "rule_id": "nebius-generic-id",
+          "start_line": 67
+        }
+      ],
+      "committed_public_source": {
+        "commit": "92d5ec41fca6bc705127f25a83081a529878dc8e",
+        "path": "npa/docker/workbench/robotwin/apt-packages.lock",
+        "sha256": "688a3ffddc3cfb1277c333679ba75ff0946406d93238bf74b75977a23af16025"
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "b25e002f448246d7271adb0d9e72281e33aa822b07afff4c96c476d79fe1fc80",
+      "record_bytes": 5136,
+      "path": "usr/bin/rsync-ssl",
+      "semantic_role": "public-source-symbol",
+      "reason": "This is the same exact rsync-ssl content already reviewed by curobo-v2. The detector crosses an empty key-option assignment and a following shell variable assignment; no key body is embedded.",
+      "base_manifest_digest": null,
+      "source": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "native_findings": [
+        {
+          "end_line": 81,
+          "rule_id": "generic-api-key",
+          "start_line": 80
+        }
+      ],
+      "source_package": {
+        "name": "rsync",
+        "version": "3.2.7-0ubuntu0.22.04.7",
+        "artifacts": [
+          {
+            "name": "rsync_3.2.7.orig.tar.gz",
+            "size": 1149787,
+            "sha256": "4e7d9d3f6ed10878c58c5fb724a67dacf4b6aac7340b13e488fb2dc41346f2bb",
+            "path": "pool/main/r/rsync/rsync_3.2.7.orig.tar.gz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/r/rsync/rsync_3.2.7.orig.tar.gz"
+          },
+          {
+            "name": "rsync_3.2.7.orig.tar.gz.asc",
+            "size": 195,
+            "sha256": "8e054b8e852f371fbcb757de51f1a07de5621ae959ea766d3c3e5439d7b5f4ae",
+            "path": "pool/main/r/rsync/rsync_3.2.7.orig.tar.gz.asc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/r/rsync/rsync_3.2.7.orig.tar.gz.asc"
+          },
+          {
+            "name": "rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz",
+            "size": 117112,
+            "sha256": "05db0546477de617be806c2abd8d16f8aed4aa2cfe8d2273b3a030750c6cb811",
+            "path": "pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz"
+          },
+          {
+            "name": "rsync_3.2.7-0ubuntu0.22.04.7.dsc",
+            "size": 2402,
+            "sha256": "5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d",
+            "path": "pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7.dsc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7.dsc"
+          }
+        ]
+      }
+    },
+    {
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e7f13b46d4a44126b8940d481f53e3b92f90688f2a5a81a09cb0de3333549dc0",
+      "record_bytes": 3157,
+      "path": "usr/share/openssh/sshd_config.md5sum",
+      "semantic_role": "package-integrity-metadata",
+      "reason": "The public OpenSSH package stores historical default-configuration MD5 values for upgrade handling. The detector match is a hexadecimal checksum, not an infrastructure identifier.",
+      "base_manifest_digest": null,
+      "source": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/",
+      "native_findings": [
+        {
+          "end_line": 40,
+          "rule_id": "nebius-generic-id",
+          "start_line": 40
+        }
+      ],
+      "source_package": {
+        "name": "openssh",
+        "version": "1:8.9p1-3ubuntu0.17",
+        "artifacts": [
+          {
+            "name": "openssh_8.9p1.orig.tar.gz",
+            "size": 1820282,
+            "sha256": "fd497654b7ab1686dac672fb83dfb4ba4096e8b5ffcdaccd262380ae58bec5e7",
+            "path": "pool/main/o/openssh/openssh_8.9p1.orig.tar.gz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/o/openssh/openssh_8.9p1.orig.tar.gz"
+          },
+          {
+            "name": "openssh_8.9p1.orig.tar.gz.asc",
+            "size": 833,
+            "sha256": "ed9b972e9a1c1474d279fa97f2a03431e14e888e1b18eff93570962843320d58",
+            "path": "pool/main/o/openssh/openssh_8.9p1.orig.tar.gz.asc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/o/openssh/openssh_8.9p1.orig.tar.gz.asc"
+          },
+          {
+            "name": "openssh_8.9p1-3ubuntu0.17.debian.tar.xz",
+            "size": 212088,
+            "sha256": "83fe26a1ef150e5905e128ce46bd3d2f2670e2779b430ec87e13877624d20940",
+            "path": "pool/main/o/openssh/openssh_8.9p1-3ubuntu0.17.debian.tar.xz",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/o/openssh/openssh_8.9p1-3ubuntu0.17.debian.tar.xz"
+          },
+          {
+            "name": "openssh_8.9p1-3ubuntu0.17.dsc",
+            "size": 3380,
+            "sha256": "50f5827412304d40dbc169d09bf9ac913cfb45b65ce4e08da54da91dae60cc86",
+            "path": "pool/main/o/openssh/openssh_8.9p1-3ubuntu0.17.dsc",
+            "url": "https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/pool/main/o/openssh/openssh_8.9p1-3ubuntu0.17.dsc"
+          }
+        ]
+      }
+    }
+  ]
+}
