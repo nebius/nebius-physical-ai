@@ -383,3 +383,90 @@ def test_unreachable_statement_guard_catches_fixture(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _unreachable_statement_violations(broken)
+
+
+# Absent from the CPU unit-test environment, so importing one at module level
+# fails collection for the whole file rather than skipping a single test.
+HEAVY_TEST_IMPORTS = frozenset(
+    {
+        "torch",
+        "genesis",
+        "lerobot",
+        "isaaclab",
+        "open3d",
+        "mujoco",
+        "fiftyone",
+        "cv2",
+    }
+)
+
+
+def _heavy_module_import_violations(path: Path) -> list[str]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+    # Only statements directly in the module body execute at import time. Reading
+    # the body alone is what lets the supported escapes through untouched: a
+    # function-level import, a try/except ImportError, an `if TYPE_CHECKING`
+    # block, and `pytest.importorskip` are all nested or are calls, never a
+    # top-level Import node.
+    violations = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module] if node.module and not node.level else []
+        else:
+            continue
+        for name in names:
+            if name.split(".")[0] in HEAVY_TEST_IMPORTS:
+                violations.append(
+                    f"{path}:{node.lineno} imports {name} at module level; "
+                    "use pytest.importorskip or import inside the test"
+                )
+    return violations
+
+
+def test_tests_do_not_import_heavy_packages_at_module_level() -> None:
+    violations = [
+        violation
+        for path in _test_paths()
+        for violation in _heavy_module_import_violations(path)
+    ]
+    assert not violations, "\n".join(violations)
+
+
+def test_heavy_import_guard_catches_broken_fixture(tmp_path: Path) -> None:
+    bad = tmp_path / "test_bad_heavy_import.py"
+    bad.write_text(
+        "import torch\n\n\ndef test_x():\n    assert torch\n", encoding="utf-8"
+    )
+
+    violations = _heavy_module_import_violations(bad)
+
+    assert violations
+    assert "module level" in violations[0]
+
+
+def test_heavy_import_guard_allows_the_supported_escapes(tmp_path: Path) -> None:
+    ok = tmp_path / "test_supported_escapes.py"
+    ok.write_text(
+        "from typing import TYPE_CHECKING\n\n"
+        "import pytest\n\n"
+        "if TYPE_CHECKING:\n"
+        "    import torch\n\n"
+        "try:\n"
+        "    import lerobot\n"
+        "except ImportError:\n"
+        "    lerobot = None\n\n\n"
+        "def test_a():\n"
+        "    torch = pytest.importorskip('torch')\n"
+        "    assert torch\n\n\n"
+        "def test_b():\n"
+        "    import genesis\n\n"
+        "    assert genesis\n",
+        encoding="utf-8",
+    )
+
+    assert not _heavy_module_import_violations(ok)
