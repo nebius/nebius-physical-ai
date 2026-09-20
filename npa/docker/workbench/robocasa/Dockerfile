@@ -78,7 +78,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" whee
     && python -m pip install --no-cache-dir \
         "git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_COMMIT}" \
         numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow \
-        "opencv-python-headless>=4.9,<4.14" pyyaml pynput tqdm termcolor "imageio[ffmpeg]" \
+        "opencv-python>=4.9,<4.14" pyyaml pynput tqdm termcolor "imageio[ffmpeg]" \
         h5py lxml hidapi "gymnasium==0.29.1" huggingface_hub \
         "fastapi==0.136.1" "uvicorn[standard]==0.38.0" "pydantic==2.13.4" \
         "boto3==1.42.9" "httpx>=0.27" \
@@ -99,7 +99,7 @@ RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
     && python -c "from importlib.metadata import metadata, version; from packaging.requirements import Requirement; requirements = [Requirement(raw) for raw in (metadata('lerobot').get_all('Requires-Dist') or [])]; incompatible = [str(req) for req in requirements if req.name in {'torch', 'torchvision'} and not req.specifier.contains(version(req.name), prereleases=True)]; assert not incompatible, incompatible" \
-    && python -c "from importlib.metadata import distributions; forbidden_names = {'cuda-bindings', 'cuda-pathfinder', 'cuda-toolkit', 'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; installed = {str(dist.metadata['Name']).lower() for dist in distributions()}; forbidden = sorted(installed & forbidden_names); assert not forbidden, forbidden" \
+    && python -c "from importlib.metadata import distributions; forbidden_names = {'cuda-bindings', 'cuda-pathfinder', 'cuda-toolkit', 'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; opencv_names = {'opencv-python', 'opencv-python-headless', 'opencv-contrib-python', 'opencv-contrib-python-headless'}; installed = {str(dist.metadata['Name']).lower() for dist in distributions()}; forbidden = sorted(installed & forbidden_names); opencv = sorted(installed & opencv_names); assert not forbidden, forbidden; assert opencv == ['opencv-python'], opencv" \
     && python -c "import torch; assert torch.__version__ == '2.9.0+cu128'; assert torch.version.cuda == '12.8'" \
     && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
