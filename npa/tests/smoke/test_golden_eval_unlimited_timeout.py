@@ -212,6 +212,36 @@ def test_finite_serverless_evaluation_keeps_existing_explicit_timeout(
     assert submit.call_args.kwargs["timeout"] == "9m"
 
 
+def test_cli_forwards_candidate_and_independently_frozen_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = _spec(monkeypatch, 45)
+    monkeypatch.setattr(cli, "container", lambda _name: spec)
+    submit = Mock(return_value={"ok": True})
+    monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
+    digest = "sha256:" + "a" * 64
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "golden-eval",
+            "run",
+            spec.name,
+            "--serverless",
+            "--registry",
+            "ghcr.io/example",
+            "--tag",
+            digest,
+            "--expected-image-digest",
+            digest,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert submit.call_args.kwargs["registry"] == "ghcr.io/example"
+    assert submit.call_args.kwargs["tag"] == digest
+    assert submit.call_args.kwargs["expected_image_digest"] == digest
+
+
 def test_direct_unlimited_serverless_call_refuses_before_config_or_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

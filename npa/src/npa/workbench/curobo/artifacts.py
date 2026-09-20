@@ -325,6 +325,14 @@ def log_trajectory_columns(
         columns=rr.Points3D.columns(positions=trajectory["tool_position"]),
         strict=True,
     )
+    quaternions = np.asarray(trajectory["tool_quaternion"], dtype=float)
+    for component, name in enumerate(("w", "x", "y", "z")):
+        recording.send_columns(
+            f"{root}/tool_quaternion/{name}",
+            indexes=indexes,
+            columns=rr.Scalars.columns(scalars=quaternions[:, component]),
+            strict=True,
+        )
     for field in ("position", "velocity", "acceleration", "jerk"):
         values = np.asarray(trajectory[field], dtype=float)
         for joint in range(values.shape[1]):
@@ -394,14 +402,6 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
                 rr.TextDocument(json.dumps(trajectory["joint_names"])),
             )
             recording.log(
-                (
-                    root
-                    + f"/trajectory_coverage/samples-{len(trajectory['position']):08d}"
-                    + f"/joints-{len(trajectory['joint_names']):03d}"
-                ),
-                rr.TextDocument("complete retained trajectory columns"),
-            )
-            recording.log(
                 root + "/tool_path", rr.LineStrips3D([trajectory["tool_position"]])
             )
             log_trajectory_columns(recording, root, trajectory, problem_index=index)
@@ -439,55 +439,63 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
     }
 
 
-def _hash_and_find(path: Path, markers: list[bytes]) -> tuple[str, int, list[str]]:
+_RRD_CHUNK_HEADER = re.compile(
+    rb"Chunk\([^)]*\) with ([0-9]+) rows \([^)]*\) - /([^ ]+) -"
+)
+
+
+def _expected_rrd_chunks(rows: list[dict[str, Any]]) -> dict[str, int]:
+    expected: dict[str, int] = {"provenance": 1}
+    for index, row in enumerate(rows):
+        root = f"problems/{index:06d}"
+        expected[f"{root}/status"] = 1
+        if row["status"] != "invalid":
+            expected[f"{root}/goal"] = 1
+        if row["status"] != "success":
+            continue
+        trajectory = row["trajectory"]
+        samples = len(trajectory["position"])
+        expected[f"{root}/joint_names"] = 1
+        expected[f"{root}/tool_path"] = 1
+        expected[f"{root}/tool"] = samples
+        for component in ("w", "x", "y", "z"):
+            expected[f"{root}/tool_quaternion/{component}"] = samples
+        for joint in range(len(trajectory["joint_names"])):
+            for field in ("position", "velocity", "acceleration", "jerk"):
+                expected[f"{root}/joints/{joint}/{field}"] = samples
+    return expected
+
+
+def _scan_decoded_chunks(
+    path: Path, expected: dict[str, int], *, run_id: str
+) -> tuple[str, int, list[str]]:
     digest = hashlib.sha256()
-    remaining = set(markers)
-    simple = {marker for marker in remaining if not marker.startswith(b"problems/")}
-    entity = re.compile(
-        rb"problems/[0-9]{6}/(?:status|goal|tool_path|"
-        rb"trajectory_coverage/samples-[0-9]{8}/joints-[0-9]{3})"
-    )
+    observed = {entity: 0 for entity in expected}
+    identities = {b"npa.curobo": False, run_id.encode(): False}
     size = 0
     with path.open("rb") as stream:
         for line in stream:
             digest.update(line)
             size += len(line)
-            for marker in tuple(simple):
+            for marker in identities:
                 if marker in line:
-                    simple.remove(marker)
-                    remaining.discard(marker)
-            for marker in entity.findall(line):
-                remaining.discard(marker)
-    missing = sorted(marker.decode("utf-8") for marker in remaining)
-    return digest.hexdigest(), size, missing
-
-
-def _rrd_markers(rows: list[dict[str, Any]], run_id: str) -> list[bytes]:
-    markers = [
-        b"npa.curobo",
-        run_id.encode(),
-        b"provenance",
-        b"trajectory_time",
-        b"problem_index",
+                    identities[marker] = True
+            match = _RRD_CHUNK_HEADER.search(line)
+            if match:
+                entity = match.group(2).decode()
+                if entity in observed:
+                    observed[entity] += int(match.group(1))
+    mismatches = [
+        f"{entity}: expected {count}, decoded {observed[entity]}"
+        for entity, count in expected.items()
+        if observed[entity] != count
     ]
-    for index, row in enumerate(rows):
-        root = f"problems/{index:06d}"
-        markers.append(f"{root}/status".encode())
-        if row["status"] != "invalid":
-            markers.append(f"{root}/goal".encode())
-        if row["status"] == "success":
-            trajectory = row["trajectory"]
-            markers.extend(
-                [
-                    f"{root}/tool_path".encode(),
-                    (
-                        f"{root}/trajectory_coverage/"
-                        f"samples-{len(trajectory['position']):08d}/"
-                        f"joints-{len(trajectory['joint_names']):03d}"
-                    ).encode(),
-                ]
-            )
-    return markers
+    mismatches.extend(
+        f"recording identity {marker.decode()} is absent"
+        for marker, seen in identities.items()
+        if not seen
+    )
+    return digest.hexdigest(), size, sorted(mismatches)
 
 
 def _decode_rrd_to(
@@ -515,16 +523,19 @@ def _decode_rrd_to(
         )
     if printed.returncode:
         raise CuroboError("Rerun could not decode the generated recording")
-    markers = _rrd_markers(rows, run_id)
-    digest, size, missing = _hash_and_find(decoded_output, markers)
-    if missing:
+    expected = _expected_rrd_chunks(rows)
+    digest, size, mismatches = _scan_decoded_chunks(
+        decoded_output, expected, run_id=run_id
+    )
+    if mismatches:
         raise CuroboError("decoded RRD omits required factual coverage")
     return {
         "verify": "passed",
         "print": "passed",
         "print_sha256": digest,
         "print_bytes": size,
-        "required_marker_count": len(markers),
+        "required_chunk_count": len(expected),
+        "decoded_chunk_rows": sum(expected.values()),
         "status_entities": len(rows),
         "goal_entities": sum(row["status"] != "invalid" for row in rows),
         "trajectory_entities": sum(row["status"] == "success" for row in rows),
@@ -533,7 +544,7 @@ def _decode_rrd_to(
             for row in rows
             if row["status"] == "success"
         ),
-        "missing_markers": [],
+        "chunk_mismatches": [],
     }
 
 

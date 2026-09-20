@@ -116,6 +116,7 @@ def submit_golden_eval(
     project_id: str | None = None,
     registry: str | None = None,
     tag: str | None = None,
+    expected_image_digest: str | None = None,
     timeout: str = "40m",
     poll_ceiling_s: float = 2700.0,
     wait: bool = True,
@@ -133,10 +134,21 @@ def submit_golden_eval(
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
 
     image = resolve_golden_image(tool, registry=registry, tag=tag)
-    if tool == "curobo" and not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
-        raise RuntimeError(
-            "cuRobo golden acceptance requires --tag sha256:<exact digest>"
-        )
+    if tool == "curobo":
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+            raise RuntimeError(
+                "cuRobo golden acceptance requires --tag sha256:<exact digest>"
+            )
+        actual_digest = image.rsplit("@", 1)[1]
+        if not expected_image_digest or not _DIGEST.fullmatch(expected_image_digest):
+            raise RuntimeError(
+                "cuRobo golden acceptance requires an independently frozen "
+                "--expected-image-digest"
+            )
+        if actual_digest != expected_image_digest:
+            raise RuntimeError(
+                "cuRobo selected image differs from the independently frozen digest"
+            )
     resolved_project = _project_id(project_id)
     cfg = load_credentials(export_to_environment=True)
     bucket = (cfg.s3_bucket or "").rstrip("/")
@@ -164,6 +176,7 @@ def submit_golden_eval(
         extra_env.update(
             {
                 "NPA_IMAGE_DIGEST": image.rsplit("@", 1)[1],
+                "NPA_EXPECTED_IMAGE_DIGEST": expected_image_digest,
                 "NPA_SMOKE_OUTPUT_DIR": "/tmp/npa-golden",
                 "NPA_SMOKE_RUN_ID": run_id,
             }

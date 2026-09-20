@@ -143,13 +143,35 @@ def test_curobo_serverless_passes_digest_and_durable_smoke_environment(monkeypat
         project_id="project",
         registry="ghcr.io/example",
         tag=digest,
+        expected_image_digest=digest,
         wait=False,
     )
     assert result["image"] == f"ghcr.io/example/npa-curobo@{digest}"
     assert captured["image"] == result["image"]
     assert captured["env"]["NPA_IMAGE_DIGEST"] == digest
+    assert captured["env"]["NPA_EXPECTED_IMAGE_DIGEST"] == digest
     assert captured["env"]["NPA_SMOKE_OUTPUT_DIR"] == "/tmp/npa-golden"
     assert captured["env"]["NPA_SMOKE_RUN_ID"] == captured["name"]
     assert captured["env"]["NPA_OUTPUT_PATH"].startswith(
         "s3://example-bucket/golden-evals/"
     )
+
+
+@pytest.mark.parametrize("expected", [None, "sha256:" + "b" * 64])
+def test_curobo_serverless_refuses_unfrozen_or_different_digest_before_access(
+    monkeypatch, expected
+):
+    digest = "sha256:" + "a" * 64
+    monkeypatch.setattr(
+        serverless_runner,
+        "_project_id",
+        lambda *_: pytest.fail("provider access preceded candidate digest gate"),
+    )
+    with pytest.raises(RuntimeError, match="frozen|differs"):
+        serverless_runner.submit_golden_eval(
+            "curobo",
+            registry="ghcr.io/example",
+            tag=digest,
+            expected_image_digest=expected,
+            wait=False,
+        )

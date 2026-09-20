@@ -76,19 +76,26 @@ same run prefix. S3 publication reads back and hashes every object. The mandator
 RRD contains actual joint traces, tool paths from FK, goal markers,
 timing/pose/dynamics metrics and every problem status. Its manifest binds the
 run, journal, result and RRD hashes plus logged sample/status/goal counts and a
-streamed full-decode receipt. It contains no invented robot meshes.
+streamed full-decode receipt. The receipt checks decoded row counts for every
+status, goal, FK position, FK quaternion and joint position/velocity/
+acceleration/jerk entity; a producer-authored coverage label is not evidence.
+It contains no invented robot meshes.
 
 The golden command writes a non-overwriting run directory beneath
 `NPA_SMOKE_OUTPUT_DIR`. Retain its input, journal, result, independent
 validation, RRD, full `rerun rrd print -vv` output, control record and artifact
 manifest. Acceptance requires the feasible pose to succeed and the separately
 declared goal-blocked pose to fail; malformed manifest rejection is additional
-failure evidence. Set `NPA_IMAGE_DIGEST` to the exact immutable digest for live
-qualification so the artifact manifest binds source, image, GPU and outputs.
-For serverless golden acceptance, pass that digest as `--tag sha256:<hex>`;
-mutable tags are rejected before provider access. The command requires
+failure evidence. After private build and byte review, freeze the candidate
+digest in the post-build plan amendment. For serverless golden acceptance pass
+the selected digest through `--tag sha256:<hex>` and the separately reviewed
+value through `--expected-image-digest sha256:<hex>`. Missing, mutable or
+different identities are rejected before credential/provider access. The job
+receives both identities and checks equality again. The command requires
 `NPA_OUTPUT_PATH`, uploads every declared file, reads each object back and emits
-a separate upload receipt.
+a separate upload receipt. Workload failures upload partial artifacts and a
+redacted failure receipt; partial upload failures are retained locally and the
+receipt is published when S3 remains reachable.
 
 On a GPU or upload failure the runtime retains a mode-0700 working directory
 and the already flushed problem journal. Inspect that evidence before any

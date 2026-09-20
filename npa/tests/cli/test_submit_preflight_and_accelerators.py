@@ -935,6 +935,7 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    digest = "sha256:" + "6" * 64
 
     def metadata_forbidden(*_args, **_kwargs):
         raise AssertionError("uncontracted image reached bootstrap metadata lookup")
@@ -946,11 +947,31 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
 
     result = workflow_cli._preflight_image_bootstrap_contracts(
         images=[image],
-        pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+        pull_checks=[
+            ImagePullCheck(image=image, status="ok", http_status=200, digest=digest)
+        ],
         context="exact-context",
     )
 
-    assert result == []
+    assert result == [
+        {
+            "image": image.rsplit(":", 1)[0] + "@" + digest,
+            "digest": digest,
+            "state": "pullable",
+            "source": "registry_pull",
+        }
+    ]
+
+
+def test_registered_uncontracted_image_requires_resolved_digest() -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._preflight_image_bootstrap_contracts(
+            images=[image],
+            pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+            context="exact-context",
+        )
+    assert excinfo.type.__name__ == "Exit"
 
 
 @pytest.mark.parametrize("source", ["oci_attestation", "ephemeral_capability_probe"])

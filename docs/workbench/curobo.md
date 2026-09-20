@@ -69,7 +69,22 @@ audit, RRD, full `rerun rrd print -vv` output, controls and SHA-256 manifest
 under `NPA_SMOKE_OUTPUT_DIR`. It requires one feasible pose to succeed and a
 separately declared valid-but-goal-blocked pose to fail; malformed manifest
 rejection is retained as a second negative control. RRD manifests bind the run,
-journal and result hashes and record decoded status, goal-marker and trajectory
-coverage instead of treating a viewer opening as proof. Golden acceptance
-requires an exact `sha256:` image passed through `--tag`, uploads every declared
-artifact to `NPA_OUTPUT_PATH`, and reads every object back before success.
+journal and result hashes and verify decoded status/goal entities plus actual
+FK-position, FK-quaternion and per-joint sample chunk counts for every successful
+trajectory instead of trusting producer-authored coverage labels.
+
+After the private build, freeze its reviewed digest separately from the selected
+image and pass both values. Admission compares them before credentials or provider
+access:
+
+```bash
+npa workbench golden-eval run curobo --serverless \
+  --registry "<candidate-registry>" \
+  --tag "sha256:<candidate-digest>" \
+  --expected-image-digest "sha256:<independently-frozen-candidate-digest>"
+```
+
+Every declared artifact is uploaded to the run-scoped S3 prefix and read back
+before success. A workload failure uploads its input, partial outputs, redacted
+failure record and receipt; an upload failure retains and, when S3 remains
+reachable, publishes the per-object failure receipt.

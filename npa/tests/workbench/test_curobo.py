@@ -16,8 +16,8 @@ from pydantic import ValidationError
 from npa.workbench.curobo import runtime
 from npa.workbench.curobo.artifacts import (
     CuroboError,
-    _hash_and_find,
-    _rrd_markers,
+    _expected_rrd_chunks,
+    _scan_decoded_chunks,
     build_rrd,
     canonical,
     decode_rrd,
@@ -397,7 +397,13 @@ def test_validation_recomputes_facts_and_detects_hash_tampering(monkeypatch):
 
 @pytest.mark.parametrize(
     "distance,orientation,accepted",
-    [(0.005, 0.05, True), (0.005001, 0.0, False), (0.0, 0.050001, False)],
+    [
+        (0.005, 0.05, True),
+        (0.005001, 0.0, False),
+        (0.0, 0.050001, False),
+        (float("nan"), 0.0, False),
+        (0.0, float("nan"), False),
+    ],
 )
 def test_validation_requires_independent_terminal_pose_replay(
     distance, orientation, accepted
@@ -474,7 +480,8 @@ def test_factual_rrd_round_trip(tmp_path):
     assert decoded["verify"] == "passed"
     assert decoded["print"] == "passed"
     assert decoded["print_bytes"] == decoded_path.stat().st_size
-    assert decoded["missing_markers"] == []
+    assert decoded["chunk_mismatches"] == []
+    assert decoded["decoded_chunk_rows"] == 23
     import sys
 
     executable = Path(sys.executable).with_name("rerun")
@@ -494,13 +501,14 @@ def test_factual_rrd_round_trip(tmp_path):
         "problem_index",
         "trajectory_time",
         "tool_path",
+        "tool_quaternion/w",
         "problems/000000/goal",
         "joints/0/position",
     ):
         assert entity in printed
 
 
-def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_marker(tmp_path):
+def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_chunk(tmp_path):
     solved = plan_row()
     failed = {
         "mode": "kinematic",
@@ -510,11 +518,18 @@ def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_marker(tmp_p
         "query": copy.deepcopy(solved["query"]),
         "metrics": {"wall_plan_seconds": 0.1},
     }
-    markers = _rrd_markers([solved, failed], "coverage-run")
+    expected = _expected_rrd_chunks([solved, failed])
     decoded = tmp_path / "truncated-print.txt"
-    decoded.write_bytes(b"\n".join(markers[:-1]) + b"\n")
-    _digest, _size, missing = _hash_and_find(decoded, markers)
-    assert missing == [markers[-1].decode()]
+    lines = [b'npa.curobo "coverage-run"']
+    for entity, count in expected.items():
+        if entity == "problems/000000/joints/0/position":
+            continue
+        lines.append(f"Chunk(x) with {count} rows (1 B) - /{entity} -".encode())
+    decoded.write_bytes(b"\n".join(lines) + b"\n")
+    _digest, _size, mismatches = _scan_decoded_chunks(
+        decoded, expected, run_id="coverage-run"
+    )
+    assert mismatches == ["problems/000000/joints/0/position: expected 2, decoded 0"]
 
 
 def test_functional_smoke_retains_complete_positive_and_failure_evidence(
@@ -567,6 +582,7 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
     monkeypatch.setenv("NPA_SMOKE_RUN_ID", "retained-smoke")
     monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
     monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "b" * 64)
     monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
     uploaded = {}
     monkeypatch.setattr(
@@ -620,6 +636,8 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
     )
     receipt = json.loads((root / "upload-receipt.json").read_text())
     assert receipt["readback_verified"] is True
+    assert receipt["workload_status"] == "passed"
+    assert receipt["errors"] == []
     assert {item["path"] for item in receipt["objects"]} == expected - {
         "upload-receipt.json"
     }
@@ -627,11 +645,84 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
     assert json.loads(capsys.readouterr().out)["status"] == "passed"
 
 
+def test_functional_smoke_uploads_partial_artifacts_and_failure_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    def fail_after_partial_output(_kind, _manifest, output, *, run_id):
+        output.mkdir(parents=True)
+        (output / "partial.log").write_text(f"{run_id}: planner failed")
+        raise RuntimeError("synthetic planner failure")
+
+    monkeypatch.setattr(smoke, "execute", fail_after_partial_output)
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("NPA_SMOKE_RUN_ID", "failed-smoke")
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    uploaded = {}
+    monkeypatch.setattr(
+        smoke,
+        "write_bytes_uri",
+        lambda uri, payload: uploaded.__setitem__(uri, payload),
+    )
+    monkeypatch.setattr(smoke, "read_bytes_uri", lambda uri: uploaded[uri])
+
+    with pytest.raises(RuntimeError, match="synthetic planner"):
+        smoke.main()
+
+    root = tmp_path / "failed-smoke"
+    receipt = json.loads((root / "upload-receipt.json").read_text())
+    assert receipt["workload_status"] == "failed"
+    assert receipt["readback_verified"] is True
+    assert {item["path"] for item in receipt["objects"]} == {
+        "failure.json",
+        "input.json",
+        "output/partial.log",
+    }
+    assert "s3://example-bucket/golden/failure.json" in uploaded
+    assert "s3://example-bucket/golden/upload-receipt.json" in uploaded
+    assert json.loads(capsys.readouterr().out)["status"] == "failed"
+
+
+def test_functional_smoke_retains_partial_upload_failure_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    (tmp_path / "kept.txt").write_text("kept")
+    (tmp_path / "rejected.txt").write_text("rejected")
+    uploaded = {}
+
+    def publish(uri, payload):
+        if uri.endswith("/rejected.txt"):
+            raise RuntimeError("synthetic upload failure")
+        uploaded[uri] = payload
+
+    monkeypatch.setattr(smoke, "_publish", publish)
+    with pytest.raises(RuntimeError, match="upload or read-back"):
+        smoke._upload_tree(
+            tmp_path,
+            output_uri="s3://example-bucket/golden/",
+            run_id="partial-upload",
+            image_digest="sha256:" + "b" * 64,
+            workload_status="failed",
+        )
+    receipt = json.loads((tmp_path / "upload-receipt.json").read_text())
+    assert receipt["readback_verified"] is False
+    assert receipt["errors"] == [{"path": "rejected.txt", "error": "RuntimeError"}]
+    assert "s3://example-bucket/golden/upload-receipt.json" in uploaded
+    assert json.loads(capsys.readouterr().out)["status"] == "evidence-upload-failed"
+
+
 @pytest.mark.parametrize(
     "missing,error",
     [
         ("NPA_IMAGE_SOURCE_SHA", "NPA_IMAGE_SOURCE_SHA"),
         ("NPA_IMAGE_DIGEST", "NPA_IMAGE_DIGEST"),
+        ("NPA_EXPECTED_IMAGE_DIGEST", "NPA_EXPECTED_IMAGE_DIGEST"),
         ("NPA_OUTPUT_PATH", "NPA_OUTPUT_PATH"),
     ],
 )
@@ -643,6 +734,7 @@ def test_functional_smoke_requires_immutable_durable_identity(
     values = {
         "NPA_IMAGE_SOURCE_SHA": "a" * 40,
         "NPA_IMAGE_DIGEST": "sha256:" + "b" * 64,
+        "NPA_EXPECTED_IMAGE_DIGEST": "sha256:" + "b" * 64,
         "NPA_OUTPUT_PATH": "s3://example-bucket/golden/",
     }
     for name, value in values.items():
@@ -657,9 +749,33 @@ def test_functional_smoke_requires_immutable_durable_identity(
     assert not list(tmp_path.iterdir())
 
 
+def test_functional_smoke_rejects_different_frozen_digest_before_planner(
+    tmp_path, monkeypatch
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "c" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        smoke, "execute", lambda *_a, **_k: pytest.fail("planner called")
+    )
+    with pytest.raises(RuntimeError, match="frozen candidate"):
+        smoke.main()
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize(
     "distance,orientation,accepted",
-    [(0.005, 0.05, True), (0.0050001, 0.0, False), (0.0, 0.050001, False)],
+    [
+        (0.005, 0.05, True),
+        (0.0050001, 0.0, False),
+        (0.0, 0.050001, False),
+        (float("nan"), 0.0, False),
+        (0.0, float("nan"), False),
+    ],
 )
 def test_functional_smoke_enforces_terminal_pose_threshold(
     distance, orientation, accepted
@@ -781,6 +897,11 @@ def test_rrd_column_batches_preserve_all_joint_and_fk_samples(tmp_path):
         reference.log(
             "trajectory/tool", rr.Points3D([trajectory["tool_position"][frame]])
         )
+        for component, name in enumerate(("w", "x", "y", "z")):
+            reference.log(
+                f"trajectory/tool_quaternion/{name}",
+                rr.Scalars(trajectory["tool_quaternion"][frame][component]),
+            )
         for field in ("position", "velocity", "acceleration", "jerk"):
             reference.log(
                 f"trajectory/joints/0/{field}", rr.Scalars(trajectory[field][frame][0])

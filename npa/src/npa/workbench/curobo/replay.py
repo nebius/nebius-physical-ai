@@ -64,8 +64,21 @@ def _tensor_array(tensor) -> np.ndarray:
 
 
 def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
-    first = first / np.linalg.norm(first)
-    second = second / np.linalg.norm(second)
+    first_norm = float(np.linalg.norm(first))
+    second_norm = float(np.linalg.norm(second))
+    if (
+        first.shape != (4,)
+        or second.shape != (4,)
+        or not np.isfinite(first).all()
+        or not np.isfinite(second).all()
+        or not math.isfinite(first_norm)
+        or not math.isfinite(second_norm)
+        or first_norm <= 1e-12
+        or second_norm <= 1e-12
+    ):
+        raise ReplayError("quaternion replay contains invalid values")
+    first = first / first_norm
+    second = second / second_norm
     return float(2.0 * np.arccos(np.clip(abs(np.dot(first, second)), 0.0, 1.0)))
 
 

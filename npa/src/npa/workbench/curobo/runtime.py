@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -155,12 +156,18 @@ def _download_artifacts(request: RunRequest, root: Path):
 
 
 def _require_replay_tolerance(replay: dict) -> None:
-    if (
-        replay.get("terminal_goal_distance_m", {}).get("max", float("inf")) > 0.005
-        or replay.get("terminal_goal_orientation_rad", {}).get("max", float("inf"))
-        > 0.05
-    ):
-        raise CuroboError("independent terminal goal replay exceeds tolerance")
+    values = (
+        (replay.get("terminal_goal_distance_m", {}).get("max"), 0.005),
+        (replay.get("terminal_goal_orientation_rad", {}).get("max"), 0.05),
+    )
+    for value, limit in values:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value > limit
+        ):
+            raise CuroboError("independent terminal goal replay exceeds tolerance")
 
 
 def validate(request: RunRequest):

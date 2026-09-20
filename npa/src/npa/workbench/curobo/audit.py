@@ -138,8 +138,21 @@ def _query(row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
-    first = first / np.linalg.norm(first)
-    second = second / np.linalg.norm(second)
+    first_norm = float(np.linalg.norm(first))
+    second_norm = float(np.linalg.norm(second))
+    if (
+        first.shape != (4,)
+        or second.shape != (4,)
+        or not np.isfinite(first).all()
+        or not np.isfinite(second).all()
+        or not math.isfinite(first_norm)
+        or not math.isfinite(second_norm)
+        or first_norm <= 1e-12
+        or second_norm <= 1e-12
+    ):
+        raise AuditError("quaternion evidence contains invalid values")
+    first = first / first_norm
+    second = second / second_norm
     return float(2.0 * np.arccos(np.clip(abs(np.dot(first, second)), 0.0, 1.0)))
 
 
@@ -260,8 +273,7 @@ def benchmark_acceptance(cells: dict[str, dict[str, Any]]) -> dict[str, Any]:
         if (
             cell["input_count"] != gate["input_count"]
             or cell["invalid"] != gate["invalid"]
-            or cell["success"] + cell["failed"] + cell["invalid"]
-            != cell["input_count"]
+            or cell["success"] + cell["failed"] + cell["invalid"] != cell["input_count"]
             or not 0 <= cell["torque_violation_successes"] <= cell["success"]
         ):
             raise AuditError(f"{name} population differs")

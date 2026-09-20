@@ -144,6 +144,19 @@ def run(
     gpu: str = typer.Option(
         "", "--gpu", help="Serverless GPU type override (e.g. h200, h100, l40s, b300)."
     ),
+    registry: str | None = typer.Option(
+        None, "--registry", help="Candidate image registry override."
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        help="Candidate image tag or exact sha256:<digest> for qualification.",
+    ),
+    expected_image_digest: str | None = typer.Option(
+        None,
+        "--expected-image-digest",
+        help="Independently frozen sha256:<digest> required by strict qualification.",
+    ),
     timeout: str = typer.Option("40m", "--timeout", help="Serverless job timeout."),
 ) -> None:
     """Print, execute locally, or run on serverless a container's golden eval.
@@ -180,6 +193,9 @@ def run(
             result = submit_golden_eval(
                 name,
                 gpu_type=gpu or None,
+                registry=registry,
+                tag=tag,
+                expected_image_digest=expected_image_digest,
                 timeout=timeout,
                 on_state_change=_on_change,
             )
