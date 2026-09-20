@@ -81,15 +81,26 @@ def _gzip_saved_image(
     tmp_path: Path,
     members: dict[str, bytes],
     *,
+    layer_tar_bytes: bytes | None = None,
+    compressed_layer_bytes: bytes | None = None,
     blob_digest: str | None = None,
     rootfs_diff_id: str | None = None,
     config_size_delta: int = 0,
     layer_size_delta: int = 0,
     manifest_size_delta: int = 0,
     layout_version: str = "1.0.0",
+    omit_oci_layer_descriptor: bool = False,
 ) -> Path:
-    layer = _tar(tmp_path / "compressed-layer.tar", members).read_bytes()
-    compressed = gzip.compress(layer, mtime=0)
+    layer = (
+        layer_tar_bytes
+        if layer_tar_bytes is not None
+        else _tar(tmp_path / "compressed-layer.tar", members).read_bytes()
+    )
+    compressed = (
+        compressed_layer_bytes
+        if compressed_layer_bytes is not None
+        else gzip.compress(layer, mtime=0)
+    )
     actual_blob_digest = hashlib.sha256(compressed).hexdigest()
     name = f"blobs/sha256/{blob_digest or actual_blob_digest}"
     config = json.dumps(
@@ -113,13 +124,17 @@ def _gzip_saved_image(
                 "digest": f"sha256:{config_digest}",
                 "size": len(config) + config_size_delta,
             },
-            "layers": [
-                {
-                    "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
-                    "digest": f"sha256:{blob_digest or actual_blob_digest}",
-                    "size": len(compressed) + layer_size_delta,
-                }
-            ],
+            "layers": (
+                []
+                if omit_oci_layer_descriptor
+                else [
+                    {
+                        "mediaType": "application/vnd.docker.image.rootfs.diff.tar.gzip",
+                        "digest": f"sha256:{blob_digest or actual_blob_digest}",
+                        "size": len(compressed) + layer_size_delta,
+                    }
+                ]
+            ),
         },
         separators=(",", ":"),
     ).encode()
@@ -399,6 +414,110 @@ def test_unsafe_outer_archive_member_fails_closed(tmp_path: Path) -> None:
     saved = _tar(tmp_path / "unsafe.tar", {"../manifest.json": b"[]"})
     with pytest.raises(RuntimeError, match="unsafe member path"):
         scanner.inspect_saved_image(saved)
+
+
+def test_empty_outer_archive_fails_through_explicit_guard(tmp_path: Path) -> None:
+    saved = _tar(tmp_path / "empty.tar", {})
+    with pytest.raises(RuntimeError, match="no compatibility manifest"):
+        scanner.inspect_saved_image(saved)
+
+
+def test_garbage_outer_archive_fails_through_explicit_guard(tmp_path: Path) -> None:
+    saved = tmp_path / "garbage.tar"
+    saved.write_bytes(b"not a tar archive")
+    with pytest.raises(RuntimeError, match="not a readable tar archive"):
+        scanner.inspect_saved_image(saved)
+
+
+def test_outer_compression_is_rejected_before_archive_parsing(tmp_path: Path) -> None:
+    saved = _saved_image(
+        tmp_path,
+        [{"opt/seedvr2/LICENSE": b"Apache License 2.0"}],
+    )
+    compressed = tmp_path / "outer.tar.gz"
+    compressed.write_bytes(gzip.compress(saved.read_bytes(), mtime=0))
+    with pytest.raises(RuntimeError, match="outer compression is unsupported"):
+        scanner.inspect_saved_image(compressed)
+
+
+def test_malformed_decompressed_layer_fails_through_explicit_guard(
+    tmp_path: Path,
+) -> None:
+    saved = _gzip_saved_image(
+        tmp_path,
+        {},
+        layer_tar_bytes=b"valid gzip, but not a tar archive",
+    )
+    with pytest.raises(RuntimeError, match="layer is not a readable tar archive"):
+        scanner.inspect_saved_image(saved)
+
+
+def test_truncated_gzip_stream_fails_through_explicit_guard(tmp_path: Path) -> None:
+    saved = _gzip_saved_image(
+        tmp_path,
+        {},
+        compressed_layer_bytes=b"\x1f\x8b\x08truncated",
+    )
+    with pytest.raises(RuntimeError, match="layer gzip is invalid"):
+        scanner.inspect_saved_image(saved)
+
+
+def test_invalid_deflate_stream_fails_through_explicit_zlib_guard(
+    tmp_path: Path,
+) -> None:
+    gzip_header = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff"
+    saved = _gzip_saved_image(
+        tmp_path,
+        {},
+        compressed_layer_bytes=gzip_header + b"\xff" * 20,
+    )
+    with pytest.raises(RuntimeError, match="layer gzip is invalid"):
+        scanner.inspect_saved_image(saved)
+
+
+def test_rootfs_layer_count_mismatch_fails_through_explicit_guard(
+    tmp_path: Path,
+) -> None:
+    saved = _saved_image(
+        tmp_path,
+        [{"opt/seedvr2/LICENSE": b"Apache License 2.0"}],
+        rootfs_diff_ids=[],
+    )
+    with pytest.raises(RuntimeError, match="layer count"):
+        scanner.inspect_saved_image(saved)
+
+
+def test_oci_descriptor_layer_count_mismatch_fails_through_explicit_guard(
+    tmp_path: Path,
+) -> None:
+    saved = _gzip_saved_image(
+        tmp_path,
+        {"opt/seedvr2/LICENSE": b"Apache License 2.0"},
+        omit_oci_layer_descriptor=True,
+    )
+    with pytest.raises(RuntimeError, match="layer orders differ"):
+        scanner.inspect_saved_image(saved)
+
+
+def test_unexpected_structural_lookup_failure_is_normalized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_structural_lookup(_image_tar: Path) -> tuple[list, dict]:
+        raise KeyError("Layers")
+
+    monkeypatch.setattr(scanner, "_inspect_saved_image", fail_structural_lookup)
+    with pytest.raises(RuntimeError, match="malformed structural data"):
+        scanner.inspect_saved_image(tmp_path / "not-read.tar")
+
+
+def test_excessively_nested_manifest_json_is_normalized(tmp_path: Path) -> None:
+    nested_json = b'{"nested":' * 10_000 + b"0" + b"}" * 10_000
+    saved = _tar(tmp_path / "deep-json.tar", {"manifest.json": nested_json})
+    with pytest.raises(
+        RuntimeError, match="excessively nested structural data"
+    ) as caught:
+        scanner.inspect_saved_image(saved)
+    assert type(caught.value) is RuntimeError
 
 
 @pytest.mark.parametrize(

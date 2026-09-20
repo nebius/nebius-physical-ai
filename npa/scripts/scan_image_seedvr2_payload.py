@@ -16,6 +16,7 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+import zlib
 
 
 @dataclass(frozen=True)
@@ -510,16 +511,28 @@ def _oci_identity(
     )
 
 
-def inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
+def _inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
     """Scan and bind one docker-save archive to config and layer identities."""
 
     findings: list[Finding] = []
-    with tarfile.open(image_tar) as archive:
+    try:
+        archive_context = tarfile.open(image_tar, mode="r:")
+    except tarfile.TarError as exc:
+        raise RuntimeError(
+            "saved image is not a readable tar archive "
+            "(outer compression is unsupported)"
+        ) from exc
+    with archive_context as archive:
         _validate_outer_archive(archive)
         manifest_stream = _regular_member_stream(
             archive, "manifest.json", description="compatibility manifest"
         )
-        manifests = _strict_json(manifest_stream.read())
+        try:
+            manifests = _strict_json(manifest_stream.read())
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                "saved image compatibility manifest is invalid JSON"
+            ) from exc
         if (
             not isinstance(manifests, list)
             or len(manifests) != 1
@@ -617,7 +630,7 @@ def inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
                                 diff_hash.update(block)
                                 uncompressed.write(block)
                                 uncompressed_size += len(block)
-                    except (EOFError, OSError) as exc:
+                    except (EOFError, OSError, zlib.error) as exc:
                         raise RuntimeError(
                             f"saved layer gzip is invalid: {relative}"
                         ) from exc
@@ -627,12 +640,17 @@ def inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
                             "saved layer hashes do not match ordered rootfs diff IDs"
                         )
                     uncompressed.seek(0)
-                    with tarfile.open(
-                        fileobj=uncompressed, mode="r:*"
-                    ) as layer_archive:
-                        findings.extend(
-                            _scan_layer_archive(layer_archive, layer=relative)
-                        )
+                    try:
+                        with tarfile.open(
+                            fileobj=uncompressed, mode="r:*"
+                        ) as layer_archive:
+                            findings.extend(
+                                _scan_layer_archive(layer_archive, layer=relative)
+                            )
+                    except tarfile.TarError as exc:
+                        raise RuntimeError(
+                            f"saved layer is not a readable tar archive: {relative}"
+                        ) from exc
             else:
                 diff_id = blob_digest
                 uncompressed_size = blob_size
@@ -640,8 +658,17 @@ def inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
                     raise RuntimeError(
                         "saved layer hashes do not match ordered rootfs diff IDs"
                     )
-                with tarfile.open(fileobj=layer_stream, mode="r|*") as layer_archive:
-                    findings.extend(_scan_layer_archive(layer_archive, layer=relative))
+                try:
+                    with tarfile.open(
+                        fileobj=layer_stream, mode="r|*"
+                    ) as layer_archive:
+                        findings.extend(
+                            _scan_layer_archive(layer_archive, layer=relative)
+                        )
+                except tarfile.TarError as exc:
+                    raise RuntimeError(
+                        f"saved layer is not a readable tar archive: {relative}"
+                    ) from exc
 
             layer_identities.append(
                 {
@@ -664,6 +691,21 @@ def inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
         "rootfs_diff_ids": diff_ids,
         "layers": layer_identities,
     }
+
+
+def inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
+    """Normalize unexpected structural parser failures at the scanner boundary."""
+
+    try:
+        return _inspect_saved_image(image_tar)
+    except RecursionError as exc:
+        raise RuntimeError(
+            "saved image contains excessively nested structural data"
+        ) from exc
+    except RuntimeError:
+        raise
+    except (IndexError, KeyError, TypeError, ValueError, tarfile.TarError) as exc:
+        raise RuntimeError("saved image contains malformed structural data") from exc
 
 
 def _file_identity(path: Path) -> dict[str, int | str]:
