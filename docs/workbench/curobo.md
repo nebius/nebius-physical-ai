@@ -66,13 +66,16 @@ Apache-2.0/MIT/BSD notices; no model weights or gated data are required. See the
 
 The real-GPU golden command preserves its input, journal, result, independent
 audit, RRD, full `rerun rrd print -vv` output, controls and SHA-256 manifest
-under `NPA_SMOKE_OUTPUT_DIR`. It requires one feasible pose to succeed and a
-separately declared valid-but-goal-blocked pose to fail; malformed manifest
-rejection is retained as a second negative control. RRD manifests bind the run,
-journal and result hashes and verify decoded status/goal entities plus actual
-FK-position, FK-quaternion and per-joint sample chunk counts for every successful
-trajectory instead of trusting producer-authored coverage labels. A separately
-regenerated recording from the durable journal is normalized only for
+under `NPA_SMOKE_OUTPUT_DIR`. Direct smoke invocation must set this to an
+absolute writable path; there is no shared `/tmp` fallback. Serverless golden
+jobs set it to `/workspace/npa-golden` in the image-owned workspace. The command
+requires one feasible pose to succeed and a separately declared
+valid-but-goal-blocked pose to fail; malformed manifest rejection is retained as
+a second negative control. RRD manifests bind the run, journal and result hashes
+and verify decoded status/goal entities plus actual FK-position, FK-quaternion
+and per-joint sample chunk counts for every successful trajectory instead of
+trusting producer-authored coverage labels. A separately regenerated recording
+from the durable journal is normalized only for
 nondeterministic log clock timelines and compared semantically, including all
 joint/FK values, factual timelines, goals, statuses and metrics.
 

@@ -84,15 +84,17 @@ nondeterministic `log_tick`/`log_time`, and requires unordered semantic equality
 of every remaining value and factual timeline. It contains no invented robot
 meshes.
 
-The golden command writes a non-overwriting run directory beneath
-`NPA_SMOKE_OUTPUT_DIR`. Retain its input, journal, result, independent
-validation, RRD, full `rerun rrd print -vv` output, control record and artifact
-manifest. Acceptance requires the feasible pose to succeed and the separately
-declared goal-blocked pose to fail; malformed manifest rejection is additional
-failure evidence. After private build and byte review, freeze the candidate
-digest in the post-build plan amendment. For serverless golden acceptance pass
-the selected digest through `--tag sha256:<hex>` and the separately reviewed
-value through `--expected-image-digest sha256:<hex>`. Missing, mutable or
+The golden command writes a non-overwriting run directory beneath the required
+absolute `NPA_SMOKE_OUTPUT_DIR`; direct invocation has no shared `/tmp` fallback.
+The serverless runner supplies `/workspace/npa-golden` in the image-owned
+workspace. Retain its input, journal, result, independent validation, RRD, full
+`rerun rrd print -vv` output, control record and artifact manifest. Acceptance
+requires the feasible pose to succeed and the separately declared goal-blocked
+pose to fail; malformed manifest rejection is additional failure evidence.
+After private build and byte review, freeze the candidate digest in the
+post-build plan amendment. For serverless golden acceptance pass the selected
+digest through `--tag sha256:<hex>` and the separately reviewed value through
+`--expected-image-digest sha256:<hex>`. Missing, mutable or
 different identities are rejected before credential/provider access. The job
 receives both identities and checks equality again. The command requires
 `NPA_OUTPUT_PATH`, uploads every declared file, reads each object back and emits
