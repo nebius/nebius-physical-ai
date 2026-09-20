@@ -162,6 +162,24 @@ def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
     assert ("bucket", "runs/demo/npa-workflow/manifest.json") not in store
 
 
+def test_block_relaunch_wave_remains_in_flight_for_exact_reconciliation() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "attempt": 2,
+        "status": "failed",
+        "sky_status": "PENDING",
+        "job_id": "job-2",
+        "job_name": "run-1-01-train-a2",
+        "recovery_decision": "block_relaunch",
+    }
+    state.record_wave(record)
+
+    assert state.in_flight_wave(record["key"]) == record
+
+
 def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
     written: dict[tuple[str, str], bytes] = {}
     state_store = RunStateStore(
