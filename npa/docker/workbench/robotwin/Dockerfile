@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1.7
+FROM python:3.12.14-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254 AS bootstrap-ca
+
 # Neutral public-development recipe. This exact official Ubuntu base and the
 # snapshot-locked Ubuntu main closure contain no RoboTwin/NVIDIA/runtime data.
 # The trusted build entrypoint remains fail-closed while the native-byte policy
@@ -20,7 +22,10 @@ COPY --chmod=0644 docker/workbench/robotwin/apt-packages.lock \
 # python3-minimal, rsync, and sudo. The base keyring, all three InRelease files,
 # every downloaded archive byte, every installed version, and every retained
 # package copyright file are bound to the committed lock.
-RUN set -eux; \
+# The minimal Ubuntu base has no CA bundle until the locked packages install.
+# Mount a pinned trust store only for their HTTPS retrieval; no donor bytes persist.
+RUN --mount=type=bind,from=bootstrap-ca,source=/etc/ssl/certs/ca-certificates.crt,target=/run/npa-bootstrap-ca.crt,ro \
+    set -eux; \
     printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$'; \
     test "$(sha256sum /usr/share/keyrings/ubuntu-archive-keyring.gpg | cut -d ' ' -f1)" = "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0"; \
     test "$(sha256sum /opt/npa/robotwin/apt-packages.lock | cut -d ' ' -f1)" = "554ae7df404eb46788608a5b7d16e20c9d8f055e2678294b2f03b82a9caf666d"; \
@@ -35,7 +40,7 @@ RUN set -eux; \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/ubuntu.sources; \
     printf '%s\n' 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99npa-snapshot; \
-    apt-get update; \
+    apt-get -o Acquire::https::CaInfo=/run/npa-bootstrap-ca.crt update; \
     awk -F '\t' '$1 == "inrelease" { print $3 "  /var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20260912T000000Z_dists_" $2 "_InRelease" }' \
       /opt/npa/robotwin/apt-packages.lock | sha256sum -c -; \
     packages="$(awk -F '\t' '$1 == "binary" { printf "%s=%s ", $2, $3 }' /opt/npa/robotwin/apt-packages.lock)"; \
@@ -49,7 +54,7 @@ RUN set -eux; \
     test "$(wc -l < "${expected_archives}")" = 75; \
     test "$(uniq "${expected_archives}" | wc -l)" = 75; \
     cd "${archive_dir}"; \
-    apt-get download ${packages}; \
+    apt-get -o Acquire::https::CaInfo=/run/npa-bootstrap-ca.crt download ${packages}; \
     test "$(find "${archive_dir}" -mindepth 1 -maxdepth 1 -type f -name '*.deb' | wc -l)" = 75; \
     test -z "$(find "${archive_dir}" -mindepth 1 -maxdepth 1 \( ! -type f -o ! -name '*.deb' \) -print -quit)"; \
     : > "${verified_archives}"; \

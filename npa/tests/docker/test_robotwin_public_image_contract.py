@@ -17,7 +17,9 @@ from npa.deploy import images
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE_ROOT = ROOT / "npa/docker/workbench/robotwin"
-ARCHIVE_DOWNLOAD = "apt-get download ${packages};"
+ARCHIVE_DOWNLOAD = (
+    "apt-get -o Acquire::https::CaInfo=/run/npa-bootstrap-ca.crt download ${packages};"
+)
 ARCHIVE_INSTALL = (
     "apt-get install -y --no-install-recommends --allow-downgrades "
     '--no-download "${archive_dir}"/*.deb;'
@@ -174,7 +176,10 @@ def _archive_command_stubs(directory: Path) -> None:
     directory.mkdir()
     scripts = {
         "apt-get": (
-            '#!/bin/sh\nset -eu\ncase "$1" in\n'
+            '#!/bin/sh\nset -eu\n'
+            'if [ "$1" = -o ]; then\n'
+            'test "$2" = Acquire::https::CaInfo=/run/npa-bootstrap-ca.crt\n'
+            'shift 2\nfi\ncase "$1" in\n'
             'download) printf download > "$DOWNLOAD_MARKER"; cp "$FIXTURE_SOURCE/"* . ;;\n'
             'install) printf "%s\\n" "$@" > "$INSTALL_MARKER" ;;\n'
             "*) exit 99 ;;\nesac\n"
