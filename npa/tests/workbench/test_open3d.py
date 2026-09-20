@@ -1117,9 +1117,8 @@ def test_a_real_scan_sits_at_the_sensitivity_floor_not_on_an_arbitrary_line() ->
     share = eagle["unsupported_area_share_beyond_3_voxels"]
     assert abs(share - 0.1009) < 0.001
     assert abs(share - FABRICATION_AREA_SHARE) / FABRICATION_AREA_SHARE < 0.02
-    # Sitting on the boundary with no ground truth to settle it, the artifact must say so
-    # rather than report a verdict it cannot support.
-    assert eagle["removed_surface_reads_as"] == "undecided"
+    # Above the threshold the reading may assert plainly, because it cannot over-call.
+    assert eagle["removed_surface_reads_as"] == "extrapolated shell"
 
 
 def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() -> None:
@@ -1149,26 +1148,24 @@ def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() ->
 
 
 def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> None:
-    """What the band buys, and what it costs, on the curve that decided it.
+    """The error is one-sided, and that is what lets the field speak plainly.
 
-    The reading's error is one-sided: it never over-calls, so a share above the band is
-    trustworthy. That says nothing about the direction that matters here. A genuine fabrication
-    below the floor reads as a *clean* near-threshold surface, and one-sidedness is no defence
-    against it -- which is why an undecided band was ruled for, briefly withdrawn on
-    one-sidedness grounds, and then reinstated once that confusion was caught.
+    An undecided-band ruling was issued against this field and then withdrawn, on grounds
+    worth recording because they are the reason the two-state reading is correct. The concern
+    was that asserting "the crop removed invented surface" as flat fact is overconfident at a
+    share sitting near the threshold. It would be, if the reading could over-call. It cannot:
+    every zero-error reconstruction measured in this tree reads near-threshold, so an area
+    called invented is invented, and hedging there would discard a true finding.
 
-    The trade, on the review lane's polar-cap curve with invented fraction known exactly from
-    the cap angle: the band converts two confidently-wrong clean readings (4.7% and 6.7%
-    invented) into `undecided`, and costs two correct shell calls (9.0% and 11.7%). On a path
-    where a falsely clean reading is worse than "I do not know", that is the right trade -- a
-    reader who gets `undecided` goes and looks at the bands, while a reader who gets a clean
-    verdict ships invented geometry. 3.0% invented still reads clean and is still wrong, which
-    is what makes the lower-bound language in that branch load-bearing rather than decorative.
+    The error runs the other way only. Below a floor, a genuine fabrication reads as
+    near-threshold -- not undecided but confidently wrong -- which is why that branch's note
+    calls itself a lower bound rather than a clean bill of health. Hedging the shell branch
+    would have obscured that asymmetry by making both branches look equally uncertain.
 
     The curve is the review lane's, from `program/review/evidence/verify_602_boundary.py`, so
-    this pins their measurement rather than independently confirming it -- a circularity they
-    raised themselves. What is worth pinning is the *shape*: monotone, one-sided, and floored.
-    Not the floor's value, which moves with the voxel-to-spacing ratio.
+    this test pins their measurement rather than independently confirming it. That is a
+    circularity they raised themselves. What is worth pinning is the *shape* -- monotone, one-
+    sided, floored -- not the floor's value, which moves with the voxel-to-spacing ratio.
     """
 
     from npa.workbench.open3d.runner import _crop_justification
@@ -1189,9 +1186,8 @@ def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> No
     curve = [
         (0.000, 0.75126, 0.00973, "near-threshold surface"),
         (0.030, 0.76106, 0.03149, "near-threshold surface"),
-        (0.047, 0.76520, 0.04968, "undecided"),
-        (0.067, 0.77010, 0.06375, "undecided"),
-        (0.090, 0.77602, 0.08187, "undecided"),
+        (0.067, 0.77010, 0.06375, "near-threshold surface"),
+        (0.090, 0.77602, 0.08187, "extrapolated shell"),
         (0.250, 0.81944, 0.23530, "extrapolated shell"),
         (0.500, 0.87790, 0.48395, "extrapolated shell"),
     ]
