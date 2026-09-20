@@ -938,6 +938,61 @@ def _parse_workflow_inventory(
     return [dict(row) for row in rows], ""
 
 
+def _owned_workflow_teardown_allowance(
+    completed: subprocess.CompletedProcess[str],
+) -> dict[str, Any] | None:
+    """Validate the narrow cancel result that explicit project destroy may consume."""
+
+    payload = parse_single_json_document(completed.stdout or "")
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("owned_teardown_allowed") is not True:
+        return None
+    if payload.get("outcome") not in {
+        "verification_failed",
+        "partial_cancellation",
+    }:
+        return None
+    if payload.get("detected_state") != "VERIFICATION_UNAVAILABLE":
+        return None
+    raw_conflicts = payload.get("durable_absence_conflict_job_ids")
+    raw_jobs = payload.get("jobs")
+    raw_errors = payload.get("errors")
+    if (
+        not isinstance(raw_conflicts, list)
+        or not raw_conflicts
+        or not isinstance(raw_jobs, list)
+        or not isinstance(raw_errors, list)
+        or len(raw_errors) != len(raw_conflicts)
+    ):
+        return None
+    conflict_ids = [str(value or "").strip() for value in raw_conflicts]
+    if any(not value for value in conflict_ids) or len(set(conflict_ids)) != len(
+        conflict_ids
+    ):
+        return None
+    jobs = {
+        str(row.get("job_id") or "").strip(): row
+        for row in raw_jobs
+        if isinstance(row, dict)
+    }
+    if any(
+        job_id not in jobs or jobs[job_id].get("live_outcome") != "absent"
+        for job_id in conflict_ids
+    ):
+        return None
+    return {
+        "run_id": str(payload.get("run_id") or ""),
+        "outcome": str(payload.get("outcome") or ""),
+        "verified_absent_job_ids": conflict_ids,
+        "cancelled_job_ids": [
+            str(value)
+            for value in payload.get("cancelled_job_ids", [])
+            if str(value).strip()
+        ],
+    }
+
+
 def _stream_kind(value: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -1147,11 +1202,23 @@ def execute_project_destroy(
                     executed.append(list(cancel_command))
                     command_results.append(_command_evidence(completed, cancel_command))
                     if completed.returncode != 0:
-                        phase_errors.append(
-                            f"workflow cancellation failed for {run_id}: "
-                            + _command_failure_detail(completed)
-                        )
-                        recovery_commands.append(list(cancel_command))
+                        allowance = _owned_workflow_teardown_allowance(completed)
+                        if allowance is not None:
+                            phase_warnings.append(
+                                "workflow cancellation remains non-terminal for "
+                                f"{run_id}, but every exact live job converged or was "
+                                "verified absent; explicit project destroy will "
+                                "continue run-owned infrastructure teardown"
+                            )
+                            phase_evidence.setdefault(
+                                "workflow_teardown_allowances", []
+                            ).append(allowance)
+                        else:
+                            phase_errors.append(
+                                f"workflow cancellation failed for {run_id}: "
+                                + _command_failure_detail(completed)
+                            )
+                            recovery_commands.append(list(cancel_command))
         else:
             for command in commands:
                 completed = _run(command, runner)
