@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-09-15T00:00:00Z",
+  "as_of": "2026-09-20T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -144,6 +144,23 @@
         "platform": "gpu-rtx6000",
         "result": "CUDA_BASE_RTX_PRO_6000_VALIDATION_PASSED"
       }
+    },
+    {
+      "name": "npa-seedvr2",
+      "dockerfile": "seedvr2/Dockerfile",
+      "build_script": "seedvr2/build.sh",
+      "redistribution": "public",
+      "verdict": "port",
+      "validation": "pending-build",
+      "torch": "2.13.0+cu130 candidate",
+      "source_compiled_extensions": [
+        "flash-attn 2.8.3.post1",
+        "NVIDIA Apex fused normalization"
+      ],
+      "smoke": "Pinned official SeedVR2-3B restores a real degraded robot-observation clip and emits a fully decoded, hash-bound MP4 with objective temporal and object-preservation evidence.",
+      "port_blocker": "The first candidate is deliberately H100-only: TORCH_CUDA_ARCH_LIST=9.0 compiles FlashAttention and Apex only for sm_90. Datacenter Blackwell needs an explicit sm_100 rebuild followed by the same real restoration and objective gates; wheel arch presence or imports alone are insufficient.",
+      "upstream_tracking": "https://github.com/Dao-AILab/flash-attention and https://github.com/NVIDIA/apex",
+      "notes": "Route the quarantined first candidate only to one H100. No B200/B300 compatibility is inferred from CUDA 13 or the Torch wheel."
     },
     {
       "name": "npa-lerobot",

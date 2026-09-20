@@ -7,7 +7,9 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
-from urllib.request import urlopen
+from urllib.parse import urlparse
+
+import httpx
 
 from npa.workbench.seedvr2.runtime import _probe_video, restore
 from npa.workbench.seedvr2.schemas import RestoreRequest
@@ -57,8 +59,16 @@ class _LocalStorage:
 
 
 def _fetch_source(path: Path) -> None:
-    with urlopen(SOURCE_URL, timeout=120) as response, path.open("wb") as output:
-        shutil.copyfileobj(response, output)
+    if urlparse(SOURCE_URL).scheme != "https":
+        raise RuntimeError("RoboPro golden-eval source must use HTTPS")
+    # The URL is a fixed, hash-verified HTTPS fixture.
+    with (
+        httpx.stream("GET", SOURCE_URL, follow_redirects=True, timeout=120) as response,
+        path.open("wb") as output,
+    ):
+        response.raise_for_status()
+        for chunk in response.iter_bytes():
+            output.write(chunk)
     if _sha256(path) != SOURCE_SHA256:
         raise RuntimeError("RoboPro golden-eval source hash mismatch")
 

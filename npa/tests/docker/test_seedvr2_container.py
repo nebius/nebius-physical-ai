@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -88,6 +89,40 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
     )
     assert "seedvr2-requirements.lock" in dockerfile[:requirements_end]
     assert "flash-attn.tar.gz" not in dockerfile[:requirements_end]
+
+
+def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
+    requirements = (DOCKER_DIR / "requirements.in").read_text()
+    lock = (DOCKER_DIR / "requirements.lock").read_text()
+
+    for requirement in (
+        "diffusers==0.38.0",
+        "pillow==12.3.0",
+        "safetensors==0.8.0",
+        "setuptools==83.0.0",
+        "torch==2.13.0",
+        "torchvision==0.28.0",
+    ):
+        assert requirement in requirements
+        assert requirement in lock
+    assert "accelerate==" not in requirements
+    assert "accelerate==" not in lock
+    assert (
+        'torchvision.__version__.startswith("0.28.0")'
+        in (DOCKER_DIR / "Dockerfile").read_text()
+    )
+
+
+def test_seedvr2_blackwell_manifest_keeps_the_h100_only_boundary() -> None:
+    manifest = json.loads(
+        (ROOT / "npa/docker/workbench/blackwell-dc-images.json").read_text()
+    )
+    entry = next(row for row in manifest["images"] if row["name"] == "npa-seedvr2")
+    assert entry["verdict"] == "port"
+    assert entry["validation"] == "pending-build"
+    assert "H100-only" in entry["port_blocker"]
+    assert "sm_90" in entry["port_blocker"]
+    assert "sm_100" in entry["port_blocker"]
 
 
 def test_seedvr2_golden_eval_runs_real_gpu_capability() -> None:

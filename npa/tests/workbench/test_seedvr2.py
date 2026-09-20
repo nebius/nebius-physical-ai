@@ -235,7 +235,7 @@ def test_runtime_refuses_non_s3_and_non_video_paths() -> None:
         runtime.restore(
             RestoreRequest(
                 input_path=INPUT_URI,
-                output_path="/tmp/output",
+                output_path="local-output",
                 run_id="invalid",
                 dry_run=True,
             )

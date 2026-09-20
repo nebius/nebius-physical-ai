@@ -93,7 +93,7 @@ def test_local_path_is_rejected_without_calling_runtime(monkeypatch) -> None:
             "seedvr2",
             "restore",
             "--input-path",
-            "/tmp/input.mp4",
+            "local-input.mp4",
             "--output-path",
             "s3://example-bucket/output/",
             "--run-id",

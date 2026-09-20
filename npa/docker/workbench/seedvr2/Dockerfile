@@ -90,7 +90,7 @@ from apex.normalization import FusedLayerNorm, FusedRMSNorm
 from flash_attn import flash_attn_varlen_func
 assert torch.version.cuda == "13.0", torch.version.cuda
 assert "sm_90" in set(torch._C._cuda_getArchFlags().split())
-assert torchvision.__version__.startswith("0.27.1")
+assert torchvision.__version__.startswith("0.28.0")
 assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
 PY
 
