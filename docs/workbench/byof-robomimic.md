@@ -287,7 +287,11 @@ private exact-digest stage must:
 The private dedicated gate above is retained for existing operator workflows.
 The public development route builds and scans the neutral image first, then
 validates its immutable digest with `train-smoke`; provider capacity proof stays
-in the run evidence. Release promotion and a public release catalog row still
+in the run evidence. Set `NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY=public` and
+`NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA` to the exact 40-character source SHA.
+The runner verifies that the official `dev-<full-SHA>` tag resolves to the
+selected `NPA_BYOF_ROBOMIMIC_IMAGE` digest before execution. Runtime acknowledgement
+and verified fetch preflight remain required. Release promotion and a public release catalog row still
 require all image, anonymous-pull and functional-GPU evidence.
 
 Image-policy sweeps, simulator rollouts, rendering, and the full algorithm
@@ -307,3 +311,13 @@ npa/.venv/bin/python -m pytest -q npa/tests/docker/test_robomimic_image_contract
 These local checks validate source contracts and refusal behavior. They do not
 build an image, fetch a payload, use CUDA, submit a workflow, or claim public or
 live acceptance.
+
+The built-image payload report retains raw findings for the delivered official
+corresponding-source archives. `source-fixture-dispositions.json` attributes only
+exact archive/member hashes and finding kinds for public cryptographic test keys,
+codec regression fixtures, and documentation/test filenames. Every archive is
+size/SHA-verified against the source lock before attribution. Other bytes and
+finding kinds fail normally; each verified source archive uses the existing
+walker budget, and the source lock bounds their total bytes and count. The exact
+GCC source SHA has a measured 123,895-member bound; its expansion and depth
+limits remain unchanged.

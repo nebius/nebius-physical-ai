@@ -58,11 +58,12 @@ BYOF_REPO_MOUNT = "/opt/byof"
 ROBOMIMIC_REPO_URL = "https://github.com/ARISE-Initiative/robomimic.git"
 ROBOMIMIC_REPO_REF = "d309eaecc18acf4152a830a895a6984b8ac71b05"
 ROBOMIMIC_BASE_IMAGE = "tool://robomimic"
+ROBOMIMIC_PUBLIC_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
 ROBOMIMIC_BUILD_COMMAND_SHA256 = (
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
 ROBOMIMIC_SMOKE_COMMAND_SHA256 = (
-    "edc22a2c6efe3fa66b505f7ec3868245277089e0506c43bca503b988b9a15b05"
+    "5415a073ecf5e53bac7c967f5c657ec642f2fc70d5e844462977951e3e777f18"
 )
 ROBOMIMIC_RUN_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
 IMMUTABLE_IMAGE_DIGEST_RE = re.compile(r".+@(sha256:[0-9a-f]{64})", re.I)
@@ -808,7 +809,7 @@ def _require_robomimic_immutable_inputs(
     )
     if accepted_pattern.fullmatch(accepted_image) is None:
         raise ValueError(
-            "operator-selected robomimic image must be an exact private npa-robomimic digest"
+            "operator-selected robomimic image must be an exact npa-robomimic digest"
         )
     values = {
         "repository": (args.repo_url, ROBOMIMIC_REPO_URL),
@@ -854,6 +855,39 @@ def _require_robomimic_immutable_inputs(
         entitlement_sha256=args._robomimic_runtime_entitlement_sha256,
         customer_binding_sha256=args._robomimic_customer_binding_sha256,
     )
+
+
+def _require_robomimic_public_development_image(image: str) -> None:
+    """Bind an official public digest to the selected immutable development tag."""
+
+    source_sha = os.environ.get("NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA", "").strip()
+    if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+        raise ValueError(
+            "robomimic public execution requires the full development source SHA"
+        )
+    repository = f"{ROBOMIMIC_PUBLIC_REGISTRY}/npa-robomimic"
+    if re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", image) is None:
+        raise ValueError(
+            "robomimic public execution requires an exact official development digest"
+        )
+    result = subprocess.run(
+        [
+            "docker",
+            "buildx",
+            "imagetools",
+            "inspect",
+            f"{repository}:dev-{source_sha}",
+            "--format",
+            "{{json .Manifest}}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if json.loads(result.stdout).get("digest") != image.rsplit("@", 1)[1]:
+        raise ValueError(
+            "robomimic public digest does not match the selected development tag"
+        )
 
 
 def _require_robomimic_execution_context(
@@ -912,19 +946,26 @@ def _require_robomimic_execution_context(
         raise ValueError(
             "robomimic registry does not match the operator-selected registry"
         )
-    if _is_public_robomimic_registry(selected_registry):
-        raise ValueError("robomimic requires an operator-private registry")
+    official_public = selected_registry == ROBOMIMIC_PUBLIC_REGISTRY
+    if _is_public_robomimic_registry(selected_registry) and not official_public:
+        raise ValueError(
+            "robomimic requires an operator-private registry or official public development image"
+        )
     effective_registry = _registry_path(image).rstrip("/")
     if effective_registry != selected_registry:
         raise ValueError(
-            "robomimic image does not target the operator-selected private registry"
+            "robomimic image does not target the operator-selected registry"
         )
-    if _is_public_robomimic_registry(effective_registry):
-        raise ValueError("robomimic image must not target a public registry")
-    if selectors["NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY"].lower() != "private":
+    expected_visibility = "public" if official_public else "private"
+    if (
+        selectors["NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY"].lower()
+        != expected_visibility
+    ):
         raise ValueError(
-            "operator-selected robomimic registry visibility must be private"
+            f"operator-selected robomimic registry visibility must be {expected_visibility}"
         )
+    if official_public:
+        _require_robomimic_public_development_image(image)
     output_bucket = _bare_s3_bucket(args.output_root)
     manager_bucket = _bare_s3_bucket(selectors["NPA_E2E_S3_BUCKET"])
     expected_output_root = f"s3://{manager_bucket}/oss-solutions/robomimic"

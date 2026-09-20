@@ -1814,7 +1814,7 @@ def test_workflow_refusal_recognizes_accepted_digest_under_renamed_image(
             "quay.io/example/robomimic:latest",
             "s3://manager-bucket/oss-solutions/robomimic",
             (),
-            "image does not target the operator-selected private registry",
+            "image does not target the operator-selected registry",
         ),
         (
             "quay.io:443/example",
@@ -2054,7 +2054,7 @@ def test_robomimic_runner_accepts_only_the_exact_immutable_contract(
     malformed_image = "private.invalid/robomimic/unreviewed@sha256:" + "c" * 64
     monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_IMAGE", malformed_image)
     args.image = malformed_image
-    with pytest.raises(ValueError, match="exact private npa-robomimic digest"):
+    with pytest.raises(ValueError, match="exact npa-robomimic digest"):
         runner._require_robomimic_execution_context(
             args,
             registry=args.registry,
@@ -2292,7 +2292,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
     assert config["smoke_artifact_name"] == "robomimic-smoke.json"
     assert config["wait_timeout"] == -1
     assert build == ""
-    assert smoke == "robomimic-entrypoint smoke"
+    assert smoke == "robomimic-entrypoint train-smoke"
     assert hashlib.sha256(build.encode()).hexdigest() == BUILD_COMMAND_SHA256
     lock_bytes = BAKED_LOCK.read_bytes()
     assert (
@@ -3457,3 +3457,33 @@ def test_robomimic_delivery_boundaries_do_not_invent_runtime_consent() -> None:
         "NPA_ACCEPT_CUDNN",
     ):
         assert invented_proxy not in combined
+
+
+def test_public_development_execution_binds_full_sha_to_digest(monkeypatch):
+    runner = _byof_runner_module()
+    source_sha = "b" * 40
+    digest = "sha256:" + "a" * 64
+    image = f"{runner.ROBOMIMIC_PUBLIC_REGISTRY}/npa-robomimic@{digest}"
+    monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA", source_sha)
+    calls = []
+
+    def inspect(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(stdout=json.dumps({"digest": digest}))
+
+    monkeypatch.setattr(runner.subprocess, "run", inspect)
+    runner._require_robomimic_public_development_image(image)
+    assert calls[0][4].endswith(f":dev-{source_sha}")
+    with pytest.raises(ValueError, match="does not match"):
+        runner._require_robomimic_public_development_image(image[:-1] + "b")
+    for value in ("latest", "v1.0.0", "a" * 7, ""):
+        monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA", value)
+        with pytest.raises(ValueError, match="full development source SHA"):
+            runner._require_robomimic_public_development_image(image)
+    monkeypatch.setenv("NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA", source_sha)
+    for bad in (
+        image.replace("@" + digest, ":latest"),
+        image.replace("ghcr.io", "quay.io"),
+    ):
+        with pytest.raises(ValueError, match="exact official development digest"):
+            runner._require_robomimic_public_development_image(bad)

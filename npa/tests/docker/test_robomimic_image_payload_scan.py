@@ -152,3 +152,106 @@ def test_oci_config_env_rejects_invented_acceptance_proxy(
     )
 
     assert {finding.kind for finding in findings} == {"invented_acceptance_proxy"}
+
+
+def test_source_fixture_attribution_keeps_raw_and_rejects_drift(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    source = _tar(
+        tmp_path / "source.tar", {"upstream/tests/fixture.bin": b"test vector"}
+    )
+    archive_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    source_path = f"{scanner.SOURCE_ROOT}{archive_sha}/source.tar"
+    fixture_path = source_path + "!/upstream/tests/fixture.bin"
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "corresponding-source.lock.json").write_text(
+        json.dumps(
+            {
+                "cpython": {
+                    "filename": "source.tar",
+                    "sha256": archive_sha,
+                    "size": source.stat().st_size,
+                },
+                "sources": [],
+            }
+        )
+    )
+    (policy / "source-fixture-dispositions.json").write_text(
+        json.dumps(
+            {
+                "fixtures": [
+                    {
+                        "path": fixture_path,
+                        "archive_sha256": archive_sha,
+                        "member_sha256": hashlib.sha256(b"test vector").hexdigest(),
+                        "kinds": ["checkpoint_or_weight"],
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(scanner, "IMAGE_ROOT", policy)
+    image = _tar(tmp_path / "image.tar", {source_path: source.read_bytes()})
+    report = scanner._scan_report([image], {})
+    assert report["findings"] == []
+    assert [item.kind for item in report["raw_findings"]] == ["checkpoint_or_weight"]
+    assert report["attributed_source_fixtures"] == report["raw_findings"]
+
+    image = _tar(
+        tmp_path / "image.tar",
+        {
+            source_path: source.read_bytes(),
+            "opt/policy.bin": b"unattributed",
+        },
+    )
+    assert [item.path for item in scanner.scan(image, {})] == ["opt/policy.bin"]
+    changed = bytearray(source.read_bytes())
+    changed[512] ^= 1
+    image = _tar(tmp_path / "image.tar", {source_path: bytes(changed)})
+    with pytest.raises(ValueError, match="archive bytes differ from lock"):
+        scanner.scan(image, {})
+
+
+def test_malformed_codec_produces_a_finding_instead_of_aborting(tmp_path):
+    for payload in (
+        b"\xfd7zXZ\x00" + b"invalid" * 10,
+        b"\x1f\x8b\x08\x00" + b"invalid" * 10,
+    ):
+        image = _tar(tmp_path / "image.tar", {"opt/fixture": payload})
+        assert "nested_archive_unreadable" in {
+            item.kind for item in scanner.scan(image, {})
+        }
+
+
+def test_attributed_codec_fixture_still_receives_raw_secret_checks():
+    import hashlib
+
+    archive_sha = "a" * 64
+    source_path = f"{scanner.SOURCE_ROOT}{archive_sha}/source.tar"
+    path = source_path + "!/upstream/tests/bad.xz"
+    payload = b"\xfd7zXZ\x00-----BEGIN PRIVATE KEY-----"
+    audited = {
+        path: {
+            "archive_sha256": archive_sha,
+            "member_sha256": hashlib.sha256(payload).hexdigest(),
+            "kinds": ["nested_archive_unreadable"],
+        }
+    }
+    findings = []
+    original = scanner.walker._scan_nested_archive
+    with scanner._audited_codec_fixtures(audited, {source_path: Path("unused")}):
+        scanner.walker._scan_file_stream(
+            path=path,
+            stream=io.BytesIO(payload),
+            source="source.tar",
+            findings=findings,
+            depth=0,
+            budget=scanner.walker._NestedArchiveBudget(1024, 10),
+        )
+    assert {finding.kind for finding in findings} == {
+        "credential_content",
+        "nested_archive_unreadable",
+    }
+    assert scanner.walker._scan_nested_archive is original

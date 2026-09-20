@@ -473,12 +473,22 @@ def _robomimic_live_selectors(e2e_project: str | None) -> dict[str, str]:
         bool(selectors["project"]) and e2e_project == selectors["project"]
     )
     _require_robomimic_entitlement_context(bool(selectors["registry"]))
+    official_public = selectors["registry"] == "ghcr.io/nebius/nebius-physical-ai"
     _require_robomimic_entitlement_context(
-        not is_public_registry(selectors["registry"])
+        not is_public_registry(selectors["registry"]) or official_public
     )
     _require_robomimic_entitlement_context(
-        selectors["registry_visibility"].lower() == "private"
+        selectors["registry_visibility"].lower()
+        == ("public" if official_public else "private")
     )
+    if official_public:
+        _require_robomimic_entitlement_context(
+            re.fullmatch(
+                r"[0-9a-f]{40}",
+                os.environ.get("NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA", ""),
+            )
+            is not None
+        )
     expected_image = re.escape(selectors["registry"].rstrip("/")) + (
         r"/npa-robomimic@sha256:[0-9a-f]{64}"
     )
@@ -1448,7 +1458,8 @@ def _assert_robomimic_runtime(
     assert hardware["compute_capability"] == [10, 0]
     assert len(hardware["nvidia_smi_rows"]) == 1
     assert "B200" in hardware["nvidia_smi_rows"][0].upper()
-    assert hardware["strict_reserved_capacity_attested"] is True
+    assert "strict_reserved_capacity_attested" not in hardware
+    assert "application_strict_capacity_qualification" in artifact["deferred"]
     pod_image = artifact["pod_image"]
     assert pod_image["runtime_ref"] == summary_image
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", pod_image["digest"])

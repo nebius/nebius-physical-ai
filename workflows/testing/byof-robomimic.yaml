@@ -9,10 +9,11 @@ metadata:
     independently verified CUDA runtime and runs real upstream low-dimensional
     behavior cloning on the immutable official Lift PH dataset. It retains a
     genuine held-out split, reloads the produced checkpoint, and infers one
-    held-out action on exactly one STRICT-bound B200 without rendering.
+    held-out action on exactly one B200 without rendering. The fleet records
+    provider STRICT reserved-capacity evidence independently at run level.
 config:
   # Ordinary submission remains plan-only. The dedicated runner first requires
-  # an operator-selected private image digest, immutable target selectors, a
+  # an operator-selected image digest (private or official public development), immutable target selectors, a
   # valid customer entitlement record, and the name of a pre-populated read-only
   # runtime PVC. The operator-host harness
   # consumes this exact config; do not lift ordinary nested-controller execution
@@ -25,14 +26,14 @@ config:
   repo_auth: none
   repo_token_env: GH_TOKEN
   base_profile: prebuilt
-  # This proposed public tag is deliberately absent and unaccepted in Phase A.
-  # It keeps offline workflow rendering deterministic without claiming a pullable
-  # image. Actual execution requires an exact operator-selected private digest.
+  # This quarantined release placeholder is only for deterministic offline planning.
+  # Execution selects an exact digest; official public development images also
+  # require NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA matching their dev-<full-SHA> tag.
   controller_image: "ghcr.io/nebius/nebius-physical-ai/npa-robomimic:0.1.0-neutral-unbuilt"
   base_image: "tool://robomimic"
   build_command: ""
   workload: solution-smoke
-  smoke_command: "robomimic-entrypoint smoke"
+  smoke_command: "robomimic-entrypoint train-smoke"
   solution_name: "robomimic"
   capability_name: "lift_ph_lowdim_checkpoint_reload_action"
   smoke_artifact_name: "robomimic-smoke.json"
@@ -55,7 +56,7 @@ initial: byof-run
 states:
   byof-run:
     description: >
-      Use the exact operator-selected private neutral image plus a separately
+      Use the exact operator-selected neutral image plus a separately
       prepared, immutable, read-only CUDA runtime. After the customer entitlement
       and independent transaction gates pass, hard-gate upstream BC training, held-out
       validation, checkpoint reload, and held-out action inference on one B200.

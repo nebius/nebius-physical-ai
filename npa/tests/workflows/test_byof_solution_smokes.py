@@ -195,7 +195,7 @@ def _load_config(path: Path) -> dict[str, object]:
 def _smoke_contract(path: Path, config: dict[str, object]) -> str:
     command = str(config.get("smoke_command") or "")
     if path.name == "byof-robomimic.yaml":
-        assert command == "robomimic-entrypoint smoke"
+        assert command == "robomimic-entrypoint train-smoke"
         return ROBOMIMIC_SMOKE_PATH.read_text(encoding="utf-8")
     return command
 

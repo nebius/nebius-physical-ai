@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from dataclasses import asdict
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import re
 import sys
+import tarfile
 import tempfile
 from typing import Any
 
@@ -139,16 +142,163 @@ FORBIDDEN_HISTORY: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
-def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
-    """Scan every supplied layer and OCI config under the robomimic policy."""
+SOURCE_ROOT = "usr/share/npa/robomimic/corresponding-source/"
+IMAGE_ROOT = Path(__file__).resolve().parents[1] / "docker/workbench/robomimic"
 
-    with walker.payload_policy(
-        forbidden_paths=FORBIDDEN_PATHS,
-        forbidden_history=FORBIDDEN_HISTORY,
-        audited_secret_files=walker.AUDITED_SECRET_LITERAL_FILE_SHA256,
-        audited_libraries=walker.AUDITED_LITERAL_LIBRARY_SHA256,
-    ):
-        return walker.scan_tars(tars, config)
+
+@contextmanager
+def _audited_codec_fixtures(audited, verified_sources):
+    """Keep raw checks, but bound expansion of exact upstream error fixtures."""
+
+    original = walker._scan_nested_archive
+
+    def scan_fixture(**kwargs):
+        path = kwargs["parent_path"]
+        archive_path = path.partition("!/")[0]
+        disposition = audited.get(path, {})
+        if (
+            archive_path in verified_sources
+            and "nested_archive_unreadable" in disposition.get("kinds", [])
+            and disposition.get("archive_sha256") == archive_path.split("/")[-2]
+        ):
+            stream = kwargs["stream"]
+            stream.seek(0)
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            stream.seek(0)
+            if digest == disposition["member_sha256"]:
+                kwargs["findings"].append(
+                    walker.Finding(
+                        "nested_archive_unreadable",
+                        path,
+                        "hash-verified upstream codec/archive error fixture; raw byte checks retained",
+                    )
+                )
+                return
+        original(**kwargs)
+
+    # Like the existing policy context, this CLI-only scope is not thread-safe.
+    walker._scan_nested_archive = scan_fixture
+    try:
+        yield
+    finally:
+        walker._scan_nested_archive = original
+
+
+def _scan_report(tars: list[Path], config: dict[str, Any]) -> dict[str, Any]:
+    """Keep raw findings and attribute only exact locked public source fixtures.
+
+    Each hash-verified source archive receives the walker's existing archive
+    budget. The lock bounds their total compressed bytes and count; duplicate
+    source delivery is refused. All other image bytes retain per-layer budgets.
+    """
+
+    lock = json.loads((IMAGE_ROOT / "corresponding-source.lock.json").read_text())
+    artifacts = [lock["cpython"]] + [
+        item for source in lock["sources"] for item in source["artifacts"]
+    ]
+    expected = {
+        SOURCE_ROOT + item["sha256"] + "/" + item["filename"]: item
+        for item in artifacts
+    }
+    dispositions = json.loads(
+        (IMAGE_ROOT / "source-fixture-dispositions.json").read_text()
+    )
+    audited = {item["path"]: item for item in dispositions["fixtures"]}
+    raw: list[walker.Finding] = []
+    attributed: list[walker.Finding] = []
+    with tempfile.TemporaryDirectory(prefix="robomimic-source-scan-") as tmp:
+        sources: dict[str, Path] = {}
+        with (
+            walker.payload_policy(
+                forbidden_paths=FORBIDDEN_PATHS,
+                forbidden_history=FORBIDDEN_HISTORY,
+                audited_secret_files=walker.AUDITED_SECRET_LITERAL_FILE_SHA256,
+                audited_libraries=walker.AUDITED_LITERAL_LIBRARY_SHA256,
+            ),
+            _audited_codec_fixtures(audited, sources),
+        ):
+            for layer in tars:
+                budget = walker._NestedArchiveBudget(
+                    walker.MAX_NESTED_UNCOMPRESSED_BYTES,
+                    walker.MAX_NESTED_ARCHIVE_MEMBERS,
+                )
+                with tarfile.open(layer, "r:*") as archive:
+                    for member in archive:
+                        path = walker._normalize_archive_path(member.name)
+                        if not member.isfile():
+                            walker._add_forbidden_path_findings(path, layer.name, raw)
+                            continue
+                        with archive.extractfile(member) as stream:
+                            selected_budget = budget
+                            if path in expected:
+                                item = expected[path]
+                                if path in sources or member.size != item["size"]:
+                                    raise ValueError(
+                                        "duplicate or changed corresponding-source archive"
+                                    )
+                                captured = Path(tmp) / str(len(sources))
+                                digest = hashlib.sha256()
+                                with captured.open("wb") as output:
+                                    while chunk := stream.read(1024 * 1024):
+                                        digest.update(chunk)
+                                        output.write(chunk)
+                                if digest.hexdigest() != item["sha256"]:
+                                    raise ValueError(
+                                        "corresponding-source archive bytes differ from lock"
+                                    )
+                                sources[path] = captured
+                                selected_budget = walker._NestedArchiveBudget(
+                                    walker.MAX_NESTED_UNCOMPRESSED_BYTES,
+                                    dispositions.get("archive_member_limits", {}).get(
+                                        item["sha256"],
+                                        walker.MAX_NESTED_ARCHIVE_MEMBERS,
+                                    ),
+                                )
+                                with captured.open("rb") as source_stream:
+                                    walker._scan_file_stream(
+                                        path=path,
+                                        stream=source_stream,
+                                        source=layer.name,
+                                        findings=raw,
+                                        depth=0,
+                                        budget=selected_budget,
+                                    )
+                            else:
+                                walker._scan_file_stream(
+                                    path=path,
+                                    stream=stream,
+                                    source=layer.name,
+                                    findings=raw,
+                                    depth=0,
+                                    budget=selected_budget,
+                                )
+            raw.extend(walker.scan_tars([], config))
+        for finding in raw:
+            disposition = audited.get(finding.path)
+            if disposition is None or finding.kind not in disposition["kinds"]:
+                continue
+            archive_path, separator, _ = finding.path.partition("!/")
+            if not separator or archive_path not in sources:
+                continue
+            if expected[archive_path]["sha256"] != disposition["archive_sha256"]:
+                continue
+            # The trusted disposition records the independently reproduced member
+            # hash; the verified whole-archive hash binds every member byte and
+            # metadata entry, including nested archives and directory fixtures.
+            if re.fullmatch(r"[0-9a-f]{64}", disposition["member_sha256"]):
+                attributed.append(finding)
+    findings = [finding for finding in raw if finding not in attributed]
+    return {
+        "findings": findings,
+        "raw_findings": raw,
+        "attributed_source_fixtures": attributed,
+    }
+
+
+def scan_tars(tars: list[Path], config: dict[str, Any]) -> list[walker.Finding]:
+    """Scan every layer and OCI config, retaining only unresolved findings."""
+
+    return _scan_report(tars, config)["findings"]
 
 
 def scan(rootfs_tar: Path, config: dict[str, Any]) -> list[walker.Finding]:
@@ -187,7 +337,8 @@ def main(argv: list[str] | None = None) -> int:
                 config = (
                     json.loads(args.config_json.read_text()) if args.config_json else {}
                 )
-            findings = scan_tars(tars, config)
+            report = _scan_report(tars, config)
+            findings = report["findings"]
     except Exception as exc:  # noqa: BLE001 - every unreadable artifact fails closed
         print(json.dumps({"status": "error", "error": str(exc)}, indent=2))
         return 2
@@ -198,7 +349,17 @@ def main(argv: list[str] | None = None) -> int:
         or ("docker-save" if args.docker_save else "offline-rootfs"),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
+        "source_lock_sha256": hashlib.sha256(
+            (IMAGE_ROOT / "corresponding-source.lock.json").read_bytes()
+        ).hexdigest(),
+        "source_fixture_dispositions_sha256": hashlib.sha256(
+            (IMAGE_ROOT / "source-fixture-dispositions.json").read_bytes()
+        ).hexdigest(),
         "findings": [asdict(item) for item in findings],
+        "raw_findings": [asdict(item) for item in report["raw_findings"]],
+        "attributed_source_fixtures": [
+            asdict(item) for item in report["attributed_source_fixtures"]
+        ],
     }
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:

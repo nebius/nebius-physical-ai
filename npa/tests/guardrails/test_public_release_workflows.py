@@ -164,7 +164,7 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     )
     script = step["run"]
     assert script.index("docker buildx prune --all --force") < script.index(
-        'docker save --output "$RUNNER_TEMP/${TOOL}.tar"'
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar"'
     )
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
@@ -258,7 +258,7 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     assert ('test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
             '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"') in post_push
     assert '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"' in post_push
-    assert 'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+    assert 'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
