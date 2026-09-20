@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import argparse
 import bz2
+from datetime import datetime
 import hashlib
 import io
 import json
 import lzma
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -1579,11 +1581,38 @@ EXPECTED_CANONICAL_LAYER_SHA256 = (
     '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
 )
 
+def _validate_tar_timestamps(item: tarfile.TarInfo) -> None:
+    timestamps = {"mtime": item.mtime}
+    timestamps.update({
+        key: value for key, value in item.pax_headers.items()
+        if key in {"mtime", "atime", "ctime"}
+    })
+    for value in timestamps.values():
+        if re.fullmatch(r"-?[0-9]+(?:\.[0-9]+)?", str(value)) is None:
+            raise ValueError("invalid canonical TAR timestamp")
+        if not math.isfinite(float(value)):
+            raise ValueError("nonfinite canonical TAR timestamp")
+
+
+def _discard_oci_timestamp(record: dict[str, object]) -> None:
+    if "created" not in record:
+        return
+    value = record.pop("created")
+    pattern = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})"
+    if not isinstance(value, str) or re.fullmatch(pattern, value) is None:
+        raise ValueError("invalid canonical OCI timestamp")
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("invalid canonical OCI timestamp") from error
+
+
 def _canonical_layer_sha256(raw: bytes) -> str:
     """Bind all ordered members, omitting only archive timestamps."""
     records = []
     with tarfile.open(fileobj=io.BytesIO(raw), mode="r:") as layer:
         for item in layer:
+            _validate_tar_timestamps(item)
             record = item.get_info()
             record["type"] = item.type.hex()
             record.pop("mtime")
@@ -1611,10 +1640,10 @@ def _canonical_config_sha256(config: dict[str, object]) -> str:
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise ValueError("canonical image revision must be a full Git SHA")
     canonical["config"]["Labels"]["org.opencontainers.image.revision"] = "<revision>"
-    canonical.pop("created", None)
+    _discard_oci_timestamp(canonical)
     canonical["rootfs"]["diff_ids"] = "<independently-bound-ordered-layers>"
     for entry in canonical["history"]:
-        entry.pop("created", None)
+        _discard_oci_timestamp(entry)
         entry["created_by"] = re.sub(
             r"org\.opencontainers\.image\.revision=(?:[0-9a-f]{40})?(?= |$)",
             "org.opencontainers.image.revision=<revision>",

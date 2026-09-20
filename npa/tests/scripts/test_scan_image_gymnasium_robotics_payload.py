@@ -1282,6 +1282,28 @@ def test_canonical_closure_preserves_member_semantics(field: str) -> None:
     )
 
 
+@pytest.mark.parametrize("field", ["mtime", "atime", "ctime"])
+@pytest.mark.parametrize("value", ["arbitrary-content", "NaN", "Infinity", "9" * 400])
+def test_canonical_tar_timestamps_reject_nonnumeric_or_nonfinite_data(
+    field: str, value: str,
+) -> None:
+    item = tarfile.TarInfo("opt/empty")
+    item.pax_headers = {field: value}
+    with pytest.raises(ValueError, match="canonical TAR timestamp"):
+        SCAN._validate_tar_timestamps(item)
+
+
+@pytest.mark.parametrize("value", ["arbitrary-content", "2026-99-99T00:00:00Z", "2026-09-20", None])
+@pytest.mark.parametrize("history", [False, True])
+def test_canonical_oci_timestamps_reject_arbitrary_content(
+    value: object, history: bool,
+) -> None:
+    config = {"config": {"Labels": {"org.opencontainers.image.revision": "a" * 40}}, "rootfs": {"diff_ids": []}, "history": [{"created_by": "build"}]}
+    (config["history"][0] if history else config)["created"] = value
+    with pytest.raises(ValueError, match="canonical OCI timestamp"):
+        SCAN._canonical_config_sha256(config)
+
+
 def test_canonical_closure_permits_only_timestamp_and_revision_changes() -> None:
     config = {
         "config": {
@@ -1289,12 +1311,12 @@ def test_canonical_closure_permits_only_timestamp_and_revision_changes() -> None
             "User": "ubuntu",
         },
         "rootfs": {"diff_ids": []},
-        "history": [{"created_by": "build", "created": "old"}],
-        "created": "old",
+        "history": [{"created_by": "build", "created": "2026-09-19T00:00:00Z"}],
+        "created": "2026-09-19T00:00:00Z",
     }
     expected = SCAN._canonical_config_sha256(config)
-    config["created"] = "new"
-    config["history"][0]["created"] = "new"
+    config["created"] = "2026-09-20T00:00:00.123456789Z"
+    config["history"][0]["created"] = "2026-09-20T00:00:00.123456789Z"
     config["config"]["Labels"]["org.opencontainers.image.revision"] = "b" * 40
     assert SCAN._canonical_config_sha256(config) == expected
     config["config"]["User"] = "root"
