@@ -7,7 +7,7 @@ import tarfile
 
 from image_byte_scan import core as W, prepare as P
 from npa.deploy import images
-from . import artifact, handoff, registry
+from . import acceptance, artifact, handoff, registry
 from .diagnostics import phase, run_phase
 from .process import (
     ROOT,
@@ -493,8 +493,9 @@ def _require_accepted_publication(
 ):
     """Refuse every registry write until exact workload acceptance is committed."""
     accepted = (
-        images.validate_ncore_accepted_image_manifest(
-            W.bound_json(P.binding(Path(acceptance_path)))
+        acceptance.verify_final_acceptance(
+            Path(acceptance_path).absolute().parents[1],
+            Path(acceptance_path).absolute(),
         )
         if acceptance_path is not None
         else images.ncore_accepted_image_manifest()

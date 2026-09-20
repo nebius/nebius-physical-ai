@@ -543,7 +543,9 @@ def test_publication_can_consume_external_acceptance_at_exact_candidate(
     path = tmp_path / "accepted.json"
     path.write_text(json.dumps(accepted))
     monkeypatch.setattr(
-        cli.images, "validate_ncore_accepted_image_manifest", lambda value: value
+        cli.acceptance,
+        "verify_final_acceptance",
+        lambda analysis_root, acceptance_path: accepted,
     )
     monkeypatch.setattr(
         cli.images,
@@ -603,7 +605,9 @@ def test_build_metadata_cannot_redirect_the_gated_digest(private, monkeypatch):
 
 
 @pytest.mark.parametrize("observed", [None, "same", "different"])
-def test_immutable_tag_is_preserved_or_refused(private, monkeypatch, observed):
+def test_preacceptance_tag_must_be_absent_for_authenticated_and_anonymous_reads(
+    private, monkeypatch, observed
+):
     path, digest, _ = _archive(private)
     graph, verification = artifact.inspect(path, digest)
     build = private / "build"
@@ -624,16 +628,13 @@ def test_immutable_tag_is_preserved_or_refused(private, monkeypatch, observed):
     monkeypatch.setattr(registry, "_readback", lambda *_: calls.append("readback"))
     args = SimpleNamespace(analysis_root=private, authfile=private / "auth.json")
     receipt = {"image": gates.eligibility(SHA), "image_digest": digest}
-    if observed == "different":
-        with pytest.raises(ValueError, match="divergent"):
+    if observed is not None:
+        with pytest.raises(ValueError, match="preexisted"):
             registry.transfer(args, private, receipt, graph, verification)
         assert calls == []
     else:
         assert registry.transfer(args, private, receipt, graph, verification) == digest
-        assert calls == (["copy"] if observed is None else []) + [
-            "visibility",
-            "readback",
-        ]
+        assert calls == ["copy", "visibility", "readback"]
 
 
 @pytest.mark.parametrize(
@@ -649,6 +650,27 @@ def test_registry_errors_are_never_tag_absence(private, monkeypatch, error):
         registry._observed(
             gates.eligibility(SHA), private / "existing.json", private / "auth.json"
         )
+
+
+def test_anonymous_prepublication_lookup_disables_credentials(private, monkeypatch):
+    commands = []
+
+    def run(argv, **_kwargs):
+        commands.append(argv)
+        return subprocess.CompletedProcess(argv, 1, b"", b"manifest unknown")
+
+    monkeypatch.setattr(registry.subprocess, "run", run)
+    assert (
+        registry._observed(
+            gates.eligibility(SHA),
+            private / "anonymous-existing.json",
+            private / "empty-auth.json",
+            True,
+        )
+        is None
+    )
+    assert "--no-creds" in commands[0]
+    assert "--authfile" in commands[0]
 
 
 def test_copy_uses_all_manifests_and_preserves_original_digests(private, monkeypatch):

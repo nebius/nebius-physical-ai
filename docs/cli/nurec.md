@@ -15,10 +15,13 @@ check  Check NRE container access, dataset download rights, and GPU suitability.
 convert-colmap  Convert COLMAP using Apache-2.0 NVIDIA NCore; NRE is a separate downstream engine.
 audit-colmap  Re-download and independently decode an immutable NCore V4 conversion.
 control-source  Prove a wrong source digest fails before extraction with zero S3 outputs.
+acquire-source  Anonymously download and hash-bind the immutable public source ZIP.
 stage-source  Conditionally stage and independently read back the pinned source ZIP.
 probe-storage  Prove conditional write, exact read, enumeration, and deletion on S3.
 observe-runtime  Observe one live/retained NRE pod through the Kubernetes control plane.
 bundle-runtime  Bind separately observed reconstruct and render runtime identities.
+publish-evidence  Conditionally publish and independently read back one evidence object.
+readback-qualification  Download and byte-bind one stable complete qualification prefix.
 audit-qualification  Reopen and byte-bind native NRE, media, USDZ, metrics, and RRD evidence.
 cleanup-qualification  Cancel before destroy and prove no owned compute/local runtime remains.
 fetch  Download and unpack the real NCore V4 shards for a scene.
@@ -43,10 +46,13 @@ status  Summarize what a NuRec run prefix currently holds, stage by stage.
 | `convert-colmap` | Convert COLMAP using Apache-2.0 NVIDIA NCore; NRE is a separate downstream engine. |
 | `audit-colmap` | Re-download and independently decode an immutable NCore V4 conversion. |
 | `control-source` | Prove a wrong source digest fails before extraction with zero S3 outputs. |
+| `acquire-source` | Anonymously download and hash-bind the immutable public source ZIP. |
 | `stage-source` | Conditionally stage and independently read back the pinned source ZIP. |
 | `probe-storage` | Prove conditional write, exact read, enumeration, and deletion on S3. |
 | `observe-runtime` | Observe one live/retained NRE pod through the Kubernetes control plane. |
 | `bundle-runtime` | Bind separately observed reconstruct and render runtime identities. |
+| `publish-evidence` | Conditionally publish and independently read back one evidence object. |
+| `readback-qualification` | Download and byte-bind one stable complete qualification prefix. |
 | `audit-qualification` | Reopen and byte-bind native NRE, media, USDZ, metrics, and RRD evidence. |
 | `cleanup-qualification` | Cancel before destroy and prove no owned compute/local runtime remains. |
 | `fetch` | Download and unpack the real NCore V4 shards for a scene. |

@@ -94,6 +94,11 @@ leisaac = [
     # FFmpeg executable; LeIsaac packaging scans and records those bytes.
     "imageio-ffmpeg==0.6.0",
 ]
+# Apache-2.0 Pixar USD Python runtime used only to reopen post-S3-readback
+# NuRec USDZ packages during objective qualification.
+nurec-audit = [
+    "usd-core==25.11",
+]
 genesis = [
     "genesis-world",
     "rsl-rl-lib==2.2.4",

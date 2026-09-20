@@ -17,17 +17,30 @@ import yaml
 
 from npa.errors import NpaError
 from npa.workbench.nurec.evidence import (
+    NurecEvidenceError,
     RECONSTRUCTION_RECEIPT_FORMAT,
     RENDER_RECEIPT_FORMAT,
     _decode_image,
     _decode_video,
+    _nested_value,
+    _sequence_inventory,
+    _yaml_mapping,
     validate_runtime_attestation,
 )
 from npa.workbench.nurec.ncore_audit import AUDIT_FORMAT
 from npa.workbench.nurec.nurec import parse_metrics_yaml
+from npa.workbench.nurec.qualification_readback import (
+    READBACK_FORMAT,
+    local_inventory,
+)
 
 
 AUDIT_FORMAT_VERSION = "npa_ncore_qualification_audit_v1"
+NATIVE_RECIPE = "configs/experimental/3dgut/3dgut_colmap.yaml"
+MIN_PSNR = 15.0
+MIN_SSIM = 0.5
+MAX_LPIPS = 0.5
+USD_RUNTIME_VERSION = (0, 25, 11)
 
 
 class NcoreQualificationAuditError(NpaError):
@@ -80,6 +93,140 @@ def _write_private(path: Path, payload: dict[str, Any]) -> None:
         raise
 
 
+def _record_matches(path: Path, record: Any) -> bool:
+    return (
+        isinstance(record, dict)
+        and record.get("sha256") == _sha(path)
+        and record.get("bytes") == path.stat().st_size
+    )
+
+
+def _nonzero_offset(value: Any) -> bool:
+    try:
+        values = [float(item.strip()) for item in str(value).split(",")]
+    except ValueError:
+        return False
+    return (
+        len(values) == 3
+        and all(math.isfinite(item) for item in values)
+        and any(abs(item) > 1e-9 for item in values)
+    )
+
+
+def _final_workflow_status(
+    path: Path,
+    *,
+    recording_id: str,
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    status = _json(path)
+    stages = status.get("stages")
+    if (
+        status.get("run_id") != recording_id
+        or status.get("status") != "SUCCEEDED"
+        or not isinstance(stages, dict)
+    ):
+        raise NcoreQualificationAuditError("final workflow status differs")
+    by_state = {
+        str(value.get("workflow_state") or ""): value
+        for value in stages.values()
+        if isinstance(value, dict)
+    }
+    if set(by_state) != {"reconstruct", "render", "visualize", "finalize"} or any(
+        stage.get("state") != "SUCCEEDED" for stage in by_state.values()
+    ):
+        raise NcoreQualificationAuditError(
+            "final workflow did not complete the qualification graph"
+        )
+    run_sha = hashlib.sha256(recording_id.encode()).hexdigest()
+    if runtime.get("workflow_run_id_sha256") != run_sha:
+        raise NcoreQualificationAuditError("runtime workflow run binding differs")
+    selected: list[dict[str, Any]] = []
+    for stage_name in ("reconstruct", "render"):
+        stage = by_state[stage_name]
+        job_id = str(stage.get("managed_job_id") or "")
+        job_name = str(stage.get("job_name") or "")
+        attempts = stage.get("managed_job_attempts")
+        matches = (
+            [
+                attempt
+                for attempt in attempts
+                if isinstance(attempt, dict)
+                and str(attempt.get("job_id") or "") == job_id
+                and attempt.get("job_name") == job_name
+                and attempt.get("state") == "SUCCEEDED"
+            ]
+            if isinstance(attempts, list)
+            else []
+        )
+        observed = runtime["stages"][stage_name]
+        if (
+            stage.get("job_attribution") == "ambiguous"
+            or len(matches) != 1
+            or observed.get("managed_job_id_sha256")
+            != hashlib.sha256(job_id.encode()).hexdigest()
+            or observed.get("managed_job_name_sha256")
+            != hashlib.sha256(job_name.encode()).hexdigest()
+        ):
+            raise NcoreQualificationAuditError(
+                "runtime attestation is not the final successful workflow attempt"
+            )
+        selected.append(
+            {
+                "stage": stage_name,
+                "managed_job_id_sha256": observed["managed_job_id_sha256"],
+                "managed_job_name_sha256": observed["managed_job_name_sha256"],
+            }
+        )
+    return {
+        "sha256": _sha(path),
+        "status": "SUCCEEDED",
+        "run_id_sha256": run_sha,
+        "selected_stage_jobs_sha256": _canonical_sha(selected),
+    }
+
+
+def _complete_readback(root: Path, receipt_path: Path) -> dict[str, Any]:
+    if (
+        receipt_path.is_symlink()
+        or not receipt_path.is_file()
+        or receipt_path.stat().st_uid != os.getuid()
+        or receipt_path.stat().st_nlink != 1
+        or receipt_path.stat().st_mode & 0o077
+    ):
+        raise NcoreQualificationAuditError(
+            "complete readback receipt is missing or not private"
+        )
+    receipt = _json(receipt_path)
+    local = local_inventory(root)
+    if (
+        receipt.get("format") != READBACK_FORMAT
+        or receipt.get("status") != "pass"
+        or receipt.get("stable_listing") is not True
+        or receipt.get("object_count") != len(local)
+        or receipt.get("local_inventory") != local
+        or receipt.get("local_inventory_sha256") != _canonical_sha(local)
+        or not isinstance(receipt.get("s3_inventory"), list)
+        or receipt.get("object_count") != len(receipt["s3_inventory"])
+        or receipt.get("s3_inventory_sha256") != _canonical_sha(receipt["s3_inventory"])
+        or {item["path"] for item in local}
+        != {
+            str(item.get("path") or "")
+            for item in receipt["s3_inventory"]
+            if isinstance(item, dict)
+        }
+    ):
+        raise NcoreQualificationAuditError(
+            "complete qualification readback binding differs"
+        )
+    return {
+        "receipt_sha256": _sha(receipt_path),
+        "object_count": len(local),
+        "local_inventory_sha256": _canonical_sha(local),
+        "s3_inventory_sha256": receipt["s3_inventory_sha256"],
+    }
+
+
 def _usdz(path: Path) -> dict[str, Any]:
     try:
         from pxr import Usd
@@ -88,6 +235,8 @@ def _usdz(path: Path) -> dict[str, Any]:
             "USD runtime is required for qualification audit"
         ) from exc
     try:
+        if tuple(Usd.GetVersion()) != USD_RUNTIME_VERSION:
+            raise ValueError("USD runtime version differs")
         with zipfile.ZipFile(path) as package:
             members = package.infolist()
             if (
@@ -106,7 +255,12 @@ def _usdz(path: Path) -> dict[str, Any]:
             raise ValueError("USDZ stage has no scene prims")
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         raise NcoreQualificationAuditError("trained USDZ did not reopen") from exc
-    return {"sha256": _sha(path), "bytes": path.stat().st_size, "reopened": True}
+    return {
+        "sha256": _sha(path),
+        "bytes": path.stat().st_size,
+        "reopened": True,
+        "usd_runtime_version": ".".join(map(str, USD_RUNTIME_VERSION[1:])),
+    }
 
 
 def _rrd_document(chunks: list[Any], entity: str) -> dict[str, Any]:
@@ -267,13 +421,16 @@ def audit_qualification(
     recording_id: str,
     expected_image: str,
     expected_source_sha256: str,
+    readback_receipt_path: Path,
     output_path: Path,
 ) -> dict[str, Any]:
     """Validate downloaded workload bytes and emit one immutable objective receipt."""
     root = root.absolute()
+    readback = _complete_readback(root, readback_receipt_path)
     conversion_path = root / "ncore/sequence/conversion.json"
     audit_path = root / "evidence/ncore-conversion-audit.json"
     runtime_path = root / "evidence/nre-runtime.json"
+    workflow_status_path = root / "evidence/workflow-status.json"
     reconstruction_path = root / "reconstruction/reconstruction.json"
     render_path = root / "novel_views/nre-render.json"
     conversion = _json(conversion_path)
@@ -295,6 +452,11 @@ def audit_qualification(
         expected_image=expected_image,
         required_stages=("reconstruct", "render"),
     )
+    workflow_status = _final_workflow_status(
+        workflow_status_path,
+        recording_id=recording_id,
+        runtime=runtime,
+    )
     if (
         reconstruction.get("format") != RECONSTRUCTION_RECEIPT_FORMAT
         or reconstruction.get("status") != "pass"
@@ -306,15 +468,111 @@ def audit_qualification(
         or render.get("nre_image") != expected_image
     ):
         raise NcoreQualificationAuditError("native NRE receipts differ")
+    sequence_path = root / "ncore/sequence/sequence.json"
+    try:
+        sequence, sequence_sha256 = _sequence_inventory(sequence_path)
+    except NurecEvidenceError as exc:
+        raise NcoreQualificationAuditError(
+            "final NCore sequence did not reopen"
+        ) from exc
+    reconstruction_input = reconstruction.get("input")
+    report_members = conversion.get("members")
+    if (
+        not isinstance(reconstruction_input, dict)
+        or reconstruction_input.get("sequence_members") != sequence
+        or reconstruction_input.get("sequence_inventory_sha256") != sequence_sha256
+        or not isinstance(report_members, list)
+        or audit.get("conversion", {}).get("inventory_sha256")
+        != _canonical_sha(report_members)
+    ):
+        raise NcoreQualificationAuditError(
+            "final NCore sequence differs from the audited conversion"
+        )
+    sequence_records = {item["path"]: item for item in sequence}
+    if any(
+        not isinstance(member, dict)
+        or sequence_records.get(str(member.get("path") or "")) != member
+        for member in report_members
+    ):
+        raise NcoreQualificationAuditError(
+            "converted member bytes differ from the producer inventory"
+        )
+    audit_readback = audit.get("s3_readback")
+    audit_objects = (
+        audit_readback.get("objects") if isinstance(audit_readback, dict) else None
+    )
+    expected_conversion_objects = {
+        "conversion.json",
+        ".npa-colmap-claim.json",
+        *(str(member.get("path") or "") for member in report_members),
+    }
+    if (
+        not isinstance(audit_objects, list)
+        or not all(isinstance(item, dict) for item in audit_objects)
+        or audit_readback.get("stable_listing") is not True
+        or audit_readback.get("object_count") != len(audit_objects)
+        or audit_readback.get("objects_sha256") != _canonical_sha(audit_objects)
+        or {
+            str(item.get("path") or "")
+            for item in audit_objects
+            if isinstance(item, dict)
+        }
+        != expected_conversion_objects
+    ):
+        raise NcoreQualificationAuditError(
+            "conversion audit does not bind the complete object inventory"
+        )
+    for item in audit_objects:
+        relative = str(item.get("path") or "")
+        candidate = root / "ncore/sequence" / relative
+        if (
+            not candidate.is_file()
+            or candidate.is_symlink()
+            or item.get("bytes") != candidate.stat().st_size
+            or not isinstance(item.get("etag"), str)
+            or not item["etag"]
+        ):
+            raise NcoreQualificationAuditError(
+                "conversion readback inventory differs from final bytes"
+            )
+    parsed_path = root / "reconstruction/parsed.yaml"
+    metrics_path = root / "reconstruction/metrics.yaml"
     usdz_path = root / "reconstruction/last.usdz"
     usdz = _usdz(usdz_path)
+    recipe = reconstruction.get("recipe")
+    try:
+        parsed = _yaml_mapping(parsed_path)
+    except NurecEvidenceError as exc:
+        raise NcoreQualificationAuditError("native NRE recipe is invalid") from exc
+    resolved_epochs = _nested_value(parsed, ("trainer", "max_epochs"))
+    resolved_samples = _nested_value(
+        parsed,
+        ("dataset", "samples_per_epoch"),
+        ("data", "samples_per_epoch"),
+    )
     if (
         reconstruction.get("outputs", {}).get("usdz", {}).get("sha256")
         != usdz["sha256"]
+        or not _record_matches(
+            parsed_path, reconstruction.get("outputs", {}).get("parsed_config")
+        )
+        or not _record_matches(
+            metrics_path, reconstruction.get("outputs", {}).get("metrics")
+        )
         or render.get("input_usdz", {}).get("sha256") != usdz["sha256"]
+        or not isinstance(recipe, dict)
+        or recipe.get("name") != NATIVE_RECIPE
+        or recipe.get("mode") != "trainval"
+        or recipe.get("max_epochs_argument") != 0
+        or recipe.get("resolved_epochs") != 1
+        or recipe.get("resolved_samples_per_epoch") != 30000
+        or resolved_epochs != 1
+        or resolved_samples != 30000
     ):
-        raise NcoreQualificationAuditError("trained/rendered USDZ identity differs")
-    metrics = parse_metrics_yaml(root / "reconstruction/metrics.yaml")
+        raise NcoreQualificationAuditError(
+            "native recipe or trained output identity differs"
+        )
+    metrics = parse_metrics_yaml(metrics_path)
     selected_metrics = {
         name: metrics.get(name) for name in ("test/psnr", "test/ssim", "test/lpips")
     }
@@ -325,9 +583,12 @@ def audit_qualification(
             and math.isfinite(float(value))
             for value in selected_metrics.values()
         )
-        or float(selected_metrics["test/psnr"]) <= 0
-        or not 0 < float(selected_metrics["test/ssim"]) <= 1
+        or float(selected_metrics["test/psnr"]) < MIN_PSNR
+        or float(selected_metrics["test/ssim"]) < MIN_SSIM
+        or float(selected_metrics["test/ssim"]) > 1
         or float(selected_metrics["test/lpips"]) < 0
+        or float(selected_metrics["test/lpips"]) > MAX_LPIPS
+        or reconstruction.get("observed_metrics") != selected_metrics
     ):
         raise NcoreQualificationAuditError("NRE objective metrics differ")
     image_paths = sorted(
@@ -348,8 +609,16 @@ def audit_qualification(
         [*images, *videos], key=lambda item: (item["path"], item["sha256"])
     )
     output = render.get("output")
+    invocation = render.get("invocation")
     if (
-        not isinstance(output, dict)
+        not isinstance(invocation, dict)
+        or invocation.get("render_exit_code") != 0
+        or invocation.get("novel_view") is not True
+        or not (
+            _nonzero_offset(invocation.get("rig_translation_offset"))
+            or _nonzero_offset(invocation.get("rig_rotation_offset"))
+        )
+        or not isinstance(output, dict)
         or len(images) != output.get("frame_count")
         or len(videos) != output.get("video_count")
         or not videos
@@ -362,14 +631,20 @@ def audit_qualification(
         or output.get("inventory_sha256") != _canonical_sha(inventory)
     ):
         raise NcoreQualificationAuditError("rendered media receipt differs")
+    final_path = root / "reports/final.json"
+    final = _json(final_path)
+    if final != {"has_usdz": True, "has_novel_views": True, "has_rrd": True}:
+        raise NcoreQualificationAuditError("terminal qualification report differs")
     rrd = _rrd(root, recording_id)
     receipt = {
         "format": AUDIT_FORMAT_VERSION,
         "status": "pass",
         "source_archive_sha256": expected_source_sha256,
+        "complete_readback": readback,
         "conversion_report_sha256": _sha(conversion_path),
         "conversion_audit_sha256": _sha(audit_path),
         "runtime_attestation_sha256": _sha(runtime_path),
+        "workflow_status": workflow_status,
         "reconstruction_receipt_sha256": _sha(reconstruction_path),
         "render_receipt_sha256": _sha(render_path),
         "nre_image": expected_image,
@@ -377,6 +652,19 @@ def audit_qualification(
         "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
         "gpu_count": 1,
         "usdz": usdz,
+        "recipe": {
+            "name": NATIVE_RECIPE,
+            "mode": "trainval",
+            "max_epochs_argument": 0,
+            "resolved_epochs": 1,
+            "resolved_samples_per_epoch": 30000,
+        },
+        "sequence_inventory_sha256": sequence_sha256,
+        "objective_thresholds": {
+            "minimum_psnr": MIN_PSNR,
+            "minimum_ssim": MIN_SSIM,
+            "maximum_lpips": MAX_LPIPS,
+        },
         "metrics": selected_metrics,
         "render": {
             "frame_count": len(images),
@@ -384,8 +672,11 @@ def audit_qualification(
             "decoded_video_frames": sum(item["decoded_frames"] for item in videos),
             "inventory_sha256": output.get("inventory_sha256"),
             "finite_pixels": True,
-            "novel_view": render.get("invocation", {}).get("novel_view") is True,
+            "novel_view": True,
+            "rig_translation_offset": invocation["rig_translation_offset"],
+            "rig_rotation_offset": invocation["rig_rotation_offset"],
         },
+        "final_report_sha256": _sha(final_path),
         "rrd": rrd,
     }
     _write_private(output_path, receipt)

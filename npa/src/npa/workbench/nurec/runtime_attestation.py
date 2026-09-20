@@ -115,17 +115,19 @@ def _gpu_name(node: dict[str, Any]) -> str:
     labels = node.get("metadata", {}).get("labels", {})
     if not isinstance(labels, dict):
         raise NurecRuntimeAttestationError("node GPU labels are missing")
-    candidates = [
-        labels.get("nvidia.com/gpu.product"),
-        labels.get("skypilot.co/accelerator"),
-    ]
-    normalized = {
-        re.sub(r"[^A-Z0-9]", "", str(value).upper()) for value in candidates if value
-    }
-    if normalized.isdisjoint(_GPU_LABELS):
+    product = labels.get("nvidia.com/gpu.product")
+    normalized_product = re.sub(r"[^A-Z0-9]", "", str(product or "").upper())
+    if normalized_product not in _GPU_LABELS:
         raise NurecRuntimeAttestationError(
             "node does not advertise the exact RTX PRO 6000 Blackwell Server Edition GPU"
         )
+    accelerator = labels.get("skypilot.co/accelerator")
+    if accelerator:
+        normalized_accelerator = re.sub(r"[^A-Z0-9]", "", str(accelerator).upper())
+        if normalized_accelerator not in _GPU_LABELS:
+            raise NurecRuntimeAttestationError(
+                "node GPU labels advertise conflicting products"
+            )
     return GPU_NAME
 
 
@@ -202,6 +204,27 @@ def _workflow_status_binding(
     if len(matches) != 1:
         raise NurecRuntimeAttestationError(
             "workflow status does not bind the exact stage managed job"
+        )
+    selected = matches[0]
+    if selected.get("state") not in {"RUNNING", "SUCCEEDED"}:
+        raise NurecRuntimeAttestationError(
+            "workflow status stage is not running or successful"
+        )
+    attempts = selected.get("managed_job_attempts")
+    if not isinstance(attempts, list):
+        raise NurecRuntimeAttestationError(
+            "workflow status stage attempt evidence is missing"
+        )
+    exact_attempts = [
+        attempt
+        for attempt in attempts
+        if isinstance(attempt, dict)
+        and str(attempt.get("job_id") or "") == managed_job_id
+        and attempt.get("job_name") == managed_job_name
+    ]
+    if len(exact_attempts) != 1:
+        raise NurecRuntimeAttestationError(
+            "workflow status does not contain one exact selected attempt"
         )
     return hashlib.sha256(raw).hexdigest()
 

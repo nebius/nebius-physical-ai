@@ -160,7 +160,9 @@ def _active_job_pods(
     return active
 
 
-def _workflow_jobs(path: Path, run_id: str) -> tuple[list[tuple[str, str]], str]:
+def _workflow_jobs(
+    path: Path, run_id: str
+) -> tuple[list[tuple[str, str]], str, tuple[str, ...]]:
     if (
         path.is_symlink()
         or not path.is_file()
@@ -194,6 +196,7 @@ def _workflow_jobs(path: Path, run_id: str) -> tuple[list[tuple[str, str]], str]
             "workflow status does not contain the complete qualification graph"
         )
     jobs: dict[str, str] = {}
+    unlaunched: list[str] = []
     for stage in stages.values():
         if not isinstance(stage, dict) or stage.get("job_attribution") == "ambiguous":
             raise NcoreQualificationCleanupError(
@@ -228,14 +231,22 @@ def _workflow_jobs(path: Path, run_id: str) -> tuple[list[tuple[str, str]], str]
                 )
             jobs[job_id] = job_name
         if len(jobs) == before_count:
-            raise NcoreQualificationCleanupError(
-                "workflow status stage has no exact managed job"
-            )
+            state = str(stage.get("state") or "").upper()
+            stage_name = str(stage.get("workflow_state") or "")
+            if state not in {"PENDING", "BLOCKED", "CANCELLED", "SKIPPED"} or str(
+                stage.get("managed_job_id") or ""
+            ):
+                raise NcoreQualificationCleanupError(
+                    "launched workflow stage has no exact managed job"
+                )
+            unlaunched.append(stage_name)
     if not jobs:
         raise NcoreQualificationCleanupError("workflow status contains no managed jobs")
-    return sorted(jobs.items(), key=lambda item: int(item[0])), hashlib.sha256(
-        raw
-    ).hexdigest()
+    return (
+        sorted(jobs.items(), key=lambda item: int(item[0])),
+        hashlib.sha256(raw).hexdigest(),
+        tuple(sorted(unlaunched)),
+    )
 
 
 def cleanup_qualification(
@@ -264,7 +275,9 @@ def cleanup_qualification(
     from npa.orchestration.skypilot.cleanup import cleanup_launched_workflows
 
     run_id = _safe(run_id, "run ID")
-    jobs, workflow_status_sha256 = _workflow_jobs(workflow_status_path, run_id)
+    jobs, workflow_status_sha256, unlaunched_states = _workflow_jobs(
+        workflow_status_path, run_id
+    )
     context = _safe(context, "context")
     namespace = _safe(namespace, "namespace")
     builder = _safe(builder, "builder")
@@ -352,6 +365,7 @@ def cleanup_qualification(
         "run_id_sha256": hashlib.sha256(run_id.encode()).hexdigest(),
         "workflow_status_sha256": workflow_status_sha256,
         "managed_jobs": len(jobs),
+        "proven_unlaunched_states": list(unlaunched_states),
         "managed_job_identities_sha256": _sha(jobs),
         "jobs_terminal_or_absent": True,
         "cancel_before_destroy": True,

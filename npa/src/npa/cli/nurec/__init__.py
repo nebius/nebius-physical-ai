@@ -475,6 +475,39 @@ def control_source_cmd(
     _finish_nurec_result(result, output_format)
 
 
+@app.command("acquire-source")
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def acquire_source_cmd(
+    output_path: Path = typer.Option(
+        ..., "--output-path", help="New private local source ZIP path."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private source-acquisition receipt."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Anonymously download and hash-bind the immutable public source ZIP."""
+    from npa.workbench.nurec.source_acquisition import (
+        NcoreSourceAcquisitionError,
+        acquire_public_source,
+    )
+
+    try:
+        evidence = acquire_public_source(output_path, receipt_path)
+        result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}
+    except NcoreSourceAcquisitionError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private source acquisition evidence could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
 @app.command("stage-source")
 @intent_boundary(OperationIntent.MUTATE)
 @json_stdout_contract
@@ -686,6 +719,90 @@ def bundle_runtime_cmd(
     _finish_nurec_result(result, output_format)
 
 
+@app.command("publish-evidence")
+@intent_boundary(OperationIntent.MUTATE)
+@json_stdout_contract
+def publish_evidence_cmd(
+    source_path: Path = typer.Option(
+        ..., "--source-path", help="Private local evidence JSON."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="Fresh exact run-owned S3 object."
+    ),
+    kind: str = typer.Option(
+        ...,
+        "--kind",
+        help="Evidence kind: runtime-attestation or workflow-status.",
+    ),
+    run_id: str = typer.Option(..., "--run-id", help="Exact parent workflow run ID."),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private handoff receipt."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Conditionally publish and independently read back one evidence object."""
+    from npa.workbench.nurec.evidence_handoff import (
+        NcoreEvidenceHandoffError,
+        publish_qualification_evidence,
+    )
+
+    try:
+        evidence = publish_qualification_evidence(
+            source_path,
+            output_path,
+            kind=kind,
+            run_id=run_id,
+            receipt_path=receipt_path,
+        )
+        result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}
+    except NcoreEvidenceHandoffError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private evidence handoff receipt could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
+@app.command("readback-qualification")
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def readback_qualification_cmd(
+    prefix: str = typer.Option(
+        ..., "--prefix", help="Exact run-owned S3 qualification prefix."
+    ),
+    destination: Path = typer.Option(
+        ..., "--destination", help="New private local read-back directory."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private complete-readback receipt."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Download and byte-bind one stable complete qualification prefix."""
+    from npa.workbench.nurec.qualification_readback import (
+        NcoreQualificationReadbackError,
+        readback_qualification,
+    )
+
+    try:
+        evidence = readback_qualification(prefix, destination, receipt_path)
+        result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}
+    except NcoreQualificationReadbackError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private qualification readback evidence could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
 @app.command("audit-qualification")
 @intent_boundary(OperationIntent.OBSERVE)
 @json_stdout_contract
@@ -701,6 +818,11 @@ def audit_qualification_cmd(
     ),
     expected_source_sha256: str = typer.Option(
         ..., "--expected-source-sha256", help="Expected pinned source ZIP SHA-256."
+    ),
+    readback_receipt: Path = typer.Option(
+        ...,
+        "--readback-receipt",
+        help="Private complete-prefix readback receipt for this exact root.",
     ),
     receipt_path: Path = typer.Option(
         ..., "--receipt-path", help="Fresh private objective audit receipt."
@@ -721,6 +843,7 @@ def audit_qualification_cmd(
             recording_id=recording_id,
             expected_image=expected_image,
             expected_source_sha256=expected_source_sha256,
+            readback_receipt_path=readback_receipt,
             output_path=receipt_path,
         )
         result = {**evidence, "evidence_status": evidence["status"], "status": "ok"}

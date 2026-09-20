@@ -178,78 +178,82 @@ enumerates the exact object, deletes it, and proves absence. Its private receipt
 contains only hashes, counts, and dispositions:
 
 ```bash
+npa workbench nurec acquire-source \
+  --output-path '<private-analysis>/qualification/struktur28_colmap.zip' \
+  --receipt-path '<private-analysis>/qualification/source-acquisition.json' \
+  --output-format json
+
 npa workbench nurec probe-storage \
   --prefix 's3://<bucket>/<fresh-run-prefix>/' \
-  --receipt-path '<private-evidence>/s3-handoff-probe.json' \
+  --receipt-path '<private-analysis>/qualification/s3-handoff-probe.json' \
   --output-format json
 
 npa workbench nurec stage-source \
-  --source-path '<private>/struktur28_colmap.zip' \
+  --source-path '<private-analysis>/qualification/struktur28_colmap.zip' \
   --output-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
   --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
-  --receipt-path '<private-evidence>/source-staging.json' --output-format json
-
-# Run before the positive conversion; the dedicated prefix must stay empty.
-npa workbench nurec control-source \
-  --input-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
-  --output-path 's3://<bucket>/<run>/controls/wrong-source/' \
-  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
-  --receipt-path '<private-evidence>/wrong-source.json' --output-format json
+  --receipt-path '<private-analysis>/qualification/source-staging.json' \
+  --scratch-dir '<private-analysis>/qualification/staging-readback' \
+  --output-format json
 ```
 
-Pre-publication qualification does not push the candidate converter merely to
-make it reachable from Kubernetes. Load the checked OCI archive into one
-controlled local daemon, verify `local-image-binding.json`, and run its immutable
-local image ID with pulling disabled:
+`acquire-source` is anonymous, refuses replacement, verifies the immutable
+archive hash, and writes an owner-only receipt. Pre-publication qualification
+does not push the candidate converter merely to make it reachable from
+Kubernetes. After the committed OCI build and check phases have loaded and
+verified the local export, use the committed runner. It recomputes the
+OCI-to-local-image relation, creates three separately inspected containers with
+`--pull=never`, runs the wrong-source control before conversion, then runs the
+positive conversion and independent conversion audit:
 
 ```bash
-docker run --rm --pull=never --env-file '<private-s3-env>' \
-  '<immutable-local-image-id>' \
-  npa workbench nurec convert-colmap \
+npa/.venv/bin/python npa/scripts/run_ncore_qualification.py \
+  --source-sha '<reviewed-40-character-commit>' \
+  --analysis-root '<private-analysis>' \
+  --gate-dir '<private-analysis>/gates' \
+  --evidence-dir '<private-analysis>/qualification' \
+  --cache-dir '<private-analysis>/qualification/cache' \
+  --s3-env-file '<owner-only-S3-env-file>' \
+  --run-id '<run-id>' \
   --input-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
-  --output-path 's3://<bucket>/<run>/ncore/sequence/' \
-  --expected-archive-sha256 \
-  cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
-  --dataset-root struktur28 --output-format json
+  --control-output-path 's3://<bucket>/<run>/controls/wrong-source/' \
+  --conversion-path 's3://<bucket>/<run>/ncore/sequence/' \
+  --audit-output-path 's3://<bucket>/<run>/evidence/ncore-conversion-audit.json' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d
 ```
 
 After the independent conversion audit, submit
 `workflows/testing/nurec-reconstruct-render.yaml`. This downstream-only spec
 pulls the separately licensed, digest-pinned NRE image and never needs the
 candidate image in a registry. While each GPU-stage pod remains observable,
-capture its exact control-plane identity and bind both receipts:
+run the committed observer concurrently with submit. It reads only live,
+non-cached workflow status, captures each stage while `RUNNING`, binds the exact
+managed-job name and ID to the pod, and retains terminal status:
 
 ```bash
-npa workbench nurec observe-runtime --stage reconstruct \
-  --managed-job-name '<exact-stage-job-name>' --managed-job-id '<stage-job-id>' \
-  --workflow-run-id '<run-id>' --workflow-status '<private>/reconstruct-status.json' \
+npa/.venv/bin/python npa/scripts/observe_ncore_workflow.py \
+  --source-sha '<reviewed-40-character-commit>' \
+  --run-id '<run-id>' --workflow-s3-uri 's3://<bucket>/<workflow-state-prefix>' \
+  --project '<project-alias>' --sky-bin '<pinned-sky-executable>' \
   --context '<exact-context>' --namespace '<namespace>' \
   --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
-  --receipt-path '<private-evidence>/reconstruct-runtime.json' --output-format json
-npa workbench nurec observe-runtime --stage render \
-  --managed-job-name '<exact-stage-job-name>' --managed-job-id '<stage-job-id>' \
-  --workflow-run-id '<run-id>' --workflow-status '<private>/render-status.json' \
-  --context '<exact-context>' --namespace '<namespace>' \
-  --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
-  --receipt-path '<private-evidence>/render-runtime.json' --output-format json
-npa workbench nurec bundle-runtime \
-  --reconstruct-receipt '<private-evidence>/reconstruct-runtime.json' \
-  --render-receipt '<private-evidence>/render-runtime.json' \
-  --receipt-path '<private-evidence>/nre-runtime.json' --output-format json
+  --evidence-dir '<private-analysis>/qualification' --poll-seconds 5
 ```
 
-Start both observers immediately after submit; they discover only pods whose
-SkyPilot job annotations match the exact stage job name and ID that the supplied
-fresh workflow-status JSON attributes to that workflow state. The bundle binds
-one parent workflow run and rejects reused job, pod, or task identities.
+The observer discovers only pods whose SkyPilot job annotations match the exact
+stage job name and ID in the fresh workflow-status JSON. The bundle binds one
+parent workflow run and rejects reused job, pod, or task identities.
 
 Visual review uses the committed one-shot harness only after objective workload
 checks pass. `freeze` deterministically selects two source-camera positives,
-builds uniform and fixed 32-pixel block-rotation negatives, and selects four
-novel-view frames by index from one explicitly selected camera trajectory.
-Independently review its owner-only label commitment
-before `calibrate`; run `final` once only when calibration has TP=2, TN=2,
-FP=0, and FN=0:
+builds one fixed 32-pixel block-rotation control and one local seam/floater
+control from real rendered frames, and selects four novel-view frames by index
+from one explicitly selected camera trajectory. An independent reviewer must
+open all controls and final frames, review the prompts, and emit the exact
+owner-only freeze-review receipt before `accept-freeze`. Every hosted call then
+conditionally creates and reads back a separate marker under an external S3
+attempt prefix. Run `final` once only when calibration has TP=2, TN=2, FP=0,
+and FN=0:
 
 ```bash
 npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py freeze \
@@ -260,24 +264,42 @@ npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py freeze \
   --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
   --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt \
   --final-task npa/scripts/ncore_publication/vlm-final-task-v2.txt \
-  --output-root '<fresh-private-evidence>/vlm'
-# Record the emitted freeze SHA-256 after independent label/control review.
+  --output-root '<private-analysis>/qualification/vlm'
+
+# The independent reviewer creates freeze-review.json with the committed
+# npa_ncore_vlm_freeze_review_v1 schema. Retain the exact external prefix in
+# owner-only external-attempt-prefix.txt for acceptance re-verification.
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py accept-freeze \
+  --evidence-root '<private-analysis>/qualification/vlm' \
+  --freeze-sha256 '<freeze-sha256>' \
+  --review-path '<private-analysis>/qualification/vlm/freeze-review.json' \
+  --external-attempt-prefix 's3://<bucket>/<run>/vlm-attempts/'
+
 npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py calibrate \
-  --evidence-root '<fresh-private-evidence>/vlm' --freeze-sha256 '<sha256>' \
+  --evidence-root '<private-analysis>/qualification/vlm' \
+  --freeze-sha256 '<freeze-sha256>' \
+  --freeze-acceptance-sha256 '<freeze-acceptance-sha256>' \
+  --external-attempt-prefix 's3://<bucket>/<run>/vlm-attempts/' \
   --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
   --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt
 npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py final \
-  --evidence-root '<fresh-private-evidence>/vlm' --freeze-sha256 '<sha256>' \
-  --calibration-sha256 '<sha256>' \
+  --evidence-root '<private-analysis>/qualification/vlm' \
+  --freeze-sha256 '<freeze-sha256>' \
+  --freeze-acceptance-sha256 '<freeze-acceptance-sha256>' \
+  --external-attempt-prefix 's3://<bucket>/<run>/vlm-attempts/' \
+  --calibration-sha256 '<calibration-sha256>' \
   --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
+  --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt \
   --final-task npa/scripts/ncore_publication/vlm-final-task-v2.txt
 ```
 
 The harness makes no retries, requires exact served-model identity, writes an
-immutable attempt marker before every call, and retains request/response bytes,
-prompt/frame hashes, HTTP status/body on failures, finish/usage metadata, and a
-transport manifest. Final execution re-derives the complete attempt set and
-rejects a calibration from any other freeze.
+immutable external attempt marker before every call, and retains request/response
+bytes, prompt/frame hashes, HTTP status/body on failures, provider request ID,
+timing, finish/usage metadata, and a transport manifest. Final execution
+rebuilds each request and re-derives each score/rationale from raw response
+bytes, requires the complete attempt set, and rejects a calibration from any
+other freeze.
 
 The converter image fetches its immutable, hash-locked Python dependencies on
 first use. Downloads require no artificial credential gate. A writable cache
@@ -300,21 +322,48 @@ npa workbench nurec audit-colmap \
   --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
   --dataset-root struktur28 --rig-mode derive --output-format json
 
+# After terminal success, conditionally add the host-observed control-plane
+# evidence to this run's retained prefix before taking one complete read-back.
+npa workbench nurec publish-evidence \
+  --source-path '<private-analysis>/qualification/nre-runtime.json' \
+  --output-path 's3://<bucket>/<run>/evidence/nre-runtime.json' \
+  --kind runtime-attestation --run-id '<run-id>' \
+  --receipt-path '<private-analysis>/qualification/runtime-handoff.json' \
+  --output-format json
+npa workbench nurec publish-evidence \
+  --source-path '<private-analysis>/qualification/workflow-status.json' \
+  --output-path 's3://<bucket>/<run>/evidence/workflow-status.json' \
+  --kind workflow-status --run-id '<run-id>' \
+  --receipt-path '<private-analysis>/qualification/status-handoff.json' \
+  --output-format json
+npa workbench nurec readback-qualification \
+  --prefix 's3://<bucket>/<run>/' \
+  --destination '<private-analysis>/qualification/readback' \
+  --receipt-path '<private-analysis>/qualification/qualification-readback.json' \
+  --output-format json
+
+# Install the pinned Apache-2.0 Pixar USD audit extra in this worktree's
+# private venv; audit-qualification reopens the post-readback USDZ with it.
+uv pip install --python npa/.venv/bin/python 'usd-core==25.11'
 npa workbench nurec audit-qualification \
-  --root '<private-complete-S3-readback>' --recording-id '<run-id>' \
+  --root '<private-analysis>/qualification/readback' --recording-id '<run-id>' \
   --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
   --expected-source-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
-  --receipt-path '<private-evidence>/qualification-audit.json' --output-format json
+  --readback-receipt '<private-analysis>/qualification/qualification-readback.json' \
+  --receipt-path '<private-analysis>/qualification/qualification-audit.json' \
+  --output-format json
 
 npa workbench nurec cleanup-qualification \
-  --run-id '<run-id>' --workflow-status '<private>/final-workflow-status.json' \
+  --run-id '<run-id>' \
+  --workflow-status '<private-analysis>/qualification/workflow-status.json' \
   --context '<exact-context>' --namespace '<namespace>' \
   --storage-prefix 's3://<bucket>/<run>/' \
   --local-image '<exact-local-candidate-ref>' --builder '<run-owned-builder>' \
   --build-receipt '<private-analysis>/build/build.json' \
   --source-sha '<reviewed-40-character-commit>' \
   --isolated-config-dir '<private-sky-state>' \
-  --receipt-path '<private-evidence>/cleanup.json' --output-format json
+  --receipt-path '<private-analysis>/qualification/cleanup.json' \
+  --output-format json
 ```
 
 Cleanup enumerates every exact managed-job attempt in the complete four-state
@@ -322,6 +371,30 @@ workflow status, asks for each cancellation, waits for terminal or absent state,
 and only then downs run compute. It retains the shared controller and declared
 evidence prefix, removes the loaded candidate and run-owned builder, and fails
 if any exact-job pod remains active.
+
+Finally, fill the proposed manifest only from the retained receipts, then use
+the committed acceptance assembler. `statement` validates the gate and
+workload receipts, re-verifies every raw VLM response, and inventories every
+bound evidence file. A different reviewer must create
+`acceptance/review.json` for that exact statement before `finalize` emits the
+only manifest the publication command will consume:
+
+```bash
+npa/.venv/bin/python npa/scripts/assemble_ncore_acceptance.py statement \
+  --analysis-root '<private-analysis>' --gate-dir '<private-analysis>/gates' \
+  --evidence-root '<private-analysis>/qualification' \
+  --proposed-manifest '<private-analysis>/qualification/proposed-manifest.json' \
+  --output '<private-analysis>/acceptance/statement.json'
+npa/.venv/bin/python npa/scripts/assemble_ncore_acceptance.py finalize \
+  --analysis-root '<private-analysis>' \
+  --statement '<private-analysis>/acceptance/statement.json' \
+  --review '<private-analysis>/acceptance/review.json' \
+  --output '<private-analysis>/acceptance/accepted-manifest.json'
+```
+
+The publisher rehashes the statement, independent review, and complete bound
+evidence inventory immediately before any registry write; it rejects an
+arbitrary standalone accepted-manifest JSON.
 
 `--input-path` also accepts an S3 dataset prefix. `--cache-dir` and
 `--scratch-dir` select private local staging parents, defaulting to

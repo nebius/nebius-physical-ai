@@ -452,6 +452,24 @@ def _write_synthetic_nurec_lineage(root, helpers):
     )
     _write_proof_document(
         root,
+        "ncore/sequence/.npa-colmap-claim.json",
+        {"format": "synthetic-claim", "status": "complete"},
+    )
+    conversion_path = root / "ncore/sequence/conversion.json"
+    conversion = json.loads(conversion_path.read_text())
+    conversion["members"] = [
+        {
+            "path": name,
+            "bytes": (root / "ncore/sequence" / name).stat().st_size,
+            "sha256": hashlib.sha256(
+                (root / "ncore/sequence" / name).read_bytes()
+            ).hexdigest(),
+        }
+        for name in ("sequence.json", "capture.zarr.itar", "npa-rig.json")
+    ]
+    conversion_path.write_text(json.dumps(conversion))
+    _write_proof_document(
+        root,
         "reports/final.json",
         {
             "has_usdz": True,
@@ -523,7 +541,13 @@ def _write_native_receipts(root):
     )
     gpu = ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]
     stages = {}
+    jobs = {
+        "reconstruct": ("private-run-01-reconstruct", "41"),
+        "render": ("private-run-02-render", "42"),
+    }
+    run_id = root.name
     for index, stage in enumerate(("reconstruct", "render"), start=1):
+        job_name, job_id = jobs[stage]
         stages[stage] = {
             "format": "npa_nurec_kubernetes_runtime_stage_v3",
             "status": "pass",
@@ -535,9 +559,9 @@ def _write_native_receipts(root):
             "gpu_count": 1,
             "resource_identity_sha256": f"{index}" * 64,
             "pod_identity_sha256": f"{index + 2}" * 64,
-            "managed_job_name_sha256": f"{index + 4}" * 64,
-            "managed_job_id_sha256": f"{index + 6}" * 64,
-            "workflow_run_id_sha256": "b" * 64,
+            "managed_job_name_sha256": hashlib.sha256(job_name.encode()).hexdigest(),
+            "managed_job_id_sha256": hashlib.sha256(job_id.encode()).hexdigest(),
+            "workflow_run_id_sha256": hashlib.sha256(run_id.encode()).hexdigest(),
             "workflow_status_sha256": f"{index + 9:x}" * 64,
             "task_cluster_sha256": f"{index + 6}" * 64,
             "context_sha256": "9" * 64,
@@ -557,10 +581,62 @@ def _write_native_receipts(root):
             "observed_image_digest": image.split("@", 1)[1],
             "gpu_names": gpu,
             "gpu_count": 1,
-            "workflow_run_id_sha256": "b" * 64,
+            "workflow_run_id_sha256": hashlib.sha256(run_id.encode()).hexdigest(),
             "context_sha256": "9" * 64,
             "namespace_sha256": "a" * 64,
             "stages": stages,
+        },
+    )
+    _write_proof_document(
+        root,
+        "evidence/workflow-status.json",
+        {
+            "run_id": run_id,
+            "status": "SUCCEEDED",
+            "stages": {
+                stage: {
+                    "state": "SUCCEEDED",
+                    "workflow_state": stage,
+                    "managed_job_id": (
+                        jobs.get(
+                            stage, (f"private-run-{index:02}-{stage}", str(40 + index))
+                        )[1]
+                    ),
+                    "job_name": (
+                        jobs.get(
+                            stage, (f"private-run-{index:02}-{stage}", str(40 + index))
+                        )[0]
+                    ),
+                    "job_attribution": "runtime_wave",
+                    "managed_job_attempts": [
+                        {
+                            "attempt": 1,
+                            "job_id": (
+                                jobs.get(
+                                    stage,
+                                    (
+                                        f"private-run-{index:02}-{stage}",
+                                        str(40 + index),
+                                    ),
+                                )[1]
+                            ),
+                            "job_name": (
+                                jobs.get(
+                                    stage,
+                                    (
+                                        f"private-run-{index:02}-{stage}",
+                                        str(40 + index),
+                                    ),
+                                )[0]
+                            ),
+                            "state": "SUCCEEDED",
+                        }
+                    ],
+                }
+                for index, stage in enumerate(
+                    ("reconstruct", "render", "visualize", "finalize"), start=1
+                )
+            },
         },
     )
     metrics = root / "reconstruction/metrics.yaml"
@@ -602,6 +678,84 @@ def _write_proof_rrd(root):
     )
 
 
+def _write_conversion_audit(root, helpers):
+    conversion = root / "ncore/sequence/conversion.json"
+    report = json.loads(conversion.read_text())
+    object_names = {
+        "conversion.json",
+        ".npa-colmap-claim.json",
+        *(member["path"] for member in report["members"]),
+    }
+    objects = [
+        {
+            "path": name,
+            "bytes": (root / "ncore/sequence" / name).stat().st_size,
+            "etag": f"etag-{index}",
+        }
+        for index, name in enumerate(sorted(object_names), start=1)
+    ]
+    _write_proof_document(
+        root,
+        "evidence/ncore-conversion-audit.json",
+        {
+            "format": "npa_ncore_colmap_conversion_audit_v1",
+            "status": "pass",
+            "source": {"archive_sha256": helpers.NUREC_COLMAP_SHA256},
+            "conversion": {
+                "report_sha256": hashlib.sha256(conversion.read_bytes()).hexdigest(),
+                "inventory_sha256": hashlib.sha256(
+                    json.dumps(
+                        report["members"], sort_keys=True, separators=(",", ":")
+                    ).encode()
+                ).hexdigest(),
+            },
+            "s3_readback": {
+                "stable_listing": True,
+                "object_count": len(objects),
+                "objects_sha256": hashlib.sha256(
+                    json.dumps(objects, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "objects": objects,
+            },
+        },
+    )
+
+
+def _write_readback_receipt(root):
+    from npa.workbench.nurec.qualification_readback import (
+        READBACK_FORMAT,
+        local_inventory,
+    )
+
+    local = local_inventory(root)
+    s3 = [
+        {"path": item["path"], "bytes": item["bytes"], "etag": f"etag-{index}"}
+        for index, item in enumerate(local, start=1)
+    ]
+    path = root.parent / "qualification-readback.json"
+    path.write_text(
+        json.dumps(
+            {
+                "format": READBACK_FORMAT,
+                "status": "pass",
+                "prefix_sha256": "a" * 64,
+                "stable_listing": True,
+                "object_count": len(local),
+                "s3_inventory_sha256": hashlib.sha256(
+                    json.dumps(s3, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "s3_inventory": s3,
+                "local_inventory_sha256": hashlib.sha256(
+                    json.dumps(local, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "local_inventory": local,
+            }
+        )
+    )
+    path.chmod(0o600)
+    return path
+
+
 def test_actual_usdz_aggregated_metrics_media_and_rrd_pass(helpers, downstream_run):
     _write_synthetic_usdz(downstream_run / "reconstruction/last.usdz")
     _write_native_receipts(downstream_run)
@@ -614,27 +768,14 @@ def test_actual_usdz_aggregated_metrics_media_and_rrd_pass(helpers, downstream_r
 def test_production_qualification_audit_binds_complete_readback(
     helpers, downstream_run
 ):
-    import hashlib
-
     from npa.workbench.nurec.qualification_audit import audit_qualification
 
     _write_synthetic_usdz(downstream_run / "reconstruction/last.usdz")
     _write_native_receipts(downstream_run)
     _write_proof_rrd(downstream_run)
-    conversion = downstream_run / "ncore/sequence/conversion.json"
-    _write_proof_document(
-        downstream_run,
-        "evidence/ncore-conversion-audit.json",
-        {
-            "format": "npa_ncore_colmap_conversion_audit_v1",
-            "status": "pass",
-            "source": {"archive_sha256": helpers.NUREC_COLMAP_SHA256},
-            "conversion": {
-                "report_sha256": hashlib.sha256(conversion.read_bytes()).hexdigest()
-            },
-        },
-    )
-    receipt_path = downstream_run / "evidence/qualification.json"
+    _write_conversion_audit(downstream_run, helpers)
+    readback_receipt = _write_readback_receipt(downstream_run)
+    receipt_path = downstream_run.parent / "qualification.json"
 
     receipt = audit_qualification(
         downstream_run,
@@ -644,6 +785,7 @@ def test_production_qualification_audit_binds_complete_readback(
             "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
         ),
         expected_source_sha256=helpers.NUREC_COLMAP_SHA256,
+        readback_receipt_path=readback_receipt,
         output_path=receipt_path,
     )
 
@@ -651,7 +793,81 @@ def test_production_qualification_audit_binds_complete_readback(
     assert receipt["render"]["video_count"] == 1
     assert receipt["render"]["decoded_video_frames"] == 2
     assert receipt["rrd"]["lineage_verified"] is True
+    assert receipt["recipe"]["resolved_epochs"] == 1
+    assert receipt["recipe"]["resolved_samples_per_epoch"] == 30000
+    assert receipt["render"]["novel_view"] is True
+    assert receipt["workflow_status"]["status"] == "SUCCEEDED"
     assert json.loads(receipt_path.read_text()) == receipt
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "reduced_recipe",
+        "changed_sequence",
+        "zero_offset",
+        "failed_final",
+        "stale_runtime_attempt",
+    ],
+)
+def test_production_qualification_audit_rejects_mutated_native_proof(
+    helpers, downstream_run, mutation
+):
+    from npa.workbench.nurec.qualification_audit import (
+        NcoreQualificationAuditError,
+        audit_qualification,
+    )
+
+    _write_synthetic_usdz(downstream_run / "reconstruction/last.usdz")
+    if mutation == "reduced_recipe":
+        (downstream_run / "reconstruction/parsed.yaml").write_text(
+            "trainer:\n  max_epochs: 1\n"
+            "dataset:\n  camera_ids: [camera1, camera2]\n"
+            "  samples_per_epoch: 1\n"
+        )
+    _write_native_receipts(downstream_run)
+    _write_proof_rrd(downstream_run)
+    _write_conversion_audit(downstream_run, helpers)
+    if mutation == "changed_sequence":
+        (downstream_run / "ncore/sequence/capture.zarr.itar").write_bytes(
+            b"post-audit replacement"
+        )
+    elif mutation == "zero_offset":
+        path = downstream_run / "novel_views/nre-render.json"
+        payload = json.loads(path.read_text())
+        payload["invocation"]["rig_translation_offset"] = "0.0,0.0,0.0"
+        path.write_text(json.dumps(payload))
+    elif mutation == "failed_final":
+        path = downstream_run / "reports/final.json"
+        payload = json.loads(path.read_text())
+        payload["has_novel_views"] = False
+        path.write_text(json.dumps(payload))
+    elif mutation == "stale_runtime_attempt":
+        path = downstream_run / "evidence/workflow-status.json"
+        payload = json.loads(path.read_text())
+        stage = payload["stages"]["render"]
+        stage["managed_job_id"] = "99"
+        stage["job_name"] = "private-run-02-render-retry"
+        stage["managed_job_attempts"].append(
+            {
+                "attempt": 2,
+                "job_id": "99",
+                "job_name": "private-run-02-render-retry",
+                "state": "SUCCEEDED",
+            }
+        )
+        path.write_text(json.dumps(payload))
+
+    readback_receipt = _write_readback_receipt(downstream_run)
+    with pytest.raises(NcoreQualificationAuditError):
+        audit_qualification(
+            downstream_run,
+            recording_id=downstream_run.name,
+            expected_image=NRE_IMAGE,
+            expected_source_sha256=helpers.NUREC_COLMAP_SHA256,
+            readback_receipt_path=readback_receipt,
+            output_path=downstream_run / "evidence/rejected.json",
+        )
 
 
 @pytest.mark.parametrize(

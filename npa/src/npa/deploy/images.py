@@ -547,8 +547,14 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     controls = record(payload, "qualification_controls")
     equal(controls, "status", "pass")
     for field in (
+        "source_acquisition_receipt_sha256",
         "s3_probe_receipt_sha256",
         "source_staging_receipt_sha256",
+        "candidate_image_receipt_sha256",
+        "qualification_execution_receipt_sha256",
+        "wrong_source_execution_receipt_sha256",
+        "conversion_execution_receipt_sha256",
+        "audit_execution_receipt_sha256",
         "wrong_source_receipt_sha256",
     ):
         match(controls, field, r"[0-9a-f]{64}")
@@ -571,6 +577,12 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(proof, "nre_image", NCORE_ACCEPTED_NRE_IMAGE)
     equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
     match(proof, "runtime_image_attestation_sha256", r"[0-9a-f]{64}")
+    for field in (
+        "complete_readback_receipt_sha256",
+        "final_workflow_status_sha256",
+        "final_report_sha256",
+    ):
+        match(proof, field, r"[0-9a-f]{64}")
     equal(proof, "runtime_attestation_format", "npa_nurec_runtime_attestation_v4")
     equal(proof, "runtime_attested_stages", ["reconstruct", "render"])
     equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
@@ -588,6 +600,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         count(proof, field, 1)
     for field in ("report_sha256", "usdz_sha256", "render_sha256"):
         match(proof, field, r"[0-9a-f]{64}")
+    equal(proof, "usd_runtime_version", "25.11")
     equal(proof, "rendered_usdz_sha256", proof["usdz_sha256"])
     for field in ("trained_scene_reopened", "finite_pixels", "novel_view"):
         equal(proof, field, True)
@@ -600,9 +613,9 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
             and math.isfinite(float(value)),
             f"finite observed metric {name}",
         )
-    require(float(metrics["test/psnr"]) > 0, "positive PSNR")
-    require(0 < float(metrics["test/ssim"]) <= 1, "bounded SSIM")
-    require(float(metrics["test/lpips"]) >= 0, "nonnegative LPIPS")
+    require(float(metrics["test/psnr"]) >= 15, "minimum PSNR")
+    require(0.5 <= float(metrics["test/ssim"]) <= 1, "minimum SSIM")
+    require(0 <= float(metrics["test/lpips"]) <= 0.5, "maximum LPIPS")
     visual = record(proof, "visual_review")
     equal(visual, "status", "pass")
     equal(visual, "model", "openbmb/MiniCPM-V-4_5")
@@ -626,6 +639,9 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     for field in (
         "control_manifest_sha256",
         "label_commitment_sha256",
+        "freeze_acceptance_sha256",
+        "freeze_review_receipt_sha256",
+        "external_attempt_prefix_sha256",
         "calibration_result_sha256",
         "final_frame_manifest_sha256",
         "final_result_sha256",
@@ -647,6 +663,10 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     )
     equal(visual, "final_passed", True)
     equal(visual, "attempt_count", 5)
+    equal(visual, "external_attempt_markers", 5)
+    equal(visual, "realistic_defect_controls", 1)
+    equal(visual, "response_rederived", True)
+    equal(visual, "transport_metadata_complete", True)
     equal(visual, "one_shot", True)
     equal(visual, "claim", "visual_coherence_only")
     from npa.deploy.ncore_acceptance import (
@@ -668,7 +688,10 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     ):
         match(cleanup, field, r"[0-9a-f]{64}")
     count(cleanup, "storage_objects", 1)
-    count(cleanup, "managed_jobs", 4)
+    require(
+        type(cleanup.get("managed_jobs")) is int and cleanup["managed_jobs"] >= 1,
+        "managed jobs",
+    )
     equal(cleanup, "active_job_pods", 0)
     equal(cleanup, "jobs_terminal_or_absent", True)
     equal(cleanup, "cancel_before_destroy", True)
@@ -692,6 +715,15 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         "local_runtime_disposition",
     )
     equal(cleanup, "orphan_count", 0)
+    acceptance = record(payload, "acceptance_verification")
+    equal(acceptance, "format", "npa_ncore_receipt_derived_acceptance_v1")
+    for field in (
+        "statement_sha256",
+        "evidence_inventory_sha256",
+        "review_receipt_sha256",
+        "reviewer_id_sha256",
+    ):
+        match(acceptance, field, r"[0-9a-f]{64}")
     return payload
 
 

@@ -240,3 +240,107 @@ def test_cleanup_refuses_incomplete_workflow_job_inventory(tmp_path: Path) -> No
             process_runner=_runner(),
             workflow_cleaner=_cleaner,
         )
+
+
+def test_cleanup_cancels_every_retry_attempt(tmp_path: Path) -> None:
+    status = _workflow_status(tmp_path)
+    payload = json.loads(status.read_text())
+    payload["stages"]["reconstruct"]["managed_job_id"] = "45"
+    payload["stages"]["reconstruct"]["job_name"] = "private-run-01-reconstruct-retry"
+    payload["stages"]["reconstruct"]["managed_job_attempts"] = [
+        {
+            "attempt": 1,
+            "job_id": "41",
+            "job_name": "private-run-01-reconstruct",
+            "state": "FAILED",
+        },
+        {
+            "attempt": 2,
+            "job_id": "45",
+            "job_name": "private-run-01-reconstruct-retry",
+            "state": "SUCCEEDED",
+        },
+    ]
+    status.write_text(json.dumps(payload))
+    status.chmod(0o600)
+
+    def cleaner(jobs, *_args, **_kwargs):
+        assert jobs == [
+            ("41", "private-run-01-reconstruct"),
+            ("42", "private-run-02-render"),
+            ("43", "private-run-03-visualize"),
+            ("44", "private-run-04-finalize"),
+            ("45", "private-run-01-reconstruct-retry"),
+        ]
+        return SimpleNamespace(
+            errors=[],
+            commands=[
+                *[["sky", "jobs", "cancel", "--yes", job_id] for job_id, _ in jobs],
+                ["sky", "down", "--yes", "private-run"],
+            ],
+        )
+
+    receipt = cleanup_qualification(
+        run_id="private-run",
+        workflow_status_path=status,
+        context="private-context",
+        namespace="private-namespace",
+        storage_prefix="s3://private/run/evidence/",
+        local_image="local/ncore:candidate",
+        builder="private-builder",
+        build_receipt_path=_build_receipt(tmp_path),
+        source_sha=SOURCE_SHA,
+        output_path=tmp_path / "cleanup.json",
+        storage_client=_Storage(),
+        process_runner=_runner(),
+        workflow_cleaner=cleaner,
+    )
+    assert receipt["managed_jobs"] == 5
+
+
+def test_cleanup_accepts_proven_unlaunched_later_states(tmp_path: Path) -> None:
+    status = _workflow_status(tmp_path)
+    payload = json.loads(status.read_text())
+    for name in ("render", "visualize", "finalize"):
+        payload["stages"][name] = {
+            "workflow_state": name,
+            "state": "BLOCKED",
+            "managed_job_id": "",
+            "job_name": "",
+            "managed_job_attempts": [],
+            "job_attribution": "runtime_wave",
+        }
+    status.write_text(json.dumps(payload))
+    status.chmod(0o600)
+
+    def cleaner(jobs, *_args, **_kwargs):
+        assert jobs == [("41", "private-run-01-reconstruct")]
+        return SimpleNamespace(
+            errors=[],
+            commands=[
+                ["sky", "jobs", "cancel", "--yes", "41"],
+                ["sky", "down", "--yes", "private-run"],
+            ],
+        )
+
+    receipt = cleanup_qualification(
+        run_id="private-run",
+        workflow_status_path=status,
+        context="private-context",
+        namespace="private-namespace",
+        storage_prefix="s3://private/run/evidence/",
+        local_image="local/ncore:candidate",
+        builder="private-builder",
+        build_receipt_path=_build_receipt(tmp_path),
+        source_sha=SOURCE_SHA,
+        output_path=tmp_path / "cleanup.json",
+        storage_client=_Storage(),
+        process_runner=_runner(),
+        workflow_cleaner=cleaner,
+    )
+    assert receipt["managed_jobs"] == 1
+    assert receipt["proven_unlaunched_states"] == [
+        "finalize",
+        "render",
+        "visualize",
+    ]

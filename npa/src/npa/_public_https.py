@@ -10,7 +10,7 @@ from __future__ import annotations
 import http.client
 import ssl
 import time
-from typing import BinaryIO
+from typing import BinaryIO, Callable
 from urllib.parse import urljoin, urlsplit
 
 
@@ -18,7 +18,11 @@ class PublicDownloadError(RuntimeError):
     """A public download failed; diagnostics never include server URL data."""
 
 
-def _validate_url(url: str, allowed_hosts: frozenset[str]) -> tuple[str, str]:
+def _validate_url(
+    url: str,
+    allowed_hosts: frozenset[str],
+    host_policy: Callable[[str], bool] | None = None,
+) -> tuple[str, str]:
     # urlsplit silently strips some whitespace/control characters. Reject them
     # before parsing, along with non-ASCII text (URLs must be percent encoded).
     if not isinstance(url, str) or any(ord(c) <= 32 or ord(c) >= 127 for c in url):
@@ -28,7 +32,10 @@ def _validate_url(url: str, allowed_hosts: frozenset[str]) -> tuple[str, str]:
         host = parsed.hostname
         if (
             parsed.scheme != "https"
-            or host not in allowed_hosts
+            or (
+                host not in allowed_hosts
+                and (host_policy is None or not host_policy(str(host)))
+            )
             or parsed.username is not None
             or parsed.password is not None
             or parsed.port not in (None, 443)
@@ -44,7 +51,7 @@ def _validate_url(url: str, allowed_hosts: frozenset[str]) -> tuple[str, str]:
     return host, target
 
 
-def _redirect_target(response, url, allowed_hosts, visited):
+def _redirect_target(response, url, allowed_hosts, visited, host_policy=None):
     location = response.getheader("Location")
     if not location:
         raise PublicDownloadError("public download redirect has no location")
@@ -52,7 +59,7 @@ def _redirect_target(response, url, allowed_hosts, visited):
     if any(ord(c) <= 32 or ord(c) >= 127 for c in location):
         raise PublicDownloadError("public download redirect is malformed")
     next_url = urljoin(url, location)
-    host, target = _validate_url(next_url, allowed_hosts)
+    host, target = _validate_url(next_url, allowed_hosts, host_policy)
     # Preserve urllib's existing ten-redirect ceiling for these callers.
     if next_url in visited or len(visited) > 10:
         raise PublicDownloadError("public download redirect loop or too many redirects")
@@ -60,7 +67,9 @@ def _redirect_target(response, url, allowed_hosts, visited):
     return next_url, host, target
 
 
-def _download_hops(url, output, allowed_hosts, redirect_hosts):
+def _download_hops(
+    url, output, allowed_hosts, redirect_hosts, redirect_host_policy=None
+):
     host, target = _validate_url(url, allowed_hosts)
     visited = {url}
     context = ssl.create_default_context()
@@ -73,7 +82,11 @@ def _download_hops(url, output, allowed_hosts, redirect_hosts):
             with connection.getresponse() as response:
                 if response.status in (301, 302, 303, 307, 308):
                     url, host, target = _redirect_target(
-                        response, url, allowed_hosts | redirect_hosts, visited
+                        response,
+                        url,
+                        allowed_hosts | redirect_hosts,
+                        visited,
+                        redirect_host_policy,
                     )
                 elif response.status == 200:
                     while chunk := response.read(1024 * 1024):
@@ -98,6 +111,7 @@ def download_public_https(
     *,
     allowed_hosts: frozenset[str],
     redirect_hosts: frozenset[str] = frozenset(),
+    redirect_host_policy: Callable[[str], bool] | None = None,
 ) -> None:
     """Stream an anonymous public artifact over verified HTTPS.
 
@@ -113,13 +127,21 @@ def download_public_https(
         output: Binary stream receiving the artifact; caller verifies its hash.
         allowed_hosts: Exact hosts permitted initially and after redirects.
         redirect_hosts: Additional exact hosts permitted only after redirects.
+        redirect_host_policy: Optional strict predicate for dynamic redirect-only
+            hosts. It is never consulted for the initial URL.
     Returns:
         None.
     Raises:
         PublicDownloadError: URL policy, TLS, transport, or HTTP validation failed.
     """
     try:
-        _download_hops(url, output, allowed_hosts, redirect_hosts)
+        _download_hops(
+            url,
+            output,
+            allowed_hosts,
+            redirect_hosts,
+            redirect_host_policy,
+        )
     except (OSError, http.client.HTTPException, ValueError):
         # Even parser/transport exceptions can contain a signed URL. Do not
         # expose a chained exception when this reaches a CLI traceback.

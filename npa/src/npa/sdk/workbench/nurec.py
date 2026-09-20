@@ -133,6 +133,17 @@ def control_source(
     )
 
 
+def acquire_source(
+    output_path: Path | str,
+    *,
+    receipt_path: Path | str,
+) -> dict[str, Any]:
+    """Anonymously acquire the immutable public qualification source ZIP."""
+    from npa.workbench.nurec.source_acquisition import acquire_public_source
+
+    return acquire_public_source(Path(output_path), Path(receipt_path))
+
+
 def stage_source(
     source_path: Path | str,
     output_path: str,
@@ -250,12 +261,47 @@ def cleanup_qualification(
     )
 
 
+def publish_evidence(
+    source_path: Path | str,
+    output_path: str,
+    *,
+    kind: str,
+    run_id: str,
+    receipt_path: Path | str,
+) -> dict[str, Any]:
+    """Conditionally publish and read back a private qualification receipt."""
+    from npa.workbench.nurec.evidence_handoff import (
+        publish_qualification_evidence,
+    )
+
+    return publish_qualification_evidence(
+        Path(source_path),
+        output_path,
+        kind=kind,
+        run_id=run_id,
+        receipt_path=Path(receipt_path),
+    )
+
+
+def readback_qualification(
+    prefix: str,
+    destination: Path | str,
+    *,
+    receipt_path: Path | str,
+) -> dict[str, Any]:
+    """Download and byte-bind a stable complete qualification prefix."""
+    from npa.workbench.nurec.qualification_readback import readback_qualification as run
+
+    return run(prefix, Path(destination), Path(receipt_path))
+
+
 def audit_qualification(
     root: Path | str,
     *,
     recording_id: str,
     expected_image: str,
     expected_source_sha256: str,
+    readback_receipt: Path | str,
     receipt_path: Path | str,
 ) -> dict[str, Any]:
     """Reopen and byte-bind the complete downloaded NCore/NRE qualification."""
@@ -266,6 +312,7 @@ def audit_qualification(
         recording_id=recording_id,
         expected_image=expected_image,
         expected_source_sha256=expected_source_sha256,
+        readback_receipt_path=Path(readback_receipt),
         output_path=Path(receipt_path),
     )
 

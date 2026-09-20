@@ -1164,6 +1164,7 @@ def build_actionable_run_status(
             "state": state,
             "workflow_state": name,
             "managed_job_id": managed_job_id,
+            "job_name": str(attribution.get("job_name") or ""),
             "managed_job_attempts": list(attribution.get("attempts") or []),
             "active_attempt": attribution.get("active_attempt"),
             "job_attribution": attribution.get("attribution", "unknown"),

@@ -31,10 +31,19 @@ def _status(tmp_path: Path, stage: str) -> Path:
                 "run_id": "private-run",
                 "stages": {
                     stage: {
+                        "state": "RUNNING",
                         "workflow_state": stage,
                         "managed_job_id": job_id,
                         "job_name": job_name,
                         "job_attribution": "exact",
+                        "managed_job_attempts": [
+                            {
+                                "attempt": 1,
+                                "job_id": job_id,
+                                "job_name": job_name,
+                                "state": "RUNNING",
+                            }
+                        ],
                     }
                 },
             }
@@ -49,6 +58,7 @@ def _runner(
     image_id: str = IMAGE,
     gpu_limit: str = "1",
     gpu_label: str = "",
+    accelerator_label: str = "",
     managed_job_name: str = "private-run-01-reconstruct",
     managed_job_id: str = "41",
 ):
@@ -100,7 +110,12 @@ def _runner(
                     "uid": "node-uid-private",
                     "labels": {
                         "nvidia.com/gpu.product": gpu_label
-                        or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+                        or "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+                        **(
+                            {"skypilot.co/accelerator": accelerator_label}
+                            if accelerator_label
+                            else {}
+                        ),
                     },
                 }
             }
@@ -166,6 +181,12 @@ def test_observe_and_bundle_two_control_plane_stage_identities(
         (
             _runner(gpu_label="NVIDIA-RTX-PRO-6000-Blackwell-Workstation-Edition"),
             "Server Edition",
+        ),
+        (
+            _runner(
+                accelerator_label="NVIDIA-H100-80GB-HBM3",
+            ),
+            "conflicting",
         ),
     ],
 )
