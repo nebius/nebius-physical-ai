@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from npa.cli.workbench.robocasa.deploy import (
+    DEFAULT_NAME,
+    DEFAULT_NAMESPACE,
+    DEFAULT_PORT,
+)
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 from npa.orchestration.npa_workflow.interpreter import PlanStep
@@ -114,6 +119,15 @@ def test_robocasa_workflows_forward_the_service_token() -> None:
     for workflow in (WORKFLOW, DATA_POLICY):
         plan = build_plan(load_spec(workflow), run_id="test")
         assert secret_env_hints_for_plan(plan.steps) == ("ROBOCASA_TOKEN",)
+
+
+def test_workflow_endpoint_matches_default_service_deployment() -> None:
+    expected = (
+        f"http://{DEFAULT_NAME}.{DEFAULT_NAMESPACE}.svc.cluster.local:{DEFAULT_PORT}"
+    )
+    assert DEFAULT_NAMESPACE == "workbench"
+    for workflow in (WORKFLOW, DATA_POLICY):
+        assert load_spec(workflow).config["robocasa_endpoint"] == expected
 
 
 def test_robocasa_service_token_hint_uses_the_resolved_token_env() -> None:

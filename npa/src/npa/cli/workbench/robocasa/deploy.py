@@ -24,7 +24,7 @@ DEFAULT_IMAGE = container_image_for_tool(
     "robocasa", registry=DEFAULT_CONTAINER_REGISTRY
 )
 DEFAULT_NAME = "npa-robocasa"
-DEFAULT_NAMESPACE = "default"
+DEFAULT_NAMESPACE = "workbench"
 
 GPU_NODE_SELECTORS = {
     "h100": "gpu-h100-sxm",

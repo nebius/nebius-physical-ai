@@ -47,7 +47,7 @@ Deploy the service when you want a persistent endpoint several runs share:
 npa workbench robocasa deploy \
   --project <alias> --cluster-name <name> \
   --output-path s3://<bucket>/robocasa/ \
-  --gpu-type rtxpro6000 --namespace default \
+  --gpu-type rtxpro6000 --namespace workbench \
   --dry-run                       # prints the manifest without applying
 npa workbench robocasa deploy --project <alias> --destroy
 ```
