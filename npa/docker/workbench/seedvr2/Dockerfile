@@ -1,8 +1,6 @@
 # Apache-2.0 SeedVR2 source/runtime only; public model weights stay runtime-only.
 FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:ae7f650405a3964972dacfa889273bf8e3fbe9709899afd187da01c4cdff3105 AS seedvr2-build
 
-ARG NPA_SOURCE_SHA
-ARG SOURCE_DATE_EPOCH
 ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185
 ARG SEEDVR2_SOURCE_SHA256=aeaed7c661f4c3804c71542bbf7ce6c45c103e5f62caf917c2d2ab6e8a29dc98
 ARG APEX_SOURCE_REF=8a6508aaad6e75a2b939e33f308cd63d745d97f1
@@ -21,7 +19,6 @@ LABEL npa.tool="seedvr2" \
       npa.build.flash-attn.max-jobs="${FLASH_ATTN_MAX_JOBS}" \
       npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
       npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -37,10 +34,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
-
-RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
-    && printf '%s\n' "$NPA_SOURCE_SHA" > /opt/npa-source-revision
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
@@ -110,12 +103,12 @@ PY
 
 COPY --chmod=0555 scripts/measure_extension_arches.py /opt/npa-tools/measure_extension_arches.py
 RUN install -d -m 0755 /usr/share/doc/npa-seedvr2/extension-arches \
-    && python3.12 /opt/npa-tools/measure_extension_arches.py \
-      /opt/seedvr2-venv/lib/python3.12/site-packages/flash_attn \
+    && /opt/seedvr2-venv/bin/python /opt/npa-tools/measure_extension_arches.py \
+      --distribution flash-attn \
       --min-size-mb 0 --skip-no-fatbin --exact sm_90 --json \
       > /usr/share/doc/npa-seedvr2/extension-arches/flash-attn.json \
-    && python3.12 /opt/npa-tools/measure_extension_arches.py \
-      /opt/seedvr2-venv/lib/python3.12/site-packages/apex \
+    && /opt/seedvr2-venv/bin/python /opt/npa-tools/measure_extension_arches.py \
+      --distribution apex \
       --min-size-mb 0 --skip-no-fatbin --exact sm_90 --json \
       > /usr/share/doc/npa-seedvr2/extension-arches/apex.json
 
@@ -138,8 +131,6 @@ RUN curl --fail --location \
 
 FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49
 
-ARG NPA_SOURCE_SHA
-ARG SOURCE_DATE_EPOCH
 ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185
 ARG FLASH_ATTN_MAX_JOBS=2
 ARG FLASH_ATTN_NVCC_THREADS=1
@@ -155,7 +146,6 @@ LABEL npa.tool="seedvr2" \
       npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
       npa.build.flash-attn.cuda-archs="${FLASH_ATTN_CUDA_ARCHS}" \
       npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -171,10 +161,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
-
-RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
-    && printf '%s\n' "$NPA_SOURCE_SHA" > /opt/npa-source-revision
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
@@ -227,6 +213,13 @@ RUN python3.12 -m venv /opt/npa-venv \
     && test -z "$(find /opt/npa-src /opt/npa-venv \
       \( -iname '*.pth' -o -iname '*.pt' -o -iname '*.safetensors' \
          -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)"
+
+ARG NPA_SOURCE_SHA
+ARG SOURCE_DATE_EPOCH
+RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
+    && printf '%s\n' "$NPA_SOURCE_SHA" > /opt/npa-source-revision
+LABEL org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 COPY --chmod=0444 docker/workbench/seedvr2/REDISTRIBUTION.md /usr/share/doc/npa-seedvr2/REDISTRIBUTION.md
 COPY --chmod=0444 docker/workbench/seedvr2/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-seedvr2/THIRD_PARTY_NOTICES.md

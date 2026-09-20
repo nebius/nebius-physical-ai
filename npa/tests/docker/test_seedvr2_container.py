@@ -75,9 +75,15 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
     )
     assert "NVSHMEM-License-v3.4.5-0.txt" in dockerfile
     assert "COPY --from=seedvr2-build /opt/seedvr2-venv" in dockerfile
-    final_stage = dockerfile.split(
+    build_stage, final_stage = dockerfile.split(
         "FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@", 1
-    )[1]
+    )
+    assert "NPA_SOURCE_SHA" not in build_stage
+    assert "SOURCE_DATE_EPOCH" not in build_stage
+    assert final_stage.index("COPY src/npa") < final_stage.index("ARG NPA_SOURCE_SHA")
+    assert final_stage.index("COPY src/npa") < final_stage.index(
+        'LABEL org.opencontainers.image.revision="${NPA_SOURCE_SHA}"'
+    )
     assert "/opt/seedvr2-venv/bin/pip check" in final_stage
     assert "from flash_attn import flash_attn_varlen_func" in final_stage
     assert "from apex.normalization import FusedLayerNorm" in final_stage
@@ -126,6 +132,11 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
     assert "MAX_JOBS=8" not in dockerfile
     assert "scripts/measure_extension_arches.py" in dockerfile
     assert dockerfile.count("--skip-no-fatbin --exact sm_90 --json") == 2
+    assert "--distribution flash-attn" in dockerfile
+    assert "--distribution apex" in dockerfile
+    assert dockerfile.count(
+        "/opt/seedvr2-venv/bin/python /opt/npa-tools/measure_extension_arches.py"
+    ) == 2
     assert "/usr/share/doc/npa-seedvr2/extension-arches/flash-attn.json" in dockerfile
     assert "/usr/share/doc/npa-seedvr2/extension-arches/apex.json" in dockerfile
     assert "npa/scripts/measure_extension_arches.py" in build_script

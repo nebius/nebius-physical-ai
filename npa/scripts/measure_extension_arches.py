@@ -35,7 +35,8 @@ pass raises on sm_120 because the epilogue needs TMA. Only a real capability run
 on the part decides a cell.
 
 USAGE
-  measure_extension_arches.py <wheel|.so|directory> [...] [--require sm_100]
+  measure_extension_arches.py [<wheel|.so|directory> ...]
+                             [--distribution NAME ...] [--require sm_100]
                              [--exact sm_100] [--min-size-mb N] [--json]
 
 EXAMPLES
@@ -46,11 +47,16 @@ EXAMPLES
   # Gate a build: fail unless every extension can reach B200.
   measure_extension_arches.py /opt/cosmos/venv/lib/python3.10/site-packages \\
     --require sm_100
+
+  # Resolve top-level extension modules from a wheel's installed RECORD.
+  /opt/tool-venv/bin/python measure_extension_arches.py \\
+    --distribution flash-attn --exact sm_90
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import struct
 import sys
@@ -139,6 +145,37 @@ def _binaries(target: Path, min_size: int):
     yield str(target), target.read_bytes()
 
 
+def _distribution_binaries(distribution_name: str, min_size: int):
+    """Yield native binaries owned by one installed Python distribution."""
+
+    distribution = importlib.metadata.distribution(distribution_name)
+    if distribution.files is None:
+        raise ValueError(f"{distribution_name} has no installed-file inventory")
+    for relative in sorted(distribution.files, key=str):
+        if ".so" not in relative.name:
+            continue
+        path = Path(distribution.locate_file(relative))
+        if not path.is_file():
+            raise ValueError(
+                f"{distribution_name} records a missing native binary: {relative}"
+            )
+        if path.stat().st_size >= min_size:
+            yield f"{distribution_name}:{relative.as_posix()}", path.read_bytes()
+
+
+def _input_binaries(
+    targets: list[Path], distributions: list[str], min_size: int
+):
+    """Yield explicitly targeted and distribution-owned native binaries."""
+
+    for target in targets:
+        if not target.exists():
+            raise ValueError(f"no such path: {target}")
+        yield from _binaries(target, min_size)
+    for distribution_name in distributions:
+        yield from _distribution_binaries(distribution_name, min_size)
+
+
 def _fmt(counter: Counter) -> list[str]:
     return [f"sm_{arch}" for arch in sorted(counter)]
 
@@ -148,7 +185,16 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("targets", nargs="+", type=Path)
+    parser.add_argument("targets", nargs="*", type=Path)
+    parser.add_argument(
+        "--distribution",
+        action="append",
+        default=[],
+        help=(
+            "scan every native binary recorded by an installed Python "
+            "distribution; may be repeated"
+        ),
+    )
     parser.add_argument(
         "--require",
         action="append",
@@ -188,11 +234,9 @@ def main(argv: list[str] | None = None) -> int:
     report: dict[str, dict] = {}
     failures: list[str] = []
 
-    for target in args.targets:
-        if not target.exists():
-            print(f"ERROR: no such path: {target}", file=sys.stderr)
-            return 2
-        for label, blob in _binaries(target, min_size):
+    try:
+        binaries = _input_binaries(args.targets, args.distribution, min_size)
+        for label, blob in binaries:
             sass, ptx = scan(blob)
             if args.skip_no_fatbin and not sass and not ptx:
                 continue
@@ -227,6 +271,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{label} ({len(blob) / 1e6:.0f} MB)")
                 print(f"  SASS: {' '.join(entry['sass']) or 'none'}")
                 print(f"  PTX:  {' '.join(entry['ptx']) or 'none'}")
+    except (OSError, ValueError, importlib.metadata.PackageNotFoundError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
 
     if not report:
         print("ERROR: no native binaries found to measure", file=sys.stderr)
