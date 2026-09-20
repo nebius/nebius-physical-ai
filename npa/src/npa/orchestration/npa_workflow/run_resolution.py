@@ -720,12 +720,20 @@ def list_resolved_artifacts(
         raise WorkflowStateError(
             "run was found via managed-job evidence but its artifact location is unavailable"
         )
-    is_paidf = (
+    manifest_schema = (
+        str(resolution.manifest.get("schema_version") or "")
+        if isinstance(resolution.manifest, dict)
+        else ""
+    )
+    # Declarative outputs may use any path below the exact run root. The
+    # historical ``artifacts/`` convention applies only to raw schema-v1 runs.
+    uses_run_root_layout = (
         resolution.workflow_name == PAIDF_WORKFLOW_NAME
         or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
         or resolution.manifest_pending
+        or manifest_schema == "npa.workflow.run.v1"
     )
-    if not is_paidf:
+    if not uses_run_root_layout:
         from npa.orchestration.skypilot.workflow_state import list_artifacts
 
         return list_artifacts(state, stage or None)
