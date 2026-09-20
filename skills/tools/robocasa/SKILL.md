@@ -47,7 +47,7 @@ Deploy the service when you want a persistent endpoint several runs share:
 npa workbench robocasa deploy \
   --project <alias> --cluster-name <name> \
   --output-path s3://<bucket>/robocasa/ \
-  --gpu-type rtxpro6000 --namespace workbench \
+  --gpu-type l40s --namespace workbench \
   --dry-run                       # prints the manifest without applying
 npa workbench robocasa deploy --project <alias> --destroy
 ```
@@ -55,7 +55,15 @@ npa workbench robocasa deploy --project <alias> --destroy
 `--gpu-type` is `h100`, `l40s`, `rtx6000`, or `rtxpro6000`. Auth defaults to
 `token` (the token comes from the variable named by `--token-env`, default
 `ROBOCASA_TOKEN`); `--insecure-no-auth` exists but should not be used. Always
-`--dry-run` first and read the manifest.
+`--dry-run` first and read the manifest. Deploy ensures the shared `workbench`
+namespace exists and destroy deliberately leaves it in place. For a private
+image, create the named pull secret in that namespace and pass
+`--image-pull-secret`.
+
+The `0.1.1` image remains on its CUDA 12.4 compatibility contract. Use L40S for
+pixel-bearing EGL runs; the hardware matrix marks RTX PRO 6000, B200, and B300
+blocked until a CUDA 13 image is built and measured. Do not select those
+accelerators from generic rendering capability alone.
 
 ## Run
 

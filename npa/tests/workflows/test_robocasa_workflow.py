@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from npa.cli.workbench.robocasa.deploy import (
+    DEFAULT_GPU_TYPE,
     DEFAULT_NAME,
     DEFAULT_NAMESPACE,
     DEFAULT_PORT,
+    GPU_NODE_SELECTORS,
 )
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
@@ -128,6 +130,20 @@ def test_workflow_endpoint_matches_default_service_deployment() -> None:
     assert DEFAULT_NAMESPACE == "workbench"
     for workflow in (WORKFLOW, DATA_POLICY):
         assert load_spec(workflow).config["robocasa_endpoint"] == expected
+
+
+def test_workflow_accelerator_matches_compatible_service_default() -> None:
+    assert DEFAULT_GPU_TYPE == "l40s"
+    assert GPU_NODE_SELECTORS[DEFAULT_GPU_TYPE] == "gpu-l40s-d"
+    for workflow in (WORKFLOW, DATA_POLICY):
+        spec = load_spec(workflow)
+        gpu_resources = [
+            resource
+            for resource in spec.resources.values()
+            if resource.get("accelerators")
+        ]
+        assert gpu_resources
+        assert all(resource["accelerators"] == "L40S:1" for resource in gpu_resources)
 
 
 def test_robocasa_service_token_hint_uses_the_resolved_token_env() -> None:

@@ -56,7 +56,7 @@ config:
 resources:
   sim-gpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
+    accelerators: L40S:1
     cpus: 8
     memory: 32Gi
   convert-cpu:
@@ -71,7 +71,7 @@ resources:
     image: tool://lancedb
   train-gpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
+    accelerators: L40S:1
     cpus: 16
     memory: 64Gi
 

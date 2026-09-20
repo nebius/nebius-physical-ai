@@ -114,12 +114,46 @@ def test_deploy_manifest_rolls_when_service_env_changes(
     )
     second = manifest()
 
-    first_annotation = first["items"][1]["spec"]["template"]["metadata"]["annotations"]
-    second_annotation = second["items"][1]["spec"]["template"]["metadata"][
-        "annotations"
-    ]
+    first_deployment = next(
+        item for item in first["items"] if item["kind"] == "Deployment"
+    )
+    second_deployment = next(
+        item for item in second["items"] if item["kind"] == "Deployment"
+    )
+    first_annotation = first_deployment["spec"]["template"]["metadata"]["annotations"]
+    second_annotation = second_deployment["spec"]["template"]["metadata"]["annotations"]
     assert first_annotation != second_annotation
     assert len(first_annotation["npa.nebius.ai/env-checksum"]) == 64
+
+
+def test_deploy_manifest_ensures_namespace_before_namespaced_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deploy_module, "_service_env", lambda **_kwargs: {})
+
+    manifest = deploy_module._kubernetes_manifest(
+        project="fleet-test",
+        image="example.invalid/npa-robocasa@sha256:" + "1" * 64,
+        name="npa-robocasa",
+        namespace="workbench",
+        port=8791,
+        output_path="s3://example/output",
+        node_selector_key="node.kubernetes.io/instance-type",
+        node_selector_value="gpu-l40s-d",
+        image_pull_secret="pull-secret",
+        auth_mode="none",
+        token_env="ROBOCASA_TOKEN",
+    )
+
+    assert manifest["items"][0] == {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": "workbench"},
+    }
+    assert all(
+        item["metadata"].get("namespace") == "workbench"
+        for item in manifest["items"][1:]
+    )
 
 
 def test_status_help() -> None:

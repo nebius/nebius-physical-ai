@@ -25,6 +25,7 @@ DEFAULT_IMAGE = container_image_for_tool(
 )
 DEFAULT_NAME = "npa-robocasa"
 DEFAULT_NAMESPACE = "workbench"
+DEFAULT_GPU_TYPE = "l40s"
 
 GPU_NODE_SELECTORS = {
     "h100": "gpu-h100-sxm",
@@ -58,7 +59,9 @@ def deploy_cmd(
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Service port."),
     output_path: str = typer.Option("", "--output-path", help="Default S3 output URI."),
     gpu_type: str = typer.Option(
-        "rtxpro6000", "--gpu-type", help="GPU type: h100, l40s, rtx6000, or rtxpro6000."
+        DEFAULT_GPU_TYPE,
+        "--gpu-type",
+        help="GPU type: h100, l40s, rtx6000, or rtxpro6000.",
     ),
     node_selector_key: str = typer.Option(
         "node.kubernetes.io/instance-type",
@@ -223,6 +226,11 @@ def _kubernetes_manifest(
         "apiVersion": "v1",
         "kind": "List",
         "items": [
+            {
+                "apiVersion": "v1",
+                "kind": "Namespace",
+                "metadata": {"name": namespace},
+            },
             {
                 "apiVersion": "v1",
                 "kind": "Secret",

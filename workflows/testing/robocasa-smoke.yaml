@@ -23,7 +23,7 @@ config:
 resources:
   gpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
+    accelerators: L40S:1
     cpus: 8
     memory: 32Gi
 
