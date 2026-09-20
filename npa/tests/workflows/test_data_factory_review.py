@@ -119,6 +119,8 @@ def test_caption_appearance_model_and_candidate_identity_remain_useful(tmp_path)
         review.text("a robot folds blue cloth under warm light")
         == "a robot folds blue cloth under warm light"
     )
+    ordinary_fields = "stage: augment\npass_rate=0.91\nstatus: completed"
+    assert review.text(ordinary_fields) == ordinary_fields
     assert "unlisted-private-token" not in review.text(
         "blue cloth; token=unlisted-private-token"
     )

@@ -120,15 +120,23 @@ def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
         )
 
 
-def _fail(msg: str, code: int = 1) -> None:
+def _fail(
+    msg: str,
+    code: int = 1,
+    *,
+    secrets: Sequence[str] = (),
+) -> None:
     # Operational recovery commands and status phrases must remain copyable and
     # machine-observable even when Rich detects a narrow non-interactive console.
+    from npa.verification import redact_failure_text
+
+    safe_message = redact_failure_text(msg, secrets=secrets)
     error = Text("Error:", style="red")
     error.append(" ")
     # Exception messages can legitimately contain bracketed values (for example,
     # a malformed URI such as ``[/foo]``).  Keep them literal so Rich does not
     # replace the original failure with a MarkupError while reporting it.
-    error.append(str(msg))
+    error.append(safe_message)
     console.print(error, soft_wrap=True)
     raise typer.Exit(code)
 
@@ -1219,7 +1227,10 @@ def submit_cmd(
                 infra=infra,
             )
         except Exception as exc:  # noqa: BLE001 - fail before any mutation
-            _fail(f"deployIfAbsent target resolution failed: {exc}")
+            _fail(
+                f"deployIfAbsent target resolution failed: {exc}",
+                secrets=submission_redaction_secrets,
+            )
             return
         if is_paidf_spec and not infra_context:
             declared_contexts = sorted(
@@ -1298,7 +1309,10 @@ def submit_cmd(
                 ),
             )
         except Exception as exc:
-            _fail(f"cannot resolve the workflow's source requirement: {exc}")
+            _fail(
+                f"cannot resolve the workflow's source requirement: {exc}",
+                secrets=submission_redaction_secrets,
+            )
             return
         bucket_for_source = str(
             s3_bucket or spec_config.get("bucket", "") or ""
@@ -1328,7 +1342,10 @@ def submit_cmd(
                 local_source_fingerprint = _local_source_fingerprint()
             except Exception as exc:
                 if stage_src is not False and not existing_source_uri:
-                    _fail(f"npa source staging is not feasible: {exc}")
+                    _fail(
+                        f"npa source staging is not feasible: {exc}",
+                        secrets=submission_redaction_secrets,
+                    )
                     return
         existing_fingerprint = existing_source_uri.rstrip("/").rsplit("/", 1)[-1]
         persisted_source_is_stale = bool(
@@ -1384,7 +1401,10 @@ def submit_cmd(
                     deploy_targets, mutation=not plan_only
                 )
             except Exception as exc:  # noqa: BLE001 - normalized before all mutation
-                _fail(f"deployIfAbsent preflight failed: {exc}")
+                _fail(
+                    f"deployIfAbsent preflight failed: {exc}",
+                    secrets=submission_redaction_secrets,
+                )
                 return
         if not skip_preflight:
             missing = _submit_prerequisites(
@@ -1502,7 +1522,11 @@ def submit_cmd(
                     )
                 )
             except (RuntimeError, ValueError) as exc:
-                _fail(str(exc), code=_submit_failure_code(exc))
+                _fail(
+                    str(exc),
+                    code=_submit_failure_code(exc),
+                    secrets=submission_redaction_secrets,
+                )
                 return
 
         if not plan_only:
@@ -1550,7 +1574,7 @@ def submit_cmd(
                         ),
                     )
             except CosmosCheckpointAccessError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         # Image reachability and the complete cumulative infrastructure plan are
@@ -1626,7 +1650,7 @@ def submit_cmd(
                             err=True,
                         )
             except NpaWorkflowError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         if infra_context and not plan_only and not _adopt_npa_kubeconfig(infra_context):
@@ -1657,7 +1681,7 @@ def submit_cmd(
                 RuntimeError,
                 ValueError,
             ) as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         if not skip_preflight and not plan_only:
@@ -1675,7 +1699,7 @@ def submit_cmd(
             try:
                 verify_execution_scope(execution_target)
             except RuntimeError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         if not plan_only:
@@ -1769,7 +1793,7 @@ def submit_cmd(
                         reporter=lambda message: typer.echo(message, err=True),
                     )
             except PaidfInputError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
             prepared_overrides = prepared_input.config_overrides()
             from npa.orchestration.npa_workflow.run_state import (
@@ -1830,7 +1854,7 @@ def submit_cmd(
                     expected_fingerprint=existing_fingerprint,
                 )
             except Exception as exc:  # noqa: BLE001
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
         if stage_source_planned and not plan_only:
             staged_uri = _stage_npa_src_for_submit(
@@ -1896,6 +1920,7 @@ def submit_cmd(
                 assume_decision=assume_decision,
                 enabled=resolve_accelerators and not plan_only,
                 environment=runtime_environment,
+                diagnostic_secrets=submission_redaction_secrets,
                 config_path=config_path,
                 isolated_config_dir=isolated_config_dir,
                 readiness_timeout=gpu_readiness_timeout,
@@ -1922,6 +1947,7 @@ def submit_cmd(
                 _fail(
                     f"multi-node GPU capacity preflight failed: {exc}",
                     code=_submit_failure_code(exc),
+                    secrets=submission_redaction_secrets,
                 )
                 return
 
@@ -1971,6 +1997,7 @@ def submit_cmd(
                     sky_bin=sky_bin,
                     assume_decision=assume_decision,
                     enabled=resolve_accelerators,
+                    diagnostic_secrets=submission_redaction_secrets,
                     config_path=config_path,
                     isolated_config_dir=isolated_config_dir,
                     readiness_timeout=gpu_readiness_timeout,
@@ -2033,7 +2060,7 @@ def submit_cmd(
                 allow_runtime_required=plan_only,
             )
         except NpaWorkflowError as exc:
-            _fail(str(exc))
+            _fail(str(exc), secrets=submission_redaction_secrets)
             return
 
         if plan_only:
@@ -2214,7 +2241,7 @@ def submit_cmd(
                     accept_eula=accept_eula,
                 )
             except ValueError as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
             unresolved = unresolved_submit_placeholders(plan.yaml_text)
             if unresolved:
@@ -2277,7 +2304,7 @@ def submit_cmd(
                     )
                 )
             except (ExecutionPreflightError, ValueError, RuntimeError) as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
             extra_env.update(injected)
             if json.dumps(documents, sort_keys=True) != original_documents:
@@ -2330,7 +2357,7 @@ def submit_cmd(
                     if name not in secret_env:
                         secret_env.append(name)
             except (WorkflowStateError, ExecutionPreflightError) as exc:
-                _fail(str(exc))
+                _fail(str(exc), secrets=submission_redaction_secrets)
                 return
 
         ledger_project = project or "default"
@@ -2770,7 +2797,7 @@ def _run_npa_workflow_runtime(
     try:
         spec = load_spec_for_submit(yaml_path, config_overrides=config_overrides)
     except NpaWorkflowError as exc:
-        _fail(str(exc))
+        _fail(str(exc), secrets=tuple(secret_env_values.values()))
         return
 
     submitted_yaml = yaml_path.read_bytes()
@@ -2858,7 +2885,7 @@ def _run_npa_workflow_runtime(
                 logger=lambda message: typer.echo(f"[runtime] {message}", err=True),
             )
         except NpaWorkflowError as exc:
-            _fail(str(exc))
+            _fail(str(exc), secrets=tuple(secret_env_values.values()))
             return
     artifact_load: dict[str, object] | None = None
     if (
@@ -3528,6 +3555,7 @@ def _resolve_submit_accelerators(
     config_path: Path | None = None,
     isolated_config_dir: Path | None = None,
     environment: Mapping[str, str] | None = None,
+    diagnostic_secrets: Sequence[str] = (),
     readiness_timeout: float = 600.0,
     readiness_poll_interval: float = 10.0,
 ) -> dict[str, str]:
@@ -3587,7 +3615,10 @@ def _resolve_submit_accelerators(
                 config_path=config_path,
             )
         except (SkyPilotSubmitError, SkyPilotNotInstalledError, ValueError) as exc:
-            _fail(f"SkyPilot API daemon preflight failed: {exc}")
+            _fail(
+                f"SkyPilot API daemon preflight failed: {exc}",
+                secrets=diagnostic_secrets,
+            )
             return {}
 
         context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
@@ -3606,7 +3637,10 @@ def _resolve_submit_accelerators(
             UnsatisfiableAcceleratorError,
             ValueError,
         ) as exc:
-            _fail(f"accelerator readiness failed: {exc}")
+            _fail(
+                f"accelerator readiness failed: {exc}",
+                secrets=diagnostic_secrets,
+            )
             return {}
 
     overrides: dict[str, str] = {}
@@ -4051,7 +4085,10 @@ def _stage_npa_src_for_submit(
             persist_workflow_src_s3_uri(uri, project or None)
         return uri
     except (ConfigError, SrcStagingError) as exc:
-        _fail(str(exc))
+        _fail(
+            str(exc),
+            secrets=tuple((credential_values or {}).values()),
+        )
         return ""
 
 

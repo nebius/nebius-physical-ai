@@ -107,6 +107,37 @@ def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> Non
     )
 
 
+def test_fail_structurally_redacts_raw_multiline_exception(monkeypatch) -> None:
+    output = StringIO()
+    monkeypatch.setattr(
+        workflow_cli,
+        "console",
+        Console(file=output, force_terminal=False, color_system=None),
+    )
+    message = (
+        "provider rejected HF_TOKEN=hf_synthetic_boundary_token\n"
+        "retry: npa workbench workflow status synthetic-run\n"
+        "details: https://synthetic-user:synthetic-password@api.example.invalid/"
+        "path?X-Amz-Signature=synthetic-query"
+    )
+
+    with pytest.raises(typer.Exit) as exc_info:
+        workflow_cli._fail(message)
+
+    rendered = output.getvalue()
+    assert exc_info.value.exit_code == 1
+    assert rendered.count("\n") == message.count("\n") + 1
+    assert "retry: npa workbench workflow status synthetic-run" in rendered
+    for secret in (
+        "hf_synthetic_boundary_token",
+        "synthetic-user",
+        "synthetic-password",
+        "X-Amz-Signature",
+        "synthetic-query",
+    ):
+        assert secret not in rendered
+
+
 def test_submit_lists_every_missing_prerequisite_at_once() -> None:
     result = _submit()
 
@@ -407,6 +438,89 @@ def test_paidf_existing_target_orders_placement_exact_access_then_image(
     assert result.exit_code == 1
     assert isinstance(result.exception, RuntimeError)
     assert events == ["placement", f"exact:{control}", "image"]
+
+
+def test_checkpoint_access_failure_redacts_resolved_opaque_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.cosmos.checkpoint_access import CosmosCheckpointAccessError
+
+    opaque_token = "synthetic-opaque-checkpoint-credential"
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("NPA_ACCESS_APPROVAL_STATE_PATH", str(tmp_path / "access.json"))
+    for name, value in (
+        ("NEBIUS_TOKEN_FACTORY_KEY", "synthetic-token-factory-key"),
+        ("AWS_ACCESS_KEY_ID", "synthetic-access-key"),
+        ("AWS_SECRET_ACCESS_KEY", "synthetic-secret-key"),
+        ("HF_TOKEN", opaque_token),
+    ):
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", "/bin/true")
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._available_kube_contexts",
+        lambda: ["npa-cluster"],
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._adopt_npa_kubeconfig", lambda _context: True
+    )
+    monkeypatch.setattr(
+        "npa.clients.huggingface.validate_hf_access",
+        lambda *_args, **_kwargs: pytest.fail(
+            "broad repository-level Hugging Face probe must not run"
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._paidf_kubernetes_prerequisites_for_submit",
+        lambda _context: [],
+    )
+
+    def denied(*, modality: str, token: str):
+        assert modality == "edge"
+        assert token == opaque_token
+        raise CosmosCheckpointAccessError(f"provider rejected token {token}")
+
+    monkeypatch.setattr(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access",
+        denied,
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        lambda *_args, **_kwargs: pytest.fail(
+            "image preflight reached after checkpoint access failure"
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "paidf-redacted-access-failure",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
+            "--var",
+            "augment_control=edge",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--secret-env",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "--secret-env",
+            "AWS_ACCESS_KEY_ID",
+            "--secret-env",
+            "AWS_SECRET_ACCESS_KEY",
+            "--secret-env",
+            "HF_TOKEN",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "provider rejected token <redacted>" in result.output
+    assert opaque_token not in result.output
 
 
 @pytest.mark.parametrize(

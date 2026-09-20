@@ -22,9 +22,199 @@ _SECRET_ASSIGNMENT = re.compile(
     r"[a-z0-9_-]*[\"']?\s*[:=]\s*)"
     r"(?:bearer\s+)?[\"']?([^\s,;}\]\"']+)"
 )
-_PRESIGNED_QUERY = re.compile(r"(?i)([a-z][a-z0-9+.-]*://[^\s?]+)\?[^\s]+")
-_BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
-_URL_USERINFO = re.compile(r"(?i)(https?://)[^/@\s]+@")
+_HORIZONTAL_WHITESPACE = r"[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]"
+_SECRET_ASSIGNMENT_PREFIX = re.compile(
+    r"(?i)(?<![a-z0-9_-])"
+    r"(?P<key>[\"']?[a-z0-9_-]+[\"']?)"
+    rf"(?P<separator>{_HORIZONTAL_WHITESPACE}*[:=]{_HORIZONTAL_WHITESPACE}*)"
+    rf"(?P<scheme>(?:bearer|basic){_HORIZONTAL_WHITESPACE}+)?"
+)
+_SECRET_KEY_MARKERS = (
+    "token",
+    "password",
+    "secret",
+    "api_key",
+    "api-key",
+    "apikey",
+    "authorization",
+)
+_NON_SECRET_WORKFLOW_TOKEN_REFERENCES = tuple(
+    (f"unknown {scope} ", f"{scope}.") for scope in ("config", "run", "state", "loop")
+)
+_NON_SECRET_ASSIGNMENT_CONTEXT_WIDTH = max(
+    len(context) for context, _value_prefix in _NON_SECRET_WORKFLOW_TOKEN_REFERENCES
+)
+_BEARER_TOKEN = re.compile(
+    rf"(?i)\bbearer{_HORIZONTAL_WHITESPACE}+"
+    r"(?![a-z][a-z0-9+.-]*://)"
+    r"[A-Za-z0-9._~+/=-]+"
+)
+
+
+def _quoted_secret_end(text: str, start: int) -> tuple[int, bool]:
+    quote = text[start]
+    line_end = text.find("\n", start + 1)
+    if line_end < 0:
+        line_end = len(text)
+    index = start + 1
+    while index < line_end:
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] != quote:
+            index += 1
+            continue
+        tail = index + 1
+        while tail < line_end and text[tail] in " \t":
+            tail += 1
+        if tail == line_end or text[tail] in ",;}]":
+            return index + 1, True
+        index += 1
+    return line_end, False
+
+
+def _redact_secret_assignments(text: str) -> str:
+    pieces: list[str] = []
+    cursor = 0
+    for match in _SECRET_ASSIGNMENT_PREFIX.finditer(text):
+        if match.start() < cursor:
+            continue
+        key = match.group("key")
+        normalized_key = key.strip("\"'").lower()
+        if not any(marker in normalized_key for marker in _SECRET_KEY_MARKERS):
+            continue
+        prefix = text[
+            max(0, match.start() - _NON_SECRET_ASSIGNMENT_CONTEXT_WIDTH) : match.start()
+        ].lower()
+
+        value_start = match.end()
+        if value_start >= len(text) or text[value_start] == "\n":
+            continue
+        quote = text[value_start] if text[value_start] in {'"', "'"} else ""
+        if quote:
+            value_end, closed_quote = _quoted_secret_end(text, value_start)
+        else:
+            value_end = value_start
+            while (
+                value_end < len(text)
+                and not text[value_end].isspace()
+                and text[value_end] not in ",;}]\"'"
+            ):
+                value_end += 1
+            closed_quote = False
+        if value_end == value_start:
+            continue
+        raw_value = text[value_start:value_end]
+        if (
+            normalized_key == "token"
+            and not quote
+            and any(
+                prefix.endswith(context)
+                and raw_value.lower().startswith(value_prefix)
+                and len(raw_value) > len(value_prefix)
+                and all(
+                    character.isascii() and (character.isalnum() or character in "_.-")
+                    for character in raw_value
+                )
+                for context, value_prefix in _NON_SECRET_WORKFLOW_TOKEN_REFERENCES
+            )
+        ):
+            continue
+
+        pieces.append(text[cursor : match.start()])
+        pieces.append(f"{key}{match.group('separator')}{quote}<redacted>")
+        if closed_quote:
+            pieces.append(quote)
+        cursor = value_end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _redact_url_credentials(text: str) -> str:
+    replacements: list[tuple[int, int]] = []
+    token_start = 0
+    while token_start < len(text):
+        while token_start < len(text) and text[token_start].isspace():
+            token_start += 1
+        token_end = token_start
+        while token_end < len(text) and not text[token_end].isspace():
+            token_end += 1
+        if token_start == token_end:
+            break
+
+        urls: list[tuple[int, int]] = []
+        search_from = token_start
+        while True:
+            delimiter = text.find("://", search_from, token_end)
+            if delimiter < 0:
+                break
+            scheme_start = delimiter
+            while scheme_start > token_start:
+                candidate = text[scheme_start - 1]
+                if not (
+                    candidate.isascii() and (candidate.isalnum() or candidate in "+.-")
+                ):
+                    break
+                scheme_start -= 1
+            while scheme_start < delimiter and not (
+                text[scheme_start].isascii() and text[scheme_start].isalpha()
+            ):
+                scheme_start += 1
+            if scheme_start < delimiter:
+                urls.append((scheme_start, delimiter))
+            search_from = delimiter + 3
+
+        for index, (scheme_start, delimiter) in enumerate(urls):
+            url_end = urls[index + 1][0] if index + 1 < len(urls) else token_end
+            authority_start = delimiter + 3
+            authority_end = url_end
+            for boundary in "/?#":
+                boundary_index = text.find(boundary, authority_start, url_end)
+                if boundary_index >= 0:
+                    authority_end = min(authority_end, boundary_index)
+            userinfo_end = text.find("@", authority_start, authority_end)
+            if userinfo_end >= 0:
+                replacements.append((authority_start, userinfo_end))
+
+            query_start = text.find("?", authority_start, url_end)
+            if 0 <= query_start < token_end - 1:
+                replacements.append((query_start + 1, token_end))
+
+        token_start = token_end
+
+    if not replacements:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for start, end in sorted(replacements):
+        if start < cursor:
+            cursor = max(cursor, end)
+            continue
+        pieces.append(text[cursor:start])
+        pieces.append("<redacted>")
+        cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def redact_failure_text(reason: object, *, secrets: Sequence[str]) -> str:
+    """Redact failure text without changing its display structure.
+
+    Args:
+        reason: Exception or provider diagnostic to make safe for display.
+        secrets: Resolved credential values known at the call boundary.
+    Returns:
+        Redacted text with its original whitespace and line structure.
+    Raises:
+        None.
+    """
+
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    text = redact_text(str(reason or ""), secrets)
+    text = _redact_secret_assignments(text)
+    text = _BEARER_TOKEN.sub("Bearer <redacted>", text)
+    return _redact_url_credentials(text)
 
 
 def utc_now() -> str:
@@ -39,11 +229,7 @@ def utc_now() -> str:
 def sanitize_reason(reason: object, *, limit: int = 600) -> str:
     """Return a concise diagnostic without secrets or presigned query strings."""
 
-    text = " ".join(str(reason or "").split())
-    text = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}<redacted>", text)
-    text = _PRESIGNED_QUERY.sub(r"\1?<redacted>", text)
-    text = _BEARER_TOKEN.sub("Bearer <redacted>", text)
-    text = _URL_USERINFO.sub(r"\1<redacted>@", text)
+    text = " ".join(redact_failure_text(reason, secrets=()).split())
     return text[:limit]
 
 
@@ -65,9 +251,8 @@ def sanitize_failure_reason(
         None.
     """
 
-    from npa.orchestration.skypilot.workflow_state import redact_text
-
-    return sanitize_reason(redact_text(str(reason or ""), secrets), limit=limit)
+    text = " ".join(redact_failure_text(reason, secrets=secrets).split())
+    return text[:limit]
 
 
 def classify_verification_failure(reason: object) -> tuple[str, str]:

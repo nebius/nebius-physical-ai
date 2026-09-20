@@ -107,3 +107,324 @@ def test_failure_sanitizer_requires_and_redacts_explicit_secrets() -> None:
     )
     with pytest.raises(TypeError):
         sanitize_failure_reason("login failed")  # type: ignore[call-arg]
+
+
+def test_display_failure_redactor_preserves_multiline_recovery_text() -> None:
+    from npa.verification import redact_failure_text
+
+    opaque_secret = "synthetic-opaque-display-credential"
+    message = (
+        "provider rejected HF_TOKEN=hf_synthetic_display_token\n"
+        "retry: npa workbench workflow status synthetic-run\n"
+        "details: s3://bucket/key?X-Amz-Signature=synthetic-query\n"
+        'quoted: {"api_key": "synthetic quoted credential"}\n'
+        "transport: custom+s3://synthetic-user:synthetic-password@bucket/key\n"
+        f"opaque: {opaque_secret}"
+    )
+
+    sanitized = redact_failure_text(message, secrets=(opaque_secret,))
+
+    assert sanitized.count("\n") == message.count("\n")
+    assert "retry: npa workbench workflow status synthetic-run" in sanitized
+    assert "hf_synthetic_display_token" not in sanitized
+    assert "X-Amz-Signature" not in sanitized
+    assert "synthetic quoted credential" not in sanitized
+    assert "synthetic-user" not in sanitized
+    assert "synthetic-password" not in sanitized
+    assert opaque_secret not in sanitized
+    assert '{"api_key": "<redacted>"}' in sanitized
+    assert sanitized.count("<redacted>") >= 5
+
+
+@pytest.mark.parametrize(
+    ("message", "secret"),
+    [
+        (
+            'provider rejected api_key: "SYNTH-UNTERMINATED-DOUBLE',
+            "SYNTH-UNTERMINATED-DOUBLE",
+        ),
+        (
+            "provider rejected api_key: 'SYNTH-UNTERMINATED-SINGLE",
+            "SYNTH-UNTERMINATED-SINGLE",
+        ),
+        (
+            '{"api_key": "SYNTH-DOUBLE operator\'s credential"}',
+            "SYNTH-DOUBLE",
+        ),
+        (
+            "{'api_key': 'SYNTH-SINGLE operator \"quoted\" credential'}",
+            "SYNTH-SINGLE",
+        ),
+        (
+            'provider response truncated at "authorization": "SYNTH-TRUNCATED',
+            "SYNTH-TRUNCATED",
+        ),
+        ("Authorization: Basic SYNTHBASE64VALUE", "SYNTHBASE64VALUE"),
+    ],
+)
+def test_display_failure_redactor_fails_closed_for_malformed_quoted_assignments(
+    message: str,
+    secret: str,
+) -> None:
+    from npa.verification import redact_failure_text
+
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert secret not in sanitized
+    assert "<redacted>" in sanitized
+
+
+def test_display_failure_redactor_never_consumes_later_recovery_lines() -> None:
+    from npa.verification import redact_failure_text
+
+    message = (
+        'provider rejected api_key: "SYNTH-LINE-SECRET\n'
+        "retry: npa workbench workflow status synthetic-run\n"
+        '"docs"'
+    )
+
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert "SYNTH-LINE-SECRET" not in sanitized
+    assert "retry: npa workbench workflow status synthetic-run" in sanitized
+    assert sanitized.count("\n") == message.count("\n")
+
+
+def test_display_failure_redactor_consumes_ambiguous_quoted_value_tail() -> None:
+    from npa.verification import redact_failure_text
+
+    message = (
+        'provider rejected api_key: "SYNTH-MALFORMED "quoted" credential"\n'
+        "retry: npa workbench workflow status synthetic-run"
+    )
+
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert "SYNTH-MALFORMED" not in sanitized
+    assert "quoted" not in sanitized
+    assert "credential" not in sanitized
+    assert "retry: npa workbench workflow status synthetic-run" in sanitized
+
+
+def test_display_failure_redactor_preserves_structured_fields_after_secret() -> None:
+    from npa.verification import redact_failure_text
+
+    message = '{"api_key": "SYNTH-SECRET", "retry": "keep-this"}'
+
+    assert redact_failure_text(message, secrets=()) == (
+        '{"api_key": "<redacted>", "retry": "keep-this"}'
+    )
+
+
+@pytest.mark.parametrize("scope", ["config", "run", "state", "loop"])
+def test_display_failure_redactor_preserves_unknown_workflow_token_name(
+    scope: str,
+) -> None:
+    from npa.verification import redact_failure_text
+
+    message = f"state score-rollouts: unknown {scope} token: {scope}.does_not_exist"
+
+    assert redact_failure_text(message, secrets=()) == message
+
+
+def test_display_failure_redactor_does_not_allow_shapeless_unknown_token() -> None:
+    from npa.verification import redact_failure_text
+
+    message = "state score-rollouts: unknown config token: SYNTH-OPAQUE-SECRET"
+
+    assert redact_failure_text(message, secrets=()).endswith("token: <redacted>")
+
+
+@pytest.mark.parametrize("prefix", [".", "-", "+", "..."])
+def test_display_failure_redactor_covers_punctuation_prefixed_urls(
+    prefix: str,
+) -> None:
+    from npa.verification import redact_failure_text
+
+    message = (
+        f"{prefix}https://synth-user:synth-pass@example.invalid/path "
+        f"{prefix}s3://bucket/key?X-Amz-Signature=synth-signature"
+    )
+
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert "synth-user" not in sanitized
+    assert "synth-pass" not in sanitized
+    assert "synth-signature" not in sanitized
+    assert f"{prefix}https://<redacted>@example.invalid/path" in sanitized
+    assert f"{prefix}s3://bucket/key?<redacted>" in sanitized
+
+
+def test_display_failure_redactor_handles_long_secret_assignment_key() -> None:
+    from npa.verification import redact_failure_text
+
+    secret = "SYNTH-LONG-KEY-SECRET"
+    message = f"{'x' * 256}_token={secret}"
+
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert secret not in sanitized
+    assert sanitized.endswith("=<redacted>")
+
+
+def test_display_failure_redactor_handles_dense_same_line_assignments() -> None:
+    from npa.verification import redact_failure_text
+
+    message = ", ".join(f"token=SYNTH-DENSE-{index}" for index in range(5_000))
+
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert "SYNTH-DENSE" not in sanitized
+    assert sanitized.count("token=<redacted>") == 5_000
+
+
+def test_assignment_redactor_never_scans_back_to_line_start_per_match() -> None:
+    from npa.verification import _redact_secret_assignments
+
+    class NoBackwardScan(str):
+        def rfind(self, *_args: object, **_kwargs: object) -> int:
+            raise AssertionError("assignment context lookup must stay bounded")
+
+    message = NoBackwardScan(", ".join(f"token=value-{index}" for index in range(50)))
+
+    assert _redact_secret_assignments(message).count("token=<redacted>") == 50
+
+
+@pytest.mark.parametrize(
+    "separator",
+    [",", ";", "|", "><", '","next":"'],
+)
+def test_display_failure_redactor_covers_compact_multiple_urls(
+    separator: str,
+) -> None:
+    from npa.verification import redact_failure_text, sanitize_failure_reason
+
+    message = (
+        f"https://synth-user-1:synth-pass-1@one.invalid{separator}"
+        "https://synth-user-2:synth-pass-2@two.invalid"
+    )
+
+    for sanitized in (
+        redact_failure_text(message, secrets=()),
+        sanitize_failure_reason(message, secrets=()),
+    ):
+        for secret in (
+            "synth-user-1",
+            "synth-pass-1",
+            "synth-user-2",
+            "synth-pass-2",
+        ):
+            assert secret not in sanitized
+        assert sanitized.count("<redacted>@") == 2
+
+
+def test_display_failure_redactor_covers_query_before_compact_second_url() -> None:
+    from npa.verification import redact_failure_text
+
+    message = (
+        "https://one.invalid/path?X-Amz-Signature=synth-signature,"
+        "https://synth-user:synth-pass@two.invalid"
+    )
+
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert "synth-signature" not in sanitized
+    assert "synth-user" not in sanitized
+    assert "synth-pass" not in sanitized
+    assert "<redacted>" in sanitized
+
+
+@pytest.mark.parametrize("nested_prefix", ["target=", "", "x"])
+def test_display_failure_redactor_covers_signature_after_nested_url(
+    nested_prefix: str,
+) -> None:
+    from npa.verification import redact_failure_text, sanitize_failure_reason
+
+    signature = "synth-nested-signature"
+    message = (
+        "storage rejected s3://bucket/key?"
+        f"{nested_prefix}https://storage.invalid/path"
+        f"&X-Amz-Signature={signature}"
+    )
+
+    for sanitized in (
+        redact_failure_text(message, secrets=()),
+        sanitize_failure_reason(message, secrets=()),
+    ):
+        assert signature not in sanitized
+        assert "X-Amz-Signature" not in sanitized
+        assert "s3://bucket/key?<redacted>" in sanitized
+
+
+def test_display_failure_redactor_preserves_line_after_bearer_label() -> None:
+    from npa.verification import redact_failure_text
+
+    message = "provider rejected bearer\nretry: npa workbench health preflight"
+
+    assert redact_failure_text(message, secrets=()) == message
+
+
+def test_display_failure_redactor_does_not_consume_url_scheme_after_bearer() -> None:
+    from npa.verification import redact_failure_text
+
+    message = (
+        "missing bearer "
+        "https://synth-user:synth-password@storage.invalid/path?"
+        "X-Amz-Signature=synth-signature"
+    )
+
+    assert redact_failure_text(message, secrets=()) == (
+        "missing bearer https://<redacted>@storage.invalid/path?<redacted>"
+    )
+
+
+def test_display_failure_redactor_accepts_nonbreaking_assignment_space() -> None:
+    from npa.verification import redact_failure_text
+
+    secret = "SYNTH-NBSP-SECRET"
+
+    assert redact_failure_text(f"api_key:\u00a0{secret}", secrets=()) == (
+        "api_key:\u00a0<redacted>"
+    )
+
+
+@pytest.mark.parametrize("separator", ["\u00a0", "\u202f", "\u2007"])
+def test_display_failure_redactor_accepts_horizontal_unicode_space(
+    separator: str,
+) -> None:
+    from npa.verification import redact_failure_text
+
+    secret = "SYNTH-HORIZONTAL-SPACE-SECRET"
+
+    assert redact_failure_text(f"Bearer{separator}{secret}", secrets=()) == (
+        "Bearer <redacted>"
+    )
+    assert (
+        redact_failure_text(
+            f"Authorization:{separator}Basic{separator}{secret}",
+            secrets=(),
+        )
+        == f"Authorization:{separator}<redacted>"
+    )
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\r", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"],
+)
+def test_display_failure_redactor_preserves_every_line_boundary(
+    separator: str,
+) -> None:
+    from npa.verification import redact_failure_text
+
+    message = f"missing api_key:{separator}retry: npa workbench health preflight"
+
+    assert redact_failure_text(message, secrets=()) == message
+
+
+def test_display_failure_redactor_does_not_treat_next_line_as_secret_value() -> None:
+    from npa.verification import redact_failure_text
+
+    message = "missing token:\n  run npa workbench health preflight"
+
+    assert redact_failure_text(message, secrets=()) == message
