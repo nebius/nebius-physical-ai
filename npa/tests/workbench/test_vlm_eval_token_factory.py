@@ -290,6 +290,7 @@ def test_self_hosted_judge_keeps_legacy_parsing_without_completion_metadata(
     }
     result = _call_completion(monkeypatch, completion, backend="self-hosted")
     assert result.success is True
+    assert result.provider_success is None
     assert result.score == 1.0
     assert result.served_model is None
     assert result.evidence is not None

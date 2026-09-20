@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,8 @@ from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
+    VlmBenchmarkCaseResult,
+    VlmEvalResult,
     VlmStructuredResponse,
     benchmark_vlm_eval,
     evaluate_stub,
@@ -164,13 +167,60 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
     assert real.rubric == "Retain this override rubric."
 
 
+def test_exported_dataclasses_keep_legacy_positional_constructors() -> None:
+    result = VlmEvalResult(
+        "passed",
+        "api",
+        "input",
+        "output",
+        "result-uri",
+        "task",
+        "model",
+        0.9,
+        0.8,
+        True,
+        "timestamp",
+        "keyframes",
+        1,
+        "rationale",
+        "served-model",
+        None,
+    )
+    structured = VlmStructuredResponse(
+        True, 0.9, "rationale", "served-model", None, "parser-v1"
+    )
+    case = VlmBenchmarkCaseResult(
+        "item",
+        "rollout",
+        True,
+        True,
+        0.9,
+        "passed",
+        True,
+        "task",
+        "rationale",
+        1,
+        "provider",
+        None,
+    )
+
+    assert result.served_model == "served-model"
+    assert result.evidence is None
+    assert result.provider_success is None
+    assert structured.served_model == "served-model"
+    assert structured.parser_version == "parser-v1"
+    assert structured.provider_success is None
+    assert case.evidence is None
+    assert case.provider_success is None
+
+
 def test_parse_structured_response_clamps_score() -> None:
     parsed = parse_structured_response(
         '{"success": true, "score": 1.4, "rationale": "clear completion"}'
     )
 
     assert parsed.success is True
-    assert parsed.success_provided is True
+    assert parsed.provider_success is True
     assert parsed.score == 1.0
     assert parsed.rationale == "clear completion"
 
@@ -181,7 +231,22 @@ def test_parse_structured_response_marks_score_derived_success() -> None:
     )
 
     assert parsed.success is True
-    assert parsed.success_provided is False
+    assert parsed.provider_success is None
+
+
+@pytest.mark.parametrize(
+    ("raw_success", "compatibility_success"),
+    [('"false"', False), ("null", False), ("1", True)],
+)
+def test_parse_structured_response_does_not_promote_non_boolean_provider_success(
+    raw_success: str, compatibility_success: bool
+) -> None:
+    parsed = parse_structured_response(
+        f'{{"success":{raw_success},"score":0.7,"rationale":"legacy"}}'
+    )
+
+    assert parsed.success is compatibility_success
+    assert parsed.provider_success is None
 
 
 def test_mocked_self_hosted_endpoint_returns_structured_score(
@@ -246,6 +311,44 @@ def test_self_hosted_omitted_success_is_not_reported_as_provider_value(
 
     assert result.score == 0.7
     assert result.passed is False
+    assert result.provider_success is None
+    assert result.provider_success_matches_score_gate is None
+    assert result.evidence is not None
+
+
+@pytest.mark.parametrize("raw_success", ["false", None, 1])
+def test_self_hosted_non_boolean_success_is_not_reported_as_provider_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raw_success: object
+) -> None:
+    rollout = _write_image_rollout(tmp_path / "rollout", [(20, 120, 40)])
+    completion = {
+        "model": "deployed-model-revision",
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "success": raw_success,
+                            "score": 0.7,
+                            "rationale": "legacy response",
+                        }
+                    )
+                }
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: completion
+    )
+
+    result = evaluate_vlm(
+        input_path=str(rollout),
+        output_path=str(tmp_path / "result.json"),
+        task="identify visible task progress",
+        backend="self-hosted",
+        success_threshold=0.8,
+    )
+
     assert result.provider_success is None
     assert result.provider_success_matches_score_gate is None
     assert result.evidence is not None

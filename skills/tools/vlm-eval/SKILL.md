@@ -74,8 +74,9 @@ This evidence proves judge traceability, not physical correctness or safety.
 own `success` boolean is retained as `provider_success` when the response
 actually includes it, and `provider_success_matches_score_gate` exposes
 disagreement. If a self-hosted response omits that boolean, both fields stay
-null rather than presenting an inferred value as provider output. Never
-substitute the provider boolean for the score-derived gate.
+null rather than presenting an inferred value as provider output. Legacy
+non-boolean values such as `"true"` also stay null in those provenance fields.
+Never substitute the provider boolean for the score-derived gate.
 
 ## Scoring controls that actually change the verdict
 

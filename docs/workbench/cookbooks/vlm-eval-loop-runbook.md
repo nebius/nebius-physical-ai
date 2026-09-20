@@ -44,10 +44,12 @@ be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
 returns a `success` boolean, the result records it as `provider_success` and
 reports whether it agrees in `provider_success_matches_score_gate`.
 Self-hosted responses that omit the boolean leave both fields null rather than
-presenting a score-derived fallback as provider output. A real disagreement is
-calibration evidence, not permission to replace the score-derived label. Before
-reviewing thin geometry or skeletons, compare retained submitted-frame
-dimensions with the source because normalization can remove the defect.
+presenting a score-derived fallback as provider output. Legacy non-boolean
+values such as `"true"` are likewise not promoted to provider booleans. A real
+disagreement is calibration evidence, not permission to replace the
+score-derived label. Before reviewing thin geometry or skeletons, compare
+retained submitted-frame dimensions with the source because normalization can
+remove the defect.
 
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private

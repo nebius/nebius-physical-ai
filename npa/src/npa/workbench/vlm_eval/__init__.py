@@ -209,11 +209,11 @@ class VlmEvalResult:
     frame_selection: str = DEFAULT_FRAME_SELECTION
     frame_count: int = 0
     rationale: str = ""
-    rubric: str = DEFAULT_RUBRIC
     served_model: str | None = None
+    evidence: VlmEvaluationEvidence | None = None
+    rubric: str = DEFAULT_RUBRIC
     provider_success: bool | None = None
     provider_success_matches_score_gate: bool | None = None
-    evidence: VlmEvaluationEvidence | None = None
 
 
 @dataclass(frozen=True)
@@ -221,10 +221,10 @@ class VlmStructuredResponse:
     success: bool
     score: float
     rationale: str
-    success_provided: bool = True
     served_model: str | None = None
     evidence: VlmEvaluationEvidence | None = None
     parser_version: str = SELF_HOSTED_RESPONSE_PARSER_VERSION
+    provider_success: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -299,9 +299,9 @@ class VlmBenchmarkCaseResult:
     rationale: str
     frame_count: int
     score_source: str
-    provider_success: bool | None
-    provider_success_matches_score_gate: bool | None
     evidence: VlmEvaluationEvidence | None
+    provider_success: bool | None = None
+    provider_success_matches_score_gate: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -717,14 +717,17 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
     if "rationale" not in payload:
         raise VlmEvalError("VLM response JSON must include rationale")
     score = _clamp_score(payload["score"])
-    success_provided = "success" in payload
-    success = _coerce_bool(payload["success"]) if success_provided else score >= 0.5
+    success_supplied = "success" in payload
+    success = _coerce_bool(payload["success"]) if success_supplied else score >= 0.5
+    provider_success = payload.get("success")
+    if not isinstance(provider_success, bool):
+        provider_success = None
     return VlmStructuredResponse(
         success=success,
         score=score,
         rationale=str(payload["rationale"]),
-        success_provided=success_provided,
         parser_version=_parser_version(SELF_HOSTED_RESPONSE_PARSER_VERSION, deframed),
+        provider_success=provider_success,
     )
 
 
@@ -780,6 +783,7 @@ def _parse_api_structured_response(
         rationale=rationale,
         served_model=served_model,
         parser_version=_parser_version(HOSTED_RESPONSE_PARSER_VERSION, deframed),
+        provider_success=payload["success"],
     )
 
 
@@ -1051,9 +1055,7 @@ def _result_from_structured(
     score = round(_clamp_score(structured.score), 4)
     passed = score >= success_threshold
     provider_success = (
-        structured.success
-        if structured.evidence is not None and structured.success_provided
-        else None
+        structured.provider_success if structured.evidence is not None else None
     )
     provider_success_matches_score_gate = (
         provider_success == passed if provider_success is not None else None
