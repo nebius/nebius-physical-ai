@@ -80,6 +80,16 @@ def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     assert "chown -R ubuntu:ubuntu /app " not in text
     assert "chown -R ubuntu:ubuntu /opt/robocasa/source\n" not in text
     assert "chown -R ubuntu:ubuntu /app /opt/robocasa\n" not in text
+    copy_end = text.index(
+        "COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py"
+    )
+    normalize_permissions = text.index(
+        "RUN chmod -R u=rwX,go=rX /app/npa /app/smoke_functional.py"
+    )
+    runtime_import = text.index(
+        'RUN python -c "from npa.workbench.robocasa.service import app;'
+    )
+    assert copy_end < normalize_permissions < runtime_import
 
 
 def test_robocasa_image_binds_committed_source_revision() -> None:

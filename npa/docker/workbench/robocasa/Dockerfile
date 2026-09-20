@@ -112,6 +112,8 @@ COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py
 COPY src/npa/workbench/robocasa /app/npa/workbench/robocasa
 COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
 
+RUN chmod -R u=rwX,go=rX /app/npa /app/smoke_functional.py
+
 RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
