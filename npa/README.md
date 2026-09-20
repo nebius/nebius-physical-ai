@@ -294,6 +294,13 @@ authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
 
+For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
+plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
+`NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the
+configured bucket and storage service account for real. See
+[`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
+for the full env contract and safety preconditions.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
