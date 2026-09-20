@@ -127,7 +127,10 @@ secret assignments, bearer tokens, and resolved credential values before JSON
 output or local persistence. Every workflow CLI `Error:` boundary applies the
 same shape-based redaction before rendering, while preserving multiline
 recovery commands; credential-aware submit failures also redact the exact
-resolved values even when a provider quotes an opaque token.
+resolved values even when a provider quotes an opaque token. Provider
+diagnostics that enter durable workflow records use that same redactor for URL
+userinfo, signed URL queries, bearer and known token shapes, secret assignments,
+and PEM private-key blocks while preserving line structure for troubleshooting.
 
 **A stale or ambiguous run is never selected silently.** Resume by naming it:
 

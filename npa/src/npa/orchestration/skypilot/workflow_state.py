@@ -19,6 +19,10 @@ from botocore.config import Config as BotoConfig
 
 from npa.clients.config import resolve_project_storage
 from npa.clients.credentials import load_credentials, storage_endpoint_url
+from npa.diagnostic_redaction import (
+    SECRET_ENV_NAMES as SECRET_ENV_NAMES,
+    redact_diagnostic_text,
+)
 
 UTC = timezone.utc
 
@@ -26,18 +30,6 @@ UTC = timezone.utc
 DEFAULT_WORKFLOW_MOUNT_PATH = "/mnt/npa-workflow-state"
 DEFAULT_WORKFLOW_STATE_PREFIX = ""
 WORKFLOW_SCHEMA_VERSION = 1
-SECRET_ENV_NAMES = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
-_SENSITIVE_ENV_NAMES = (
-    *SECRET_ENV_NAMES,
-    "HF_TOKEN",
-    "HUGGING_FACE_HUB_TOKEN",
-    "HUGGINGFACE_TOKEN",
-    "HUGGINGFACE_HUB_TOKEN",
-    "NGC_API_KEY",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "SKYPILOT_DOCKER_PASSWORD",
-)
 
 
 class WorkflowStateError(RuntimeError):
@@ -679,26 +671,7 @@ def cancel_workflow_job(
 
 
 def redact_text(text: str, secrets: Sequence[str] | None = None) -> str:
-    redacted = text
-    for secret in secrets or ():
-        if secret:
-            redacted = redacted.replace(secret, "<redacted>")
-    for name in _SENSITIVE_ENV_NAMES:
-        redacted = re.sub(
-            rf"({re.escape(name)}\s*[:=]\s*)[^\s,;'\"]+",
-            r"\1<redacted>",
-            redacted,
-            flags=re.IGNORECASE,
-        )
-    patterns = (
-        r"hf_[A-Za-z0-9_=-]{8,}",
-        r"nvapi-[A-Za-z0-9_=-]{8,}",
-        r"gh[pousr]_[A-Za-z0-9_=-]{20,}",
-        r"(?:AKIA|ASIA)[A-Z0-9]{16}",
-    )
-    for pattern in patterns:
-        redacted = re.sub(pattern, "<redacted>", redacted)
-    return redacted
+    return redact_diagnostic_text(text, secrets=secrets or ())
 
 
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:

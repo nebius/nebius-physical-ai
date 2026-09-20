@@ -279,7 +279,7 @@ def test_display_failure_redactor_handles_dense_same_line_assignments() -> None:
 
 
 def test_assignment_redactor_never_scans_back_to_line_start_per_match() -> None:
-    from npa.verification import _redact_secret_assignments
+    from npa.diagnostic_redaction import _redact_secret_assignments
 
     class NoBackwardScan(str):
         def rfind(self, *_args: object, **_kwargs: object) -> int:
@@ -428,3 +428,67 @@ def test_display_failure_redactor_does_not_treat_next_line_as_secret_value() -> 
     message = "missing token:\n  run npa workbench health preflight"
 
     assert redact_failure_text(message, secrets=()) == message
+
+
+@pytest.mark.parametrize(
+    ("message", "secret"),
+    [
+        ("Bearer SYNTHETIC-OPAQUE-CREDENTIAL", "SYNTHETIC-OPAQUE-CREDENTIAL"),
+        (
+            "https://synthetic-user:synthetic-password@provider.invalid/path",
+            "synthetic-password",
+        ),
+        (
+            "s3://bucket/key?X-Amz-Signature=synthetic-signature",
+            "synthetic-signature",
+        ),
+        (
+            "-----BEGIN PRIVATE KEY-----\nsynthetic-key\n-----END PRIVATE KEY-----",
+            "synthetic-key",
+        ),
+        ("AKIAABCDEFGHIJKLMNOP", "AKIAABCDEFGHIJKLMNOP"),
+    ],
+)
+def test_workflow_state_redactor_covers_unstructured_credential_formats(
+    message: str,
+    secret: str,
+) -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    assert secret not in redact_text(message)
+
+
+def test_workflow_state_redactor_preserves_nonsecret_diagnostics() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = (
+        "retry: npa workbench workflow status synthetic-run\n"
+        "endpoint=https://provider.invalid/path\n"
+        "state score-rollouts: unknown config token: config.does_not_exist"
+    )
+
+    assert redact_text(message) == message
+
+
+def test_workflow_state_redactor_is_idempotent_and_preserves_lines() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    opaque = "synthetic-exact-opaque-secret"
+    message = (
+        "provider rejected Bearer SYNTHETIC-BEARER\n"
+        "-----BEGIN PRIVATE KEY-----\n"
+        "synthetic-key\n"
+        "-----END PRIVATE KEY-----\n"
+        "retry: npa workbench health preflight\n"
+        f"opaque={opaque}"
+    )
+
+    sanitized = redact_text(message, secrets=(opaque,))
+
+    assert sanitized.count("\n") == message.count("\n")
+    assert "retry: npa workbench health preflight" in sanitized
+    assert redact_text(sanitized, secrets=(opaque,)) == sanitized
+    assert all(
+        secret not in sanitized
+        for secret in ("SYNTHETIC-BEARER", "synthetic-key", opaque)
+    )
