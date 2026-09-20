@@ -18,7 +18,7 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
-| Habitat-Sim (**source closure pending; unbuilt/quarantined**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
+| Habitat-Sim (**neutral runtime-fetch; live qualification pending**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
@@ -76,10 +76,10 @@ unique and must be tested with its own upstream-named capabilities.
 Pinned MIT source:
 `facebookresearch/habitat-sim@57ee4941dc4765240f0f91f70b2c97a919bf9038`.
 Upstream warns that beyond v0.3.4, Meta internal teams do not officially
-maintain releases or provide active development. This public-neutral objective
-has pending corresponding-source closure and remains unbuilt and publication-quarantined,
-not a published NPA image or an
-accepted live capability.
+maintain releases or provide active development. Its public build target is a
+neutral Ubuntu/Python bootstrap with accompanying exact Ubuntu source. The
+simulator and scientific/native dependencies are fetched only at runtime.
+Supported release publication and live capability qualification remain pending.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
@@ -92,9 +92,9 @@ The hard gate fetches the official Meta test-scene archive referenced by the
 pinned Habitat-Sim tree, verifies its 94,590,970-byte SHA-256
 `1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
 extracts only the exact hash-pinned `skokloster-castle.glb` and `.navmesh`, and
-deletes the archive. The dedicated build uses an immutable Ubuntu package snapshot
-and a 35-wheel, hash-locked Python closure, and preserves package inventories
-with the result. Habitat's pinned README and the original asset identify the
+deletes the archive. The runtime installer uses the existing immutable Ubuntu
+snapshot and hash-locked Python/source inputs. The public image contains those
+locks and launchers, without the simulator or scientific runtime payload. Habitat's pinned README and the original asset identify the
 demo as CC BY 4.0; the proof carries attribution, license/original links, and
 modification provenance. Matterport3D, HM3D, Replica, other proprietary or gated
 datasets, semantic annotations, and distributed Habitat-Lab training are

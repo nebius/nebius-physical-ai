@@ -553,7 +553,10 @@ def _run_traversal(scene: Path, output_dir: Path) -> dict[str, object]:
             "depth_sensor": True,
             "semantic_sensor": False,
             "enable_physics": True,
-            "physics_config_file": "/usr/src/habitat-sim/data/default.physics_config.json",
+            "physics_config_file": str(
+                Path(os.environ.get("NPA_HABITAT_SOURCE_ROOT", "/usr/src/habitat-sim"))
+                / "data/default.physics_config.json"
+            ),
             "seed": 7,
         }
     )

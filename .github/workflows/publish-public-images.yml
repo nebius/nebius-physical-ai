@@ -130,11 +130,6 @@ jobs:
                   raise SystemExit("lerobot_version is not supported by the packaged manifest")
           matrix = []
           for tool in build_tools:
-              if tool == "habitat-sim":
-                  raise SystemExit(
-                      "habitat-sim: Phase A quarantine refuses a public build; "
-                      "record accepted private-stage evidence before enabling a trusted rebuild"
-                  )
               key = tool if tool in entries else f"sim2real-{tool}"
               entry = entries.get(key)
               if not isinstance(entry, dict) or entry.get("redistribution") != "public":
@@ -445,6 +440,11 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = habitat-sim ]; then
+            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-bootstrap-source.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -692,6 +692,11 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = habitat-sim ]; then
+            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-bootstrap-source.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \

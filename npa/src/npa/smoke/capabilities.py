@@ -33,8 +33,8 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "source inventory hashes match; no functional capture validation claimed",
     ],
     "habitat-sim": [
-        "pinned MIT Habitat-Sim source; intended exact-byte and corresponding-source "
-        "closure qualification remains pending",
+        "neutral bootstrap with accompanying Ubuntu source; pinned MIT Habitat-Sim "
+        "and its scientific/native dependencies are fetched at runtime",
         "official CC BY 4.0 Skokloster archive fetched only at runtime with exact hashes",
         "real greedy-follower traversal produces distinct RGB and finite-depth frames",
         "Bullet world time advances with nonzero agent displacement",

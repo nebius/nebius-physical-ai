@@ -73,7 +73,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
-| `npa-habitat-sim` | `habitat-sim/Dockerfile` | quarantined/unbuilt command-passthrough job; `workflow.habitat_sim.smoke` |
+| `npa-habitat-sim` | `habitat-sim/Dockerfile.bootstrap` | neutral runtime-fetch job; `workflow.habitat_sim.smoke`; release validation pending |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |

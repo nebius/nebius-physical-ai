@@ -47,8 +47,7 @@ image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
 The current source inventory, including the pending Habitat-Sim integration,
-has **43 packaging entries** (40 redistribution-eligible, two restricted, and
-one with pending source closure)
+has **43 packaging entries** (41 redistribution-eligible and two restricted)
 and **44 mapped tools**: 37 public-release members, two restricted
 tools, and five quarantined tools (`curobo`, `habitat-sim`, `ncore`, `openpi`,
 and `robocasa`). These counts come from `packaging-contract.yaml` and
@@ -420,16 +419,13 @@ historical evidence.
 
 ## Not in the public image table
 
-- **`npa-habitat-sim`** is an unbuilt, publication-quarantined public-neutral
-  candidate, not a public-image row. Its dedicated recipe contains the pinned
-  MIT source projection and locked dependencies; complete corresponding-source
-  closure and redistribution eligibility remain pending, while the CC BY
-  Skokloster scene remains an exact runtime fetch. It is present in the packaging
-  and image-name inventories but remains in `UNVALIDATED_PUBLICATION_TOOLS`.
-  No digest, anonymous pull, accepted capability result, or release is claimed.
-  A later trusted full-SHA public rebuild is a new digest and must repeat complete
-  scans and the real one-RTX gate before this table can list it. See
-  [`byof-habitat-sim.md`](byof-habitat-sim.md).
+- **`npa-habitat-sim`** uses `habitat-sim/Dockerfile.bootstrap`, a neutral
+  Ubuntu/Python launcher with accompanying exact Ubuntu sources. Pinned
+  Habitat-Sim, native build dependencies, scientific wheels and the attributed
+  CC BY Skokloster scene are fetched only at runtime. It remains in
+  `UNVALIDATED_PUBLICATION_TOOLS` until exact-image scans and the real one-RTX
+  capability gate pass. The legacy baked candidate remains quarantined and is
+  not the public build target. See [`byof-habitat-sim.md`](byof-habitat-sim.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream
   `vllm/vllm-omni:cosmos3` image with Ray Serve, measured chunked video rollouts,
   and source-aligned edge-transfer augmentation with verified S3 recovery.

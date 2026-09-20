@@ -62,15 +62,14 @@
     },
     {
       "name": "npa-habitat-sim",
-      "dockerfile": "habitat-sim/Dockerfile",
-      "build_script": "habitat-sim/build.sh",
+      "dockerfile": "habitat-sim/Dockerfile.bootstrap",
       "verdict": "unknown",
       "validation": "pending-build",
-      "redistribution": "unvalidated",
+      "redistribution": "public",
       "smoke": "Run the genuine official Skokloster RGB/depth, Bullet, EGL, and agent-traversal gate on exactly one RTX PRO 6000 Blackwell; verify the exact image digest, artifact hashes, and exit zero.",
       "blocked_reason": "Habitat-Sim requires a supported NVIDIA OpenGL/EGL headless rendering path; no such path is verified for the datacenter B200/B300 target, so its hard gate remains STRICT-bound to one RTX PRO 6000 Blackwell.",
       "upstream_tracking": "https://github.com/facebookresearch/habitat-sim/tree/57ee4941dc4765240f0f91f70b2c97a919bf9038",
-      "notes": "The candidate is unbuilt and publication-quarantined, with complete corresponding-source closure and redistribution eligibility still pending. The MIT simulator source is baked; the attributed CC BY 4.0 Skokloster demo scene is fetched and hash-verified only at runtime. No B200/B300 capability or image result is claimed."
+      "notes": "Neutral bootstrap runtime-fetches the pinned MIT simulator and native/scientific dependencies. Accompanying exact source covers the Ubuntu bootstrap; payload and one-RTX functional proof remain required. No B200/B300 capability is claimed."
     },
     {
       "name": "npa-cosmos3-nano-video",

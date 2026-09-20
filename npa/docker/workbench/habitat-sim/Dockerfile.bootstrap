@@ -1,0 +1,141 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BASE_IMAGE=ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+ARG APT_SNAPSHOT=20260903T121500Z
+ARG CA_DEB_SHA256=6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245
+ARG OPENSSL_DEB_SHA256=bf5e804a0533d55ea9aa90320bcbce42981996dd41e8d4bcd5d15e41f91c2817
+ARG LIBSSL3_DEB_SHA256=c12bbf0074c44019bdf4b035b058c24eb904fc772c94707b1df801a4d130e146
+ARG CA_CERT_COUNT=121
+ARG CA_CONFIG_BYTES=4809
+ARG CA_CONFIG_SHA256=fe407f6205ff90c56d4f073ffaa2a8abde7835558919c19367a7cd4fd6312dad
+ARG CA_BUNDLE_BYTES=182140
+ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd
+
+FROM scratch AS npa-ca-bootstrap
+ARG APT_SNAPSHOT
+ARG CA_DEB_SHA256
+ARG OPENSSL_DEB_SHA256
+ARG LIBSSL3_DEB_SHA256
+ADD --checksum=sha256:${CA_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb \
+    /ca-certificates.deb
+ADD --checksum=sha256:${OPENSSL_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/o/openssl/openssl_3.0.2-0ubuntu1.29_amd64.deb \
+    /openssl.deb
+ADD --checksum=sha256:${LIBSSL3_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/o/openssl/libssl3_3.0.2-0ubuntu1.29_amd64.deb \
+    /libssl3.deb
+
+FROM ${BASE_IMAGE} AS npa-ca-trust
+ARG CA_CERT_COUNT
+ARG CA_CONFIG_BYTES
+ARG CA_CONFIG_SHA256
+ARG CA_BUNDLE_BYTES
+ARG CA_BUNDLE_SHA256
+USER root
+RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-certificates.deb,ro \
+    --mount=from=npa-ca-bootstrap,source=/openssl.deb,target=/tmp/openssl.deb,ro \
+    --mount=from=npa-ca-bootstrap,source=/libssl3.deb,target=/tmp/libssl3.deb,ro \
+    dpkg-deb -x /tmp/libssl3.deb / && \
+    dpkg-deb -x /tmp/openssl.deb / && \
+    dpkg-deb -x /tmp/ca-certificates.deb / && \
+    npa_bootstrap_ca() { \
+      ca_root="${1%/}"; \
+      ca_cert_dir="${ca_root}/usr/share/ca-certificates"; \
+      ca_config="${ca_root}/etc/ca-certificates.conf"; \
+      ca_bundle="${ca_root}/etc/ssl/certs/ca-certificates.crt"; \
+      test -d "${ca_cert_dir}" && \
+      install -d -m 0755 "${ca_root}/etc/ssl/certs" && \
+      find "${ca_cert_dir}" -type f -name '*.crt' -printf '%P\n' | \
+        LC_ALL=C sort -u > "${ca_config}" && \
+      test "$(wc -l < "${ca_config}")" -eq "${CA_CERT_COUNT}" && \
+      test "$(stat -c %s "${ca_config}")" -eq "${CA_CONFIG_BYTES}" && \
+      printf '%s  %s\n' "${CA_CONFIG_SHA256}" "${ca_config}" | sha256sum -c - && \
+      : > "${ca_bundle}" && \
+      while IFS= read -r certificate; do \
+        certificate_path="${ca_cert_dir}/${certificate}"; \
+        test -f "${certificate_path}" || return 1; \
+        test "$(tail -c 1 "${certificate_path}" | od -An -t u1 | tr -d ' ')" = 10 || return 1; \
+        /usr/bin/openssl x509 -in "${certificate_path}" -noout >/dev/null 2>&1 || return 1; \
+        cat "${certificate_path}" >> "${ca_bundle}" || return 1; \
+      done < "${ca_config}" && \
+      test "$(stat -c %s "${ca_bundle}")" -eq "${CA_BUNDLE_BYTES}" && \
+      printf '%s  %s\n' "${CA_BUNDLE_SHA256}" "${ca_bundle}" | sha256sum -c -; \
+    }; \
+    npa_bootstrap_ca /
+
+FROM ${BASE_IMAGE} AS bootstrap
+ARG APT_SNAPSHOT
+ARG NPA_SOURCE_SHA
+COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
+COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN mkdir -p /usr/share/doc/npa-habitat-sim && \
+    cp /var/lib/dpkg/status /usr/share/doc/npa-habitat-sim/base-status && \
+    printf '%s\n' 'Types: deb deb-src' \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" \
+      'Suites: jammy jammy-updates jammy-security' 'Components: main universe' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      'Check-Valid-Until: no' > /etc/apt/sources.list.d/npa-snapshot.sources && \
+    rm -f /etc/apt/sources.list && apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates python3 python3-venv \
+      sudo openssh-client openssh-server rsync netcat-openbsd && \
+    rm -f /etc/ssh/ssh_host_* && \
+    groupadd --gid 1000 ubuntu && \
+    useradd --uid 1000 --gid 1000 --create-home --shell /bin/bash --no-log-init ubuntu && \
+    install -d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh && \
+    printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-npa-skypilot && \
+    chmod 0440 /etc/sudoers.d/90-npa-skypilot && \
+    printf 'PasswordAuthentication no\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/99-npa-worker.conf && \
+    cp /var/lib/dpkg/status /usr/share/doc/npa-habitat-sim/runtime-status && \
+    rm -rf /var/cache/apt/* /var/cache/debconf/* /var/lib/apt/lists/*
+
+# Deliver the exact source of every inherited/installed bootstrap package. These
+# come from signed metadata in the same immutable official Ubuntu snapshot.
+FROM bootstrap AS source-delivery
+COPY docker/workbench/habitat-sim/bootstrap_sources.py /tmp/bootstrap_sources.py
+RUN apt-get update && python3 /tmp/bootstrap_sources.py fetch /usr/share/doc/npa-habitat-sim
+
+FROM bootstrap AS runtime
+ARG NPA_SOURCE_SHA
+COPY --from=source-delivery /usr/share/doc/npa-habitat-sim/ubuntu-sources /usr/share/doc/npa-habitat-sim/ubuntu-sources
+COPY --from=source-delivery /usr/share/doc/npa-habitat-sim/bootstrap-sources.json /usr/share/doc/npa-habitat-sim/bootstrap-sources.json
+COPY docker/workbench/habitat-sim/source-manifest.json \
+     docker/workbench/habitat-sim/apt-build.lock \
+     docker/workbench/habitat-sim/apt-runtime.lock \
+     docker/workbench/habitat-sim/requirements-build.lock \
+     docker/workbench/habitat-sim/requirements-runtime.lock \
+     docker/workbench/habitat-sim/prepare_source.py \
+     docker/workbench/habitat-sim/verify_apt_artifacts.sh \
+     docker/workbench/habitat-sim/verify_apt_source.py \
+     docker/workbench/habitat-sim/bootstrap_sources.py \
+     /usr/share/doc/npa-habitat-sim/
+COPY src/npa/__init__.py /opt/npa-runtime/npa/__init__.py
+COPY src/npa/workflows/__init__.py /opt/npa-runtime/npa/workflows/__init__.py
+COPY src/npa/workflows/habitat_sim_smoke.py /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py
+COPY --chmod=0755 docker/workbench/habitat-sim/bootstrap-entrypoint.sh /usr/local/bin/npa-habitat-bootstrap
+COPY --chmod=0755 docker/workbench/habitat-sim/runtime.sh /usr/local/libexec/npa-habitat-runtime
+# SkyPilot overrides ENTRYPOINT. The interpreter shim preserves lazy bootstrap
+# for its real workload while ordinary Python/SSH setup remains network-free.
+COPY --chmod=0755 docker/workbench/habitat-sim/python-shim.sh /usr/local/bin/python3
+RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
+    python3 /usr/share/doc/npa-habitat-sim/bootstrap_sources.py verify /usr/share/doc/npa-habitat-sim && \
+    ln -s python3 /usr/local/bin/python && \
+    find /usr/share/doc/npa-habitat-sim /opt/npa-runtime -type d -exec chmod 0755 {} + && \
+    find /usr/share/doc/npa-habitat-sim /opt/npa-runtime -type f -exec chmod 0644 {} + && \
+    rm -rf /var/lib/apt/lists/* && \
+    ! find / -xdev \( -name '*habitat_sim*.so' -o -name 'libLLVM*' \
+      -o -name 'skokloster-castle.glb' -o -name 'habitat-test-scenes.zip' \) -print -quit | grep -q .
+ENV PYTHONPATH=/opt/npa-runtime \
+    PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
+    MAGNUM_LOG=verbose HABITAT_SIM_LOG=verbose
+LABEL npa.tool="habitat-sim" npa.version="0.3.3-public-unbuilt" \
+      npa.habitat_provisioning="runtime-fetch" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="MIT AND LicenseRef-Ubuntu-Package-Notices" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
+USER ubuntu
+RUN test "$(id -u)" = 1000 && sudo -n true && \
+    /usr/bin/python3 -m npa.workflows.habitat_sim_smoke --help >/dev/null
+ENTRYPOINT ["/usr/local/bin/npa-habitat-bootstrap"]
+CMD ["python3", "-m", "npa.workflows.habitat_sim_smoke", "--help"]

@@ -37,27 +37,28 @@ EXPECTED_RUNTIME_IDENTITY_COMMANDS = (
 
 def test_habitat_pending_source_closure_agrees_with_catalog_totals() -> None:
     entries = PACKAGING["images"]
-    assert entries["habitat-sim"]["redistribution"] == "unvalidated"
+    assert entries["habitat-sim"]["redistribution"] == "public"
+    assert entries["habitat-sim"]["dockerfile"] == "habitat-sim/Dockerfile.bootstrap"
     blackwell = json.loads(
         (ROOT / "npa/docker/workbench/blackwell-dc-images.json").read_bytes()
     )
     (habitat,) = [
         row for row in blackwell["images"] if row["name"] == "npa-habitat-sim"
     ]
-    assert habitat["redistribution"] == "unvalidated"
+    assert habitat["redistribution"] == "public"
     assert habitat["validation"] == "pending-build"
     counts = {
         value: sum(row["redistribution"] == value for row in entries.values())
         for value in ("public", "restricted", "unvalidated")
     }
-    assert counts == {"public": 40, "restricted": 2, "unvalidated": 1}
+    assert counts == {"public": 41, "restricted": 2, "unvalidated": 0}
     catalog = (ROOT / "docs/workbench/container-image-catalog.md").read_text()
     assert "43 packaging entries" in catalog
     assert (
-        "40 redistribution-eligible, two restricted, and\none with pending source closure"
+        "41 redistribution-eligible and two restricted"
         in catalog
     )
-    assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 
 def test_habitat_capability_metadata_keeps_byte_and_source_qualification_pending() -> (
@@ -66,19 +67,19 @@ def test_habitat_capability_metadata_keeps_byte_and_source_qualification_pending
     from npa.smoke.capabilities import GOLDEN_EVAL_CAPABILITIES
 
     capability = GOLDEN_EVAL_CAPABILITIES["habitat-sim"][0]
-    assert "intended exact-byte and corresponding-source" in capability
-    assert "closure qualification remains pending" in capability
+    assert "accompanying Ubuntu source" in capability
+    assert "fetched at runtime" in capability
     assert "complete redistributable dependency closure" not in capability
     entry = yaml.safe_load((ROOT / "npa/src/npa/smoke/golden_evals.yaml").read_text())[
         "containers"
     ]["habitat-sim"]
     notes = entry["safety"]["notes"]
-    assert "Unvalidated and publication-quarantined" in notes
-    assert "exact-byte redistribution" in notes
-    assert "complete corresponding-source qualification remain pending" in notes
+    assert "Neutral runtime-fetch bootstrap" in notes
+    assert "Accompanying source" in notes
+    assert "supported release validation is pending" in notes
     assert "not accepted image/live proof" in notes
-    assert entry["golden_eval"]["status"] == "gpu-gated"
-    assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
+    assert entry["golden_eval"]["status"] == "blocked-on-upstream"
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 
 def test_habitat_diagram_keeps_unvalidated_candidate_out_of_gpu_gated_group() -> None:
@@ -140,9 +141,15 @@ def test_habitat_optional_elf_stack_is_runtime_fetched_from_hash_locked_rows() -
         "--target \"$staging/payload\"",
         ".ready",
         "payload-$lock_digest",
-        "mkdir \"$final_dir\"",
+        "mktemp -d \"${TMPDIR:-/tmp}/npa-habitat-runtime.XXXXXX\"",
+        "sha256sum -c ../payload.sha256",
+        "mv -- \"$staging\" \"$final_dir\"",
+        "trap cleanup_runtime_cache EXIT",
+        "rm -rf -- \"$runtime_cache_root\"",
     ):
         assert required in entrypoint
+    assert "${HOME}/.cache/npa-habitat-runtime" not in entrypoint
+    assert "mkdir \"$final_dir\"" not in entrypoint
     assert "--help" in entrypoint
     assert "credential" not in entrypoint.lower()
 
@@ -218,12 +225,16 @@ def _validate_habitat_root_exemption(
     dockerfile: str, exemption: dict[str, object]
 ) -> None:
     assert exemption["id"] == "habitat-sim-skypilot-0.12.2-v1"
-    assert exemption["sources"] == ["habitat-sim/Dockerfile"]
+    assert exemption["sources"] == ["habitat-sim/Dockerfile", "habitat-sim/Dockerfile.bootstrap"]
     assert exemption["grants"] == [
         {
             "source": "habitat-sim/Dockerfile",
             "sudoers_entry": "ubuntu ALL=(ALL) NOPASSWD:ALL",
-        }
+        },
+        {
+            "source": "habitat-sim/Dockerfile.bootstrap",
+            "sudoers_entry": "ubuntu ALL=(ALL) NOPASSWD:ALL",
+        },
     ]
     rationale = exemption["rationale"]
     for boundary in (
@@ -375,8 +386,8 @@ def test_candidate_has_pending_source_closure_and_is_unpublishable() -> None:
     assert "habitat-sim" not in images.SUPPORTED_TOOL_VERSIONS
     assert images.UNBUILT_CANDIDATE_TOOL_VERSIONS["habitat-sim"].endswith("-unbuilt")
     assert images.supported_tool_version("habitat-sim").endswith("-unbuilt")
-    assert not images.is_publicly_redistributable("habitat-sim")
-    assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
+    assert images.is_publicly_redistributable("habitat-sim")
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
     assert "habitat-sim" in images.UNVALIDATED_PUBLICATION_TOOLS
     assert "habitat-sim" not in images.publicly_publishable_tools()
 
@@ -971,8 +982,9 @@ def test_dockerfile_recomputes_and_records_committed_npa_source_manifest() -> No
 
 def test_trusted_public_workflow_refuses_phase_a_candidate() -> None:
     workflow = (ROOT / ".github/workflows/publish-public-images.yml").read_text()
-    assert 'if tool == "habitat-sim":' in workflow
-    assert "Phase A quarantine refuses a public build" in workflow
+    assert "Phase A quarantine refuses a public build" not in workflow
+    assert "habitat-sim/verify_bootstrap.py" in workflow
+    assert "pushed-bootstrap-source.json" in workflow
 
 
 def test_release_manifest_has_no_habitat_entry() -> None:
@@ -986,7 +998,7 @@ def test_habitat_golden_requires_real_operator_qualification_bindings() -> None:
     )
     golden = manifest["containers"]["habitat-sim"]["golden_eval"]
     command = golden["command"]
-    assert golden["status"] == "gpu-gated"
+    assert golden["status"] == "blocked-on-upstream"
     for variable in (
         "NPA_WORKFLOW_RUN_ID",
         "NPA_RENDERED_PLAN_SHA256",

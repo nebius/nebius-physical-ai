@@ -1,11 +1,20 @@
-# Habitat-Sim quarantined public-image candidate
+# Habitat-Sim runtime-fetch image
 
-Habitat-Sim has a dedicated image and a one-state `npa.workflow/v0.0.1` smoke
-spec. The public-neutral candidate is **unbuilt and publication-quarantined;
-complete corresponding-source closure is pending**.
-No image digest, registry publication, anonymous pull, or live capability result
-exists yet. An import, build, scene download, plan, or GPU visibility check cannot
-satisfy its hard gate.
+The public `Dockerfile.bootstrap` ships Ubuntu/Python/SSH prerequisites, NPA
+launchers and immutable upstream locks. Every inherited and installed Ubuntu
+source component accompanies the image, fetched from the same signed official
+snapshot and verified against its source descriptor. Habitat-Sim, its native
+build dependencies, scientific wheels and the scene are obtained only inside the
+operator workload. The interpreter shim also works when SkyPilot overrides the
+container entrypoint. Runtime source and venv directories are private, ephemeral
+and removed after the workload.
+
+Public development publication requires actual layer-wide payload absence,
+bootstrap source-delivery, security, SBOM and provenance checks. Supported release
+promotion still requires a real exact-digest RTX RGB-D/navigation/Bullet result.
+The previous baked `Dockerfile` and `verify_image.py` remain a quarantined private
+candidate; their complete source-closure and retained-byte guards are unchanged.
+The legacy packaging details below apply to that candidate only.
 
 ## Source and maintenance boundary
 

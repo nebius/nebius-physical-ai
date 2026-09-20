@@ -583,7 +583,6 @@ def test_the_restriction_mechanism_covers_operator_private_wrapper() -> None:
     assert restricted_image_names() == [
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
-        "habitat-sim",
     ]
     assert "cosmos3-nano-video" not in publicly_publishable_tools()
     assert not is_publicly_redistributable("cosmos3-nano-video")
@@ -612,7 +611,7 @@ def test_public_refusal_union_preserves_pending_and_permanent_reasons() -> None:
     assert restricted_image_names() == sorted(expected)
     assert images.omniverse_restricted_image_names() == sorted(expected)
     assert all(not is_publicly_redistributable(name) for name in expected)
-    assert "habitat-sim" in images.PENDING_REDISTRIBUTION_TOOLS
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
     assert "habitat-sim" not in images.RESTRICTED_PUBLICATION_TOOLS
     assert "habitat-sim" in images.PUBLICATION_QUARANTINE_TOOLS
     assert "habitat-sim" not in publicly_publishable_tools()

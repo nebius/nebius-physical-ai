@@ -139,7 +139,7 @@ RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 # A pending source-delivery proof is not a permanent upstream license restriction.
-PENDING_REDISTRIBUTION_TOOLS: frozenset[str] = frozenset({"habitat-sim"})
+PENDING_REDISTRIBUTION_TOOLS: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS

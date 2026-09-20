@@ -167,9 +167,9 @@ images:
       layer scanning plus an eight-node RTX PRO 6000 qualification are required
       before release promotion.
   habitat-sim:
-    dockerfile: habitat-sim/Dockerfile
+    dockerfile: habitat-sim/Dockerfile.bootstrap
     tier: interactive
-    redistribution: unvalidated
+    redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
     passwordless_root_exemption:
       id: habitat-sim-skypilot-0.12.2-v1
@@ -182,8 +182,11 @@ images:
         is the reviewed trust boundary.
       sources:
         - habitat-sim/Dockerfile
+        - habitat-sim/Dockerfile.bootstrap
       grants:
         - source: habitat-sim/Dockerfile
+          sudoers_entry: ubuntu ALL=(ALL) NOPASSWD:ALL
+        - source: habitat-sim/Dockerfile.bootstrap
           sudoers_entry: ubuntu ALL=(ALL) NOPASSWD:ALL
       compensating_controls:
         bootstrap_contract: skypilot-0.12.2-v1
@@ -202,20 +205,18 @@ images:
         - baked-credentials
         - mutable-image-capability-claim
     notes: >-
-      Unbuilt, publication-quarantined candidate targeting public delivery;
-      complete inherited/installed corresponding-source closure is pending, not
-      established by the rsync source package or a top-level MIT grant.
-      The intended bootstrap image contains the exact Habitat-Sim 0.3.3 source
-      projection and its bounded locked Ubuntu/Python closure. The optional
-      SciPy/Numba/llvmlite/Matplotlib scientific and visualisation stack is
-      intentionally runtime-fetched from the hash-locked requirements marker
-      into a private run-owned cache only when the smoke workload is invoked;
-      it is absent from the bootstrap image and this mechanism does not qualify
-      redistribution rights. The CC BY 4.0 Skokloster Castle scene is fetched
-      only at runtime from the official HTTPS locator after complete archive and
-      selected-member hash checks; scene, cache, credentials, and outputs are
-      absent from the image. A trusted public full-SHA rebuild creates a new
-      digest and requires complete repeat scans and exact-digest one-RTX proof.
+      Neutral runtime-fetch bootstrap. The public Dockerfile.bootstrap contains
+      Ubuntu/Python/SSH prerequisites, NPA launchers and immutable upstream locks.
+      Every inherited and installed Ubuntu component has accompanying official
+      snapshot source and copyright notices. Habitat-Sim, its C++ dependencies,
+      scientific wheels, GPU libraries and the CC BY 4.0 Skokloster scene are
+      fetched only by the operator workload into an ephemeral runtime; source
+      archives, direct APT packages and wheels are verified against existing pins.
+      The real RGB-D, navigation and Bullet smoke still requires one RTX GPU.
+      Legacy Dockerfile/build.sh artifacts remain separately quarantined under
+      runtime-payload.json and its unchanged full-layer/source/512 MiB guards;
+      they are not the public build target. All public full-SHA builds require
+      exact-image absence/source, security, SBOM/provenance and GPU validation.
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service

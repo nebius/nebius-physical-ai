@@ -311,13 +311,10 @@ def test_readiness_binds_exact_workflow_and_records_unbuilt_blocker() -> None:
     assert payload["prerequisites"]["target_runtime"]["status"] == "blocked"
 
 
-def test_pending_public_image_is_refused_and_private_reference_is_resolvable() -> None:
-    with pytest.raises(
-        ValueError, match="pending corresponding-source closure"
-    ) as error:
-        container_image_for_tool("habitat-sim")
-    assert "--push" not in str(error.value)
-    assert "never distributed" not in str(error.value)
+def test_neutral_public_candidate_and_private_reference_are_resolvable() -> None:
+    assert container_image_for_tool("habitat-sim").startswith(
+        "ghcr.io/nebius/nebius-physical-ai/npa-habitat-sim:"
+    )
     assert (
         container_image_for_tool(
             "habitat-sim",
