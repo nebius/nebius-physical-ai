@@ -26,6 +26,7 @@ from npa.workbench.vlm_eval import (
     SUPPORTED_BACKENDS,
     SUPPORTED_FRAME_SELECTIONS,
     VlmEvalError,
+    VlmJudgeComparisonRequest,
     benchmark_result_uri_for,
     benchmark_vlm_eval,
     compare_vlm_judges,
@@ -326,7 +327,7 @@ def _execute_judge_comparison(
     *,
     dry_run: bool,
 ) -> dict[str, Any]:
-    report = compare_vlm_judges(**asdict(options))
+    report = compare_vlm_judges(VlmJudgeComparisonRequest(**asdict(options)))
     payload = asdict(report)
     payload["dry_run"] = dry_run or _env_dry_run()
     if not payload["dry_run"]:

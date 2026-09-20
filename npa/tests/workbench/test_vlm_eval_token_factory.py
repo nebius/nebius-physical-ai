@@ -172,11 +172,13 @@ def _run_judge_comparison(monkeypatch, tmp_path, completions):
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
     report = vlm_eval.compare_vlm_judges(
-        input_path=str(frame),
-        output_path=str(tmp_path / "comparison"),
-        primary_model="MiniMaxAI/MiniMax-M3",
-        secondary_model="openbmb/MiniCPM-V-4_5",
-        task="Is the green frame visible?",
+        vlm_eval.VlmJudgeComparisonRequest(
+            input_path=str(frame),
+            output_path=str(tmp_path / "comparison"),
+            primary_model="MiniMaxAI/MiniMax-M3",
+            secondary_model="openbmb/MiniCPM-V-4_5",
+            task="Is the green frame visible?",
+        )
     )
     return report, requests, frame
 
@@ -243,10 +245,12 @@ def test_compare_judges_rejects_same_model_before_transport(
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
     with pytest.raises(VlmEvalError, match="two distinct model IDs"):
         vlm_eval.compare_vlm_judges(
-            input_path=str(frame),
-            output_path=str(tmp_path / "comparison"),
-            primary_model="same/model",
-            secondary_model="same/model",
+            vlm_eval.VlmJudgeComparisonRequest(
+                input_path=str(frame),
+                output_path=str(tmp_path / "comparison"),
+                primary_model="same/model",
+                secondary_model="same/model",
+            )
         )
     assert called is False
 
@@ -275,6 +279,29 @@ def test_compare_judges_retains_provider_error_and_other_outcome(
     assert report.primary.error.provider.finish_reason == "length"
     assert report.secondary.result is not None
     assert report.secondary.error is None
+
+
+def test_compare_judges_rejects_markdown_fenced_json_without_repair(
+    monkeypatch, tmp_path
+) -> None:
+    fenced = _completion(
+        model="MiniMaxAI/MiniMax-M3",
+        content=f"```json\n{_VALID_CONTENT}\n```",
+    )
+    secondary = _completion(model="openbmb/MiniCPM-V-4_5")
+
+    report, requests, _frame = _run_judge_comparison(
+        monkeypatch, tmp_path, [fenced, secondary]
+    )
+
+    assert len(requests) == 2
+    assert report.status == "judge_error"
+    assert report.escalation_required is True
+    assert report.primary.error is not None
+    assert report.primary.error.stage == "response_contract"
+    assert report.primary.error.provider is not None
+    assert report.primary.error.provider.raw_response
+    assert report.secondary.result is not None
 
 
 def test_compare_judges_retains_http_error_body_and_request_id(
@@ -327,10 +354,12 @@ def test_compare_judges_retains_http_error_body_and_request_id(
     monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
     report = vlm_eval.compare_vlm_judges(
-        input_path=str(frame),
-        output_path=str(tmp_path / "comparison"),
-        primary_model="MiniMaxAI/MiniMax-M3",
-        secondary_model="openbmb/MiniCPM-V-4_5",
+        vlm_eval.VlmJudgeComparisonRequest(
+            input_path=str(frame),
+            output_path=str(tmp_path / "comparison"),
+            primary_model="MiniMaxAI/MiniMax-M3",
+            secondary_model="openbmb/MiniCPM-V-4_5",
+        )
     )
 
     assert calls == 2
@@ -396,6 +425,53 @@ def test_transport_retains_decoding_error_response(monkeypatch, body, message) -
     assert captured[0].raw_body == body
     assert captured[0].status_code == 200
     assert captured[0].request_id_header == "decode-error-request"
+
+
+def test_transport_observer_receives_exact_success_response(monkeypatch) -> None:
+    from npa.workbench import vlm_eval
+
+    completion = _completion()
+    raw_body = json.dumps(completion, separators=(",", ":")) + "\n"
+
+    class Response:
+        status_code = 200
+        headers = {"x-request-id": "observed-request"}
+        text = raw_body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return completion
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, *_args, **_kwargs):
+            return Response()
+
+    observed = []
+    monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
+    response = vlm_eval._post_with_readiness_retry(
+        url="https://example.test/v1/chat/completions",
+        headers={},
+        request={"model": "test/model"},
+        backend="api",
+        timeout_s=1,
+        response_sink=observed.append,
+    )
+
+    assert response.raw_body == raw_body
+    assert len(observed) == 1
+    assert observed[0].raw_body == raw_body
+    assert observed[0].request_id_header == "observed-request"
 
 
 @pytest.mark.parametrize(

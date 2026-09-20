@@ -342,6 +342,47 @@ class VlmJudgeComparisonReport:
 
 
 @dataclass(frozen=True)
+class VlmJudgeComparisonRequest:
+    """Describe one immutable paired hosted-judge request.
+
+    Args:
+        input_path: One rollout image, video, array, directory, or S3 prefix.
+        output_path: Destination for the comparison artifact.
+        primary_model: First hosted vision model ID.
+        secondary_model: Distinct second hosted vision model ID.
+        task: Shared physical-task instruction.
+        success_threshold: Score threshold applied to each result separately.
+        frame_selection: Shared final, keyframes, or sequence strategy.
+        max_frames: Maximum number of shared normalized frames.
+        endpoint_url: Optional hosted OpenAI-compatible endpoint override.
+        api_key_env: Environment variable containing the hosted API key.
+        rubric: Shared visual scoring rubric.
+        rubric_path: Optional local file that replaces ``rubric``.
+        timeout_s: Timeout for each provider request.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    input_path: str
+    output_path: str
+    primary_model: str
+    secondary_model: str
+    task: str = "sim-to-real"
+    success_threshold: float = 0.8
+    frame_selection: str = DEFAULT_FRAME_SELECTION
+    max_frames: int = DEFAULT_MAX_FRAMES
+    endpoint_url: str = ""
+    api_key_env: str = DEFAULT_API_KEY_ENV
+    rubric: str = DEFAULT_RUBRIC
+    rubric_path: str = ""
+    timeout_s: float = DEFAULT_TIMEOUT_S
+
+
+@dataclass(frozen=True)
 class VlmStructuredResponse:
     success: bool
     score: float
@@ -780,37 +821,12 @@ def evaluate_vlm(
 
 
 def compare_vlm_judges(
-    *,
-    input_path: str,
-    output_path: str,
-    primary_model: str,
-    secondary_model: str,
-    task: str = "sim-to-real",
-    success_threshold: float = 0.8,
-    frame_selection: str = DEFAULT_FRAME_SELECTION,
-    max_frames: int = DEFAULT_MAX_FRAMES,
-    endpoint_url: str = "",
-    api_key_env: str = DEFAULT_API_KEY_ENV,
-    rubric: str = DEFAULT_RUBRIC,
-    rubric_path: str = "",
-    timeout_s: float = DEFAULT_TIMEOUT_S,
+    request: VlmJudgeComparisonRequest,
 ) -> VlmJudgeComparisonReport:
     """Run two distinct hosted judges over one immutable prompt and frame set.
 
     Args:
-        input_path: One rollout image, video, array, directory, or S3 prefix.
-        output_path: Destination for the comparison artifact.
-        primary_model: First hosted vision model ID.
-        secondary_model: Distinct second hosted vision model ID.
-        task: Shared physical-task instruction.
-        success_threshold: Score threshold applied to each result separately.
-        frame_selection: Shared final, keyframes, or sequence strategy.
-        max_frames: Maximum number of shared normalized frames.
-        endpoint_url: Optional hosted OpenAI-compatible endpoint override.
-        api_key_env: Environment variable containing the hosted API key.
-        rubric: Shared visual scoring rubric.
-        rubric_path: Optional local file that replaces ``rubric``.
-        timeout_s: Timeout for each provider request.
+        request: Frozen input, model, rubric, frame, endpoint, and timeout options.
 
     Returns:
         An audit-only report retaining both outcomes without averaging.
@@ -819,29 +835,38 @@ def compare_vlm_judges(
         VlmEvalError: If configuration, input, or shared evidence is invalid.
     """
 
+    return _evaluate_judge_pair(request)
+
+
+def _evaluate_judge_pair(
+    request: VlmJudgeComparisonRequest,
+) -> VlmJudgeComparisonReport:
     _validate_common(
-        input_path=input_path,
-        output_path=output_path,
-        success_threshold=success_threshold,
-        frame_selection=frame_selection,
-        max_frames=max_frames,
-        timeout_s=timeout_s,
+        input_path=request.input_path,
+        output_path=request.output_path,
+        success_threshold=request.success_threshold,
+        frame_selection=request.frame_selection,
+        max_frames=request.max_frames,
+        timeout_s=request.timeout_s,
     )
-    models = _comparison_models(primary_model, secondary_model)
-    effective_rubric = _load_rubric(rubric=rubric, rubric_path=rubric_path)
-    with _materialized_input(input_path) as local_input:
+    models = _comparison_models(request.primary_model, request.secondary_model)
+    effective_rubric = _load_rubric(
+        rubric=request.rubric,
+        rubric_path=request.rubric_path,
+    )
+    with _materialized_input(request.input_path) as local_input:
         context = _comparison_context(
             local_input=local_input,
-            input_path=input_path,
-            output_path=output_path,
-            task=task,
+            input_path=request.input_path,
+            output_path=request.output_path,
+            task=request.task,
             rubric=effective_rubric,
-            success_threshold=success_threshold,
-            frame_selection=frame_selection,
-            max_frames=max_frames,
-            endpoint_url=endpoint_url,
-            api_key_env=api_key_env,
-            timeout_s=timeout_s,
+            success_threshold=request.success_threshold,
+            frame_selection=request.frame_selection,
+            max_frames=request.max_frames,
+            endpoint_url=request.endpoint_url,
+            api_key_env=request.api_key_env,
+            timeout_s=request.timeout_s,
         )
         return _run_judge_comparison(context, models)
 
@@ -1091,19 +1116,10 @@ def _parse_comparison_response(
 ) -> VlmJudgeOutcome:
     choice = _available_response_choice(response.data)
     try:
-        parsed_choice, message = _response_choice_and_content(response.data)
-        structured = _parse_backend_verdict(
-            backend="api",
-            requested_model=model,
-            data=response.data,
-            choice=parsed_choice,
-            message=message,
-        )
-        evidence = _build_evaluation_evidence(
-            request,
-            response,
-            parsed_choice,
-            parser_version=structured.parser_version,
+        structured = _strict_comparison_verdict(
+            model=model,
+            request=request,
+            response=response,
         )
     except VlmEvalError as exc:
         return _comparison_error_outcome(
@@ -1118,9 +1134,36 @@ def _parse_comparison_response(
     return _comparison_success_outcome(
         model=model,
         request_sha256=request_sha256,
-        structured=replace(structured, evidence=evidence),
+        structured=structured,
         context=context,
     )
+
+
+def _strict_comparison_verdict(
+    *,
+    model: str,
+    request: VlmRequestEvidence,
+    response: _VlmBackendResponse,
+) -> VlmStructuredResponse:
+    choice, message = _response_choice_and_content(response.data)
+    if _deframe_json_text(message)[1]:
+        raise VlmEvalError(
+            "Paired judge response must be bare JSON without a Markdown fence"
+        )
+    structured = _parse_backend_verdict(
+        backend="api",
+        requested_model=model,
+        data=response.data,
+        choice=choice,
+        message=message,
+    )
+    evidence = _build_evaluation_evidence(
+        request,
+        response,
+        choice,
+        parser_version=structured.parser_version,
+    )
+    return replace(structured, evidence=evidence)
 
 
 def _comparison_success_outcome(
@@ -2611,6 +2654,7 @@ def _post_with_readiness_retry(
     request: dict[str, Any],
     backend: str,
     timeout_s: float,
+    response_sink: Callable[[_VlmBackendResponse], None] | None = None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None = None,
 ) -> _VlmBackendResponse:
     """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
@@ -2633,11 +2677,19 @@ def _post_with_readiness_retry(
         try:
             with httpx.Client(timeout=timeout_s) as client:
                 response = client.post(url, headers=headers, json=request)
+                _retain_response(
+                    _backend_response_from_http(
+                        response,
+                        data={},
+                        started_at=started_at,
+                    ),
+                    response_sink,
+                )
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     captured = _captured_http_response(response, started_at=started_at)
-                    _retain_error_response(captured, error_response_sink)
+                    _retain_response(captured, error_response_sink)
                     detail = captured.raw_body.strip().replace("\n", " ")[:1000]
                     suffix = f" response={detail}" if detail else ""
                     raise VlmEvalError(
@@ -2647,13 +2699,13 @@ def _post_with_readiness_retry(
                     data = response.json()
                 except ValueError as exc:
                     captured = _captured_http_response(response, started_at=started_at)
-                    _retain_error_response(captured, error_response_sink)
+                    _retain_response(captured, error_response_sink)
                     raise VlmEvalError(
                         "VLM backend returned non-JSON response"
                     ) from exc
                 if not isinstance(data, dict):
                     captured = _captured_http_response(response, started_at=started_at)
-                    _retain_error_response(captured, error_response_sink)
+                    _retain_response(captured, error_response_sink)
                     raise VlmEvalError(
                         "VLM backend returned a non-object JSON response"
                     )
@@ -2708,7 +2760,7 @@ def _backend_response_from_http(
     )
 
 
-def _retain_error_response(
+def _retain_response(
     response: _VlmBackendResponse,
     sink: Callable[[_VlmBackendResponse], None] | None,
 ) -> None:

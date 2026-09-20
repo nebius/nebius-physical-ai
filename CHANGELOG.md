@@ -13,7 +13,8 @@ a versioned heading when a release is cut.
   and normalized frame set to two explicitly distinct hosted models. Its
   `vlm_judge_disagreement.json` artifact retains both complete outcomes or typed
   errors, never averages scores, and requires escalation on disagreement or
-  judge error. The report is explicitly audit-only and does not qualify either
+  judge error. Markdown-fenced output is retained as a typed error rather than
+  repaired. The report is explicitly audit-only and does not qualify either
   model, defend against in-image instructions, prove a critical defect absent,
   or establish physical correctness or safety.
 

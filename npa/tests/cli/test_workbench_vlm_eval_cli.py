@@ -354,9 +354,13 @@ def test_vlm_eval_sdk_benchmark_returns_report() -> None:
 
 def test_vlm_eval_sdk_exports_direct_paired_judge_surface() -> None:
     from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
-    from npa.workbench.vlm_eval import compare_vlm_judges
+    from npa.workbench.vlm_eval import (
+        VlmJudgeComparisonRequest,
+        compare_vlm_judges,
+    )
 
     assert sdk_vlm_eval.compare_judges is compare_vlm_judges
+    assert sdk_vlm_eval.VlmJudgeComparisonRequest is VlmJudgeComparisonRequest
 
 
 def test_vlm_eval_sdk_wrapper_accepts_string_flags(capsys, tmp_path) -> None:

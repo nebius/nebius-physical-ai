@@ -95,7 +95,9 @@ mean score, and sets `passed=false` plus `escalation_required=true` when the
 score-derived verdicts disagree or either judge errors. The artifact is always
 `deployment_status: audit_only`: agreement does not qualify either judge, and a
 weak judge can make disagreement common without making the scene intrinsically
-ambiguous. It also does not defend against in-image instructions or prove a
+ambiguous. Unlike ordinary single-judge compatibility parsing, this path
+rejects Markdown-fenced JSON as a typed judge error instead of transforming the
+output. It also does not defend against in-image instructions or prove a
 critical visible defect absent. Full provider responses stay in the private
 artifact; CLI output is a bounded summary.
 

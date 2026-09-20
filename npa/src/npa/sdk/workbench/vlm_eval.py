@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from npa._sdk import make_cli_wrapper
-from npa.workbench.vlm_eval import benchmark_vlm_eval, compare_vlm_judges
+from npa.workbench.vlm_eval import (
+    VlmJudgeComparisonRequest,
+    benchmark_vlm_eval,
+    compare_vlm_judges,
+)
 
 run = make_cli_wrapper("npa.cli.workbench.vlm_eval", "run_cmd", "Run VLM evaluation.")
 benchmark = benchmark_vlm_eval
@@ -19,6 +23,7 @@ workflow = make_cli_wrapper(
 )
 
 __all__ = [
+    "VlmJudgeComparisonRequest",
     "benchmark",
     "compare_judges",
     "list",

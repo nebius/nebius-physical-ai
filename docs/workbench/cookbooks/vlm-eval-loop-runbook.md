@@ -74,16 +74,21 @@ npa workbench vlm-eval compare-judges \
   --task "Describe the exact visible completion evidence."
 ```
 
+The direct SDK surface takes a typed
+`npa.sdk.workbench.vlm_eval.VlmJudgeComparisonRequest` and passes it to
+`npa.sdk.workbench.vlm_eval.compare_judges`.
+
 The command materializes and selects frames once, builds one prompt, and proves
 the transported request objects differ only in `model`. It writes
 `vlm_judge_disagreement.json`, retains each complete result or typed error, and
 requires escalation on disagreement or judge error. The report is always
 `audit_only`; agreement does not qualify either model, estimate an operational
 disagreement rate, establish physical correctness, or certify robot safety.
-It also does not defend against instructions embedded in the submitted pixels
-or prove that a critical visible defect is absent. Full rationales and raw
-provider responses are written only to the private artifact; console output is
-a bounded summary.
+Markdown-fenced JSON is a typed judge error on this strict path, not repaired
+into a verdict. The command also does not defend against instructions embedded
+in the submitted pixels or prove that a critical visible defect is absent. Full
+rationales and raw provider responses are written only to the private artifact;
+console output is a bounded summary.
 
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
