@@ -116,6 +116,10 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
     first_scan = text.index(
         "npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py"
     )
+    first_step = text.rfind("      - name:", 0, first_scan)
+    first_step_text = text[first_step:first_scan]
+    assert 'metadata_config_digest="$(jq -er' in first_step_text
+    assert 'containerimage.config.digest' in first_step_text
     first_output = text.index(
         '"$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"', first_scan
     )
