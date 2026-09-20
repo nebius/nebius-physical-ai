@@ -10,7 +10,7 @@ failure classes. Each ID resolves to one complete per-item result because
 duplicate dataset IDs are rejected before evaluation.
 
 The tested implementation source is
-`d9c53c3fc1fc9fa9bee0937f15514fefd632af83`.
+`a098219c7443a85a28aa6f1126d6290e44ec3c75`.
 
 ## Retained hosted evidence
 
