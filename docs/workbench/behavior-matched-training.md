@@ -24,8 +24,10 @@ Q=0.40 with four successes on the same ten cases. Trash scored Q=0.30 versus
 stock's Q=0.366667, with two successes each. Shoes scored Q=0.43 versus stock's
 Q=0.44, with zero versus one success. Across all three trained tasks, selected
 Q=0.276667 regressed from stock's Q=0.402222, with three versus seven successes.
-The furniture transfer cell scored Q=0 for both models. The other two transfer
-cells and six-task aggregate remain pending. See the
+The furniture transfer cell scored Q=0 for both models. Fire scored Q=0.2125
+versus stock's Q=0.2375; hot dogs improved to Q=0.75 versus stock's Q=0.50.
+Across all sixty matched cases, selected Q=0.298750 regressed from stock's
+Q=0.324028, with ten versus twelve full successes. See the
 [experiment report](behavior-matched-results-2026-09-19.md).
 
 ## What is trained
@@ -203,11 +205,13 @@ unchanged normalization assets. A selected offline checkpoint is still
 `not_rollout_evaluated`; measure it with the unchanged official evaluator before
 making a policy-quality claim.
 
-Checkpoints produced by the completed run also contain a native BF16
-`action_correlation_cholesky` intermediate that is not part of the parameter-only
-export. To serve one of those selected checkpoints, first validate the full
-native state against the export and emit a correlation manifest, artifact, and
-serving-validation receipt. Package the selected files under the exact
+The completed run's selected export also contains the native BF16
+`action_correlation_cholesky` intermediate. The serving loader overwrites that
+saved array with recomputed FP32 correlation statistics during model creation,
+so the adapter restores the validated native bytes before inference. To serve
+one of these selected checkpoints, first validate the full native state against
+the export and emit a correlation manifest, artifact, and serving-validation
+receipt. Package the selected files under the exact
 `selected-model/` archive prefix, then use `--policy-kind rlc-selected` with:
 
 - `--policy-selected-export-receipt`

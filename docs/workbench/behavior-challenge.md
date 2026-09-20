@@ -19,8 +19,10 @@ successes on the same cases. Trash scored Q=0.30 versus stock's Q=0.366667,
 with two full successes each. Shoes scored Q=0.43 versus stock's Q=0.44, with
 zero versus one success. The three trained tasks average Q=0.276667 versus
 stock's Q=0.402222, with three versus seven full successes. Furniture scored Q=0
-for both models. Two transfer cells remain pending; there is no six-task
-aggregate or policy-quality win claim.
+for both models. Setting the fire scored Q=0.2125 versus stock's Q=0.2375;
+cooking hot dogs improved to Q=0.75 versus stock's Q=0.50. The complete six-task
+panel averages **Q=0.298750 versus stock's Q=0.324028**, with ten versus twelve
+full successes. This is an overall regression on reused development cases.
 
 **Earlier comparison, September 18:** the
 [76-rollout follow-up](behavior-followup-results-2026-09-18.md) scored the
@@ -94,7 +96,9 @@ stage-replay action conditioning. Native GPU training and holdout selection
 completed for both arms. Selected-model serving validation passed; the first
 matched trained-task panel regressed from stock's Q=0.402222 to Q=0.276667,
 with seven versus three full successes. Furniture scored Q=0 for both models;
-two transfer cells remain pending.
+fire scored Q=0.2125 versus stock's Q=0.2375, and hot dogs scored Q=0.75 versus
+stock's Q=0.50. Across all sixty matched cases, selected Q=0.298750 remains
+below stock's Q=0.324028.
 The published RLC comparison below is a separate measured result.
 
 `--policy-kind rlc` selects a development-only transfer of the published
