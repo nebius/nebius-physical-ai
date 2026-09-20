@@ -163,9 +163,7 @@ def _distribution_binaries(distribution_name: str, min_size: int):
             yield f"{distribution_name}:{relative.as_posix()}", path.read_bytes()
 
 
-def _input_binaries(
-    targets: list[Path], distributions: list[str], min_size: int
-):
+def _input_binaries(targets: list[Path], distributions: list[str], min_size: int):
     """Yield explicitly targeted and distribution-owned native binaries."""
 
     for target in targets:

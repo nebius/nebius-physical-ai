@@ -134,9 +134,12 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
     assert dockerfile.count("--skip-no-fatbin --exact sm_90 --json") == 2
     assert "--distribution flash-attn" in dockerfile
     assert "--distribution apex" in dockerfile
-    assert dockerfile.count(
-        "/opt/seedvr2-venv/bin/python /opt/npa-tools/measure_extension_arches.py"
-    ) == 2
+    assert (
+        dockerfile.count(
+            "/opt/seedvr2-venv/bin/python /opt/npa-tools/measure_extension_arches.py"
+        )
+        == 2
+    )
     assert "/usr/share/doc/npa-seedvr2/extension-arches/flash-attn.json" in dockerfile
     assert "/usr/share/doc/npa-seedvr2/extension-arches/apex.json" in dockerfile
     assert "npa/scripts/measure_extension_arches.py" in build_script
