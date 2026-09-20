@@ -54,12 +54,22 @@ def _frame_coverage(conversion: dict, training: dict) -> None:
     _require(train.keys() == val.keys() == source.keys(), "all source training cameras")
     for camera, count in source.items():
         _require(
-            max(train[camera], val[camera]) <= count <= train[camera] + val[camera],
-            "training/validation frame accounting",
+            train[camera] + val[camera] == count,
+            "disjoint training/validation frame accounting",
         )
     source_hash = _hash(conversion, "camera_frame_inventory_sha256")
     for field in ("source_frame_inventory_sha256", "covered_frame_inventory_sha256"):
         _require(_hash(training, field) == source_hash, field)
+    for field in (
+        "training_frame_inventory_sha256",
+        "validation_frame_inventory_sha256",
+    ):
+        _hash(training, field)
+    _require(
+        _hash(training, "split_union_frame_inventory_sha256") == source_hash,
+        "split union frame inventory",
+    )
+    _require(training.get("split_overlap_frames") == 0, "disjoint split identities")
     _require(training.get("independent_frame_readback") is True, "frame readback")
 
 

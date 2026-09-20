@@ -39,6 +39,8 @@ _PHASES = frozenset(
         "components",
         "bootstrap",
         "source-recheck",
+        "evidence-manifest",
+        "accepted-workload-binding",
         "registry-transfer",
         "registry-tag-lookup",
         "registry-copy",

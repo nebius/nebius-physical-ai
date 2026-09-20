@@ -419,11 +419,113 @@ def test_publication_reexecutes_gates_instead_of_trusting_a_pass_file(
     )
     calls = []
     monkeypatch.setattr(
-        gates, "verify", lambda *_: (calls.append("all gates") or {}, {})
+        gates,
+        "verify",
+        lambda *_: (
+            calls.append("all gates")
+            or {
+                "image_manifest_digest": "sha256:" + "c" * 64,
+                "image_config_digest": "sha256:" + "d" * 64,
+            },
+            {},
+        ),
+    )
+    evidence = private / "evidence-manifest.json"
+    evidence.write_text("{}")
+    monkeypatch.setattr(cli, "_gate_evidence_manifest", lambda *_: evidence)
+    monkeypatch.setattr(
+        cli,
+        "_require_accepted_publication",
+        lambda *_: calls.append("accepted workload"),
     )
     monkeypatch.setattr(registry, "transfer", lambda *_: calls.append("transfer"))
     cli._check_or_publish(args)
-    assert calls == ["all gates", "transfer"]
+    assert calls == ["all gates", "accepted workload", "transfer"]
+
+
+def test_publication_cannot_transfer_quarantined_bytes_without_acceptance(
+    private, monkeypatch
+):
+    build = _build_receipt(private)
+    args = SimpleNamespace(
+        analysis_root=private,
+        source_sha=SHA,
+        action="publish",
+        output_dir=private / "gates",
+    )
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    monkeypatch.setattr(gates, "verify", lambda *_: (graph, {}))
+    evidence = private / "evidence-manifest.json"
+    evidence.write_text("{}")
+    monkeypatch.setattr(cli, "_gate_evidence_manifest", lambda *_: evidence)
+    monkeypatch.setattr(
+        cli.images,
+        "ncore_accepted_image_manifest",
+        lambda: (_ for _ in ()).throw(RuntimeError("NCore remains unaccepted")),
+    )
+    monkeypatch.setattr(
+        registry,
+        "transfer",
+        lambda *_: pytest.fail("registry write reached without acceptance"),
+    )
+    with pytest.raises(RuntimeError, match="unaccepted"):
+        cli._check_or_publish(args)
+    assert json.loads((args.output_dir / "prepublication.json").read_text())[
+        "image_digest"
+    ] == build["image_digest"]
+
+
+def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    build = {"image_digest": "sha256:" + "b" * 64, "archive_sha256": "e" * 64}
+    accepted = {
+        "development_sha": SHA,
+        "oci_digest": build["image_digest"],
+        "amd64_manifest": graph["image_manifest_digest"],
+        "config_digest": graph["image_config_digest"],
+        "prepublication": {"archive_sha256": build["archive_sha256"]},
+    }
+    monkeypatch.setattr(
+        cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
+    )
+    assert cli._require_accepted_publication(SHA, build, graph)["oci_digest"] == build[
+        "image_digest"
+    ]
+    accepted["development_sha"] = "f" * 40
+    monkeypatch.setattr(
+        cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
+    )
+    with pytest.raises(ValueError, match="does_not_match"):
+        cli._require_accepted_publication(SHA, build, graph)
+
+
+def test_gate_evidence_manifest_binds_every_existing_gate_artifact(private):
+    directory = private / "gates"
+    (directory / "bytes").mkdir(parents=True)
+    (directory / "graph.json").write_text('{"graph":"verified"}')
+    (directory / "bytes/report.json").write_text('{"complete":true}')
+    build = {"image_digest": "sha256:" + "b" * 64, "archive_sha256": "e" * 64}
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
+    output = cli._gate_evidence_manifest(directory, SHA, build, graph)
+    receipt = json.loads(output.read_text())
+    assert receipt["source_sha"] == SHA
+    assert {row["path"] for row in receipt["files"]} == {
+        "bytes/report.json",
+        "graph.json",
+    }
+    for row in receipt["files"]:
+        path = directory / row["path"]
+        assert row["bytes"] == path.stat().st_size
+        assert row["sha256"] == process.file_sha(path)
 
 
 def test_build_metadata_cannot_redirect_the_gated_digest(private, monkeypatch):
@@ -803,7 +905,7 @@ def test_workflow_scopes_ncore_away_from_generic_load_push_and_attestations():
         "Attest exact pushed digest SBOM",
     ):
         assert by_name[name]["if"] == "matrix.tool != 'ncore'"
-    ncore = by_name["Gate and publish the exact NCore OCI graph"]
+    ncore = by_name["Gate accepted exact NCore OCI graph and publish"]
     assert ncore["if"] == "matrix.tool == 'ncore'"
     assert "publish_ncore_oci.py publish" in ncore["run"]
     assert "--metadata" in ncore["run"] and "--authfile" in ncore["run"]

@@ -227,7 +227,7 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
     ncore_steps = {
         "Prepare NCore native scanners and separate source inputs",
         "Build NCore committed attested OCI archive",
-        "Gate and publish the exact NCore OCI graph",
+        "Gate accepted exact NCore OCI graph and publish",
     }
     for step in all_steps:
         env = step.get("env", {})

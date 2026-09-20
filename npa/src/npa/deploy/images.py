@@ -35,6 +35,10 @@ LTX2_IMAGE_MANIFEST_RESOURCE = "ltx2_image_manifest.json"
 CONTENT_AGENTS_IMAGE_MANIFEST_RESOURCE = "content_agents_image_manifest.json"
 NCORE_IMAGE_MANIFEST_RESOURCE = "ncore_image_manifest.json"
 PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
+NCORE_ACCEPTED_NRE_IMAGE = (
+    "nvcr.io/nvidia/nre/nre-ga@"
+    "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+)
 
 CONTAINER_IMAGE_NAMES = {
     "openpi": "npa-openpi",
@@ -433,6 +437,34 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(source, "ncore_revision", "59c698d206da92b406a4f72619fce3b3a2c64bfd")
     for field in ("lock_sha256", "post_patch_inventory_sha256"):
         match(source, field, r"[0-9a-f]{64}")
+    prepublication = record(payload, "prepublication")
+    equal(prepublication, "status", "pass")
+    for field, expected in (
+        ("source_sha", payload["development_sha"]),
+        ("image_digest", payload["oci_digest"]),
+        ("platform_digest", payload["amd64_manifest"]),
+        ("config_digest", payload["config_digest"]),
+    ):
+        equal(prepublication, field, expected)
+    for field in (
+        "archive_sha256",
+        "evidence_manifest_sha256",
+        "graph_receipt_sha256",
+        "raw_byte_report_sha256",
+        "raw_byte_ledger_sha256",
+        "attribution_receipt_sha256",
+        "attribution_replay_report_sha256",
+        "attribution_replay_ledger_sha256",
+        "provenance_sbom_sha256",
+        "source_delivery_receipt_sha256",
+        "component_receipt_sha256",
+        "selected_base_receipt_sha256",
+        "bootstrap_receipt_sha256",
+        "payload_receipt_sha256",
+        "vulnerability_receipt_sha256",
+        "license_receipt_sha256",
+    ):
+        match(prepublication, field, r"[0-9a-f]{64}")
     for name in ("byte_scan", "payload_scan", "vulnerability_scan", "license_scan"):
         scan = record(payload, name)
         equal(scan, "status", "pass")
@@ -441,9 +473,9 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     byte_scan = payload["byte_scan"]
     equal(byte_scan, "complete", True)
     equal(byte_scan, "config_digest", payload["config_digest"])
+    equal(byte_scan, "archive_sha256", prepublication["archive_sha256"])
     equal(byte_scan, "unresolved_findings", 0)
-    for field in ("archive_sha256", "policy_sha256"):
-        match(byte_scan, field, r"[0-9a-f]{64}")
+    match(byte_scan, "policy_sha256", r"[0-9a-f]{64}")
     for field in ("bytes_scanned", "files_scanned"):
         count(byte_scan, field, 1)
     equal(payload["license_scan"], "unresolved_findings", 0)
@@ -514,10 +546,10 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(proof, "status", "pass")
     equal(proof, "conversion_report_sha256", conversion["report_sha256"])
     equal(proof, "converted_inventory_sha256", conversion["converted_inventory_sha256"])
-    match(proof, "nre_image", r"nvcr\.io/nvidia/nre/nre-ga@sha256:[0-9a-f]{64}")
+    equal(proof, "nre_image", NCORE_ACCEPTED_NRE_IMAGE)
     equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
     equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
-    count(proof, "gpu_count", 1)
+    equal(proof, "gpu_count", 1)
     # Zero means NRE's full native recipe, not a zero-epoch training workload.
     for field in ("max_epochs", "train_exit_code", "render_exit_code"):
         equal(proof, field, 0)

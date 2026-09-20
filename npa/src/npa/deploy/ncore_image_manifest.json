@@ -11,6 +11,29 @@
     "lock_sha256": null,
     "post_patch_inventory_sha256": null
   },
+  "prepublication": {
+    "status": null,
+    "source_sha": null,
+    "image_digest": null,
+    "platform_digest": null,
+    "config_digest": null,
+    "archive_sha256": null,
+    "evidence_manifest_sha256": null,
+    "graph_receipt_sha256": null,
+    "raw_byte_report_sha256": null,
+    "raw_byte_ledger_sha256": null,
+    "attribution_receipt_sha256": null,
+    "attribution_replay_report_sha256": null,
+    "attribution_replay_ledger_sha256": null,
+    "provenance_sbom_sha256": null,
+    "source_delivery_receipt_sha256": null,
+    "component_receipt_sha256": null,
+    "selected_base_receipt_sha256": null,
+    "bootstrap_receipt_sha256": null,
+    "payload_receipt_sha256": null,
+    "vulnerability_receipt_sha256": null,
+    "license_receipt_sha256": null
+  },
   "byte_scan": {
     "status": null,
     "report_sha256": null,
@@ -140,6 +163,10 @@
       "covered_camera_frame_counts": null,
       "source_frame_inventory_sha256": null,
       "covered_frame_inventory_sha256": null,
+      "training_frame_inventory_sha256": null,
+      "validation_frame_inventory_sha256": null,
+      "split_union_frame_inventory_sha256": null,
+      "split_overlap_frames": null,
       "independent_frame_readback": null
     },
     "rrd": {
