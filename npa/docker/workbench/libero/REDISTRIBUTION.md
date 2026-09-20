@@ -61,13 +61,15 @@ materialization still refuses without the customer/run authorization. These
 controls prove identity and refusal; they do not accept terms for a customer.
 
 The candidate remains unvalidated and unreleased. The trusted public workflow
-permits payload-free development staging, but its downstream qualification
-gates must first emit a canonical complete-image inventory and OCI config digest
-for independent review. The inventory binds every byte in each ordered uncompressed
-layer tar and the canonical flattened-rootfs records. A future publication path
-would also require a current strict checked-in qualification record binding those
-exact identities and the exact development source revision. Dispatch inputs
-cannot self-attest them. The dedicated complete-byte/layer/exported-rootfs
+has a payload-free development-staging path, but it is conditional: a current
+strict checked-in qualification record and complete local byte gates must first
+bind the exact development source revision, OCI graph, and scanner identities.
+An unqualified or missing record stops before any registry write; dispatch
+inputs cannot self-attest qualification. Once that prerequisite is met,
+staging may copy only the exact locally gated OCI graph into the official
+private package, without a public tag or visibility transition. The inventory
+binds every byte in each ordered uncompressed layer tar and the canonical
+flattened-rootfs records. The dedicated complete-byte/layer/exported-rootfs
 scanner requires equality before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
 commit; the package layer removes APT/dpkg/account logs and normalizes the
 non-root account's shadow day to that epoch. It must also pass the
