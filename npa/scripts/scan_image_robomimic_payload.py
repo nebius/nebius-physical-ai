@@ -147,10 +147,35 @@ IMAGE_ROOT = Path(__file__).resolve().parents[1] / "docker/workbench/robomimic"
 
 
 @contextmanager
-def _audited_codec_fixtures(audited, verified_sources):
+def _audited_codec_fixtures(audited, verified_sources, observed=None):
     """Keep raw checks, but bound expansion of exact upstream error fixtures."""
 
     original = walker._scan_nested_archive
+    original_file = walker._scan_file_stream
+    original_path = walker._add_forbidden_path_findings
+    observed = observed if observed is not None else {}
+    occurrences: dict[str, int] = {}
+
+    def record_path(path, source, findings):
+        if path in audited:
+            occurrences[path] = occurrences.get(path, 0) + 1
+        original_path(path, source, findings)
+
+    def scan_file(**kwargs):
+        path = kwargs["path"]
+        if path not in audited:
+            return original_file(**kwargs)
+        with tempfile.TemporaryFile() as captured:
+            digest = hashlib.sha256()
+            while chunk := kwargs["stream"].read(1024 * 1024):
+                digest.update(chunk)
+                captured.write(chunk)
+            member_type = (
+                "decompressed-file" if path.endswith("!/<decompressed>") else "file"
+            )
+            observed.setdefault(path, []).append((digest.hexdigest(), member_type))
+            captured.seek(0)
+            original_file(**{**kwargs, "stream": captured})
 
     def scan_fixture(**kwargs):
         path = kwargs["parent_path"]
@@ -178,10 +203,35 @@ def _audited_codec_fixtures(audited, verified_sources):
 
     # Like the existing policy context, this CLI-only scope is not thread-safe.
     walker._scan_nested_archive = scan_fixture
+    walker._scan_file_stream = scan_file
+    walker._add_forbidden_path_findings = record_path
     try:
-        yield
+        yield occurrences
     finally:
         walker._scan_nested_archive = original
+        walker._scan_file_stream = original_file
+        walker._add_forbidden_path_findings = original_path
+
+
+def _directory_identities(stream, member_parts: list[str]) -> list[tuple[str, str]]:
+    """Observe the exact metadata of listed directory fixtures, including duplicates."""
+
+    identities = []
+    with tarfile.open(fileobj=stream, mode="r|*") as archive:
+        for member in archive:
+            if member.name.lstrip("/") != member_parts[0]:
+                continue
+            if len(member_parts) == 1:
+                identities.append(
+                    (
+                        hashlib.sha256(b"").hexdigest(),
+                        "directory" if member.isdir() else "not-directory",
+                    )
+                )
+            elif member.isfile():
+                with archive.extractfile(member) as nested:
+                    identities.extend(_directory_identities(nested, member_parts[1:]))
+    return identities
 
 
 def _scan_report(tars: list[Path], config: dict[str, Any]) -> dict[str, Any]:
@@ -206,6 +256,8 @@ def _scan_report(tars: list[Path], config: dict[str, Any]) -> dict[str, Any]:
     audited = {item["path"]: item for item in dispositions["fixtures"]}
     raw: list[walker.Finding] = []
     attributed: list[walker.Finding] = []
+    observed: dict[str, list[tuple[str, str]]] = {}
+    matched_dispositions: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="robomimic-source-scan-") as tmp:
         sources: dict[str, Path] = {}
         with (
@@ -215,7 +267,7 @@ def _scan_report(tars: list[Path], config: dict[str, Any]) -> dict[str, Any]:
                 audited_secret_files=walker.AUDITED_SECRET_LITERAL_FILE_SHA256,
                 audited_libraries=walker.AUDITED_LITERAL_LIBRARY_SHA256,
             ),
-            _audited_codec_fixtures(audited, sources),
+            _audited_codec_fixtures(audited, sources, observed) as occurrences,
         ):
             for layer in tars:
                 budget = walker._NestedArchiveBudget(
@@ -277,21 +329,38 @@ def _scan_report(tars: list[Path], config: dict[str, Any]) -> dict[str, Any]:
             disposition = audited.get(finding.path)
             if disposition is None or finding.kind not in disposition["kinds"]:
                 continue
-            archive_path, separator, _ = finding.path.partition("!/")
+            archive_path, separator, member_path = finding.path.partition("!/")
             if not separator or archive_path not in sources:
                 continue
             if expected[archive_path]["sha256"] != disposition["archive_sha256"]:
                 continue
-            # The trusted disposition records the independently reproduced member
-            # hash; the verified whole-archive hash binds every member byte and
-            # metadata entry, including nested archives and directory fixtures.
-            if re.fullmatch(r"[0-9a-f]{64}", disposition["member_sha256"]):
+            if (
+                disposition["member_type"] == "directory"
+                and finding.path not in observed
+            ):
+                with sources[archive_path].open("rb") as stream:
+                    observed[finding.path] = _directory_identities(
+                        stream, member_path.split("!/")
+                    )
+            identity = (disposition["member_sha256"], disposition["member_type"])
+            if occurrences.get(finding.path) == 1 and observed.get(finding.path) == [
+                identity
+            ]:
                 attributed.append(finding)
+                matched_dispositions.append(
+                    {
+                        **disposition,
+                        "finding": asdict(finding),
+                        "observed_member_sha256": identity[0],
+                        "observed_member_type": identity[1],
+                    }
+                )
     findings = [finding for finding in raw if finding not in attributed]
     return {
         "findings": findings,
         "raw_findings": raw,
         "attributed_source_fixtures": attributed,
+        "matched_source_dispositions": matched_dispositions,
     }
 
 
@@ -360,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
         "attributed_source_fixtures": [
             asdict(item) for item in report["attributed_source_fixtures"]
         ],
+        "matched_source_dispositions": report["matched_source_dispositions"],
     }
     rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if args.output:

@@ -186,6 +186,7 @@ def test_source_fixture_attribution_keeps_raw_and_rejects_drift(tmp_path, monkey
                         "path": fixture_path,
                         "archive_sha256": archive_sha,
                         "member_sha256": hashlib.sha256(b"test vector").hexdigest(),
+                        "member_type": "file",
                         "kinds": ["checkpoint_or_weight"],
                     }
                 ]
@@ -255,3 +256,59 @@ def test_attributed_codec_fixture_still_receives_raw_secret_checks():
         "nested_archive_unreadable",
     }
     assert scanner.walker._scan_nested_archive is original
+
+
+@pytest.mark.parametrize("mutation", ["hash", "type", "duplicate"])
+def test_fixture_requires_unique_observed_hash_and_type(
+    tmp_path, monkeypatch, mutation
+):
+    import hashlib
+    import json
+
+    source = tmp_path / "source.tar"
+    member_path = "upstream/fixture.bin"
+    payload = b"public test vector"
+    with tarfile.open(source, "w") as archive:
+        for _ in range(2 if mutation == "duplicate" else 1):
+            member = tarfile.TarInfo(member_path)
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+    archive_sha = hashlib.sha256(source.read_bytes()).hexdigest()
+    source_path = f"{scanner.SOURCE_ROOT}{archive_sha}/source.tar"
+    policy = tmp_path / "policy"
+    policy.mkdir()
+    (policy / "corresponding-source.lock.json").write_text(
+        json.dumps(
+            {
+                "cpython": {
+                    "filename": "source.tar",
+                    "sha256": archive_sha,
+                    "size": source.stat().st_size,
+                },
+                "sources": [],
+            }
+        )
+    )
+    (policy / "source-fixture-dispositions.json").write_text(
+        json.dumps(
+            {
+                "fixtures": [
+                    {
+                        "path": source_path + "!/" + member_path,
+                        "archive_sha256": archive_sha,
+                        "member_sha256": "0" * 64
+                        if mutation == "hash"
+                        else hashlib.sha256(payload).hexdigest(),
+                        "member_type": "directory" if mutation == "type" else "file",
+                        "kinds": ["checkpoint_or_weight"],
+                    }
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(scanner, "IMAGE_ROOT", policy)
+    image = _tar(tmp_path / "image.tar", {source_path: source.read_bytes()})
+    report = scanner._scan_report([image], {})
+    assert report["findings"]
+    assert report["attributed_source_fixtures"] == []
+    assert report["matched_source_dispositions"] == []
