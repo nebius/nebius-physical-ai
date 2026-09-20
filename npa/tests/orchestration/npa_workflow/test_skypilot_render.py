@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,10 @@ from npa.orchestration.npa_workflow.submit import (
     merge_config_overrides,
     prepare_npa_workflow_for_submit,
 )
-from npa.orchestration.npa_workflow.submission_state import load_submission_state
+from npa.orchestration.npa_workflow.submission_state import (
+    load_submission_state,
+    submission_state_path,
+)
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -1212,6 +1216,99 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     )
     assert receipt["workflow"]["manifest_uri"].endswith("/npa-workflow/manifest.json")
     assert receipt["workflow"]["steps"][0]["state"] == "score-rollouts"
+
+
+def test_post_launch_corrupt_receipt_does_not_hide_exact_job_identity(
+    mocker,
+) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
+    secret = "synthetic-corrupt-receipt-secret"
+    receipt_path = submission_state_path("default", "npa-submit-corrupt")
+    corrupt_body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+
+    def fake_submit(_path, _run_id, **kwargs):
+        receipt_path.write_bytes(corrupt_body)
+        kwargs["transaction_recorder"]({"state": "submitted", "job_id": "42"})
+        return WorkflowResult(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            launch_transaction={"state": "submitted", "job_id": "42"},
+        )
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NPA_SPECS / "vlm-eval-single.yaml"),
+            "--run-id",
+            "npa-submit-corrupt",
+            "--registry",
+            "cr.example.invalid/reg",
+            "--skip-preflight",
+            "--no-preflight-images",
+            "--no-resolve-accelerators",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "SUBMITTED"
+    assert payload["job_id"] == "42"
+    assert payload["submission_warnings"]
+    assert "receipt is unavailable" in payload["submission_warnings"][0]
+    assert secret not in f"{result.stdout}\n{result.stderr}"
+    assert receipt_path.read_bytes() == corrupt_body
+
+
+def test_prelaunch_corrupt_receipt_still_prevents_provider_submit(mocker) -> None:
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    secret = "synthetic-prelaunch-receipt-secret"
+    receipt_path = submission_state_path("default", "npa-submit-prelaunch-corrupt")
+    receipt_path.parent.mkdir(parents=True)
+    corrupt_body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+    receipt_path.write_bytes(corrupt_body)
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NPA_SPECS / "vlm-eval-single.yaml"),
+            "--run-id",
+            "npa-submit-prelaunch-corrupt",
+            "--registry",
+            "cr.example.invalid/reg",
+            "--skip-preflight",
+            "--no-preflight-images",
+            "--no-resolve-accelerators",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "could not persist pre-mutation submission ledger" in result.output
+    assert secret not in f"{result.stdout}\n{result.stderr}"
+    assert receipt_path.read_bytes() == corrupt_body
+    submit.assert_not_called()
 
 
 def test_workbench_workflow_submit_npa_plan_only(

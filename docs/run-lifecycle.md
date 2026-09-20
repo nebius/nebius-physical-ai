@@ -112,6 +112,16 @@ Source staging and submission are content-addressed and idempotent for an
 explicit `RUN_ID`, so repeating a submit repairs and reuses derived artifacts
 instead of duplicating work.
 
+The owner-only submission receipt under
+`~/.npa/workflow-submissions/<project>/<run>.json` is part of that safety
+boundary. If it is unreadable, malformed, symlinked, or belongs to a different
+project/run identity, NPA preserves it and refuses pre-launch mutation. Audit
+the path and its exact ownership, back it up, then repair the receipt before
+retrying; do not delete it merely to bypass the check because it may retain the
+only exact managed-job identity. If corruption occurs after provider acceptance,
+submit still prints the accepted status and job ID with a
+`submission_warnings` entry so the job can be cancelled or reconciled.
+
 **A stale or ambiguous run is never selected silently.** Resume by naming it:
 
 ```bash

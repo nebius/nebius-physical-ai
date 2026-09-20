@@ -18,7 +18,7 @@ from npa.orchestration.npa_workflow.submission_state import (
 )
 
 
-def _receipt_bytes(**overrides: object) -> bytes:
+def _receipt_bytes(*, omit: tuple[str, ...] = (), **overrides: object) -> bytes:
     payload: dict[str, object] = {
         "schema_version": "npa.workflow.submission.v1",
         "project": "demo",
@@ -27,34 +27,43 @@ def _receipt_bytes(**overrides: object) -> bytes:
         "launch": {"status": "launching", "kind": "runtime"},
     }
     payload.update(overrides)
+    for key in omit:
+        payload.pop(key, None)
     return json.dumps(payload, sort_keys=True).encode()
 
 
 UNVERIFIABLE_RECEIPTS = (
-    ("truncated_json", b'{"schema_version":'),
-    ("invalid_utf8", b'\xff\xfe{"schema_version":'),
-    ("non_object", b"[]"),
-    ("empty_object", b"{}"),
-    ("wrong_schema", _receipt_bytes(schema_version="npa.workflow.submission.v0")),
-    (
-        "missing_schema",
-        _receipt_bytes(schema_version=None),
+    pytest.param("truncated_json", b'{"schema_version":', id="truncated-json"),
+    pytest.param("invalid_utf8", b'\xff\xfe{"schema_version":', id="invalid-utf8"),
+    pytest.param("zero_bytes", b"", id="zero-bytes"),
+    pytest.param("non_object", b"[]", id="non-object"),
+    pytest.param("empty_object", b"{}", id="empty-object"),
+    pytest.param(
+        "wrong_schema",
+        _receipt_bytes(schema_version="npa.workflow.submission.v0"),
+        id="wrong-schema",
     ),
-    ("wrong_project", _receipt_bytes(project="other")),
-    ("wrong_run", _receipt_bytes(run_id="run-2")),
+    pytest.param(
+        "missing_schema",
+        _receipt_bytes(omit=("schema_version",)),
+        id="missing-schema",
+    ),
+    pytest.param(
+        "wrong_project",
+        _receipt_bytes(project="other"),
+        id="wrong-project",
+    ),
+    pytest.param("wrong_run", _receipt_bytes(run_id="run-2"), id="wrong-run"),
 )
 
 
-@pytest.mark.parametrize("operation", ["update", "plan"])
+@pytest.mark.parametrize("operation", ["update", "update_locked", "plan"])
 @pytest.mark.parametrize(("case", "body"), UNVERIFIABLE_RECEIPTS)
 def test_mutation_rejects_unverifiable_existing_receipt_without_replacing_bytes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     operation: str,
     case: str,
     body: bytes,
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
     path = submission_state_path("demo", "run-1")
     path.parent.mkdir(parents=True)
     path.write_bytes(body)
@@ -66,6 +75,14 @@ def test_mutation_rejects_unverifiable_existing_receipt_without_replacing_bytes(
             update_submission_state(
                 "demo", "run-1", {"artifact_load": {"status": "ok"}}
             )
+        elif operation == "update_locked":
+            with submission_lock("demo", "run-1"):
+                update_submission_state(
+                    "demo",
+                    "run-1",
+                    {"artifact_load": {"status": "ok"}},
+                    locked=True,
+                )
         else:
             record_submission_plan(
                 "demo",
@@ -77,11 +94,10 @@ def test_mutation_rejects_unverifiable_existing_receipt_without_replacing_bytes(
     assert path.read_bytes() == body, case
 
 
-@pytest.mark.parametrize("operation", ["update", "plan"])
+@pytest.mark.parametrize("operation", ["update", "update_locked", "plan"])
 def test_mutation_rejects_symlink_receipt_without_replacing_link(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+    tmp_path: Path, operation: str
 ) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path))
     path = submission_state_path("demo", "run-1")
     path.parent.mkdir(parents=True)
     target = tmp_path / "retained-receipt.json"
@@ -96,6 +112,14 @@ def test_mutation_rejects_symlink_receipt_without_replacing_link(
             update_submission_state(
                 "demo", "run-1", {"artifact_load": {"status": "ok"}}
             )
+        elif operation == "update_locked":
+            with submission_lock("demo", "run-1"):
+                update_submission_state(
+                    "demo",
+                    "run-1",
+                    {"artifact_load": {"status": "ok"}},
+                    locked=True,
+                )
         else:
             record_submission_plan(
                 "demo",
@@ -106,6 +130,20 @@ def test_mutation_rejects_symlink_receipt_without_replacing_link(
 
     assert path.is_symlink()
     assert target.read_bytes() == body
+
+
+def test_unverifiable_receipt_error_never_includes_receipt_contents() -> None:
+    secret = "synthetic-secret-that-must-not-appear"
+    path = submission_state_path("demo", "run-1")
+    path.parent.mkdir(parents=True)
+    body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+    path.write_bytes(body)
+
+    with pytest.raises(ValueError) as exc_info:
+        update_submission_state("demo", "run-1", {"launch_state": "submitted"})
+
+    assert secret not in str(exc_info.value)
+    assert path.read_bytes() == body
 
 
 def test_resume_planning_preserves_run_location_and_launch(tmp_path, monkeypatch):

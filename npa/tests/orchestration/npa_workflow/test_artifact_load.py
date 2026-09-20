@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from npa.clients import config
 from npa.orchestration.npa_workflow.artifact_load import (
     discover_final_rerun_artifact,
     load_final_artifact_into_agent,
 )
+from npa.orchestration.npa_workflow.submission_state import submission_state_path
 
 
 class FakeS3:
@@ -162,3 +165,37 @@ def test_missing_agent_is_partial_not_workflow_failure(
     assert result.retry_command == (
         "npa workbench workflow load-artifact paidf-1 --project demo"
     )
+
+
+@pytest.mark.parametrize("run_prefix_uri", ["", "s3://bucket/paidf-1"])
+def test_optional_handoff_keeps_workflow_success_when_receipt_is_corrupt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_prefix_uri: str,
+) -> None:
+    from npa.cli.workbench.workflow import _load_paidf_artifact
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    secret = "synthetic-receipt-secret"
+    path = submission_state_path("demo", "paidf-1")
+    path.parent.mkdir(parents=True)
+    body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+    path.write_bytes(body)
+    if run_prefix_uri:
+        monkeypatch.setattr(
+            "npa.orchestration.npa_workflow.src_staging._storage_client",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("synthetic storage failure")
+            ),
+        )
+
+    result = _load_paidf_artifact(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri=run_prefix_uri,
+    )
+
+    assert result["status"] == "partial"
+    assert "receipt_warning" in result
+    assert secret not in str(result)
+    assert path.read_bytes() == body

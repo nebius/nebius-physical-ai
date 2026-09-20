@@ -2151,6 +2151,7 @@ def submit_cmd(
     submitted_yaml_context: tempfile.TemporaryDirectory[str] | None = None
     workflow_state = None
     instrumented = None
+    submission_warnings: list[str] = []
     if substitutions or materializer or durable_s3:
         submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
         submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
@@ -2335,12 +2336,23 @@ def submit_cmd(
                 update_submission_state,
             )
 
-            update_submission_state(
-                ledger_project,
-                resolved_run_id,
-                {"launch": dict(payload)},
-                locked=True,
-            )
+            try:
+                update_submission_state(
+                    ledger_project,
+                    resolved_run_id,
+                    {"launch": dict(payload)},
+                    locked=True,
+                )
+            except (OSError, ValueError) as exc:
+                accepted = str(payload.get("state") or "").lower() in {
+                    "submitted",
+                    "adopted",
+                }
+                if not accepted or not str(payload.get("job_id") or "").strip():
+                    raise
+                warning = _submission_receipt_warning(exc)
+                if warning not in submission_warnings:
+                    submission_warnings.append(warning)
 
         def _launch() -> WorkflowResult:
             from npa.clients.config import default_project_name, resolve_environment
@@ -2437,7 +2449,7 @@ def submit_cmd(
                     locked=True,
                 )
                 result = _launch()
-                update_submission_state(
+                warning = _try_optional_submission_update(
                     ledger_project,
                     resolved_run_id,
                     {
@@ -2449,6 +2461,8 @@ def submit_cmd(
                     },
                     locked=True,
                 )
+                if warning and warning not in submission_warnings:
+                    submission_warnings.append(warning)
         else:
             result = _launch()
         if workflow_state is not None and instrumented is not None:
@@ -2516,9 +2530,12 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
 
     if output_format == OutputFormat.json:
+        payload = {**result.__dict__, "run_id": resolved_run_id}
+        if submission_warnings:
+            payload["submission_warnings"] = submission_warnings
         typer.echo(
             json.dumps(
-                {**result.__dict__, "run_id": resolved_run_id},
+                payload,
                 indent=2,
                 sort_keys=True,
             )
@@ -2529,6 +2546,8 @@ def submit_cmd(
     typer.echo(f"run_id: {resolved_run_id}")
     if result.job_id:
         typer.echo(f"job_id: {result.job_id}")
+    for warning in submission_warnings:
+        typer.echo(f"warning: {warning}", err=True)
     if workflow_state is not None:
         typer.echo(f"run_prefix_uri: {workflow_state.uri}")
     log_paths = getattr(result, "log_paths", {})
@@ -2857,6 +2876,30 @@ def _resolve_runtime_secret_values(
     return dict(context.secret_values)
 
 
+def _submission_receipt_warning(exc: BaseException) -> str:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    return "submission receipt was not updated: " + redact_text(str(exc))
+
+
+def _try_optional_submission_update(
+    project: str,
+    run_id: str,
+    updates: Mapping[str, object],
+    *,
+    locked: bool = False,
+) -> str:
+    from npa.orchestration.npa_workflow.submission_state import (
+        update_submission_state,
+    )
+
+    try:
+        update_submission_state(project, run_id, updates, locked=locked)
+    except (OSError, ValueError) as exc:
+        return _submission_receipt_warning(exc)
+    return ""
+
+
 def _load_paidf_artifact(
     *,
     project: str,
@@ -2872,7 +2915,6 @@ def _load_paidf_artifact(
         load_final_artifact_into_agent,
     )
     from npa.orchestration.npa_workflow.src_staging import _storage_client
-    from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
     if not run_prefix_uri:
         result: dict[str, object] = {
@@ -2884,7 +2926,11 @@ def _load_paidf_artifact(
             ),
             "verified": False,
         }
-        update_submission_state(project or "default", run_id, {"artifact_load": result})
+        warning = _try_optional_submission_update(
+            project or "default", run_id, {"artifact_load": result}
+        )
+        if warning:
+            result["receipt_warning"] = warning
         return result
     try:
         client = _storage_client(
@@ -2912,7 +2958,11 @@ def _load_paidf_artifact(
             ),
             "verified": False,
         }
-        update_submission_state(project or "default", run_id, {"artifact_load": result})
+        warning = _try_optional_submission_update(
+            project or "default", run_id, {"artifact_load": result}
+        )
+        if warning:
+            result["receipt_warning"] = warning
         return result
 
 
@@ -7261,7 +7311,7 @@ def stage_src_cmd(
                 run_id,
                 {"source": {"status": "verified", "uri": uri}},
             )
-        except (ConfigError, SrcStagingError) as exc:
+        except (ConfigError, SrcStagingError, OSError, ValueError) as exc:
             _fail(str(exc))
             return
     else:

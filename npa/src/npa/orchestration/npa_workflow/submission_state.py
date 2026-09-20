@@ -258,8 +258,9 @@ def _read_existing_for_update(project: str, run_id: str) -> dict[str, Any]:
         return {}
     if inspected.outcome == "unavailable":
         raise ValueError(
-            "existing workflow submission receipt is unavailable; preserve and "
-            f"repair or explicitly remove it before retrying: {inspected.error}"
+            "existing workflow submission receipt is unavailable; preserve it, "
+            "audit its exact project/run ownership, and repair it before retrying: "
+            f"{inspected.error}"
         )
     return inspected.payload
 
@@ -309,7 +310,22 @@ def update_submission_state(
     *,
     locked: bool = False,
 ) -> dict[str, Any]:
-    """Atomically merge non-secret submission metadata into the local ledger."""
+    """Atomically merge non-secret submission metadata into the local ledger.
+
+    Args:
+        project: Selected project alias.
+        run_id: Exact run whose receipt is updated.
+        updates: Non-secret metadata to merge.
+        locked: Whether the caller already holds this receipt's submission lock.
+
+    Returns:
+        The complete updated submission receipt.
+
+    Raises:
+        ValueError: Metadata contains secrets or the existing receipt cannot be
+            verified against its schema and exact project/run identity.
+        OSError: The receipt lock or atomic persistence operation fails.
+    """
 
     if _contains_secret(updates):
         raise ValueError(
@@ -357,7 +373,9 @@ def record_submission_plan(
         The updated submission receipt.
 
     Raises:
-        ValueError: Metadata contains secrets or changes the workflow identity.
+        ValueError: Metadata contains secrets, changes the workflow identity,
+            or the existing receipt cannot be verified against its schema and
+            exact project/run identity.
         OSError: The locked receipt cannot be persisted.
     """
     with submission_lock(project, run_id):
