@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from npa.cli.gemini_robotics import (
+from npa.cli.workbench.gemini_robotics import (
     AdaptationJob,
     EvalResult,
     PlanResult,

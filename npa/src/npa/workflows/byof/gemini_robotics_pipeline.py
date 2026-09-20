@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from npa.cli.gemini_robotics import (
+from npa.cli.workbench.gemini_robotics import (
     ADAPT_RECEIPT_SCHEMA,
     EVAL_RECEIPT_SCHEMA,
     PLAN_RECEIPT_SCHEMA,
@@ -88,7 +88,7 @@ def run_er_planning_stage(
     client: GeminiRoboticsClient | None = None,
 ) -> dict[str, Any]:
     """Run the ER planning stage and persist its receipt."""
-    from npa.cli.gemini_robotics import PROVISIONAL_MODEL_ID
+    from npa.cli.workbench.gemini_robotics import PROVISIONAL_MODEL_ID
 
     active = _client_or_default(client)
     try:
@@ -120,7 +120,7 @@ def run_adaptation_stage(
     client: GeminiRoboticsClient | None = None,
 ) -> dict[str, Any]:
     """Run the on-device adaptation stage and persist its receipt."""
-    from npa.cli.gemini_robotics import PROVISIONAL_MODEL_ID, _read_examples
+    from npa.cli.workbench.gemini_robotics import PROVISIONAL_MODEL_ID, _read_examples
 
     if not config.dataset_path:
         raise GeminiRoboticsPipelineError(
@@ -163,7 +163,7 @@ def run_eval_stage(
     client: GeminiRoboticsClient | None = None,
 ) -> dict[str, Any]:
     """Run the rubric-eval stage against a plan receipt and persist it."""
-    from npa.cli.gemini_robotics import PROVISIONAL_MODEL_ID
+    from npa.cli.workbench.gemini_robotics import PROVISIONAL_MODEL_ID
 
     if not config.rubric_path:
         raise GeminiRoboticsPipelineError("Eval stage requires rubric_path to be set.")

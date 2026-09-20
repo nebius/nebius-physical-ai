@@ -565,6 +565,16 @@ skills:
         contains: "input-path"
       - type: file_exists
         path: npa/docker/workbench/lichtblick/Dockerfile
+  - name: gemini-robotics
+    category: tools
+    when_to_use: "Gemini Robotics 2 toolRefs: ER embodied-reasoning planning, on-device adaptation jobs, or rubric evaluation via the hosted Gemini API, or the npa workbench gemini-robotics CLI."
+    path: skills/tools/gemini-robotics/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "gemini-robotics", "plan", "--help"]
+        contains: "task"
+      - type: file_exists
+        path: skills/tools/gemini-robotics/SKILL.md
   - name: genesis
     category: tools
     when_to_use: "Genesis simulation, RL teacher training, visual demo generation, and EGL behavior."

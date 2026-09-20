@@ -10,7 +10,7 @@ import json
 import httpx
 import pytest
 
-from npa.cli.gemini_robotics import (
+from npa.cli.workbench.gemini_robotics import (
     API_KEY_ENV,
     BASE_URL_ENV,
     PROVISIONAL_API_BASE_URL,
@@ -268,28 +268,55 @@ def test_eval_plan_rejects_non_json() -> None:
         )
 
 
-def test_workbench_wrappers_point_at_cli_callbacks() -> None:
+def test_workbench_surface_is_pipeline_first() -> None:
+    """The SDK surface re-exports the pipeline stages directly.
+
+    New tools must not route through ``npa._sdk.make_cli_wrapper``: the
+    workbench package is the primary surface and the CLI is a thin client.
+    """
     from npa.workbench import gemini_robotics
+    from npa.workflows.byof import gemini_robotics_pipeline as pipe
 
-    assert gemini_robotics.plan.__npa_cli_module__ == "npa.cli.gemini_robotics"
-    assert gemini_robotics.plan.__npa_cli_callback__ == "plan_cmd"
-    assert gemini_robotics.adapt.__npa_cli_callback__ == "adapt_cmd"
-    assert gemini_robotics.eval.__npa_cli_callback__ == "eval_cmd"
-    assert gemini_robotics.plan.__name__ == "plan"
-    assert gemini_robotics.adapt.__name__ == "adapt"
-    assert gemini_robotics.eval.__name__ == "eval"
+    assert gemini_robotics.plan is pipe.run_er_planning_stage
+    assert gemini_robotics.adapt is pipe.run_adaptation_stage
+    assert gemini_robotics.eval is pipe.run_eval_stage
+    assert gemini_robotics.run_er_planning_stage is pipe.run_er_planning_stage
+    assert gemini_robotics.run_adaptation_stage is pipe.run_adaptation_stage
+    assert gemini_robotics.run_eval_stage is pipe.run_eval_stage
+    assert not any(
+        hasattr(getattr(gemini_robotics, name), "__npa_cli_module__")
+        for name in ("plan", "adapt", "eval")
+    )
+    assert set(gemini_robotics.__all__) == {
+        "plan",
+        "adapt",
+        "eval",
+        "run_er_planning_stage",
+        "run_adaptation_stage",
+        "run_eval_stage",
+    }
 
 
-def test_workbench_wrapper_delegates_to_callback(monkeypatch) -> None:
-    import npa.cli.gemini_robotics as cli_module
+def test_workbench_plan_runs_pipeline_stage(tmp_path) -> None:
+    from npa.cli.workbench.gemini_robotics import PlanResult
     from npa.workbench import gemini_robotics
+    from npa.workflows.byof.gemini_robotics_pipeline import (
+        GeminiRoboticsPipelineConfig,
+    )
 
-    captured: dict = {}
+    class FakeClient:
+        def plan(self, **kwargs):
+            return PlanResult(
+                text="1. Approach.\n2. Grasp.",
+                safety_calls=[],
+                model=kwargs.get("model", ""),
+                finish_reason="STOP",
+            )
 
-    def fake_plan_cmd(task: str):
-        captured["task"] = task
-        return {"ok": True}
-
-    monkeypatch.setattr(cli_module, "plan_cmd", fake_plan_cmd)
-    assert gemini_robotics.plan(task="pick up the cup") == {"ok": True}
-    assert captured["task"] == "pick up the cup"
+    config = GeminiRoboticsPipelineConfig(
+        task="pick up the cup", output_dir=str(tmp_path / "out")
+    )
+    receipt = gemini_robotics.plan(config, client=FakeClient())
+    assert receipt["task"] == "pick up the cup"
+    assert receipt["plan_text"] == "1. Approach.\n2. Grasp."
+    assert (tmp_path / "out" / "plan.json").exists()
