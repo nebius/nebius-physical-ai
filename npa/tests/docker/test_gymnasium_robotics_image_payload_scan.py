@@ -120,8 +120,11 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
         '"$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"', first_scan
     )
     first_invocation = text[first_scan:first_output]
-    assert "--expected-config-sha256" not in first_invocation
-    assert "--expected-layer-diff-ids-json" not in first_invocation
+    assert '--expected-config-sha256 "$expected_config_sha256"' in first_invocation
+    assert (
+        '--expected-layer-diff-ids-json "$expected_layer_diff_ids_json"'
+        in first_invocation
+    )
     pushed_scan = text.rindex(
         "npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py"
     )
@@ -129,8 +132,11 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
         '"$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"', pushed_scan
     )
     pushed_invocation = text[pushed_scan:pushed_output]
-    assert "--expected-config-sha256" not in pushed_invocation
-    assert "--expected-layer-diff-ids-json" not in pushed_invocation
+    assert '--expected-config-sha256 "$expected_config_sha256"' in pushed_invocation
+    assert (
+        '--expected-layer-diff-ids-json "$expected_layer_diff_ids_json"'
+        in pushed_invocation
+    )
     gym_gate = text[source_gate:push]
     assert "--arg config_sha256" not in gym_gate
     assert "--argjson expected_layer_diff_ids" not in gym_gate

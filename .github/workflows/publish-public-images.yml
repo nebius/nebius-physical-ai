@@ -455,8 +455,12 @@ jobs:
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
           if [ "$TOOL" = gymnasium-robotics ]; then
+            expected_config_sha256="${metadata_config_digest#sha256:}"
+            expected_layer_diff_ids_json="$(docker image inspect --format '{{json .RootFS.Layers}}' "$IMAGE")"
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --expected-config-sha256 "$expected_config_sha256" \
+              --expected-layer-diff-ids-json "$expected_layer_diff_ids_json" \
               --output "$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
           fi
           if [ "$TOOL" = curobo ]; then
@@ -774,8 +778,12 @@ jobs:
             sleep 5
           done
           if [ "$TOOL" = gymnasium-robotics ]; then
+            expected_config_sha256="${config_digest#sha256:}"
+            expected_layer_diff_ids_json="$layer_diff_ids"
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --expected-config-sha256 "$expected_config_sha256" \
+              --expected-layer-diff-ids-json "$expected_layer_diff_ids_json" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
             payload="$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"
             test -s "$payload"
