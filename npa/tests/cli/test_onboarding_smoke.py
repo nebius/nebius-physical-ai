@@ -572,4 +572,4 @@ def test_quickstart_benchmark_command_produces_real_result(tmp_path) -> None:
     payload = json.loads(result.output)
     # A real scoring pass over the shipped labeled rollout set, no GPU or creds.
     assert payload["best_config"]["metrics"]["accuracy"] == 1.0
-    assert json.loads(output_path.read_text(encoding="utf-8"))["item_count"] == 4
+    assert json.loads(output_path.read_text(encoding="utf-8"))["item_count"] == 5
