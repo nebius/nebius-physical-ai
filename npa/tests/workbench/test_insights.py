@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
+from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
 from npa.workbench.insights.analytics import (
@@ -1582,3 +1584,434 @@ def test_shards_are_read_in_write_order(tmp_path: Path) -> None:
     for index in range(12):
         append_jsonl_uri(uri, [{"seq": index}], previous_total=index)
     assert [row["seq"] for row in read_jsonl_store(uri)] == list(range(12))
+
+
+# ── Storage layer: typed failures, closed bodies, no sibling-prefix mixing ────
+#
+# Live evidence this class of bug produces: an access-denied or expired-token
+# S3 response looked identical to "the store has never been written to" (empty
+# JSONL), and an `ingest-run --input-path s3://bucket/run-1` scan additionally
+# picked up `run-10`'s manifests because `run-1` is a lexical prefix of
+# `run-10`. Both silently corrupt query/ingest results instead of failing loud.
+
+
+class _FakeListS3Client:
+    """Filters ``Contents`` by ``Prefix`` the way real S3 does.
+
+    ``head_object`` raises unconditionally: list-based discovery must never
+    call it, so any accidental reintroduction of a HeadObject dependency in
+    ``list_json_uris`` fails these tests immediately rather than merely
+    working here-but-not-under-a-ListBucket-only IAM policy.
+    """
+
+    def __init__(self, keys: list[str]) -> None:
+        self._keys = sorted(keys)
+
+    def head_object(self, **_: Any) -> None:
+        raise AssertionError("list_json_uris must not call HeadObject")
+
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str = "", MaxKeys: int | None = None
+    ) -> dict[str, Any]:
+        matched = [key for key in self._keys if key.startswith(Prefix)]
+        if MaxKeys is not None:
+            matched = matched[:MaxKeys]
+        return {"Contents": [{"Key": key} for key in matched]}
+
+    def get_paginator(self, name: str) -> "_FakeListS3Client":
+        assert name == "list_objects_v2"
+        return self
+
+    def paginate(self, *, Bucket: str, Prefix: str = ""):
+        yield self.list_objects_v2(Bucket=Bucket, Prefix=Prefix)
+
+
+def test_list_json_uris_does_not_mix_sibling_run_prefixes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``run-1`` is a lexical prefix of ``run-10``; a bare scan would mix them."""
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(
+        [
+            "runs/run-1/manifest.json",
+            "runs/run-10/manifest.json",
+            "runs/run-1-old/manifest.json",
+        ]
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_json_uris("s3://bucket/runs/run-1") == [
+        "s3://bucket/runs/run-1/manifest.json"
+    ]
+
+
+def test_list_json_uris_explicit_trailing_slash_also_excludes_siblings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit directory marker must skip the exact-object check outright."""
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(
+        ["runs/run-1/manifest.json", "runs/run-10/manifest.json"]
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_json_uris("s3://bucket/runs/run-1/") == [
+        "s3://bucket/runs/run-1/manifest.json"
+    ]
+
+
+def test_list_json_uris_supports_an_exact_object(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(
+        ["runs/run-1/manifest.json", "runs/run-10/manifest.json"]
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_json_uris("s3://bucket/runs/run-1/manifest.json") == [
+        "s3://bucket/runs/run-1/manifest.json"
+    ]
+
+
+def test_list_json_uris_bucket_root_without_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root input must not attempt an exact-object check on an empty key."""
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(["a/manifest.json", "b/manifest.json"])
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_json_uris("s3://bucket") == [
+        "s3://bucket/a/manifest.json",
+        "s3://bucket/b/manifest.json",
+    ]
+
+
+def test_list_json_uris_bucket_root_with_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(["a/manifest.json"])
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_json_uris("s3://bucket/") == ["s3://bucket/a/manifest.json"]
+
+
+def test_list_json_uris_succeeds_when_head_object_is_denied_by_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ListBucket+GetObject policy that denies HeadObject must still discover runs."""
+    from npa.workbench.insights import storage as st
+
+    class _DenyHeadClient(_FakeListS3Client):
+        def head_object(self, **_: Any) -> None:
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+                "HeadObject",
+            )
+
+    client = _DenyHeadClient(["runs/run-1/manifest.json", "runs/run-10/manifest.json"])
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_json_uris("s3://bucket/runs/run-1") == [
+        "s3://bucket/runs/run-1/manifest.json"
+    ]
+
+
+def test_is_missing_s3_object_prioritizes_denied_over_contradictory_404() -> None:
+    """A provider that stamps 404 on a denial body must not be read as absent."""
+    from npa.workbench.insights.storage import _is_missing_s3_object
+
+    exc = ClientError(
+        {
+            "Error": {"Code": "AccessDenied", "Message": "denied"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        },
+        "HeadObject",
+    )
+    assert _is_missing_s3_object(exc) is False
+
+
+def test_is_missing_s3_object_true_for_genuine_not_found() -> None:
+    from npa.workbench.insights.storage import _is_missing_s3_object
+
+    assert (
+        _is_missing_s3_object(
+            ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        )
+        is True
+    )
+
+
+def test_uri_exists_raises_typed_error_on_access_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A denied/expired-credential HEAD must not be reported as "absent"."""
+    from npa.workbench.insights import storage as st
+
+    client = Mock()
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "HeadObject"
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    with pytest.raises(st.InsightsStorageError, match="AccessDenied"):
+        st.uri_exists("s3://bucket/store/records.jsonl")
+
+
+def test_uri_exists_returns_false_for_genuine_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.insights import storage as st
+
+    client = Mock()
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404"}}, "HeadObject"
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.uri_exists("s3://bucket/store/records.jsonl") is False
+
+
+def test_read_jsonl_uri_propagates_access_denied_instead_of_reporting_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A denied store must not read back as "no runs found"."""
+    from npa.workbench.insights import storage as st
+
+    client = Mock()
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "HeadObject"
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    with pytest.raises(st.InsightsStorageError):
+        st.read_jsonl_uri("s3://bucket/store/records.jsonl")
+
+
+def test_read_bytes_uri_closes_body_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.insights import storage as st
+
+    body = Mock()
+    body.read.return_value = b"payload"
+    client = Mock()
+    client.get_object.return_value = {"Body": body}
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.read_bytes_uri("s3://bucket/store/records.jsonl") == b"payload"
+    body.close.assert_called_once()
+
+
+def test_read_bytes_uri_closes_body_even_when_read_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.insights import storage as st
+
+    body = Mock()
+    body.read.side_effect = RuntimeError("stream reset")
+    client = Mock()
+    client.get_object.return_value = {"Body": body}
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    with pytest.raises(RuntimeError):
+        st.read_bytes_uri("s3://bucket/store/records.jsonl")
+    body.close.assert_called_once()
+
+
+def test_ingest_run_does_not_pull_in_sibling_run_artifacts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End-to-end: ``ingest-run`` on ``run-1`` must not ingest ``run-10``."""
+    from npa.workbench.insights import storage as st
+
+    payloads = {
+        "runs/run-1/manifest.json": {
+            "schema": "npa.dataset.manifest.v1",
+            "dataset_id": "keep",
+            "version": "v1",
+            "record_count": 5,
+        },
+        "runs/run-10/manifest.json": {
+            "schema": "npa.dataset.manifest.v1",
+            "dataset_id": "sibling",
+            "version": "v1",
+            "record_count": 500,
+        },
+    }
+
+    class _FakeClient(_FakeListS3Client):
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+            body = Mock()
+            body.read.return_value = json.dumps(payloads[Key]).encode("utf-8")
+            return {"Body": body}
+
+    client = _FakeClient(list(payloads))
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    store = str(tmp_path / "store")
+    response = ingest_run(
+        IngestRunRequest(input_uri="s3://bucket/runs/run-1", output_uri=store)
+    )
+
+    assert response.scanned == 1
+    assert [artifact.uri for artifact in response.ingested] == [
+        "s3://bucket/runs/run-1/manifest.json"
+    ]
+    versions = {row["artifact_version"] for row in read_records(store)}
+    assert versions == {"keep@v1"}
+
+
+class _FailingPaginationClient:
+    """Yields one real page, then fails fetching the next.
+
+    Simulates a connection dropping (or access being revoked) partway through
+    a paginated listing — something a real, large run prefix can hit even
+    though the first page succeeded.
+    """
+
+    def __init__(self, first_page_keys: list[str], error: Exception) -> None:
+        self._first_page_keys = first_page_keys
+        self._error = error
+
+    def list_objects_v2(self, **_: Any) -> dict[str, Any]:
+        return {"Contents": []}
+
+    def get_paginator(self, name: str) -> "_FailingPaginationClient":
+        assert name == "list_objects_v2"
+        return self
+
+    def paginate(self, *, Bucket: str, Prefix: str = ""):
+        yield {"Contents": [{"Key": key} for key in self._first_page_keys]}
+        raise self._error
+
+
+def test_list_json_uris_does_not_return_partial_results_on_mid_pagination_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A page-2 failure must not silently report page 1's results as complete."""
+    from npa.workbench.insights import storage as st
+
+    error = ClientError(
+        {"Error": {"Code": "InternalError", "Message": "boom"}}, "ListObjectsV2"
+    )
+    client = _FailingPaginationClient(["runs/run-1/a.json"], error)
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    # Trailing slash: explicit directory, so the exact-object check is skipped
+    # and pagination is reached directly.
+    with pytest.raises(st.InsightsStorageError):
+        st.list_json_uris("s3://bucket/runs/run-1/")
+
+
+def test_s3_key_exists_via_list_raises_on_missing_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing *bucket* is a real failure, not "the key is absent"."""
+    from npa.workbench.insights import storage as st
+
+    class _NoSuchBucketClient:
+        def list_objects_v2(self, **_: Any) -> dict[str, Any]:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchBucket", "Message": "no bucket"}},
+                "ListObjectsV2",
+            )
+
+    with pytest.raises(st.InsightsStorageError):
+        st._s3_key_exists_via_list(_NoSuchBucketClient(), "bucket", "runs/run-1")
+
+
+def test_list_json_uris_raises_on_missing_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.insights import storage as st
+
+    class _NoSuchBucketClient:
+        def list_objects_v2(self, **_: Any) -> dict[str, Any]:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchBucket", "Message": "no bucket"}},
+                "ListObjectsV2",
+            )
+
+        def get_paginator(self, name: str) -> "_NoSuchBucketClient":
+            return self
+
+        def paginate(self, *, Bucket: str, Prefix: str = ""):
+            raise ClientError(
+                {"Error": {"Code": "NoSuchBucket", "Message": "no bucket"}},
+                "ListObjectsV2",
+            )
+            yield  # pragma: no cover - unreachable, satisfies generator typing
+
+    monkeypatch.setattr(st, "_s3_client", lambda: _NoSuchBucketClient())
+
+    with pytest.raises(st.InsightsStorageError):
+        st.list_json_uris("s3://bucket/runs/run-1")
+
+
+def test_ingest_run_does_not_report_a_successful_partial_ingest_on_denial(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One readable artifact plus one access-denied artifact must not "succeed"."""
+    from npa.workbench.insights import storage as st
+
+    class _FakeClient(_FakeListS3Client):
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+            if Key == "runs/run-1/a.json":
+                body = Mock()
+                body.read.return_value = json.dumps(
+                    {
+                        "schema": "npa.dataset.manifest.v1",
+                        "dataset_id": "keep",
+                        "version": "v1",
+                    }
+                ).encode("utf-8")
+                return {"Body": body}
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "GetObject"
+            )
+
+    client = _FakeClient(["runs/run-1/a.json", "runs/run-1/b.json"])
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    store = str(tmp_path / "store")
+    with pytest.raises(st.InsightsStorageError):
+        ingest_run(
+            IngestRunRequest(input_uri="s3://bucket/runs/run-1", output_uri=store)
+        )
+
+    # A failure mid-scan must not leave behind a partial, "successful"-looking store.
+    assert read_records(store) == []
+
+
+def test_client_error_detail_redacts_presigned_query_and_tokens() -> None:
+    """A provider error Message can itself echo request secrets back verbatim."""
+    from npa.workbench.insights.storage import _client_error_detail
+
+    exc = ClientError(
+        {
+            "Error": {
+                "Code": "AccessDenied",
+                "Message": (
+                    "Access denied for https://example-bucket.s3.amazonaws.com/key"
+                    "?X-Amz-Signature=abcdef123456&X-Amz-Credential=AKIAEXAMPLE "
+                    "Authorization: Bearer sekrit-token-value"
+                ),
+            }
+        },
+        "GetObject",
+    )
+
+    detail = _client_error_detail(exc)
+
+    assert "AccessDenied" in detail
+    assert "abcdef123456" not in detail
+    assert "AKIAEXAMPLE" not in detail
+    assert "sekrit-token-value" not in detail
