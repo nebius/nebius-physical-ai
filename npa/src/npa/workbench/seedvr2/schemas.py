@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 SOURCE_REPOSITORY = "https://github.com/ByteDance-Seed/SeedVR"
@@ -47,8 +47,9 @@ class VideoArtifactRequest(BaseModel):
 class RestoreRequest(VideoArtifactRequest):
     """Describe one deterministic official SeedVR2-3B inference."""
 
-    output_height: int = Field(default=480, ge=16)
-    output_width: int = Field(default=640, ge=16)
+    probe_path: str = ""
+    output_height: int = Field(default=480, ge=16, le=4096)
+    output_width: int = Field(default=640, ge=16, le=4096)
     seed: int = 666
     dry_run: bool = False
 
@@ -60,6 +61,14 @@ class RestoreRequest(VideoArtifactRequest):
         if value % 16:
             raise ValueError("SeedVR2 output dimensions must be divisible by 16")
         return value
+
+    @model_validator(mode="after")
+    def require_supported_pixel_budget(self) -> RestoreRequest:
+        """Reject requests above the reviewed single-H100 target area."""
+
+        if self.output_height * self.output_width > 1920 * 1080:
+            raise ValueError("SeedVR2 output area must not exceed 1920x1080")
+        return self
 
 
 __all__ = [

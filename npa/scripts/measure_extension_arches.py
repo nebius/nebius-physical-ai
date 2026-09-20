@@ -36,7 +36,7 @@ on the part decides a cell.
 
 USAGE
   measure_extension_arches.py <wheel|.so|directory> [...] [--require sm_100]
-                             [--min-size-mb N] [--json]
+                             [--exact sm_100] [--min-size-mb N] [--json]
 
 EXAMPLES
   # The pinned Cosmos Predict2 dependency wheels, straight from the release:
@@ -157,10 +157,25 @@ def main(argv: list[str] | None = None) -> int:
         help="fail unless every measured binary carries this SASS architecture",
     )
     parser.add_argument(
+        "--exact",
+        action="append",
+        default=[],
+        metavar="sm_NNN",
+        help=(
+            "fail unless every measured binary carries exactly this SASS set and "
+            "no PTX architecture outside the set"
+        ),
+    )
+    parser.add_argument(
         "--min-size-mb",
         type=float,
         default=1.0,
         help="skip binaries smaller than this (default: 1 MB)",
+    )
+    parser.add_argument(
+        "--skip-no-fatbin",
+        action="store_true",
+        help="ignore native binaries with no measurable CUDA fat-binary container",
     )
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
@@ -169,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     required = {
         name if name.startswith("sm_") else f"sm_{name}" for name in args.require
     }
+    exact = {name if name.startswith("sm_") else f"sm_{name}" for name in args.exact}
     report: dict[str, dict] = {}
     failures: list[str] = []
 
@@ -178,6 +194,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         for label, blob in _binaries(target, min_size):
             sass, ptx = scan(blob)
+            if args.skip_no_fatbin and not sass and not ptx:
+                continue
             entry = {
                 "bytes": len(blob),
                 "sass": _fmt(sass),
@@ -188,6 +206,23 @@ def main(argv: list[str] | None = None) -> int:
             if missing:
                 entry["missing"] = missing
                 failures.append(f"{label} lacks {', '.join(missing)}")
+            if exact:
+                unexpected_sass = sorted(set(entry["sass"]) - exact)
+                missing_exact = sorted(exact - set(entry["sass"]))
+                exact_ptx = {name.replace("sm_", "compute_", 1) for name in exact}
+                unexpected_ptx = sorted(set(entry["ptx"]) - exact_ptx)
+                if missing_exact:
+                    entry["missing_exact_sass"] = missing_exact
+                if unexpected_sass:
+                    entry["unexpected_sass"] = unexpected_sass
+                if unexpected_ptx:
+                    entry["unexpected_ptx"] = unexpected_ptx
+                if missing_exact or unexpected_sass or unexpected_ptx:
+                    failures.append(
+                        f"{label} is not exact: missing={missing_exact}, "
+                        f"unexpected_sass={unexpected_sass}, "
+                        f"unexpected_ptx={unexpected_ptx}"
+                    )
             if not args.json:
                 print(f"{label} ({len(blob) / 1e6:.0f} MB)")
                 print(f"  SASS: {' '.join(entry['sass']) or 'none'}")
@@ -201,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, sort_keys=True))
 
     if failures:
-        print("\nMISSING REQUIRED ARCHITECTURES", file=sys.stderr)
+        print("\nARCHITECTURE GATE FAILURES", file=sys.stderr)
         for failure in failures:
             print(f"  {failure}", file=sys.stderr)
         return 1

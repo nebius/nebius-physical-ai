@@ -241,6 +241,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "restore",
             "--input-path",
             "{{config.seedvr2_input_uri}}",
+            "--probe-path",
+            "{{config.seedvr2_probe_uri}}",
             "--output-path",
             "{{config.seedvr2_output_uri}}",
             "--run-id",

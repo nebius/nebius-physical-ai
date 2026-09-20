@@ -21,11 +21,16 @@ from .schemas import (
     MODEL_FILES,
     MODEL_REPOSITORY,
     MODEL_REVISION,
+    PROBE_SCHEMA,
     RESULT_SCHEMA,
     SOURCE_REPOSITORY,
     SOURCE_REVISION,
     RestoreRequest,
 )
+
+SOURCE_REVISION_PATH = Path("/opt/npa-source-revision")
+MAX_SOURCE_PIXELS = 1920 * 1080
+MIN_H100_MEMORY_MIB = 75_000
 
 
 class SeedVR2Error(RuntimeError):
@@ -57,6 +62,58 @@ def _validate_request(request: RestoreRequest) -> None:
         raise SeedVR2Error("input_path must be one exact s3:// MP4 object")
     if destination.kind != "s3" or not destination.key:
         raise SeedVR2Error("output_path must be an s3:// bucket prefix")
+    if not request.dry_run and not request.probe_path:
+        raise SeedVR2Error("non-dry SeedVR2 execution requires probe_path")
+    if not request.probe_path:
+        return
+    probe = authorize_uri(request.probe_path, operation="read SeedVR2 probe")
+    if probe.kind != "s3" or not probe.key.lower().endswith(".json"):
+        raise SeedVR2Error("probe_path must be one exact s3:// JSON object")
+
+
+def _verify_probe_contract(
+    request: RestoreRequest,
+    storage: Any,
+    directory: Path,
+    *,
+    input_hash: str,
+    source_probe: dict[str, Any],
+) -> dict[str, str] | None:
+    if not request.probe_path:
+        return None
+    probe_path = directory / "probe.json"
+    storage.download_file(request.probe_path, str(probe_path))
+    try:
+        document = json.loads(probe_path.read_text())
+        probe_input = document["input"]
+    except (KeyError, OSError, TypeError, json.JSONDecodeError) as exc:
+        raise SeedVR2Error(
+            "probe_path does not contain a valid probe document"
+        ) from exc
+    if not isinstance(document, dict) or not isinstance(probe_input, dict):
+        raise SeedVR2Error("probe_path does not contain a valid probe document")
+    valid = (
+        document.get("schema") == PROBE_SCHEMA
+        and document.get("status") == "ok"
+        and document.get("run_id") == request.run_id
+        and probe_input.get("uri") == request.input_path
+        and probe_input.get("sha256") == input_hash
+        and probe_input.get("media") == source_probe
+    )
+    if not valid:
+        raise SeedVR2Error("probe document does not bind the exact restore input")
+    return {"uri": request.probe_path, "sha256": _sha256(probe_path)}
+
+
+def _validate_source_geometry(
+    request: RestoreRequest, source_probe: dict[str, Any]
+) -> None:
+    if source_probe["width"] * source_probe["height"] > MAX_SOURCE_PIXELS:
+        raise SeedVR2Error("source video area must not exceed 1920x1080")
+    source_ratio = Fraction(source_probe["width"], source_probe["height"])
+    output_ratio = Fraction(request.output_width, request.output_height)
+    if source_ratio != output_ratio:
+        raise SeedVR2Error("requested output aspect ratio must match the source video")
 
 
 def _stable_run_name(run_id: str) -> str:
@@ -78,24 +135,31 @@ def _create_work_directory(run_id: str) -> Path:
     return directory
 
 
-def _probe_video(path: Path) -> dict[str, Any]:
+def _probe_video_header(path: Path) -> tuple[int, int]:
     command = [
         "ffprobe",
         "-v",
         "error",
-        "-count_frames",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-f",
+        "mov",
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=codec_name,width,height,avg_frame_rate,nb_read_frames",
-        "-show_entries",
-        "format=duration,size",
+        "stream=codec_name,width,height:format=format_name",
         "-of",
         "json",
         str(path),
     ]
     try:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=_media_environment(),
+        )
     except OSError as exc:
         raise SeedVR2Error("ffprobe is unavailable") from exc
     if completed.returncode != 0:
@@ -103,12 +167,65 @@ def _probe_video(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(completed.stdout)
         stream = payload["streams"][0]
+        formats = str(payload["format"]["format_name"]).split(",")
+        width, height = int(stream["width"]), int(stream["height"])
+        if "mp4" not in formats or stream["codec_name"] != "h264":
+            raise ValueError("not an H.264 MP4")
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise SeedVR2Error("video is not one supported H.264 MP4 stream") from exc
+    if width < 1 or height < 1:
+        raise SeedVR2Error("video contains no positive-size video stream")
+    return width, height
+
+
+def _probe_video(path: Path) -> dict[str, Any]:
+    width, height = _probe_video_header(path)
+    if width * height > MAX_SOURCE_PIXELS:
+        raise SeedVR2Error("video area must not exceed 1920x1080")
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-protocol_whitelist",
+        "file,pipe",
+        "-f",
+        "mov",
+        "-count_frames",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        (
+            "stream=codec_name,width,height,avg_frame_rate,nb_read_frames:"
+            "format=format_name,duration,size"
+        ),
+        "-of",
+        "json",
+        str(path),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=_media_environment(),
+        )
+    except OSError as exc:
+        raise SeedVR2Error("ffprobe is unavailable") from exc
+    if completed.returncode != 0:
+        raise SeedVR2Error("ffprobe could not decode the video artifact")
+    try:
+        payload = json.loads(completed.stdout)
+        stream = payload["streams"][0]
+        formats = str(payload["format"]["format_name"]).split(",")
+        if "mp4" not in formats or stream["codec_name"] != "h264":
+            raise ValueError("not an H.264 MP4")
         frames = int(stream["nb_read_frames"])
         fps = str(stream["avg_frame_rate"])
         result = {
             "codec": str(stream["codec_name"]),
-            "width": int(stream["width"]),
-            "height": int(stream["height"]),
+            "width": width,
+            "height": height,
             "frames": frames,
             "fps": fps,
             "duration_seconds": float(payload["format"]["duration"]),
@@ -123,10 +240,25 @@ def _probe_video(path: Path) -> dict[str, Any]:
 
 def _decoded_frame_hashes(path: Path) -> list[str]:
     completed = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(path), "-f", "framemd5", "-"],
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-protocol_whitelist",
+            "file,pipe",
+            "-f",
+            "mov",
+            "-i",
+            str(path),
+            "-f",
+            "framemd5",
+            "-",
+        ],
         text=True,
         capture_output=True,
         check=False,
+        env=_media_environment(),
     )
     if completed.returncode != 0:
         raise SeedVR2Error("ffmpeg could not decode every output frame")
@@ -139,6 +271,30 @@ def _decoded_frame_hashes(path: Path) -> list[str]:
 
 def _seedvr_python() -> str:
     return os.environ.get("SEEDVR2_PYTHON", "/opt/seedvr2-venv/bin/python")
+
+
+def _media_environment() -> dict[str, str]:
+    return {
+        "HOME": "/nonexistent",
+        "LC_ALL": "C",
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "TMPDIR": "/tmp",
+    }
+
+
+def _model_fetch_environment() -> dict[str, str]:
+    environment = {
+        "HOME": "/workspace",
+        "HF_HOME": os.environ.get("HF_HOME", "/workspace/.cache/huggingface"),
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PYTHONUNBUFFERED": "1",
+        "TMPDIR": "/tmp",
+    }
+    for name in ("HF_TOKEN", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"):
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
+    return environment
 
 
 def _resolve_model_files() -> dict[str, Path]:
@@ -157,6 +313,7 @@ def _resolve_model_files() -> dict[str, Path]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         check=False,
+        env=_model_fetch_environment(),
     )
     if completed.returncode != 0:
         raise SeedVR2Error("the pinned public SeedVR2 model download failed")
@@ -189,12 +346,16 @@ def _verify_model_files(snapshot: Path) -> dict[str, Path]:
 
 def _prepare_upstream_workspace(directory: Path, model_files: dict[str, Path]) -> Path:
     source = Path(os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2"))
-    required = source / "projects" / "inference_seedvr2_3b.py"
-    if not required.is_file():
+    required_files = (
+        source / "projects" / "inference_seedvr2_3b.py",
+        source / "configs_3b" / "main.yaml",
+        source / "models" / "video_vae_v3" / "s8_c16_t4_inflation_sd3.yaml",
+    )
+    if not all(path.is_file() for path in required_files):
         raise SeedVR2Error("the pinned SeedVR2 source tree is unavailable")
     workspace = directory / "upstream"
     workspace.mkdir()
-    for name in ("configs_3b", "projects"):
+    for name in ("configs_3b", "models", "projects"):
         (workspace / name).symlink_to(source / name, target_is_directory=True)
     checkpoints = workspace / "ckpts"
     checkpoints.mkdir()
@@ -231,18 +392,27 @@ def build_restore_argv(request: RestoreRequest, workspace: Path) -> list[str]:
 
 def _inference_environment() -> dict[str, str]:
     source = os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2")
-    environment = dict(os.environ)
-    python_path = environment.get("PYTHONPATH", "")
-    environment["PYTHONPATH"] = source + (
-        os.pathsep + python_path if python_path else ""
-    )
-    for secret in (
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "HF_TOKEN",
-        "SEEDVR2_TOKEN",
+    environment = {
+        "HOME": "/workspace",
+        "HF_HOME": os.environ.get("HF_HOME", "/workspace/.cache/huggingface"),
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "PYTHONPATH": source,
+        "PYTHONUNBUFFERED": "1",
+        "TMPDIR": "/tmp",
+    }
+    for name in (
+        "CUDA_HOME",
+        "CUDA_MODULE_LOADING",
+        "CUDA_VISIBLE_DEVICES",
+        "LD_LIBRARY_PATH",
+        "NVIDIA_DRIVER_CAPABILITIES",
+        "NVIDIA_VISIBLE_DEVICES",
+        "OMP_NUM_THREADS",
+        "PYTORCH_CUDA_ALLOC_CONF",
     ):
-        environment.pop(secret, None)
+        value = os.environ.get(name)
+        if value:
+            environment[name] = value
     return environment
 
 
@@ -297,20 +467,26 @@ def _validate_output(
 def _gpu_inventory() -> dict[str, str]:
     command = [
         "nvidia-smi",
-        "--query-gpu=name,memory.total,driver_version,compute_cap",
+        "--query-gpu=name,memory.total,driver_version,compute_cap,mig.mode.current",
         "--format=csv,noheader,nounits",
     ]
     try:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        completed = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            env=_media_environment(),
+        )
     except OSError:
         return {"status": "unavailable"}
     if completed.returncode != 0:
         return {"status": "unavailable"}
     lines = completed.stdout.splitlines()
-    if not lines:
+    if len(lines) != 1:
         return {"status": "unavailable"}
     fields = [item.strip() for item in lines[0].split(",")]
-    if len(fields) != 4:
+    if len(fields) != 5:
         return {"status": "unavailable"}
     return {
         "status": "available",
@@ -318,6 +494,40 @@ def _gpu_inventory() -> dict[str, str]:
         "memory_mib": fields[1],
         "driver_version": fields[2],
         "compute_capability": fields[3],
+        "mig_mode": fields[4],
+        "count": "1",
+    }
+
+
+def _runtime_identity() -> dict[str, Any]:
+    image = os.environ.get("NPA_TASK_IMAGE", "")
+    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+        raise SeedVR2Error("NPA_TASK_IMAGE must bind an immutable image digest")
+    try:
+        source_revision = SOURCE_REVISION_PATH.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise SeedVR2Error("image lacks its baked NPA source revision") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", source_revision):
+        raise SeedVR2Error("image has an invalid baked NPA source revision")
+    gpu = _gpu_inventory()
+    if (
+        gpu.get("status") != "available"
+        or gpu.get("compute_capability") != "9.0"
+        or "H100" not in gpu.get("name", "")
+        or gpu.get("mig_mode") != "Disabled"
+        or not str(gpu.get("memory_mib", "")).isdigit()
+        or int(gpu["memory_mib"]) < MIN_H100_MEMORY_MIB
+    ):
+        raise SeedVR2Error(
+            "official SeedVR2 execution requires one full-memory verified H100 GPU"
+        )
+    return {
+        "image": image,
+        "image_digest": image.rsplit("@", 1)[1],
+        "npa_source_revision": source_revision,
+        "gpu": gpu,
+        "sequence_parallel_size": 1,
+        "color_fix": False,
     }
 
 
@@ -333,7 +543,7 @@ def _ensure_artifacts_absent(storage: Any, uris: list[str]) -> None:
 
 def _publish_verified(storage: Any, source: Path, uri: str, readback_root: Path) -> str:
     expected = _sha256(source)
-    storage.upload_file(str(source), uri)
+    storage.put_bytes_conditional(source.read_bytes(), uri, if_none_match=True)
     readback = readback_root / source.name
     storage.download_file(uri, str(readback))
     if _sha256(readback) != expected:
@@ -365,8 +575,11 @@ def _result_document(
     started_at: str,
     input_hash: str,
     output_hash: str,
+    upstream_log_hash: str,
     unique_frames: int,
     artifacts: dict[str, str],
+    probe_identity: dict[str, str] | None,
+    runtime_identity: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema": RESULT_SCHEMA,
@@ -388,6 +601,7 @@ def _result_document(
             "uri": request.input_path,
             "sha256": input_hash,
             "media": source_probe,
+            "probe": probe_identity,
         },
         "output": {
             "sha256": output_hash,
@@ -396,14 +610,13 @@ def _result_document(
             "derived_sensor_truth": False,
         },
         "request": request.model_dump(exclude={"dry_run"}),
-        "runtime": {
-            "image": os.environ.get("NPA_TASK_IMAGE", ""),
-            "gpu": _gpu_inventory(),
-            "sequence_parallel_size": 1,
-            "color_fix": False,
-        },
+        "runtime": runtime_identity,
         "argv": argv,
         "artifacts": artifacts,
+        "artifact_hashes": {
+            "restored_video": output_hash,
+            "upstream_log": upstream_log_hash,
+        },
         "limitations": [
             "Generated detail is a review aid, not observed sensor truth.",
             "Heavy degradation and large motion can fail or create unpleasant detail.",
@@ -418,6 +631,7 @@ def restore(
     storage_factory: Callable[[], Any] = StorageClient.from_environment,
     inference_runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
     model_resolver: Callable[[], dict[str, Path]] = _resolve_model_files,
+    runtime_identity_resolver: Callable[[], dict[str, Any]] = _runtime_identity,
 ) -> dict[str, Any]:
     """Run official SeedVR2-3B and publish readback-verified artifacts.
 
@@ -426,6 +640,7 @@ def restore(
         storage_factory: Build the request-scoped object-storage client.
         inference_runner: Execute the upstream ``torchrun`` command.
         model_resolver: Fetch and verify the exact public model payloads.
+        runtime_identity_resolver: Verify the immutable image and H100 identity.
     Returns:
         Complete run provenance and artifact URIs.
     Raises:
@@ -446,6 +661,7 @@ def restore(
             storage_factory(),
             inference_runner,
             model_resolver,
+            runtime_identity_resolver,
         )
     except Exception as exc:
         failure = {"status": "failed", "at": _utc_now(), "error": type(exc).__name__}
@@ -464,6 +680,7 @@ def _restore_in_directory(
     storage: Any,
     runner: Callable[..., subprocess.CompletedProcess[Any]],
     model_resolver: Callable[[], dict[str, Path]],
+    runtime_identity_resolver: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
     input_dir = directory / "input"
     generated_dir = directory / "generated"
@@ -474,6 +691,15 @@ def _restore_in_directory(
     storage.download_file(request.input_path, str(source))
     source_probe = _probe_video(source)
     input_hash = _sha256(source)
+    _validate_source_geometry(request, source_probe)
+    probe_identity = _verify_probe_contract(
+        request,
+        storage,
+        directory,
+        input_hash=input_hash,
+        source_probe=source_probe,
+    )
+    runtime_identity = runtime_identity_resolver()
     workspace = _prepare_upstream_workspace(directory, model_resolver())
     argv = build_restore_argv(request, workspace)
     log_path = directory / "upstream.log"
@@ -492,6 +718,8 @@ def _restore_in_directory(
         output,
         unique_frames,
         log_path,
+        probe_identity,
+        runtime_identity,
     )
 
 
@@ -507,6 +735,8 @@ def _publish_result(
     output: Path,
     unique_frames: int,
     log_path: Path,
+    probe_identity: dict[str, str] | None,
+    runtime_identity: dict[str, Any],
 ) -> dict[str, Any]:
     uris = {
         "restored_video": _artifact_uri(request.output_path, "restored.mp4"),
@@ -516,7 +746,9 @@ def _publish_result(
     _ensure_artifacts_absent(storage, list(uris.values()))
     readback = directory / "readback"
     output_hash = _publish_verified(storage, output, uris["restored_video"], readback)
-    _publish_verified(storage, log_path, uris["upstream_log"], readback)
+    upstream_log_hash = _publish_verified(
+        storage, log_path, uris["upstream_log"], readback
+    )
     result = _result_document(
         request,
         argv,
@@ -525,8 +757,11 @@ def _publish_result(
         started_at=started_at,
         input_hash=input_hash,
         output_hash=output_hash,
+        upstream_log_hash=upstream_log_hash,
         unique_frames=unique_frames,
         artifacts=uris,
+        probe_identity=probe_identity,
+        runtime_identity=runtime_identity,
     )
     result_path = directory / "result.json"
     result_path.write_bytes(_canonical_json(result))

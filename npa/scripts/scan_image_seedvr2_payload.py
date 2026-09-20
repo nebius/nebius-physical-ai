@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import io
 import json
 from pathlib import Path
 import re
 import subprocess
 import tarfile
 import tempfile
+import zipfile
 
 
 @dataclass(frozen=True)
@@ -42,7 +44,7 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "sensor_or_output_media",
-        re.compile(r"^(?:opt/seedvr2|opt/npa-src)/.+\.(?:mp4|mov|avi|mkv|mcap)$", re.I),
+        re.compile(r"^.+\.(?:mp4|mov|avi|mkv|mcap)$", re.I),
     ),
     (
         "credential_file",
@@ -59,32 +61,185 @@ SECRET_CONTENT = (
     re.compile(rb"AKIA[0-9A-Z]{16}"),
     re.compile(rb"hf_[A-Za-z0-9]{24,}"),
 )
+NESTED_TAR_SUFFIXES = (".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".tgz")
+NESTED_ZIP_SUFFIXES = (".zip", ".whl", ".egg")
+UNSUPPORTED_NESTED_ARCHIVE_SUFFIXES = (
+    ".7z",
+    ".conda",
+    ".jar",
+    ".rar",
+    ".tar.zst",
+    ".tzst",
+)
+MAX_NESTED_ARCHIVE_BYTES = 256 * 1024**2
+MAX_NESTED_ARCHIVE_DEPTH = 2
 
 
 def _is_application_content(name: str) -> bool:
-    return name.startswith(("opt/seedvr2/", "opt/npa-src/")) or name in {
+    logical_name = name.rsplit("!/", 1)[-1]
+    return logical_name.startswith(
+        ("opt/seedvr2/", "opt/npa-src/")
+    ) or logical_name in {
         "usr/local/bin/seedvr2-entrypoint",
         "usr/share/doc/npa-seedvr2/REDISTRIBUTION.md",
         "usr/share/doc/npa-seedvr2/THIRD_PARTY_NOTICES.md",
     }
 
 
-def _scan_layer_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
+def _path_findings(name: str, *, layer: str) -> list[Finding]:
+    logical_name = name.rsplit("!/", 1)[-1]
+    return [
+        Finding(kind, layer, name)
+        for kind, pattern in FORBIDDEN_PATHS
+        if pattern.search(name) or pattern.search(logical_name)
+    ]
+
+
+def _member_name(name: str) -> tuple[str, bool]:
+    unsafe = "\\" in name
+    normalized = name.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    normalized = normalized.lstrip("/")
+    unsafe = unsafe or any(part == ".." for part in normalized.split("/"))
+    return normalized, unsafe
+
+
+def _scan_nested_tar(
+    payload: bytes, *, layer: str, path: str, depth: int
+) -> list[Finding]:
+    nested_layer = f"{layer}:{path}"
+    try:
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+            return _scan_layer_archive(
+                archive,
+                layer=nested_layer,
+                prefix=f"{path}!/",
+                depth=depth,
+            )
+    except tarfile.TarError:
+        return [Finding("unreadable_nested_archive", layer, path)]
+
+
+def _scan_nested_zip(
+    payload: bytes, *, layer: str, path: str, depth: int
+) -> list[Finding]:
+    nested_layer = f"{layer}:{path}"
+    findings: list[Finding] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            for member in archive.infolist():
+                if member.is_dir():
+                    continue
+                relative_name, unsafe = _member_name(member.filename)
+                name = f"{path}!/{relative_name}"
+                if unsafe:
+                    findings.append(Finding("unsafe_archive_path", nested_layer, name))
+                findings.extend(_path_findings(name, layer=nested_layer))
+                nested_kind = _nested_archive_kind(relative_name)
+                member_payload: bytes | None = None
+                if nested_kind:
+                    if depth >= MAX_NESTED_ARCHIVE_DEPTH:
+                        findings.append(
+                            Finding("nested_archive_depth_exceeded", nested_layer, name)
+                        )
+                        continue
+                    if member.file_size > MAX_NESTED_ARCHIVE_BYTES:
+                        findings.append(
+                            Finding("oversized_nested_archive", nested_layer, name)
+                        )
+                        continue
+                    member_payload = archive.read(member)
+                    findings.extend(
+                        _scan_nested_archive(
+                            member_payload,
+                            layer=nested_layer,
+                            path=name,
+                            depth=depth + 1,
+                            kind=nested_kind,
+                        )
+                    )
+                if _is_application_content(name) and member.file_size <= 16 * 1024**2:
+                    if member_payload is None:
+                        member_payload = archive.read(member)
+                    if any(
+                        pattern.search(member_payload) for pattern in SECRET_CONTENT
+                    ):
+                        findings.append(
+                            Finding("credential_content", nested_layer, name)
+                        )
+    except (
+        NotImplementedError,
+        OSError,
+        RuntimeError,
+        zipfile.BadZipFile,
+        zipfile.LargeZipFile,
+    ):
+        return [Finding("unreadable_nested_archive", layer, path)]
+    return findings
+
+
+def _nested_archive_kind(name: str) -> str:
+    lowered = name.lower()
+    if lowered.endswith(NESTED_TAR_SUFFIXES):
+        return "tar"
+    if lowered.endswith(NESTED_ZIP_SUFFIXES):
+        return "zip"
+    if lowered.endswith(UNSUPPORTED_NESTED_ARCHIVE_SUFFIXES):
+        return "unsupported"
+    return ""
+
+
+def _scan_nested_archive(
+    payload: bytes, *, layer: str, path: str, depth: int, kind: str
+) -> list[Finding]:
+    if kind == "tar":
+        return _scan_nested_tar(payload, layer=layer, path=path, depth=depth)
+    if kind == "unsupported":
+        return [Finding("unsupported_nested_archive", layer, path)]
+    return _scan_nested_zip(payload, layer=layer, path=path, depth=depth)
+
+
+def _scan_layer_archive(
+    archive: tarfile.TarFile, *, layer: str, prefix: str = "", depth: int = 0
+) -> list[Finding]:
     findings: list[Finding] = []
     for member in archive:
-        name = member.name.lstrip("./")
+        relative_name, unsafe = _member_name(member.name)
+        name = prefix + relative_name
+        if unsafe:
+            findings.append(Finding("unsafe_archive_path", layer, name))
         if member.isdir():
             continue
-        for kind, pattern in FORBIDDEN_PATHS:
-            if pattern.search(name):
-                findings.append(Finding(kind, layer, name))
+        findings.extend(_path_findings(name, layer=layer))
+        payload: bytes | None = None
+        nested_kind = _nested_archive_kind(relative_name)
+        if member.isfile() and nested_kind:
+            if depth >= MAX_NESTED_ARCHIVE_DEPTH:
+                findings.append(Finding("nested_archive_depth_exceeded", layer, name))
+                continue
+            if member.size > MAX_NESTED_ARCHIVE_BYTES:
+                findings.append(Finding("oversized_nested_archive", layer, name))
+                continue
+            stream = archive.extractfile(member)
+            payload = stream.read() if stream is not None else b""
+            findings.extend(
+                _scan_nested_archive(
+                    payload,
+                    layer=layer,
+                    path=name,
+                    depth=depth + 1,
+                    kind=nested_kind,
+                )
+            )
         if (
             member.isfile()
             and _is_application_content(name)
             and member.size <= 16 * 1024**2
         ):
-            stream = archive.extractfile(member)
-            payload = stream.read() if stream is not None else b""
+            if payload is None:
+                stream = archive.extractfile(member)
+                payload = stream.read() if stream is not None else b""
             if any(pattern.search(payload) for pattern in SECRET_CONTENT):
                 findings.append(Finding("credential_content", layer, name))
     return findings

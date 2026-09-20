@@ -157,7 +157,7 @@
         "flash-attn 2.8.3.post1",
         "NVIDIA Apex fused normalization"
       ],
-      "smoke": "Pinned official SeedVR2-3B restores a real degraded robot-observation clip and emits a fully decoded, hash-bound MP4 with objective temporal and object-preservation evidence.",
+      "smoke": "Pending acceptance target: pinned official SeedVR2-3B must restore a real degraded robot-observation clip and emit a fully decoded, hash-bound MP4; objective temporal and object-preservation evidence is a separate post-workflow gate, not a current smoke result.",
       "build_target": "The first candidate explicitly requests sm_90 from both FlashAttention and Apex. Its built extension arch inventory remains unproven until the exact image exists. Datacenter Blackwell would need an explicit sm_100 rebuild followed by the same real restoration and objective gates; wheel arch presence or imports alone are insufficient.",
       "upstream_tracking": "https://github.com/Dao-AILab/flash-attention and https://github.com/NVIDIA/apex",
       "notes": "Route the quarantined first candidate only to one H100. No B200/B300 compatibility is inferred from CUDA 13 or the Torch wheel."

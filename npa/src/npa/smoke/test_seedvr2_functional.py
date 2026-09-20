@@ -11,8 +11,9 @@ from urllib.parse import urlparse
 
 import httpx
 
+from npa.workbench.seedvr2.artifacts import probe as probe_input
 from npa.workbench.seedvr2.runtime import _probe_video, restore
-from npa.workbench.seedvr2.schemas import RestoreRequest
+from npa.workbench.seedvr2.schemas import RestoreRequest, VideoArtifactRequest
 
 
 SOURCE_URL = (
@@ -23,6 +24,7 @@ SOURCE_URL = (
 )
 SOURCE_SHA256 = "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198"
 INPUT_URI = "s3://seedvr2-golden/input.mp4"
+PROBE_URI = "s3://seedvr2-golden/probe.json"
 OUTPUT_URI = "s3://seedvr2-golden/output/"
 
 
@@ -56,6 +58,16 @@ class _LocalStorage:
         shutil.copyfile(local_file, target)
         self.objects[uri] = target
         return uri
+
+    def put_bytes_conditional(
+        self, payload: bytes, uri: str, *, if_none_match: bool
+    ) -> str:
+        if not if_none_match or uri in self.objects:
+            raise RuntimeError("golden-eval conditional write collision")
+        target = self.root / uri.rsplit("/", 1)[-1]
+        target.write_bytes(payload)
+        self.objects[uri] = target
+        return hashlib.sha256(payload).hexdigest()
 
 
 def _fetch_source(path: Path) -> None:
@@ -133,10 +145,19 @@ def main() -> None:
     _fetch_source(source)
     _degrade(source, degraded)
     storage = _LocalStorage(degraded, root)
+    probe_input(
+        VideoArtifactRequest(
+            input_path=INPUT_URI,
+            output_path=PROBE_URI,
+            run_id="seedvr2-golden-eval",
+        ),
+        storage_factory=lambda: storage,
+    )
     result = restore(
         RestoreRequest(
             input_path=INPUT_URI,
             output_path=OUTPUT_URI,
+            probe_path=PROBE_URI,
             run_id="seedvr2-golden-eval",
             output_height=480,
             output_width=640,

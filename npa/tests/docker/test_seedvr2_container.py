@@ -47,8 +47,20 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
         in dockerfile
     )
     assert "NPA_LIGHT_WORKBENCH_TOOL=seedvr2" in dockerfile
+    assert "printf '%s\\n' \"$NPA_SOURCE_SHA\" > /opt/npa-source-revision" in dockerfile
+    assert "LicenseRef-NVIDIA-CUDA-Toolkit" in dockerfile
     assert "find /opt/seedvr2 -type f" in dockerfile
     assert "HF_TOKEN" not in dockerfile
+    source_layer = dockerfile[
+        dockerfile.index(
+            "RUN curl --fail --location \\\n"
+            '      "https://codeload.github.com/ByteDance-Seed/SeedVR/'
+        ) : dockerfile.index("COPY pyproject.toml README.md")
+    ]
+    assert "/opt/seedvr2/neg_emb.pt" in source_layer
+    assert "/opt/seedvr2/pos_emb.pt" in source_layer
+    assert "/tmp/seedvr2.tar.gz" in source_layer
+    assert source_layer.index("rm -f") < source_layer.index("find /opt/seedvr2")
 
 
 def test_seedvr2_build_and_entrypoint_scripts_are_executable() -> None:
@@ -79,6 +91,11 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
         'npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}"' in dockerfile
     )
     assert "MAX_JOBS=8" not in dockerfile
+    assert "scripts/measure_extension_arches.py" in dockerfile
+    assert dockerfile.count("--skip-no-fatbin --exact sm_90 --json") == 2
+    assert "/usr/share/doc/npa-seedvr2/extension-arches/flash-attn.json" in dockerfile
+    assert "/usr/share/doc/npa-seedvr2/extension-arches/apex.json" in dockerfile
+    assert "npa/scripts/measure_extension_arches.py" in build_script
 
     assert '--build-arg "FLASH_ATTN_MAX_JOBS=$FLASH_ATTN_MAX_JOBS"' in build_script
     assert (
@@ -98,6 +115,7 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
 def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
     requirements = (DOCKER_DIR / "requirements.in").read_text()
     lock = (DOCKER_DIR / "requirements.lock").read_text()
+    notices = (DOCKER_DIR / "THIRD_PARTY_NOTICES.md").read_text()
 
     for requirement in (
         "diffusers==0.38.0",
@@ -109,12 +127,30 @@ def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
     ):
         assert requirement in requirements
         assert requirement in lock
+        if requirement.startswith(("diffusers", "safetensors", "torch")):
+            assert f"`{requirement}`" in notices
     assert "accelerate==" not in requirements
     assert "accelerate==" not in lock
     assert (
         'torchvision.__version__.startswith("0.28.0")'
         in (DOCKER_DIR / "Dockerfile").read_text()
     )
+
+
+def test_seedvr2_service_environment_is_hash_locked() -> None:
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
+    service_input = (DOCKER_DIR / "service-requirements.in").read_text()
+    service_lock = (DOCKER_DIR / "service-requirements.lock").read_text()
+
+    assert "hatchling==1.29.0" in service_input
+    assert "uvicorn==0.52.4" in service_input
+    assert "hatchling==1.29.0" in service_lock
+    assert "uvicorn==0.52.4" in service_lock
+    assert "--hash=sha256:" in service_lock
+    assert "--require-hashes" in dockerfile
+    assert "/tmp/seedvr2-service.lock" in dockerfile
+    assert "--no-build-isolation /opt/npa-src" in dockerfile
+    assert "'uvicorn==" not in dockerfile
 
 
 def test_seedvr2_blackwell_manifest_keeps_pending_build_unproven() -> None:
@@ -134,4 +170,4 @@ def test_seedvr2_golden_eval_runs_real_gpu_capability() -> None:
     assert golden.gpu == "required"
     assert golden.serverless_gpu == "h100"
     assert golden.module == "npa.smoke.test_seedvr2_functional"
-    assert golden.status == "gpu-gated"
+    assert golden.status == "needs-image-update"

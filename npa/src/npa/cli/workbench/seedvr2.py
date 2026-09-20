@@ -54,6 +54,16 @@ def _paths(input_path: str, output_path: str) -> tuple[str, str]:
         raise typer.Exit(1) from exc
 
 
+def _optional_read_path(path: str) -> str:
+    if not path:
+        return ""
+    try:
+        return validate_read_path(path, tool="seedvr2", allow_hf=False, required=True)
+    except PathContractError as exc:
+        typer.echo(f"SeedVR2 failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
 def _run(operation: Callable, request: object, output_format: OutputFormat) -> None:
     try:
         document = operation(request)
@@ -99,6 +109,9 @@ def restore_cmd(
     input_path: str = typer.Option(..., "--input-path"),
     output_path: str = typer.Option(..., "--output-path"),
     run_id: str = typer.Option(..., "--run-id"),
+    probe_path: str = typer.Option(
+        "", "--probe-path", help="Required for non-dry restoration."
+    ),
     output_height: int = typer.Option(480, "--output-height", min=16),
     output_width: int = typer.Option(640, "--output-width", min=16),
     seed: int = typer.Option(666, "--seed"),
@@ -108,12 +121,14 @@ def restore_cmd(
     """Run pinned one-step SeedVR2-3B and publish immutable artifacts."""
 
     input_path, output_path = _paths(input_path, output_path)
+    probe_path = _optional_read_path(probe_path)
     _run(
         runtime.restore,
         RestoreRequest(
             input_path=input_path,
             output_path=output_path,
             run_id=run_id,
+            probe_path=probe_path,
             output_height=output_height,
             output_width=output_width,
             seed=seed,

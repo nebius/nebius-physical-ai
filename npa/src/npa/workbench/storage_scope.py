@@ -126,11 +126,21 @@ def _parse_s3_uri(value: str, parsed, *, operation: str) -> AuthorizedUri:
         or parsed.fragment
     ):
         raise StorageAuthorizationError(f"{operation} S3 URI is malformed")
+    if parsed.path.startswith("//"):
+        raise StorageAuthorizationError(
+            f"{operation} S3 URI must use one canonical, unescaped object key"
+        )
+    key = _canonical_s3_key(parsed.path)
+    raw_key = parsed.path.lstrip("/")
+    if raw_key not in {key, f"{key}/"}:
+        raise StorageAuthorizationError(
+            f"{operation} S3 URI must use one canonical, unescaped object key"
+        )
     return AuthorizedUri(
         kind="s3",
         original=value,
         bucket=parsed.hostname or "",
-        key=_canonical_s3_key(parsed.path),
+        key=key,
     )
 
 
@@ -188,7 +198,17 @@ def _parse_s3_root(value: str) -> S3Root:
         raise StorageAuthorizationError(
             "allowed S3 roots must be canonical s3://bucket[/prefix] URIs"
         )
-    return S3Root(bucket=parsed.hostname or "", prefix=_canonical_s3_key(parsed.path))
+    if parsed.path.startswith("//"):
+        raise StorageAuthorizationError(
+            "allowed S3 roots must use canonical, unescaped object keys"
+        )
+    prefix = _canonical_s3_key(parsed.path)
+    raw_prefix = parsed.path.lstrip("/")
+    if raw_prefix not in {prefix, f"{prefix}/"}:
+        raise StorageAuthorizationError(
+            "allowed S3 roots must use canonical, unescaped object keys"
+        )
+    return S3Root(bucket=parsed.hostname or "", prefix=prefix)
 
 
 def _canonical_s3_key(path: str) -> str:

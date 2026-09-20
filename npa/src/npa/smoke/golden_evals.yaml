@@ -1136,7 +1136,7 @@ containers:
       serverless_gpu: h100
       gpu: required
       timeout_seconds: unlimited
-      status: gpu-gated
+      status: needs-image-update
 
   alpamayo2-super:
     image: npa-alpamayo2-super

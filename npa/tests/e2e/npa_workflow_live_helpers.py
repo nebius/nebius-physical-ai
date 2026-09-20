@@ -285,6 +285,20 @@ def seed_live_workflow_inputs(
         _seed_nurec_colmap_source(client, bucket=bucket, prefix=marker)
         return
 
+    if spec_name == "seedvr2-video-restoration.yaml":
+        source = os.environ.get("NPA_E2E_SEEDVR2_INPUT_SRC", "").strip()
+        if not source:
+            pytest.skip(
+                "NPA_E2E_SEEDVR2_INPUT_SRC must name a licensed real MP4 fixture"
+            )
+        _seed_object_from_source(
+            source,
+            bucket,
+            f"{marker}/input/low-resolution.mp4",
+            client,
+        )
+        return
+
     if spec_name == "paidf-cosmos3.yaml":
         body = base64.b64decode(_CONDITIONED_COSMOS_MP4_B64, validate=True)
         if len(body) < 12 or body[4:8] != b"ftyp":
@@ -1629,6 +1643,16 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    if name == "seedvr2-video-restoration.yaml":
+        text = re.sub(
+            r'(seedvr2_input_uri:\s*")[^"]*(")',
+            lambda match: (
+                f"{match.group(1)}s3://{{{{config.bucket}}}}/"
+                f"{{{{config.prefix}}}}/input/low-resolution.mp4{match.group(2)}"
+            ),
+            text,
+            count=1,
+        )
     if name == "isaac-arena-evaluation-rtxpro.yaml":
         text = re.sub(
             r'(input_uri:\s*")[^"]*(")',

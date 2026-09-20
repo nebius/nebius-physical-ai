@@ -28,7 +28,9 @@ Also load `npa-cli-conventions`, `toolref-argv-contract`,
   values in `npa.workbench.seedvr2.schemas.MODEL_FILES`.
 - The real entrypoint is upstream `projects/inference_seedvr2_3b.py` under
   one-process `torchrun`, seed 666 and sequence-parallel size 1.
-- The candidate hardware contract is one H100 (`sm_90`). A compatible image or
+- The candidate hardware contract is exactly one full-memory H100 (`sm_90`), a
+  digest-bound `NPA_TASK_IMAGE`, and the full NPA source revision baked into
+  that image. A caller-supplied revision, tag, compatible image, MIG slice, or
   successful import is not capability evidence.
 - Model weights, customer video, outputs, credentials, and populated caches are
   runtime-only. No per-run model terms prompt is required for these public
@@ -53,12 +55,16 @@ npa workbench workflow submit \
 
 The canonical graph is `probe -> restore -> verify -> review`. Keep the CPU
 probe, GPU inference, independent CPU readback, and review stages separate.
-Every command uses `--input-path`, `--output-path`, and `--run-id`; artifacts
-move through S3. Existing output objects are immutable and cause failure.
+Every command uses `--input-path`, `--output-path`, and `--run-id`; restore also
+receives mandatory `--probe-path` and must reject a changed run ID, input bytes,
+or media. Artifacts move through S3 and are create-only per object. Source and
+output frames must stay within the reviewed 1920x1080 area budget; output
+dimensions must also preserve source aspect ratio and be divisible by 16.
 
 Configure the optional service with `SEEDVR2_TOKEN` and
 `SEEDVR2_ALLOWED_S3_ROOTS`. Keep authentication, request serialization,
-storage-root authorization, and secret stripping from the upstream process.
+canonical unescaped storage-root authorization, local-MP4-only media decoding,
+and the purpose-specific credential-free subprocess environment allowlists.
 
 ## Evidence contract
 

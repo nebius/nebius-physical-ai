@@ -22,7 +22,7 @@ LABEL npa.tool="seedvr2" \
       npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
       npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause"
+      org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -40,7 +40,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]]
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
+    && printf '%s\n' "$NPA_SOURCE_SHA" > /opt/npa-source-revision
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
@@ -98,6 +99,17 @@ assert torchvision.__version__.startswith("0.28.0")
 assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
 PY
 
+COPY --chmod=0555 scripts/measure_extension_arches.py /opt/npa-tools/measure_extension_arches.py
+RUN install -d -m 0755 /usr/share/doc/npa-seedvr2/extension-arches \
+    && python3.12 /opt/npa-tools/measure_extension_arches.py \
+      /opt/seedvr2-venv/lib/python3.12/site-packages/flash_attn \
+      --min-size-mb 0 --skip-no-fatbin --exact sm_90 --json \
+      > /usr/share/doc/npa-seedvr2/extension-arches/flash-attn.json \
+    && python3.12 /opt/npa-tools/measure_extension_arches.py \
+      /opt/seedvr2-venv/lib/python3.12/site-packages/apex \
+      --min-size-mb 0 --skip-no-fatbin --exact sm_90 --json \
+      > /usr/share/doc/npa-seedvr2/extension-arches/apex.json
+
 RUN curl --fail --location \
       "https://codeload.github.com/ByteDance-Seed/SeedVR/tar.gz/${SEEDVR2_SOURCE_REF}" \
       -o /tmp/seedvr2.tar.gz \
@@ -107,14 +119,23 @@ RUN curl --fail --location \
     && test -s /opt/seedvr2/LICENSE \
     && printf '%s\n' "${SEEDVR2_SOURCE_REF}" > /opt/seedvr2/NPA_SOURCE_REVISION \
     && rm -rf /opt/seedvr2/.git \
+    && rm -f \
+      /opt/seedvr2/neg_emb.pt \
+      /opt/seedvr2/pos_emb.pt \
+      /tmp/seedvr2.tar.gz \
     && test -z "$(find /opt/seedvr2 -type f \
       \( -iname '*.pth' -o -iname '*.pt' -o -iname '*.safetensors' \
          -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)"
 
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
+COPY docker/workbench/seedvr2/service-requirements.lock /tmp/seedvr2-service.lock
 RUN python3.12 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/pip install --no-cache-dir 'uvicorn==0.41.0' /opt/npa-src \
+    && /opt/npa-venv/bin/pip install --no-cache-dir --require-hashes \
+      -r /tmp/seedvr2-service.lock \
+    && /opt/npa-venv/bin/pip install --no-cache-dir --no-deps \
+      --no-build-isolation /opt/npa-src \
+    && /opt/npa-venv/bin/pip check \
     && /opt/npa-venv/bin/npa workbench seedvr2 restore \
       --input-path s3://dry-run/input.mp4 \
       --output-path s3://dry-run/output/ \

@@ -80,6 +80,15 @@ def test_restore_dry_run_emits_real_upstream_argv() -> None:
     assert "inference_seedvr2_3b.py" in payload["argv"][3]
 
 
+def test_restore_exposes_optional_probe_binding() -> None:
+    result = CliRunner().invoke(
+        app,
+        ["workbench", "seedvr2", "restore", "--help"],
+    )
+    assert result.exit_code == 0
+    assert "--probe-path" in result.stdout
+
+
 def test_local_path_is_rejected_without_calling_runtime(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,

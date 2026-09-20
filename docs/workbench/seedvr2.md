@@ -34,11 +34,18 @@ The output prefix contains `restored.mp4`, `upstream.log`, and `result.json`.
 The review prefix contains `comparison.mp4`, `contact-sheet.png`,
 `review.json`, and `index.html`. Existing output objects are never overwritten.
 
-The direct batch interface uses the same implementation:
+The direct batch interface uses the same implementation. Bind restoration to a
+probe from the exact input bytes:
 
 ```bash
+npa workbench seedvr2 probe \
+  --input-path "s3://<your-bucket>/inputs/low-resolution.mp4" \
+  --output-path "s3://<your-bucket>/runs/<run-id>/probe.json" \
+  --run-id "<run-id>"
+
 npa workbench seedvr2 restore \
   --input-path "s3://<your-bucket>/inputs/low-resolution.mp4" \
+  --probe-path "s3://<your-bucket>/runs/<run-id>/probe.json" \
   --output-path "s3://<your-bucket>/runs/<run-id>/restoration/" \
   --run-id "<run-id>" \
   --output-height 480 \
@@ -47,9 +54,16 @@ npa workbench seedvr2 restore \
 ```
 
 `--input-path` must identify one MP4 object and `--output-path` must be an S3
-prefix. Output dimensions must be divisible by 16. `--dry-run` prints the exact
-official `torchrun` invocation without fetching the model or touching storage.
-The Python SDK exposes `probe`, `restore`, `verify`, and `review`.
+prefix. `--probe-path` is mandatory for every non-dry restoration, and the run
+fails if the probe run ID, URI, byte hash, or decoded media no longer matches
+the input. Source and output frames may contain at most 1920x1080 pixels;
+output dimensions must also be divisible by 16 and preserve the source aspect
+ratio. Non-dry execution requires exactly one full-memory H100, a digest-bound
+`NPA_TASK_IMAGE`, and the full NPA source revision baked into that image; a tag
+or caller-supplied revision is rejected. `--dry-run`
+prints the exact official `torchrun` invocation without fetching the model or
+touching storage. The Python SDK exposes `probe`, `restore`, `verify`, and
+`review`.
 
 ## Identity and packaging
 
@@ -71,8 +85,16 @@ The Python SDK exposes `probe`, `restore`, `verify`, and `review`.
   honor `TORCH_CUDA_ARCH_LIST`.
 
 The optional service requires `SEEDVR2_TOKEN` and explicit
-`SEEDVR2_ALLOWED_S3_ROOTS`. It serializes GPU operations and removes storage and
-service credentials from the upstream inference process.
+`SEEDVR2_ALLOWED_S3_ROOTS`. It serializes GPU operations. Media is forced
+through the local MP4 demuxer with a restricted protocol list, and media/model
+subprocesses receive purpose-specific environment allowlists rather than the
+service environment. Storage, service, workload-identity, and metadata
+credentials are not copied through environment variables. This is process
+hygiene, not a sandbox: the child still shares the container filesystem and
+network namespace, so keep the service internal and use pod-level identity and
+egress policy. Verification and review re-read the probe and bind the same
+workflow run, image digest,
+baked source revision, model files, command, media hashes, and artifact URIs.
 
 See the [redistribution record](../../npa/docker/workbench/seedvr2/REDISTRIBUTION.md)
 and [operator skill](../../skills/tools/seedvr2/SKILL.md) for exact payload
