@@ -43,6 +43,20 @@ REMOVED_PATH_RULES = [
 PKCS12 = re.compile(r"(?i)(?:^|/)[^/]+\.p(?:12|fx)$")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}$")
 SHA = re.compile(r"[0-9a-f]{64}$")
+PAX_TEXT_KEYS = frozenset(
+    {
+        "path",
+        "linkpath",
+        "uid",
+        "gid",
+        "uname",
+        "gname",
+        "mtime",
+        "atime",
+        "ctime",
+    }
+)
+PAX_BINARY_PREFIXES = ("SCHILY.xattr.", "LIBARCHIVE.xattr.")
 
 
 class ScanError(ValueError):
@@ -1043,27 +1057,20 @@ def parse_pax(data):
         record = data[space + 1 : cursor + length]
         require(record.endswith(b"\n") and b"=" in record, "pax_record_format")
         key, value = record[:-1].split(b"=", 1)
-        key, value = key.decode("utf-8"), value.decode("utf-8")
+        key = key.decode("utf-8")
         require(
-            key and key not in result and "\x00" not in value,
+            key and key not in result and "\x00" not in key,
             "pax_duplicate_or_invalid_key",
         )
         require(
-            key
-            in {
-                "path",
-                "linkpath",
-                "uid",
-                "gid",
-                "uname",
-                "gname",
-                "mtime",
-                "atime",
-                "ctime",
-            }
-            or key.startswith(("SCHILY.xattr.", "LIBARCHIVE.xattr.")),
+            key in PAX_TEXT_KEYS or key.startswith(PAX_BINARY_PREFIXES),
             "unsupported_pax_semantics",
         )
+        if key in PAX_TEXT_KEYS:
+            value = value.decode("utf-8")
+            require("\x00" not in value, "pax_duplicate_or_invalid_key")
+        # Kernel xattrs carry arbitrary bytes; only their already-scanned record
+        # and key participate in this parser's path-safety decisions.
         result[key] = value
         cursor += length
     return result

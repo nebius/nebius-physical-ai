@@ -52,6 +52,24 @@ def tar_data(entries, *, format=tarfile.PAX_FORMAT):
     return result.getvalue()
 
 
+def pax_record(key, value):
+    payload = key.encode() + b"=" + value + b"\n"
+    size = len(payload) + 2
+    while True:
+        record = str(size).encode() + b" " + payload
+        if len(record) == size:
+            return record
+        size = len(record)
+
+
+def tar_with_binary_pax(key, value):
+    placeholder = b"x" * len(value)
+    raw = tar_data([file("opt/metadata", b"neutral", pax={key: placeholder.decode()})])
+    encoded = pax_record(key, placeholder)
+    assert raw.count(encoded) == 1
+    return raw.replace(encoded, pax_record(key, value))
+
+
 def file(name, data=b"", *, kind=tarfile.REGTYPE, link="", pax=None):
     return name, data, kind, link, pax or {}
 
@@ -297,6 +315,75 @@ def test_literal_metadata_and_binary_content_never_emit_input_text(tmp_path, whe
     assert report["complete"] and not report["valid"]
     assert findings(records, "private_literal")
     assert value not in json.dumps(report) + json.dumps(records)
+
+
+def test_binary_security_capability_xattr_is_opaque_after_raw_scan(tmp_path):
+    key = "SCHILY.xattr.security.capability"
+    value = bytes.fromhex("0100000200140000000000000000000000000000")
+    raw = tar_with_binary_pax(key, value)
+
+    report, records = run(
+        tmp_path,
+        fixture(tmp_path, entries=[file("opt/metadata", b"neutral")], raw=raw),
+    )
+
+    assert report["complete"] and report["valid"]
+    extensions = [row for row in records if row.get("kind") == "raw_tar_extension"]
+    assert [row["sha256"] for row in extensions] == [digest(pax_record(key, value))]
+
+
+def test_binary_xattr_still_receives_literal_scanning(tmp_path):
+    key = "LIBARCHIVE.xattr.user.audit"
+    marker = b"private-operator-marker"
+    value = b"\xff\x00" + marker + b"\x00\xfe"
+    raw = tar_with_binary_pax(key, value)
+
+    report, records = run(
+        tmp_path,
+        fixture(
+            tmp_path,
+            entries=[file("opt/metadata", b"neutral")],
+            raw=raw,
+            literals=[marker.decode()],
+        ),
+    )
+
+    assert report["complete"] and not report["valid"]
+    extensions = [row for row in records if row.get("kind") == "raw_tar_extension"]
+    literal_hits = findings(records, "private_literal")
+    assert len(extensions) == len(literal_hits) == 1
+    assert {
+        key: extensions[0][key]
+        for key in ("scope", "layer_ordinal", "entry_ordinal", "tar_offset")
+    } == {
+        key: literal_hits[0][key]
+        for key in ("scope", "layer_ordinal", "entry_ordinal", "tar_offset")
+    }
+    assert marker.decode() not in json.dumps(report) + json.dumps(records)
+
+
+def test_binary_xattr_allowance_does_not_relax_pax_paths(tmp_path):
+    raw = tar_with_binary_pax("path", b"opt/\x00bad")
+
+    report, _ = run(
+        tmp_path,
+        fixture(tmp_path, entries=[file("opt/metadata", b"neutral")], raw=raw),
+    )
+
+    assert not report["complete"] and not report["valid"]
+    assert report["failure_code"] == "pax_duplicate_or_invalid_key"
+
+
+def test_binary_xattr_key_cannot_hide_a_nul(tmp_path):
+    raw = tar_with_binary_pax("SCHILY.xattr.user.\x00audit", b"neutral")
+
+    report, _ = run(
+        tmp_path,
+        fixture(tmp_path, entries=[file("opt/metadata", b"neutral")], raw=raw),
+    )
+
+    assert not report["complete"] and not report["valid"]
+    assert report["failure_code"] == "pax_duplicate_or_invalid_key"
 
 
 @pytest.mark.parametrize("literal", ["ab", "ééééé", "abcdef"])
