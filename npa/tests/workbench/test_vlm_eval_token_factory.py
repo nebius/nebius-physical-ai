@@ -290,6 +290,7 @@ def test_self_hosted_judge_keeps_legacy_parsing_without_completion_metadata(
     }
     result = _call_completion(monkeypatch, completion, backend="self-hosted")
     assert result.success is True
+    assert result.provider_success is None
     assert result.score == 1.0
     assert result.served_model is None
     assert result.evidence is not None
@@ -364,6 +365,16 @@ def test_api_result_retains_recomputable_secret_free_evidence(
     assert evidence.schema_version == "npa_vlm_eval_evidence_v1"
     assert evidence.request.endpoint_role == "hosted-api"
     assert len(evidence.request.frames) == 1
+    assert result.rubric == "Require visible green pixels."
+    reconstructed_prompt = vlm_eval._build_prompt(
+        task=result.task,
+        rubric=result.rubric,
+        frame_selection=result.frame_selection,
+        frame_count=result.frame_count,
+    )
+    assert hashlib.sha256(reconstructed_prompt.encode()).hexdigest() == (
+        evidence.request.prompt_sha256
+    )
     submitted = vlm_eval.select_rollout_frames(frame.parent)[0]
     frame_evidence = evidence.request.frames[0]
     assert frame_evidence.label == "frame.png"
@@ -385,12 +396,45 @@ def test_api_result_retains_recomputable_secret_free_evidence(
     assert evidence.provider.returned_model == "vendor/served-vision"
     assert evidence.provider.finish_reason == "stop"
     assert evidence.provider.usage == completion["usage"]
+    assert result.provider_success is True
+    assert result.provider_success_matches_score_gate is True
     assert evidence.provider.raw_response == raw_response
     assert (
         evidence.provider.raw_response_sha256
         == hashlib.sha256(raw_response.encode()).hexdigest()
     )
     json.dumps(asdict(result))
+
+
+def test_api_result_surfaces_provider_success_score_contradiction(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "blank.png"
+    Image.new("RGB", (8, 8), "gray").save(frame)
+    completion = _completion(
+        content='{"success":true,"score":0.0,"rationale":"No task evidence is visible."}'
+    )
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **kwargs: completion
+    )
+
+    result = evaluate_vlm(
+        input_path=str(frame),
+        output_path=str(tmp_path / "evaluation.json"),
+        backend="api",
+        model="MiniMaxAI/MiniMax-M3",
+        task="Confirm visible task completion.",
+        success_threshold=0.8,
+    )
+
+    assert result.score == 0.0
+    assert result.passed is False
+    assert result.status == "needs_iteration"
+    assert result.provider_success is True
+    assert result.provider_success_matches_score_gate is False
 
 
 def test_api_result_marks_unavailable_optional_provider_metadata(monkeypatch) -> None:
@@ -539,3 +583,5 @@ def test_real_benchmark_case_retains_per_request_evidence(
     assert case.evidence is not None
     assert case.evidence.request.frames[0].label == "frame.png"
     assert case.evidence.provider.finish_reason == "stop"
+    assert case.provider_success is True
+    assert case.provider_success_matches_score_gate is True

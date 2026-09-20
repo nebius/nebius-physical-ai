@@ -31,12 +31,28 @@ response and existing task fields can describe operator data.
 `stub` results and `--score` overrides do not contain provider evidence. They are
 wiring checks, never visual proof. Real `benchmark` reports retain the evidence
 for every case so calibration failures and model disagreement remain inspectable.
-If a model wraps one complete JSON object in a single Markdown JSON fence, the
-parser removes only that transport wrapper and appends `+markdown-fence-v1` to
-the retained parser version. Prefixes, suffixes, duplicate keys, non-finite
-numbers, invalid types, and partial output still fail rather than being repaired.
-None of these fields turns a visual judgment into objective task, geometry,
-collision, or safety evidence.
+The hosted API parser removes a single Markdown JSON fence around one complete
+object and appends `+markdown-fence-v1` to the retained parser version.
+Prefixes, suffixes, duplicate keys, non-finite numbers, invalid types, and
+partial output fail on that strict path. The self-hosted parser deliberately
+keeps its older compatibility behavior: it can extract an object from
+surrounding text, uses the last duplicate key, and coerces compatible score and
+`success` values. Retained parser versions distinguish these paths. None of
+these fields turns a visual judgment into objective task, geometry, collision,
+or safety evidence.
+
+The serialized result retains the effective `rubric`, so the exact prompt can
+be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
+`passed` is always `score >= success_threshold`. When a real backend actually
+returns a `success` boolean, the result records it as `provider_success` and
+reports whether it agrees in `provider_success_matches_score_gate`.
+Self-hosted responses that omit the boolean leave both fields null rather than
+presenting a score-derived fallback as provider output. Legacy non-boolean
+values such as `"true"` are likewise not promoted to provider booleans. A real
+disagreement is calibration evidence, not permission to replace the
+score-derived label. Before reviewing thin geometry or skeletons, compare
+retained submitted-frame dimensions with the source because normalization can
+remove the defect.
 
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
@@ -139,6 +155,11 @@ points at the same rollout directories and includes `expected_label` for each
 item, then run the sweep below.
 
 ## Tune
+
+Use neutral identify-then-judge task text. Ask what the frames show before
+asking whether they satisfy the target; do not ask the model to confirm the
+desired answer. A blank and an unrelated rollout must score low under the exact
+same task-plus-rubric prompt before the positive score is usable evidence.
 
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
