@@ -4,6 +4,7 @@ from fnmatch import fnmatchcase
 import inspect
 import json
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +32,36 @@ def _fake_sky(tmp_path: Path) -> Path:
     sky.write_text("#!/bin/sh\n", encoding="utf-8")
     sky.chmod(0o755)
     return sky
+
+
+def _ordered_cleanup_sky(
+    tmp_path: Path, *, run_id: str, status: str
+) -> tuple[Path, Path]:
+    sky = tmp_path / f"sky-{status.lower()}"
+    state = tmp_path / f"state-{status.lower()}"
+    events = tmp_path / f"events-{status.lower()}"
+    sky.write_text(
+        f"""#!{sys.executable}
+import json
+import pathlib
+import sys
+state = pathlib.Path({str(state)!r})
+events = pathlib.Path({str(events)!r})
+args = sys.argv[1:]
+if args[:2] == ["jobs", "queue"]:
+    current = "CANCELLED" if state.exists() else {status!r}
+    print(json.dumps([{{"job_id": 7, "name": {f"{run_id}-job"!r}, "status": current}}]))
+elif args[:2] == ["jobs", "cancel"]:
+    events.write_text(events.read_text() + "cancel:7\\n" if events.exists() else "cancel:7\\n")
+    state.write_text("cancelled")
+elif args[:1] == ["down"]:
+    line = "down:" + args[-1] + "\\n"
+    events.write_text(events.read_text() + line if events.exists() else line)
+""",
+        encoding="utf-8",
+    )
+    sky.chmod(0o755)
+    return sky, events
 
 
 @pytest.fixture(autouse=True)
@@ -143,6 +174,86 @@ def test_cleanup_all_for_run_matches_run_id_patterns(
     assert not any(call.startswith("down:*") for call in calls)
     assert "sky-jobs-controller-abc123" not in result.resources_removed
     assert cluster_name_patterns_for_run(run_id)[0] == run_tag(run_id)
+
+
+def test_cleanup_statuses_cover_pinned_skypilot_nonterminal_contract() -> None:
+    pinned_nonterminal = {
+        "PENDING",
+        "SUBMITTED",
+        "STARTING",
+        "RUNNING",
+        "WINDING_DOWN",
+        "RECOVERING",
+        "CANCELLING",
+    }
+    pinned_terminal = {
+        "SUCCEEDED",
+        "CANCELLED",
+        "FAILED",
+        "FAILED_SETUP",
+        "FAILED_PRECHECKS",
+        "FAILED_NO_RESOURCE",
+        "FAILED_CONTROLLER",
+    }
+
+    assert pinned_nonterminal <= cleanup_module.NONTERMINAL_JOB_STATUSES
+    assert pinned_terminal.isdisjoint(cleanup_module.NONTERMINAL_JOB_STATUSES)
+
+
+@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])
+def test_cleanup_all_for_run_cancels_all_pinned_nonterminal_statuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        cleanup_module,
+        "_matching_jobs",
+        lambda *_args, **_kwargs: [
+            {"job_id": "7", "name": "owned-run-job", "status": status}
+        ],
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_cancel_job",
+        lambda job_id, **_kwargs: calls.append(f"cancel:{job_id}") or CleanupResult(),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "wait_for_jobs_terminal",
+        lambda *_args, **_kwargs: (False, ["7"]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster, **_kwargs: calls.append(f"down:{cluster}") or CleanupResult(),
+    )
+
+    result = cleanup_all_for_run("owned-run-123456", sky_bin=_fake_sky(tmp_path))
+
+    assert calls == ["cancel:7"]
+    assert any("still non-terminal" in error for error in result.errors)
+
+
+@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])
+def test_cleanup_command_orders_cancel_before_cluster_down(
+    tmp_path: Path, status: str
+) -> None:
+    run_id = "owned-run-command-123456"
+    sky_bin, events_path = _ordered_cleanup_sky(tmp_path, run_id=run_id, status=status)
+
+    result = cleanup_all_for_run(
+        run_id,
+        isolated_config_dir=tmp_path / "isolated",
+        sky_bin=sky_bin,
+        job_drain_timeout=1,
+    )
+
+    events = events_path.read_text(encoding="utf-8").splitlines()
+    assert result.ok
+    assert events[0] == "cancel:7"
+    assert events[1:] == [
+        f"down:{pattern}" for pattern in cluster_name_patterns_for_run(run_id)
+    ]
 
 
 def test_cleanup_launched_workflow_uses_exact_job_and_keeps_controller(
@@ -973,6 +1084,38 @@ def test_a_readable_queue_that_is_already_terminal_does_not_wait(
     assert drained is True
     assert still_running == []
     assert slept == []
+
+
+@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])
+def test_wait_for_jobs_terminal_keeps_all_pinned_nonterminal_statuses(
+    monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
+    monkeypatch.setattr(
+        cleanup_module,
+        "_all_jobs",
+        lambda **_kwargs: cleanup_module.JobQueueSnapshot(
+            "verified_jobs", jobs=({"job_id": "7", "status": status},)
+        ),
+    )
+
+    drained, still_running = cleanup_module.wait_for_jobs_terminal(
+        ["7"], timeout=0, sleep=lambda _seconds: None
+    )
+
+    assert drained is False
+    assert still_running == ["7"]
+
+
+@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])
+def test_job_group_stays_nonterminal_until_every_row_is_terminal(status: str) -> None:
+    statuses = cleanup_module._job_statuses(
+        [
+            {"job_id": "7", "status": status},
+            {"job_id": "7", "status": "SUCCEEDED"},
+        ]
+    )
+
+    assert statuses == {"7": status}
 
 
 @pytest.mark.parametrize(

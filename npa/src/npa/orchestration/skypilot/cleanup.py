@@ -66,8 +66,12 @@ class CleanupResult:
 
 NONTERMINAL_JOB_STATUSES = {
     "PENDING",
+    # Pinned SkyPilot still parses legacy controller rows in this state.
+    "SUBMITTED",
     "STARTING",
     "RUNNING",
+    # Batch output is still being merged; teardown is not yet safe.
+    "WINDING_DOWN",
     "RECOVERING",
     "CANCELLING",
 }
