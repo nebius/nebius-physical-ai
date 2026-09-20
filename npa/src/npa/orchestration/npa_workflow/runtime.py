@@ -83,6 +83,10 @@ TERMINAL_FAIL = frozenset(
         "STOPPED",
     }
 )
+_SUPERVISOR_EVENT_PHASES = frozenset(
+    {"decision", "cancellation", "recovery_reserved", "launch", "attempt_terminal"}
+)
+_SUPERVISOR_RECOVERY_ACTIONS = frozenset(action.value for action in RecoveryAction)
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
@@ -1062,8 +1066,6 @@ class SkyPilotWaveExecutor:
             )
         event: Mapping[str, Any] | None = None
         for candidate in reversed(events):
-            if candidate.get("phase") != "cancellation":
-                continue
             identity = candidate.get("attempt_identity")
             recovery = candidate.get("recovery")
             cancellation = candidate.get("cancellation")
@@ -1075,8 +1077,19 @@ class SkyPilotWaveExecutor:
             )
             if not identity_matches and not provider_matches:
                 continue
-            if not isinstance(recovery, Mapping) or (
-                recovery.get("action") == "reuse_completed_wave"
+            phase = str(candidate.get("phase") or "")
+            if phase not in _SUPERVISOR_EVENT_PHASES:
+                event = candidate
+                break
+            if phase != "cancellation":
+                continue
+            if not isinstance(recovery, Mapping):
+                event = candidate
+                break
+            action = recovery.get("action")
+            if (
+                action == "reuse_completed_wave"
+                or action not in _SUPERVISOR_RECOVERY_ACTIONS
             ):
                 event = candidate
                 break
@@ -1137,7 +1150,8 @@ class SkyPilotWaveExecutor:
             cancellation.get("provider_terminal_status") or ""
         ).upper()
         if (
-            cancellation.get("exact") is not True
+            event.get("phase") != "cancellation"
+            or cancellation.get("exact") is not True
             or cancellation.get("provider_job_id") != attempt.job_id
             or str(cancellation.get("status") or "").lower()
             not in {"cancelled", "canceled"}

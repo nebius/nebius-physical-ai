@@ -4505,6 +4505,11 @@ def test_resume_blocks_output_reuse_when_artifacts_cannot_be_revalidated(
         ("output_mismatch", False),
         ("malformed_recovery", True),
         ("malformed_identity", True),
+        ("empty_recovery", True),
+        ("missing_recovery_action", True),
+        ("unknown_recovery_action", True),
+        ("unknown_phase", True),
+        ("logical_attempt_mismatch", True),
         ("invalid_json", True),
         ("event_read_failure", True),
     ],
@@ -4560,6 +4565,16 @@ def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
             payload["outputs"]["valid"] = []
         elif tamper == "malformed_recovery":
             payload["recovery"] = ["reuse_completed_wave"]
+        elif tamper == "empty_recovery":
+            payload["recovery"] = {}
+        elif tamper == "missing_recovery_action":
+            payload["recovery"].pop("action")
+        elif tamper == "unknown_recovery_action":
+            payload["recovery"]["action"] = "future_recovery_action"
+        elif tamper == "unknown_phase":
+            payload["phase"] = "future_phase"
+        elif tamper == "logical_attempt_mismatch":
+            payload["attempt_identity"]["logical_attempt_id"] = "different-attempt"
         else:
             payload["attempt_identity"] = ["malformed"]
         store.objects[event_key] = json.dumps(payload).encode()
@@ -4593,6 +4608,44 @@ def test_resume_blocks_incomplete_or_forged_output_reuse_evidence(
     assert blocked.status == "failed"
     assert blocked.recovery_decision == "reuse_completed_wave"
     assert blocked.supervisor_blocks_cancellation
+
+
+def test_resume_skips_well_formed_nonreuse_cancellation_event(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    run_id = "rt-output-reuse-nonreuse-event"
+    spec, gate, store, crashed_attempt = _crashed_output_reuse_case(
+        tmp_path,
+        mocker,
+        runtime_sdk_submission,
+        run_id=run_id,
+        crash_before_runtime_record=True,
+    )
+    for key, body in store.objects.items():
+        if "/supervisor/attempts/" not in key:
+            continue
+        payload = json.loads(body)
+        if payload.get("phase") != "cancellation":
+            continue
+        payload["recovery"]["action"] = "terminalize"
+        store.objects[key] = json.dumps(payload).encode()
+
+    resumed = _executor(
+        spec,
+        run_id=run_id,
+        options=RuntimeOptions(poll_seconds=0, resume=True),
+        output_checker=lambda _uri: True,
+        store=store,
+    )
+    record = resumed.ledger.in_flight_wave(crashed_attempt["key"])
+    assert record is not None
+    attempt = resumed._attempt_from_record(
+        record, steps=[gate], kind="serial", group=""
+    )
+
+    assert not resumed._resume_durable_output_reuse(attempt)
 
 
 def test_resume_ignores_unrelated_malformed_supervisor_history(
