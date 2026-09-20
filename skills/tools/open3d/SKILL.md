@@ -92,6 +92,20 @@ be able to open the thing being asserted.
   samples sits at most about half a voxel diagonal from one. Pass `0` to publish
   the closed surface unchanged, which is right when the capture is already
   complete.
+- **The default assumes sample spacing well below the voxel, and says so because
+  it is measurably wrong otherwise.** A watertight mesh sampled uniformly at 300k
+  points, then voxelized at its own median spacing, reports **0.2055 unsupported
+  area** at factor `1.0` — yet that surface is correct: its median vertex sits
+  0.02 voxels from the ground-truth mesh, p99 at 0.16, and *no* vertex is further
+  than one voxel. The figure is discretization, not fabrication. It collapses to
+  0.0075 at factor 1.5 and 0.000084 at 2.0, and the furthest vertex is only 2.21
+  voxels out. Genuine fabrication does not collapse like that: on the demo scans
+  the discarded shell reached 18 voxels. So when spacing approaches the voxel,
+  raise the factor to 1.5–2.0; at `1.0` the crop removed 8.45% of *correct*
+  vertices there. Coverage did not catch it and cannot — coverage asks whether
+  observations are explained, not whether correct surface was discarded. Read the
+  unsupported fraction with `max_vertex_distance_to_sample` beside it; the
+  fraction alone does not distinguish the two cases.
 - Both surfaces ship: `mesh.ply` is the cropped result and `mesh_uncropped.ply`
   is what Poisson returned, so the crop is a checkable claim rather than a
   deletion. `reconstruct` also publishes the support measurement before and
