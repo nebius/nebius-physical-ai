@@ -1192,6 +1192,25 @@ def test_grade_gate_rejects_inconsistent_vlm_status(tmp_path: Path) -> None:
     assert decision == "loop_back"
 
 
+def test_grade_gate_identifies_vlm_result_at_explicit_custom_path(
+    tmp_path: Path,
+) -> None:
+    custom = tmp_path / "custom-score.json"
+    result = evaluate_stub(
+        input_path="rollout",
+        output_path=str(custom),
+        score=0.9,
+        success_threshold=0.5,
+    )
+    custom.write_text(json.dumps(asdict(result)))
+
+    decision = dfs.grade_gate(
+        str(custom), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "promote_checkpoint"
+
+
 def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
     tmp_path: Path,
 ) -> None:
@@ -1555,6 +1574,18 @@ def test_grade_gate_malformed_authoritative_report_fails_closed(
         dfs.grade_gate(str(tmp_path), str(tmp_path / "d.json"), threshold=0.5)
         == "loop_back"
     )
+
+
+def test_grade_gate_rejects_vlm_status_on_cosmos_report(tmp_path: Path) -> None:
+    (tmp_path / "cosmos_evaluator.json").write_text(
+        json.dumps({"status": "passed", "score": 0.9, "passed": True})
+    )
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "loop_back"
 
 
 def test_download_json_missing_exact_file_does_not_substitute(
