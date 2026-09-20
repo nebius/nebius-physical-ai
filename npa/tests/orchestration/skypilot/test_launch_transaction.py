@@ -285,6 +285,8 @@ def test_native_finalizer_rejects_incomplete_controller_evidence(tmp_path, evide
     assert result.job_id == ""
     assert result.launch_result is None
     assert result.recovery_decision == "retain_native_identity_conflict_no_retry"
+    assert result.existence == "indeterminate"
+    assert "Do not retry" in result.operator_remedy
 
 
 def test_consecutive_readiness_requires_count_and_full_window() -> None:

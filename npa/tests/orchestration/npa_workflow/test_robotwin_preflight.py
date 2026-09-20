@@ -891,7 +891,6 @@ def test_worker_materialization_records_each_rollback_outcome_and_residual(
     assert caught.value.args == ("injected materialization failure",)
     assert write_calls == 3
     assert recovery.cleanup_outcomes == (
-        ("kubeconfig.yaml", "missing"),
         ("customer-authorization.json", "error:PermissionError:13"),
         ("runtime-context.json", "removed"),
     )
@@ -925,6 +924,36 @@ def test_worker_materialization_removes_the_file_whose_fsync_fails(
     )
     assert recovery.residual_names == ()
     assert recovery.directory_fsync == "error:OSError"
+
+
+def test_worker_materialization_preserves_a_colliding_unowned_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    environment, _path, raw, _entitlement_path, _entitlement_raw = (
+        _authorization_environment(tmp_path)
+    )
+    authorization = _load_authorization(environment, raw)
+    directory = tmp_path / "materialized"
+    directory.mkdir(mode=0o700)
+    real_write = preflight_module.write_owner_file
+
+    def collide(path: Path, payload: bytes, *, directory_fd=None) -> None:
+        if path.name == "customer-authorization.json":
+            real_write(path, b"belongs to another operation", directory_fd=directory_fd)
+        real_write(path, payload, directory_fd=directory_fd)
+
+    monkeypatch.setattr(preflight_module, "write_owner_file", collide)
+    with pytest.raises(FileExistsError) as caught:
+        preflight_module._materialize_authorization(authorization, directory)
+    assert (directory / "customer-authorization.json").read_bytes() == (
+        b"belongs to another operation"
+    )
+    assert caught.value.recovery_context.cleanup_outcomes == (
+        ("runtime-context.json", "removed"),
+    )
+    assert caught.value.recovery_context.residual_names == (
+        "customer-authorization.json",
+    )
 
 
 def test_materialized_config_mutation_refuses_before_submit(

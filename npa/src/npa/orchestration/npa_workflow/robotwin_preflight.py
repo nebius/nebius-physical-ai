@@ -2415,7 +2415,8 @@ def write_owner_file(
             stream.write(raw)
             stream.flush()
             os.fsync(stream.fileno())
-    except BaseException:
+    except BaseException as failure:
+        setattr(failure, "created_owner_file", path.name)
         try:
             os.unlink(
                 path.name if directory_fd is not None else path,
@@ -2516,8 +2517,8 @@ def _materialize_authorization(
     )
     try:
         for path, raw in payloads:
-            created.append(path.name)
             write_owner_file(path, raw, directory_fd=directory_fd)
+            created.append(path.name)
         os.fsync(directory_fd)
         return MaterializedRobotwinContext(
             context_path,
@@ -2527,6 +2528,9 @@ def _materialize_authorization(
             authorization,
         )
     except BaseException as failure:
+        failed_created_name = getattr(failure, "created_owner_file", None)
+        if failed_created_name is not None and failed_created_name not in created:
+            created.append(failed_created_name)
         recovery = _rollback_materialization(directory_fd, created)
         setattr(failure, "recovery_context", recovery)
         raise

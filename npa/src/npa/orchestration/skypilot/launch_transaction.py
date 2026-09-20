@@ -902,6 +902,14 @@ def run_launch_transaction(
 def _finish_native_transaction(transaction, result, reconcile, checkpoint):
     from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
 
+    # The launch has returned; the earlier absence observation is now stale.
+    transaction.state = LaunchState.INDETERMINATE
+    transaction.existence = "indeterminate"
+    transaction.recovery_decision = "retain_native_identity_conflict_no_retry"
+    transaction.operator_remedy = (
+        "Preserve the original private context. Do not retry, adopt or cancel by name; "
+        "reconcile the original native request before resuming the same run."
+    )
     if not isinstance(result, NativeLaunchResult):
         transaction.primary_error = "native request/result observation missing"
         checkpoint()
@@ -928,6 +936,7 @@ def _finish_native_transaction(transaction, result, reconcile, checkpoint):
         _fail_native_terminal_transaction(transaction, checkpoint)
     transaction.state = LaunchState.SUBMITTED
     transaction.recovery_decision = "native_result_and_complete_tasks_verified"
+    transaction.operator_remedy = ""
     checkpoint()
 
 
