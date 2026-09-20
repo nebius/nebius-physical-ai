@@ -1755,6 +1755,16 @@ def test_runtime_fetch_lock_is_adjacent_and_owner_only(tmp_path: Path) -> None:
         verifier._release_runtime_fetch_lock(lock_path, handle)
 
 
+def test_runtime_fetch_proof_cleanup_uses_body_digest_domain(tmp_path: Path) -> None:
+    proof = tmp_path / verifier.RUNTIME_FETCH_PROOF_NAME
+    expected = {"demo.py": {"type": "file", "size": 1, "sha256": "a" * 64}}
+    digest = verifier._write_runtime_fetch_proof(
+        proof, expected, {"demo": {"version": "1.0"}}, "lock", "inventory"
+    )
+    verifier._remove_runtime_fetch_proof(proof, digest)
+    assert not proof.exists()
+
+
 def test_fetched_record_tree_rejects_changed_installed_member(tmp_path: Path) -> None:
     stage = tmp_path / "site-packages"
     dist = stage / "demo-1.0.dist-info"

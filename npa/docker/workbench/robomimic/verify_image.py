@@ -2999,7 +2999,14 @@ def _remove_runtime_fetch_proof(path: Path, expected_sha256: str) -> None:
     try:
         if path.is_symlink() or not path.is_file():
             return
-        if _sha256(path) != expected_sha256:
+        raw = _immutable_bytes(path, RUNTIME_METADATA_MAX_BYTES)
+        envelope = json.loads(raw.decode("utf-8"))
+        declared = envelope.get("proof_sha256")
+        body = {key: value for key, value in envelope.items() if key != "proof_sha256"}
+        actual = hashlib.sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if declared != actual or actual != expected_sha256:
             raise VerificationError(
                 "runtime fetch proof identity changed during cleanup"
             )
