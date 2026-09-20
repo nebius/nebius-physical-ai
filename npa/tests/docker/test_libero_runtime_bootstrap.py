@@ -61,6 +61,7 @@ def _write_json(path: Path, value: object, *, mode: int = 0o600) -> str:
 def _fixture(tmp_path: Path) -> tuple[object, argparse.Namespace, dict[str, object]]:
     module = _load_module()
     module.RUNTIME_EXECUTION_GROUP = module.grp.getgrgid(os.getgid()).gr_name
+    module.RUNTIME_SUPERVISOR_USER = module.pwd.getpwuid(os.getuid()).pw_name
     license_bytes = b"fixture MIT license\n"
     bddl_bytes = b"fixture bddl\n"
     initial_bytes = b"fixture initial states\n"
