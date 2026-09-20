@@ -66,6 +66,26 @@ def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
     assert "torch.version.cuda == '12.8'" in text
 
 
+def test_robocasa_public_runtime_excludes_restricted_optional_payloads() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    dependency_install = text.split("# Install RoboCasa source", maxsplit=1)[0]
+
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
+    assert "        ffmpeg fuse netcat-openbsd" in text
+    assert "imageio_ffmpeg-0.6.0.tar.gz#sha256=" in dependency_install
+    assert '"imageio[ffmpeg]"' not in dependency_install
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dependency_install
+    assert "imageio_ffmpeg.get_ffmpeg_exe() == '/usr/bin/ffmpeg'" in dependency_install
+    assert "imageio.mimsave(video," in dependency_install
+    assert "itertools.islice(reader, 3)" in dependency_install
+    assert "len(frames) == 2" in dependency_install
+    assert dependency_install.count("render_dataset_with_omniverse.py") >= 2
+    assert (
+        "*/robosuite/scripts/__pycache__/render_dataset_with_omniverse*.pyc"
+        in dependency_install
+    )
+
+
 def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 

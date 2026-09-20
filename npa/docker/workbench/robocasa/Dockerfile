@@ -41,6 +41,7 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics \
     ROBOCASA_PORT=8791 \
     PYTHONPATH=/app \
@@ -54,7 +55,7 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3 python3-dev python3-pip python3-venv build-essential git \
         software-properties-common ca-certificates curl \
-        fuse netcat-openbsd pciutils procps wget \
+        ffmpeg fuse netcat-openbsd pciutils procps wget \
         libegl1 libgl1 libglvnd0 libegl1-mesa-dev \
     && add-apt-repository -y ppa:deadsnakes/ppa \
     && apt-get update \
@@ -78,7 +79,8 @@ RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" whee
     && python -m pip install --no-cache-dir \
         "git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_COMMIT}" \
         numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow \
-        "opencv-python>=4.9,<4.14" pyyaml pynput tqdm termcolor "imageio[ffmpeg]" \
+        "opencv-python>=4.9,<4.14" pyyaml pynput tqdm termcolor imageio \
+        "imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755" \
         h5py lxml hidapi "gymnasium==0.29.1" huggingface_hub \
         "fastapi==0.136.1" "uvicorn[standard]==0.38.0" "pydantic==2.13.4" \
         "boto3==1.42.9" "httpx>=0.27" \
@@ -89,7 +91,23 @@ RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" whee
         "deepdiff>=7.0.1,<9.0.0" "diffusers>=0.27.2,<0.36.0" \
         "pyserial>=3.5,<4.0" \
         "torch==2.9.0" "torchvision==0.24.0" \
-    && python -m pip install --no-cache-dir --no-deps "lerobot==0.5.1"
+    && python -m pip install --no-cache-dir --no-deps "lerobot==0.5.1" \
+    && find /opt/robocasa/venv -type f \
+        -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && rm -f \
+        /opt/robocasa/venv/lib/python3.12/site-packages/robosuite/scripts/render_dataset_with_omniverse.py \
+    && find /opt/robocasa/venv -type f \
+        -path '*/robosuite/scripts/__pycache__/render_dataset_with_omniverse*.pyc' \
+        -delete \
+    && test -z "$(find /opt/robocasa/venv -type f \
+        -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && test ! -e \
+        /opt/robocasa/venv/lib/python3.12/site-packages/robosuite/scripts/render_dataset_with_omniverse.py \
+    && test -z "$(find /opt/robocasa/venv -type f \
+        -path '*/robosuite/scripts/__pycache__/render_dataset_with_omniverse*.pyc' \
+        -print -quit)" \
+    && python -c "import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == '/usr/bin/ffmpeg'" \
+    && python -c "import itertools, tempfile; from pathlib import Path; import imageio.v2 as imageio; import numpy as np; tmp = tempfile.TemporaryDirectory(); video = Path(tmp.name) / 'probe.mp4'; imageio.mimsave(video, [np.zeros((64, 64, 3), dtype=np.uint8), np.full((64, 64, 3), 255, dtype=np.uint8)], fps=2); reader = imageio.get_reader(video); frames = list(itertools.islice(reader, 3)); reader.close(); assert len(frames) == 2 and frames[0].shape == (64, 64, 3); tmp.cleanup()"
 
 # Install RoboCasa source (no deps; the closure above is pinned).
 RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
