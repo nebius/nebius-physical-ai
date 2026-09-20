@@ -1113,3 +1113,29 @@ def test_a_real_scan_lands_on_the_boundary_and_that_is_recorded() -> None:
     share = eagle["unsupported_area_share_beyond_3_voxels"]
     assert abs(share - 0.1009) < 0.001
     assert abs(share - FABRICATION_AREA_SHARE) / FABRICATION_AREA_SHARE < 0.02
+
+
+def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() -> None:
+    """The strongest measured case for reading the bands instead of the fraction.
+
+    A watertight mesh observed at 0.708 of a voxel reports 0.5659 unsupported area — more
+    than half its surface — while only 0.0027 of its area is actually further than one
+    voxel from the true surface. The headline number overstates fabrication by a factor
+    of roughly 200. The bands put 0.0003 past three voxels, and the reading stays
+    near-threshold, which is correct.
+
+    Figures from evidence/open3d/band-validity-sweep.json.
+    """
+
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(50000)
+
+    reading = _crop_justification(
+        _support_block(unsupported=0.5659, beyond_1_5=0.0180, beyond_3=0.0003),
+        0,
+        _Mesh(),
+    )
+    assert reading["removed_surface_reads_as"] == "near-threshold surface"
+    assert reading["unsupported_area_share_beyond_3_voxels"] < 0.001

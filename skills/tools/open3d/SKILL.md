@@ -119,6 +119,16 @@ be able to open the thing being asserted.
   treated as a verdict — the solid-object scan sits on the 0.1 boundary, so any
   scene near it is undecided and the bands themselves are the evidence.
   Measurements: `evidence/open3d/band-profile-across-scenes.json`.
+- **The bands hold from 0.5 to 5.4 voxels of sample spacing, and the fraction does
+  not.** Swept against a fixed voxel on a watertight mesh, so fabrication could be
+  measured against ground truth rather than inferred, there was **no case where a
+  correct surface read as a shell**. Across that range the share past three voxels
+  tracked the area genuinely further than one voxel from the true surface to within
+  0.06 absolute. The headline fraction did not: at 0.708 voxels of spacing it
+  reported **0.5659** unsupported where only **0.0027** of area was actually
+  fabricated, overstating by roughly 200-fold. The reverse error — a real shell
+  reading as near-threshold — is not covered by that sweep and rests only on the
+  scenes above. Measurements: `evidence/open3d/band-validity-sweep.json`.
 - Both surfaces ship: `mesh.ply` is the cropped result and `mesh_uncropped.ply`
   is what Poisson returned, so the crop is a checkable claim rather than a
   deletion. `reconstruct` also publishes the support measurement before and

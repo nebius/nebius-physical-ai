@@ -401,8 +401,16 @@ def _sample_distances(o3d, cloud, vertices):
 #: is a coin toss and the `note` is advice rather than a finding. Treat a share within
 #: roughly a factor of two of this value as undecided and read the bands directly.
 #:
-#: This is a reporting boundary and nothing gates on it. Deliberately so, while a case
-#: this close to it exists.
+#: A sweep of sample spacing from 0.50 to 5.45 voxels against a fixed voxel, on a
+#: watertight mesh so that fabrication could be measured against ground truth, produced
+#: no case where a correct surface read as a shell. Over that range the share tracked
+#: the area genuinely further than one voxel from the true surface to within 0.06
+#: absolute, while `unsupported_area_fraction` overstated it by up to 200-fold — 0.5659
+#: reported against 0.0027 actual. The reverse error, a real shell reading as
+#: near-threshold, is not covered by that sweep and rests only on the scenes above.
+#:
+#: This is still a reporting boundary and nothing gates on it. Deliberately so, while a
+#: case as close to it as Eagle exists.
 FABRICATION_AREA_SHARE = 0.1
 
 
