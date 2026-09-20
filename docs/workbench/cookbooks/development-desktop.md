@@ -317,7 +317,11 @@ The backup selection should cover:
   its `.git` entry, and the common Git directory. This preserves uncommitted work
   and branch history. Ignored datasets, build products, caches, and environments
   need their own artifact policy; GitHub pushes alone do not cover local edits.
-- Codex session and archive files, configuration, and the session index.
+- Codex session and archive files, configuration, rules, and the session index.
+  Capture its SQLite session databases with SQLite's online backup API before
+  sending them to restic; copying a live database without its WAL can lose
+  committed state. Check the copies and keep a private mapping back to their
+  original paths. Restore these databases only while Codex is stopped.
 - VS Code user settings, VNC/session configuration, keyring state, and desktop
   service definitions. Authentication files, if included, belong only in the
   encrypted private backup.
