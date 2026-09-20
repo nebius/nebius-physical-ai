@@ -579,9 +579,7 @@ def test_blocking_mypy_runs_as_merge_gate() -> None:
     # workflow strips `:line:` before diffing (multiset compare, so genuinely
     # new errors of an already-seen shape are still caught).
     baseline_step = next(
-        step
-        for step in steps
-        if step.get("name") == "Check against baseline"
+        step for step in steps if step.get("name") == "Check against baseline"
     )
     script = baseline_step["run"]
     assert "sed -E 's|^([^:]+\\.py):[0-9]+:|\\1:|'" in script, (
