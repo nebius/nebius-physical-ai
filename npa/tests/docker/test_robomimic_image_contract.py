@@ -2051,7 +2051,6 @@ def inert_installed_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> di
     monkeypatch.setattr(
         VERIFIER, "verify_debian_install", lambda **_: {"package_count": 0}
     )
-    monkeypatch.setattr(VERIFIER, "_verified_installer", _inert_installer_identity)
     return dict(
         source_root=source,
         metadata_path=tmp_path / "inert-manifest",
@@ -2061,7 +2060,6 @@ def inert_installed_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> di
         source_archive_path=archive,
         selected_wheel_root=wheels,
         empty_boundary_paths=(),
-        installer_input_root=tmp_path / "inert-build-input",
     )
 
 
@@ -2098,6 +2096,7 @@ def test_installed_byte_proof_binds_archive_wheels_and_inventories(
         proof["installed_dependencies"]["installation_policy"]
         == "pip-26.2.1-posix-home-target-no-compile-v2"
     )
+    assert "installer_input_sha256" not in proof
     record = (
         inert_installed_image["baked_deps_path"] / "inertpkg-1.0.dist-info/RECORD"
     ).read_text()
@@ -2449,21 +2448,24 @@ def test_deterministic_installer_refuses_unmodeled_entrypoints(declaration) -> N
         VERIFIER._wheel_scripts(members, "inert.dist-info")
 
 
-def test_deterministic_installer_requires_exact_metadata_and_build_input() -> None:
+def test_runtime_installer_metadata_stays_out_of_neutral_build_inputs() -> None:
     manifest = VERIFIER._source_manifest(IMAGE_ROOT / "source-manifest.json")
     installer = manifest["build_installer"]
     assert installer["version"] == "26.2.1"
     assert installer["members"]["count"] == 476
     assert len(installer["members"]["pe_launchers"]) == 6
     assert installer["members"]["notice_files"] == 42
+    assert (
+        "neutral-image build-input closure" in installer["members"]["notice_delivery"]
+    )
     expected = VERIFIER._expected_build_input_objects({"packages": []}, manifest)
     assert expected == {
         "debian",
         "source",
         "source/robomimic.tar",
-        "tools",
-        "tools/pip-26.2.1-py3-none-any.whl",
     }
+    assert "tools" not in expected
+    assert installer["path"] not in expected
     for key, value in (
         ("version", "unknown"),
         ("sha256", "0" * 64),

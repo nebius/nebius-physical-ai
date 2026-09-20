@@ -37,7 +37,7 @@ SOURCE_LICENSE_SHA256 = (
     "7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556"
 )
 SOURCE_MANIFEST_SHA256 = (
-    "878634c85bf2f3b73ec4ce8f01472305cea0665d0458785dbb771d8f6ee46a9f"
+    "559390f6f7c1ecf492d3509d72979933e8a1a3cc7c008232651d7e4337f142fd"
 )
 SOURCE_TREE_SHA1 = "4c8ebe35dbef16126dadf59cf8b771b9203753ab"
 SOURCE_ARCHIVE_SHA256 = (
@@ -563,7 +563,7 @@ def _checked_installer(value: Any) -> dict:
         raise VerificationError("unsupported build installer identity")
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     if hashlib.sha256(encoded).hexdigest() != (
-        "10d2341e000fc9db85d2bce23025bb6c68cccea82d55ee49140dd3d75472b062"
+        "5b00e5ffc288f1337991a5ea8d3563dbd6b1458203cd16eb7b81ba5899740bda"
     ):
         raise VerificationError("build installer metadata mismatch")
     _checked_https_url(value.get("url"), host="files.pythonhosted.org")
@@ -775,6 +775,16 @@ def _checked_debian_lock(value: dict[str, Any]) -> dict[str, Any]:
     _verify_debian_lock_header(value)
     _verify_debian_repository_metadata(value)
     source_ids = _debian_source_ids(value)
+    checked, by_name = _checked_debian_packages(value, source_ids)
+    _verify_debian_lock_policy(value, by_name, source_ids)
+    return value
+
+
+def _checked_debian_packages(
+    value: dict[str, Any], source_ids: set[str]
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Authenticate Debian package identities before dependency-policy checks."""
+
     packages = value.get("packages")
     if not isinstance(packages, list):
         raise VerificationError("Debian package records must be an array")
@@ -792,8 +802,7 @@ def _checked_debian_lock(value: dict[str, Any]) -> dict[str, Any]:
         raise VerificationError("Debian package byte total mismatch")
     if any(set(item["depends"]) - set(by_name) for item in checked):
         raise VerificationError("Debian dependency closure is incomplete")
-    _verify_debian_lock_policy(value, by_name, source_ids)
-    return value
+    return checked, by_name
 
 
 def _verify_debian_lock_policy(
@@ -877,8 +886,6 @@ def _expected_build_input_objects(
     return {
         "debian",
         "source",
-        "tools",
-        manifest["build_installer"]["path"],
         manifest["archive"]["path"],
         *(item["artifact"] for item in lock["packages"]),
     }
@@ -910,7 +917,6 @@ def verify_build_inputs(
             digest=package["sha256"],
         )
     _verify_source_archive(input_root / manifest["archive"]["path"], manifest)
-    installer = _verified_installer(input_root, manifest)
     return {
         "schema": "npa.robomimic.build-input-verification.v1",
         "debian_package_count": len(lock["packages"]),
@@ -920,7 +926,6 @@ def verify_build_inputs(
         "source_manifest_sha256": SOURCE_MANIFEST_SHA256,
         "source_revision": SOURCE_REVISION,
         "source_tree_sha1": SOURCE_TREE_SHA1,
-        "build_installer_sha256": installer["sha256"],
     }
 
 
@@ -1016,7 +1021,6 @@ def prepare_build_inputs(
         tempfile.mkdtemp(prefix=f".{output_root.name}.staging-", dir=output_root.parent)
     )
     try:
-        _prepare_installer(manifest, staging)
         (staging / "debian").mkdir()
         for package in lock["packages"]:
             _download_exact_package(package, staging / package["artifact"])
@@ -1033,28 +1037,6 @@ def prepare_build_inputs(
     return proof
 
 
-class _NoInstallerRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, fp, code, msg, headers, new_url):
-        raise VerificationError("build installer redirect refused")
-
-
-def _prepare_installer(manifest: dict, staging: Path) -> None:
-    installer = _checked_installer(manifest["build_installer"])
-    destination = staging / installer["path"]
-    destination.parent.mkdir(mode=0o700)
-    opener = urllib.request.build_opener(
-        urllib.request.ProxyHandler({}), _NoInstallerRedirect()
-    )
-    with opener.open(installer["url"], timeout=60) as response:
-        if response.status != 200 or response.url != installer["url"]:
-            raise VerificationError("build installer response refused")
-        raw = response.read(INSTALLER_WHEEL_SIZE + 1)
-    _checked_installer_bytes(raw)
-    with destination.open("xb") as stream:
-        stream.write(raw)
-    destination.chmod(0o444)
-
-
 def _checked_installer_bytes(raw: bytes) -> None:
     if (
         len(raw) != INSTALLER_WHEEL_SIZE
@@ -1064,13 +1046,19 @@ def _checked_installer_bytes(raw: bytes) -> None:
 
 
 def _verified_installer(input_root: Path, manifest: dict) -> dict:
-    installer = _checked_installer(manifest["build_installer"])
+    installer = _runtime_installer_metadata(manifest)
     path = input_root / installer["path"]
     raw = _immutable_bytes(path, INSTALLER_WHEEL_SIZE)
     _checked_installer_bytes(raw)
     if path.stat().st_mode & 0o222:
         raise VerificationError("build installer must be read-only")
     return installer
+
+
+def _runtime_installer_metadata(manifest: dict[str, Any]) -> dict:
+    """Return installer provenance only for the explicit runtime transaction."""
+
+    return _checked_installer(manifest["build_installer"])
 
 
 def _installer_environment(scratch: Path) -> dict[str, str]:
@@ -1851,7 +1839,6 @@ def verify_neutral_image(
     source_archive_path: Path,
     selected_wheel_root: Path,
     empty_boundary_paths: tuple[Path, ...],
-    installer_input_root: Path,
     read_only: bool = False,
 ) -> dict[str, Any]:
     """Authenticate installed trees using independent immutable build inputs.
@@ -1864,7 +1851,6 @@ def verify_neutral_image(
         VerificationError: Any input, installed member or boundary differs.
     """
     metadata = _source_manifest(metadata_path)
-    installer = _verified_installer(installer_input_root, metadata)
     source, dependencies = _image_byte_proofs(
         source_root,
         source_archive_path,
@@ -1876,10 +1862,7 @@ def verify_neutral_image(
     )
     debian = verify_debian_install(debian_lock_path=debian_lock_path)
     _verify_empty_boundaries(empty_boundary_paths)
-    return {
-        **_neutral_image_proof(metadata, debian, source, dependencies),
-        **_installer_proof_fields(installer),
-    }
+    return _neutral_image_proof(metadata, debian, source, dependencies)
 
 
 def _image_byte_proofs(
@@ -1903,18 +1886,6 @@ def _image_byte_proofs(
     ) as exc:
         raise VerificationError("installed-byte proof inputs are invalid") from exc
     return source, dependencies
-
-
-def _installer_proof_fields(installer: dict) -> dict:
-    return {
-        "installer_input_sha256": installer["sha256"],
-        "installer_member_inventory_sha256": installer["members"]["inventory_sha256"],
-        "installer_source_revision": installer["source_revision"],
-        "installer_publisher_statement_sha256": installer["publisher"][
-            "verified_statement_sha256"
-        ],
-        "parent_byte_qualification": "not-established-by-installed-tree-proof",
-    }
 
 
 def _verify_empty_boundaries(paths: tuple[Path, ...]) -> None:
@@ -2372,21 +2343,14 @@ def _runtime_fetch_plan(
     *, runtime_root: Path, runtime_lock_path: Path, expected_inventory_sha256: str
 ) -> tuple[dict, dict, dict, str, str, Path, str, str]:
     """Validate the customer-authored artifact plan before any network access."""
-    if not runtime_root.is_dir() or runtime_root.is_symlink():
-        raise VerificationError("runtime fetch root is absent or is a symlink")
-    if os.statvfs(runtime_root).f_flag & os.ST_RDONLY:
-        raise VerificationError("runtime fetch root is mounted read-only")
-    lock, lock_hash, inventory, inventory_sha256, _ = _runtime_metadata(
+    lock, inventory, artifacts, lock_hash, inventory_sha256 = _runtime_fetch_inputs(
         runtime_root=runtime_root,
         runtime_lock_path=runtime_lock_path,
         expected_inventory_sha256=expected_inventory_sha256,
-        require_read_only_mount=False,
     )
-    artifacts, _ = _runtime_artifact_closure(lock, inventory)
-    credential_env, credential, site_packages, installer = _runtime_fetch_contract(
-        inventory, artifacts
+    credential_env, credential, site_root, installer = _runtime_fetch_contract_state(
+        runtime_root, inventory, artifacts
     )
-    site_root = _runtime_fetch_destination(runtime_root, site_packages)
     denylist_source = _runtime_fetch_artifacts(
         {**artifacts, "pip": installer}, credential_env, credential
     )
@@ -2401,6 +2365,33 @@ def _runtime_fetch_plan(
         credential_env,
         installer,
     )
+
+
+def _runtime_fetch_inputs(
+    *, runtime_root: Path, runtime_lock_path: Path, expected_inventory_sha256: str
+) -> tuple[dict, dict, dict, str, str]:
+    if not runtime_root.is_dir() or runtime_root.is_symlink():
+        raise VerificationError("runtime fetch root is absent or is a symlink")
+    if os.statvfs(runtime_root).f_flag & os.ST_RDONLY:
+        raise VerificationError("runtime fetch root is mounted read-only")
+    lock, lock_hash, inventory, inventory_sha256, _ = _runtime_metadata(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=False,
+    )
+    artifacts, _ = _runtime_artifact_closure(lock, inventory)
+    return lock, inventory, artifacts, lock_hash, inventory_sha256
+
+
+def _runtime_fetch_contract_state(
+    runtime_root: Path, inventory: dict, artifacts: dict
+) -> tuple[str, str, Path, dict[str, str | int]]:
+    credential_env, credential, site_packages, installer = _runtime_fetch_contract(
+        inventory, artifacts
+    )
+    site_root = _runtime_fetch_destination(runtime_root, site_packages)
+    return credential_env, credential, site_root, installer
 
 
 class _SameHostRedirect(urllib.request.HTTPRedirectHandler):
@@ -3479,19 +3470,16 @@ def _verify_external_runtime(
     expected_inventory_sha256: str,
     require_read_only_mount: bool,
 ) -> dict[str, Any]:
-    lock, lock_hash, inventory, inventory_sha256, read_only_mount = _runtime_metadata(
+    state = _external_runtime_state(
         runtime_root=runtime_root,
         runtime_lock_path=runtime_lock_path,
         expected_inventory_sha256=expected_inventory_sha256,
         require_read_only_mount=require_read_only_mount,
     )
-    artifacts, artifact_payload_bytes = _runtime_artifact_closure(lock, inventory)
-    files, links, payload_bytes = _checked_payload_entries(inventory)
-    fetched_site_root = _runtime_fetched_site_root(
-        runtime_root, inventory, artifacts, lock_hash, inventory_sha256
-    )
-    _verify_runtime_object_types(runtime_root, files, links, fetched_site_root)
-    _verify_runtime_member_content(runtime_root, files, links)
+    _verify_external_runtime_members(runtime_root, state)
+    lock, lock_hash, inventory_sha256, read_only_mount = state[:4]
+    artifacts, artifact_payload_bytes = state[4]
+    files, links, payload_bytes, _fetched_site_root = state[5]
     return {
         "schema": "npa.robomimic.external-runtime-verification.v1",
         "runtime_id": lock["runtime_id"],
@@ -3506,6 +3494,40 @@ def _verify_external_runtime(
         "payload_symlink_count": len(links),
         "payload_bytes": payload_bytes,
     }
+
+
+def _external_runtime_state(
+    *,
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    require_read_only_mount: bool,
+) -> tuple[dict, str, str, bool, tuple[dict, int], tuple[dict, dict, int, Path | None]]:
+    lock, lock_hash, inventory, inventory_sha256, read_only_mount = _runtime_metadata(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=require_read_only_mount,
+    )
+    artifacts, artifact_payload_bytes = _runtime_artifact_closure(lock, inventory)
+    files, links, payload_bytes = _checked_payload_entries(inventory)
+    fetched_site_root = _runtime_fetched_site_root(
+        runtime_root, inventory, artifacts, lock_hash, inventory_sha256
+    )
+    return (
+        lock,
+        lock_hash,
+        inventory_sha256,
+        read_only_mount,
+        (artifacts, artifact_payload_bytes),
+        (files, links, payload_bytes, fetched_site_root),
+    )
+
+
+def _verify_external_runtime_members(runtime_root: Path, state: tuple) -> None:
+    files, links, _payload_bytes, fetched_site_root = state[5]
+    _verify_runtime_object_types(runtime_root, files, links, fetched_site_root)
+    _verify_runtime_member_content(runtime_root, files, links)
 
 
 def _runtime_fetched_site_root(
@@ -3775,6 +3797,24 @@ def _copy_runtime_inventory(
     )
     lock, lock_hash = _runtime_lock_metadata(runtime_lock_path)
     artifacts, _ = _runtime_artifact_closure(lock, inventory)
+    _copy_runtime_payload(
+        source,
+        staging,
+        inventory,
+        artifacts,
+        lock_hash,
+        expected_inventory_sha256,
+    )
+
+
+def _copy_runtime_payload(
+    source: Path,
+    staging: Path,
+    inventory: dict,
+    artifacts: dict,
+    lock_hash: str,
+    expected_inventory_sha256: str,
+) -> None:
     fetched_site_root = _runtime_fetched_site_root(
         source, inventory, artifacts, lock_hash, expected_inventory_sha256
     )
@@ -4006,14 +4046,13 @@ def materialize_external_runtime(
 ) -> dict[str, Any]:
     """Atomically publish a verified private snapshot for runtime execution."""
 
-    source_proof = verify_external_runtime(
-        runtime_root=runtime_root,
-        runtime_lock_path=runtime_lock_path,
-        expected_inventory_sha256=expected_inventory_sha256,
-        require_read_only_mount=require_source_read_only,
+    source_proof = _verify_snapshot_source(
+        runtime_root,
+        runtime_lock_path,
+        expected_inventory_sha256,
+        require_source_read_only,
     )
-    if destination.exists() or destination.is_symlink():
-        raise VerificationError("runtime snapshot destination already exists")
+    _require_snapshot_destination_absent(destination)
     published_source, snapshot_proof = _publish_runtime_snapshot(
         source_proof=source_proof,
         runtime_root=runtime_root,
@@ -4029,6 +4068,25 @@ def materialize_external_runtime(
         "snapshot_write_bits_absent": destination.stat().st_mode & 0o222 == 0,
         "snapshot_root": str(destination),
     }
+
+
+def _verify_snapshot_source(
+    runtime_root: Path,
+    runtime_lock_path: Path,
+    expected_inventory_sha256: str,
+    require_source_read_only: bool,
+) -> dict[str, Any]:
+    return verify_external_runtime(
+        runtime_root=runtime_root,
+        runtime_lock_path=runtime_lock_path,
+        expected_inventory_sha256=expected_inventory_sha256,
+        require_read_only_mount=require_source_read_only,
+    )
+
+
+def _require_snapshot_destination_absent(destination: Path) -> None:
+    if destination.exists() or destination.is_symlink():
+        raise VerificationError("runtime snapshot destination already exists")
 
 
 def _build_parsers(subparsers: Any) -> None:
@@ -4056,7 +4114,6 @@ def _image_parser(subparsers: Any) -> None:
     image = subparsers.add_parser("image")
     image.add_argument("--source-archive", type=Path, required=True)
     image.add_argument("--selected-wheel-root", type=Path, required=True)
-    image.add_argument("--installer-input-root", type=Path, required=True)
     image.add_argument("--read-only-tree", action="store_true")
     image.add_argument("--source-root", type=Path, default=Path("/opt/robomimic"))
     image.add_argument(
@@ -4216,7 +4273,6 @@ def _dispatch_build(args: argparse.Namespace) -> dict:
         baked_deps_path=args.baked_deps,
         source_archive_path=args.source_archive,
         selected_wheel_root=args.selected_wheel_root,
-        installer_input_root=args.installer_input_root,
         read_only=args.read_only_tree,
         empty_boundary_paths=(
             Path(RUNTIME_ROOT_DEFAULT),

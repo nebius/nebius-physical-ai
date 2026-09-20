@@ -59,7 +59,7 @@
       "notice_files": 42,
       "license_file_metadata_entries": 22,
       "vendor_components": 18,
-      "notice_delivery": "retain the complete immutable wheel and all notices as a read-only build input; never install or copy it into an image layer",
+      "notice_delivery": "retain the complete immutable wheel and all notices as a separate runtime-installer provenance input; never include it in the neutral-image build-input closure or copy it into an image layer",
       "license_scope": "MIT top-level only; bundled component notices and MPL certificate-data obligations remain separate; py3-none-any is not binary-free"
     },
     "transformation_source": {
