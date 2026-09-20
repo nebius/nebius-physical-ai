@@ -140,6 +140,9 @@ else: a live job is adopted and polled, unavailable queue evidence remains
 blocked, and neither case resets the attempt number or submits replacement
 work. A previously verified terminal attempt keeps the ordinary terminal retry
 path and does not become queue-dependent again.
+An unrecognized non-terminal recovery decision also defaults to exact
+reconciliation; only explicit completion/absence decisions, provider-terminal
+evidence, or durable proof that launch never started may skip that fence.
 
 Directory-style output evidence scans every S3 list page for a non-empty
 descendant. Zero-byte directory markers do not prove completion or absence,

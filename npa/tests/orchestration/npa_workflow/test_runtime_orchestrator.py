@@ -4018,8 +4018,11 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
     assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
 
 
-def _seed_block_relaunch_case(
-    tmp_path: Path, *, terminal_verified: bool = False
+def _seed_resume_recovery_case(
+    tmp_path: Path,
+    *,
+    recovery_decision: str = "block_relaunch",
+    terminal_verified: bool = False,
 ) -> tuple[Any, Any, MemoryStore, WaveAttempt]:
     from npa.orchestration.npa_workflow.runtime import (
         _image_identity,
@@ -4054,7 +4057,7 @@ def _seed_block_relaunch_case(
         source_sha256=_source_identity(),
         image_digest=_image_identity(seed.render_options),
         error_category="unknown",
-        recovery_decision="block_relaunch",
+        recovery_decision=recovery_decision,
         operator_remedy="restore exact queue access and resume",
     )
     if terminal_verified:
@@ -4069,7 +4072,7 @@ def test_resume_reconciles_block_relaunch_exact_job_before_submit(
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
-    spec, gate, store, blocked = _seed_block_relaunch_case(tmp_path)
+    spec, gate, store, blocked = _seed_resume_recovery_case(tmp_path)
 
     reconciled: list[tuple[str, str]] = []
 
@@ -4100,12 +4103,48 @@ def test_resume_reconciles_block_relaunch_exact_job_before_submit(
     assert resumed.attempts[-1].adopted
 
 
+def test_resume_reconciles_unknown_recovery_decision_before_submit(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, gate, store, blocked = _seed_resume_recovery_case(
+        tmp_path, recovery_decision="block_awaiting_quota_v2"
+    )
+    reconciled: list[tuple[str, str]] = []
+
+    def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled.append((job_name, job_id))
+        return ManagedJobEvidence(
+            "found", job_id=job_id, status="RUNNING", workload_observable=True
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="rt-block-relaunch",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=RuntimeOptions(poll_seconds=0, resume=True, retries=3),
+        store=store,
+        reconcile_fn=reconcile,
+    )
+
+    result = resumed.execute(gate)
+
+    assert result["status"] == "ok"
+    assert submitter.calls == []
+    assert reconciled == [(blocked.job_name, blocked.job_id)]
+    assert resumed.attempts[-1].attempt == 2
+    assert resumed.attempts[-1].adopted
+
+
 def test_resume_keeps_block_relaunch_fail_closed_when_queue_is_unavailable(
     tmp_path: Path,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
-    spec, gate, store, blocked = _seed_block_relaunch_case(tmp_path)
+    spec, gate, store, blocked = _seed_resume_recovery_case(tmp_path)
     reconciled: list[tuple[str, str]] = []
 
     def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
@@ -4137,7 +4176,7 @@ def test_resume_retries_verified_terminal_block_without_queue_dependency(
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
-    spec, gate, store, blocked = _seed_block_relaunch_case(
+    spec, gate, store, blocked = _seed_resume_recovery_case(
         tmp_path, terminal_verified=True
     )
     reconciled: list[tuple[str, str]] = []

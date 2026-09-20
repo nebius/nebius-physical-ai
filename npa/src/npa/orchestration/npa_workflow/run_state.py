@@ -10,6 +10,31 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
+_UNRESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
+    {
+        "block_indeterminate",
+        "block_after_uncertain_success",
+        "recovery_deadline_exhausted_verified_absent",
+        "interrupted_verified_absent",
+        "resume_block_terminal_or_legacy_absence",
+        "resume_block_output_present",
+        "resume_block_output_indeterminate",
+        "verified_absent_no_retry",
+    }
+)
+_RESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
+    {
+        "block_relaunch",
+        "readiness_blocked",
+        "reuse_completed_wave",
+        "cancel_and_terminalize",
+        "terminalize",
+        "operator_authorized_absent_output_adoption",
+        "adopted_terminal_success_after_driver_failure",
+        "operator_authorized_verified_absent_relaunch",
+        "phantom_record_cancelled_verified_relaunch",
+    }
+)
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
 PAIDF_COSMOS3_WORKFLOW_NAME = "paidf-cosmos3"
 PAIDF_INPUT_WORKFLOW_NAMES = frozenset(
@@ -21,6 +46,21 @@ def is_paidf_input_workflow_name(name: object) -> bool:
     """Whether submit owns real-video/LeRobot preparation for this workflow."""
 
     return str(name or "").strip() in PAIDF_INPUT_WORKFLOW_NAMES
+
+
+def _provider_job_status_is_terminal(value: object) -> bool:
+    state = str(value or "").strip().upper().replace("-", "_")
+    return state in {
+        "SUCCEEDED",
+        "SUCCESS",
+        "COMPLETED",
+        "DONE",
+        "FAILED",
+        "FAIL",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+    } or state.startswith("FAILED")
 
 
 def paidf_artifact_prefix(run_id: str) -> str:
@@ -208,18 +248,29 @@ class RuntimeRunState:
             cancellation_verified = isinstance(cancellation, Mapping) and (
                 str(cancellation.get("state") or "").lower() == "verified"
             )
-            unresolved = (
-                recovery == "block_relaunch" and not cancellation_verified
-            ) or recovery in {
-                "block_indeterminate",
-                "block_after_uncertain_success",
-                "recovery_deadline_exhausted_verified_absent",
-                "interrupted_verified_absent",
-                "resume_block_terminal_or_legacy_absence",
-                "resume_block_output_present",
-                "resume_block_output_indeterminate",
-                "verified_absent_no_retry",
-            }
+            never_launched = (
+                not str(record.get("job_id") or "")
+                and int(record.get("launch_sequence") or 0) == 0
+                and not record.get("partial_launch")
+                and not record.get("recovery_reservation")
+            )
+            if recovery == "block_relaunch":
+                unresolved = not cancellation_verified
+            elif recovery in _UNRESOLVED_WAVE_RECOVERY_DECISIONS:
+                unresolved = True
+            elif recovery in _RESOLVED_WAVE_RECOVERY_DECISIONS:
+                unresolved = False
+            else:
+                # Recovery decisions are an evolving persisted vocabulary. An
+                # unknown non-terminal decision is not proof that the provider
+                # job ended; one conservative exact lookup is cheaper than
+                # silently launching a duplicate. Terminal provider/cancellation
+                # evidence remains authoritative and needs no extra queue row.
+                unresolved = not (
+                    cancellation_verified
+                    or never_launched
+                    or _provider_job_status_is_terminal(record.get("sky_status"))
+                )
             return dict(record) if status == "running" or unresolved else None
         return None
 
