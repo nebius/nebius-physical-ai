@@ -5653,6 +5653,33 @@ def test_rendered_backend_uses_dedicated_agent_skypilot_state(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) -> None:
+    import sys
+
+    module_name = "npa_rendered_bounded_credential_paths"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    config_path = "/agent-home/.nebius/config.yaml"
+    denied = {"/mnt/cloud-metadata/token", config_path}
+    real_stat = module.os.stat
+
+    def reject_credential_stat(path, *args, **kwargs):
+        if module.os.fspath(path) in denied:
+            raise AssertionError("credential paths must not be preflight statted")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa"))
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", config_path)
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
+    monkeypatch.setattr(module.os, "stat", reject_credential_stat)
+    monkeypatch.setattr(module, "_agent_exact_kubeconfig", lambda: "")
+    try:
+        environment = module._agent_command_env()
+        assert environment["NEBIUS_PROFILE"] == "cursor-sa"
+        assert module._agent_inventory_credential_context()[3] == "instance_metadata"
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_backend_preserves_metadata_profile_home(
     monkeypatch, tmp_path
 ) -> None:
