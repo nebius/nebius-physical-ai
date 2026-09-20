@@ -602,6 +602,7 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
     )
     smoke.main()
     root = tmp_path / "retained-smoke"
+    assert root.stat().st_mode & 0o777 == 0o700
     expected = {
         "artifact-manifest.json",
         "controls.json",
@@ -684,7 +685,9 @@ def test_functional_smoke_uploads_partial_artifacts_and_failure_receipt(
     }
     assert "s3://example-bucket/golden/failure.json" in uploaded
     assert "s3://example-bucket/golden/upload-receipt.json" in uploaded
-    assert json.loads(capsys.readouterr().out)["status"] == "failed"
+    failure_output = json.loads(capsys.readouterr().out)
+    assert failure_output["status"] == "failed"
+    assert failure_output["evidence_upload_failure_type"] is None
 
 
 def test_functional_smoke_retains_partial_upload_failure_receipt(

@@ -78,7 +78,7 @@ image and pass both values. Admission compares them before credentials or provid
 access:
 
 ```bash
-npa workbench golden-eval run curobo --serverless \
+npa workbench golden-eval run "${NPA_GOLDEN_TOOL:-curobo}" --serverless \
   --registry "<candidate-registry>" \
   --tag "sha256:<candidate-digest>" \
   --expected-image-digest "sha256:<independently-frozen-candidate-digest>"

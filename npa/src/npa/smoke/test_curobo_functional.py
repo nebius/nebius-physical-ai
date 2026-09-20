@@ -259,7 +259,8 @@ def main():
     if not re.fullmatch(r"s3://[^/\s]+/.+", output_uri):
         raise RuntimeError("NPA_OUTPUT_PATH must be a non-root S3 prefix")
     root = Path(os.environ.get("NPA_SMOKE_OUTPUT_DIR", "/tmp/npa-golden")) / run_id
-    root.mkdir(parents=True, exist_ok=False)
+    root.mkdir(mode=0o700, parents=True, exist_ok=False)
+    root.chmod(0o700)
     try:
         summary = _run_workload(
             root,
@@ -280,6 +281,7 @@ def main():
                 }
             )
         )
+        upload_failure_type = None
         try:
             _upload_tree(
                 root,
@@ -288,14 +290,15 @@ def main():
                 image_digest=image_digest,
                 workload_status="failed",
             )
-        except Exception:
-            pass
+        except Exception as upload_exc:
+            upload_failure_type = type(upload_exc).__name__
         print(
             json.dumps(
                 {
                     "status": "failed",
                     "run_id": run_id,
                     "failure_type": type(exc).__name__,
+                    "evidence_upload_failure_type": upload_failure_type,
                     "failure_sha256": _sha256(root / "failure.json"),
                     "upload_receipt_sha256": (
                         _sha256(root / "upload-receipt.json")
