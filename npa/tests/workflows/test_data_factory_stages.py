@@ -1233,16 +1233,19 @@ def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
 def test_grade_gate_does_not_fall_back_from_malformed_canonical_vlm_result(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / RESULT_FILENAME).write_text(json.dumps({"score": "not-a-number"}))
+    (tmp_path / RESULT_FILENAME).write_text('{"status": "passed"')
     (tmp_path / LEGACY_RESULT_FILENAME).write_text(
-        json.dumps({"status": "completed", "score": 0.9, "passed": True})
+        json.dumps({"status": "passed", "score": 0.95, "passed": True})
     )
+    decision_path = tmp_path / "decision.json"
 
-    decision = dfs.grade_gate(
-        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
-    )
+    decision = dfs.grade_gate(str(tmp_path), str(decision_path), threshold=0.5)
+    payload = json.loads(decision_path.read_text())
 
     assert decision == "loop_back"
+    assert payload["score"] == 0.0
+    assert payload["report_status"] == "missing"
+    assert payload["report_sha256"] == ""
 
 
 def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
