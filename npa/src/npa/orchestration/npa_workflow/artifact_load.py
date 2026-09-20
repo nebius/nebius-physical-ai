@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
+
+from npa.verification import sanitize_failure_reason
 
 
 FINAL_RERUN_KEY = "reports/sim2real.rrd"
@@ -42,7 +44,12 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket_and_key[0], bucket_and_key[1]
 
 
-def discover_final_rerun_artifact(run_prefix_uri: str, *, client: Any) -> str:
+def discover_final_rerun_artifact(
+    run_prefix_uri: str,
+    *,
+    client: Any,
+    diagnostic_secrets: Sequence[str] = (),
+) -> str:
     """Discover a final Rerun object strictly below one exact workflow prefix."""
 
     bucket, prefix = _parse_s3_uri(run_prefix_uri)
@@ -50,9 +57,10 @@ def discover_final_rerun_artifact(run_prefix_uri: str, *, client: Any) -> str:
     try:
         client.s3.head_object(Bucket=bucket, Key=exact_key)
         return f"s3://{bucket}/{exact_key}"
-    except Exception:  # noqa: BLE001 - fall back to final-report discovery
+    except Exception as exc:  # noqa: BLE001 - fall back to final-report discovery
         logger.debug(
-            "Exact PAIDF Rerun object is unavailable; listing reports", exc_info=True
+            "Exact PAIDF Rerun object is unavailable; listing reports: %s",
+            sanitize_failure_reason(exc, secrets=diagnostic_secrets),
         )
     report_prefix = f"{prefix.rstrip('/')}/reports/"
     try:
@@ -64,9 +72,10 @@ def discover_final_rerun_artifact(run_prefix_uri: str, *, client: Any) -> str:
             if str(item.get("Key") or "").endswith(".rrd")
         )
     except Exception as exc:  # noqa: BLE001 - include provider detail, never credentials
+        safe_reason = sanitize_failure_reason(exc, secrets=diagnostic_secrets)
         raise ArtifactLoadError(
             f"Could not discover a final Rerun artifact below "
-            f"s3://{bucket}/{report_prefix}: {exc}"
+            f"s3://{bucket}/{report_prefix}: {safe_reason}"
         ) from exc
     if not keys:
         raise ArtifactLoadError(
@@ -101,6 +110,7 @@ def load_final_artifact_into_agent(
     storage_client: Any,
     agent_name: str = "",
     http_request: Callable[..., Any] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> ArtifactLoadResult:
     """Load and verify the final PAIDF recording, returning a partial on agent errors.
 
@@ -118,13 +128,20 @@ def load_final_artifact_into_agent(
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
     retry = _retry_command(run_id, project, agent_name)
+    diagnostic_secrets = tuple(
+        str(value) for value in (credential_values or {}).values() if value
+    )
     try:
         artifact_uri = discover_final_rerun_artifact(
-            run_prefix_uri, client=storage_client
+            run_prefix_uri,
+            client=storage_client,
+            diagnostic_secrets=diagnostic_secrets,
         )
     except ArtifactLoadError as exc:
         result = ArtifactLoadResult(
-            status="partial", detail=str(exc), retry_command=retry
+            status="partial",
+            detail=sanitize_failure_reason(exc, secrets=diagnostic_secrets),
+            retry_command=retry,
         )
         update_submission_state(
             project or "default", run_id, {"artifact_load": result.to_dict()}
@@ -154,8 +171,10 @@ def load_final_artifact_into_agent(
         )
         return result
 
+    agent_diagnostic_secrets = diagnostic_secrets
     try:
         auth = _load_auth_secret(str(record.get("auth_secret_path") or ""))
+        agent_diagnostic_secrets = (*diagnostic_secrets, *auth)
         verify = _record_tls_verify(record)
         if http_request is None:
             import httpx
@@ -221,7 +240,10 @@ def load_final_artifact_into_agent(
             status="partial",
             artifact_uri=artifact_uri,
             agent_name=selected,
-            detail=f"workflow succeeded; artifact load/verification is incomplete: {exc}",
+            detail=(
+                "workflow succeeded; artifact load/verification is incomplete: "
+                + sanitize_failure_reason(exc, secrets=agent_diagnostic_secrets)
+            ),
             retry_command=retry,
         )
     update_submission_state(

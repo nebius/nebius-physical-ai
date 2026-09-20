@@ -1355,7 +1355,7 @@ def test_post_launch_receipt_warning_redacts_plain_resolved_secret(mocker) -> No
 @pytest.mark.parametrize(
     ("state", "job_id", "run_id"),
     [
-        ("running", "42", "npa-submit-nonaccepted-state"),
+        ("indeterminate", "42", "npa-submit-nonaccepted-state"),
         ("submitted", " ", "npa-submit-blank-job-id"),
     ],
 )
@@ -1387,9 +1387,74 @@ def test_post_launch_receipt_failure_requires_exact_accepted_identity(
     result = _invoke_npa_submit(run_id, json_output=True)
 
     assert result.exit_code != 0
-    assert isinstance(result.exception, ValueError)
     submit.assert_called_once()
+    assert "submission_warnings" not in result.output
     assert receipt_path.read_bytes() == corrupt_body
+
+
+@pytest.mark.parametrize(
+    ("status", "job_id", "launch_transaction", "run_id"),
+    [
+        ("INDETERMINATE", "42", {}, "npa-final-receipt-indeterminate"),
+        ("SUBMITTED", " ", {}, "npa-final-receipt-blank-job"),
+        (
+            "SUBMITTED",
+            "42",
+            {"state": "indeterminate", "job_id": "42"},
+            "npa-final-receipt-transaction-state-conflict",
+        ),
+        (
+            "SUBMITTED",
+            "42",
+            {"state": "submitted", "job_id": "99"},
+            "npa-final-receipt-transaction-id-conflict",
+        ),
+    ],
+)
+def test_final_post_launch_receipt_failure_requires_accepted_result_identity(
+    mocker,
+    status: str,
+    job_id: str,
+    launch_transaction: dict[str, str],
+    run_id: str,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    _patch_npa_submit_preflight(mocker)
+    real_update = submission_state.update_submission_state
+
+    def fail_final_launch_update(project, exact_run_id, updates, **kwargs):
+        launch = updates.get("launch")
+        if (
+            kwargs.get("locked") is True
+            and set(updates) == {"launch"}
+            and isinstance(launch, dict)
+            and "status" in launch
+        ):
+            raise ValueError("synthetic final receipt failure")
+        return real_update(project, exact_run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_final_launch_update,
+    )
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(
+            status=status,
+            job_id=job_id,
+            returncode=1,
+            launch_transaction=launch_transaction,
+        ),
+    )
+
+    result = _invoke_npa_submit(run_id, json_output=True)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "could not persist post-launch submission receipt" in result.output
+    assert "submission_warnings" not in result.output
+    submit.assert_called_once()
 
 
 def test_prelaunch_corrupt_receipt_still_prevents_provider_submit(mocker) -> None:
@@ -1410,7 +1475,7 @@ def test_prelaunch_corrupt_receipt_still_prevents_provider_submit(mocker) -> Non
     submit.assert_not_called()
 
 
-def test_prelaunch_receipt_write_failure_never_reaches_provider(mocker) -> None:
+def test_planning_receipt_write_failure_never_reaches_provider(mocker) -> None:
     _patch_npa_submit_preflight(mocker)
     mocker.patch(
         "npa.orchestration.npa_workflow.submission_state.update_submission_state",
@@ -1423,6 +1488,31 @@ def test_prelaunch_receipt_write_failure_never_reaches_provider(mocker) -> None:
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
     assert "synthetic pre-launch receipt failure" in result.output
+    submit.assert_not_called()
+
+
+def test_workflow_receipt_write_failure_never_reaches_provider(mocker) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    _patch_npa_submit_preflight(mocker)
+    real_update = submission_state.update_submission_state
+
+    def fail_workflow_update(project, run_id, updates, **kwargs):
+        if kwargs.get("locked") is True and set(updates) == {"workflow"}:
+            raise ValueError("synthetic workflow receipt failure")
+        return real_update(project, run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_workflow_update,
+    )
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = _invoke_npa_submit("npa-submit-workflow-write-failure")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "could not persist pre-launch workflow receipt" in result.output
     submit.assert_not_called()
 
 

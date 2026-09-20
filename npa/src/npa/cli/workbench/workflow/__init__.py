@@ -1110,7 +1110,10 @@ def submit_cmd(
         )
         secret_env[:] = list(dict.fromkeys(required_secret_env))
     except Exception as exc:
-        _fail(f"Workflow credential resolution failed: {exc}")
+        _fail(
+            "Workflow credential resolution failed: "
+            + _sanitized_failure_reason(exc, secrets=())
+        )
         return
     s3_endpoint = submit_credentials.endpoint_url
     extra_env: dict[str, str] = dict(submit_credentials.secret_values)
@@ -1704,7 +1707,12 @@ def submit_cmd(
                     },
                 )
             except Exception as exc:
-                _fail(f"could not persist pre-mutation submission ledger: {exc}")
+                _fail(
+                    "could not persist pre-mutation submission ledger: "
+                    + _sanitized_failure_reason(
+                        exc, secrets=submission_redaction_secrets
+                    )
+                )
                 return
             if output_format != OutputFormat.json:
                 typer.echo(
@@ -2353,11 +2361,10 @@ def submit_cmd(
                     locked=True,
                 )
             except (OSError, ValueError) as exc:
-                accepted = str(payload.get("state") or "").lower() in {
-                    "submitted",
-                    "adopted",
-                }
-                if not accepted or not str(payload.get("job_id") or "").strip():
+                if not _accepted_submission_identity(
+                    state=payload.get("state"),
+                    job_id=payload.get("job_id"),
+                ):
                     raise
                 warning = _submission_receipt_warning(
                     exc, secrets=submission_redaction_secrets
@@ -2449,30 +2456,49 @@ def submit_cmd(
             )
 
             with submission_lock(ledger_project, resolved_run_id):
-                update_submission_state(
-                    ledger_project,
-                    resolved_run_id,
-                    {
-                        "workflow": _npa_submission_receipt(
-                            prepared_npa, resolved_run_id
+                try:
+                    update_submission_state(
+                        ledger_project,
+                        resolved_run_id,
+                        {
+                            "workflow": _npa_submission_receipt(
+                                prepared_npa, resolved_run_id
+                            )
+                        },
+                        locked=True,
+                    )
+                except (OSError, ValueError) as exc:
+                    _fail(
+                        "could not persist pre-launch workflow receipt: "
+                        + _sanitized_failure_reason(
+                            exc, secrets=submission_redaction_secrets
                         )
-                    },
-                    locked=True,
-                )
+                    )
+                    return
                 result = _launch()
-                warning = _try_optional_submission_update(
-                    ledger_project,
-                    resolved_run_id,
-                    {
-                        "launch": {
-                            **dict(getattr(result, "launch_transaction", {}) or {}),
-                            "status": result.status.lower(),
-                            "sky_job_id": result.job_id,
-                        }
-                    },
-                    locked=True,
-                    secrets=submission_redaction_secrets,
-                )
+                try:
+                    warning = _try_optional_submission_update(
+                        ledger_project,
+                        resolved_run_id,
+                        {
+                            "launch": {
+                                **dict(getattr(result, "launch_transaction", {}) or {}),
+                                "status": result.status.lower(),
+                                "sky_job_id": result.job_id,
+                            }
+                        },
+                        warning_allowed=_accepted_workflow_result_identity(result),
+                        locked=True,
+                        secrets=submission_redaction_secrets,
+                    )
+                except (OSError, ValueError) as exc:
+                    _fail(
+                        "could not persist post-launch submission receipt: "
+                        + _sanitized_failure_reason(
+                            exc, secrets=submission_redaction_secrets
+                        )
+                    )
+                    return
                 if warning and warning not in submission_warnings:
                     submission_warnings.append(warning)
         else:
@@ -2516,16 +2542,22 @@ def submit_cmd(
                     f"{run_prefix_uri.rstrip('/')}/npa-workflow/manifest.json",
                 )
     except OSError as exc:
-        _fail(f"SkyPilot workflow submission failed: {exc}")
+        _fail(
+            "SkyPilot workflow submission failed: "
+            + _sanitized_failure_reason(exc, secrets=submission_redaction_secrets)
+        )
         return
     except SkyPilotSubmitError as exc:
         transaction = getattr(exc, "transaction", None)
+        safe_error = _sanitized_failure_reason(
+            exc, secrets=submission_redaction_secrets
+        )
         if output_format == OutputFormat.json and transaction is not None:
             typer.echo(
                 json.dumps(
                     {
                         "status": "failed",
-                        "error": str(exc),
+                        "error": safe_error,
                         "launch_transaction": transaction.to_dict(),
                     },
                     indent=2,
@@ -2533,7 +2565,7 @@ def submit_cmd(
                 )
             )
             raise typer.Exit(_submit_failure_code(exc)) from exc
-        _fail(str(exc), code=_submit_failure_code(exc))
+        _fail(safe_error, code=_submit_failure_code(exc))
         return
     finally:
         if submitted_yaml_context is not None:
@@ -2888,20 +2920,52 @@ def _resolve_runtime_secret_values(
     return dict(context.secret_values)
 
 
-def _sanitized_failure_reason(
-    exc: BaseException, *, secrets: Sequence[str] = ()
-) -> str:
+def _sanitized_failure_reason(exc: BaseException, *, secrets: Sequence[str]) -> str:
     """Redact credential values and provider URL context from a diagnostic."""
 
-    from npa.orchestration.skypilot.workflow_state import redact_text
-    from npa.verification import sanitize_reason
+    from npa.verification import sanitize_failure_reason
 
-    return sanitize_reason(redact_text(str(exc), secrets))
+    return sanitize_failure_reason(exc, secrets=secrets)
 
 
-def _submission_receipt_warning(
-    exc: BaseException, *, secrets: Sequence[str] = ()
-) -> str:
+def _accepted_submission_identity(*, state: object, job_id: object) -> bool:
+    """Return whether a launch result proves one accepted managed-job identity."""
+
+    from npa.orchestration.skypilot.launch_transaction import LaunchState
+
+    raw_state = getattr(state, "value", state)
+    normalized = str(raw_state or "").strip().lower()
+    return normalized in {
+        LaunchState.SUBMITTED.value,
+        LaunchState.ADOPTED.value,
+    } and bool(str(job_id or "").strip())
+
+
+def _accepted_workflow_result_identity(result: object) -> bool:
+    """Require accepted, matching identities from result and transaction evidence."""
+
+    result_job_id = str(getattr(result, "job_id", "") or "").strip()
+    if not _accepted_submission_identity(
+        state=getattr(result, "status", ""),
+        job_id=result_job_id,
+    ):
+        return False
+    raw_transaction = getattr(result, "launch_transaction", None)
+    if not isinstance(raw_transaction, Mapping) or not raw_transaction:
+        return True
+    transaction_job_id = str(raw_transaction.get("job_id") or "").strip()
+    return (
+        _accepted_submission_identity(
+            state=raw_transaction.get("state"),
+            job_id=transaction_job_id,
+        )
+        and transaction_job_id == result_job_id
+    )
+
+
+def _submission_receipt_warning(exc: BaseException, *, secrets: Sequence[str]) -> str:
+    """Return a sanitized warning for a nonfatal receipt-write failure."""
+
     return "submission receipt was not updated: " + _sanitized_failure_reason(
         exc, secrets=secrets
     )
@@ -2912,9 +2976,12 @@ def _try_optional_submission_update(
     run_id: str,
     updates: Mapping[str, object],
     *,
+    warning_allowed: bool,
+    secrets: Sequence[str],
     locked: bool = False,
-    secrets: Sequence[str] = (),
 ) -> str:
+    """Persist one update, warning only when the caller proves that is safe."""
+
     from npa.orchestration.npa_workflow.submission_state import (
         update_submission_state,
     )
@@ -2922,6 +2989,8 @@ def _try_optional_submission_update(
     try:
         update_submission_state(project, run_id, updates, locked=locked)
     except (OSError, ValueError) as exc:
+        if not warning_allowed:
+            raise
         return _submission_receipt_warning(exc, secrets=secrets)
     return ""
 
@@ -2956,6 +3025,7 @@ def _load_paidf_artifact(
             project or "default",
             run_id,
             {"artifact_load": result},
+            warning_allowed=True,
             secrets=tuple((credential_values or {}).values()),
         )
         if warning:
@@ -2975,6 +3045,7 @@ def _load_paidf_artifact(
             run_prefix_uri=run_prefix_uri,
             storage_client=client,
             agent_name=agent_name,
+            credential_values=credential_values,
         ).to_dict()
     except Exception as exc:  # noqa: BLE001 - optional post-success operation
         result = {
@@ -2996,6 +3067,7 @@ def _load_paidf_artifact(
             project or "default",
             run_id,
             {"artifact_load": result},
+            warning_allowed=True,
             secrets=tuple((credential_values or {}).values()),
         )
         if warning:
@@ -7349,7 +7421,7 @@ def stage_src_cmd(
                 {"source": {"status": "verified", "uri": uri}},
             )
         except (ConfigError, SrcStagingError, OSError, ValueError) as exc:
-            _fail(str(exc))
+            _fail(_sanitized_failure_reason(exc, secrets=()))
             return
     else:
         uri = _stage_npa_src_for_submit(

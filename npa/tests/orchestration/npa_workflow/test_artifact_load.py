@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -165,6 +166,102 @@ def test_missing_agent_is_partial_not_workflow_failure(
     assert result.retry_command == (
         "npa workbench workflow load-artifact paidf-1 --project demo"
     )
+
+
+def test_storage_failure_detail_is_redacted_before_return_and_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    caplog.set_level("DEBUG", logger="npa.orchestration.npa_workflow.artifact_load")
+    query_secret = "synthetic-list-query"
+    assignment_secret = "synthetic-list-assignment"
+    bearer_secret = "synthetic-list-bearer"
+    plain_credential = "hunter2"
+
+    class FailingListing:
+        s3: object
+
+        def __init__(self) -> None:
+            self.s3 = self
+
+        def head_object(self, **_kwargs):  # noqa: ANN201
+            raise RuntimeError(
+                "exact artifact unavailable at "
+                f"s3://bucket/exact?signature={query_secret} "
+                f"login failed for {plain_credential}"
+            )
+
+        def get_paginator(self, _name: str):  # noqa: ANN201
+            return self
+
+        def paginate(self, **_kwargs):  # noqa: ANN201
+            raise RuntimeError(
+                "listing failed at "
+                f"s3://bucket/reports?signature={query_secret} "
+                f'{{"aws_secret_access_key":"{assignment_secret}"}} '
+                f"Bearer {bearer_secret} login failed for {plain_credential}"
+            )
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-storage-redaction",
+        run_prefix_uri="s3://bucket/paidf-storage-redaction",
+        storage_client=FailingListing(),
+        credential_values={"AWS_SECRET_ACCESS_KEY": plain_credential},
+    )
+
+    persisted = json.loads(
+        submission_state_path("demo", "paidf-storage-redaction").read_text()
+    )
+    exposed = f"{result.to_dict()}\n{persisted}\n{caplog.text}"
+    assert result.status == "partial"
+    assert query_secret not in exposed
+    assert assignment_secret not in exposed
+    assert bearer_secret not in exposed
+    assert plain_credential not in exposed
+
+
+def test_agent_failure_detail_redacts_loaded_auth_before_return_and_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/paidf-agent-redaction/reports/sim2real.rrd"
+    client = FakeS3({artifact.removeprefix("s3://bucket/")})
+    query_secret = "synthetic-agent-query"
+    assignment_secret = "synthetic-agent-assignment"
+    bearer_secret = "synthetic-agent-bearer"
+
+    def request(*_args, **_kwargs):
+        raise RuntimeError(
+            "agent failed at "
+            f"https://agent.invalid/status?token={query_secret} "
+            f"authorization={assignment_secret} "
+            f"Bearer {bearer_secret} do-not-print"
+        )
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-agent-redaction",
+        run_prefix_uri="s3://bucket/paidf-agent-redaction",
+        storage_client=client,
+        http_request=request,
+    )
+
+    persisted = json.loads(
+        submission_state_path("demo", "paidf-agent-redaction").read_text()
+    )
+    exposed = f"{result.to_dict()}\n{persisted}"
+    assert result.status == "partial"
+    assert query_secret not in exposed
+    assert assignment_secret not in exposed
+    assert bearer_secret not in exposed
+    assert "do-not-print" not in exposed
 
 
 @pytest.mark.parametrize("run_prefix_uri", ["", "s3://bucket/paidf-1"])
