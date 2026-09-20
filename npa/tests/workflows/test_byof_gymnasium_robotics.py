@@ -207,6 +207,11 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     profile = PROFILE.read_text(encoding="utf-8")
     assert "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1" in profile
     assert 'NVIDIA_DRIVER_CAPABILITIES: "graphics,utility"' in profile
+    task = list(yaml.safe_load_all(profile))[1]
+    container = task["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]
+    assert container["env"] == [
+        {"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "graphics,utility"}
+    ], "NVIDIA driver libraries must be selected when the container is created"
     assert "export NVIDIA_DRIVER_CAPABILITIES=graphics,utility" in WORKFLOW.read_text(
         encoding="utf-8"
     )

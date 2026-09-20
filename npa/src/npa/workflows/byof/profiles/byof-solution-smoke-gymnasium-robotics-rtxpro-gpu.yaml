@@ -14,7 +14,8 @@ resources:
   image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
 config:
   kubernetes:
-    # Check neutral image bytes before SkyPilot creates its trusted runtime cache.
+    # SkyPilot 0.12.2 reads this hook only from global --config. Mirror it in
+    # the task-private global config to verify bytes before Sky creates caches.
     post_provision_runcmd:
       - /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py || exit $?
     pod_config:
@@ -26,6 +27,9 @@ config:
             type: RuntimeDefault
         containers:
           - name: ray-node
+            env:
+              - name: NVIDIA_DRIVER_CAPABILITIES
+                value: "graphics,utility"
             securityContext:
               runAsNonRoot: true
               runAsUser: 1000
