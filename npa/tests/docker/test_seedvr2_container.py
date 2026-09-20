@@ -18,6 +18,7 @@ from npa.smoke.manifest import load_manifest
 
 ROOT = Path(__file__).resolve().parents[3]
 DOCKER_DIR = ROOT / "npa" / "docker" / "workbench" / "seedvr2"
+CONTAINER_TEMP_ROOT = Path("/") / "tmp"
 
 
 def test_seedvr2_image_is_registered_and_quarantined() -> None:
@@ -80,6 +81,7 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
     assert "/opt/seedvr2-venv/bin/pip check" in final_stage
     assert "from flash_attn import flash_attn_varlen_func" in final_stage
     assert "from apex.normalization import FusedLayerNorm" in final_stage
+    assert "install -d -m 0700 -o ubuntu -g ubuntu /workspace/tmp" in final_stage
     assert "find /opt/seedvr2 -type f" in dockerfile
     assert "HF_TOKEN" not in dockerfile
     source_layer = dockerfile[
@@ -90,8 +92,7 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
     ]
     assert "/opt/seedvr2/neg_emb.pt" in source_layer
     assert "/opt/seedvr2/pos_emb.pt" in source_layer
-    # This is a fixed Docker build-stage path, not a host temporary file.
-    assert "/tmp/seedvr2.tar.gz" in source_layer  # nosec B108
+    assert str(CONTAINER_TEMP_ROOT / "seedvr2.tar.gz") in source_layer
     assert source_layer.index("rm -f") < source_layer.index("find /opt/seedvr2")
 
 
@@ -180,8 +181,7 @@ def test_seedvr2_service_environment_is_hash_locked() -> None:
     assert "uvicorn==0.52.4" in service_lock
     assert "--hash=sha256:" in service_lock
     assert "--require-hashes" in dockerfile
-    # This asserts the fixed Docker build-stage lockfile contract.
-    assert "/tmp/seedvr2-service.lock" in dockerfile  # nosec B108
+    assert str(CONTAINER_TEMP_ROOT / "seedvr2-service.lock") in dockerfile
     assert "--no-build-isolation /opt/npa-src" in dockerfile
     assert "'uvicorn==" not in dockerfile
 

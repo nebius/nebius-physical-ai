@@ -32,6 +32,7 @@ SOURCE_REVISION_PATH = Path("/opt/npa-source-revision")
 MAX_SOURCE_PIXELS = 1920 * 1080
 MIN_H100_MEMORY_MIB = 75_000
 SOURCE_ROOT = Path("/opt/seedvr2")
+RUNTIME_TEMP_ROOT = Path("/workspace/tmp")
 
 
 class SeedVR2Error(RuntimeError):
@@ -302,8 +303,7 @@ def _media_environment() -> dict[str, str]:
         "HOME": "/nonexistent",
         "LC_ALL": "C",
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        # tempfile uses exclusive random names in the container namespace.
-        "TMPDIR": "/tmp",  # nosec B108
+        "TMPDIR": str(RUNTIME_TEMP_ROOT),
     }
 
 
@@ -313,8 +313,7 @@ def _model_fetch_environment() -> dict[str, str]:
         "HF_HOME": os.environ.get("HF_HOME", "/workspace/.cache/huggingface"),
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "PYTHONUNBUFFERED": "1",
-        # Downloader temporary files are never accepted as model payloads.
-        "TMPDIR": "/tmp",  # nosec B108
+        "TMPDIR": str(RUNTIME_TEMP_ROOT),
     }
     for name in ("HF_TOKEN", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"):
         value = os.environ.get(name)
@@ -421,8 +420,7 @@ def _inference_environment() -> dict[str, str]:
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "PYTHONPATH": str(SOURCE_ROOT),
         "PYTHONUNBUFFERED": "1",
-        # Upstream tempfile creation uses exclusive random names.
-        "TMPDIR": "/tmp",  # nosec B108
+        "TMPDIR": str(RUNTIME_TEMP_ROOT),
     }
     for name in (
         "CUDA_HOME",

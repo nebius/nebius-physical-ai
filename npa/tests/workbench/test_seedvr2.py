@@ -434,7 +434,7 @@ def test_restore_rejects_noncanonical_storage_keys(field: str, value: str) -> No
 def test_upstream_source_root_is_not_environment_overridable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SEEDVR2_SOURCE_ROOT", "/tmp/untrusted-seedvr")
+    monkeypatch.setenv("SEEDVR2_SOURCE_ROOT", "/workspace/untrusted-seedvr")
     request = RestoreRequest(
         input_path=INPUT_URI,
         output_path=OUTPUT_PREFIX,
@@ -462,6 +462,7 @@ def test_inference_environment_is_a_credential_free_allowlist(
     environment = runtime._inference_environment()
     assert environment["CUDA_VISIBLE_DEVICES"] == "0"
     assert environment["HOME"] == "/workspace"
+    assert environment["TMPDIR"] == "/workspace/tmp"
     assert (
         not {
             "AWS_ACCESS_KEY_ID",
@@ -475,6 +476,8 @@ def test_inference_environment_is_a_credential_free_allowlist(
     )
     media_environment = runtime._media_environment()
     model_environment = runtime._model_fetch_environment()
+    assert media_environment["TMPDIR"] == "/workspace/tmp"
+    assert model_environment["TMPDIR"] == "/workspace/tmp"
     assert not {"AWS_ACCESS_KEY_ID", "NEBIUS_IAM_TOKEN"} & media_environment.keys()
     assert not {"AWS_ACCESS_KEY_ID", "NEBIUS_IAM_TOKEN"} & model_environment.keys()
     assert model_environment["HF_TOKEN"] == "secret-HF_TOKEN"

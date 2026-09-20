@@ -235,6 +235,7 @@ COPY --chmod=0755 docker/workbench/seedvr2/entrypoint.sh /usr/local/bin/seedvr2-
 RUN install -d -m 0755 -o ubuntu -g ubuntu \
       /workspace /workspace/.cache /workspace/.cache/huggingface \
       /workspace/seedvr2-runs \
+    && install -d -m 0700 -o ubuntu -g ubuntu /workspace/tmp \
     && chown -R ubuntu:ubuntu /workspace
 
 VOLUME ["/workspace/.cache/huggingface"]
