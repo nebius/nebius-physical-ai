@@ -13,7 +13,8 @@ Catalog reachability is fail-closed: every entry is consumed by a shipped spec
 except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
 `workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
-`workbench.isaac_lab.byof_repo`, and `workbench.lerobot.eval`. The
+`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`, and
+`workbench.vlm_eval.compare_judges`. The
 reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
 `workbench.sim2real.run` surface is intentionally absent.
@@ -44,6 +45,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.content_agents.validate` | `python -m npa.workflows.content_agents validate` | rigid-ready USDA | upstream `render_valid` + `physics_sane` result and fresh OVRTX evidence | yes (real upstream `validation-agent validate`) |
 | `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
+| `workbench.vlm_eval.compare_judges` | `npa workbench vlm-eval compare-judges` | `config.rollouts_uri` | `<scores_uri>/vlm_judge_disagreement.json` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
 | `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval.json` | no |
 | `workbench.vlm_eval.loop` | `npa workbench vlm-eval loop` | `config.rollouts_uri` | `config.scores_uri` | no |
@@ -194,3 +196,6 @@ Hosted model selection: `workbench.token_factory.reason` accepts optional
 `.judge_against_plan` accept optional `config.vlm_model`. An omitted or empty
 value leaves model selection to the CLI default for the chosen backend; an
 explicit value is passed as `--model`, including legacy dedicated model IDs.
+The audit-only `workbench.vlm_eval.compare_judges` primitive passes distinct
+`config.primary_vlm_model` and `config.secondary_vlm_model` values and never
+averages their outcomes.

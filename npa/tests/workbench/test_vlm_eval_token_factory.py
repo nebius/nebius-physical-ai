@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from PIL import Image
 
@@ -154,6 +155,432 @@ def _call_completion(
         frames=[],
         timeout_s=120,
     )
+
+
+def _run_judge_comparison(monkeypatch, tmp_path, completions):
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (12, 9), "green").save(frame)
+    requests = []
+    responses = iter(completions)
+
+    def post(**kwargs):
+        requests.append(kwargs["request"])
+        return next(responses)
+
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    report = vlm_eval.compare_vlm_judges(
+        vlm_eval.VlmJudgeComparisonRequest(
+            input_path=str(frame),
+            output_path=str(tmp_path / "comparison"),
+            primary_model="MiniMaxAI/MiniMax-M3",
+            secondary_model="openbmb/MiniCPM-V-4_5",
+            task="Is the green frame visible?",
+        )
+    )
+    return report, requests, frame
+
+
+def test_compare_judges_uses_identical_request_except_model_and_fails_closed(
+    monkeypatch, tmp_path
+) -> None:
+    primary = _completion(model="MiniMaxAI/MiniMax-M3")
+    primary["id"] = "primary-request"
+    primary["usage"] = {"prompt_tokens": 10, "completion_tokens": 5}
+    secondary = _completion(
+        model="openbmb/MiniCPM-V-4_5",
+        content='{"success":false,"score":0.2,"rationale":"not visible"}',
+    )
+    secondary["id"] = "secondary-request"
+    secondary["usage"] = {"prompt_tokens": 11, "completion_tokens": 4}
+
+    report, requests, _frame = _run_judge_comparison(
+        monkeypatch, tmp_path, [primary, secondary]
+    )
+
+    assert len(requests) == 2
+    assert requests[0]["model"] != requests[1]["model"]
+    assert {key: value for key, value in requests[0].items() if key != "model"} == {
+        key: value for key, value in requests[1].items() if key != "model"
+    }
+    assert "response_format" not in requests[0]
+    assert "chat_template_kwargs" not in requests[0]
+    assert report.status == "judge_disagreement"
+    assert report.passed is False
+    assert report.escalation_required is True
+    assert report.deployment_status == "audit_only"
+    assert report.operational_rate_estimated is False
+    assert report.score_delta_secondary_minus_primary == -0.7
+    assert report.primary.result is not None
+    assert report.secondary.result is not None
+    assert report.primary.result.evidence is not None
+    assert report.secondary.result.evidence is not None
+    assert report.primary.result.evidence.provider.provider_request_id == (
+        "primary-request"
+    )
+    assert report.secondary.result.evidence.provider.usage == secondary["usage"]
+    assert report.primary.result.evidence.request.frames == (
+        report.secondary.result.evidence.request.frames
+    )
+    payload = asdict(report)
+    assert "mean_score" not in payload
+    assert "average_score" not in payload
+
+
+def test_compare_judges_rejects_same_model_before_transport(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "green").save(frame)
+    called = False
+
+    def post(**_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    with pytest.raises(VlmEvalError, match="two distinct model IDs"):
+        vlm_eval.compare_vlm_judges(
+            vlm_eval.VlmJudgeComparisonRequest(
+                input_path=str(frame),
+                output_path=str(tmp_path / "comparison"),
+                primary_model="same/model",
+                secondary_model="same/model",
+            )
+        )
+    assert called is False
+
+
+def test_compare_judges_retains_provider_error_and_other_outcome(
+    monkeypatch, tmp_path
+) -> None:
+    primary = _completion(model="MiniMaxAI/MiniMax-M3", finish="length")
+    primary["id"] = "truncated-request"
+    secondary = _completion(model="openbmb/MiniCPM-V-4_5")
+
+    report, requests, _frame = _run_judge_comparison(
+        monkeypatch, tmp_path, [primary, secondary]
+    )
+
+    assert len(requests) == 2
+    assert report.status == "judge_error"
+    assert report.passed is False
+    assert report.escalation_required is True
+    assert report.score_delta_secondary_minus_primary is None
+    assert report.primary.result is None
+    assert report.primary.error is not None
+    assert report.primary.error.stage == "response_contract"
+    assert report.primary.error.provider is not None
+    assert report.primary.error.provider.provider_request_id == "truncated-request"
+    assert report.primary.error.provider.finish_reason == "length"
+    assert report.secondary.result is not None
+    assert report.secondary.error is None
+
+
+def test_compare_judges_rejects_markdown_fenced_json_without_repair(
+    monkeypatch, tmp_path
+) -> None:
+    fenced = _completion(
+        model="MiniMaxAI/MiniMax-M3",
+        content=f"```json\n{_VALID_CONTENT}\n```",
+    )
+    secondary = _completion(model="openbmb/MiniCPM-V-4_5")
+
+    report, requests, _frame = _run_judge_comparison(
+        monkeypatch, tmp_path, [fenced, secondary]
+    )
+
+    assert len(requests) == 2
+    assert report.status == "judge_error"
+    assert report.escalation_required is True
+    assert report.primary.error is not None
+    assert report.primary.error.stage == "response_contract"
+    assert report.primary.error.provider is not None
+    assert report.primary.error.provider.raw_response
+    assert report.secondary.result is not None
+
+
+def test_compare_judges_types_non_string_content_and_runs_both_judges(
+    monkeypatch, tmp_path
+) -> None:
+    invalid = _completion(
+        model="MiniMaxAI/MiniMax-M3",
+        content={"success": True, "score": 0.9, "rationale": "not a string"},
+    )
+    secondary = _completion(model="openbmb/MiniCPM-V-4_5")
+
+    report, requests, _frame = _run_judge_comparison(
+        monkeypatch, tmp_path, [invalid, secondary]
+    )
+
+    assert len(requests) == 2
+    assert report.status == "judge_error"
+    assert report.primary.error is not None
+    assert report.primary.error.error_type == "response_contract_error"
+    assert report.secondary.result is not None
+
+
+def test_compare_judges_retains_http_error_body_and_request_id(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "green").save(frame)
+    calls = 0
+
+    class Response:
+        def __init__(self, request, request_body):
+            nonlocal calls
+            calls += 1
+            self.request = request
+            self.status_code = 429 if calls == 1 else 200
+            self.headers = {"x-request-id": f"request-{calls}"}
+            self.payload = (
+                {"error": {"message": "rate limited"}}
+                if calls == 1
+                else _completion(model=request_body["model"])
+            )
+            self.text = json.dumps(self.payload, separators=(",", ":"))
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    "rate limited",
+                    request=self.request,
+                    response=self,
+                )
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, url, **kwargs):
+            return Response(httpx.Request("POST", url), kwargs["json"])
+
+    monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    report = vlm_eval.compare_vlm_judges(
+        vlm_eval.VlmJudgeComparisonRequest(
+            input_path=str(frame),
+            output_path=str(tmp_path / "comparison"),
+            primary_model="MiniMaxAI/MiniMax-M3",
+            secondary_model="openbmb/MiniCPM-V-4_5",
+        )
+    )
+
+    assert calls == 2
+    assert report.status == "judge_error"
+    assert report.primary.error is not None
+    assert report.primary.error.stage == "provider_http_status"
+    assert report.primary.error.error_type == "provider_http_status_error"
+    provider = report.primary.error.provider
+    assert provider is not None
+    assert provider.status_code == 429
+    assert provider.provider_request_id == "request-1"
+    assert provider.raw_response == '{"error":{"message":"rate limited"}}'
+    assert report.secondary.result is not None
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ("", "non-JSON"),
+        ("not-json", "non-JSON"),
+        ('["not","an","object"]', "non-object"),
+    ],
+)
+def test_transport_retains_decoding_error_response(monkeypatch, body, message) -> None:
+    from npa.workbench import vlm_eval
+
+    class Response:
+        status_code = 200
+        headers = {"x-request-id": "decode-error-request"}
+        text = body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return json.loads(body)
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, *_args, **_kwargs):
+            return Response()
+
+    captured = []
+    monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
+    with pytest.raises(VlmEvalError, match=message):
+        vlm_eval._post_with_readiness_retry(
+            url="https://example.test/v1/chat/completions",
+            headers={},
+            request={"model": "test/model"},
+            backend="api",
+            timeout_s=1,
+            error_response_sink=captured.append,
+        )
+
+    assert len(captured) == 1
+    assert captured[0].raw_body == body
+    assert captured[0].status_code == 200
+    assert captured[0].request_id_header == "decode-error-request"
+
+
+def test_transport_observer_receives_exact_success_response(monkeypatch) -> None:
+    from npa.workbench import vlm_eval
+
+    completion = _completion()
+    raw_body = json.dumps(completion, separators=(",", ":")) + "\n"
+
+    class Response:
+        status_code = 200
+        headers = {"x-request-id": "observed-request"}
+        text = raw_body
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return completion
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, *_args, **_kwargs):
+            return Response()
+
+    observed = []
+    monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
+    response = vlm_eval._post_with_readiness_retry(
+        url="https://example.test/v1/chat/completions",
+        headers={},
+        request={"model": "test/model"},
+        backend="api",
+        timeout_s=1,
+        response_sink=observed.append,
+    )
+
+    assert response.raw_body == raw_body
+    assert len(observed) == 1
+    assert observed[0].raw_body == raw_body
+    assert observed[0].request_id_header == "observed-request"
+
+
+@pytest.mark.parametrize(
+    ("score", "expected_status", "expected_passed"),
+    [
+        (0.9, "judges_agree_passed", True),
+        (0.2, "judges_agree_needs_iteration", False),
+    ],
+)
+def test_compare_judges_reports_agreement_without_escalation(
+    monkeypatch, tmp_path, score, expected_status, expected_passed
+) -> None:
+    content = json.dumps(
+        {"success": expected_passed, "score": score, "rationale": "visible evidence"}
+    )
+    report, _requests, _frame = _run_judge_comparison(
+        monkeypatch,
+        tmp_path,
+        [
+            _completion(model="MiniMaxAI/MiniMax-M3", content=content),
+            _completion(model="openbmb/MiniCPM-V-4_5", content=content),
+        ],
+    )
+
+    assert report.status == expected_status
+    assert report.passed is expected_passed
+    assert report.escalation_required is False
+    assert report.score_delta_secondary_minus_primary == 0.0
+
+
+def test_compare_judges_rejects_mismatched_shared_frame_evidence(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    report, _requests, frame = _run_judge_comparison(
+        monkeypatch,
+        tmp_path,
+        [
+            _completion(model="MiniMaxAI/MiniMax-M3"),
+            _completion(model="openbmb/MiniCPM-V-4_5"),
+        ],
+    )
+    assert report.secondary.result is not None
+    evidence = report.secondary.result.evidence
+    assert evidence is not None
+    mismatched_frame = replace(evidence.request.frames[0], sha256="0" * 64)
+    mismatched_request = replace(evidence.request, frames=(mismatched_frame,))
+    mismatched_result = replace(
+        report.secondary.result,
+        evidence=replace(evidence, request=mismatched_request),
+    )
+    mismatched_outcome = replace(report.secondary, result=mismatched_result)
+    selected = tuple(vlm_eval.select_rollout_frames(frame))
+    context = vlm_eval._VlmJudgeContext(
+        input_path=str(frame),
+        output_path=str(tmp_path / "comparison"),
+        task=report.task,
+        rubric=report.rubric,
+        success_threshold=report.success_threshold,
+        frame_selection=report.frame_selection,
+        max_frames=4,
+        endpoint_url="",
+        api_key_env="TEST_KEY",
+        timeout_s=120,
+        prompt="not used by report construction",
+        frames=selected,
+    )
+
+    with pytest.raises(VlmEvalError, match="frame evidence does not match"):
+        vlm_eval._build_judge_comparison_report(
+            context=context,
+            common_request_sha256=report.common_request_sha256,
+            primary=report.primary,
+            secondary=mismatched_outcome,
+        )
+
+
+def test_compare_judges_requires_canonical_artifact_filename(tmp_path) -> None:
+    from npa.workbench import vlm_eval
+
+    assert vlm_eval.judge_comparison_result_uri_for("s3://bucket/private/") == (
+        "s3://bucket/private/vlm_judge_disagreement.json"
+    )
+    canonical = str(tmp_path / "vlm_judge_disagreement.json")
+    assert vlm_eval.judge_comparison_result_uri_for(canonical) == canonical
+    with pytest.raises(VlmEvalError, match="filename must be"):
+        vlm_eval.judge_comparison_result_uri_for(str(tmp_path / "other.json"))
 
 
 @pytest.mark.parametrize(

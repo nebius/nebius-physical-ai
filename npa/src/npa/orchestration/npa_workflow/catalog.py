@@ -61,6 +61,7 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.insights.record": "public lineage/metrics ingestion primitive",
     "workbench.isaac_lab.byof_repo": "public Isaac Lab BYOF primitive",
     "workbench.lerobot.eval": "public LeRobot evaluation primitive",
+    "workbench.vlm_eval.compare_judges": "public audit-only hosted judge-disagreement primitive",
 }
 
 
@@ -697,6 +698,44 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.scores_uri}}",
             "--backend",
             "{{config.vlm_backend}}",
+        ],
+    ),
+    "workbench.vlm_eval.compare_judges": ToolEntry(
+        name="workbench.vlm_eval.compare_judges",
+        description=(
+            "Retain two hosted VLM outcomes over one shared prompt and frame set."
+        ),
+        config_defaults={
+            "primary_vlm_model": "MiniMaxAI/MiniMax-M3",
+            "secondary_vlm_model": "openbmb/MiniCPM-V-4_5",
+            "vlm_task": "sim-to-real",
+            "vlm_frame_selection": "keyframes",
+            "vlm_max_frames": "4",
+            "vlm_success_threshold": "0.8",
+        },
+        argv_template=[
+            "npa",
+            "workbench",
+            "vlm-eval",
+            "compare-judges",
+            "--primary-model",
+            "{{config.primary_vlm_model}}",
+            "--secondary-model",
+            "{{config.secondary_vlm_model}}",
+            "--input-path",
+            "{{config.rollouts_uri}}",
+            "--output-path",
+            "{{config.scores_uri}}",
+            "--task",
+            "{{config.vlm_task}}",
+            "--api-key-env",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "--frame-selection",
+            "{{config.vlm_frame_selection}}",
+            "--max-frames",
+            "{{config.vlm_max_frames}}",
+            "--success-threshold",
+            "{{config.vlm_success_threshold}}",
         ],
     ),
     "workbench.vlm_eval.judge_against_plan": ToolEntry(

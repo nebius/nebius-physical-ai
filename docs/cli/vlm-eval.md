@@ -11,6 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 run  Score a rollout artifact with a VLM backend.
+compare-judges  Compare two hosted judges without averaging their outcomes.
 loop  Score every rollout under a prefix and write an aggregate task-success report.
 benchmark  Sweep VLM-eval configs over a labeled rollout benchmark set.
 workflow  Show the npa.workflow specs for VLM evaluation.
@@ -29,6 +30,7 @@ list  List available VLM eval backends.
 | Command | Description |
 | --- | --- |
 | `run` | Score a rollout artifact with a VLM backend. |
+| `compare-judges` | Compare two hosted judges without averaging their outcomes. |
 | `loop` | Score every rollout under a prefix and write an aggregate task-success report. |
 | `benchmark` | Sweep VLM-eval configs over a labeled rollout benchmark set. |
 | `workflow` | Show the npa.workflow specs for VLM evaluation. |

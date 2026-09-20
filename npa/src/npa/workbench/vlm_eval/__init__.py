@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import TYPE_CHECKING, Any, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Sequence
 
 import httpx
 import numpy as np
@@ -59,11 +59,16 @@ LEGACY_RESULT_FILENAME = "vlm_eval_stub.json"
 #: the retired sim-to-real-loop.yaml, whose readers key off this filename.
 LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
+JUDGE_COMPARISON_RESULT_FILENAME = "vlm_judge_disagreement.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
 EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v2"
+JUDGE_COMPARISON_SCHEMA_VERSION = "npa_vlm_judge_comparison_v1"
 HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
 SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v1"
 MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
+UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_v1"
+DEFAULT_PRIMARY_JUDGE_MODEL = "MiniMaxAI/MiniMax-M3"
+DEFAULT_SECONDARY_JUDGE_MODEL = "openbmb/MiniCPM-V-4_5"
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
 DEFAULT_SAMPLE_BENCHMARK_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "sample_benchmark" / "benchmark.json"
@@ -228,6 +233,156 @@ class VlmEvalResult:
 
 
 @dataclass(frozen=True)
+class VlmJudgeError:
+    """Retain one paired judge's typed failure and available provenance.
+
+    Args:
+        model: Exact requested model identity.
+        stage: Request stage that failed.
+        error_type: Stable transport or response failure category.
+        message: Bounded diagnostic without authorization data.
+        request: Request evidence created before transport.
+        provider: Provider evidence when a response was received.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    model: str
+    stage: str
+    error_type: str
+    message: str
+    request: VlmRequestEvidence
+    provider: VlmProviderEvidence | None = None
+
+
+@dataclass(frozen=True)
+class VlmJudgeOutcome:
+    """Represent exactly one success or error in a paired judge comparison.
+
+    Args:
+        model: Exact requested model identity.
+        transport_request_sha256: Digest of the exact JSON request object.
+        result: Complete scalar evaluation when parsing succeeded.
+        error: Typed failure record when the attempt did not produce a verdict.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    model: str
+    transport_request_sha256: str
+    result: VlmEvalResult | None
+    error: VlmJudgeError | None
+
+
+@dataclass(frozen=True)
+class VlmJudgeComparisonReport:
+    """Preserve two hosted judge outcomes without averaging disagreement.
+
+    Args:
+        schema_version: Comparison artifact schema identifier.
+        status: Agreement, disagreement, or judge-error classification.
+        passed: True only when both score-derived verdicts pass.
+        escalation_required: Whether disagreement or error needs human review.
+        deployment_status: Explicit audit-only qualification boundary.
+        operational_rate_estimated: Always false for one comparison.
+        input_path: Rollout source supplied by the caller.
+        output_path: Artifact destination supplied by the caller.
+        result_uri: Exact comparison artifact destination.
+        task: Task text shared by both judges.
+        rubric: Rubric text shared by both judges.
+        success_threshold: Score-derived verdict threshold.
+        frame_selection: Shared frame selection strategy.
+        frame_count: Number of shared normalized frames.
+        shared_frame_sha256: Ordered exact normalized-frame digests.
+        common_request_sha256: Digest after excluding the model field.
+        requests_differ_only_by_model: Pre-transport equivalence assertion.
+        primary: Complete primary outcome.
+        secondary: Complete secondary outcome.
+        score_delta_secondary_minus_primary: Descriptive delta, never a mean.
+        generated_at: UTC artifact timestamp.
+        limitations: Explicit interpretation boundaries.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    schema_version: str
+    status: str
+    passed: bool
+    escalation_required: bool
+    deployment_status: str
+    operational_rate_estimated: bool
+    input_path: str
+    output_path: str
+    result_uri: str
+    task: str
+    rubric: str
+    success_threshold: float
+    frame_selection: str
+    frame_count: int
+    shared_frame_sha256: tuple[str, ...]
+    common_request_sha256: str
+    requests_differ_only_by_model: bool
+    primary: VlmJudgeOutcome
+    secondary: VlmJudgeOutcome
+    score_delta_secondary_minus_primary: float | None
+    generated_at: str
+    limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class VlmJudgeComparisonRequest:
+    """Describe one immutable paired hosted-judge request.
+
+    Args:
+        input_path: One rollout image, video, array, directory, or S3 prefix.
+        output_path: Destination for the comparison artifact.
+        primary_model: First hosted vision model ID.
+        secondary_model: Distinct second hosted vision model ID.
+        task: Shared physical-task instruction.
+        success_threshold: Score threshold applied to each result separately.
+        frame_selection: Shared final, keyframes, or sequence strategy.
+        max_frames: Maximum number of shared normalized frames.
+        endpoint_url: Optional hosted OpenAI-compatible endpoint override.
+        api_key_env: Environment variable containing the hosted API key.
+        rubric: Shared visual scoring rubric.
+        rubric_path: Optional local file that replaces ``rubric``.
+        timeout_s: Timeout for each provider request.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    input_path: str
+    output_path: str
+    primary_model: str
+    secondary_model: str
+    task: str = "sim-to-real"
+    success_threshold: float = 0.8
+    frame_selection: str = DEFAULT_FRAME_SELECTION
+    max_frames: int = DEFAULT_MAX_FRAMES
+    endpoint_url: str = ""
+    api_key_env: str = DEFAULT_API_KEY_ENV
+    rubric: str = DEFAULT_RUBRIC
+    rubric_path: str = ""
+    timeout_s: float = DEFAULT_TIMEOUT_S
+
+
+@dataclass(frozen=True)
 class VlmStructuredResponse:
     success: bool
     score: float
@@ -256,6 +411,22 @@ class _VlmBackendResponse:
     status_code: int | None
     request_id_header: str | None
     latency_s: float
+
+
+@dataclass(frozen=True)
+class _VlmJudgeContext:
+    input_path: str
+    output_path: str
+    task: str
+    rubric: str
+    success_threshold: float
+    frame_selection: str
+    max_frames: int
+    endpoint_url: str
+    api_key_env: str
+    timeout_s: float
+    prompt: str
+    frames: tuple[SelectedFrame, ...]
 
 
 @dataclass(frozen=True)
@@ -350,11 +521,16 @@ __all__ = [
     "VlmEvaluationEvidence",
     "VlmEvalResult",
     "VlmFrameEvidence",
+    "VlmJudgeComparisonReport",
+    "VlmJudgeComparisonRequest",
+    "VlmJudgeError",
+    "VlmJudgeOutcome",
     "VlmProviderEvidence",
     "VlmRequestEvidence",
     "VlmStructuredResponse",
     "benchmark_result_uri_for",
     "benchmark_vlm_eval",
+    "compare_vlm_judges",
     "VlmLoopRollout",
     "aggregate_loop_report",
     "discover_rollouts",
@@ -362,6 +538,7 @@ __all__ = [
     "evaluate_stub",
     "evaluate_vlm",
     "loop_report_uri_for",
+    "judge_comparison_result_uri_for",
     "load_benchmark_dataset",
     "parse_structured_response",
     "result_uri_for",
@@ -644,6 +821,552 @@ def evaluate_vlm(
     )
 
 
+def compare_vlm_judges(
+    request: VlmJudgeComparisonRequest,
+) -> VlmJudgeComparisonReport:
+    """Run two distinct hosted judges over one immutable prompt and frame set.
+
+    Args:
+        request: Frozen input, model, rubric, frame, endpoint, and timeout options.
+
+    Returns:
+        An audit-only report retaining both outcomes without averaging.
+
+    Raises:
+        VlmEvalError: If configuration, input, or shared evidence is invalid.
+    """
+
+    return _evaluate_judge_pair(request)
+
+
+def _evaluate_judge_pair(
+    request: VlmJudgeComparisonRequest,
+) -> VlmJudgeComparisonReport:
+    _validate_common(
+        input_path=request.input_path,
+        output_path=request.output_path,
+        success_threshold=request.success_threshold,
+        frame_selection=request.frame_selection,
+        max_frames=request.max_frames,
+        timeout_s=request.timeout_s,
+    )
+    models = _comparison_models(request.primary_model, request.secondary_model)
+    effective_rubric = _load_rubric(
+        rubric=request.rubric,
+        rubric_path=request.rubric_path,
+    )
+    with _materialized_input(request.input_path) as local_input:
+        context = _comparison_context(
+            local_input=local_input,
+            input_path=request.input_path,
+            output_path=request.output_path,
+            task=request.task,
+            rubric=effective_rubric,
+            success_threshold=request.success_threshold,
+            frame_selection=request.frame_selection,
+            max_frames=request.max_frames,
+            endpoint_url=request.endpoint_url,
+            api_key_env=request.api_key_env,
+            timeout_s=request.timeout_s,
+        )
+        return _run_judge_comparison(context, models)
+
+
+def _comparison_models(primary: str, secondary: str) -> tuple[str, str]:
+    models = (primary.strip(), secondary.strip())
+    if not all(models):
+        raise VlmEvalError("paired judges require two nonempty model IDs")
+    if models[0] == models[1]:
+        raise VlmEvalError("paired judges require two distinct model IDs")
+    return models
+
+
+def _comparison_context(
+    local_input: Path,
+    input_path: str,
+    output_path: str,
+    task: str,
+    rubric: str,
+    success_threshold: float,
+    frame_selection: str,
+    max_frames: int,
+    endpoint_url: str,
+    api_key_env: str,
+    timeout_s: float,
+) -> _VlmJudgeContext:
+    effective_task = _resolve_task_text(local_input, task)
+    frames = tuple(
+        select_rollout_frames(
+            local_input,
+            frame_selection=frame_selection,
+            max_frames=max_frames,
+        )
+    )
+    prompt = _comparison_prompt(effective_task, rubric, frame_selection, len(frames))
+    return _VlmJudgeContext(
+        input_path,
+        output_path,
+        effective_task,
+        rubric,
+        success_threshold,
+        frame_selection,
+        max_frames,
+        endpoint_url,
+        api_key_env,
+        timeout_s,
+        prompt,
+        frames,
+    )
+
+
+def _comparison_prompt(
+    task: str,
+    rubric: str,
+    frame_selection: str,
+    frame_count: int,
+) -> str:
+    return _build_prompt(
+        task=task,
+        rubric=rubric,
+        frame_selection=frame_selection,
+        frame_count=frame_count,
+    )
+
+
+def _run_judge_comparison(
+    context: _VlmJudgeContext,
+    models: tuple[str, str],
+) -> VlmJudgeComparisonReport:
+    common_request = _common_hosted_request(
+        prompt=context.prompt,
+        frames=context.frames,
+    )
+    requests = tuple(_request_for_model(common_request, model) for model in models)
+    common_sha256 = _assert_model_only_request_difference(requests)
+    url = _chat_completions_url(
+        _resolve_endpoint_url(backend="api", endpoint_url=context.endpoint_url)
+    )
+    api_key = _resolve_api_key(backend="api", api_key_env=context.api_key_env)
+    outcomes = tuple(
+        _call_comparison_judge(
+            request=request,
+            url=url,
+            api_key=api_key,
+            context=context,
+        )
+        for request in requests
+    )
+    return _build_judge_comparison_report(
+        context=context,
+        common_request_sha256=common_sha256,
+        primary=outcomes[0],
+        secondary=outcomes[1],
+    )
+
+
+def _common_hosted_request(
+    *, prompt: str, frames: Sequence[SelectedFrame]
+) -> dict[str, Any]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for frame in frames:
+        encoded = base64.b64encode(frame.data).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{frame.media_type};base64,{encoded}"},
+            }
+        )
+    return {
+        "temperature": 0,
+        "messages": [{"role": "user", "content": content}],
+    }
+
+
+def _request_for_model(common_request: dict[str, Any], model: str) -> dict[str, Any]:
+    isolated_request = json.loads(_canonical_json(common_request))
+    return {"model": model, **isolated_request}
+
+
+def _assert_model_only_request_difference(
+    requests: Sequence[dict[str, Any]],
+) -> str:
+    if len(requests) != 2:
+        raise VlmEvalError("paired judge comparison requires exactly two requests")
+    common_requests = []
+    for request in requests:
+        common = dict(request)
+        model = common.pop("model", None)
+        if not isinstance(model, str) or not model:
+            raise VlmEvalError("paired judge request has no model identity")
+        common_requests.append(common)
+    if common_requests[0] != common_requests[1]:
+        raise VlmEvalError("paired judge requests differ by more than model")
+    return _sha256_json(common_requests[0])
+
+
+def _call_comparison_judge(
+    *,
+    request: dict[str, Any],
+    url: str,
+    api_key: str,
+    context: _VlmJudgeContext,
+) -> VlmJudgeOutcome:
+    model = str(request["model"])
+    request_evidence = _comparison_request_evidence(request, context)
+    request_sha256 = _sha256_json(request)
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    response, error = _post_comparison_request(
+        url=url,
+        headers=headers,
+        request=request,
+        timeout_s=context.timeout_s,
+    )
+    if error is not None:
+        return _comparison_transport_error_outcome(
+            model=model,
+            request_sha256=request_sha256,
+            request=request_evidence,
+            response=response,
+            error=error,
+        )
+    if response is None:
+        raise VlmEvalError("paired judge transport returned no outcome")
+    return _parse_comparison_response(
+        model=model,
+        request_sha256=request_sha256,
+        request=request_evidence,
+        response=response,
+        context=context,
+    )
+
+
+def _comparison_transport_error_outcome(
+    *,
+    model: str,
+    request_sha256: str,
+    request: VlmRequestEvidence,
+    response: _VlmBackendResponse | None,
+    error: VlmEvalError,
+) -> VlmJudgeOutcome:
+    stage, error_type = _comparison_transport_error_kind(response)
+    provider = None
+    if response is not None:
+        choice = _available_response_choice(response.data)
+        provider = _unparsed_provider_evidence(response, choice)
+    return _comparison_error_outcome(
+        model=model,
+        request_sha256=request_sha256,
+        request=request,
+        stage=stage,
+        error_type=error_type,
+        error=error,
+        provider=provider,
+    )
+
+
+def _comparison_request_evidence(
+    request: dict[str, Any],
+    context: _VlmJudgeContext,
+) -> VlmRequestEvidence:
+    return _build_request_evidence(
+        backend="api",
+        model=str(request["model"]),
+        prompt=context.prompt,
+        rubric=context.rubric,
+        request=request,
+        frames=context.frames,
+        frame_selection=context.frame_selection,
+        max_frames=context.max_frames,
+    )
+
+
+def _post_comparison_request(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    timeout_s: float,
+) -> tuple[_VlmBackendResponse | None, VlmEvalError | None]:
+    started_at = time.monotonic()
+    captured: list[_VlmBackendResponse] = []
+    try:
+        raw_response = _post_with_readiness_retry(
+            url=url,
+            headers=headers,
+            request=request,
+            backend="api",
+            timeout_s=timeout_s,
+            error_response_sink=captured.append,
+        )
+        response = _coerce_backend_response(
+            raw_response,
+            fallback_latency_s=time.monotonic() - started_at,
+        )
+        return response, None
+    except VlmEvalError as exc:
+        response = captured[0] if captured else None
+        return response, exc
+
+
+def _parse_comparison_response(
+    model: str,
+    request_sha256: str,
+    request: VlmRequestEvidence,
+    response: _VlmBackendResponse,
+    context: _VlmJudgeContext,
+) -> VlmJudgeOutcome:
+    choice = _available_response_choice(response.data)
+    try:
+        structured = _strict_comparison_verdict(
+            model=model,
+            request=request,
+            response=response,
+        )
+    except VlmEvalError as exc:
+        return _comparison_error_outcome(
+            model=model,
+            request_sha256=request_sha256,
+            request=request,
+            stage="response_contract",
+            error_type="response_contract_error",
+            error=exc,
+            provider=_unparsed_provider_evidence(response, choice),
+        )
+    return _comparison_success_outcome(
+        model=model,
+        request_sha256=request_sha256,
+        structured=structured,
+        context=context,
+    )
+
+
+def _strict_comparison_verdict(
+    *,
+    model: str,
+    request: VlmRequestEvidence,
+    response: _VlmBackendResponse,
+) -> VlmStructuredResponse:
+    choice, message = _response_choice_and_content(response.data)
+    if not isinstance(message, str):
+        raise VlmEvalError("Hosted VLM response content must be a JSON string")
+    if _deframe_json_text(message)[1]:
+        raise VlmEvalError(
+            "Paired judge response must be bare JSON without a Markdown fence"
+        )
+    structured = _parse_backend_verdict(
+        backend="api",
+        requested_model=model,
+        data=response.data,
+        choice=choice,
+        message=message,
+    )
+    evidence = _build_evaluation_evidence(
+        request,
+        response,
+        choice,
+        parser_version=structured.parser_version,
+    )
+    return replace(structured, evidence=evidence)
+
+
+def _comparison_success_outcome(
+    *,
+    model: str,
+    request_sha256: str,
+    structured: VlmStructuredResponse,
+    context: _VlmJudgeContext,
+) -> VlmJudgeOutcome:
+    result = _result_from_structured(
+        backend="api",
+        input_path=context.input_path,
+        output_path=context.output_path,
+        task=context.task,
+        model=model,
+        success_threshold=context.success_threshold,
+        frame_selection=context.frame_selection,
+        frame_count=len(context.frames),
+        rubric=context.rubric,
+        structured=structured,
+    )
+    result = replace(
+        result,
+        result_uri=judge_comparison_result_uri_for(context.output_path),
+    )
+    return VlmJudgeOutcome(model, request_sha256, result, None)
+
+
+def _comparison_error_outcome(
+    *,
+    model: str,
+    request_sha256: str,
+    request: VlmRequestEvidence,
+    stage: str,
+    error_type: str,
+    error: VlmEvalError,
+    provider: VlmProviderEvidence | None = None,
+) -> VlmJudgeOutcome:
+    failure = VlmJudgeError(
+        model=model,
+        stage=stage,
+        error_type=error_type,
+        message=str(error)[:1000],
+        request=request,
+        provider=provider,
+    )
+    return VlmJudgeOutcome(model, request_sha256, None, failure)
+
+
+def _comparison_transport_error_kind(
+    response: _VlmBackendResponse | None,
+) -> tuple[str, str]:
+    if response is None:
+        return "transport", "transport_error"
+    if response.status_code is not None and response.status_code >= 400:
+        return "provider_http_status", "provider_http_status_error"
+    return "response_decode", "provider_response_decode_error"
+
+
+def _available_response_choice(data: dict[str, Any]) -> dict[str, Any]:
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        return choices[0]
+    return {}
+
+
+def _unparsed_provider_evidence(
+    response: _VlmBackendResponse,
+    choice: dict[str, Any],
+) -> VlmProviderEvidence:
+    provider_id = response.data.get("id")
+    returned_model = response.data.get("model")
+    finish_reason = choice.get("finish_reason")
+    usage = response.data.get("usage")
+    return VlmProviderEvidence(
+        provider_request_id=(
+            provider_id if isinstance(provider_id, str) else response.request_id_header
+        ),
+        returned_model=returned_model if isinstance(returned_model, str) else None,
+        finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+        latency_s=round(response.latency_s, 6),
+        status_code=response.status_code,
+        usage=usage if isinstance(usage, dict) else None,
+        raw_response=response.raw_body,
+        raw_response_sha256=_sha256_text(response.raw_body),
+        parser_version=UNPARSED_RESPONSE_PARSER_VERSION,
+    )
+
+
+def _build_judge_comparison_report(
+    *,
+    context: _VlmJudgeContext,
+    common_request_sha256: str,
+    primary: VlmJudgeOutcome,
+    secondary: VlmJudgeOutcome,
+) -> VlmJudgeComparisonReport:
+    expected_frames = tuple(_frame_evidence(frame) for frame in context.frames)
+    _validate_shared_comparison_evidence(primary, secondary, expected_frames)
+    status = _comparison_status(primary, secondary)
+    return VlmJudgeComparisonReport(
+        schema_version=JUDGE_COMPARISON_SCHEMA_VERSION,
+        status=status,
+        passed=status == "judges_agree_passed",
+        escalation_required=status in {"judge_error", "judge_disagreement"},
+        deployment_status="audit_only",
+        operational_rate_estimated=False,
+        input_path=context.input_path,
+        output_path=context.output_path,
+        result_uri=judge_comparison_result_uri_for(context.output_path),
+        task=context.task,
+        rubric=context.rubric,
+        success_threshold=context.success_threshold,
+        frame_selection=context.frame_selection,
+        frame_count=len(context.frames),
+        shared_frame_sha256=tuple(frame.sha256 for frame in expected_frames),
+        common_request_sha256=common_request_sha256,
+        requests_differ_only_by_model=True,
+        primary=primary,
+        secondary=secondary,
+        score_delta_secondary_minus_primary=_comparison_score_delta(primary, secondary),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        limitations=_comparison_limitations(),
+    )
+
+
+def _validate_shared_comparison_evidence(
+    primary: VlmJudgeOutcome,
+    secondary: VlmJudgeOutcome,
+    expected_frames: tuple[VlmFrameEvidence, ...],
+) -> None:
+    _validate_comparison_outcome(primary, expected_frames)
+    _validate_comparison_outcome(secondary, expected_frames)
+    primary_request = _outcome_request(primary)
+    secondary_request = _outcome_request(secondary)
+    if primary_request.prompt_sha256 != secondary_request.prompt_sha256:
+        raise VlmEvalError("paired judge prompt evidence does not match")
+    if primary_request.rubric_sha256 != secondary_request.rubric_sha256:
+        raise VlmEvalError("paired judge rubric evidence does not match")
+
+
+def _validate_comparison_outcome(
+    outcome: VlmJudgeOutcome,
+    expected_frames: tuple[VlmFrameEvidence, ...],
+) -> None:
+    if (outcome.result is None) == (outcome.error is None):
+        raise VlmEvalError("judge outcome must contain exactly one result or error")
+    request = _outcome_request(outcome)
+    if request.frames != expected_frames:
+        raise VlmEvalError("paired judge frame evidence does not match")
+    if request.endpoint_role != "hosted-api":
+        raise VlmEvalError("paired judge outcome is not from the hosted API")
+    requested_model = request.request_manifest.get("requested_model")
+    if requested_model != outcome.model:
+        raise VlmEvalError("paired judge request model evidence does not match")
+
+
+def _outcome_request(outcome: VlmJudgeOutcome) -> VlmRequestEvidence:
+    if outcome.result is not None and outcome.result.evidence is not None:
+        return outcome.result.evidence.request
+    if outcome.error is not None:
+        return outcome.error.request
+    raise VlmEvalError("paired judge outcome has no request evidence")
+
+
+def _comparison_status(
+    primary: VlmJudgeOutcome,
+    secondary: VlmJudgeOutcome,
+) -> str:
+    if primary.error is not None or secondary.error is not None:
+        return "judge_error"
+    if primary.result is None or secondary.result is None:
+        raise VlmEvalError("paired judge result is incomplete")
+    if primary.result.passed != secondary.result.passed:
+        return "judge_disagreement"
+    if primary.result.passed:
+        return "judges_agree_passed"
+    return "judges_agree_needs_iteration"
+
+
+def _comparison_score_delta(
+    primary: VlmJudgeOutcome,
+    secondary: VlmJudgeOutcome,
+) -> float | None:
+    if primary.result is None or secondary.result is None:
+        return None
+    return round(secondary.result.score - primary.result.score, 4)
+
+
+def _comparison_limitations() -> tuple[str, ...]:
+    return (
+        "Audit record only; this comparison does not qualify either judge.",
+        "A weak judge can create disagreement, so disagreement does not prove case ambiguity.",
+        "Scores are never averaged; both original outcomes remain authoritative.",
+        "One comparison does not estimate an operational disagreement rate.",
+        "In-image instructions remain an unresolved input-integrity risk.",
+        "Judge agreement cannot prove that a critical visible defect is absent.",
+        "Visual agreement does not establish physical correctness or robot safety.",
+    )
+
+
 def evaluate_stub(
     *,
     input_path: str,
@@ -810,6 +1533,31 @@ def result_uri_for(output_path: str) -> str:
     if output_path.endswith(".json"):
         return output_path
     return output_path.rstrip("/") + f"/{RESULT_FILENAME}"
+
+
+def judge_comparison_result_uri_for(output_path: str) -> str:
+    """Return the distinct paired-judge artifact URI for an output path.
+
+    Args:
+        output_path: Output directory, S3 prefix, or canonical JSON path.
+
+    Returns:
+        The canonical ``vlm_judge_disagreement.json`` destination.
+
+    Raises:
+        VlmEvalError: If an explicit JSON path uses another filename.
+    """
+
+    if output_path.endswith(".json"):
+        if output_path.rstrip("/").rsplit("/", 1)[-1] != (
+            JUDGE_COMPARISON_RESULT_FILENAME
+        ):
+            raise VlmEvalError(
+                "--output-path JSON filename must be "
+                f"{JUDGE_COMPARISON_RESULT_FILENAME}"
+            )
+        return output_path
+    return output_path.rstrip("/") + f"/{JUDGE_COMPARISON_RESULT_FILENAME}"
 
 
 def loop_report_uri_for(output_path: str) -> str:
@@ -1909,67 +2657,144 @@ def _post_with_readiness_retry(
     request: dict[str, Any],
     backend: str,
     timeout_s: float,
+    response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None = None,
 ) -> _VlmBackendResponse:
-    """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
-
-    A self-hosted vLLM server started alongside the eval job needs minutes to
-    load weights; retry transient connection failures with backoff up to the
-    readiness deadline so a cold start is a bounded wait, not an instant
-    connection-refused. Hosted (``api``) backends are expected to be up and fail
-    fast. This lives in the request path so callers that stub
-    ``_call_openai_compatible`` in tests never incur the wait.
-    """
-
+    """POST while tolerating bounded self-hosted model warmup."""
     is_self_hosted = backend == "self-hosted"
     ready_timeout = _ready_timeout_s()
     deadline = time.monotonic() + (ready_timeout if is_self_hosted else 0.0)
     started_at = time.monotonic()
     delay = 2.0
-    last_conn_error = ""
     while True:
         try:
-            with httpx.Client(timeout=timeout_s) as client:
-                response = client.post(url, headers=headers, json=request)
-                response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, dict):
-                    raise VlmEvalError(
-                        "VLM backend returned a non-object JSON response"
-                    )
-                raw_body = getattr(response, "text", "") or _canonical_json(data)
-                response_headers = getattr(response, "headers", {})
-                return _VlmBackendResponse(
-                    data=data,
-                    raw_body=raw_body,
-                    status_code=getattr(response, "status_code", None),
-                    request_id_header=_request_id_from_headers(response_headers),
-                    latency_s=time.monotonic() - started_at,
-                )
+            return _post_backend_once(
+                url=url,
+                headers=headers,
+                request=request,
+                timeout_s=timeout_s,
+                started_at=started_at,
+                response_sink=response_sink,
+                error_response_sink=error_response_sink,
+            )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            last_conn_error = str(exc) or exc.__class__.__name__
             if is_self_hosted and time.monotonic() < deadline:
                 time.sleep(delay)
                 delay = min(delay * 1.5, 15.0)
                 continue
-            if is_self_hosted:
-                raise VlmEvalError(
-                    f"VLM backend not ready at {url} after {ready_timeout:.0f}s "
-                    f"(last: {last_conn_error})"
-                ) from exc
-            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
-        except httpx.HTTPStatusError as exc:
-            # Include a bounded response body.  vLLM uses the same HTTP 404 for
-            # an unknown route and for an unknown served-model name; the status
-            # line alone made those materially different live failures
-            # indistinguishable.  Model-server errors do not contain our API
-            # key, but keep the diagnostic bounded before it reaches logs.
-            detail = exc.response.text.strip().replace("\n", " ")[:1000]
-            suffix = f" response={detail}" if detail else ""
-            raise VlmEvalError(f"VLM backend request failed: {exc}{suffix}") from exc
+            raise _connection_failure(url, ready_timeout, is_self_hosted, exc) from exc
         except httpx.HTTPError as exc:
             raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise VlmEvalError("VLM backend returned non-JSON response") from exc
+
+
+def _post_backend_once(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    timeout_s: float,
+    started_at: float,
+    response_sink: Callable[[_VlmBackendResponse], None] | None,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> _VlmBackendResponse:
+    with httpx.Client(timeout=timeout_s) as client:
+        response = client.post(url, headers=headers, json=request)
+        observed = _backend_response_from_http(response, data={}, started_at=started_at)
+        _retain_response(observed, response_sink)
+        _raise_for_backend_status(response, started_at, error_response_sink)
+        data = _decode_backend_json(response, started_at, error_response_sink)
+        return _backend_response_from_http(
+            response,
+            data=data,
+            started_at=started_at,
+        )
+
+
+def _raise_for_backend_status(
+    response: Any,
+    started_at: float,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        detail = captured.raw_body.strip().replace("\n", " ")[:1000]
+        suffix = f" response={detail}" if detail else ""
+        raise VlmEvalError(f"VLM backend request failed: {exc}{suffix}") from exc
+
+
+def _decode_backend_json(
+    response: Any,
+    started_at: float,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except ValueError as exc:
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        raise VlmEvalError("VLM backend returned non-JSON response") from exc
+    if not isinstance(data, dict):
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        raise VlmEvalError("VLM backend returned a non-object JSON response")
+    return data
+
+
+def _connection_failure(
+    url: str,
+    ready_timeout: float,
+    is_self_hosted: bool,
+    error: httpx.HTTPError,
+) -> VlmEvalError:
+    if not is_self_hosted:
+        return VlmEvalError(f"VLM backend request failed: {error}")
+    detail = str(error) or error.__class__.__name__
+    return VlmEvalError(
+        f"VLM backend not ready at {url} after {ready_timeout:.0f}s (last: {detail})"
+    )
+
+
+def _captured_http_response(
+    response: Any,
+    *,
+    started_at: float,
+) -> _VlmBackendResponse:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    data = payload if isinstance(payload, dict) else {}
+    return _backend_response_from_http(response, data=data, started_at=started_at)
+
+
+def _backend_response_from_http(
+    response: Any,
+    *,
+    data: dict[str, Any],
+    started_at: float,
+) -> _VlmBackendResponse:
+    raw_body = getattr(response, "text", None)
+    if raw_body is None:
+        raw_body = _canonical_json(data)
+    response_headers = getattr(response, "headers", {})
+    return _VlmBackendResponse(
+        data=data,
+        raw_body=raw_body,
+        status_code=getattr(response, "status_code", None),
+        request_id_header=_request_id_from_headers(response_headers),
+        latency_s=time.monotonic() - started_at,
+    )
+
+
+def _retain_response(
+    response: _VlmBackendResponse,
+    sink: Callable[[_VlmBackendResponse], None] | None,
+) -> None:
+    if sink is not None:
+        sink(response)
 
 
 def _coerce_backend_response(
