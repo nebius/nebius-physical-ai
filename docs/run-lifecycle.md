@@ -40,7 +40,9 @@ prints the exact build command for anything missing. It unions every declared
 decision outcome, and `--infra k8s/<cluster>` lets the pull check verify that
 exact cluster's declared pull-secret authority. `submit` uses the same complete
 image plan by default, so a branch-specific missing image surfaces before the
-run instead of as an `ImagePullBackOff` on the cluster.
+run instead of as an `ImagePullBackOff` on the cluster. If complete-path
+planning itself fails, `preflight-images` exits before any registry or
+Kubernetes probe; it never reports that failure as `images: none`.
 
 ### Quota is arithmetic, and it is checked first
 

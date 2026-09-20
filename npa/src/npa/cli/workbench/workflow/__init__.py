@@ -7646,6 +7646,7 @@ def preflight_images_cmd(
     the actual manifest fetch a worker performs.
     """
 
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
@@ -7675,12 +7676,16 @@ def preflight_images_cmd(
     if resolved_registry:
         typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
-    images, pull_secrets_by_image = _plan_preflight_image_requirements(
-        spec,
-        run_id=run_id,
-        options=options,
-        assume_decision=assume_decision,
-    )
+    try:
+        images, pull_secrets_by_image = _plan_preflight_image_requirements(
+            spec,
+            run_id=run_id,
+            options=options,
+            assume_decision=assume_decision,
+        )
+    except (NpaWorkflowError, ValueError) as exc:
+        _fail(f"image preflight planning failed: {exc}")
+        return
     if image_pull_secret:
         explicit = tuple(
             dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())
