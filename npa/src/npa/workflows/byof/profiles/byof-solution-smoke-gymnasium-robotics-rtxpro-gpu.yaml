@@ -25,6 +25,8 @@ config:
           - name: ray-node
             securityContext:
               runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
               privileged: false
               allowPrivilegeEscalation: false
               capabilities:
@@ -191,6 +193,7 @@ run: |
           raise SystemExit("Pod policy receipt must explicitly disable service-account automount")
       pod_security = {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}}
       container_security = {
+          "runAsUser": 1000, "runAsGroup": 1000,
           "runAsNonRoot": True, "privileged": False, "allowPrivilegeEscalation": False,
           "capabilities": {"drop": ["ALL"]},
       }
