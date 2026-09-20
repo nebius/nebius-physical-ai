@@ -140,6 +140,7 @@ def test_runtime_observer_cli_forwards_exact_pod_identity(monkeypatch, tmp_path)
         ),
     )
     receipt = tmp_path / "runtime.json"
+    status = tmp_path / "status.json"
 
     result = CliRunner().invoke(
         app,
@@ -155,6 +156,10 @@ def test_runtime_observer_cli_forwards_exact_pod_identity(monkeypatch, tmp_path)
             "exact-run",
             "--managed-job-id",
             "42",
+            "--workflow-run-id",
+            "exact-workflow",
+            "--workflow-status",
+            str(status),
             "--namespace",
             "exact-namespace",
             "--context",
@@ -173,6 +178,8 @@ def test_runtime_observer_cli_forwards_exact_pod_identity(monkeypatch, tmp_path)
     assert seen[0]["pod_name"] == "exact-pod"
     assert seen[0]["managed_job_name"] == "exact-run"
     assert seen[0]["managed_job_id"] == "42"
+    assert seen[0]["workflow_run_id"] == "exact-workflow"
+    assert seen[0]["workflow_status_path"] == status
     assert seen[0]["context"] == "exact-context"
     assert seen[0]["output_path"] == receipt
 

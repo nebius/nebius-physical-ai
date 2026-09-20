@@ -75,8 +75,7 @@ def validate_runtime_attestation(
         "observed_image_digest",
         "gpu_names",
         "gpu_count",
-        "managed_job_name_sha256",
-        "managed_job_id_sha256",
+        "workflow_run_id_sha256",
         "context_sha256",
         "namespace_sha256",
         "stages",
@@ -109,6 +108,8 @@ def validate_runtime_attestation(
         "pod_identity_sha256",
         "managed_job_name_sha256",
         "managed_job_id_sha256",
+        "workflow_run_id_sha256",
+        "workflow_status_sha256",
         "task_cluster_sha256",
         "context_sha256",
         "namespace_sha256",
@@ -137,6 +138,8 @@ def validate_runtime_attestation(
             "pod_identity_sha256",
             "managed_job_name_sha256",
             "managed_job_id_sha256",
+            "workflow_run_id_sha256",
+            "workflow_status_sha256",
             "task_cluster_sha256",
             "context_sha256",
             "namespace_sha256",
@@ -146,19 +149,27 @@ def validate_runtime_attestation(
             if re.fullmatch(r"[0-9a-f]{64}", str(stage.get(field) or "")) is None:
                 raise NurecEvidenceError("runtime stage identity hash differs")
         for field in (
-            "managed_job_name_sha256",
-            "managed_job_id_sha256",
+            "workflow_run_id_sha256",
             "context_sha256",
             "namespace_sha256",
         ):
             if stage.get(field) != payload.get(field):
                 raise NurecEvidenceError("runtime stage run binding differs")
-    if len(
-        {stages[stage_name]["pod_identity_sha256"] for stage_name in required}
-    ) != len(required) or len(
-        {stages[stage_name]["task_cluster_sha256"] for stage_name in required}
-    ) != len(required):
-        raise NurecEvidenceError("runtime stages did not use distinct pods and tasks")
+    if (
+        len({stages[stage_name]["pod_identity_sha256"] for stage_name in required})
+        != len(required)
+        or len({stages[stage_name]["task_cluster_sha256"] for stage_name in required})
+        != len(required)
+        or len(
+            {stages[stage_name]["managed_job_name_sha256"] for stage_name in required}
+        )
+        != len(required)
+        or len({stages[stage_name]["managed_job_id_sha256"] for stage_name in required})
+        != len(required)
+    ):
+        raise NurecEvidenceError(
+            "runtime stages did not use distinct jobs, pods, and tasks"
+        )
     return payload
 
 

@@ -221,12 +221,14 @@ capture its exact control-plane identity and bind both receipts:
 
 ```bash
 npa workbench nurec observe-runtime --stage reconstruct \
-  --managed-job-name '<run-id>' --managed-job-id '<submit-job-id>' \
+  --managed-job-name '<exact-stage-job-name>' --managed-job-id '<stage-job-id>' \
+  --workflow-run-id '<run-id>' --workflow-status '<private>/reconstruct-status.json' \
   --context '<exact-context>' --namespace '<namespace>' \
   --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
   --receipt-path '<private-evidence>/reconstruct-runtime.json' --output-format json
 npa workbench nurec observe-runtime --stage render \
-  --managed-job-name '<run-id>' --managed-job-id '<submit-job-id>' \
+  --managed-job-name '<exact-stage-job-name>' --managed-job-id '<stage-job-id>' \
+  --workflow-run-id '<run-id>' --workflow-status '<private>/render-status.json' \
   --context '<exact-context>' --namespace '<namespace>' \
   --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
   --receipt-path '<private-evidence>/render-runtime.json' --output-format json
@@ -237,8 +239,9 @@ npa workbench nurec bundle-runtime \
 ```
 
 Start both observers immediately after submit; they discover only pods whose
-SkyPilot job annotations and stage cluster label match the exact returned job
-ID. The bundle rejects reused pod/task identities.
+SkyPilot job annotations match the exact stage job name and ID that the supplied
+fresh workflow-status JSON attributes to that workflow state. The bundle binds
+one parent workflow run and rejects reused job, pod, or task identities.
 
 Visual review uses the committed one-shot harness only after objective workload
 checks pass. `freeze` deterministically selects two source-camera positives,
@@ -304,7 +307,7 @@ npa workbench nurec audit-qualification \
   --receipt-path '<private-evidence>/qualification-audit.json' --output-format json
 
 npa workbench nurec cleanup-qualification \
-  --run-id '<run-id>' --job-id '<submit-job-id>' \
+  --run-id '<run-id>' --workflow-status '<private>/final-workflow-status.json' \
   --context '<exact-context>' --namespace '<namespace>' \
   --storage-prefix 's3://<bucket>/<run>/' \
   --local-image '<exact-local-candidate-ref>' --builder '<run-owned-builder>' \
@@ -314,10 +317,11 @@ npa workbench nurec cleanup-qualification \
   --receipt-path '<private-evidence>/cleanup.json' --output-format json
 ```
 
-Cleanup always asks for exact managed-job cancellation, waits for terminal or
-absent state, and only then downs run compute. It retains the shared controller
-and declared evidence prefix, removes the loaded candidate and run-owned
-builder, and fails if an exact-job pod remains active.
+Cleanup enumerates every exact managed-job attempt in the complete four-state
+workflow status, asks for each cancellation, waits for terminal or absent state,
+and only then downs run compute. It retains the shared controller and declared
+evidence prefix, removes the loaded candidate and run-owned builder, and fails
+if any exact-job pod remains active.
 
 `--input-path` also accepts an S3 dataset prefix. `--cache-dir` and
 `--scratch-dir` select private local staging parents, defaulting to

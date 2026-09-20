@@ -14,7 +14,7 @@ from npa.errors import NpaError
 from npa.workbench.nurec.s3_probe import _prefix, _snapshot
 
 
-CLEANUP_FORMAT = "npa_ncore_qualification_cleanup_v1"
+CLEANUP_FORMAT = "npa_ncore_qualification_cleanup_v2"
 _SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}")
 
 
@@ -108,8 +108,7 @@ def _active_job_pods(
     kubectl_bin: str,
     context: str,
     namespace: str,
-    job_name: str,
-    job_id: str,
+    jobs: set[tuple[str, str]],
     runner: Callable[..., subprocess.CompletedProcess[str]],
 ) -> int:
     result = _run(
@@ -150,18 +149,99 @@ def _active_job_pods(
         annotations = metadata.get("annotations")
         if (
             isinstance(annotations, dict)
-            and annotations.get("skypilot-managed-job-name") == job_name
-            and str(annotations.get("skypilot-managed-job-id") or "") == job_id
+            and (
+                str(annotations.get("skypilot-managed-job-id") or ""),
+                str(annotations.get("skypilot-managed-job-name") or ""),
+            )
+            in jobs
             and status.get("phase") not in {"Succeeded", "Failed"}
         ):
             active += 1
     return active
 
 
+def _workflow_jobs(path: Path, run_id: str) -> tuple[list[tuple[str, str]], str]:
+    if (
+        path.is_symlink()
+        or not path.is_file()
+        or path.stat().st_uid != os.getuid()
+        or path.stat().st_nlink != 1
+        or path.stat().st_mode & 0o077
+    ):
+        raise NcoreQualificationCleanupError("workflow status evidence is missing")
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NcoreQualificationCleanupError(
+            "workflow status evidence is invalid"
+        ) from exc
+    stages = payload.get("stages") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("run_id") != run_id
+        or not isinstance(stages, dict)
+    ):
+        raise NcoreQualificationCleanupError("workflow status run binding differs")
+    expected_states = {"reconstruct", "render", "visualize", "finalize"}
+    observed_states = {
+        str(stage.get("workflow_state") or "")
+        for stage in stages.values()
+        if isinstance(stage, dict)
+    }
+    if observed_states != expected_states:
+        raise NcoreQualificationCleanupError(
+            "workflow status does not contain the complete qualification graph"
+        )
+    jobs: dict[str, str] = {}
+    for stage in stages.values():
+        if not isinstance(stage, dict) or stage.get("job_attribution") == "ambiguous":
+            raise NcoreQualificationCleanupError(
+                "workflow status contains ambiguous job attribution"
+            )
+        attempts = stage.get("managed_job_attempts")
+        if not isinstance(attempts, list):
+            attempts = [
+                {
+                    "job_id": stage.get("managed_job_id"),
+                    "job_name": stage.get("job_name"),
+                }
+            ]
+        before_count = len(jobs)
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                raise NcoreQualificationCleanupError(
+                    "workflow status job evidence is invalid"
+                )
+            job_id = str(attempt.get("job_id") or "").strip()
+            job_name = str(attempt.get("job_name") or "").strip()
+            if not job_id:
+                continue
+            if not job_id.isdigit() or int(job_id) < 1:
+                raise NcoreQualificationCleanupError(
+                    "workflow status managed job ID is invalid"
+                )
+            job_name = _safe(job_name, "managed job name")
+            if job_id in jobs and jobs[job_id] != job_name:
+                raise NcoreQualificationCleanupError(
+                    "workflow status managed job identity is inconsistent"
+                )
+            jobs[job_id] = job_name
+        if len(jobs) == before_count:
+            raise NcoreQualificationCleanupError(
+                "workflow status stage has no exact managed job"
+            )
+    if not jobs:
+        raise NcoreQualificationCleanupError("workflow status contains no managed jobs")
+    return sorted(jobs.items(), key=lambda item: int(item[0])), hashlib.sha256(
+        raw
+    ).hexdigest()
+
+
 def cleanup_qualification(
     *,
     run_id: str,
-    job_id: str,
+    workflow_status_path: Path,
     context: str,
     namespace: str,
     storage_prefix: str,
@@ -181,12 +261,10 @@ def cleanup_qualification(
 ) -> dict[str, Any]:
     """Cancel, await terminality, down owned compute, and prove no active pod."""
     from npa.clients.storage import StorageClient
-    from npa.orchestration.skypilot.cleanup import cleanup_launched_workflow
+    from npa.orchestration.skypilot.cleanup import cleanup_launched_workflows
 
     run_id = _safe(run_id, "run ID")
-    job_id = str(job_id).strip()
-    if not job_id.isdigit() or int(job_id) < 1:
-        raise NcoreQualificationCleanupError("managed job ID is invalid")
+    jobs, workflow_status_sha256 = _workflow_jobs(workflow_status_path, run_id)
     context = _safe(context, "context")
     namespace = _safe(namespace, "namespace")
     builder = _safe(builder, "builder")
@@ -204,7 +282,8 @@ def cleanup_qualification(
         raise NcoreQualificationCleanupError("build receipt is invalid") from exc
     argv = build.get("argv") if isinstance(build, dict) else None
     if (
-        build.get("schema") != "npa.ncore.committed-oci-build.v1"
+        not isinstance(build, dict)
+        or build.get("schema") != "npa.ncore.committed-oci-build.v1"
         or build.get("source_sha") != source_sha
         or not isinstance(argv, list)
         or "--oci-output" not in argv
@@ -213,11 +292,10 @@ def cleanup_qualification(
         raise NcoreQualificationCleanupError(
             "build receipt does not prove a local-only OCI route"
         )
-    cleaner = workflow_cleaner or cleanup_launched_workflow
+    cleaner = workflow_cleaner or cleanup_launched_workflows
     cleanup = cleaner(
-        job_id,
+        jobs,
         run_id,
-        job_name=run_id,
         isolated_config_dir=isolated_config_dir,
         config_path=config_path,
         sky_bin=sky_bin,
@@ -236,9 +314,9 @@ def cleanup_qualification(
         index for index, command in enumerate(command_tokens) if "down" in command
     ]
     if (
-        len(cancel_indexes) != 1
+        len(cancel_indexes) != len(jobs)
         or len(down_indexes) != 1
-        or cancel_indexes[0] >= down_indexes[0]
+        or max(cancel_indexes) >= down_indexes[0]
     ):
         raise NcoreQualificationCleanupError(
             "cleanup did not prove cancel-before-destroy ordering"
@@ -247,8 +325,7 @@ def cleanup_qualification(
         kubectl_bin=kubectl_bin,
         context=context,
         namespace=namespace,
-        job_name=run_id,
-        job_id=job_id,
+        jobs=set(jobs),
         runner=process_runner,
     )
     if active_pods:
@@ -273,7 +350,9 @@ def cleanup_qualification(
         "format": CLEANUP_FORMAT,
         "status": "pass",
         "run_id_sha256": hashlib.sha256(run_id.encode()).hexdigest(),
-        "managed_job_id_sha256": hashlib.sha256(job_id.encode()).hexdigest(),
+        "workflow_status_sha256": workflow_status_sha256,
+        "managed_jobs": len(jobs),
+        "managed_job_identities_sha256": _sha(jobs),
         "jobs_terminal_or_absent": True,
         "cancel_before_destroy": True,
         "active_job_pods": 0,

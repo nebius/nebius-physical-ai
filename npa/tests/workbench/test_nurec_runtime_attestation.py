@@ -16,13 +16,41 @@ IMAGE = (
 DIGEST = IMAGE.split("@", 1)[1]
 
 
+def _job(stage: str) -> tuple[str, str]:
+    return f"private-run-0{1 if stage == 'reconstruct' else 2}-{stage}", (
+        "41" if stage == "reconstruct" else "42"
+    )
+
+
+def _status(tmp_path: Path, stage: str) -> Path:
+    job_name, job_id = _job(stage)
+    path = tmp_path / f"{stage}-status.json"
+    path.write_text(
+        json.dumps(
+            {
+                "run_id": "private-run",
+                "stages": {
+                    stage: {
+                        "workflow_state": stage,
+                        "managed_job_id": job_id,
+                        "job_name": job_name,
+                        "job_attribution": "exact",
+                    }
+                },
+            }
+        )
+    )
+    path.chmod(0o600)
+    return path
+
+
 def _runner(
     *,
     image_id: str = IMAGE,
     gpu_limit: str = "1",
     gpu_label: str = "",
-    managed_job_name: str = "private-run",
-    managed_job_id: str = "42",
+    managed_job_name: str = "private-run-01-reconstruct",
+    managed_job_id: str = "41",
 ):
     def run(command, **kwargs):
         assert kwargs["check"] is False
@@ -83,17 +111,20 @@ def _runner(
 
 def _observe(tmp_path: Path, stage: str) -> tuple[dict, Path]:
     path = tmp_path / f"{stage}.json"
+    job_name, job_id = _job(stage)
     receipt = runtime_attestation.observe_kubernetes_stage(
         stage=stage,
         pod_name=f"private-{stage}-pod",
         namespace="private-namespace",
         container_name="ray-node",
         expected_image=IMAGE,
-        managed_job_name="private-run",
-        managed_job_id="42",
+        managed_job_name=job_name,
+        managed_job_id=job_id,
+        workflow_run_id="private-run",
+        workflow_status_path=_status(tmp_path, stage),
         output_path=path,
         context="private-context",
-        runner=_runner(),
+        runner=_runner(managed_job_name=job_name, managed_job_id=job_id),
     )
     return receipt, path
 
@@ -141,6 +172,7 @@ def test_observe_and_bundle_two_control_plane_stage_identities(
 def test_observation_rejects_wrong_runtime_identity(
     runner, match: str, tmp_path: Path
 ) -> None:
+    job_name, job_id = _job("reconstruct")
     with pytest.raises(runtime_attestation.NurecRuntimeAttestationError, match=match):
         runtime_attestation.observe_kubernetes_stage(
             stage="reconstruct",
@@ -148,8 +180,10 @@ def test_observation_rejects_wrong_runtime_identity(
             namespace="private-namespace",
             container_name="ray-node",
             expected_image=IMAGE,
-            managed_job_name="private-run",
-            managed_job_id="42",
+            managed_job_name=job_name,
+            managed_job_id=job_id,
+            workflow_run_id="private-run",
+            workflow_status_path=_status(tmp_path, "reconstruct"),
             output_path=tmp_path / "receipt.json",
             context="private-context",
             runner=runner,
@@ -159,6 +193,7 @@ def test_observation_rejects_wrong_runtime_identity(
 
 
 def test_observation_rejects_unrelated_managed_job(tmp_path: Path) -> None:
+    job_name, job_id = _job("reconstruct")
     with pytest.raises(
         runtime_attestation.NurecRuntimeAttestationError,
         match="not bound",
@@ -169,16 +204,42 @@ def test_observation_rejects_unrelated_managed_job(tmp_path: Path) -> None:
             namespace="private-namespace",
             container_name="ray-node",
             expected_image=IMAGE,
-            managed_job_name="private-run",
-            managed_job_id="42",
+            managed_job_name=job_name,
+            managed_job_id=job_id,
+            workflow_run_id="private-run",
+            workflow_status_path=_status(tmp_path, "reconstruct"),
             output_path=tmp_path / "receipt.json",
             context="private-context",
-            runner=_runner(managed_job_id="41"),
+            runner=_runner(managed_job_name=job_name, managed_job_id="40"),
+        )
+
+
+def test_observation_rejects_status_from_another_workflow_stage(tmp_path: Path) -> None:
+    job_name, job_id = _job("reconstruct")
+    wrong_status = _status(tmp_path, "render")
+    with pytest.raises(
+        runtime_attestation.NurecRuntimeAttestationError,
+        match="exact stage managed job",
+    ):
+        runtime_attestation.observe_kubernetes_stage(
+            stage="reconstruct",
+            pod_name="private-reconstruct-pod",
+            namespace="private-namespace",
+            container_name="ray-node",
+            expected_image=IMAGE,
+            managed_job_name=job_name,
+            managed_job_id=job_id,
+            workflow_run_id="private-run",
+            workflow_status_path=wrong_status,
+            output_path=tmp_path / "receipt.json",
+            context="private-context",
+            runner=_runner(managed_job_name=job_name, managed_job_id=job_id),
         )
 
 
 def test_observation_discovers_only_exact_managed_job_stage(tmp_path: Path) -> None:
-    exact = _runner()
+    job_name, job_id = _job("reconstruct")
+    exact = _runner(managed_job_name=job_name, managed_job_id=job_id)
 
     def runner(command, **kwargs):
         resource = command[command.index("get") + 1]
@@ -194,7 +255,7 @@ def test_observation_discovers_only_exact_managed_job_stage(tmp_path: Path) -> N
         pod = json.loads(exact(pod_command, **kwargs).stdout)
         unrelated = json.loads(json.dumps(pod))
         unrelated["metadata"]["uid"] = "unrelated"
-        unrelated["metadata"]["annotations"]["skypilot-managed-job-id"] = "41"
+        unrelated["metadata"]["annotations"]["skypilot-managed-job-id"] = "40"
         return subprocess.CompletedProcess(
             command, 0, json.dumps({"items": [unrelated, pod]}), ""
         )
@@ -204,8 +265,10 @@ def test_observation_discovers_only_exact_managed_job_stage(tmp_path: Path) -> N
         namespace="private-namespace",
         container_name="ray-node",
         expected_image=IMAGE,
-        managed_job_name="private-run",
-        managed_job_id="42",
+        managed_job_name=job_name,
+        managed_job_id=job_id,
+        workflow_run_id="private-run",
+        workflow_status_path=_status(tmp_path, "reconstruct"),
         output_path=tmp_path / "receipt.json",
         context="private-context",
         max_wait_seconds=1,
@@ -227,5 +290,23 @@ def test_bundle_rejects_reused_single_stage(tmp_path: Path) -> None:
         runtime_attestation.bundle_runtime_attestations(
             reconstruct_path=reconstruct_path,
             render_path=reconstruct_path,
+            output_path=tmp_path / "bundle.json",
+        )
+
+
+def test_bundle_requires_distinct_stage_managed_jobs(tmp_path: Path) -> None:
+    reconstruct, reconstruct_path = _observe(tmp_path, "reconstruct")
+    _, render_path = _observe(tmp_path, "render")
+    render = json.loads(render_path.read_text())
+    render["managed_job_id_sha256"] = reconstruct["managed_job_id_sha256"]
+    render_path.write_text(json.dumps(render))
+
+    with pytest.raises(
+        runtime_attestation.NurecRuntimeAttestationError,
+        match="runtime identities differ",
+    ):
+        runtime_attestation.bundle_runtime_attestations(
+            reconstruct_path=reconstruct_path,
+            render_path=render_path,
             output_path=tmp_path / "bundle.json",
         )

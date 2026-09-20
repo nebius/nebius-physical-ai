@@ -57,6 +57,45 @@ def _build_receipt(tmp_path: Path) -> Path:
             }
         )
     )
+    path.chmod(0o600)
+    return path
+
+
+def _workflow_status(tmp_path: Path) -> Path:
+    path = tmp_path / "workflow-status.json"
+    path.write_text(
+        json.dumps(
+            {
+                "run_id": "private-run",
+                "stages": {
+                    "reconstruct": {
+                        "workflow_state": "reconstruct",
+                        "managed_job_id": "41",
+                        "job_name": "private-run-01-reconstruct",
+                        "job_attribution": "exact",
+                    },
+                    "render": {
+                        "workflow_state": "render",
+                        "managed_job_id": "42",
+                        "job_name": "private-run-02-render",
+                        "job_attribution": "exact",
+                    },
+                    "visualize": {
+                        "workflow_state": "visualize",
+                        "managed_job_id": "43",
+                        "job_name": "private-run-03-visualize",
+                        "job_attribution": "exact",
+                    },
+                    "finalize": {
+                        "workflow_state": "finalize",
+                        "managed_job_id": "44",
+                        "job_name": "private-run-04-finalize",
+                        "job_attribution": "exact",
+                    },
+                },
+            }
+        )
+    )
     return path
 
 
@@ -68,7 +107,7 @@ def _runner(*, active=False):
                     {
                         "metadata": {
                             "annotations": {
-                                "skypilot-managed-job-name": "private-run",
+                                "skypilot-managed-job-name": "private-run-02-render",
                                 "skypilot-managed-job-id": "42",
                             }
                         },
@@ -90,7 +129,10 @@ def _cleaner(*_args, **_kwargs):
     return SimpleNamespace(
         errors=[],
         commands=[
+            ["sky", "jobs", "cancel", "--yes", "41"],
             ["sky", "jobs", "cancel", "--yes", "42"],
+            ["sky", "jobs", "cancel", "--yes", "43"],
+            ["sky", "jobs", "cancel", "--yes", "44"],
             ["sky", "down", "--yes", "private-run"],
         ],
     )
@@ -102,7 +144,7 @@ def test_cleanup_receipt_derives_order_absence_and_retained_storage(
     path = tmp_path / "cleanup.json"
     receipt = cleanup_qualification(
         run_id="private-run",
-        job_id="42",
+        workflow_status_path=_workflow_status(tmp_path),
         context="private-context",
         namespace="private-namespace",
         storage_prefix="s3://private/run/evidence/",
@@ -119,6 +161,7 @@ def test_cleanup_receipt_derives_order_absence_and_retained_storage(
     assert receipt["status"] == "pass"
     assert receipt["cancel_before_destroy"] is True
     assert receipt["active_job_pods"] == 0
+    assert receipt["managed_jobs"] == 4
     assert receipt["registry_disposition"] == "not_created_local_oci_route"
     assert receipt["storage_disposition"] == "retained_declared"
     assert receipt["orphan_count"] == 0
@@ -129,7 +172,7 @@ def test_cleanup_refuses_active_exact_job_pod(tmp_path: Path) -> None:
     with pytest.raises(NcoreQualificationCleanupError, match="active Kubernetes"):
         cleanup_qualification(
             run_id="private-run",
-            job_id="42",
+            workflow_status_path=_workflow_status(tmp_path),
             context="private-context",
             namespace="private-namespace",
             storage_prefix="s3://private/run/evidence/",
@@ -150,14 +193,17 @@ def test_cleanup_refuses_destroy_before_cancel(tmp_path: Path) -> None:
             errors=[],
             commands=[
                 ["sky", "down", "--yes", "private-run"],
+                ["sky", "jobs", "cancel", "--yes", "41"],
                 ["sky", "jobs", "cancel", "--yes", "42"],
+                ["sky", "jobs", "cancel", "--yes", "43"],
+                ["sky", "jobs", "cancel", "--yes", "44"],
             ],
         )
 
     with pytest.raises(NcoreQualificationCleanupError, match="cancel-before"):
         cleanup_qualification(
             run_id="private-run",
-            job_id="42",
+            workflow_status_path=_workflow_status(tmp_path),
             context="private-context",
             namespace="private-namespace",
             storage_prefix="s3://private/run/evidence/",
@@ -169,4 +215,28 @@ def test_cleanup_refuses_destroy_before_cancel(tmp_path: Path) -> None:
             storage_client=_Storage(),
             process_runner=_runner(),
             workflow_cleaner=wrong_order,
+        )
+
+
+def test_cleanup_refuses_incomplete_workflow_job_inventory(tmp_path: Path) -> None:
+    status = _workflow_status(tmp_path)
+    payload = json.loads(status.read_text())
+    del payload["stages"]["finalize"]
+    status.write_text(json.dumps(payload))
+
+    with pytest.raises(NcoreQualificationCleanupError, match="complete"):
+        cleanup_qualification(
+            run_id="private-run",
+            workflow_status_path=status,
+            context="private-context",
+            namespace="private-namespace",
+            storage_prefix="s3://private/run/evidence/",
+            local_image="local/ncore:candidate",
+            builder="private-builder",
+            build_receipt_path=_build_receipt(tmp_path),
+            source_sha=SOURCE_SHA,
+            output_path=tmp_path / "cleanup.json",
+            storage_client=_Storage(),
+            process_runner=_runner(),
+            workflow_cleaner=_cleaner,
         )

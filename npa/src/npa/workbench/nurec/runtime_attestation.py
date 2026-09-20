@@ -14,8 +14,8 @@ from typing import Any, Callable, Sequence
 from npa.errors import NpaError
 
 
-STAGE_FORMAT = "npa_nurec_kubernetes_runtime_stage_v2"
-BUNDLE_FORMAT = "npa_nurec_runtime_attestation_v3"
+STAGE_FORMAT = "npa_nurec_kubernetes_runtime_stage_v3"
+BUNDLE_FORMAT = "npa_nurec_runtime_attestation_v4"
 STAGES = ("reconstruct", "render")
 GPU_NAME = "NVIDIA RTX PRO 6000 Blackwell Server Edition"
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}")
@@ -143,7 +143,6 @@ def _identity_sha(value: str) -> str:
 def _bound_pod(
     pod: dict[str, Any],
     *,
-    stage: str,
     managed_job_name: str,
     managed_job_id: str,
 ) -> bool:
@@ -154,12 +153,57 @@ def _bound_pod(
     labels = metadata.get("labels")
     if not isinstance(annotations, dict) or not isinstance(labels, dict):
         return False
-    cluster_name = str(labels.get("skypilot-cluster-name") or "")
     return (
         annotations.get("skypilot-managed-job-name") == managed_job_name
         and str(annotations.get("skypilot-managed-job-id") or "") == managed_job_id
-        and cluster_name.startswith(f"{stage}-{managed_job_id}-")
+        and bool(str(labels.get("skypilot-cluster-name") or ""))
     )
+
+
+def _workflow_status_binding(
+    path: Path,
+    *,
+    workflow_run_id: str,
+    stage: str,
+    managed_job_name: str,
+    managed_job_id: str,
+) -> str:
+    if (
+        path.is_symlink()
+        or not path.is_file()
+        or path.stat().st_uid != os.getuid()
+        or path.stat().st_nlink != 1
+        or path.stat().st_mode & 0o077
+    ):
+        raise NurecRuntimeAttestationError("workflow status evidence is missing")
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise NurecRuntimeAttestationError(
+            "workflow status evidence is invalid"
+        ) from exc
+    stages = payload.get("stages") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("run_id") != workflow_run_id
+        or not isinstance(stages, dict)
+    ):
+        raise NurecRuntimeAttestationError("workflow status run binding differs")
+    matches = [
+        item
+        for item in stages.values()
+        if isinstance(item, dict)
+        and item.get("workflow_state") == stage
+        and str(item.get("managed_job_id") or "") == managed_job_id
+        and item.get("job_name") == managed_job_name
+        and item.get("job_attribution") != "ambiguous"
+    ]
+    if len(matches) != 1:
+        raise NurecRuntimeAttestationError(
+            "workflow status does not bind the exact stage managed job"
+        )
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _discover_pod(
@@ -191,7 +235,6 @@ def _discover_pod(
             if isinstance(item, dict)
             and _bound_pod(
                 item,
-                stage=stage,
                 managed_job_name=managed_job_name,
                 managed_job_id=managed_job_id,
             )
@@ -247,6 +290,8 @@ def observe_kubernetes_stage(
     expected_image: str,
     managed_job_name: str,
     managed_job_id: str,
+    workflow_run_id: str,
+    workflow_status_path: Path,
     output_path: Path,
     context: str,
     max_wait_seconds: float = 0,
@@ -264,7 +309,15 @@ def observe_kubernetes_stage(
     container_name = _exact_name(container_name, "container name")
     managed_job_name = _exact_name(managed_job_name, "managed job name")
     managed_job_id = _job_id(managed_job_id)
+    workflow_run_id = _exact_name(workflow_run_id, "workflow run ID")
     context = _exact_name(context, "context")
+    workflow_status_sha256 = _workflow_status_binding(
+        workflow_status_path,
+        workflow_run_id=workflow_run_id,
+        stage=stage,
+        managed_job_name=managed_job_name,
+        managed_job_id=managed_job_id,
+    )
     expected_digest = _expected_digest(expected_image)
     prefix = [kubectl_bin, "--context", context]
     prefix.extend(["--namespace", namespace])
@@ -293,7 +346,6 @@ def observe_kubernetes_stage(
         raise NurecRuntimeAttestationError("pod object is incomplete")
     if not _bound_pod(
         pod,
-        stage=stage,
         managed_job_name=managed_job_name,
         managed_job_id=managed_job_id,
     ):
@@ -358,6 +410,8 @@ def observe_kubernetes_stage(
         "node_uid": node_uid,
         "managed_job_name": managed_job_name,
         "managed_job_id": managed_job_id,
+        "workflow_run_id": workflow_run_id,
+        "workflow_status_sha256": workflow_status_sha256,
         "cluster_name": cluster_name,
         "context": context,
         "namespace": namespace,
@@ -382,6 +436,8 @@ def observe_kubernetes_stage(
         "pod_identity_sha256": _identity_sha(pod_uid),
         "managed_job_name_sha256": _identity_sha(managed_job_name),
         "managed_job_id_sha256": _identity_sha(managed_job_id),
+        "workflow_run_id_sha256": _identity_sha(workflow_run_id),
+        "workflow_status_sha256": workflow_status_sha256,
         "task_cluster_sha256": _identity_sha(cluster_name),
         "context_sha256": _identity_sha(context),
         "namespace_sha256": _identity_sha(namespace),
@@ -423,8 +479,7 @@ def bundle_runtime_attestations(
     digests = {stage["observed_image_digest"] for stage in stages.values()}
     gpu_names = {tuple(stage.get("gpu_names", [])) for stage in stages.values()}
     binding_fields = (
-        "managed_job_name_sha256",
-        "managed_job_id_sha256",
+        "workflow_run_id_sha256",
         "context_sha256",
         "namespace_sha256",
     )
@@ -434,6 +489,8 @@ def bundle_runtime_attestations(
     }
     pod_identities = {stage.get("pod_identity_sha256") for stage in stages.values()}
     task_identities = {stage.get("task_cluster_sha256") for stage in stages.values()}
+    job_names = {stage.get("managed_job_name_sha256") for stage in stages.values()}
+    job_ids = {stage.get("managed_job_id_sha256") for stage in stages.values()}
     if (
         len(images) != 1
         or len(digests) != 1
@@ -441,6 +498,8 @@ def bundle_runtime_attestations(
         or any(len(values) != 1 for values in bindings.values())
         or len(pod_identities) != len(stages)
         or len(task_identities) != len(stages)
+        or len(job_names) != len(stages)
+        or len(job_ids) != len(stages)
     ):
         raise NurecRuntimeAttestationError(
             "reconstruct and render runtime identities differ"
@@ -465,5 +524,12 @@ def bundle_runtime_attestations(
             )
         },
     }
+    from npa.workbench.nurec.evidence import validate_runtime_attestation
+
+    validate_runtime_attestation(
+        receipt,
+        expected_image=receipt["requested_image"],
+        required_stages=STAGES,
+    )
     _write_fresh_private(output_path, receipt)
     return receipt

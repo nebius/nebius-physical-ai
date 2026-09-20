@@ -70,6 +70,9 @@ NONTERMINAL_JOB_STATUSES = {
     "RUNNING",
     "RECOVERING",
     "CANCELLING",
+    # The controller lost authoritative workload state. This is unresolved,
+    # never proof that the managed workload is terminal.
+    "FAILED_CONTROLLER",
 }
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
 RUN_ID_MIN_LENGTH = 12

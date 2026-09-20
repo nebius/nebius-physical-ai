@@ -577,6 +577,14 @@ def observe_runtime_cmd(
     managed_job_id: str = typer.Option(
         ..., "--managed-job-id", help="Exact numeric managed-job ID returned by submit."
     ),
+    workflow_run_id: str = typer.Option(
+        ..., "--workflow-run-id", help="Exact parent npa.workflow run ID."
+    ),
+    workflow_status_path: Path = typer.Option(
+        ...,
+        "--workflow-status",
+        help="Fresh private JSON status binding this stage to the exact managed job.",
+    ),
     namespace: str = typer.Option(
         ..., "--namespace", help="Exact Kubernetes namespace."
     ),
@@ -619,6 +627,8 @@ def observe_runtime_cmd(
             expected_image=expected_image,
             managed_job_name=managed_job_name,
             managed_job_id=managed_job_id,
+            workflow_run_id=workflow_run_id,
+            workflow_status_path=workflow_status_path,
             output_path=receipt_path,
             context=context,
             max_wait_seconds=max_wait_seconds,
@@ -729,8 +739,10 @@ def audit_qualification_cmd(
 @json_stdout_contract
 def cleanup_qualification_cmd(
     run_id: str = typer.Option(..., "--run-id", help="Exact fresh workflow run ID."),
-    job_id: str = typer.Option(
-        ..., "--job-id", help="Exact managed-job ID returned by submit."
+    workflow_status: Path = typer.Option(
+        ...,
+        "--workflow-status",
+        help="Final private workflow status containing every exact managed job.",
     ),
     context: str = typer.Option(..., "--context", help="Exact kubectl context."),
     namespace: str = typer.Option(..., "--namespace", help="Exact pod namespace."),
@@ -774,7 +786,7 @@ def cleanup_qualification_cmd(
     try:
         evidence = cleanup_qualification(
             run_id=run_id,
-            job_id=job_id,
+            workflow_status_path=workflow_status,
             context=context,
             namespace=namespace,
             storage_prefix=storage_prefix,

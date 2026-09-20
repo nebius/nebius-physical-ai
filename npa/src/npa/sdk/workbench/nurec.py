@@ -160,6 +160,8 @@ def observe_runtime(
     expected_image: str,
     managed_job_name: str,
     managed_job_id: str,
+    workflow_run_id: str,
+    workflow_status: Path | str,
     context: str,
     receipt_path: Path | str,
     pod_name: str = "",
@@ -179,6 +181,8 @@ def observe_runtime(
         expected_image=expected_image,
         managed_job_name=managed_job_name,
         managed_job_id=managed_job_id,
+        workflow_run_id=workflow_run_id,
+        workflow_status_path=Path(workflow_status),
         output_path=Path(receipt_path),
         context=context,
         max_wait_seconds=max_wait_seconds,
@@ -205,7 +209,7 @@ def bundle_runtime(
 def cleanup_qualification(
     *,
     run_id: str,
-    job_id: str,
+    workflow_status: Path | str,
     context: str,
     namespace: str,
     storage_prefix: str,
@@ -227,7 +231,7 @@ def cleanup_qualification(
 
     return run(
         run_id=run_id,
-        job_id=job_id,
+        workflow_status_path=Path(workflow_status),
         context=context,
         namespace=namespace,
         storage_prefix=storage_prefix,

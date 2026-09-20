@@ -571,7 +571,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(proof, "nre_image", NCORE_ACCEPTED_NRE_IMAGE)
     equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
     match(proof, "runtime_image_attestation_sha256", r"[0-9a-f]{64}")
-    equal(proof, "runtime_attestation_format", "npa_nurec_runtime_attestation_v3")
+    equal(proof, "runtime_attestation_format", "npa_nurec_runtime_attestation_v4")
     equal(proof, "runtime_attested_stages", ["reconstruct", "render"])
     equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
     equal(proof, "gpu_count", 1)
@@ -657,15 +657,18 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     validate_full_input_proof(conversion, proof)
     validate_selected_base_scan(payload)
     cleanup = record(payload, "cleanup")
-    equal(cleanup, "format", "npa_ncore_qualification_cleanup_v1")
+    equal(cleanup, "format", "npa_ncore_qualification_cleanup_v2")
     equal(cleanup, "status", "pass")
     for field in (
         "receipt_sha256",
         "build_receipt_sha256",
+        "workflow_status_sha256",
+        "managed_job_identities_sha256",
         "storage_inventory_sha256",
     ):
         match(cleanup, field, r"[0-9a-f]{64}")
     count(cleanup, "storage_objects", 1)
+    count(cleanup, "managed_jobs", 4)
     equal(cleanup, "active_job_pods", 0)
     equal(cleanup, "jobs_terminal_or_absent", True)
     equal(cleanup, "cancel_before_destroy", True)
