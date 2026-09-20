@@ -13,7 +13,7 @@ physical-correctness, or critical-defect certificate.
 | CPU | Real frame normalization, request construction, parsing, and report validation |
 | GPU | Not applicable; no local model is served |
 | Hosted API | Six real image attempts: three fixed primary/secondary pairs whose payloads differed only in `model` |
-| Smoke/unit result | 229 affected checks passed and 2 skipped on Python 3.12 |
+| Smoke/unit result | 229 collected: 227 passed and 2 skipped on Python 3.12 |
 | Guardrails | 3,881 passed |
 | Full workload result | All six responses were complete; both judges matched all three frozen labels; observed escalation was 0/3 |
 | Objective controls | Same-model pre-transport rejection, exact request equivalence, frame mismatch rejection, provider-error retention, fail-closed disagreement |
