@@ -72,7 +72,7 @@ RUN --mount=type=bind,from=bootstrap-ca,source=/etc/ssl/certs/ca-certificates.cr
     done; \
     LC_ALL=C sort -o "${verified_archives}" "${verified_archives}"; \
     cmp "${expected_archives}" "${verified_archives}"; \
-    apt-get install -y --no-install-recommends --allow-downgrades --no-download "${archive_dir}"/*.deb; \
+    apt-get install -y --no-install-recommends --allow-downgrades --no-download -o "Dir::Cache::archives=${archive_dir}" "${archive_dir}"/*.deb; \
     while IFS="$(printf '\t')" read -r kind name version architecture archive_sha archive_size archive_path source source_version relationship copyright_sha copyright_path annotation; do \
       test "${kind}" = binary || continue; \
       test "$(dpkg-query -W -f='${Version}' "${name}")" = "${version}"; \

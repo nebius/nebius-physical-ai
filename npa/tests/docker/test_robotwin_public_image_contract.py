@@ -22,7 +22,7 @@ ARCHIVE_DOWNLOAD = (
 )
 ARCHIVE_INSTALL = (
     "apt-get install -y --no-install-recommends --allow-downgrades "
-    '--no-download "${archive_dir}"/*.deb;'
+    '--no-download -o "Dir::Cache::archives=${archive_dir}" "${archive_dir}"/*.deb;'
 )
 LOCK_ONLY_SANITY_GUARD = 'test "$(uniq "${expected_archives}" | wc -l)" = 75;'
 ARCHIVE_PREINSTALL_GUARDS = (
