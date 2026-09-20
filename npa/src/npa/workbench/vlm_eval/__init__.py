@@ -1362,6 +1362,22 @@ def _comparison_request_evidence(
     )
 
 
+def _comparison_response_retainer(
+    observed: list[_VlmBackendResponse],
+    sink: Callable[[_VlmBackendResponse], None] | None,
+) -> Callable[[_VlmBackendResponse], None]:
+    def retain(response: _VlmBackendResponse) -> None:
+        observed.append(response)
+        try:
+            _retain_response(response, sink)
+        except VlmEvalError as exc:
+            raise _VlmEvidenceRetentionError(
+                "provider response evidence could not be retained"
+            ) from exc
+
+    return retain
+
+
 def _post_comparison_request(
     *,
     url: str,
@@ -1373,15 +1389,7 @@ def _post_comparison_request(
     started_at = time.monotonic()
     captured: list[_VlmBackendResponse] = []
     observed: list[_VlmBackendResponse] = []
-
-    def retain(response: _VlmBackendResponse) -> None:
-        observed.append(response)
-        try:
-            _retain_response(response, response_sink)
-        except VlmEvalError as exc:
-            raise _VlmEvidenceRetentionError(
-                "provider response evidence could not be retained"
-            ) from exc
+    retain = _comparison_response_retainer(observed, response_sink)
 
     try:
         raw_response = _post_with_readiness_retry(
