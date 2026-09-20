@@ -302,6 +302,13 @@ Hard-gate capability:
   nonlinear drift and malformed-input controls must fail, with zero false
   positives and zero false negatives.
 
+Also exercised in the same live-qualified smoke:
+
+- `decoded_plot_validation`: decode every native `--save_plot` PNG and derived
+  review copy, require at least 800x600 pixels and non-uniform RGB content, and
+  retain each hash in the capture manifest. This is an auxiliary reviewability
+  check, not a trajectory-quality metric.
+
 The same smoke evaluates the pinned upstream KITTI 00 ground truth, ORB, and
 S-PTAM examples. Treat those as representative compatibility and reviewability
 evidence, not as threshold calibration or proof of navigation success. Retain
@@ -313,7 +320,11 @@ review was invalidated when exact-prompt ORB/S-PTAM cross-swaps false-passed;
 retain that failure. The corrected smoke preserves each native map and emits a
 hash-linked review copy with visible estimate/reference identity. Require
 identify-first cross-swap calibration with zero false positives before scoring
-those final plots. The operator-built image remains unpublished. Before
+those final plots. In `npa.evo.capture-manifest.v1`, unsuffixed
+`kitti_*_ape` keys identify the labeled review copies and `*_native` keys
+identify untouched evo maps; follow each review entry's `source_path` and
+`source_sha256` instead of guessing from the suffix. The operator-built image
+remains unpublished. Before
 registry admission, require independent review of the candidate commit and
 retained evidence; a later conveyance still needs an explicit GPL compliance
 decision.

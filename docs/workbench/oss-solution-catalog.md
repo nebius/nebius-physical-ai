@@ -55,7 +55,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
-| evo | `evo_ape` / `evo_rpe` / `evo_traj` | **live-qualified candidate** | Digest-pinned CPU Kubernetes execution passed 2 positive and 2 negative controls, decoded 10 native result archives, preserved native KITTI plots plus hash-linked labeled review copies, and passed identify-first hosted-VLM review after exact-prompt cross-swap controls; registry admission remains a maintainer decision |
+| evo | `evo_ape` / `evo_rpe` / `evo_traj` | **live-qualified candidate** | `evo-live-20260920t0111z`: digest-pinned CPU Kubernetes execution passed 2 positive and 2 negative controls, decoded 10 native result archives, preserved native KITTI plots plus hash-linked labeled review copies, and passed identify-first hosted-VLM review after exact-prompt cross-swap controls; registry admission remains a maintainer decision |
 | Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
 | Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
 | Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
@@ -172,6 +172,7 @@ failures, and current merge blockers without live infrastructure identifiers.
 | `evo_rpe` | live-qualified candidate | Native relative pose error at a declared frame or distance delta, with the complete finite error distribution retained |
 | `evo_traj` | live-qualified candidate | Native matched trajectory plots for the pinned KITTI ground truth, ORB, and S-PTAM examples |
 | `trajectory_acceptance_controls` | live-qualified candidate | The digest-pinned Kubernetes run accepted both 120-pose low-error controls and rejected nonlinear drift plus malformed input with zero false positives/negatives |
+| `decoded_plot_validation` | live-qualified auxiliary check | Every native `--save_plot` PNG and derived review copy is decoded, dimension-checked, checked for non-uniform pixels, and retained by hash; this validates reviewability, not trajectory accuracy |
 
 The integration gate is about reliable evaluation, not improving the upstream
 ORB or S-PTAM estimates. Representative KITTI metrics are reported as observed
@@ -189,6 +190,12 @@ restricted-payload scan found no hits across 22,826 image entries; complete
 archive-byte accounting is not claimed. This remains an operator-built
 candidate, not a published NPA image; registry admission and future conveyance
 remain maintainer decisions.
+
+In `npa.evo.capture-manifest.v1`, the unsuffixed `kitti_*_ape` entries are the
+identity-labeled review copies, while the corresponding `*_native` entries are
+evo's untouched maps. Review entries link back through `source_path` and
+`source_sha256`; consumers must follow those fields rather than infer provenance
+from the key suffix.
 
 ### Open Dreamer (world model, 2-GPU minimum)
 
