@@ -2063,15 +2063,6 @@ def inert_installed_image(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> di
     )
 
 
-def _inert_installer_identity(*_) -> dict:
-    return {
-        "sha256": "0" * 64,
-        "members": {"inventory_sha256": "0" * 64},
-        "source_revision": "0" * 40,
-        "publisher": {"verified_statement_sha256": "0" * 64},
-    }
-
-
 def test_installed_byte_proof_binds_archive_wheels_and_inventories(
     inert_installed_image: dict,
 ) -> None:
@@ -2450,14 +2441,13 @@ def test_deterministic_installer_refuses_unmodeled_entrypoints(declaration) -> N
 
 def test_runtime_installer_metadata_stays_out_of_neutral_build_inputs() -> None:
     manifest = VERIFIER._source_manifest(IMAGE_ROOT / "source-manifest.json")
-    installer = manifest["build_installer"]
-    assert installer["version"] == "26.2.1"
-    assert installer["members"]["count"] == 476
-    assert len(installer["members"]["pe_launchers"]) == 6
-    assert installer["members"]["notice_files"] == 42
-    assert (
-        "neutral-image build-input closure" in installer["members"]["notice_delivery"]
+    runtime_lock = json.loads(
+        (IMAGE_ROOT / "runtime-requirements.lock").read_text(encoding="utf-8")
     )
+    installer = runtime_lock["runtime_fetch"]["installer"]
+    assert installer["version"] == "26.2.1"
+    assert installer["filename"] == "pip-26.2.1-py3-none-any.whl"
+    assert "build_installer" not in manifest
     expected = VERIFIER._expected_build_input_objects({"packages": []}, manifest)
     assert expected == {
         "debian",
@@ -2465,15 +2455,10 @@ def test_runtime_installer_metadata_stays_out_of_neutral_build_inputs() -> None:
         "source/robomimic.tar",
     }
     assert "tools" not in expected
-    assert installer["path"] not in expected
-    for key, value in (
-        ("version", "unknown"),
-        ("sha256", "0" * 64),
-        ("source_revision", "0" * 40),
-        ("parent_qualification", "PASS"),
-    ):
+    assert installer["filename"] not in expected
+    for key, value in (("version", "unknown"), ("sha256", "0" * 64)):
         with pytest.raises(VERIFIER.VerificationError):
-            VERIFIER._checked_installer({**installer, key: value})
+            VERIFIER._checked_runtime_installer({**installer, key: value})
 
 
 @pytest.mark.parametrize("raw", [b"", b"harmless incomplete archive"])

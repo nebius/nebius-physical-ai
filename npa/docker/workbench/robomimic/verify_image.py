@@ -37,7 +37,7 @@ SOURCE_LICENSE_SHA256 = (
     "7cdbfab482b23a4d925d59ff169ab0bc5f8c97ceb0db79f9fd5bf46ef8aa1556"
 )
 SOURCE_MANIFEST_SHA256 = (
-    "559390f6f7c1ecf492d3509d72979933e8a1a3cc7c008232651d7e4337f142fd"
+    "3ca2c54cc61080c7548a598bfb5184f278d4178635b375ab623e5f1f7429cd69"
 )
 SOURCE_TREE_SHA1 = "4c8ebe35dbef16126dadf59cf8b771b9203753ab"
 SOURCE_ARCHIVE_SHA256 = (
@@ -542,32 +542,24 @@ def _checked_source_manifest(value: dict[str, Any]) -> dict[str, Any]:
             "lfs": False,
         },
     }
-    if {
-        key: item for key, item in value.items() if key != "build_installer"
-    } != expected:
+    if value != expected:
         raise VerificationError("source manifest does not match the reviewed closure")
-    _checked_installer(value.get("build_installer"))
     return value
 
 
-def _checked_installer(value: Any) -> dict:
+def _checked_runtime_installer(value: Any) -> dict[str, str | int]:
     if (
         not isinstance(value, dict)
+        or set(value) != {"name", "version", "filename", "source", "size", "sha256"}
         or value.get("name") != "pip"
         or value.get("version") != "26.2.1"
-        or value.get("path") != "tools/pip-26.2.1-py3-none-any.whl"
+        or value.get("filename") != "pip-26.2.1-py3-none-any.whl"
         or value.get("size") != INSTALLER_WHEEL_SIZE
         or value.get("sha256") != INSTALLER_WHEEL_SHA256
-        or value.get("source_revision") != "634a6ec1a5d9dcc2433571cdb2f4c58a4bb29caf"
     ):
-        raise VerificationError("unsupported build installer identity")
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    if hashlib.sha256(encoded).hexdigest() != (
-        "5b00e5ffc288f1337991a5ea8d3563dbd6b1458203cd16eb7b81ba5899740bda"
-    ):
-        raise VerificationError("build installer metadata mismatch")
-    _checked_https_url(value.get("url"), host="files.pythonhosted.org")
-    return value
+        raise VerificationError("unsupported runtime installer identity")
+    _checked_https_url(value["source"], host="files.pythonhosted.org")
+    return dict(value)
 
 
 def _source_manifest(path: Path) -> dict[str, Any]:
@@ -1045,8 +1037,8 @@ def _checked_installer_bytes(raw: bytes) -> None:
         raise VerificationError("build installer bytes mismatch")
 
 
-def _verified_installer(input_root: Path, manifest: dict) -> dict:
-    installer = _runtime_installer_metadata(manifest)
+def _verified_installer(input_root: Path, runtime_lock_path: Path) -> dict:
+    installer = _runtime_installer_metadata(runtime_lock_path)
     path = input_root / installer["path"]
     raw = _immutable_bytes(path, INSTALLER_WHEEL_SIZE)
     _checked_installer_bytes(raw)
@@ -1055,10 +1047,15 @@ def _verified_installer(input_root: Path, manifest: dict) -> dict:
     return installer
 
 
-def _runtime_installer_metadata(manifest: dict[str, Any]) -> dict:
-    """Return installer provenance only for the explicit runtime transaction."""
+def _runtime_installer_metadata(runtime_lock_path: Path) -> dict[str, str | int]:
+    """Bind pip provenance only inside an explicit runtime-install transaction."""
 
-    return _checked_installer(manifest["build_installer"])
+    lock, _ = _runtime_lock_metadata(runtime_lock_path)
+    fetch = lock.get("runtime_fetch")
+    if not isinstance(fetch, dict):
+        raise VerificationError("runtime installer contract is absent")
+    installer = _checked_runtime_installer(fetch.get("installer"))
+    return {**installer, "path": f"tools/{installer['filename']}"}
 
 
 def _installer_environment(scratch: Path) -> dict[str, str]:
@@ -1170,8 +1167,8 @@ def run_build_installer(*, action: str, input_root: Path, wheels: Path) -> dict:
         VerificationError: Unsupported inputs, environment, output or operation.
     """
     _require_installer_platform()
-    manifest = _source_manifest(Path("/opt/npa/robomimic/source-manifest.json"))
-    installer = _verified_installer(input_root, manifest)
+    runtime_lock = Path("/opt/npa/robomimic/runtime-requirements.lock")
+    installer = _verified_installer(input_root, runtime_lock)
     if not os.statvfs(input_root).f_flag & os.ST_RDONLY:
         raise VerificationError("installer input mount must be read-only")
     lock = Path("/opt/npa/robomimic/baked-requirements.lock")
@@ -3951,39 +3948,45 @@ def _restore_owned_directory(path: Path, expected: tuple[int, int]) -> None:
         os.close(descriptor)
 
 
+def _snapshot_staging_directories(
+    snapshot: Path, expected: tuple[int, int]
+) -> list[tuple[Path, tuple[int, int]]]:
+    directories = [(snapshot, expected)]
+    for current, current_identity in directories:
+        descriptor = _open_owned_directory(current, current_identity)
+        try:
+            with os.scandir(descriptor) as entries:
+                for entry in entries:
+                    details = entry.stat(follow_symlinks=False)
+                    if stat.S_ISDIR(details.st_mode):
+                        child = current / entry.name
+                        directories.append((child, (details.st_dev, details.st_ino)))
+                    elif not (
+                        stat.S_ISREG(details.st_mode) or stat.S_ISLNK(details.st_mode)
+                    ):
+                        raise VerificationError(
+                            "runtime snapshot staging object is unsafe"
+                        )
+        finally:
+            os.close(descriptor)
+    return directories
+
+
+def _remove_snapshot_staging(snapshot: Path, expected: tuple[int, int]) -> None:
+    directories = _snapshot_staging_directories(snapshot, expected)
+    for directory_path, identity in reversed(directories):
+        _restore_owned_directory(directory_path, identity)
+    shutil.rmtree(snapshot)
+
+
 def _cleanup_snapshot_staging(snapshot: Path, expected: tuple[int, int]) -> None:
-    cleanup_failed = False
     try:
         try:
             snapshot.lstat()
         except FileNotFoundError:
             return
-        directories = [(snapshot, expected)]
-        for current, current_identity in directories:
-            descriptor = _open_owned_directory(current, current_identity)
-            try:
-                with os.scandir(descriptor) as entries:
-                    for entry in entries:
-                        details = entry.stat(follow_symlinks=False)
-                        if stat.S_ISDIR(details.st_mode):
-                            child = current / entry.name
-                            child_identity = (details.st_dev, details.st_ino)
-                            directories.append((child, child_identity))
-                        elif not (
-                            stat.S_ISREG(details.st_mode)
-                            or stat.S_ISLNK(details.st_mode)
-                        ):
-                            raise VerificationError(
-                                "runtime snapshot staging object is unsafe"
-                            )
-            finally:
-                os.close(descriptor)
-        for directory_path, identity in reversed(directories):
-            _restore_owned_directory(directory_path, identity)
-        shutil.rmtree(snapshot)
+        _remove_snapshot_staging(snapshot, expected)
     except (OSError, VerificationError):
-        cleanup_failed = True
-    if cleanup_failed:
         raise VerificationError("runtime snapshot cleanup failed") from None
 
 
