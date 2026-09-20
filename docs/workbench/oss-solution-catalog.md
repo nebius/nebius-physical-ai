@@ -90,14 +90,11 @@ CUDA/NVIDIA runtime, task/render asset, populated cache, checkpoint, credential,
 or output byte. It remains absent from the release manifest and public image
 table, and unqualified until byte, provenance, anonymous-pull, and live
 acceptance. Historical private r15 bytes are old-head evidence only.
-The trusted public workflow permits payload-free development staging, but still
-refuses promotion before a LIBERO build is qualified unless the
-separate image-qualification record supplies the private-stage complete-image
-inventory hash and OCI config digest. Its scanner binds every byte in each
-ordered uncompressed layer tar plus every canonical flattened-rootfs record,
-and requires the candidate to match both identities; finite payload signatures
-are only defense in depth. Image qualification does not acknowledge runtime
-terms for a customer.
+The trusted public workflow permits payload-free development publication after
+local image-byte/security gates. The local scan records the complete ordered
+layer and flattened-rootfs inventory; the pushed digest must match it and pass
+anonymous pull. Runtime qualification and customer acknowledgement remain
+separate requirements for execution and supported release promotion.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

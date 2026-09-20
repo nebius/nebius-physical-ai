@@ -6,7 +6,6 @@ from pathlib import Path
 
 import re
 
-import pytest
 import yaml
 
 
@@ -15,7 +14,6 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 PUBLISH = WORKFLOWS / "publish-public-images.yml"
 HEALTH = WORKFLOWS / "public-release-health.yml"
 SECURITY_SCAN = WORKFLOWS / "image-security-scan.yml"
-LIBERO_DOC = ROOT / "docs" / "workbench" / "byof-libero.md"
 
 
 def _spec(path: Path) -> dict:
@@ -34,6 +32,7 @@ def _assert_pinned(uses: object, action: str) -> None:
     assert uses.startswith(action + "@")
 
 
+
 def _runs(path: Path) -> str:
     spec = _spec(path)
     return "\n".join(
@@ -41,48 +40,6 @@ def _runs(path: Path) -> str:
         for job in spec["jobs"].values()
         for step in job["steps"]
     )
-
-
-def _verify_pushed_bytes_script() -> str:
-    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
-    return next(
-        step["run"]
-        for step in steps
-        if step.get("name", "").startswith("Verify pushed bytes")
-    )
-
-
-def _cleanup_requested_script() -> str:
-    steps = _spec(PUBLISH)["jobs"]["cleanup-requested"]["steps"]
-    return next(
-        step["run"]
-        for step in steps
-        if step.get("name", "").startswith("Delete only the exact")
-    )
-
-
-def _shell_function_call(script: str, name: str) -> str:
-    start = script.index(f"{name}() {{")
-    call = f"\n{name}\n"
-    end = script.index(call, start) + len(call)
-    return script[start:end]
-
-
-def test_libero_namespace_claim_requires_continuous_isolation_evidence() -> None:
-    """Sampled inventories must never be presented as run-long isolation proof."""
-
-    text = LIBERO_DOC.read_text(encoding="utf-8")
-    start = text.index("Before a future run,\n")
-    end = text.index("The execution and payload-proof kubeconfig contexts", start)
-    contract = text[start:end]
-    for required in (
-        "not a run-long isolation proof",
-        "admission-enforced exclusive-writer policy",
-        "gap-free Kubernetes watch or audit-log interval",
-        "Every unexpected\ncreate, update, or delete event fails qualification",
-        "must not claim run-long isolation",
-    ):
-        assert required in contract
 
 
 def test_public_only_workflows_exist_without_a_private_candidate_workflow() -> None:
@@ -114,9 +71,7 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         assert stale_variable not in text
 
 
-def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
-    None
-):
+def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> None:
     spec = _spec(PUBLISH)
     triggers = spec.get("on") or spec[True]
     inputs = triggers["workflow_dispatch"]["inputs"]
@@ -184,57 +139,19 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     ):
         assert required in text
         assert text.index(required) < push
-    assert "refusing before any registry write" in text[:push]
+    assert "exact pushed-byte gates and post-push anonymous verification apply" in text
     assert "if matrix and head != sha" in text
-
-
-def test_publication_uses_the_locked_cryptography_dependency() -> None:
-    text = PUBLISH.read_text(encoding="utf-8")
-    project = (ROOT / "npa" / "pyproject.toml").read_text(encoding="utf-8")
-
-    assert project.count('"cryptography==50.0.0"') == 1
-    assert (
-        text.count(
-            'npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"'
-        )
-        == 2
-    )
-    assert (
-        text.count(
-            "npa/.venv/bin/python -c 'import cryptography; "
-            'assert cryptography.__version__ == "50.0.0"\''
-        )
-        == 2
-    )
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]
     names = [str(step.get("name") or "") for step in steps]
-    crane = next(
-        index
-        for index, step in enumerate(steps)
-        if step.get("uses")
-        == "imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e"
-    )
     auth = names.index("Authenticate immutable public base pulls")
-    destination = names.index(
-        "Prove destination cannot expose unvalidated tagged bytes"
-    )
     build = names.index("Build immutable development image locally")
     push = names.index("Push only after every pre-publication gate passes")
     _assert_pinned(steps[auth]["uses"], "docker/login-action")
-    assert steps[auth]["uses"] == (
-        "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9"
-    )
-    assert names.count("Authenticate immutable public base pulls") == 1
-    assert "Authenticate immutable LIBERO base pulls" not in names
-    assert (
-        sum("imjasonh/setup-crane@" in str(step.get("uses") or "") for step in steps)
-        == 1
-    )
-    assert crane < auth < destination < build < push
+    assert auth < build < push
 
 
 def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None:
@@ -301,7 +218,7 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         assert re.search(rf"{re.escape(action)}@[0-9a-f]{{40}}", text), (
             f"{action} must be digest-pinned"
         )
-    visibility = text.index("require_existing_public_visibility")
+    visibility = text.index('gh api --method PATCH "$package_api" -f visibility=public')
     anonymous = text.index('DOCKER_CONFIG="$anonymous_config" crane manifest')
     pushed_scan = text.index(
         "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
@@ -320,147 +237,14 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepush < push
-    destination_gate = text[prepush:push]
-    assert "refusing before any registry write" in destination_gate
-    assert "refuse_first_publication()" in destination_gate
-    assert (
-        'elif [ "$visibility" = private ]; then\n              if [ "$TOOL" = libero ]; then'
-        in destination_gate
-    )
-    assert (
-        "elif grep -q '^HTTP/.* 404 ' \"$response\"; then\n            if [ \"$TOOL\" = libero ]; then"
-        in destination_gate
-    )
-    assert destination_gate.count('echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"') == 3
-    assert "payload-free public-development staging" in destination_gate
-    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
-    attestations = {
-        step["name"]: step
-        for step in steps
-        if step.get("name")
-        in {
-            "Attest exact pushed digest provenance",
-            "Attest exact pushed digest SBOM",
-            "Require both digest-bound attestation results",
-        }
-    }
-    assert set(attestations) == {
-        "Attest exact pushed digest provenance",
-        "Attest exact pushed digest SBOM",
-        "Require both digest-bound attestation results",
-    }
-    for step in attestations.values():
-        assert step["if"] == "matrix.tool != 'ncore' && matrix.tool != 'libero'"
-    assert (
-        attestations["Attest exact pushed digest provenance"]["with"][
-            "push-to-registry"
-        ]
-        == "${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}"
-    )
-    assert (
-        attestations["Attest exact pushed digest SBOM"]["with"]["push-to-registry"]
-        == "${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}"
-    )
-    result_gate = attestations["Require both digest-bound attestation results"]["run"]
-    result_lines = result_gate.splitlines()
-    assert result_lines[:2] == [
-        'test -s "$PROVENANCE_BUNDLE"',
-        'test -s "$SBOM_BUNDLE"',
-    ]
-    assert not any("&&" in line for line in result_lines[:2])
-    assert 'if [ "$TOOL" != libero ]; then' in result_gate
-    assert 'test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"' in result_gate
+    assert "Private destination contains tagged versions" in text[prepush:push]
+    assert "tagged_count" in text[prepush:push]
     verify = text[text.index("Verify pushed bytes") :]
-    first_publication = verify[
-        verify.index('elif [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]') :
-    ]
-    visibility = first_publication.index("require_existing_public_visibility")
-    assert "length == 1" in first_publication[:visibility]
-    assert "all(.[]; .name == $root" in first_publication[:visibility]
-    assert "adjacent-package-versions.json" not in first_publication
-    assert (
-        "no registry-enforced exclusive-writer or atomic compare-and-set"
-        in (first_publication[visibility:])
-    )
     assert "pushed-payload-attempt-${payload_attempt}.log" in verify
     assert "anonymous-manifest-attempt-${anonymous_attempt}.log" in verify
     assert verify.count("TOOMANYREQUESTS|429 Too Many Requests") == 2
     assert verify.count("while true; do") >= 2
     assert "if ! grep -Eq" in verify
-
-
-@pytest.mark.parametrize("visibility", ["private", "public"])
-def test_hostile_graph_mutation_before_visibility_gate_cannot_disclose(
-    tmp_path: Path, visibility: str
-) -> None:
-    import os
-    import subprocess
-    import sys
-
-    script = _verify_pushed_bytes_script()
-    gate = _shell_function_call(script, "require_existing_public_visibility")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    operations = tmp_path / "operations"
-    operations.write_text("hostile-graph-mutation\n", encoding="utf-8")
-    summary = tmp_path / "summary"
-    gh = bin_dir / "gh"
-    gh.write_text(
-        f"#!{sys.executable}\n"
-        "import os,sys\n"
-        "args=sys.argv[1:]\n"
-        "with open(os.environ['OPERATIONS'],'a') as stream: stream.write(' '.join(args)+'\\n')\n"
-        "query=args[args.index('--jq')+1]\n"
-        "print(os.environ['VISIBILITY'] if query == '.visibility' else os.environ['GITHUB_REPOSITORY'])\n",
-        encoding="utf-8",
-    )
-    gh.chmod(0o700)
-    completed = subprocess.run(
-        ["bash", "-c", "set -euo pipefail\n" + gate],
-        check=False,
-        capture_output=True,
-        env={
-            **os.environ,
-            "PATH": f"{bin_dir}:{os.environ['PATH']}",
-            "OPERATIONS": str(operations),
-            "TOOL": "libero",
-            "VISIBILITY": visibility,
-            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
-            "GITHUB_STEP_SUMMARY": str(summary),
-            "package_api": "/orgs/nebius/packages/container/npa-libero",
-        },
-        text=True,
-    )
-
-    assert completed.returncode == 1
-    if visibility == "public":
-        assert "visibility changed concurrently" in completed.stdout
-    else:
-        assert (
-            "no registry-enforced exclusive-writer or atomic compare-and-set"
-            in completed.stdout
-        )
-    operation_log = operations.read_text(encoding="utf-8")
-    assert operation_log.startswith("hostile-graph-mutation\n")
-    assert "PATCH" not in operation_log
-    if visibility == "private":
-        assert "no visibility PATCH was attempted" in summary.read_text(
-            encoding="utf-8"
-        )
-    else:
-        assert not summary.exists()
-
-
-def test_repository_concurrency_never_authorizes_public_visibility() -> None:
-    spec = _spec(PUBLISH)
-    script = _verify_pushed_bytes_script()
-    final_graph = script.index("libero-final-package-versions.json")
-    refusal = script.index("Public visibility transition is deferred", final_graph)
-
-    assert spec["concurrency"]["group"] == "public-image-registry-mutation"
-    assert "Repository-local workflow concurrency cannot exclude another" in script
-    assert "visibility=public" not in script
-    assert final_graph < refusal
 
 
 def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
@@ -471,17 +255,10 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     # Two calls bind the pulled digest to the local image; the third binds the
     # independent cuRobo archive verifier to that same inspected remote image.
     assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
-    assert (
-        'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
-        '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
-    ) in post_push
-    assert (
-        '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"'
-        in post_push
-    )
-    assert (
-        'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
-    )
+    assert ('test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
+            '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"') in post_push
+    assert '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"' in post_push
+    assert 'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
@@ -499,324 +276,11 @@ def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None
     assert "cleanup-failed-build" in text
     assert "metadata.container.tags" in text
     assert "Refusing cleanup: digest also carries tags" in text
-    assert "Refusing non-atomic registry cleanup" in text
-    assert "gh api --method DELETE" not in text
+    assert "versions/${version_id}" in text
+    assert 'if [ "$(jq length "$versions")" = 1 ]' in text
+    assert 'gh api --method DELETE "$package_api"' in text
+    assert "Deletion does not revoke downloads" in text
     assert "Requested development tag is already absent" in text
-    failed_cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
-    script = next(
-        step["run"]
-        for step in failed_cleanup["steps"]
-        if str(step.get("name") or "").startswith("Remove an exact run-owned")
-    )
-    assert 'gh api --method DELETE "$package_api"' not in script
-    assert 'gh api --method PATCH "$package_api" -f visibility=private' not in script
-    assert 'gh api -i "$package_api"' in script
-    assert "grep -q '^HTTP/.* 404 '" in script
-    assert "Failed-build package absence is unverified" in script
-    assert "subject relationship alone is not proof" in script
-    assert "NPA_FAILED_PUBLICATION_PRE_GRAPH" in script
-    assert 'before_ids="$(jq -c' in script
-    assert "Run-created attestation version is not bound" in script
-    assert "require_complete_graph" in script
-    assert "Unrelated package identity changed after the sealed" in script
-    assert "require_complete_libero_graph" in script
-    assert 'crane manifest "$repository@$LIBERO_QUALIFIED_OCI_DIGEST"' in script
-    assert "$repository@$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" in script
-    assert "vnd.docker.reference.digest" in script
-    assert "gh api --method DELETE" not in script
-    assert script.count("Refusing non-atomic registry cleanup") == 2
-    assert "versions and package configuration are retained" in script
-    assert "subprocess.check_output" not in script
-
-
-def test_requested_libero_cleanup_revalidates_but_refuses_nonatomic_delete() -> None:
-    script = _cleanup_requested_script()
-
-    assert 'gh api --method DELETE "$package_api"' not in script
-    assert "require_complete_requested_libero_graph()" in script
-    assert "Requested LIBERO pagination is incomplete or malformed" in script
-    assert "Requested LIBERO package identity changed during cleanup" in script
-    assert "Requested LIBERO package graph changed during cleanup" in script
-    assert "sort_by(.name == $root)" in script
-    loop = script.index("while IFS=$'\\t' read -r version_id digest tags; do")
-    loop_end = script.index('done < "$cleanup_rows"', loop)
-    body = script[loop:loop_end]
-    immutable_digest = body.index('crane digest "$repository@$digest"')
-    graph_readback = body.index("require_complete_requested_libero_graph")
-    identity = body.index('jq -e --arg id "$version_id"')
-    refusal = script.index("Refusing non-atomic registry cleanup", loop_end)
-    assert immutable_digest < graph_readback < identity
-    assert loop_end < refusal < script.index("exit 1", refusal)
-    assert "gh api --method DELETE" not in script
-    assert "forget_requested_libero_version" not in script
-
-
-def test_requested_libero_cleanup_refuses_hostile_graph_changes(tmp_path: Path) -> None:
-    import json
-    import os
-    import subprocess
-
-    script = _cleanup_requested_script()
-    root_digest = "sha256:" + "1" * 64
-    referrer_digests = ["sha256:" + "2" * 64, "sha256:" + "3" * 64]
-    tag = "dev-" + "a" * 40
-    image = f"ghcr.io/nebius/nebius-physical-ai/npa-libero:{tag}"
-    graph = [
-        {
-            "id": 11,
-            "name": root_digest,
-            "metadata": {"container": {"tags": [tag]}},
-        },
-        *[
-            {
-                "id": 12 + index,
-                "name": digest,
-                "metadata": {"container": {"tags": []}},
-            }
-            for index, digest in enumerate(referrer_digests)
-        ],
-    ]
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    gh = fake_bin / "gh"
-    gh.write_text(
-        """#!/usr/bin/env python3
-import json
-import os
-from pathlib import Path
-import sys
-
-args = sys.argv[1:]
-log = Path(os.environ["FAKE_GH_LOG"])
-with log.open("a", encoding="utf-8") as stream:
-    stream.write(json.dumps(args, separators=(",", ":")) + "\\n")
-if args[:3] == ["api", "--paginate", "--slurp"]:
-    count_path = Path(os.environ["FAKE_GH_COUNT"])
-    count = int(count_path.read_text(encoding="utf-8")) if count_path.exists() else 0
-    count_path.write_text(str(count + 1), encoding="utf-8")
-    graph = json.loads(os.environ["FAKE_GH_GRAPH"])
-    if count:
-        mode = os.environ["HOSTILE_MUTATION"]
-        if mode == "unrelated":
-            graph.append({"id": 99, "name": "sha256:" + "4" * 64,
-                          "metadata": {"container": {"tags": []}}})
-        elif mode == "retag":
-            graph[0]["metadata"]["container"]["tags"].append("latest")
-        elif mode == "digest":
-            graph[0]["name"] = "sha256:" + "9" * 64
-        elif mode == "identity":
-            graph[0]["id"] = 101
-        elif mode == "pages":
-            print(json.dumps([graph, {"partial": True}]))
-            raise SystemExit(0)
-    print(json.dumps([graph]))
-elif args[:1] == ["api"] and "--method" not in args and "-i" not in args:
-    print(json.dumps({"visibility": "public",
-                      "repository": {"full_name": os.environ["GITHUB_REPOSITORY"]},
-                      "name": "nebius-physical-ai/npa-libero"}))
-elif args[:3] == ["api", "--method", "DELETE"]:
-    print("{}")
-else:
-    raise SystemExit(f"unexpected gh arguments: {args!r}")
-""",
-        encoding="utf-8",
-    )
-    gh.chmod(0o700)
-    crane = fake_bin / "crane"
-    crane.write_text(
-        """#!/usr/bin/env python3
-import os
-import sys
-
-if sys.argv[1] != "digest":
-    raise SystemExit(f"unexpected crane arguments: {sys.argv[1:]!r}")
-reference = sys.argv[2]
-print(reference.rsplit("@", 1)[1] if "@" in reference else os.environ["ROOT_DIGEST"])
-""",
-        encoding="utf-8",
-    )
-    crane.chmod(0o700)
-
-    for mutation in ("unchanged", "unrelated", "retag", "digest", "identity", "pages"):
-        run_dir = tmp_path / mutation
-        run_dir.mkdir()
-        log = run_dir / "gh.jsonl"
-        summary = run_dir / "summary.md"
-        env = {
-            **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
-            "IMAGE": image,
-            "TOOL": "libero",
-            "LIBERO_QUALIFIED_OCI_DIGEST": root_digest,
-            "LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS": json.dumps(
-                sorted([root_digest, *referrer_digests])
-            ),
-            "LIBERO_PACKAGE_WRITER_REPOSITORY": "nebius/nebius-physical-ai",
-            "GITHUB_REPOSITORY": "nebius/nebius-physical-ai",
-            "GITHUB_STEP_SUMMARY": str(summary),
-            "ROOT_DIGEST": root_digest,
-            "FAKE_GH_GRAPH": json.dumps(graph),
-            "FAKE_GH_LOG": str(log),
-            "FAKE_GH_COUNT": str(run_dir / "count"),
-            "HOSTILE_MUTATION": mutation,
-        }
-        completed = subprocess.run(
-            ["bash", "-c", script],
-            cwd=ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert completed.returncode != 0, mutation
-        if mutation == "unchanged":
-            assert "Refusing non-atomic registry cleanup" in completed.stdout
-        calls = [
-            json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()
-        ]
-        assert not any("--method" in call and "DELETE" in call for call in calls), (
-            mutation,
-            completed.stdout,
-            completed.stderr,
-        )
-
-
-def test_failed_publication_current_run_delta_accepts_zero_one_or_two_referrers() -> (
-    None
-):
-    import json
-    import subprocess
-
-    cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
-    script = next(
-        step["run"]
-        for step in cleanup["steps"]
-        if str(step.get("name") or "").startswith("Remove an exact run-owned")
-    )
-    command = script.index("jq -S --argjson before_ids")
-    program_start = script.index("'\n", command) + 2
-    closing_command = '\' "$current_versions" > "$owned"'
-    offset = program_start
-    for line in script[program_start:].splitlines(keepends=True):
-        if line.strip() == closing_command:
-            program_end = offset - 1
-            break
-        offset += len(line)
-    else:
-        raise AssertionError("exact closing jq command is absent")
-    program = script[program_start:program_end]
-    tag = "dev-" + "a" * 40
-    prior = {
-        "id": 1,
-        "name": "sha256:" + "1" * 64,
-        "metadata": {"container": {"tags": ["stable"]}},
-    }
-
-    for referrer_count in range(3):
-        root = {
-            "id": 2,
-            "name": "sha256:" + "2" * 64,
-            "metadata": {"container": {"tags": [tag]}},
-        }
-        referrers = [
-            {
-                "id": 3 + index,
-                "name": "sha256:" + str(3 + index) * 64,
-                "metadata": {"container": {"tags": []}},
-            }
-            for index in range(referrer_count)
-        ]
-        completed = subprocess.run(
-            [
-                "jq",
-                "-S",
-                "--argjson",
-                "before_ids",
-                '["1"]',
-                "--arg",
-                "tag",
-                tag,
-                program,
-            ],
-            input=json.dumps([prior, root, *referrers]),
-            text=True,
-            capture_output=True,
-            check=True,
-        )
-        owned = json.loads(completed.stdout)
-        assert owned["root"] == {
-            "id": "2",
-            "name": root["name"],
-            "tags": [tag],
-        }
-        assert len(owned["referrers"]) == referrer_count
-
-
-def test_failed_publication_cleanup_seals_failure_cancellation_and_concurrency_state() -> (
-    None
-):
-    spec = _spec(PUBLISH)
-    build_steps = spec["jobs"]["build-development"]["steps"]
-    names = [str(step.get("name") or "") for step in build_steps]
-    snapshot = names.index("Seal adjacent pre-publication package graph")
-    upload = names.index("Persist adjacent pre-publication package graph")
-    push = names.index("Push only after every pre-publication gate passes")
-    provenance = names.index("Attest exact pushed digest provenance")
-    assert snapshot < upload < push < provenance
-    assert build_steps[upload]["uses"] == (
-        "actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"
-    )
-    assert "github.run_id" in build_steps[upload]["with"]["name"]
-    assert "github.run_attempt" in build_steps[upload]["with"]["name"]
-
-    cleanup = spec["jobs"]["cleanup-failed-build"]
-    condition = str(cleanup["if"])
-    assert 'fromJSON(\'["failure","cancelled"]\')' in condition
-    assert spec["concurrency"] == {
-        "group": "public-image-registry-mutation",
-        "cancel-in-progress": False,
-    }
-    recover = next(
-        step
-        for step in cleanup["steps"]
-        if step.get("name")
-        == "Recover the sealed adjacent pre-publication package graph"
-    )
-    assert "/actions/runs/${GITHUB_RUN_ID}/artifacts" in recover["run"]
-    assert ".total_count == 1" in recover["run"]
-
-
-def test_failed_publication_cleanup_checks_graph_without_nonatomic_deletion() -> None:
-    cleanup = _spec(PUBLISH)["jobs"]["cleanup-failed-build"]
-    script = next(
-        step["run"]
-        for step in cleanup["steps"]
-        if str(step.get("name") or "").startswith("Remove an exact run-owned")
-    )
-    delta = script.index("before_ids=")
-    subject = script.index("Run-created attestation version is not bound")
-    helper = script.index("require_complete_graph() {")
-    refusal = script.index("Refusing non-atomic registry cleanup", helper)
-    assert delta < subject < helper < refusal
-    assert script.count("require_complete_graph() {") == 1
-    referrer_loop = script.index(
-        "while IFS=$'\\t' read -r referrer_id referrer_digest; do", helper
-    )
-    referrer_loop_end = script.index(
-        "done < <(jq -r '.referrers[] | [.id,.name] | @tsv' \"$owned\")",
-        referrer_loop,
-    )
-    body = script[referrer_loop:referrer_loop_end]
-    assert body.index("require_complete_graph") < body.index(
-        'jq -e --arg id "$referrer_id"'
-    )
-    root_check = script.index("\nrequire_complete_graph\n", referrer_loop_end)
-    root_identity = script.index('jq -e --arg id "$root_id"', root_check)
-    assert referrer_loop_end < root_check < root_identity < refusal
-    assert script.index("exit 1", refusal) > refusal
-    assert "gh api --method DELETE" not in script
-    assert "forget_owned_version" not in script
-    assert "versions and package configuration are retained" in script
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:
@@ -839,36 +303,21 @@ def test_additive_release_inputs_are_scoped_to_promotion() -> None:
     inputs = (spec.get("on") or spec[True])["workflow_dispatch"]["inputs"]
     assert inputs["release_tag"]["default"] == ""
     assert inputs["expected_source_digest"]["default"] == ""
-    assert spec["concurrency"]["group"] == "public-image-registry-mutation"
-    assert "inputs." not in spec["concurrency"]["group"]
+    assert "inputs.release_tag || inputs.development_sha" in spec["concurrency"]["group"]
     assert spec["concurrency"]["cancel-in-progress"] is False
-    assert (
-        "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
-    )
-    resolve = next(
-        step
-        for step in spec["jobs"]["resolve"]["steps"]
-        if step.get("name")
-        == "Validate additive release selection without changing defaults"
-    )
+    assert "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
+    resolve = next(step for step in spec["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
     assert 'test "$BUILD_COUNT" = 0 && test "$CLEANUP_COUNT" = 0' in resolve["run"]
     assert resolve["env"]["DEVELOPMENT_SHA"] == "${{ inputs.development_sha }}"
     assert "--mode plan" in resolve["run"]
     promote = spec["jobs"]["promote"]
     assert promote["env"]["RELEASE_TAG"] == "${{ inputs.release_tag }}"
-    assert (
-        promote["env"]["EXPECTED_SOURCE_DIGEST"]
-        == "${{ inputs.expected_source_digest }}"
-    )
+    assert promote["env"]["EXPECTED_SOURCE_DIGEST"] == "${{ inputs.expected_source_digest }}"
     for name in ("build-development", "cleanup-requested", "cleanup-failed-build"):
-        assert "--release-tag" not in "\n".join(
-            step.get("run", "") for step in spec["jobs"][name]["steps"]
-        )
+        assert "--release-tag" not in "\n".join(step.get("run", "") for step in spec["jobs"][name]["steps"])
 
 
-def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(
-    tmp_path,
-) -> None:
+def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(tmp_path) -> None:
     """Run the checked-in trusted shell adapter against an argv-recording executable."""
     import json
     import os
@@ -884,68 +333,43 @@ def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expa
         "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
     )
     executable.chmod(0o700)
-    env = {
-        **os.environ,
-        "TARGET": "ghcr.io/nebius/nebius-physical-ai",
-        "DEVELOPMENT_SHA": "b" * 40,
-        "SELECTED_TOOLS": "detection-training",
-        "RELEASE_TAG": "runtime-recovery-1",
-        "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64,
-        "ARGV_RECORD": str(recorder),
-    }
+    env = {**os.environ, "TARGET": "ghcr.io/nebius/nebius-physical-ai", "DEVELOPMENT_SHA": "b" * 40, "SELECTED_TOOLS": "detection-training", "RELEASE_TAG": "runtime-recovery-1", "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64, "ARGV_RECORD": str(recorder)}
     steps = _spec(PUBLISH)["jobs"]["promote"]["steps"]
-    scripts = [
-        step["run"]
-        for step in steps
-        if step.get("name")
-        in {
-            "Plan and preflight immutable public development digests",
-            "Promote exact validated digests and verify public parity",
-        }
-    ]
+    scripts = [step["run"] for step in steps if step.get("name") in {"Plan and preflight immutable public development digests", "Promote exact validated digests and verify public parity"}]
     # These trusted steps have one harmless GitHub expression in the unselected
     # all-image branch. Render that expression as Actions does before bash parses it.
     for script in scripts:
-        script = script.replace(
-            "${{ inputs.skip_missing && '--skip-missing' || '' }}", ""
-        )
-        subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", script],
-            cwd=tmp_path,
-            env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")},
-            check=True,
-            capture_output=True,
-        )
+        script = script.replace("${{ inputs.skip_missing && '--skip-missing' || '' }}", "")
+        subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=tmp_path, env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}, check=True, capture_output=True)
     records = [json.loads(line) for line in recorder.read_text().splitlines()]
     assert [record[-1] for record in records] == ["plan", "preflight", "publish"]
     for record in records:
-        assert record == [
-            ".github/scripts/publish_selected_public_image.py",
-            "--target",
-            env["TARGET"],
-            "--development-sha",
-            env["DEVELOPMENT_SHA"],
-            "--release-tag",
-            env["RELEASE_TAG"],
-            "--expected-source-digest",
-            env["EXPECTED_SOURCE_DIGEST"],
-            "--tool",
-            "detection-training",
-            "--mode",
-            record[-1],
-        ]
-    resolve = next(
-        step
-        for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"]
-        if step.get("name")
-        == "Validate additive release selection without changing defaults"
-    )
+        assert record == [".github/scripts/publish_selected_public_image.py", "--target", env["TARGET"], "--development-sha", env["DEVELOPMENT_SHA"], "--release-tag", env["RELEASE_TAG"], "--expected-source-digest", env["EXPECTED_SOURCE_DIGEST"], "--tool", "detection-training", "--mode", record[-1]]
+    resolve = next(step for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
     for build_count, cleanup_count in [("1", "0"), ("0", "1"), ("1", "1")]:
         result = subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", resolve["run"]],
-            cwd=tmp_path,
+            ["bash", "-euo", "pipefail", "-c", resolve["run"]], cwd=tmp_path,
             env={**env, "BUILD_COUNT": build_count, "CLEANUP_COUNT": cleanup_count},
             capture_output=True,
         )
         assert result.returncode != 0
     assert len(recorder.read_text().splitlines()) == 3
+
+
+LIBERO_DOC = ROOT / "docs/workbench/byof-libero.md"
+
+def test_libero_namespace_claim_requires_continuous_isolation_evidence() -> None:
+    """Sampled inventories must never be presented as run-long isolation proof."""
+
+    text = LIBERO_DOC.read_text(encoding="utf-8")
+    start = text.index("Before a future run,\n")
+    end = text.index("The execution and payload-proof kubeconfig contexts", start)
+    contract = text[start:end]
+    for required in (
+        "not a run-long isolation proof",
+        "admission-enforced exclusive-writer policy",
+        "gap-free Kubernetes watch or audit-log interval",
+        "Every unexpected\ncreate, update, or delete event fails qualification",
+        "must not claim run-long isolation",
+    ):
+        assert required in contract

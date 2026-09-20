@@ -33,6 +33,10 @@ resources:
               capabilities:
                 drop: ["ALL"]
             volumeMounts:
+              - name: libero-storage-verification
+                mountPath: /opt/npa/libero/output-storage-authorization-public-key.b64
+                subPath: output-storage-authorization-public-key.b64
+                readOnly: true
               - name: libero-workspace
                 mountPath: /workspace
               - name: libero-tmp
@@ -42,6 +46,10 @@ resources:
               - name: libero-ssh
                 mountPath: /etc/ssh
         volumes:
+          - name: libero-storage-verification
+            configMap:
+              name: npa-byof-libero-storage-verification
+              defaultMode: 0444
           - name: libero-workspace
             emptyDir: {}
           - name: libero-tmp

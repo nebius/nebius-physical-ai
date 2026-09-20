@@ -61,34 +61,23 @@ materialization still refuses without the customer/run authorization. These
 controls prove identity and refusal; they do not accept terms for a customer.
 
 The candidate remains unvalidated and unreleased. The trusted public workflow
-has a payload-free development-staging path, but it is conditional: a current
-strict checked-in qualification record and complete local byte gates must first
-bind the exact development source revision, OCI graph, and scanner identities.
-An unqualified or missing record stops before any registry write; dispatch
-inputs cannot self-attest qualification. Once that prerequisite is met,
-staging may copy only the exact locally gated OCI graph into the official
-private package, without a public tag or visibility transition. The inventory
-binds every byte in each ordered uncompressed layer tar and the canonical
-flattened-rootfs records. The dedicated complete-byte/layer/exported-rootfs
-scanner requires equality before push. Both builds derive `SOURCE_DATE_EPOCH` from the exact source
-commit; the package layer removes APT/dpkg/account logs and normalizes the
-non-root account's shadow day to that epoch. It must also pass the
-SBOM/provenance/security gates, anonymous pull proof, and an exact-digest B200
-hard gate before any supported release or public catalog claim.
-LIBERO public disclosure, public tagging, and registry deletion remain fail-closed
-until the exact-digest live-B200 and registry-atomicity gates pass. No exact-digest
-live-B200 authorization path has been accepted, and
-the workflow has no registry-enforced exclusive-writer or atomic compare-and-set
-primitive for visibility changes or identity-and-tag-bound deletion. Repository
-workflow concurrency and repeated graph reads do not provide those guarantees.
-The ordinary publication preflight also refuses absent and private destinations
-before any registry write, rather than creating a private artifact in a path
-that must subsequently refuse publication.
+may build and publish the neutral bootstrap at the exact reviewed development
+SHA without customer credentials or runtime qualification. Its local scan
+establishes the ordered-layer and flattened-rootfs inventory from the built
+artifact, checks the independent rootfs export, pinned base provenance, exact
+Buildx config, SBOM, and all payload/security gates. The pushed digest must match
+that local inventory and config, pass the same payload scans, and support
+anonymous pull. These are image-byte gates; they do not authorize runtime fetch.
 
-Any qualified private state is retained. Requested and failed-build cleanup may
-validate identities and graph bytes, but explicitly refuse deletion and leave
-versions and package configuration intact. They do not claim public downloads
-can be revoked. Publication, public tagging, or deletion claims require a later
-exact-digest live-B200 authorization and implemented, independently evidenced
-registry-enforced atomic visibility/cleanup mechanisms. Source-only test results
-prove refusal behavior, not live publication capability or runtime validation.
+The control plane mounts its storage verification key at
+`/opt/npa/libero/output-storage-authorization-public-key.b64` as a root-owned
+mode-0444 file. The image contains no customer or storage trust root. Runtime
+verification rejects missing, writable, invalid, or customer-reused storage
+keys, and still requires the customer-signed authorization before materializing
+any runtime payload.
+
+The common trusted workflow retains exact run-owned development cleanup and
+refuses deletion of a digest that also carries another tag. Supported release
+promotion and public catalog validation remain quarantined until real
+exact-digest B200 capability evidence is accepted. Local source tests do not
+prove publication, anonymous pull, or GPU execution.

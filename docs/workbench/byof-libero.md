@@ -52,7 +52,7 @@ separate upstream-access inputs and never establish terms acknowledgement.
 | Boundary | Phase A contract |
 | --- | --- |
 | Source | `Lifelong-Robot-Learning/LIBERO@8f1084e3132a39270c3a13ebe37270a43ece2a01`, MIT. Source is absent from the image. An authorized runtime sparse-fetch retains only training/config/task-definition paths, verifies the source tree and license hash, and removes `.git`. `libero/libero/assets` is excluded. |
-| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, NPA verification material for transport/storage separation, and NPA-owned files. No customer key or private signing key enters the build, image, workflow, or repository. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
+| Baked runtime | The proposed public bytes are the exact linux/amd64 `python:3.10-slim-bookworm` manifest `sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496`, snapshot-pinned Debian bootstrap packages, NPA-owned bootstrap files and immutable runtime manifests. No customer key or private signing key enters the build, image, workflow, or repository. `debian-packages.lock` records every binary and corresponding source. Docker Official Images' immutable in-toto provenance independently binds the base to rootfs material `sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867`. The image contains no PyTorch, CUDA, cuDNN, NCCL, NVIDIA wheel, MuJoCo, robomimic, or robosuite byte. |
 | Weights | None are baked. Exact `google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e` files are runtime-only and Apache-2.0. |
 | Data and task inputs | No demonstration or task/render asset is baked. The selected official demonstration is runtime-only: `yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`, 508,779,600 bytes, SHA-256 `ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`, upstream-declared CC BY 4.0 with LIBERO attribution. The MIT BDDL and initial-state files are fetched only with the sparse source and verified by SHA-256. |
 | Runtime cache | `/workspace/.cache/npa/libero/<customer-run-manifest-scope-sha256>` is customer/run/manifest-addressed, atomically completed, sealed group-readable/non-writable, and separate from output. The bootstrap owner and execution UID are distinct, so fetched code cannot restore cache write bits. A shared lock and stable directory descriptor remain held through smoke/upload execution, with full inventory checks before and after. A cold population resolves all seven hash-bound official governing-terms sources after authorization and before the first cache mutation. The cache is never uploaded. Missing, denied, expired, invalid, wrong-customer/run, wrong-image, or wrong-manifest authorization refuses before cache or network effects. Runtime fetch changes delivery, not permission. |
@@ -98,46 +98,25 @@ storage endpoint after execution. Until that evidence exists, privacy,
 confidentiality, and no-egress claims remain unqualified and no fetched workload
 is considered publication-ready.
 
-Before any public byte is disclosed, a separately authorized private stage must
-first emit a canonical complete-image inventory. It binds every byte in each
-ordered uncompressed layer tar, the resulting flattened-rootfs path records,
-and the observed OCI config digest. The checked-in qualification record is only a
-descriptive, hash-bound candidate record; it is not an approval or trust boundary
-and cannot qualify its own identities. The current source-only branch has no
-publication transaction that verifies an external approval receipt. A later
-operator-controlled publication transaction must first verify an immutable,
-owner-only review receipt bound to the exact source SHA, OCI config/index/layers,
-rootfs inventory, reviewer identity, and expiry; an absent or mismatched receipt
-keeps LIBERO blocked and unvalidated. Any future trusted publication workflow
-must obtain qualified identities only from that verified receipt or qualification
-handoff; free-form dispatch values cannot create or widen qualification. Its
-pre-push scanner then requires complete image, config, exact Buildx metadata, and
-published-base provenance equality. Finite
-path and content signatures remain defense in depth, not the proof that
-arbitrary renamed, compiled, or subsequently whiteouted bytes are absent.
-Before LIBERO's first package-wide visibility change, the private destination
-must contain exactly the qualified untagged OCI graph and no unrelated version.
-The workflow still refuses the visibility change: repository workflow concurrency
-does not exclude other registry writers, so the current source-only
-implementation refuses before any visibility PATCH or first publication,
-including an absent or empty private destination. A retained private package is
-preserved, never deleted merely because its tags or OCI subjects match a
-candidate. This is an implementation boundary for the current branch, not a
-permanent eligibility requirement: a later customer-scoped transaction may
-proceed only after exact graph preflight and must fail closed on any observed
-concurrent drift. No public development digest, anonymous pull, or B200
-qualification is claimed here.
+The trusted public-development workflow builds the neutral image from the exact
+reviewed SHA. Its first local scan records a canonical complete-image inventory
+covering ordered uncompressed layer bytes and flattened-rootfs records, verifies
+the independent rootfs export and pinned base provenance, and runs the common
+SBOM, secret, license, and vulnerability gates. After publication the exact
+digest must reproduce the local image/config inventory and pass anonymous pull.
+Customer authorization and live workload qualification are not prerequisites
+for publishing these neutral bytes. Supported release promotion remains
+quarantined until the real exact-digest B200 workload passes.
 
-Requested and failed-build reconciliation may inspect package identity, graph,
-tags, and run-bound evidence, but it does not delete package versions or change
-visibility. Even an exact final graph read cannot exclude another writer adding
-a release tag before a version deletion. Without an atomic identity-and-tag
-deletion primitive, reconciliation exits with an explicit refusal and retains
-the versions and package configuration for operator recovery. Absence can be
-reported only from the existing bounded read-only checks. A failed or cancelled
-build remains failed; retained public bytes are not claimed revoked or cleaned.
-This source-only boundary is not authorization to publish, repair a registry,
-accept customer terms, or perform a live run.
+Storage verification uses a root-owned, mode-0444 control-plane mount at
+`/opt/npa/libero/output-storage-authorization-public-key.b64`. The profile mounts the `output-storage-authorization-public-key.b64` entry
+from the `npa-byof-libero-storage-verification` ConfigMap read-only using
+`subPath`; the control plane must create it before submission. Missing or
+writable key files refuse runtime execution. The neutral image bakes neither this key
+nor any customer key or acceptance record. The common publication workflow
+cleans only an exact owned development version and refuses a digest carrying
+additional tags. Public deletion does not revoke prior downloads.
+
 Both build paths derive `SOURCE_DATE_EPOCH` from that exact source commit so the
 identity comparison cannot depend on the wall-clock build time. The package
 transaction removes APT/dpkg/account logs and normalizes the non-root account's

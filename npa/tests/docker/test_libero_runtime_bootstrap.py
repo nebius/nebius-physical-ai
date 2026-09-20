@@ -3430,3 +3430,19 @@ def test_supervisor_evidence_rejects_group_writable_and_symlinked_files(
     link.symlink_to(evidence)
     with pytest.raises(module.BootstrapRefusal, match="unavailable"):
         module._immutable_supervisor_bytes(link, 1024)
+
+def test_runtime_storage_trust_root_requires_an_immutable_mounted_file(tmp_path, monkeypatch) -> None:
+    module = _load_module()
+    key = bytes(range(32))
+    mounted = tmp_path / 'output-storage-authorization-public-key.b64'
+    monkeypatch.setattr(module, 'OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY', mounted)
+    monkeypatch.setattr(module, 'OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_OWNER_UID', os.getuid())
+    monkeypatch.setenv('NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256', 'f' * 64)
+    with pytest.raises(module.BootstrapRefusal, match='unavailable'):
+        module._trusted_output_storage_authorization_public_key()
+    mounted.write_bytes(module.base64.b64encode(key))
+    mounted.chmod(0o444)
+    assert module._trusted_output_storage_authorization_public_key() == key
+    mounted.chmod(0o644)
+    with pytest.raises(module.BootstrapRefusal, match='mutable or invalid'):
+        module._trusted_output_storage_authorization_public_key()

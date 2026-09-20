@@ -250,13 +250,20 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
         temporary_mount,
         "/run",
         "/etc/ssh",
+        "/opt/npa/libero/output-storage-authorization-public-key.b64",
     }
     assert {volume["name"] for volume in pod_spec["volumes"]} == {
         "libero-workspace",
         "libero-tmp",
         "libero-run",
         "libero-ssh",
+        "libero-storage-verification",
     }
+    storage_mount = next(mount for mount in mounts if mount["name"] == "libero-storage-verification")
+    assert storage_mount["readOnly"] is True
+    assert storage_mount["subPath"] == "output-storage-authorization-public-key.b64"
+    storage_volume = next(volume for volume in pod_spec["volumes"] if volume["name"] == "libero-storage-verification")
+    assert storage_volume["configMap"]["defaultMode"] == 0o444
     assert "NVIDIA_VISIBLE_DEVICES" not in task["envs"]
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in task["envs"]
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256" not in task["envs"]

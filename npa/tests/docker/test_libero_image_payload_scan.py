@@ -1536,3 +1536,49 @@ def test_scanner_refuses_published_base_provenance_drift(tmp_path, mutation) -> 
     )
 
     assert any(item.kind == "independent_base_provenance" for item in findings)
+
+@pytest.mark.parametrize('hostile', [False, True])
+def test_record_inventory_runs_byte_gates_and_binds_followup_scan(tmp_path, hostile) -> None:
+    module = _load_module()
+    files = {'opt/npa/libero/readme': b'neutral\n'}
+    if hostile:
+        files['opt/cache/nvidia/cuda/lib/libcudart.so'] = b'restricted runtime payload'
+    layer = _layer(tmp_path / 'layer.tar', files, neutral_link=True)
+    config = _config(module)
+    config['rootfs'] = {'type': 'layers', 'diff_ids': ['sha256:' + hashlib.sha256(layer.read_bytes()).hexdigest()]}
+    config_bytes = json.dumps(config).encode()
+    config_name = hashlib.sha256(config_bytes).hexdigest() + '.json'
+    archive = _outer_archive(tmp_path / 'image.tar', {
+        config_name: config_bytes, 'layer/layer.tar': layer.read_bytes(),
+        'manifest.json': json.dumps([{'Config': config_name, 'RepoTags': [], 'Layers': ['layer/layer.tar']}]).encode(),
+    })
+    metadata = _metadata(module)
+    metadata['containerimage.config.digest'] = 'sha256:' + hashlib.sha256(config_bytes).hexdigest()
+    metadata_path = tmp_path / 'metadata.json'
+    metadata_path.write_text(json.dumps(metadata))
+    provenance, _ = _base_provenance(module)
+    provenance_path = tmp_path / 'provenance.json'
+    provenance_path.write_bytes(provenance)
+    result_path = tmp_path / 'report.json'
+    arguments = ['--docker-save', str(archive), '--exported-rootfs', str(layer),
+                 '--build-metadata', str(metadata_path), '--base-provenance', str(provenance_path),
+                 '--image-inventory-output', str(tmp_path / 'inventory.json'), '--output', str(result_path)]
+    assert module.main([*arguments, '--record-image-inventory']) == (1 if hostile else 0)
+    result = json.loads(result_path.read_text())
+    if hostile:
+        assert result['findings']
+    else:
+        followup = [*arguments,
+                    '--expected-image-inventory-sha256', result['image_inventory_sha256'],
+                    '--expected-config-digest', result['observed_config_digest'],
+                    '--expected-canonical-build-metadata-sha256', result['canonical_build_metadata_sha256'],
+                    '--expected-base-provenance-sha256', result['base_provenance_sha256']]
+        assert module.main(followup) == 0
+        followup[followup.index('--expected-image-inventory-sha256') + 1] = '0' * 64
+        assert module.main(followup) == 1
+
+
+def test_record_inventory_cannot_replace_a_remote_identity() -> None:
+    module = _load_module()
+    with pytest.raises(SystemExit):
+        module.main(['image@sha256:' + '1' * 64, '--record-image-inventory', '--build-metadata', 'metadata.json'])

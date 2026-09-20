@@ -1867,7 +1867,7 @@ def _validate_executable_profile_digest(expected_sha256: str) -> None:
 
 
 def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
-    """Load one immutable image-baked Ed25519 verification key."""
+    """Load one immutable root-owned Ed25519 verification key."""
 
     try:
         descriptor = os.open(

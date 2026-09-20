@@ -1,7 +1,6 @@
 FROM python:3.10-slim-bookworm@sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496
 
 ARG NPA_SOURCE_SHA
-ARG NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256
 ARG DEBIAN_SNAPSHOT=20260824T000000Z
 ARG SOURCE_DATE_EPOCH
 
@@ -13,7 +12,6 @@ LABEL org.opencontainers.image.title="NPA LIBERO neutral bootstrap" \
       org.nebius.npa.third-party-notices="/opt/npa/libero/THIRD_PARTY_NOTICES.md" \
       org.nebius.npa.redistribution="public-neutral-bootstrap" \
       org.nebius.npa.validation-status="quarantined-unvalidated" \
-      org.nebius.npa.output-storage-authorization-public-key-sha256="${NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256}" \
       org.nebius.npa.base-manifest="sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496" \
       org.nebius.npa.base-rootfs-material="sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
@@ -77,27 +75,8 @@ RUN set -eux; \
     chmod 0440 /etc/sudoers.d/npa-skypilot-ssh; \
     visudo -cf /etc/sudoers.d/npa-skypilot-ssh
 
-# The storage control plane uses a fixed public verification key. Customer
-# signer material remains owner-private and runtime-only; no customer key is
-# accepted by this build or written into an image layer.
-RUN --mount=type=secret,id=npa_libero_output_storage_authorization_public_key_b64,required=true \
-    set -eux; \
-    tr -d '\r\n' \
-      < /run/secrets/npa_libero_output_storage_authorization_public_key_b64 \
-      > /opt/npa/libero/output-storage-authorization-public-key.b64; \
-    base64 -d /opt/npa/libero/output-storage-authorization-public-key.b64 \
-      > /tmp/npa-libero-output-storage-authorization-public-key.raw; \
-    test "$(wc -c < /tmp/npa-libero-output-storage-authorization-public-key.raw)" = 32; \
-    test -n "${NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256}"; \
-    test "$(printf '%s' "${NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256}" | grep -Ec '^[0-9a-f]{64}$')" = 1; \
-    test "$(sha256sum /tmp/npa-libero-output-storage-authorization-public-key.raw | cut -d' ' -f1)" = \
-      "${NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256}"; \
-    test "$(base64 -w 0 < /tmp/npa-libero-output-storage-authorization-public-key.raw)" = \
-      "$(cat /opt/npa/libero/output-storage-authorization-public-key.b64)"; \
-    rm -f /tmp/npa-libero-output-storage-authorization-public-key.raw; \
-    chown root:root /opt/npa/libero/output-storage-authorization-public-key.b64; \
-    chmod 0444 /opt/npa/libero/output-storage-authorization-public-key.b64
-
+# The control plane mounts its root-owned read-only storage verification key at
+# runtime. Customer keys and acceptance records also remain runtime-only.
 COPY docker/workbench/libero/runtime-manifest.json /opt/npa/libero/runtime-manifest.json
 COPY docker/workbench/libero/runtime-requirements.txt /opt/npa/libero/runtime-requirements.txt
 COPY docker/workbench/libero/runtime-bootstrap.py /opt/npa/libero/runtime-bootstrap.py

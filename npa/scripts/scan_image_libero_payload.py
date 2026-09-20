@@ -1684,6 +1684,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expected-config-digest")
     parser.add_argument("--expected-canonical-build-metadata-sha256")
     parser.add_argument("--expected-base-provenance-sha256")
+    parser.add_argument(
+        "--record-image-inventory",
+        action="store_true",
+        help="Establish the first locally built image identity while running all byte gates",
+    )
     parser.add_argument("--image-inventory-output", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
@@ -1702,6 +1707,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.expected_canonical_build_metadata_sha256,
                 args.expected_base_provenance_sha256,
                 args.image_inventory_output,
+                args.record_image_inventory,
             )
         ):
             parser.error("--verify-build-oci is a separate validation mode")
@@ -1731,14 +1737,29 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--config-json is valid only with --rootfs-tar")
     if bool(args.exported_rootfs) != bool(args.docker_save):
         parser.error("--docker-save and --exported-rootfs are required together")
+    if args.record_image_inventory and (
+        not args.docker_save
+        or not args.image_inventory_output
+        or any(
+            (
+                args.expected_image_inventory_sha256,
+                args.expected_config_digest,
+                args.expected_canonical_build_metadata_sha256,
+                args.expected_base_provenance_sha256,
+            )
+        )
+    ):
+        parser.error("inventory recording requires a local docker-save and output, without prior identities")
     if any(
         item is None
         for item in (
             args.base_provenance,
-            args.expected_image_inventory_sha256,
-            args.expected_config_digest,
-            args.expected_canonical_build_metadata_sha256,
-            args.expected_base_provenance_sha256,
+            *(() if args.record_image_inventory else (
+                args.expected_image_inventory_sha256,
+                args.expected_config_digest,
+                args.expected_canonical_build_metadata_sha256,
+                args.expected_base_provenance_sha256,
+            )),
         )
     ):
         parser.error("complete lineage inputs are required for an image scan")
@@ -1775,6 +1796,17 @@ def main(argv: list[str] | None = None) -> int:
                     else ""
                 )
             evidence: dict[str, object] = {}
+            if args.record_image_inventory:
+                # The initial local build has no previous registry identity. Bind
+                # its complete ordered layers and independent rootfs export now;
+                # scan_tars below still rejects every payload/lineage finding.
+                _, inventory = _layer_graph_findings(tars, exported_rootfs)
+                args.expected_image_inventory_sha256 = inventory.sha256
+                args.expected_config_digest = metadata["containerimage.config.digest"]
+                args.expected_canonical_build_metadata_sha256 = hashlib.sha256(
+                    canonical_build_metadata_bytes(metadata)
+                ).hexdigest()
+                args.expected_base_provenance_sha256 = BASE_PROVENANCE_SHA256
             findings = scan_tars(
                 tars,
                 config,
@@ -1804,6 +1836,8 @@ def main(argv: list[str] | None = None) -> int:
         "archives_scanned": len(tars),
         "base_manifest": BASE_MANIFEST,
         "base_rootfs_material": BASE_ROOTFS_MATERIAL,
+        "canonical_build_metadata_sha256": args.expected_canonical_build_metadata_sha256,
+        "base_provenance_sha256": args.expected_base_provenance_sha256,
         **evidence,
         "findings": [asdict(item) for item in findings],
     }

@@ -48,21 +48,19 @@ on:
         required: false
         default: ""
       cleanup_development_tools:
-        description: "Inspect exact failed/superseded dev tags; deletion requires registry atomicity"
+        description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
         default: ""
 
 permissions:
   contents: read
-  actions: read
   packages: write
   attestations: write
   id-token: write
 
 concurrency:
-  # Serialize every public-registry mutation under one canonical lock. Raw
-  # caller spelling must not split the lock before target normalization.
-  group: public-image-registry-mutation
+  # Serialize additive aliases even when two reviewed development SHAs differ.
+  group: public-image-${{ inputs.target || 'ghcr.io/nebius/nebius-physical-ai' }}-${{ inputs.release_tag || inputs.development_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -80,33 +78,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Permit LIBERO payload-free development staging only
-        env:
-          REQUESTED_TOOLS: ${{ inputs.tool }}
-          BUILD_TOOLS: ${{ inputs.build_development_tools }}
-          CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
-        run: |
-          set -euo pipefail
-          set -f
-          contains_libero() {
-            local value="${1//,/ }"
-            local tool
-            for tool in $value; do
-              if [ "$tool" = libero ]; then
-                return 0
-              fi
-            done
-            return 1
-          }
-          if contains_libero "$REQUESTED_TOOLS" || \
-            contains_libero "$CLEANUP_TOOLS"; then
-            echo "::error::LIBERO requested or cleanup selectors require an exact qualified digest and completed publication gates."
-            exit 1
-          fi
-          if contains_libero "$BUILD_TOOLS"; then
-            echo "LIBERO payload-free public-development staging is permitted; qualification, payload, digest, anonymous-pull, and real-B200 gates remain mandatory."
-          fi
-
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
@@ -114,21 +85,7 @@ jobs:
       - name: Install NPA validation environment
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
-          npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
-
-      - name: Materialize the LIBERO output-storage trust root
-        if: ${{ inputs.tool == 'libero' || contains(inputs.build_development_tools, 'libero') || contains(inputs.cleanup_development_tools, 'libero') }}
-        env:
-          NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64 }}
-        run: |
-          set -euo pipefail
-          umask 077
-          storage_key_file="$RUNNER_TEMP/libero-output-storage-authorization-public-key.b64"
-          printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" > "$storage_key_file"
-          test "$(base64 -d "$storage_key_file" | wc -c)" = 32
-          chmod 0600 "$storage_key_file"
-          echo "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE=$storage_key_file" >> "$GITHUB_ENV"
+          npa/.venv/bin/pip install -e "npa[dev]"
 
       - name: Resolve immutable public development plan
         id: plan
@@ -140,8 +97,6 @@ jobs:
           LEROBOT_VERSION: ${{ inputs.lerobot_version }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
-          import base64
-          import hashlib
           import json
           import os
           import re
@@ -150,12 +105,7 @@ jobs:
 
           import yaml
 
-          from npa.deploy.images import (
-              development_image_for_tool,
-              development_tag,
-              libero_qualified_image_manifest,
-              libero_publication_lineage_values,
-          )
+          from npa.deploy.images import development_image_for_tool, development_tag
 
           target = os.environ["TARGET"].strip().rstrip("/")
           sha = os.environ["DEVELOPMENT_SHA"].strip().lower()
@@ -171,67 +121,6 @@ jobs:
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
-          cleanup_tools = tools("CLEANUP_TOOLS")
-          libero_qualification = None
-          if "libero" in {*build_tools, *cleanup_tools}:
-              if target != "ghcr.io/nebius/nebius-physical-ai":
-                  raise SystemExit("libero: publication target must be the official GHCR namespace")
-              libero_qualification = libero_qualified_image_manifest()
-              if libero_qualification["customer_authorization_public_key_sha256"]:
-                  raise SystemExit(
-                      "libero: customer signer must remain runtime-only"
-                  )
-              storage_key_bytes = base64.b64decode(
-                  Path(
-                      os.environ[
-                          "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE"
-                      ]
-                  ).read_bytes(),
-                  validate=True,
-              )
-              if (
-                  len(storage_key_bytes) != 32
-                  or hashlib.sha256(storage_key_bytes).hexdigest()
-                  != libero_qualification[
-                      "output_storage_authorization_public_key_sha256"
-                  ]
-              ):
-                  raise SystemExit(
-                      "libero: output-storage trust root differs from qualification"
-                  )
-              if libero_qualification["development_sha"] != sha:
-                  raise SystemExit(
-                      "libero: checked-in qualification development SHA does not match "
-                      "the exact development SHA"
-                  )
-              if subprocess.run(
-                  ["git", "merge-base", "--is-ancestor", sha, head], check=False
-              ).returncode:
-                  raise SystemExit(
-                      "libero: qualified development SHA is not an ancestor of HEAD"
-                  )
-              qualification_delta = subprocess.check_output(
-                  [
-                      "git",
-                      "diff",
-                      "--name-only",
-                      "--diff-filter=ACDMRTUXB",
-                      f"{sha}..{head}",
-                      "--",
-                  ],
-                  text=True,
-              ).splitlines()
-              if qualification_delta != ["npa/src/npa/deploy/libero_image_manifest.json"]:
-                  raise SystemExit(
-                      "libero: only the checked-in qualification manifest may differ "
-                      "from the qualified development SHA"
-                  )
-              try:
-                  libero_publication_lineage_values(
-                      libero_qualification, Path.cwd(), development_sha=sha
-                  )
-              except RuntimeError as exc:
-                  raise SystemExit(f"libero: {exc}") from exc
           lerobot_version = os.environ.get("LEROBOT_VERSION", "").strip()
           if lerobot_version:
               manifest = json.loads(Path("npa/src/npa/deploy/lerobot_version_manifest.json").read_text())
@@ -255,103 +144,20 @@ jobs:
                   "dockerfile": str(dockerfile),
                   "image": image,
                   "lerobot_version": lerobot_version if tool == "lerobot" else "",
-                  "libero_private_image_inventory_sha256": (
-                      libero_qualification["complete_image_inventory_sha256"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_private_config_digest": (
-                      libero_qualification["config_digest"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_candidate_image": (
-                      libero_qualification["candidate_image"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_oci_digest": (
-                      libero_qualification["oci_digest"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_platform_manifest_digest": (
-                      libero_qualification["platform_manifest_digest"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_attestation_manifest_digest": (
-                      libero_qualification["attestation_manifest_digest"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_attestation_config_digest": (
-                      libero_qualification["attestation_config_digest"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_attestation_layers": (
-                      json.dumps(libero_qualification["attestation_layers"], separators=(",", ":"))
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_package_version_digests": (
-                      json.dumps(libero_qualification["package_version_digests"], separators=(",", ":"))
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_package_writer_repository": (
-                      libero_qualification["package_writer_repository"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_canonical_build_metadata_sha256": (
-                      libero_qualification["canonical_build_metadata_sha256"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_base_provenance_sha256": (
-                      libero_qualification["base_provenance_sha256"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_publication_bundle_sha256": (
-                      libero_qualification["publication_bundle_sha256"]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
-                  "libero_qualified_output_storage_authorization_public_key_sha256": (
-                      libero_qualification[
-                          "output_storage_authorization_public_key_sha256"
-                      ]
-                      if tool == "libero" and libero_qualification is not None
-                      else ""
-                  ),
               })
 
           cleanup = []
-          for tool in cleanup_tools:
-              item = {
+          for tool in tools("CLEANUP_TOOLS"):
+              cleanup.append({
                   "tool": tool,
                   "image": development_image_for_tool(tool, git_sha=sha, registry=target),
-              }
-              if tool == "libero" and libero_qualification is not None:
-                  item.update({
-                      "libero_qualified_oci_digest": libero_qualification["oci_digest"],
-                      "libero_qualified_package_version_digests": json.dumps(
-                          libero_qualification["package_version_digests"],
-                          separators=(",", ":"),
-                      ),
-                      "libero_package_writer_repository": libero_qualification[
-                          "package_writer_repository"
-                      ],
-                  })
-              cleanup.append(item)
+              })
 
           # Builds must describe the exact checked-out source. A later promotion may
           # deliberately name an older dev SHA after GPU evidence is committed.
-          if matrix and head != sha and build_tools != ["libero"]:
+          if matrix and head != sha:
               raise SystemExit(f"development SHA {sha} does not match checked-out HEAD {head}")
+
           print(f"target={target}")
           print(f"development_sha={sha}")
           print(f"build_matrix={json.dumps(matrix, separators=(',', ':'))}")
@@ -397,20 +203,6 @@ jobs:
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       LEROBOT_VERSION: ${{ matrix.lerobot_version }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
-      LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256: ${{ matrix.libero_private_image_inventory_sha256 }}
-      LIBERO_PRIVATE_CONFIG_DIGEST: ${{ matrix.libero_private_config_digest }}
-      LIBERO_QUALIFIED_CANDIDATE_IMAGE: ${{ matrix.libero_qualified_candidate_image }}
-      LIBERO_QUALIFIED_OCI_DIGEST: ${{ matrix.libero_qualified_oci_digest }}
-      LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST: ${{ matrix.libero_qualified_platform_manifest_digest }}
-      LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST: ${{ matrix.libero_qualified_attestation_manifest_digest }}
-      LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST: ${{ matrix.libero_qualified_attestation_config_digest }}
-      LIBERO_QUALIFIED_ATTESTATION_LAYERS: ${{ matrix.libero_qualified_attestation_layers }}
-      LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_qualified_package_version_digests }}
-      LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
-      LIBERO_QUALIFIED_CANONICAL_BUILD_METADATA_SHA256: ${{ matrix.libero_qualified_canonical_build_metadata_sha256 }}
-      LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256: ${{ matrix.libero_qualified_base_provenance_sha256 }}
-      LIBERO_QUALIFIED_PUBLICATION_BUNDLE_SHA256: ${{ matrix.libero_qualified_publication_bundle_sha256 }}
-      LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256: ${{ matrix.libero_qualified_output_storage_authorization_public_key_sha256 }}
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
@@ -420,54 +212,26 @@ jobs:
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          # Complete-byte paths require the verified CPython 3.12 wheel.
+          # Both complete-byte paths require the verified CPython 3.12 wheel.
           python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/pip install -c npa/requirements-lock.txt -e "npa[dev]"
-          npa/.venv/bin/python -c 'import cryptography; assert cryptography.__version__ == "50.0.0"'
-
-      - name: Materialize the LIBERO output-storage trust root
-        if: matrix.tool == 'libero'
-        env:
-          NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64: ${{ secrets.NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64 }}
-        run: |
-          set -euo pipefail
-          umask 077
-          storage_key_file="$RUNNER_TEMP/libero-output-storage-authorization-public-key.b64"
-          printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" > "$storage_key_file"
-          test "$(base64 -d "$storage_key_file" | wc -c)" = 32
-          test "$(base64 -d "$storage_key_file" | sha256sum | cut -d' ' -f1)" = \
-            "$LIBERO_QUALIFIED_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_SHA256"
-          chmod 0600 "$storage_key_file"
-          echo "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE=$storage_key_file" >> "$GITHUB_ENV"
+          npa/.venv/bin/pip install -e "npa[dev]"
 
       - name: Refuse source, license, packaging, or skill guard drift
         run: |
-          if [ "$TOOL" = libero ]; then
-            git merge-base --is-ancestor "$DEVELOPMENT_SHA" HEAD
-            test "$(git diff --name-only --diff-filter=ACDMRTUXB \
-              "$DEVELOPMENT_SHA..HEAD" --)" = \
-              "npa/src/npa/deploy/libero_image_manifest.json"
-          else
-            test "$(git rev-parse HEAD)" = "$DEVELOPMENT_SHA"
-          fi
+          test "$(git rev-parse HEAD)" = "$DEVELOPMENT_SHA"
           npa/.venv/bin/python -m pytest \
             npa/tests/docker/test_packaging_contract.py \
+            npa/tests/docker/test_libero_image_contract.py \
+            npa/tests/docker/test_libero_image_payload_scan.py \
+            npa/tests/docker/test_libero_runtime_bootstrap.py \
             npa/tests/docker/test_image_payload_scan.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_ltx_image_payload_scan.py \
-            npa/tests/docker/test_libero_runtime_bootstrap.py \
-            npa/tests/docker/test_libero_image_contract.py \
-            npa/tests/docker/test_libero_image_payload_scan.py \
-            npa/tests/workflows/test_byof_container_verify.py \
-            npa/tests/workflows/test_byof_libero.py \
-            npa/tests/workflows/test_byof_repo.py \
-            npa/tests/workflows/test_byof_solution_smokes.py \
-            npa/tests/workflows/test_byof_source_auth.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
@@ -532,18 +296,6 @@ jobs:
             --source-sha "$DEVELOPMENT_SHA" --analysis-root "$root" \
             --keyring "$root/keyring/debian-archive-keyring.gpg"
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
-
-      # Some public workbench Dockerfiles inherit other immutable public NPA
-      # packages. This minimum read authentication also precedes retained-graph
-      # reconciliation because a retained candidate may still be private.
-      - name: Authenticate immutable public base pulls
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Prove destination cannot expose unvalidated tagged bytes
         if: matrix.tool != 'ncore'
         env:
@@ -554,124 +306,45 @@ jobs:
           owner="${path%%/*}"
           package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
-          tag="${package_and_tag##*:}"
-          repository="${IMAGE%:*}"
           encoded="${package//\//%2F}"
           response="$(mktemp)"
           status="$(gh api --silent --include "/orgs/${owner}/packages/container/${encoded}" >"$response" 2>/dev/null; printf '%s' "$?")"
           package_api="/orgs/${owner}/packages/container/${encoded}"
-          refuse_first_publication() {
-            echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
-            # A later visibility check cannot undo a private push. Neither an
-            # empty package nor a 404 supplies atomic publication authority.
-            echo "::error::First publication is unavailable without a registry-enforced exclusive-writer or atomic compare-and-set primitive; refusing before any registry write"
-            exit 1
-          }
           if [ "$status" = 0 ]; then
             visibility="$(gh api "$package_api" --jq .visibility)"
             if [ "$visibility" = public ]; then
-              echo "NPA_FIRST_PUBLICATION_REQUIRED=0" >> "$GITHUB_ENV"
-              if [ "$TOOL" = libero ]; then
-                echo "::error::Qualified LIBERO candidate must remain private until this gate completes"
-                exit 1
-              fi
               echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
             elif [ "$visibility" = private ]; then
-              if [ "$TOOL" = libero ]; then
-                echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
-                echo "LIBERO private package retained for payload-free public-development staging; no public visibility transition is attempted."
-              else
-                refuse_first_publication
+              # A failed first publication can leave private, untagged OCI
+              # attestations behind after its exact tagged image version is deleted.
+              # Those referrers must not prevent a clean retry, but a private package
+              # containing any tagged image could expose unvalidated bytes when the
+              # successful retry switches the package to public below.
+              versions="$(mktemp)"
+              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+              tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
+              if [ "$tagged_count" != 0 ]; then
+                echo "::error::Private destination contains tagged versions; refusing a visibility change"
+                exit 1
               fi
+              echo "Private destination contains no tagged image versions; exact pushed-byte gates and visibility verification apply." >> "$GITHUB_STEP_SUMMARY"
             else
               echo "::error::Unsupported destination visibility: $visibility"
               exit 1
             fi
           elif grep -q '^HTTP/.* 404 ' "$response"; then
-            if [ "$TOOL" = libero ]; then
-              echo "NPA_FIRST_PUBLICATION_REQUIRED=1" >> "$GITHUB_ENV"
-              echo "LIBERO package is absent; payload-free public-development staging will remain untagged until qualification gates pass."
-            else
-              refuse_first_publication
-            fi
+            # A new package is created only after every local byte-level gate below
+            # passes. The pushed digest is scanned again before the package visibility
+            # changes, and any failure triggers exact run-owned version cleanup.
+            echo "New package; exact pushed-byte gates and post-push anonymous verification apply." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "::error::Could not prove destination package state"
             exit 1
           fi
 
-      - name: Seal adjacent pre-publication package graph
-        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          umask 077
-          path="${IMAGE#ghcr.io/}"
-          owner="${path%%/*}"
-          package_and_tag="${path#*/}"
-          package="${package_and_tag%:*}"
-          tag="${package_and_tag##*:}"
-          encoded="${package//\//%2F}"
-          package_api="/orgs/${owner}/packages/container/${encoded}"
-          evidence_dir="$RUNNER_TEMP/failed-publication-ownership/${TOOL}"
-          mkdir -p "$evidence_dir"
-          snapshot="$evidence_dir/pre-publication-package-graph.json"
-          response="$(mktemp)"
-          if gh api --silent --include "$package_api" >"$response" 2>/dev/null; then
-            repository_full_name="$(gh api "$package_api" --jq '.repository.full_name // ""')"
-            test "$repository_full_name" = "$GITHUB_REPOSITORY"
-            visibility="$(gh api "$package_api" --jq .visibility)"
-            versions="$(mktemp)"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-              jq 'add' > "$versions"
-            jq -e --arg tag "$tag" '
-              all(.[]; ((.metadata.container.tags // []) | index($tag) | not))
-            ' "$versions" >/dev/null
-            jq -S -n --arg repository "${IMAGE%:*}" --arg package_api "$package_api" \
-              --arg tag "$tag" --arg run_id "$GITHUB_RUN_ID" \
-              --arg run_attempt "$GITHUB_RUN_ATTEMPT" --arg visibility "$visibility" \
-              --arg repository_full_name "$repository_full_name" \
-              --slurpfile versions "$versions" '{
-                schema:"npa.publication.pre-package-graph.v1",
-                repository:$repository,
-                package_api:$package_api,
-                tag:$tag,
-                run_id:$run_id,
-                run_attempt:$run_attempt,
-                package:{state:"present",visibility:$visibility,
-                  repository_full_name:$repository_full_name},
-                versions:($versions[0] | sort_by(.id | tostring))
-              }' > "$snapshot"
-          elif grep -q '^HTTP/.* 404 ' "$response"; then
-            jq -S -n --arg repository "${IMAGE%:*}" --arg package_api "$package_api" \
-              --arg tag "$tag" --arg run_id "$GITHUB_RUN_ID" \
-              --arg run_attempt "$GITHUB_RUN_ATTEMPT" '{
-                schema:"npa.publication.pre-package-graph.v1",
-                repository:$repository,
-                package_api:$package_api,
-                tag:$tag,
-                run_id:$run_id,
-                run_attempt:$run_attempt,
-                package:{state:"absent",visibility:null,repository_full_name:null},
-                versions:[]
-              }' > "$snapshot"
-          else
-            echo "::error::Could not seal the adjacent pre-publication package graph"
-            exit 1
-          fi
-          chmod 0600 "$snapshot"
-
-      - name: Persist adjacent pre-publication package graph
-        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: failed-publication-ownership-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/failed-publication-ownership/${{ matrix.tool }}/pre-publication-package-graph.json
-          if-no-files-found: error
-          overwrite: false
-          retention-days: 1
-
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
 
       - name: Fetch immutable LIBERO base provenance metadata
         if: matrix.tool == 'libero'
@@ -692,70 +365,17 @@ jobs:
             'b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb  '"$RUNNER_TEMP/libero-base-sbom.intoto.json" | \
             sha256sum --check --strict
 
-      - name: Verify exact qualified private LIBERO candidate lineage
-        if: matrix.tool == 'libero'
-        run: |
-          set -euo pipefail
-          npa/.venv/bin/python - <<'PY'
-          import hashlib
-          import json
-          import os
-          import subprocess
 
-          def read(command):
-              return subprocess.check_output(command)
-
-          candidate = os.environ["LIBERO_QUALIFIED_CANDIDATE_IMAGE"]
-          repository = candidate.rsplit("@", 1)[0]
-          platform_digest = os.environ["LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST"]
-          attestation_digest = os.environ["LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST"]
-          if read(["crane", "digest", candidate]).decode().strip() != os.environ["LIBERO_QUALIFIED_OCI_DIGEST"]:
-              raise SystemExit("qualified OCI index digest differs")
-          root_bytes = read(["crane", "manifest", candidate])
-          root = json.loads(root_bytes)
-          descriptors = root.get("manifests")
-          if root.get("mediaType") != "application/vnd.oci.image.index.v1+json" or not isinstance(descriptors, list) or len(descriptors) != 2:
-              raise SystemExit("qualified OCI index must contain exactly runtime and attestation manifests")
-          runtime = [item for item in descriptors if item.get("digest") == platform_digest]
-          attest = [item for item in descriptors if item.get("digest") == attestation_digest]
-          if len(runtime) != 1 or runtime[0].get("platform") != {"architecture": "amd64", "os": "linux"}:
-              raise SystemExit("qualified runtime platform descriptor differs")
-          if len(attest) != 1:
-              raise SystemExit("qualified attestation descriptor is absent")
-          annotations = attest[0].get("annotations") or {}
-          if annotations.get("vnd.docker.reference.digest") != platform_digest or annotations.get("vnd.docker.reference.type") != "attestation-manifest":
-              raise SystemExit("qualified attestation descriptor does not bind the runtime manifest")
-          attestation_ref = f"{repository}@{attestation_digest}"
-          if read(["crane", "digest", attestation_ref]).decode().strip() != attestation_digest:
-              raise SystemExit("qualified attestation manifest digest differs")
-          manifest_bytes = read(["crane", "manifest", attestation_ref])
-          manifest = json.loads(manifest_bytes)
-          config = manifest.get("config") or {}
-          if config.get("digest") != os.environ["LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"]:
-              raise SystemExit("qualified attestation config descriptor differs")
-          config_bytes = read(["crane", "blob", repository, config["digest"]])
-          if "sha256:" + hashlib.sha256(config_bytes).hexdigest() != config["digest"] or len(config_bytes) != config.get("size"):
-              raise SystemExit("qualified attestation config bytes differ")
-          expected_layers = json.loads(os.environ["LIBERO_QUALIFIED_ATTESTATION_LAYERS"])
-          layers = manifest.get("layers")
-          if not isinstance(layers, list) or len(layers) != len(expected_layers):
-              raise SystemExit("qualified attestation layer set is incomplete")
-          for layer, expected in zip(layers, expected_layers, strict=True):
-              if {"predicate_type": (layer.get("annotations") or {}).get("in-toto.io/predicate-type"), "digest": layer.get("digest"), "size_bytes": layer.get("size")} != expected:
-                  raise SystemExit("qualified attestation layer descriptor differs")
-              payload = read(["crane", "blob", repository, expected["digest"]])
-              if len(payload) != expected["size_bytes"] or "sha256:" + hashlib.sha256(payload).hexdigest() != expected["digest"]:
-                  raise SystemExit("qualified attestation layer bytes differ")
-              statement = json.loads(payload)
-              if statement.get("predicateType") != expected["predicate_type"]:
-                  raise SystemExit("qualified attestation predicate type differs")
-              subjects = statement.get("subject")
-              if not isinstance(subjects, list) or not any((subject.get("digest") or {}).get("sha256") == platform_digest.removeprefix("sha256:") for subject in subjects if isinstance(subject, dict)):
-                  raise SystemExit("qualified attestation subject does not bind the runtime manifest")
-          platform = json.loads(read(["crane", "manifest", "--platform", "linux/amd64", candidate]))
-          if platform.get("config", {}).get("digest") != os.environ["LIBERO_PRIVATE_CONFIG_DIGEST"]:
-              raise SystemExit("qualified OCI config differs")
-          PY
+      # Some public workbench Dockerfiles inherit other immutable public NPA
+      # packages. Authenticate pulls here because setup-crane installs an
+      # intentionally invalid placeholder credential; no registry write occurs
+      # until the separately gated push step below.
+      - name: Authenticate immutable public base pulls
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stage supported workflow catalog in the package build context
         if: matrix.tool != 'ncore'
@@ -793,11 +413,7 @@ jobs:
           fi
           metadata_args=()
           export_args=(--load)
-          secret_args=()
           if [[ "$TOOL" == libero ]]; then
-            NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64="$(tr -d '\r\n' < "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE")"
-            export NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
-            test "$(printf '%s' "$NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64" | base64 -d | wc -c)" = 32
             metadata_args+=(
               --metadata-file "$RUNNER_TEMP/libero-build-metadata.json"
               --provenance=mode=max
@@ -807,9 +423,6 @@ jobs:
               --output "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar,tar=true,rewrite-timestamp=true"
               --output "type=docker,dest=$RUNNER_TEMP/libero-build.docker.tar"
             )
-            secret_args+=(
-              --secret id=npa_libero_output_storage_authorization_public_key_b64,env=NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_B64
-            )
             export BUILDX_METADATA_PROVENANCE=max
           fi
           docker buildx build \
@@ -817,7 +430,6 @@ jobs:
             "${build_args[@]}" \
             "${metadata_args[@]}" \
             "${export_args[@]}" \
-            "${secret_args[@]}" \
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
@@ -880,9 +492,7 @@ jobs:
           forbidden = ("OMNI_KIT_ACCEPT_EULA=YES", "ISAACSIM_ACCEPT_EULA=YES")
           if any(value in serialized for value in forbidden):
               raise SystemExit("cached EULA acceptance found in OCI config")
-          history = subprocess.check_output(
-              ["docker", "history", "--no-trunc", image], text=True
-          )
+          history = subprocess.check_output(["docker", "history", "--no-trunc", image], text=True)
           if any(value in history for value in forbidden):
               raise SystemExit("cached EULA acceptance found in layer history")
           PY
@@ -902,16 +512,26 @@ jobs:
             docker container rm "$libero_export_container" >/dev/null
             libero_export_container=""
             npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --record-image-inventory \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
               --exported-rootfs "$RUNNER_TEMP/${TOOL}-rootfs.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
-              --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
-              --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
-              --expected-canonical-build-metadata-sha256 "$LIBERO_QUALIFIED_CANONICAL_BUILD_METADATA_SHA256" \
-              --expected-base-provenance-sha256 "$LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256" \
               --image-inventory-output "$RUNNER_TEMP/${TOOL}-image-inventory.json" \
               --output "$RUNNER_TEMP/${TOOL}-libero-payload.json"
+            npa/.venv/bin/python - <<'PYENV' >> "$GITHUB_ENV"
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads((Path(os.environ["RUNNER_TEMP"]) / "libero-libero-payload.json").read_text())
+          for key, field in {
+              "LIBERO_IMAGE_INVENTORY_SHA256": "image_inventory_sha256",
+              "LIBERO_CONFIG_DIGEST": "observed_config_digest",
+              "LIBERO_CANONICAL_BUILD_METADATA_SHA256": "canonical_build_metadata_sha256",
+              "LIBERO_BASE_PROVENANCE_SHA256": "base_provenance_sha256",
+          }.items():
+              print(f"{key}={report[field]}")
+          PYENV
             rm -f "$RUNNER_TEMP/${TOOL}-rootfs.tar"
           fi
           if [ "$TOOL" = curobo ]; then
@@ -1084,91 +704,41 @@ jobs:
         id: push
         run: |
           set -euo pipefail
-          if [ "$TOOL" = libero ]; then
-            # Publish the already qualified OCI index. Its embedded, byte-bound
-            # provenance/SBOM graph remains identical to image qualification. Do
-            # not add the public tag yet: every fallible byte and graph gate runs
-            # against the immutable digest first, leaving a failed private gate
-            # with the qualified untagged graph completely unchanged.
-            digest="$(crane digest "$LIBERO_QUALIFIED_CANDIDATE_IMAGE")"
-            test "$digest" = "$LIBERO_QUALIFIED_OCI_DIGEST"
-            test "$(crane digest --platform linux/amd64 "$LIBERO_QUALIFIED_CANDIDATE_IMAGE")" = \
-              "$LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST"
-          else
-            docker push "$IMAGE"
-            digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
-            test "$digest" = "$(crane digest "$IMAGE")"
-          fi
+          docker push "$IMAGE"
+          digest="$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          test "$digest" = "$(crane digest "$IMAGE")"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "repository=${IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - name: Attest exact pushed digest provenance
-        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
+        if: matrix.tool != 'ncore'
         id: provenance-attestation
-        # Current-main compatibility marker: attest-build-provenance@v3.
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
-          # LIBERO preserves its separately qualified embedded OCI graph. Its
-          # immutable-action workflow attestation is not another GHCR version.
-          push-to-registry: ${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}
+          push-to-registry: true
 
       - name: Attest exact pushed digest SBOM
-        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
+        if: matrix.tool != 'ncore'
         id: sbom-attestation
-        # Current-main compatibility marker: attest-sbom@v3.
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           sbom-path: ${{ runner.temp }}/${{ matrix.tool }}-sbom.spdx.json
-          push-to-registry: ${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}
+          push-to-registry: true
 
       - name: Require both digest-bound attestation results
-        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
+        if: matrix.tool != 'ncore'
         env:
           PROVENANCE_URL: ${{ steps.provenance-attestation.outputs.attestation-url }}
           PROVENANCE_BUNDLE: ${{ steps.provenance-attestation.outputs.bundle-path }}
           SBOM_URL: ${{ steps.sbom-attestation.outputs.attestation-url }}
           SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
         run: |
-          test -s "$PROVENANCE_BUNDLE"
-          test -s "$SBOM_BUNDLE"
-          if [ "$TOOL" != libero ]; then
-            test -n "$PROVENANCE_URL" && test -n "$SBOM_URL"
-          fi
-
-      - name: Revalidate qualified LIBERO repository and OCI lineage
-        if: matrix.tool == 'libero'
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
-        run: |
-          npa/.venv/bin/python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          from npa.deploy.images import libero_publication_lineage_values, libero_qualified_image_manifest
-
-          qualification = libero_qualified_image_manifest()
-          lineage = libero_publication_lineage_values(
-              qualification,
-              Path.cwd(),
-              development_sha=os.environ["DEVELOPMENT_SHA"],
-          )
-          expected = {
-              "publication_bundle_sha256": os.environ[
-                  "LIBERO_QUALIFIED_PUBLICATION_BUNDLE_SHA256"
-              ],
-          }
-          if any(lineage[name] != value for name, value in expected.items()):
-              raise SystemExit("checked-in LIBERO lineage bundle changed after resolution")
-          if os.environ["DIGEST"] != lineage["oci_digest"]:
-              raise SystemExit("published LIBERO OCI index differs from qualification")
-          if lineage["package_writer_repository"] != os.environ["GITHUB_REPOSITORY"]:
-              raise SystemExit("LIBERO package writer repository differs")
-          PY
+          test -n "$PROVENANCE_URL" && test -s "$PROVENANCE_BUNDLE"
+          test -n "$SBOM_URL" && test -s "$SBOM_BUNDLE"
 
       - name: Verify pushed bytes, revision, payload, visibility, and anonymous pull
         if: matrix.tool != 'ncore'
@@ -1197,11 +767,7 @@ jobs:
           trap cleanup_libero_export EXIT
           repository="${IMAGE%:*}"
           exact="${repository}@${DIGEST}"
-          if [ "$TOOL" = libero ]; then
-            test "$(crane digest "$exact")" = "$DIGEST"
-          else
-            test "$(crane digest "$IMAGE")" = "$DIGEST"
-          fi
+          test "$(crane digest "$IMAGE")" = "$DIGEST"
           test "$(crane config "$exact" | jq -r '.config.Labels["org.opencontainers.image.revision"] // ""')" = "$DEVELOPMENT_SHA"
           # Bind the remote digest back to the exact local image whose complete
           # filesystem tar was scanned before publication. Pulling immediately after
@@ -1231,6 +797,25 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = libero ]; then
+            libero_export_container="$(docker create "$exact")"
+            docker export --output "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
+              "$libero_export_container"
+            docker container rm "$libero_export_container" >/dev/null
+            libero_export_container=""
+            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --exported-rootfs "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
+              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
+              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
+              --expected-image-inventory-sha256 "$LIBERO_IMAGE_INVENTORY_SHA256" \
+              --expected-config-digest "$LIBERO_CONFIG_DIGEST" \
+              --expected-canonical-build-metadata-sha256 "$LIBERO_CANONICAL_BUILD_METADATA_SHA256" \
+              --expected-base-provenance-sha256 "$LIBERO_BASE_PROVENANCE_SHA256" \
+              --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
+              --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
+            rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
@@ -1272,25 +857,6 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"
           fi
-          if [ "$TOOL" = libero ]; then
-            libero_export_container="$(docker create "$exact")"
-            docker export --output "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
-              "$libero_export_container"
-            docker container rm "$libero_export_container" >/dev/null
-            libero_export_container=""
-            npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
-              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
-              --exported-rootfs "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
-              --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
-              --base-provenance "$RUNNER_TEMP/libero-base-provenance.intoto.json" \
-              --expected-image-inventory-sha256 "$LIBERO_PRIVATE_IMAGE_INVENTORY_SHA256" \
-              --expected-config-digest "$LIBERO_PRIVATE_CONFIG_DIGEST" \
-              --expected-canonical-build-metadata-sha256 "$LIBERO_QUALIFIED_CANONICAL_BUILD_METADATA_SHA256" \
-              --expected-base-provenance-sha256 "$LIBERO_QUALIFIED_BASE_PROVENANCE_SHA256" \
-              --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
-              --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
-            rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
-          fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
@@ -1312,135 +878,20 @@ jobs:
           package="${package_and_tag%:*}"
           encoded="${package//\//%2F}"
           package_api="/orgs/${owner}/packages/container/${encoded}"
-          if [ "$TOOL" = libero ]; then
-            # This is the last operation before the package-wide visibility
-            # transition. Re-read the complete version set and qualified OCI
-            # graph so no tag, version, or embedded attestation can be injected.
-            test "$(gh api "$package_api" --jq .visibility)" = private
-            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-              "$LIBERO_PACKAGE_WRITER_REPOSITORY"
-            test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-            versions="$RUNNER_TEMP/libero-final-package-versions.json"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
-            jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
-              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              ([.[].name] | sort) == $expected and
-              ([.[] | select(.name == $root)] | length) == 1 and
-              all(.[]; (.metadata.container.tags // []) == [])
-            ' "$versions" >/dev/null
-
-            root_manifest="$RUNNER_TEMP/libero-final-index.json"
-            crane manifest "$exact" > "$root_manifest"
-            test "$(crane digest "$exact")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
-            jq -e --arg runtime "$LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST" \
-              --arg attestation "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" '
-              .mediaType == "application/vnd.oci.image.index.v1+json" and
-              (.manifests | length) == 2 and
-              ([.manifests[] | select(.digest == $runtime and .platform == {"architecture":"amd64","os":"linux"})] | length) == 1 and
-              ([.manifests[] | select(.digest == $attestation and .annotations["vnd.docker.reference.digest"] == $runtime and .annotations["vnd.docker.reference.type"] == "attestation-manifest")] | length) == 1
-            ' "$root_manifest" >/dev/null
-            attestation_manifest="$RUNNER_TEMP/libero-final-attestation-manifest.json"
-            test "$(crane digest "${repository}@${LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST}")" = \
-              "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST"
-            crane manifest "${repository}@${LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST}" > "$attestation_manifest"
-            test "$(jq -r '.config.digest' "$attestation_manifest")" = \
-              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
-            config_blob="$RUNNER_TEMP/libero-final-attestation-config.json"
-            crane blob "$repository" "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST" > "$config_blob"
-            test "sha256:$(sha256sum "$config_blob" | cut -d ' ' -f 1)" = \
-              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
-            expected_layers="$RUNNER_TEMP/libero-final-expected-layers.json"
-            printf '%s' "$LIBERO_QUALIFIED_ATTESTATION_LAYERS" > "$expected_layers"
-            test "$(jq '.layers | length' "$attestation_manifest")" = \
-              "$(jq 'length' "$expected_layers")"
-            while IFS= read -r index; do
-              expected="$(jq -c ".[$index]" "$expected_layers")"
-              jq -e --argjson expected "$expected" \
-                ".layers[$index] | {predicate_type:.annotations[\"in-toto.io/predicate-type\"],digest,size_bytes:.size} == \$expected" \
-                "$attestation_manifest" >/dev/null
-              layer_digest="$(jq -r '.digest' <<<"$expected")"
-              layer_size="$(jq -r '.size_bytes' <<<"$expected")"
-              predicate_type="$(jq -r '.predicate_type' <<<"$expected")"
-              layer="$RUNNER_TEMP/libero-final-attestation-layer-$index.json"
-              crane blob "$repository" "$layer_digest" > "$layer"
-              test "$(wc -c < "$layer")" = "$layer_size"
-              test "sha256:$(sha256sum "$layer" | cut -d ' ' -f 1)" = "$layer_digest"
-              jq -e --arg predicate "$predicate_type" \
-                --arg subject "${LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST#sha256:}" '
-                .predicateType == $predicate and
-                any(.subject[]; .digest.sha256 == $subject)
-              ' "$layer" >/dev/null
-            done < <(jq -r 'keys[]' "$expected_layers")
-          elif [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]; then
-            # The serialized preflight proved this package absent or empty.
-            # Re-enumerate its complete post-push graph immediately before the
-            # package-wide visibility change and reject every unexpected tag.
-            versions="$RUNNER_TEMP/${TOOL}-final-package-versions.json"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
-            jq -e --arg root "$DIGEST" --arg tag "dev-$DEVELOPMENT_SHA" '
-              length == 1 and
-              all(.[]; (.name | test("^sha256:[0-9a-f]{64}$"))) and
-              ([.[] | select(.name == $root)] | length) == 1 and
-              all(.[]; .name == $root and (.metadata.container.tags // []) == [$tag])
-            ' "$versions" >/dev/null
+          if [ "$(gh api "$package_api" --jq .visibility)" != public ]; then
+            gh api --method PATCH "$package_api" -f visibility=public >/dev/null
           fi
-          require_existing_public_visibility() {
-            local visibility
-            visibility="$(gh api "$package_api" --jq .visibility)"
-            if [ "$TOOL" = libero ]; then
-              if [ "$visibility" = public ]; then
-                echo "::error::LIBERO visibility changed concurrently; refusing publication without a registry-atomic gate"
-                return 1
-              fi
-              if [ "$visibility" != private ]; then
-                echo "::error::Unsupported LIBERO package visibility: $visibility"
-                return 1
-              fi
-              test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-                "$GITHUB_REPOSITORY"
-              # Repository-local workflow concurrency cannot exclude another
-              # registry writer and is not a registry-enforced publication lock.
-              echo "::error::Public visibility transition is deferred: GHCR provides no registry-enforced exclusive-writer or atomic compare-and-set boundary."
-              echo "Publication deferred with the package private; no visibility PATCH was attempted." >> "$GITHUB_STEP_SUMMARY"
-              return 1
-            fi
-            if [ "$visibility" = public ]; then
-              return 0
-            fi
-            if [ "$visibility" != private ]; then
-              echo "::error::Unsupported package visibility: $visibility"
-              return 1
-            fi
-            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-              "$GITHUB_REPOSITORY"
-            # Repository-local workflow concurrency cannot exclude another
-            # registry writer and is not a registry-enforced publication lock.
-            echo "::error::Public visibility transition is deferred: GHCR provides no registry-enforced exclusive-writer or atomic compare-and-set boundary."
-            echo "Publication deferred with the package private; no visibility PATCH was attempted." >> "$GITHUB_STEP_SUMMARY"
-            return 1
-          }
-          require_existing_public_visibility
-          if [ "$TOOL" = libero ] || [ "$NPA_FIRST_PUBLICATION_REQUIRED" = 1 ]; then
-            post_versions="$RUNNER_TEMP/${TOOL}-public-package-versions.json"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$post_versions"
-            test "$(jq -Sc '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' "$versions")" = \
-              "$(jq -Sc '[.[] | {name, tags:(.metadata.container.tags // [])}] | sort_by(.name)' "$post_versions")"
-          fi
-          if [ "$TOOL" = libero ]; then
-            test "$(crane digest "$exact")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
-          fi
+          test "$(gh api "$package_api" --jq .visibility)" = public
           anonymous_config="$(mktemp -d)"
           anonymous_reference="$IMAGE"
-          if [ "$TOOL" = libero ]; then
-            anonymous_reference="$exact"
-          fi
           anonymous_attempt=1
           while true; do
             anonymous_log="$RUNNER_TEMP/${TOOL}-anonymous-manifest-attempt-${anonymous_attempt}.log"
-            if anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$anonymous_reference" \
-              2>"$anonymous_log")" && \
-              DOCKER_CONFIG="$anonymous_config" crane manifest "$anonymous_reference" \
-                >/dev/null 2>>"$anonymous_log"; then
+            if {
+              anonymous_digest="$(DOCKER_CONFIG="$anonymous_config" crane digest "$anonymous_reference")" &&
+              DOCKER_CONFIG="$anonymous_config" crane manifest "$anonymous_reference" >/dev/null &&
+              test "$anonymous_digest" = "$DIGEST"
+            } 2>"$anonymous_log"; then
               break
             fi
             cat "$anonymous_log" >&2
@@ -1451,29 +902,6 @@ jobs:
             anonymous_attempt=$((anonymous_attempt + 1))
             sleep 5
           done
-          test "$anonymous_digest" = "$DIGEST"
-          if [ "$TOOL" = libero ]; then
-            # Tagging is the final registry mutation. If it partially succeeds,
-            # failure reconciliation retains the graph and reports refusal;
-            # read/check/delete is not an atomic registry cleanup transaction.
-            crane tag "$exact" "dev-$DEVELOPMENT_SHA"
-            test "$(crane digest "$IMAGE")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
-            tagged_versions="$RUNNER_TEMP/libero-tagged-package-versions.json"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$tagged_versions"
-            jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
-              --arg tag "dev-$DEVELOPMENT_SHA" \
-              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              ([.[].name] | sort) == $expected and
-              all(.[];
-                if .name == $root
-                then (.metadata.container.tags // []) == [$tag]
-                else (.metadata.container.tags // []) == []
-                end)
-            ' "$tagged_versions" >/dev/null
-            test "$(DOCKER_CONFIG="$anonymous_config" crane digest "$IMAGE")" = \
-              "$LIBERO_QUALIFIED_OCI_DIGEST"
-            DOCKER_CONFIG="$anonymous_config" crane manifest "$IMAGE" >/dev/null
-          fi
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
@@ -1499,10 +927,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
-          TOOL: ${{ matrix.tool }}
-          LIBERO_QUALIFIED_OCI_DIGEST: ${{ matrix.libero_qualified_oci_digest }}
-          LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_qualified_package_version_digests }}
-          LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
         run: |
           set -euo pipefail
           path="${IMAGE#ghcr.io/}"
@@ -1510,124 +934,12 @@ jobs:
           package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
           tag="${package_and_tag##*:}"
-          repository="${IMAGE%:*}"
           encoded="${package//\//%2F}"
           package_api="/orgs/${owner}/packages/container/${encoded}"
-          version_pages="$(mktemp)"
           versions="$(mktemp)"
-          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$version_pages"; then
-            response="$(mktemp)"
-            if gh api -i "$package_api" >"$response" 2>&1; then
-              echo "::error::Package exists but its versions could not be verified"
-              exit 1
-            elif grep -q '^HTTP/.* 404 ' "$response"; then
-              echo "No package exists for requested cleanup." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "::error::Requested-cleanup package absence is unverified"
-            exit 1
-          fi
-          jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
-            "$version_pages" >/dev/null || {
-              echo "::error::Requested-cleanup pagination is incomplete or malformed"
-              exit 1
-            }
-          jq -S 'add | sort_by(.id | tostring)' "$version_pages" > "$versions"
-          jq -e '
-            all(.[];
-              (.id | type) == "number" and .id > 0 and
-              (.name | type) == "string" and
-              (.name | test("^sha256:[0-9a-f]{64}$")) and
-              ((.metadata.container.tags // []) | type) == "array" and
-              all((.metadata.container.tags // [])[]; type == "string")
-            ) and
-            ([.[].id | tostring] | length) == ([.[].id | tostring] | unique | length) and
-            ([.[].name] | length) == ([.[].name] | unique | length)
-          ' "$versions" >/dev/null || {
-            echo "::error::Requested-cleanup version graph is ambiguous or malformed"
-            exit 1
-          }
-          if [ "$TOOL" = libero ]; then
-            test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-            test "$(crane digest "$IMAGE")" = "$LIBERO_QUALIFIED_OCI_DIGEST"
-            jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
-              --arg tag "$tag" \
-              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              ([.[].name] | sort) == $expected and
-              ([.[] | select(.name == $root)] | length) == 1 and
-              all(.[];
-                if .name == $root
-                then (.metadata.container.tags // []) == [$tag]
-                else (.metadata.container.tags // []) == []
-                end)
-            ' "$versions" >/dev/null
-            expected_versions="$(mktemp)"
-            observed_versions="$(mktemp)"
-            cleanup_rows="$(mktemp)"
-            cp "$versions" "$expected_versions"
-            jq -r --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" '
-              sort_by(.name == $root)[] |
-              [.id, .name, ((.metadata.container.tags // []) | join(","))] | @tsv
-            ' "$expected_versions" > "$cleanup_rows"
-
-            require_complete_requested_libero_graph() {
-              package_metadata="$(mktemp)"
-              current_pages="$(mktemp)"
-              gh api "$package_api" > "$package_metadata"
-              jq -e --arg repository "$LIBERO_PACKAGE_WRITER_REPOSITORY" \
-                --arg package "$package" '
-                .visibility == "public" and
-                (.repository.full_name // "") == $repository and
-                .name == $package
-              ' "$package_metadata" >/dev/null || {
-                echo "::error::Requested LIBERO package identity changed during cleanup"
-                exit 1
-              }
-              gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$current_pages"
-              jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
-                "$current_pages" >/dev/null || {
-                  echo "::error::Requested LIBERO pagination is incomplete or malformed"
-                  exit 1
-                }
-              jq -S 'add | sort_by(.id | tostring)' "$current_pages" > "$observed_versions"
-              jq -e '
-                all(.[];
-                  (.id | type) == "number" and .id > 0 and
-                  (.name | type) == "string" and
-                  (.name | test("^sha256:[0-9a-f]{64}$")) and
-                  ((.metadata.container.tags // []) | type) == "array" and
-                  all((.metadata.container.tags // [])[]; type == "string")
-                ) and
-                ([.[].id | tostring] | length) == ([.[].id | tostring] | unique | length) and
-                ([.[].name] | length) == ([.[].name] | unique | length)
-              ' "$observed_versions" >/dev/null || {
-                echo "::error::Requested LIBERO version graph is ambiguous or malformed"
-                exit 1
-              }
-              cmp -s "$expected_versions" "$observed_versions" || {
-                echo "::error::Requested LIBERO package graph changed during cleanup"
-                exit 1
-              }
-            }
-
-            while IFS=$'\t' read -r version_id digest tags; do
-              test "$(crane digest "$repository@$digest")" = "$digest"
-              require_complete_requested_libero_graph
-              jq -e --arg id "$version_id" --arg digest "$digest" --arg tags "$tags" '
-                [.[] | select(
-                  (.id | tostring) == $id and
-                  .name == $digest and
-                  ((.metadata.container.tags // []) | join(",")) == $tags
-                )] | length == 1
-              ' "$observed_versions" >/dev/null || {
-                echo "::error::Requested LIBERO cleanup target identity changed"
-                exit 1
-              }
-            done < "$cleanup_rows"
-            # A final read cannot exclude a concurrent registry writer adding tags.
-            # No registry-enforced conditional delete primitive is available here.
-            echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
-            exit 1
+          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
+            echo "No package exists for requested cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
           matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
           count="$(jq length <<<"$matches")"
@@ -1644,42 +956,26 @@ jobs:
           version_id="$(jq -r '.[0].id' <<<"$matches")"
           digest="$(jq -r '.[0].name' <<<"$matches")"
           test "$digest" = "$(crane digest "$IMAGE")"
-          current_pages="$(mktemp)"
-          current_versions="$(mktemp)"
-          gh api --paginate --slurp "${package_api}/versions?per_page=100" > "$current_pages"
-          jq -e 'type == "array" and length > 0 and all(.[]; type == "array")' \
-            "$current_pages" >/dev/null
-          jq -S 'add | sort_by(.id | tostring)' "$current_pages" > "$current_versions"
-          cmp -s "$versions" "$current_versions" || {
-            echo "::error::Requested-cleanup package graph changed before deletion"
-            exit 1
-          }
-          jq -e --arg id "$version_id" --arg digest "$digest" --arg tag "$tag" '
-            [.[] | select(
-              (.id | tostring) == $id and .name == $digest and
-              (.metadata.container.tags // []) == [$tag]
-            )] | length == 1
-          ' "$current_versions" >/dev/null
-          # A final read cannot exclude a concurrent registry writer adding tags.
-          # No registry-enforced conditional delete primitive is available here.
-          echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
-          exit 1
+          if [ "$(jq length "$versions")" = 1 ]; then
+            # GHCR refuses deletion of a package's last tagged version. The
+            # package itself is exact and run-owned only after proving it has
+            # this one version and this one dev tag.
+            gh api --method DELETE "$package_api"
+          else
+            gh api --method DELETE "${package_api}/versions/${version_id}"
+          fi
+          echo "Deleted exact development tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
   cleanup-failed-build:
     needs: [resolve, build-development]
-    # This separate-runner reconciliation survives a build runner SIGKILL and
-    # covers both failure and cancellation after package visibility changed.
-    if: ${{ always() && needs.resolve.outputs.build_count != '0' && contains(fromJSON('["failure","cancelled"]'), needs.build-development.result) }}
+    if: ${{ always() && needs.resolve.outputs.build_count != '0' && needs.build-development.result == 'failure' }}
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.11"
-
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
 
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -1688,48 +984,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Recover the sealed adjacent pre-publication package graph
-        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARTIFACT_NAME: failed-publication-ownership-${{ matrix.tool }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          umask 077
-          containment="$(mktemp -d)"
-          metadata="$containment/artifacts.json"
-          gh api "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?name=${ARTIFACT_NAME}&per_page=100" \
-            > "$metadata"
-          jq -e --arg name "$ARTIFACT_NAME" '
-            .total_count == 1 and (.artifacts | length) == 1 and
-            .artifacts[0].name == $name and .artifacts[0].expired == false and
-            (.artifacts[0].id | tostring | test("^[1-9][0-9]*$"))
-          ' "$metadata" >/dev/null
-          artifact_id="$(jq -r '.artifacts[0].id' "$metadata")"
-          archive="$containment/evidence.zip"
-          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
-            > "$archive"
-          mkdir "$containment/unpacked"
-          unzip -qq "$archive" -d "$containment/unpacked"
-          test "$(find "$containment/unpacked" -type f -printf '%P\n')" = \
-            "pre-publication-package-graph.json"
-          snapshot="$containment/unpacked/pre-publication-package-graph.json"
-          chmod 0600 "$snapshot"
-          echo "NPA_FAILED_PUBLICATION_PRE_GRAPH=$snapshot" >> "$GITHUB_ENV"
-
       - name: Remove an exact run-owned dev tag after a failed build batch
         if: matrix.tool != 'ncore'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
-          TOOL: ${{ matrix.tool }}
-          LIBERO_QUALIFIED_OCI_DIGEST: ${{ matrix.libero_qualified_oci_digest }}
-          LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST: ${{ matrix.libero_qualified_platform_manifest_digest }}
-          LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST: ${{ matrix.libero_qualified_attestation_manifest_digest }}
-          LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST: ${{ matrix.libero_qualified_attestation_config_digest }}
-          LIBERO_QUALIFIED_ATTESTATION_LAYERS: ${{ matrix.libero_qualified_attestation_layers }}
-          LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS: ${{ matrix.libero_qualified_package_version_digests }}
-          LIBERO_PACKAGE_WRITER_REPOSITORY: ${{ matrix.libero_package_writer_repository }}
         run: |
           set -euo pipefail
           path="${IMAGE#ghcr.io/}"
@@ -1737,275 +996,37 @@ jobs:
           package_and_tag="${path#*/}"
           package="${package_and_tag%:*}"
           tag="${package_and_tag##*:}"
-          repository="${IMAGE%:*}"
           encoded="${package//\//%2F}"
           package_api="/orgs/${owner}/packages/container/${encoded}"
           versions="$(mktemp)"
           if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
-            response="$(mktemp)"
-            if gh api -i "$package_api" >"$response" 2>&1; then
-              echo "::error::Failed-build package exists but its versions could not be verified"
-              exit 1
-            elif grep -q '^HTTP/.* 404 ' "$response"; then
-              if [ "$TOOL" != libero ]; then
-                test -f "$NPA_FAILED_PUBLICATION_PRE_GRAPH"
-                jq -e '
-                  .schema == "npa.publication.pre-package-graph.v1" and
-                  .package.state == "absent" and .versions == []
-                ' "$NPA_FAILED_PUBLICATION_PRE_GRAPH" >/dev/null || {
-                  echo "::error::Failed-build cleanup lost a pre-existing package graph"
-                  exit 1
-                }
-              fi
-              echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            echo "::error::Failed-build package absence is unverified"
-            exit 1
+            echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
-          if [ "$TOOL" = libero ]; then
-            visibility="$(gh api "$package_api" --jq .visibility)"
-            test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-              "$LIBERO_PACKAGE_WRITER_REPOSITORY"
-            test "$LIBERO_PACKAGE_WRITER_REPOSITORY" = "$GITHUB_REPOSITORY"
-            qualified_rows="$(mktemp)"
-            if ! jq -e --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
-              --arg tag "$tag" \
-              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              ($expected | length > 0 and length == (unique | length) and
-                all(.[]; test("^sha256:[0-9a-f]{64}$")) and
-                index($root) != null) and
-              ([.[] | select(.name as $name | $expected | index($name))] |
-                (length == ($expected | length)) and
-                ([.[].name] | sort) == ($expected | sort) and
-                (map(.id) | length == (unique | length)) and
-                all(.[];
-                  (.id | tostring | test("^[1-9][0-9]*$")) and
-                  if .name == $root
-                  then ((.metadata.container.tags // []) == [] or
-                        (.metadata.container.tags // []) == [$tag])
-                  else (.metadata.container.tags // []) == []
-                  end))
-            ' "$versions" >/dev/null; then
-              echo "::error::Failed LIBERO cleanup cannot isolate every qualified ownership-bound version"
-              echo "WARNING: unresolved failed LIBERO candidate state was preserved for recovery." >> "$GITHUB_STEP_SUMMARY"
-              exit 1
-            fi
-            jq --arg root "$LIBERO_QUALIFIED_OCI_DIGEST" \
-              --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              [.[] | select(.name as $name | $expected | index($name)) |
-                {id:(.id | tostring), name,
-                 tags:(.metadata.container.tags // [])}] |
-              sort_by(.name == $root)
-            ' "$versions" > "$qualified_rows"
-            if [ "$visibility" = private ]; then
-              echo "Retained the private qualified LIBERO versions; no public mutation occurred." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            test "$visibility" = public || {
-              echo "::error::Unsupported failed LIBERO package visibility: $visibility"
-              exit 1
-            }
-            # Re-prove the qualified OCI graph for read-only reconciliation.
-            # Package-version names alone are not sufficient:
-            # the root index, runtime descriptor, attestation descriptor, and
-            # every attestation payload must still match the sealed candidate.
-            root_manifest="$(mktemp)"
-            test "$(crane digest "$repository@$LIBERO_QUALIFIED_OCI_DIGEST")" = \
-              "$LIBERO_QUALIFIED_OCI_DIGEST"
-            crane manifest "$repository@$LIBERO_QUALIFIED_OCI_DIGEST" > "$root_manifest"
-            jq -e --arg runtime "$LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST" \
-              --arg attestation "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" '
-              .mediaType == "application/vnd.oci.image.index.v1+json" and
-              (.manifests | length) == 2 and
-              ([.manifests[] | select(
-                .digest == $runtime and
-                .platform == {"architecture":"amd64","os":"linux"}
-              )] | length) == 1 and
-              ([.manifests[] | select(
-                .digest == $attestation and
-                .annotations["vnd.docker.reference.digest"] == $runtime and
-                .annotations["vnd.docker.reference.type"] == "attestation-manifest"
-              )] | length) == 1
-            ' "$root_manifest" >/dev/null
-            attestation_manifest="$(mktemp)"
-            test "$(crane digest "$repository@$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST")" = \
-              "$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST"
-            crane manifest \
-              "$repository@$LIBERO_QUALIFIED_ATTESTATION_MANIFEST_DIGEST" > \
-              "$attestation_manifest"
-            test "$(jq -r '.config.digest' "$attestation_manifest")" = \
-              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
-            config_blob="$(mktemp)"
-            crane blob "$repository" "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST" > \
-              "$config_blob"
-            test "sha256:$(sha256sum "$config_blob" | cut -d ' ' -f 1)" = \
-              "$LIBERO_QUALIFIED_ATTESTATION_CONFIG_DIGEST"
-            expected_layers="$(mktemp)"
-            printf '%s' "$LIBERO_QUALIFIED_ATTESTATION_LAYERS" > "$expected_layers"
-            test "$(jq '.layers | length' "$attestation_manifest")" = \
-              "$(jq 'length' "$expected_layers")"
-            while IFS= read -r index; do
-              expected="$(jq -c ".[${index}]" "$expected_layers")"
-              jq -e --argjson expected "$expected" \
-                ".layers[$index] | {predicate_type:.annotations[\"in-toto.io/predicate-type\"],digest,size_bytes:.size} == \$expected" \
-                "$attestation_manifest" >/dev/null
-              layer_digest="$(jq -r '.digest' <<<"$expected")"
-              layer_size="$(jq -r '.size_bytes' <<<"$expected")"
-              predicate_type="$(jq -r '.predicate_type' <<<"$expected")"
-              layer="$(mktemp)"
-              crane blob "$repository" "$layer_digest" > "$layer"
-              test "$(wc -c < "$layer")" = "$layer_size"
-              test "sha256:$(sha256sum "$layer" | cut -d ' ' -f 1)" = \
-                "$layer_digest"
-              jq -e --arg predicate "$predicate_type" \
-                --arg subject "${LIBERO_QUALIFIED_PLATFORM_MANIFEST_DIGEST#sha256:}" '
-                .predicateType == $predicate and
-                any(.subject[]; .digest.sha256 == $subject)
-              ' "$layer" >/dev/null
-            done < <(jq -r 'keys[]' "$expected_layers")
-            unrelated_before="$(mktemp)"
-            jq --argjson expected "$LIBERO_QUALIFIED_PACKAGE_VERSION_DIGESTS" '
-              [.[] | select(.name as $name | $expected | index($name) | not) |
-                {id:(.id | tostring), name,
-                 tags:(.metadata.container.tags // [])}] | sort_by(.id)
-            ' "$versions" > "$unrelated_before"
-            expected_versions="$(mktemp)"
-            jq -S 'sort_by(.id | tostring)' "$versions" > "$expected_versions"
-            require_complete_libero_graph() {
-              local observed
-              observed="$(mktemp)"
-              gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-                jq -S 'add | sort_by(.id | tostring)' > "$observed"
-              cmp -s "$expected_versions" "$observed" || {
-                echo "::error::Refusing cleanup: complete LIBERO package graph changed"
-                exit 1
-              }
-            }
-            while IFS=$'\t' read -r version_id digest expected_tags; do
-              require_complete_libero_graph
-              jq -e --arg id "$version_id" --arg digest "$digest" \
-                --argjson tags "$expected_tags" '
-                [.[] | select((.id | tostring) == $id and .name == $digest and
-                  (.metadata.container.tags // []) == $tags)] | length == 1
-              ' "$expected_versions" >/dev/null || {
-                echo "::error::Qualified LIBERO version identity changed during cleanup"
-                exit 1
-              }
-            done < <(jq -r '.[] | [.id, .name, (.tags | tojson)] | @tsv' "$qualified_rows")
-            # A final read cannot exclude a concurrent registry writer adding tags.
-            # No registry-enforced conditional delete primitive is available here.
-            echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
-            exit 1
+          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
+          count="$(jq length <<<"$matches")"
+          if [ "$count" = 0 ]; then
+            echo "No pushed run-owned dev tag exists for cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
-          test -f "$NPA_FAILED_PUBLICATION_PRE_GRAPH"
-          jq -e --arg repository "$repository" --arg package_api "$package_api" \
-            --arg tag "$tag" --arg run_id "$GITHUB_RUN_ID" \
-            --arg run_attempt "$GITHUB_RUN_ATTEMPT" --arg repo "$GITHUB_REPOSITORY" '
-            .schema == "npa.publication.pre-package-graph.v1" and
-            .repository == $repository and .package_api == $package_api and
-            .tag == $tag and .run_id == $run_id and .run_attempt == $run_attempt and
-            (.package.state == "absent" or
-              (.package.state == "present" and
-               .package.repository_full_name == $repo and
-               (.package.visibility == "private" or .package.visibility == "public"))) and
-            (.versions | type == "array") and
-            (if .package.state == "absent" then .versions == [] else true end)
-          ' "$NPA_FAILED_PUBLICATION_PRE_GRAPH" >/dev/null
-          test "$(gh api "$package_api" --jq '.repository.full_name // ""')" = \
-            "$GITHUB_REPOSITORY"
-          visibility="$(gh api "$package_api" --jq .visibility)"
-          if [ "$visibility" != private ] && [ "$visibility" != public ]; then
-            echo "::error::Unsupported failed-build package visibility: $visibility"
-            exit 1
-          fi
-          before_versions="$(mktemp)"
-          current_versions="$(mktemp)"
-          jq -S '.versions | sort_by(.id | tostring)' \
-            "$NPA_FAILED_PUBLICATION_PRE_GRAPH" > "$before_versions"
-          jq -S 'sort_by(.id | tostring)' "$versions" > "$current_versions"
-          jq -e '
-            (map(.id | tostring) | length == (unique | length)) and
-            all(.[];
-              (.id | tostring | test("^[1-9][0-9]*$")) and
-              (.name | type == "string") and
-              ((.metadata.container.tags // []) | type == "array"))
-          ' "$current_versions" >/dev/null
-          jq -e --slurpfile current "$current_versions" '
-            all(.[]; . as $before | any($current[0][]; . == $before))
-          ' "$before_versions" >/dev/null || {
-            echo "::error::Unrelated package identity changed after the sealed pre-publication graph"
+          test "$count" = 1
+          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
+          test "$tags" = "[\"$tag\"]" || {
+            echo "::error::Refusing cleanup: digest also carries tags $tags"
             exit 1
           }
-          before_ids="$(jq -c '[.[].id | tostring]' "$before_versions")"
-          owned="$(mktemp)"
-          jq -S --argjson before_ids "$before_ids" --arg tag "$tag" '
-            [.[] | select((.id | tostring) as $id | $before_ids | index($id) | not)] |
-            if length < 1 or length > 3 or
-               ([.[] | select((.metadata.container.tags // []) == [$tag])] | length) != 1 or
-               any(.[];
-                 ((.id | tostring | test("^[1-9][0-9]*$")) | not) or
-                 ((.name | test("^sha256:[0-9a-f]{64}$")) | not) or
-                 ((((.metadata.container.tags // []) == [$tag] or
-                    (.metadata.container.tags // []) == [])) | not)
-               )
-            then error("failed-publication current-run delta is malformed")
-            else {
-              root:(.[] | select((.metadata.container.tags // []) == [$tag]) |
-                {id:(.id | tostring),name,tags:(.metadata.container.tags // [])}),
-              referrers:[.[] | select((.metadata.container.tags // []) == []) |
-                {id:(.id | tostring),name,tags:(.metadata.container.tags // [])}] |
-                sort_by(.id)
-            }
-            end
-          ' "$current_versions" > "$owned"
-          root_id="$(jq -r '.root.id' "$owned")"
-          root_digest="$(jq -r '.root.name' "$owned")"
-          test "$root_digest" = "$(crane digest "$IMAGE")"
-          while IFS=$'\t' read -r referrer_id referrer_digest; do
-            manifest="$(mktemp)"
-            crane manifest "$repository@$referrer_digest" > "$manifest"
-            # The adjacent delta identifies candidate versions, not exclusive ownership.
-            # A subject relationship alone is not proof of run ownership.
-            jq -e --arg root "$root_digest" '
-              .schemaVersion == 2 and
-              .mediaType == "application/vnd.oci.image.manifest.v1+json" and
-              (.layers | type == "array" and length > 0) and
-              (((.subject // {}).digest == $root) or
-               ((.annotations // {})["vnd.docker.reference.digest"] == $root))
-            ' "$manifest" >/dev/null || {
-              echo "::error::Run-created attestation version is not bound to the exact candidate root"
-              exit 1
-            }
-          done < <(jq -r '.referrers[] | [.id,.name] | @tsv' "$owned")
-          expected_graph="$(mktemp)"
-          cp "$current_versions" "$expected_graph"
-          require_complete_graph() {
-            local observed
-            observed="$(mktemp)"
-            gh api --paginate --slurp "${package_api}/versions?per_page=100" |
-              jq -S 'add | sort_by(.id | tostring)' > "$observed"
-            cmp -s "$expected_graph" "$observed" || {
-              echo "::error::Refusing cleanup: complete package graph changed"
-              exit 1
-            }
-          }
-          while IFS=$'\t' read -r referrer_id referrer_digest; do
-            require_complete_graph
-            jq -e --arg id "$referrer_id" --arg digest "$referrer_digest" '
-              [.[] | select((.id | tostring) == $id and .name == $digest and
-                (.metadata.container.tags // []) == [])] | length == 1
-            ' "$expected_graph" >/dev/null
-          done < <(jq -r '.referrers[] | [.id,.name] | @tsv' "$owned")
-          require_complete_graph
-          jq -e --arg id "$root_id" --arg digest "$root_digest" --arg tag "$tag" '
-            [.[] | select((.id | tostring) == $id and .name == $digest and
-              (.metadata.container.tags // []) == [$tag])] | length == 1
-          ' "$expected_graph" >/dev/null
-          # A final read cannot exclude a concurrent registry writer adding tags.
-          # No registry-enforced conditional delete primitive is available here.
-          echo "::error::Refusing non-atomic registry cleanup; versions and package configuration are retained"
-          exit 1
+          version_id="$(jq -r '.[0].id' <<<"$matches")"
+          digest="$(jq -r '.[0].name' <<<"$matches")"
+          test "$digest" = "$(crane digest "$IMAGE")"
+          if [ "$(jq length "$versions")" = 1 ]; then
+            # Exact newly created package: GHCR refuses deletion of its last
+            # tagged version, so delete the proven one-version package.
+            gh api --method DELETE "$package_api"
+          else
+            gh api --method DELETE "${package_api}/versions/${version_id}"
+          fi
+          echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
   promote:
     needs: [resolve, build-development]
