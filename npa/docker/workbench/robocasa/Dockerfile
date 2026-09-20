@@ -71,7 +71,9 @@ WORKDIR /opt/robocasa
 # LeRobot environment wrappers nor that newer API. Keep RoboCasa's known-good
 # pin and install only the LeRobot policy package here. Keep Torch/TorchVision
 # on the same 2.9/0.24 stack as the validated LeRobot 0.5.1 workflow image and
-# inside the wheel's declared upper bounds.
+# inside the wheel's declared upper bounds. Resolve those pins together with
+# Accelerate so pip never installs a CUDA 13 Torch stack first and leaves its
+# orphaned runtime packages behind.
 RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" wheel \
     && python -m pip install --no-cache-dir \
         "git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_COMMIT}" \
@@ -87,9 +89,8 @@ RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" whee
         "av>=15.0.0,<16.0.0" "jsonlines>=4.0.0,<5.0.0" \
         "deepdiff>=7.0.1,<9.0.0" "diffusers>=0.27.2,<0.36.0" \
         "pyserial>=3.5,<4.0" \
-    && python -m pip install --no-cache-dir --no-deps "lerobot==0.5.1" \
-    && python -m pip install --no-cache-dir --upgrade \
-        "torch==2.9.0" "torchvision==0.24.0"
+        "torch==2.9.0" "torchvision==0.24.0" \
+    && python -m pip install --no-cache-dir --no-deps "lerobot==0.5.1"
 
 # Install RoboCasa source (no deps; the closure above is pinned).
 RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
@@ -99,6 +100,8 @@ RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
     && python -c "from importlib.metadata import metadata, version; from packaging.requirements import Requirement; requirements = [Requirement(raw) for raw in (metadata('lerobot').get_all('Requires-Dist') or [])]; incompatible = [str(req) for req in requirements if req.name in {'torch', 'torchvision'} and not req.specifier.contains(version(req.name), prereleases=True)]; assert not incompatible, incompatible" \
+    && python -c "from importlib.metadata import distributions; forbidden_names = {'cuda-bindings', 'cuda-pathfinder', 'cuda-toolkit', 'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; installed = {str(dist.metadata['Name']).lower() for dist in distributions()}; forbidden = sorted(installed & forbidden_names); assert not forbidden, forbidden" \
+    && python -c "import torch; assert torch.__version__ == '2.9.0+cu128'; assert torch.version.cuda == '12.8'" \
     && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
 # Copy the shared workbench implementation into the image.

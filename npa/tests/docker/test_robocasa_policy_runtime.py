@@ -43,6 +43,21 @@ def test_robocasa_act_runtime_stays_within_lerobot_dependency_bounds() -> None:
     assert "req.specifier.contains(version(req.name), prereleases=True)" in text
 
 
+def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    dependency_install = text.split("# Install RoboCasa source", maxsplit=1)[0]
+    assert dependency_install.count('"torch==2.9.0"') == 1
+    assert dependency_install.count('"torchvision==0.24.0"') == 1
+    assert '"torch==2.9.0" "torchvision==0.24.0" \\\n' in dependency_install
+    assert 'pip install --no-cache-dir --upgrade \\\n        "torch' not in text
+    assert "forbidden_names = {" in text
+    assert "'cuda-toolkit'" in text
+    assert "'nvidia-cudnn-cu13'" in text
+    assert "torch.__version__ == '2.9.0+cu128'" in text
+    assert "torch.version.cuda == '12.8'" in text
+
+
 def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
