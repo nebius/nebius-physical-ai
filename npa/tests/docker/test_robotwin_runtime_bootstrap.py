@@ -384,9 +384,11 @@ def test_capability_rollback_fsync_failure_preserves_exact_recovery_receipt(
     capability = json.loads(_environment()[runtime.AUTH_ENV])
     original_fsync = runtime.os.fsync
     original_unlink = runtime.os.unlink
+    original_listdir = runtime.os.listdir
     marker_name = hashlib.sha256(capability["capability_id"].encode()).hexdigest()
     fsync_kinds: list[str] = []
     unlink_receipts: list[tuple[str, int | None]] = []
+    listdir_receipts: list[object] = []
 
     def fail_rollback_fsync(descriptor: int) -> None:
         kind = "directory" if stat.S_ISDIR(os.fstat(descriptor).st_mode) else "file"
@@ -399,8 +401,13 @@ def test_capability_rollback_fsync_failure_preserves_exact_recovery_receipt(
         unlink_receipts.append((str(name), dir_fd))
         original_unlink(name, dir_fd=dir_fd)
 
+    def record_listdir(path: object) -> list[str]:
+        listdir_receipts.append(path)
+        return original_listdir(path)
+
     monkeypatch.setattr(runtime.os, "fsync", fail_rollback_fsync)
     monkeypatch.setattr(runtime.os, "unlink", record_unlink)
+    monkeypatch.setattr(runtime.os, "listdir", record_listdir)
     with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
         runtime._consume_capability(capability, state_dir=state_dir)
     # The commit and rollback attempts are both visible, while the marker is
@@ -408,6 +415,8 @@ def test_capability_rollback_fsync_failure_preserves_exact_recovery_receipt(
     assert fsync_kinds == ["file", "directory", "directory"]
     assert [name for name, _dir_fd in unlink_receipts] == [marker_name]
     assert all(dir_fd is not None for _name, dir_fd in unlink_receipts)
+    assert len(listdir_receipts) == 1
+    assert isinstance(listdir_receipts[0], int)
     assert list(state_dir.iterdir()) == []
 
 

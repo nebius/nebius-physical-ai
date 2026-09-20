@@ -245,7 +245,7 @@ def _consume_capability(
             else:
                 directory_fsync = "synced"
             try:
-                residual_names = tuple(sorted(child.name for child in state_dir.iterdir()))
+                residual_names = tuple(sorted(os.listdir(directory_descriptor)))
             except OSError:
                 residual_names = ("<unavailable>",)
         if directory_descriptor >= 0:
