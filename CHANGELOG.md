@@ -14,6 +14,11 @@ a versioned heading when a release is cut.
   wiring benchmark adds an illustrative missing-terminal failure so threshold
   sweeps exercise this false-pass class; its fixture score remains explicitly
   non-evidentiary and real gates still require task-specific labeled controls.
+- A retained six-call hosted control found both reviewed models produced the
+  expected pass/fail labels, but independent rationale review accepted only
+  MiniCPM on the exact three-item control. MiniMax's negative rationale
+  contradicted visible transfer evidence, so its otherwise-correct score matrix
+  was rejected rather than presented as model qualification.
 
 ### VLM image preferences are blinded and order-balanced
 
