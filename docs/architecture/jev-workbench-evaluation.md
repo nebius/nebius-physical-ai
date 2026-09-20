@@ -1,29 +1,29 @@
 # Jev integration assessment for workbench development
 
-Status: evaluation and proposed experiment, 2026-09-19. Source review used
-workbench commit `d22893238d75efbb05a69eb75bca1b82eb5fe280`. This document does
-not enable a provider, change the agent, or claim a live Jev benchmark.
+Status: optional model routing implemented; live Token Factory cache evidence
+recorded. The original source review used workbench commit
+`d22893238d75efbb05a69eb75bca1b82eb5fe280` on 2026-09-19.
 
-## Recommendation
+## Recommendation and implemented scope
 
-Start with an optional developer experiment for **skill selection and failure
-triage**. If that produces useful measurements, evaluate replacing the agent's
-**paid semantic classification fallback**. Keep deterministic routing first.
-Prefer a small injected HTTP adapter for a future production integration; use
-the LangChain wrapper when the consuming application already uses LangChain.
+[The implementation guide](../workbench/jev-routing.md) describes the shipped
+opt-in Jev router, its two Token Factory generation candidates, and reproducible
+provider tests. The router runs before final text generation and preserves
+existing grounded, explicit-model, vision, and authorization behavior. Direct
+HTTP avoids adding LangChain to the workbench's runtime dependencies.
+
+Real Token Factory requests have produced positive provider cache counters on
+both models. Live Jev inference still requires a TypeSafe key; transport and
+agent wiring tests do not establish routing accuracy. Keep the feature opt-in
+until the held-out evaluation below supports broader adoption.
 
 The [LangChain article](https://www.langchain.com/blog/building-a-harness-with-jev)
-describes Jev, a TypeSafe model for classification rather than generation.
-It fits decisions with a known answer set. Its advertised speed and cost
-multipliers are vendor comparisons, not measurements of this workbench.
-Code generation, diagnosis explanations, and workflow authoring still need
-the coding agent or a generative model.
-
-The current [blueprint architecture](blueprint-incorporation-plan.md) keeps
-the custom action loop and uses Nebius-hosted inference plus self-hostable
-tracing. A hosted TypeSafe dependency would extend that architecture. Keep it
-an explicit optional experiment until its quality and data handling justify
-that decision; migrating the agent to LangGraph is unnecessary.
+describes Jev, a TypeSafe classification model. Its advertised cost and speed
+multipliers are vendor comparisons, not measurements of this workbench. Code
+generation, diagnosis explanations, and workflow authoring still use a generative
+model. The existing [blueprint architecture](blueprint-incorporation-plan.md)
+retains the custom action loop; the optional hosted classifier does not require
+migrating it to LangGraph.
 
 ## Verified upstream contract
 
@@ -65,7 +65,7 @@ calibration. See [confidence semantics](https://docs.typesafe.ai/confidence).
 | First developer experiment | Suggest relevant skills | [`skills/index.yaml`](../../skills/index.yaml), `_resolve_skill_context` in [`agent.py`](../../npa/src/npa/cli/agent.py) | Rank candidate skill descriptions with an explicit `none` option; verify the best candidates against their actual instructions. Compare with current keyword/intent selection. Explicitly requested and mandatory skills remain authoritative. |
 | First developer experiment | Triage failed development runs | `find_improvements` in [`improvements.py`](../../npa/src/npa/agent_backend/improvements.py) | Add advisory categories such as environment, implementation, insufficient evidence, and recovered. Preserve deterministic findings, real validation receipts, and independent review. |
 | First runtime candidate | Classify paraphrases the free router misses | `classify_intent_semantic` in [`semantic_router.py`](../../npa/src/npa/agent_backend/semantic_router.py), `_semantic_route` in [`agent.py`](../../npa/src/npa/cli/agent.py) | Replace only the paid classification branch with `Choice` over known intents, `action`, and `none`. Measure against the current cheap Token Factory classifier. |
-| Later | Choose a generation tier | `classify_tier` and `build_model_ladder` in [`agent_routing.py`](../../npa/src/npa/cli/agent_routing.py) | Compare optional Jev tier suggestions with free heuristics. Preserve explicit model selection, operator model configuration, and vision requirements. |
+| Implemented, opt-in | Choose a generation model | `classify_tier` and `build_model_ladder` in [`agent_routing.py`](../../npa/src/npa/cli/agent_routing.py) | The final text path calls the shipped model router. Existing heuristics remain its baseline; explicit choices, operator configuration, and vision requirements retain precedence. |
 | Later | Rank retrieved documentation | `retrieve` in [`retrieval.py`](../../npa/src/npa/agent_backend/retrieval.py) | Rerank retrieved candidates and flag unsupported citations. Retain source IDs and original evidence; compare answer quality and added latency. |
 | Later | Classify textual workflow failures | [`token_factory_triage.py`](../../npa/src/npa/workflows/token_factory_triage.py) | Label a sanitized artifact summary before generative diagnosis. Compare against existing report quality and end-to-end cost; a category cannot replace the written report. |
 
@@ -90,7 +90,7 @@ This can operate as a script invoked by a coding assistant. Installing a
 LangChain package alone does not alter Codex's internal model routing, tool
 permissions, or approval policy.
 
-## Proposed runtime boundary
+## Future semantic-classifier boundary
 
 ```mermaid
 flowchart TD
@@ -104,9 +104,10 @@ flowchart TD
     H[Image or visual turn] --> I[Existing visual handling]
 ```
 
-The diagram isolates the semantic decision; it does not replace the other
-chat handlers or retrieval path. Put a proposed adapter in a normal shipped
-backend module, inject its client, and wire it through the existing bootstrap.
+This future extension would replace paid semantic classification. The implemented
+model router instead runs after semantic and retrieval handling, before generation.
+Put that future adapter in a normal shipped backend module, inject its client,
+and wire it through the existing bootstrap.
 Do not write classifier logic directly into the rendered backend string.
 
 An adapter should return an NPA-owned decision with intent/mode, provider,
@@ -159,7 +160,7 @@ that Jev weights or a self-hostable server are available. Verify applicable
 terms through the [provider's published policies](https://docs.typesafe.ai/legal)
 before an operational adoption; this assessment makes no legal conclusion.
 
-## Reproducible synthetic API probe
+## Optional LangChain API probe
 
 Use an isolated checkout with its own `npa/.venv` as described in
 [Contributing](../../CONTRIBUTING.md#testing-requirements). Install only the
@@ -170,8 +171,8 @@ uv pip install --python npa/.venv/bin/python 'langchain-typesafe==0.0.1a2'
 ```
 
 Provide `TYPESAFE_API_KEY` through your private environment. Its value is
-required and has no default in this example. This is the upstream credential,
-not a new NPA configuration setting. The command below makes a hosted request
+required and has no default in this example. This provider credential is separate
+from the Token Factory generation key. The command below makes a hosted request
 with synthetic text, writes decision metadata to stdout, and executes no NPA
 action. Its output is an observation, not a pass/fail benchmark. Tracing is
 disabled and the endpoint is explicit so ambient gateway settings cannot
@@ -262,8 +263,9 @@ Promotion should require held-out task success at least as good as baseline,
 a measured improvement in total cost or latency, and all existing contract
 regressions passing. Report sample counts and uncertainty; equality on a small
 sample is insufficient evidence. Tune thresholds separately for each decision,
-including the `action` label. Start runtime use in opt-in shadow mode, then an
-opt-in semantic fallback. Keep a disable path that restores the current router.
+including the `action` label. Start the future semantic-classifier replacement in
+opt-in shadow mode, then an opt-in semantic fallback. Keep a disable path that
+restores the current router.
 
 The follow-up implementation should cover invalid/missing questions, unknown
 labels, non-finite probabilities, low confidence, provider authentication and
@@ -274,33 +276,13 @@ change also needs the repository's rendered-backend and live deployment checks.
 
 ## Evidence and remaining work
 
-The assessment inspected the upstream documentation, installed pinned client
-packages, and checked the current repository integration points. The exact
-documented example was executed with injected `httpx2.MockTransport` clients:
-one synthetic request verified serialization, typed response parsing, stdout
-metadata, and closure of both clients. The missing-constructor-questions error
-in the blog example was reproduced. These checks establish API compatibility,
-not model quality, calibration, service availability, or latency.
+The [implementation guide](../workbench/jev-routing.md) distinguishes real Token
+Factory measurements from mocked Jev transport validation. The original
+LangChain example above was also exercised against the pinned package with a
+mock HTTP transport; its serialization, parsing, and client cleanup succeeded.
 
-Local validation on Python 3.12/macOS:
-
-- Repository Ruff lint passed.
-- Documentation contracts: 663 passed, including local links and examples.
-- Existing semantic-router, model-routing, and task-scorecard checks:
-  50 passed, 1 skipped. The skip is the opt-in live scorecard.
-- The new page's links and shell/Python syntax were also checked directly.
-
-Reproduce the focused repository checks from the checkout root:
-
-```bash
-npa/.venv/bin/python -m ruff check npa
-npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
-npa/.venv/bin/python -m pytest npa/tests/cli/test_agent_semantic_router.py \
-  npa/tests/cli/test_agent_routing.py \
-  npa/tests/agent_eval/test_agent_eval_scorecard.py -q
-```
-
-No `TYPESAFE_API_KEY` was configured in the evaluation environment, so no live
-Jev inference was run. Runtime adoption remains contingent on the comparison
-above. The useful deliverable now is a concrete experiment and integration
-boundary, with production behavior unchanged.
+The model router is implemented and disabled by default. Its 0.8 confidence
+threshold remains experimental. The paid semantic-classifier replacement,
+skill suggestion, retrieval reranking, and developer failure triage remain
+proposed extensions. The held-out comparison above is still required before
+claiming that Jev improves workbench routing quality or overall cost.

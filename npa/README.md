@@ -208,6 +208,13 @@ For artifact conversion and sharing, see the
 
 ## Developing and testing npa
 
+The optional [Jev model router](../docs/workbench/jev-routing.md) selects between
+eligible Token Factory text models in agent chat. `NPA_AGENT_MODEL_ROUTER=jev`
+enables it during agent deployment/bootstrap; it defaults to unset.
+`TYPESAFE_API_KEY` is required and can be saved in the existing private NPA
+credential store. The guide includes the live evaluation script, the opt-in
+`NPA_JEV_ROUTING_LIVE=1` tests, and provider-reported prefix-cache evidence.
+
 To work on `npa` itself, create the contributor environment and use the `make`
 targets from the repo root:
 
