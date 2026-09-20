@@ -618,6 +618,118 @@ def test_ambiguous_pending_paidf_component_does_not_override_exact_uri(
     assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
 
 
+def test_ambiguous_exact_fallback_enforces_artifact_limit(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "fallback-limit"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    for name in ("a.json", "b.json"):
+        resolver_env.objects[("alias-bucket", f"{exact_prefix}/artifacts/{name}")] = (
+            name.encode()
+        )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved, limit=1)
+
+    assert artifacts == [f"s3://alias-bucket/{exact_prefix}/artifacts/a.json"]
+
+
+def test_paidf_manifest_with_mismatched_run_root_keeps_exact_artifact_scope(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "manifest-provenance"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    manifest = _manifest(run_id)
+    manifest["run_prefix_uri"] = "s3://alias-bucket/different/root"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{exact_prefix}/manifest.json",
+        manifest,
+    )
+    owned_key = f"{exact_prefix}/artifacts/mine.json"
+    sibling_key = f"checkpoints/{run_id}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", owned_key)] = b"mine"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.manifest_pending is False
+    assert artifacts == [f"s3://alias-bucket/{owned_key}"]
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
+
+
+def test_terminal_ledger_workflow_name_cannot_widen_ambiguous_exact_uri(
+    resolver_env: ExactS3,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "terminal-ledger-provenance"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    sibling_key = f"checkpoints/{run_id}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.first_run_state.terminal_run_evidence",
+        lambda **_kwargs: {
+            "last_known_state": "SUCCEEDED",
+            "workflow_identity": "physical-ai-data-factory",
+        },
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.source == "project_run_terminal_ledger"
+    assert resolved.manifest_pending is False
+    assert artifacts == []
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
+
+
+def test_receipt_canonical_parent_must_match_requested_run_id(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "receipt-wanted-run"
+    other_run = "receipt-other-run"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {
+                "name": "physical-ai-data-factory",
+                "run_prefix_uri": (
+                    f"s3://alias-bucket/physical-ai-data-factory/{other_run}"
+                ),
+            },
+            "launch": {"status": "submitted", "sky_job_id": "17"},
+        },
+    )
+    sibling_key = f"physical-ai-data-factory/{other_run}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+
+    resolved = resolve_run(run_id, project="paidf")
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.manifest_pending is True
+    assert artifacts == []
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[-1][1] == (
+        f"physical-ai-data-factory/{other_run}/npa-workflow/artifacts/"
+    )
+
+
 def _resolved_declarative_run(
     resolver_env: ExactS3, *, run_id: str = "declarative-artifacts"
 ) -> tuple[RunResolution, str]:

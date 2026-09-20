@@ -769,23 +769,14 @@ def list_resolved_artifacts(
         and str((resolution.manifest or {}).get("run_prefix_uri") or "").rstrip("/")
         == f"s3://{state.bucket}/{declarative_run_root}"
     )
-    has_pending_declarative_control_prefix = (
-        resolution.manifest_pending
-        and _has_unambiguous_parent_run_root(state, run_id=resolution.run_id)
-    )
     uses_run_root_layout = (
-        has_pending_declarative_control_prefix
-        if resolution.manifest_pending
-        else (
-            resolution.workflow_name == PAIDF_WORKFLOW_NAME
-            or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
-            or has_declarative_control_prefix
-        )
+        has_declarative_control_prefix
+        or _has_unambiguous_parent_run_root(state, run_id=resolution.run_id)
     )
     if not uses_run_root_layout:
         from npa.orchestration.skypilot.workflow_state import list_artifacts
 
-        return list_artifacts(state, stage or None)
+        return list_artifacts(state, stage or None)[:limit]
 
     run_prefix = declarative_run_root + "/"
     objects: list[str] = []
