@@ -6,6 +6,12 @@ Recipes for specific workloads, benchmarks, and integrations. Start with
 [Workbench setup](../getting-started.md); each recipe states its own inputs and
 validation scope. Dated measurements apply to the versions and hardware recorded.
 
+## Development environments
+
+| Recipe | Purpose |
+| --- | --- |
+| [Persistent Linux desktop](development-desktop.md) | Develop with VS Code and Codex through SSH, render Retina text, and verify backup recovery |
+
 ## Policy training and simulation
 
 | Recipe | Purpose |
