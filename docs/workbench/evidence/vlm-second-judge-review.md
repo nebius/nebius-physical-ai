@@ -8,16 +8,17 @@ physical-correctness, or critical-defect certificate.
 
 | Item | Evidence |
 | --- | --- |
-| Source commit | Pending the reviewed source freeze |
+| Source commit | `960ba079e39f694208ab51a78010e1d31c7abe6a` |
 | Container image | Not applicable; this change uses the installed NPA client |
 | CPU | Real frame normalization, request construction, parsing, and report validation |
 | GPU | Not applicable; no local model is served |
-| Hosted API | Required: two real image requests over identical payloads except `model` |
-| Smoke/unit result | 254 focused checks passed on Python 3.12 |
-| Full workload result | Pending independent source/harness approval |
+| Hosted API | Six real image attempts: three fixed primary/secondary pairs whose payloads differed only in `model` |
+| Smoke/unit result | 229 affected checks passed and 2 skipped on Python 3.12 |
+| Guardrails | 3,881 passed |
+| Full workload result | All six responses were complete; both judges matched all three frozen labels; observed escalation was 0/3 |
 | Objective controls | Same-model pre-transport rejection, exact request equivalence, frame mismatch rejection, provider-error retention, fail-closed disagreement |
 | Visual calibration | Three independently labeled controls; n=3 is not an operational-rate estimate |
-| Independent review | Initial source review found actionable issues; corrected candidate re-review pending |
+| Independent review | Two changes-required source/harness rounds were resolved; a separate pixel/evidence reviewer accepted the audit-only mechanism |
 
 ## Contract
 
@@ -29,6 +30,27 @@ errors. It never emits a mean score.
 Disagreement or either judge error produces `passed=false` and
 `escalation_required=true`. Agreement can describe the two returned verdicts,
 but the report remains `deployment_status=audit_only`.
+
+## Hosted control outcome
+
+| Control | Frozen label | MiniMax-M3 | MiniCPM-V-4_5 | Result |
+| --- | --- | --- | --- | --- |
+| Blank reconstruction evidence | fail | `0.0`, fail, label match | `0.0`, fail, label match | agreement; no escalation |
+| Upright bottle and bowl | pass | `1.0`, pass, label match | `1.0`, pass, label match | agreement; no escalation |
+| Offset reconstruction fragment | fail | `0.2`, fail, label match | `0.0`, fail, label match | agreement; no escalation |
+
+All six provider responses had HTTP 200, `finish_reason=stop`, usage, unique
+request identity, exact returned-model identity, and retained raw-response
+hashes. Independent review recomputed request-file, canonical-request,
+report-transport, frame, prompt, rubric, manifest, response, state, and summary
+hashes without mismatch. Forced offline disagreement and provider-error
+controls separately proved that those paths fail closed and require escalation.
+
+The predeclared directional expectation was at least 2/3 escalations; the
+observed 0/3 is a descriptive surprise for these controls only. It is not an
+operational disagreement-rate estimate or evidence that either model is
+qualified. In particular, prior instruction-resistance, system-role, and
+frame-citation controls still disqualify MiniCPM-V-4_5 as an acceptance judge.
 
 ## Frozen controls
 
