@@ -50,7 +50,11 @@ DEFAULT_RUBRIC = (
     "Score whether the rollout completes the requested physical task. "
     "Use 1.0 only for clear task completion, 0.0 for clear failure, and "
     "intermediate values for partial progress. Penalize unsafe, incomplete, "
-    "or ambiguous outcomes."
+    "or ambiguous outcomes. Evidence that stops at intermediate progress "
+    "without showing the requested terminal state is incomplete, even if the "
+    "action appears likely to succeed. Do not infer placement, release, "
+    "stability, or completion from approach, contact, grasp, lift, transfer, "
+    "or disappearance alone."
 )
 #: Backend-neutral result name. The payload distinguishes fixtures from inference.
 RESULT_FILENAME = "vlm_eval.json"

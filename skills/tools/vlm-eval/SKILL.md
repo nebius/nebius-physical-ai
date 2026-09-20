@@ -146,7 +146,10 @@ npa workbench vlm-eval run \
   judge can actually see. A four-frame view of a long episode judges a summary.
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric
   reserves 1.0 for clear completion and 0.0 for clear failure, with intermediate
-  values for partial progress, and penalizes unsafe or ambiguous outcomes.
+  values for partial progress, and penalizes unsafe or ambiguous outcomes. It
+  also rejects intermediate progress without the requested terminal state:
+  approach, contact, grasp, lift, transfer, or disappearance alone cannot prove
+  placement, release, stability, or completion.
 - Write `--task` as identify-then-judge: ask what the frames show before asking
   whether they meet the target. A leading confirmation question such as "does
   this show X rather than a blank?" can make an unrelated negative control pass.
@@ -191,6 +194,14 @@ when the labeled dataset has no examples of the required class. Item IDs must
 be unique. Historical reports without `schema_version` are v1; their counts can
 be recomputed from retained per-item labels and predictions, but absent v2
 fields must not be presented as if the producer emitted them.
+
+The packaged sample's `progress-without-terminal-fail` case makes threshold
+sweeps exercise an omitted-outcome negative, but its tiny synthetic frames and
+prerecorded score remain wiring-only. For a real rollout gate, retain a
+source-matched truncated case with plausible progress and no terminal outcome,
+plus a real complete case and blank or unrelated evidence under the exact same
+task and rubric. Report sampling differences and do not call three controls an
+error-rate estimate or model qualification.
 
 ## In workflows
 

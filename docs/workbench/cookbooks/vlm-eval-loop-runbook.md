@@ -225,7 +225,11 @@ item, then run the sweep below.
 Use neutral identify-then-judge task text. Ask what the frames show before
 asking whether they satisfy the target; do not ask the model to confirm the
 desired answer. A blank and an unrelated rollout must score low under the exact
-same task-plus-rubric prompt before the positive score is usable evidence.
+same task-plus-rubric prompt before the positive score is usable evidence. Add a
+task-specific missing-terminal control that retains plausible intermediate
+progress but omits the requested outcome. The default rubric treats approach,
+contact, grasp, lift, transfer, or disappearance without the requested terminal
+state as incomplete; selected stills still cannot prove hidden state or safety.
 
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
@@ -254,6 +258,12 @@ failure item IDs, then resolve each ID in that configuration's complete
 it does not mean zero errors. Dataset item IDs must be unique. Reports without
 `schema_version` are legacy v1 records: their complete item results can be
 recomputed, but consumers must not invent v2 fields.
+
+The packaged sample includes an illustrative
+`progress-without-terminal-fail` item so fixture sweeps exercise this class.
+Its prerecorded score and tiny synthetic frames test wiring only. Calibrate the
+exact task, rubric, threshold, frame selection, and hosted model on real labeled
+rollouts before using a gate.
 
 ## Troubleshooting
 

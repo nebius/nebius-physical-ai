@@ -494,7 +494,7 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     assert payload["best_config"]["config"]["success_threshold"] == 0.8
     assert payload["best_config"]["metrics"]["accuracy"] == 1.0
     assert payload["best_config"]["metrics"]["true_positives"] == 2
-    assert payload["best_config"]["metrics"]["true_negatives"] == 2
+    assert payload["best_config"]["metrics"]["true_negatives"] == 3
     assert payload["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
     assert payload["best_config"]["metrics"]["confusion_matrix"] == {
         "actual_positive": {
@@ -503,14 +503,14 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
         },
         "actual_negative": {
             "predicted_positive": 0,
-            "predicted_negative": 2,
+            "predicted_negative": 3,
         },
     }
     assert payload["best_config"]["metrics"]["false_positive_item_ids"] == []
     assert payload["best_config"]["metrics"]["false_negative_item_ids"] == []
     assert payload["written_uri"] == str(output_path)
     written = json.loads(output_path.read_text(encoding="utf-8"))
-    assert written["item_count"] == 4
+    assert written["item_count"] == 5
     assert written["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
     assert (
         written["ranked_configs"][0]["metrics"]["confusion_matrix"]
