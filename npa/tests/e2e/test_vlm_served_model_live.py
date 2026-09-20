@@ -58,8 +58,12 @@ def test_self_hosted_result_retains_served_model() -> None:
     assert 0 <= payload["score"] <= 1
     assert payload["backend"] == "self-hosted" and not payload["dry_run"]
     evidence = payload["evidence"]
-    assert evidence["schema_version"] == "npa_vlm_eval_evidence_v1"
+    assert evidence["schema_version"] == "npa_vlm_eval_evidence_v2"
     assert evidence["request"]["endpoint_role"] == "self-hosted"
+    sampling = evidence["request"]["request_manifest"]["sampling"]
+    assert sampling["strategy"] == "keyframes"
+    assert sampling["max_frames"] == 8
+    assert sampling["selected_count"] == payload["frame_count"]
     manifest = json.dumps(
         evidence["request"]["request_manifest"],
         ensure_ascii=False,

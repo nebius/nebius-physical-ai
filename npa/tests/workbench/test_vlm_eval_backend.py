@@ -24,6 +24,7 @@ from npa.workbench.vlm_eval import (
     DEFAULT_SAMPLE_BENCHMARK_PATH,
     VlmBenchmarkCaseResult,
     VlmEvalResult,
+    VlmFrameEvidence,
     VlmStructuredResponse,
     benchmark_vlm_eval,
     evaluate_stub,
@@ -203,6 +204,7 @@ def test_exported_dataclasses_keep_legacy_positional_constructors() -> None:
         "provider",
         None,
     )
+    frame = VlmFrameEvidence("label", "image/png", "sha256", 10, 8, 6)
 
     assert result.served_model == "served-model"
     assert result.evidence is None
@@ -212,6 +214,10 @@ def test_exported_dataclasses_keep_legacy_positional_constructors() -> None:
     assert structured.provider_success is None
     assert case.evidence is None
     assert case.provider_success is None
+    assert frame.source_kind is None
+    assert frame.source_index is None
+    assert frame.source_count is None
+    assert frame.source_timestamp_s is None
 
 
 def test_parse_structured_response_clamps_score() -> None:
@@ -441,6 +447,188 @@ def test_select_rollout_frames_from_numpy_final_frame(tmp_path: Path) -> None:
     assert selected[0].label == "obs_workspace.npy:4"
     assert selected[0].media_type == "image/png"
     assert selected[0].data.startswith(b"\x89PNG")
+    assert selected[0].source_kind == "numpy-episode"
+    assert selected[0].source_index == 4
+    assert selected[0].source_count == 5
+    assert selected[0].source_timestamp_s is None
+
+
+def test_select_rollout_frames_retains_numpy_sampling_coverage(tmp_path: Path) -> None:
+    rollout = tmp_path / "episode_0000"
+    rollout.mkdir()
+    frames = np.zeros((6, 8, 8, 3), dtype=np.uint8)
+    np.save(rollout / "obs_workspace.npy", frames)
+
+    selected = select_rollout_frames(rollout, frame_selection="keyframes", max_frames=3)
+
+    assert [frame.source_index for frame in selected] == [0, 2, 5]
+    assert [frame.source_count for frame in selected] == [6, 6, 6]
+    assert all(frame.source_kind == "numpy-episode" for frame in selected)
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+def test_select_rollout_frames_retains_video_indices_and_timestamps(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "rollout.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=16x16:rate=2:duration=3",
+            "-c:v",
+            "mpeg4",
+            "-pix_fmt",
+            "yuv420p",
+            str(video),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=3)
+
+    assert [frame.source_index for frame in selected] == [0, 2, 5]
+    assert [frame.source_count for frame in selected] == [6, 6, 6]
+    assert [frame.source_timestamp_s for frame in selected] == pytest.approx(
+        [0.0, 1.0, 2.5]
+    )
+    assert all(frame.source_kind == "video" for frame in selected)
+
+
+def test_video_timestamps_use_structured_ffprobe_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "frames": [
+                    {"best_effort_timestamp_time": "0.0"},
+                    {"best_effort_timestamp_time": "0.5"},
+                    {"best_effort_timestamp_time": "1.0"},
+                ]
+            }
+        ),
+        stderr="input filename pts_time:999 must not be parsed",
+    )
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/ffprobe")
+    monkeypatch.setattr(vlm_eval.subprocess, "run", lambda *_args, **_kwargs: response)
+
+    timestamps = vlm_eval._video_frame_timestamps(tmp_path / "pts_time:999.mp4", [0, 2])
+
+    assert timestamps == [0.0, 1.0]
+
+
+def test_video_timestamps_fail_closed_on_incomplete_frame_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"frames":[{"best_effort_timestamp_time":"0.0"}]}',
+        stderr="",
+    )
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/ffprobe")
+    monkeypatch.setattr(vlm_eval.subprocess, "run", lambda *_args, **_kwargs: response)
+
+    assert vlm_eval._video_frame_timestamps(tmp_path / "video.mp4", [0, 2]) == [
+        None,
+        None,
+    ]
+
+
+def test_extracted_video_frames_sort_by_numeric_ordinal() -> None:
+    frames = [
+        Path("frame-1000.png"),
+        Path("frame-101.png"),
+        Path("frame-099.png"),
+    ]
+
+    assert sorted(frames, key=vlm_eval._video_output_frame_number) == [
+        Path("frame-099.png"),
+        Path("frame-101.png"),
+        Path("frame-1000.png"),
+    ]
+
+
+def test_unknown_video_count_does_not_infer_sampling_coverage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    video = tmp_path / "rollout.mp4"
+    video.write_bytes(b"placeholder")
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: None)
+
+    def fake_sample(
+        _video_path: Path, output_dir: Path, *, max_frames: int
+    ) -> list[float | None]:
+        assert max_frames == 2
+        Image.new("RGB", (8, 8), "green").save(output_dir / "frame-001.png")
+        return []
+
+    monkeypatch.setattr(vlm_eval, "_extract_video_sample", fake_sample)
+
+    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=2)
+    sampling = vlm_eval._sampling_manifest(
+        selected, frame_selection="sequence", max_frames=2
+    )
+
+    assert selected[0].source_index is None
+    assert selected[0].source_count is None
+    assert selected[0].source_timestamp_s is None
+    assert sampling["selected_indices"] == [None]
+    assert sampling["coverage_complete"] is False
+    assert sampling["timestamps_complete"] is False
+
+    partial = [
+        vlm_eval.SelectedFrame(
+            "frame-0",
+            "image/png",
+            b"",
+            source_kind="image-sequence",
+            source_index=0,
+            source_count=2,
+        ),
+        vlm_eval.SelectedFrame(
+            "frame-1",
+            "image/png",
+            b"",
+            source_kind="image-sequence",
+            source_index=1,
+        ),
+    ]
+    partial_sampling = vlm_eval._sampling_manifest(
+        partial, frame_selection="sequence", max_frames=2
+    )
+    assert partial_sampling["source_count"] is None
+    assert partial_sampling["coverage_complete"] is False
+
+    empty_kind = [
+        vlm_eval.SelectedFrame(
+            "frame-0",
+            "image/png",
+            b"",
+            source_kind="",
+            source_index=0,
+            source_count=1,
+        )
+    ]
+    empty_kind_sampling = vlm_eval._sampling_manifest(
+        empty_kind, frame_selection="final", max_frames=1
+    )
+    assert empty_kind_sampling["source_kind"] is None
 
 
 def _structured_eval_payload(result) -> dict[str, object]:

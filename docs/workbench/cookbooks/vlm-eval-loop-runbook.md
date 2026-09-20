@@ -17,6 +17,8 @@ requested and returned model to:
 
 - SHA-256 hashes, dimensions, media types, byte counts, and source-relative
   labels for the exact normalized image bytes submitted to the model;
+- source kind, zero-based source index, source frame count, and source video
+  timestamp when extraction can establish them;
 - hashes of the prompt, rubric, and secret-free request manifest;
 - request time, endpoint role, HTTP status when available, latency, finish
   reason, provider request ID and usage when returned;
@@ -25,6 +27,12 @@ requested and returned model to:
 The request manifest intentionally excludes authorization, endpoint addresses,
 input/output locations, prompts, and base64 image data. It contains enough
 information to recompute what was submitted without copying pixels or secrets.
+Its `sampling` block records the strategy, requested frame limit, selected
+indices and timestamps, source count, and whether index and timestamp coverage
+are complete. Unknown video metadata stays null; a generated extraction ordinal
+is never presented as a source frame index. `coverage_complete` means every
+submitted frame has auditable source-index metadata, not that every available
+source frame was submitted.
 The full result still belongs in private run storage because the provider
 response and existing task fields can describe operator data.
 
