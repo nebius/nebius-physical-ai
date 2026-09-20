@@ -209,13 +209,13 @@ model, demonstration, task/render asset, cache, checkpoint, credential, or
 output bytes. Do not add it to the public table or release manifest until a
 trusted exact-SHA build passes complete-byte and independent base-provenance
 scans, anonymous pull, and the exact-digest hard gate.
-Before that trusted build, a separately authorized private stage must emit a
-canonical complete-image inventory that binds every byte in each ordered
-uncompressed layer tar, every flattened-rootfs record, and the observed OCI
-config digest for independent qualification. The trusted workflow refuses a LIBERO
-build without those two qualified identities and requires exact equality before
-push; finite path or source-signature rules are defense in depth rather than an
-arbitrary-byte absence proof.
+The neutral development build does not require customer authorization or prior
+runtime qualification. Its local complete-byte scan records the ordered-layer,
+flattened-rootfs, and config identity from the inspected build; post-publication
+scanning must reproduce that identity and an anonymous pull must fetch the
+actual image layers. Customer acknowledgement remains mandatory before runtime
+fetch, and real exact-digest B200 evidence is required for supported release
+promotion and public catalog validation.
 
 The qualifying smoke must runtime-fetch and SHA-256-verify the exact official
 LIBERO-Spatial demonstration pinned in the spec, bind it to the reviewed BDDL

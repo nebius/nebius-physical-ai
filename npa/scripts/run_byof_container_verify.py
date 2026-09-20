@@ -85,6 +85,7 @@ LIBERO_PAYLOAD_UNBOUND_RESOURCE_NAME = "npa-libero-unbound-pod"
 LIBERO_PAYLOAD_RELEASE_ANNOTATION = "npa.nebius.com/libero-release"
 LIBERO_CONTROLLER_ROLE = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role"
 LIBERO_CONTROLLER_ROLE_BINDING = f"{SKYPILOT_ENGINE_SERVICE_ACCOUNT}-role-binding"
+LIBERO_STORAGE_VERIFICATION_CONFIGMAP = "npa-byof-libero-storage-verification"
 LIBERO_CONTROLLER_RULES = [
     {
         "apiGroups": [""],
@@ -861,6 +862,28 @@ def _libero_external_rbac_inventory_sha256(
     return _sha256_json(records)
 
 
+def _verify_libero_storage_configmap(item: dict[str, Any]) -> None:
+    """Require the immutable mounted key to match the qualified control plane."""
+    data = item.get("data")
+    key_name = "output-storage-authorization-public-key.b64"
+    if (
+        item.get("immutable") is not True
+        or not isinstance(data, dict)
+        or set(data) != {key_name}
+        or item.get("binaryData")
+    ):
+        raise RuntimeError("LIBERO storage verification ConfigMap is not immutable or closed")
+    try:
+        key = base64.b64decode(data[key_name], validate=True)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("LIBERO storage verification ConfigMap key is invalid") from exc
+    qualification = validate_libero_qualified_image_manifest(libero_image_manifest())
+    if len(key) != 32 or hashlib.sha256(key).hexdigest() != qualification[
+        "output_storage_authorization_public_key_sha256"
+    ]:
+        raise RuntimeError("LIBERO storage verification ConfigMap key differs from qualification")
+
+
 def _libero_namespaced_inventory(
     kubeconfig: Path, context: str, namespace: str
 ) -> dict[str, list[str]]:
@@ -878,7 +901,7 @@ def _libero_namespaced_inventory(
             LIBERO_CONTROLLER_ROLE_BINDING,
         },
         "secrets": set(),
-        "configmaps": set(),
+        "configmaps": {LIBERO_STORAGE_VERIFICATION_CONFIGMAP},
         "services": set(),
     }
     for kind, expected_names in expected.items():
@@ -904,6 +927,8 @@ def _libero_namespaced_inventory(
                 f"LIBERO namespace is not isolated to its reviewed {kind} inventory"
             )
         inventory[kind] = names
+        if kind == "configmaps":
+            _verify_libero_storage_configmap(items[0])
     return inventory
 
 

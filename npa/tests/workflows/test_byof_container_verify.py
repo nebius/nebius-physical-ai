@@ -1496,11 +1496,21 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
             "skypilot-service-account-role-binding",
         ],
         "secrets": [],
-        "configmaps": [],
+        "configmaps": [module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP],
         "services": [],
     }
 
+    storage_key = bytes(range(32))
+    monkeypatch.setattr(module, "libero_image_manifest", lambda: {})
+    monkeypatch.setattr(module, "validate_libero_qualified_image_manifest", lambda _manifest: {
+        "output_storage_authorization_public_key_sha256": module.hashlib.sha256(storage_key).hexdigest()
+    })
+
     def kubectl_json(arguments, **_kwargs):
+        if arguments[-1] == "configmaps":
+            return {"items": [{"metadata": {"name": module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP},
+                               "immutable": True,
+                               "data": {"output-storage-authorization-public-key.b64": module.base64.b64encode(storage_key).decode()}}]}
         kind = arguments[-1]
         return {"items": [{"metadata": {"name": name}} for name in expected[kind]]}
 
@@ -4555,3 +4565,23 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     assert os.environ.get("KUBECONFIG") == original
     assert ["/opt/sky", "api", "stop"] in seen_cmds
     assert environment_roots == [isolated]
+
+@pytest.mark.parametrize('mutation', ['mutable', 'extra-data', 'wrong-key', 'invalid-key'])
+def test_libero_storage_configmap_refuses_unqualified_mount(monkeypatch, mutation) -> None:
+    module = _load_module()
+    key = bytes(range(32))
+    item = {'immutable': True, 'data': {'output-storage-authorization-public-key.b64': module.base64.b64encode(key).decode()}}
+    monkeypatch.setattr(module, 'libero_image_manifest', lambda: {})
+    monkeypatch.setattr(module, 'validate_libero_qualified_image_manifest', lambda _manifest: {
+        'output_storage_authorization_public_key_sha256': module.hashlib.sha256(key).hexdigest()
+    })
+    if mutation == 'mutable':
+        item['immutable'] = False
+    elif mutation == 'extra-data':
+        item['data']['unexpected'] = 'value'
+    elif mutation == 'wrong-key':
+        item['data']['output-storage-authorization-public-key.b64'] = module.base64.b64encode(bytes(32)).decode()
+    else:
+        item['data']['output-storage-authorization-public-key.b64'] = '!'
+    with pytest.raises(RuntimeError, match='storage verification ConfigMap'):
+        module._verify_libero_storage_configmap(item)

@@ -111,7 +111,8 @@ quarantined until the real exact-digest B200 workload passes.
 Storage verification uses a root-owned, mode-0444 control-plane mount at
 `/opt/npa/libero/output-storage-authorization-public-key.b64`. The profile mounts the `output-storage-authorization-public-key.b64` entry
 from the `npa-byof-libero-storage-verification` ConfigMap read-only using
-`subPath`; the control plane must create it before submission. Missing or
+`subPath`; the control plane must create it with `immutable: true` before submission.
+Preflight verifies that its only data entry is the qualified storage key. Missing or
 writable key files refuse runtime execution. The neutral image bakes neither this key
 nor any customer key or acceptance record. The common publication workflow
 cleans only an exact owned development version and refuses a digest carrying
@@ -122,45 +123,22 @@ identity comparison cannot depend on the wall-clock build time. The package
 transaction removes APT/dpkg/account logs and normalizes the non-root account's
 shadow day to the same epoch in its creation layer.
 
-The following is a future, separately authorized publication runbook; it is not
-an executable requirement or completion claim for this source-only phase. No
-public digest, anonymous-pull result, or B200 capability is implied until a
-customer-scoped authorization and an independently reviewed first-publication
-transaction with exact graph preflight and fail-closed drift handling exist. If
-that transaction is not available, the
-runbook remains deferred and the quarantined candidate remains unvalidated.
+The trusted development build must:
 
-When that later transaction is authorized, the trusted build must then:
+1. build the exact reviewed source SHA with Buildx SBOM and maximum provenance,
+   verify its attested OCI archive, and import its linux/amd64 runtime image;
+2. fetch and verify the pinned official base provenance and SBOM;
+3. scan all retained layers and the independently exported rootfs, recording
+   the local complete-image inventory and config identity;
+4. prove non-root/config/bootstrap identity and pass the common license,
+   corresponding-source, vulnerability, credential, and restricted-payload gates;
+5. publish only those inspected bytes under the full-SHA development tag,
+   resolve the immutable digest, and repeat payload scanning against pulled
+   bytes with the recorded local identities; and
+6. verify anonymous digest equality and fetch every image layer anonymously.
 
-1. reproduce the accepted development SHA from its hash-bound neutral build-input
-   bundle with Buildx SBOM and maximum provenance, exporting an attested OCI
-   archive; verify its runtime config plus both subject-bound attestations before
-   selecting and importing only its linux/amd64 runtime manifest for complete-byte
-   scanning;
-2. fetch and hash-verify Docker Official Images' exact published provenance
-   metadata, without using Docker history;
-3. inspect every OCI config and ordered layer, nested archive, exact runtime
-   payload hash, renamed source signature, and an independently exported
-   flattened rootfs with `scan_image_libero_payload.py` plus the general
-   restricted-payload scanner; require the canonical complete-image inventory
-   and config to equal the private-stage identities in the strict checked-in
-   qualification manifest; free-form dispatch values are not an authorization
-   channel;
-4. prove non-root/config/bootstrap identity and independently bind the candidate
-   index, platform manifest, config, Buildx metadata, base manifest, rootfs
-   material, upstream source revision, and canonical publication/infrastructure
-   bundles. The publication bundle recursively binds the complete Python source
-   trees used for provider identity, preflight, managed submission, scheduler
-   identity, storage readback, signal teardown, and cleanup, plus the exact live
-   evidence collector; the checked-in qualification manifest is the only permitted
-   path delta after the qualified development SHA, so enforcement/runtime drift
-   requires a new candidate and renewed qualification;
-5. pass package-license, corresponding-source, Trivy fixed-critical,
-   repository Gitleaks, credential, private-infrastructure, cache, data, model,
-   output, and confidentiality gates; and
-6. push only those inspected bytes to the quarantined development tag, resolve
-   an immutable digest, repeat the scanner against pulled bytes, and prove
-   anonymous digest equality.
+These image-publication steps neither require nor create customer runtime
+acceptance. Runtime qualification remains a separate gate.
 
 Until those gates and a later exact-digest B200 qualification are independently
 accepted, `libero` stays in `UNVALIDATED_PUBLICATION_TOOLS`, has no release

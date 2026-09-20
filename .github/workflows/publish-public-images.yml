@@ -902,6 +902,12 @@ jobs:
             anonymous_attempt=$((anonymous_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = libero ]; then
+            DOCKER_CONFIG="$anonymous_config" crane pull --format=oci \
+              "$exact" "$RUNNER_TEMP/libero-anonymous.oci.tar"
+            test -s "$RUNNER_TEMP/libero-anonymous.oci.tar"
+            rm -f "$RUNNER_TEMP/libero-anonymous.oci.tar"
+          fi
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
