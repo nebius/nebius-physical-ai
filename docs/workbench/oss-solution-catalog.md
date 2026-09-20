@@ -160,7 +160,10 @@ NPA pins the maintained upstream `MichaelGrupp/evo` source at
 `8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422` (`v1.35.1`). The source and
 Python package are GPL-3.0-or-later. This is an operator-built BYOF candidate,
 not a published NPA image; any future conveyance must preserve the GPL license
-and corresponding-source obligations.
+and corresponding-source obligations. The
+[independently audited CPU workload proof](https://github.com/nebius/nebius-physical-ai/blob/899caeab007bd2d55221ff3bc7b195f02a828c11/docs/testing/evidence/evo-proof/README.md)
+publishes sanitized metrics, controls, hardware applicability, visual-review
+failures, and current merge blockers without live infrastructure identifiers.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
