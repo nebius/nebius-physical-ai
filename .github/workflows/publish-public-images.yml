@@ -931,9 +931,9 @@ jobs:
           done
           if [ "$TOOL" = libero ]; then
             DOCKER_CONFIG="$anonymous_config" crane pull --format=oci \
-              "$exact" "$RUNNER_TEMP/libero-anonymous.oci.tar"
-            test -s "$RUNNER_TEMP/libero-anonymous.oci.tar"
-            rm -f "$RUNNER_TEMP/libero-anonymous.oci.tar"
+              "$exact" "$RUNNER_TEMP/libero-anonymous.oci"
+            test -s "$RUNNER_TEMP/libero-anonymous.oci/index.json"
+            rm -rf -- "$RUNNER_TEMP/libero-anonymous.oci"
           fi
           rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
