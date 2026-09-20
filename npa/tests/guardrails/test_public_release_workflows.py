@@ -78,14 +78,15 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         assert stale_variable not in text
 
 
-def test_automatic_triggers_stay_in_dry_run() -> None:
-    """#504/#568: push/schedule runs must never build, push, or promote images.
+def test_automatic_triggers_build_dev_images_without_promoting() -> None:
+    """#504/#568: push/schedule runs must build dev images; never promote.
 
     `inputs.*` is only populated for `workflow_dispatch`; on push and schedule
-    events every input is undefined. Tool selection flows exclusively from
-    dispatch inputs, so automatic runs resolve empty build/cleanup matrices and
-    skip every write job. Promotion additionally requires an explicit
-    `workflow_dispatch` event with `dry_run: false`.
+    events every input is undefined. Tool selection therefore falls back to
+    `_automatic_build_tools`: the weekly schedule rebuilds every public tool
+    and a push rebuilds the tools whose workbench inputs changed, so
+    `dev-<sha>` tags track HEAD automatically. Promotion still requires an
+    explicit `workflow_dispatch` event with `dry_run: false`.
     """
     spec = _spec(PUBLISH)
     jobs = spec["jobs"]
@@ -95,8 +96,17 @@ def test_automatic_triggers_stay_in_dry_run() -> None:
         for step in jobs["resolve"]["steps"]
         if step.get("name") == "Resolve immutable public development plan"
     )
+    # Dispatch inputs remain the explicit-selection path ...
     assert resolve["env"]["BUILD_TOOLS"] == "${{ inputs.build_development_tools }}"
     assert resolve["env"]["CLEANUP_TOOLS"] == "${{ inputs.cleanup_development_tools }}"
+    # ... but the plan script must also handle automatic events, where inputs
+    # are undefined, instead of resolving an empty matrix.
+    script = resolve["run"]
+    assert resolve["env"]["EVENT_NAME"] == "${{ github.event_name }}"
+    assert "_automatic_build_tools" in script
+    assert 'os.environ.get("EVENT_NAME", "")' in script
+    assert '"schedule"' in script
+    assert "packaging-contract.yaml" in script
     assert (
         jobs["build-development"]["if"]
         == "${{ needs.resolve.outputs.build_count != '0' }}"
@@ -113,6 +123,9 @@ def test_automatic_triggers_stay_in_dry_run() -> None:
     assert promote_step["if"] == (
         "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}"
     )
+    # The promote job never runs after a build: automatic dev builds must not
+    # fall through into a release preflight or write.
+    assert "needs.resolve.outputs.build_count == '0'" in jobs["promote"]["if"]
 
 
 def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
