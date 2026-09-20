@@ -117,3 +117,25 @@ def test_one_multipart_sized_file_round_trips_with_matching_hash(live_bucket, tm
         scenario="multipart-file",
         sizes=[_MULTIPART_FILE_BYTES],
     )
+
+
+def test_exact_slash_ending_object_wins_over_its_children(live_bucket, tmp_path):
+    """Prove Nebius listing order preserves exact-key precedence without HEAD.
+
+    A slash-ending object is legal S3 data, even when child objects exist.
+    ``download_path`` skips HEAD for this spelling and resolves the exact key
+    through its bounded listing before considering a directory download.
+    """
+    client, bucket, prefix = live_bucket
+    exact_key = f"{prefix}exact-object/"
+    payload = b"exact slash-ending object bytes\n"
+    client.s3.put_object(Bucket=bucket, Key=exact_key + "child.bin", Body=b"child")
+    client.s3.put_object(Bucket=bucket, Key=exact_key, Body=payload)
+    client.s3.put_object(Bucket=bucket, Key=exact_key + "sibling.bin", Body=b"sibling")
+
+    target = tmp_path / "exact-object.bin"
+    result = client.download_path(f"s3://{bucket}/{exact_key}", str(target))
+
+    assert result == str(target)
+    assert target.is_file()
+    assert target.read_bytes() == payload
