@@ -807,10 +807,19 @@ def _generation_gpu(available: queue.Queue[str]):
         available.put(gpu)
 
 
-def _generation_progress(variants, failures, *, count, attempt):
+def _generation_progress(
+    variants,
+    failures,
+    *,
+    count,
+    attempt,
+    progress_write_failures=0,
+):
     status = "running"
     if len(variants) + len(failures) == count:
-        status = "failed" if failures else "completed"
+        # An earlier progress-write failure must keep the final persisted
+        # document in agreement with the stage outcome, never "completed".
+        status = "failed" if failures or progress_write_failures else "completed"
     return {
         "schema": "npa.paidf.cosmos3.generation-progress.v1",
         "status": status,
@@ -818,45 +827,119 @@ def _generation_progress(variants, failures, *, count, attempt):
         "requested_variant_count": count,
         "published_variant_count": len(variants),
         "failed_variant_count": len(failures),
+        "progress_write_failure_count": progress_write_failures,
         "variants": sorted(variants, key=lambda item: item["clip"]),
         "failures": sorted(failures, key=lambda item: item["clip"]),
     }
 
 
-def _publish_completed_variants(futures, publish, *, output_uri, storage, attempt):
-    variants = []
-    failures = []
-    first_error = None
-    for future in concurrent.futures.as_completed(futures):
-        index = futures[future]
-        phase = "generation"
-        try:
-            generated = future.result()
-            phase = "publication"
-            variants.append(publish(generated))
-        except Exception as error:
-            if first_error is None:
-                first_error = error
-            failures.append(
-                {
-                    "clip": f"variant-{index:04d}",
-                    "phase": phase,
-                    "error_type": type(error).__name__,
-                }
-            )
-        progress = _generation_progress(
-            variants, failures, count=len(futures), attempt=attempt
+def _drain_variant_future(future, index, publish, variants, failures):
+    """Publish one variant result; return its error, or None on success.
+
+    Failures are recorded with the phase they occurred in and the exception
+    type only, never the raw message.
+    """
+    phase = "generation"
+    try:
+        generated = future.result()
+        phase = "publication"
+        variants.append(publish(generated))
+        return None
+    except Exception as error:
+        failures.append(
+            {
+                "clip": f"variant-{index:04d}",
+                "phase": phase,
+                "error_type": type(error).__name__,
+            }
         )
+        return error
+
+
+def _write_progress_once(progress, output_uri, *, storage):
+    """Attempt the per-variant progress write exactly once, never retrying.
+
+    Returns the thrown error, or None on success, so the collector can keep
+    draining siblings while the stage still fails closed on any write failure.
+    """
+    try:
         _write_json(
             progress,
             output_uri.rstrip("/") + "/generation-progress.json",
             storage=storage,
         )
-    if failures:
-        raise PaidfCosmos3Error(
-            f"{len(failures)} of {len(futures)} variants failed; "
-            f"{len(variants)} published variants retained; inspect generation-progress.json and stage logs"
-        ) from first_error
+        return None
+    except Exception as error:
+        return error
+
+
+def _report_variant_progress(
+    output_uri, storage, *, count, attempt, variants, failures, write_failures
+):
+    """Build and write the progress document once; return its write error."""
+    progress = _generation_progress(
+        variants,
+        failures,
+        count=count,
+        attempt=attempt,
+        progress_write_failures=write_failures,
+    )
+    return _write_progress_once(progress, output_uri, storage=storage)
+
+
+def _fail_closed_if_incomplete(
+    variants, failures, progress_write_failures, count, first_error
+):
+    """Raise the stage error unless every variant published and reported."""
+    if not failures and not progress_write_failures:
+        return
+    detail = f"{len(failures)} of {count} variants failed"
+    if progress_write_failures:
+        detail += (
+            "; generation-progress.json write failed after "
+            f"{progress_write_failures} completed variant(s)"
+        )
+    raise PaidfCosmos3Error(
+        f"{detail}; {len(variants)} published variants retained; "
+        "inspect generation-progress.json and stage logs"
+    ) from first_error
+
+
+def _publish_completed_variants(futures, publish, *, output_uri, storage, attempt):
+    """Drain every variant future, publishing siblings even when a step fails.
+
+    A failed generation, publication, or progress write must never discard the
+    remaining sibling results: every future is still drained and published.
+    The stage then fails closed from the first observed error, and no
+    canonical manifest is published for a failed or under-reported batch.
+    """
+    variants = []
+    failures = []
+    first_error = None
+    write_failures = 0
+    for future in concurrent.futures.as_completed(futures):
+        index = futures[future]
+        variant_error = _drain_variant_future(
+            future, index, publish, variants, failures
+        )
+        if variant_error is not None and first_error is None:
+            first_error = variant_error
+        write_error = _report_variant_progress(
+            output_uri,
+            storage,
+            count=len(futures),
+            attempt=attempt,
+            variants=variants,
+            failures=failures,
+            write_failures=write_failures,
+        )
+        if write_error is not None:
+            write_failures += 1
+            if first_error is None:
+                first_error = write_error
+    _fail_closed_if_incomplete(
+        variants, failures, write_failures, len(futures), first_error
+    )
     return sorted(variants, key=lambda item: item["clip"])
 
 
