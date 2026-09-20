@@ -955,13 +955,13 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
         models=[DEFAULT_MODEL],
     )
 
-    assert report.item_count == 4
+    assert report.item_count == 5
     assert report.best_config.config.success_threshold == 0.8
     assert report.best_config.metrics.accuracy == 1.0
     assert report.best_config.metrics.precision == 1.0
     assert report.best_config.metrics.recall == 1.0
     assert report.best_config.metrics.true_positives == 2
-    assert report.best_config.metrics.true_negatives == 2
+    assert report.best_config.metrics.true_negatives == 3
     assert report.schema_version == "npa_vlm_eval_benchmark_report_v2"
     assert asdict(report.best_config.metrics.confusion_matrix) == {
         "actual_positive": {
@@ -970,7 +970,7 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
         },
         "actual_negative": {
             "predicted_positive": 0,
-            "predicted_negative": 2,
+            "predicted_negative": 3,
         },
     }
     assert report.best_config.metrics.false_positive_rate == 0.0
@@ -979,6 +979,25 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
     assert report.best_config.metrics.false_negative_item_ids == ()
     assert all(0.0 <= case.score <= 1.0 for case in report.best_config.results)
     assert {case.score_source for case in report.best_config.results} == {"fixture"}
+
+
+def test_sample_benchmark_retains_missing_terminal_failure() -> None:
+    dataset = load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH))
+    item = next(
+        entry for entry in dataset.items if entry.id == "progress-without-terminal-fail"
+    )
+
+    frames = select_rollout_frames(
+        item.rollout,
+        frame_selection="sequence",
+        max_frames=3,
+    )
+
+    assert item.expected_label is False
+    assert item.fixture_score == 0.72
+    assert len(frames) == 3
+    assert "without showing the requested terminal state" in dataset.rubrics["default"]
+    assert "Do not infer placement" in vlm_eval.DEFAULT_RUBRIC
 
 
 def _benchmark_case(
@@ -1122,7 +1141,7 @@ def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
     dataset = load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH))
 
     assert dataset.format == "npa_vlm_eval_benchmark_v1"
-    assert len(dataset.items) == 4
+    assert len(dataset.items) == 5
     assert all(Path(item.rollout).exists() for item in dataset.items)
     assert {"default", "strict"} <= set(dataset.rubrics)
 
