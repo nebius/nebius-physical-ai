@@ -2113,7 +2113,12 @@ def _resolved_runtime_path(path: Path) -> Path:
 
     resolution_failed = False
     try:
-        resolved = path.resolve(strict=False)
+        try:
+            # Non-strict resolution no longer raises for symlink loops on 3.14.
+            resolved = path.resolve(strict=True)
+        except FileNotFoundError:
+            # Preserve confinement checks for declared dangling links.
+            resolved = path.resolve(strict=False)
     except (OSError, RuntimeError):
         resolution_failed = True
     if resolution_failed:

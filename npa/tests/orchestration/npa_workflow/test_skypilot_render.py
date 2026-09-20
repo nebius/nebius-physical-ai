@@ -84,7 +84,7 @@ def test_robomimic_plan_uses_unbuilt_placeholder_and_stages_npa(
     spec = load_spec(NPA_SPECS / "byof-robomimic.yaml")
     plan = build_plan(spec, run_id="robomimic-private-plan")
 
-    with pytest.raises(ValueError, match="no accepted release image"):
+    with pytest.raises(ValueError, match="publication-quarantined for releases"):
         container_image_for_tool("robomimic")
 
     placeholder = render_skypilot_yaml(

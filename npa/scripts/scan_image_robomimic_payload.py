@@ -188,9 +188,11 @@ def _audited_codec_fixtures(audited, verified_sources, observed=None):
         ):
             stream = kwargs["stream"]
             stream.seek(0)
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            digest = hashlib.sha256()
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
             stream.seek(0)
-            if digest == disposition["member_sha256"]:
+            if digest.hexdigest() == disposition["member_sha256"]:
                 kwargs["findings"].append(
                     walker.Finding(
                         "nested_archive_unreadable",
