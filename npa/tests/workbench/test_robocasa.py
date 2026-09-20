@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from npa.workbench.robocasa import capabilities
 from npa.workbench.robocasa.capabilities import (
     RoboCasaError,
     compute_manifest_sha256,
@@ -77,6 +78,29 @@ def test_system_info_returns_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     assert info.python
     assert info.source_identity == "local_unbound"
     assert info.image_source_sha == ""
+
+
+def test_system_info_reports_policy_runtime_versions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    versions = {
+        "lerobot": "0.5.1",
+        "torch": "2.9.0",
+        "torchvision": "0.24.0",
+    }
+    monkeypatch.setattr(
+        capabilities,
+        "_package_version",
+        lambda package: versions.get(package, ""),
+    )
+    monkeypatch.delenv("NPA_IMAGE_SOURCE_SHA", raising=False)
+    monkeypatch.delenv("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", raising=False)
+
+    info = system_info()
+
+    assert info.lerobot_version == "0.5.1"
+    assert info.torch_version == "2.9.0"
+    assert info.torchvision_version == "0.24.0"
 
 
 def test_system_info_reports_exact_image_source(

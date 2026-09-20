@@ -116,6 +116,9 @@ class RoboCasaSystemInfo(BaseModel):
     robosuite_version: str = ""
     mujoco_version: str = ""
     gymnasium_version: str = ""
+    lerobot_version: str = ""
+    torch_version: str = ""
+    torchvision_version: str = ""
     source_identity: str = "local_unbound"
     image_source_sha: str = ""
     cuda_available: bool = False

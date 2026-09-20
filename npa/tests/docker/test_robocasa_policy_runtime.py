@@ -33,6 +33,16 @@ def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
     assert "-e /opt/robocasa/source" in text
 
 
+def test_robocasa_act_runtime_stays_within_lerobot_dependency_bounds() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert '"torch==2.9.0"' in text
+    assert '"torchvision==0.24.0"' in text
+    assert '"torch==2.12.1"' not in text
+    assert '"torchvision==0.27.1"' not in text
+    assert "req.specifier.contains(version(req.name), prereleases=True)" in text
+
+
 def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
@@ -61,6 +71,8 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     )
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1" in dockerfile
+    assert "FROM --platform=" not in dockerfile
+    assert "docker build \\\n  --platform linux/amd64 \\" in build_script
     assert "grep -Eq '^[0-9a-f]{40}$'" in dockerfile
     assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in dockerfile
     assert (

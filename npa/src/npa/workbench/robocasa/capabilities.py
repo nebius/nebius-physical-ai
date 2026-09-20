@@ -180,6 +180,9 @@ def system_info() -> RoboCasaSystemInfo:
         robosuite_version=_package_version("robosuite"),
         mujoco_version=_package_version("mujoco"),
         gymnasium_version=_package_version("gymnasium"),
+        lerobot_version=_package_version("lerobot"),
+        torch_version=_package_version("torch"),
+        torchvision_version=_package_version("torchvision"),
         source_identity=source_identity,
         image_source_sha=image_source_sha,
     )

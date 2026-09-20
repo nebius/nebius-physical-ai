@@ -91,7 +91,8 @@ npa workbench robocasa list --service --endpoint <url>
 ```
 
 `system-info` reports the RoboCasa, robosuite, MuJoCo, and Gymnasium versions,
-CUDA availability, registered env count, and exact NPA image source revision.
+the exact LeRobot/Torch/TorchVision policy stack, CUDA availability, registered
+env count, and exact NPA image source revision.
 The official image sets `NPA_IMAGE_SOURCE_SHA` and
 `ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1`; do not override them. A direct local run
 without an image-bound revision reports `source_identity: local_unbound`.

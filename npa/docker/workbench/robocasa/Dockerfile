@@ -17,7 +17,7 @@
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
 ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4
-FROM --platform=linux/amd64 ${BASE_IMAGE}
+FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE
 ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
@@ -69,7 +69,9 @@ WORKDIR /opt/robocasa
 # RoboCasa requires Gymnasium 0.29.1. LeRobot's broad environment dependency
 # requests Gymnasium >=1.1.1, but exact-checkpoint ACT inference uses neither
 # LeRobot environment wrappers nor that newer API. Keep RoboCasa's known-good
-# pin and install only the LeRobot policy package here.
+# pin and install only the LeRobot policy package here. Keep Torch/TorchVision
+# on the same 2.9/0.24 stack as the validated LeRobot 0.5.1 workflow image and
+# inside the wheel's declared upper bounds.
 RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" wheel \
     && python -m pip install --no-cache-dir \
         "git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_COMMIT}" \
@@ -87,7 +89,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" whee
         "pyserial>=3.5,<4.0" \
     && python -m pip install --no-cache-dir --no-deps "lerobot==0.5.1" \
     && python -m pip install --no-cache-dir --upgrade \
-        "torch==2.12.1" "torchvision==0.27.1"
+        "torch==2.9.0" "torchvision==0.24.0"
 
 # Install RoboCasa source (no deps; the closure above is pinned).
 RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
@@ -96,6 +98,7 @@ RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
 
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
+    && python -c "from importlib.metadata import metadata, version; from packaging.requirements import Requirement; requirements = [Requirement(raw) for raw in (metadata('lerobot').get_all('Requires-Dist') or [])]; incompatible = [str(req) for req in requirements if req.name in {'torch', 'torchvision'} and not req.specifier.contains(version(req.name), prereleases=True)]; assert not incompatible, incompatible" \
     && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
 # Copy the shared workbench implementation into the image.

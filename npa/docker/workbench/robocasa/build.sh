@@ -50,6 +50,7 @@ IMAGE="${REGISTRY}/npa-robocasa:${TAG}"
 
 echo "Building ${IMAGE} from ${BASE_IMAGE} (source ${NPA_SOURCE_SHA})"
 docker build \
+  --platform linux/amd64 \
   --build-arg BASE_IMAGE="${BASE_IMAGE}" \
   --build-arg ROBOCASA_VERSION="${ROBOCASA_VERSION}" \
   --build-arg NPA_SOURCE_SHA="${NPA_SOURCE_SHA}" \
