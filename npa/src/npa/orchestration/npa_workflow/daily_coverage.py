@@ -38,9 +38,7 @@ MIN_COMPREHENSIVE_STEPS = 4
 #: values of the renderer's toolRef -> image map). Image-less hosted API clients
 #: are outside this image-coverage universe.
 WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(
-    image_tool
-    for image_tool in TOOL_REF_IMAGE_TOOL.values()
-    if image_tool is not None
+    image_tool for image_tool in TOOL_REF_IMAGE_TOOL.values() if image_tool is not None
 )
 
 #: Workflow-reachable images that are NOT yet exercised by a >= 4-step spec, or
