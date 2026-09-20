@@ -27,20 +27,19 @@ from npa.orchestration.skypilot.workflow_state import (
     list_runs,
 )
 
+from .s3_fixture_cleanup import delete_owned_prefix
+
 pytestmark = pytest.mark.e2e
 
 RUN_COUNT = 12
 
 
-def _seed_manifests(client, bucket: str, prefix: str, seeded_keys: list[str]) -> None:
-    """Write ``RUN_COUNT`` durable manifests, recording each key before its write
-    completes so a mid-write failure still leaves it in the caller's cleanup list.
-    """
+def _seed_manifests(client, bucket: str, prefix: str) -> None:
+    """Write manifests under the unique prefix whose versions the fixture cleans."""
 
     for i in range(RUN_COUNT):
         run_id = f"run-{i:03d}"
         key = f"{prefix}/{run_id}/manifest.json"
-        seeded_keys.append(key)
         payload = {
             "schema_version": 1,
             "run_id": run_id,
@@ -54,17 +53,6 @@ def _seed_manifests(client, bucket: str, prefix: str, seeded_keys: list[str]) ->
             Body=json.dumps(payload).encode("utf-8"),
             ContentType="application/json",
         )
-
-
-def _delete_and_verify(
-    client, bucket: str, prefix: str, seeded_keys: list[str]
-) -> None:
-    for key in seeded_keys:
-        client.s3.delete_object(Bucket=bucket, Key=key)
-    remaining = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-    assert not remaining.get("Contents"), (
-        "Live test fixture manifests were not fully deleted"
-    )
 
 
 @pytest.fixture
@@ -96,12 +84,11 @@ def live_manifests():
         aws_access_key_id=storage.aws_access_key_id,
         aws_secret_access_key=storage.aws_secret_access_key,
     )
-    seeded_keys: list[str] = []
     try:
-        _seed_manifests(client, bucket, prefix, seeded_keys)
+        _seed_manifests(client, bucket, prefix)
         yield client, bucket, prefix, state_parent
     finally:
-        _delete_and_verify(client, bucket, prefix, seeded_keys)
+        delete_owned_prefix(client.s3, bucket, prefix + "/")
 
 
 def test_list_runs_finds_every_seeded_manifest(live_manifests):

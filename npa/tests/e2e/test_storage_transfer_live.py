@@ -22,6 +22,8 @@ import pytest
 from npa.clients.config import resolve_project_storage
 from npa.clients.storage import StorageClient
 
+from .s3_fixture_cleanup import delete_owned_prefix
+
 pytestmark = pytest.mark.e2e
 
 _SMALL_FILE_COUNT = 5
@@ -61,18 +63,7 @@ def live_bucket():
     try:
         yield client, bucket, prefix
     finally:
-        paginator = client.s3.get_paginator("list_objects_v2")
-        keys = [
-            obj["Key"]
-            for page in paginator.paginate(Bucket=bucket, Prefix=prefix)
-            for obj in page.get("Contents", [])
-        ]
-        for key in keys:
-            client.s3.delete_object(Bucket=bucket, Key=key)
-        remaining = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-        assert not remaining.get("Contents"), (
-            "Live test fixture objects were not fully deleted"
-        )
+        delete_owned_prefix(client.s3, bucket, prefix)
 
 
 def _round_trip(client, bucket, prefix, tmp_path, *, scenario: str, sizes: list[int]):
