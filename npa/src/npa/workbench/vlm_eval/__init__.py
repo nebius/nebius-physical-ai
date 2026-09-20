@@ -97,6 +97,10 @@ class VlmEvalError(ValueError):
     """Raised when a VLM evaluation request is invalid."""
 
 
+class _VlmEvidenceRetentionError(VlmEvalError):
+    """Raised when crash-safe provider evidence cannot be retained."""
+
+
 @dataclass(frozen=True)
 class VlmFrameEvidence:
     """Identify the exact normalized frame bytes submitted to a VLM.
@@ -1372,7 +1376,12 @@ def _post_comparison_request(
 
     def retain(response: _VlmBackendResponse) -> None:
         observed.append(response)
-        _retain_response(response, response_sink)
+        try:
+            _retain_response(response, response_sink)
+        except VlmEvalError as exc:
+            raise _VlmEvidenceRetentionError(
+                "provider response evidence could not be retained"
+            ) from exc
 
     try:
         raw_response = _post_with_readiness_retry(
@@ -1391,6 +1400,8 @@ def _post_comparison_request(
         if not observed:
             retain(response)
         return response, None
+    except _VlmEvidenceRetentionError:
+        raise
     except VlmEvalError as exc:
         response = captured[0] if captured else None
         if response is not None and not observed:

@@ -291,83 +291,61 @@ def test_workbench_vlm_eval_compare_judges_rejects_same_model(
     assert called is False
 
 
-def test_workbench_vlm_eval_compare_preference_writes_private_report(
-    monkeypatch, tmp_path
-) -> None:
-    from npa.workbench import vlm_eval
+def _preference_cli_images(tmp_path, *, private_names=False):
+    first_name = "private-baseline-name.png" if private_names else "first.png"
+    second_name = "private-candidate-name.png" if private_names else "second.png"
+    first = tmp_path / first_name
+    second = tmp_path / second_name
+    Image.new("RGB", (8, 8), "red").save(first)
+    Image.new("RGB", (8, 8), "blue").save(second)
+    return first, second
 
-    baseline = tmp_path / "first.png"
-    candidate = tmp_path / "second.png"
-    Image.new("RGB", (8, 8), "red").save(baseline)
-    Image.new("RGB", (8, 8), "blue").save(candidate)
-    requests = []
 
-    def post(**kwargs):
-        request = kwargs["request"]
-        requests.append(request)
-        preference = "B" if len(requests) == 1 else "A"
-        content = {
-            "preference": preference,
-            "confidence": "high",
-            "observable_support": ["private visible support"],
-            "critical_defects": {
-                "A": ["private A defect"],
-                "B": ["private B defect"],
-            },
-            "uncertainty": "private uncertainty",
-        }
-        return {
-            "id": f"private-request-{len(requests)}",
-            "model": request["model"],
-            "usage": {"completion_tokens": 12},
-            "choices": [
-                {
-                    "finish_reason": "stop",
-                    "message": {"content": json.dumps(content)},
-                }
-            ],
-        }
-
-    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
-    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
-    output_dir = tmp_path / "preference"
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "vlm-eval",
-            "compare-preference",
-            "--baseline-path",
-            str(baseline),
-            "--candidate-path",
-            str(candidate),
-            "--output-path",
-            str(output_dir),
-            "--task",
-            "Compare matched scene views.",
-            "--rubric",
-            "Prefer visible measured detail.",
-            "--output",
-            "json",
+def _preference_cli_completion(request, ordinal):
+    preference = "B" if ordinal == 1 else "A"
+    content = {
+        "preference": preference,
+        "confidence": "high",
+        "observable_support": ["private visible support"],
+        "critical_defects": {
+            "A": ["private A defect"],
+            "B": ["private B defect"],
+        },
+        "uncertainty": "private uncertainty",
+    }
+    return {
+        "id": f"private-request-{ordinal}",
+        "model": request["model"],
+        "usage": {"completion_tokens": 12},
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": json.dumps(content)},
+            }
         ],
-    )
+    }
 
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
-    assert payload["status"] == "consistent_candidate_preference"
-    assert payload["requests_counterbalanced"] is True
-    assert payload["artifact_written"] is True
-    assert len(requests) == 2
-    for private_value in (
-        str(baseline),
-        str(candidate),
-        str(output_dir),
-        "private visible support",
-        "private uncertainty",
-        "private-request-1",
-        "raw_response",
-    ):
-        assert private_value not in result.output
+
+def _preference_cli_argv(first, second, output, task, *, json_output):
+    argv = [
+        "workbench",
+        "vlm-eval",
+        "compare-preference",
+        "--baseline-path",
+        str(first),
+        "--candidate-path",
+        str(second),
+        "--output-path",
+        str(output),
+        "--task",
+        task,
+        "--rubric",
+        "Prefer visible detail.",
+    ]
+    return [*argv, "--output", "json"] if json_output else argv
+
+
+def _assert_private_preference_artifacts(output_dir) -> None:
     written = output_dir / PREFERENCE_COMPARISON_RESULT_FILENAME
     retained = json.loads(written.read_text(encoding="utf-8"))
     assert retained["first_order"]["provider"]["provider_request_id"] == (
@@ -390,15 +368,65 @@ def test_workbench_vlm_eval_compare_preference_writes_private_report(
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in journal.iterdir())
 
 
+def _assert_preference_cli_omits_private_values(result, *values) -> None:
+    for value in values:
+        assert str(value) not in result.output
+
+
+def _assert_preference_cli_success(result, requests) -> None:
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "consistent_candidate_preference"
+    assert payload["requests_counterbalanced"] is True
+    assert payload["artifact_written"] is True
+    assert len(requests) == 2
+
+
+def test_workbench_vlm_eval_compare_preference_writes_private_report(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    baseline, candidate = _preference_cli_images(tmp_path)
+    requests = []
+
+    def post(**kwargs):
+        request = kwargs["request"]
+        requests.append(request)
+        return _preference_cli_completion(request, len(requests))
+
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    output_dir = tmp_path / "preference"
+    argv = _preference_cli_argv(
+        baseline,
+        candidate,
+        output_dir,
+        "Compare matched scene views.",
+        json_output=True,
+    )
+    result = runner.invoke(app, argv)
+
+    _assert_preference_cli_success(result, requests)
+    _assert_preference_cli_omits_private_values(
+        result,
+        baseline,
+        candidate,
+        output_dir,
+        "private visible support",
+        "private uncertainty",
+        "private-request-1",
+        "raw_response",
+    )
+    _assert_private_preference_artifacts(output_dir)
+
+
 def test_workbench_vlm_eval_compare_preference_sanitizes_failure(
     monkeypatch, tmp_path
 ) -> None:
     from npa.workbench import vlm_eval
 
-    baseline = tmp_path / "private-baseline-name.png"
-    candidate = tmp_path / "private-candidate-name.png"
-    Image.new("RGB", (8, 8), "red").save(baseline)
-    Image.new("RGB", (8, 8), "blue").save(candidate)
+    baseline, candidate = _preference_cli_images(tmp_path, private_names=True)
     called = False
 
     def post(**_kwargs):
@@ -407,24 +435,14 @@ def test_workbench_vlm_eval_compare_preference_sanitizes_failure(
 
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
     secret_task = "Prefer the candidate over the baseline for operator-task-17."
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "vlm-eval",
-            "compare-preference",
-            "--baseline-path",
-            str(baseline),
-            "--candidate-path",
-            str(candidate),
-            "--output-path",
-            str(tmp_path / "private-output"),
-            "--task",
-            secret_task,
-            "--rubric",
-            "Prefer visible detail.",
-        ],
+    argv = _preference_cli_argv(
+        baseline,
+        candidate,
+        tmp_path / "private-output",
+        secret_task,
+        json_output=False,
     )
+    result = runner.invoke(app, argv)
 
     assert result.exit_code == 1
     assert "Blinded preference comparison failed" in result.output

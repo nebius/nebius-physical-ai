@@ -4,6 +4,7 @@ import base64
 from dataclasses import asdict, replace
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -225,10 +226,6 @@ def _run_preference_comparison(
 ):
     from npa.workbench import vlm_eval
 
-    baseline = tmp_path / "baseline-private-source.png"
-    candidate = tmp_path / "candidate-private-source.png"
-    Image.new("RGB", (17, 11), "red").save(baseline)
-    Image.new("RGB", (17, 11), "blue").save(candidate)
     requests = []
     responses = iter(completions)
 
@@ -238,17 +235,37 @@ def _run_preference_comparison(
 
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
-    report = vlm_eval.compare_vlm_preference(
-        vlm_eval.VlmPreferenceComparisonRequest(
-            baseline_path=str(baseline),
-            candidate_path=str(candidate),
-            output_path=str(tmp_path / "preference"),
-            model=model,
-            task=task,
-            rubric=rubric,
-        )
+    request = _preference_request(
+        tmp_path,
+        model=model,
+        task=task,
+        rubric=rubric,
     )
+    report = vlm_eval.compare_vlm_preference(request)
     return report, requests
+
+
+def _preference_request(
+    tmp_path,
+    *,
+    model="MiniMaxAI/MiniMax-M3",
+    task="Compare matched scene views.",
+    rubric="Prefer more visible measured detail and fewer unsupported surfaces.",
+):
+    from npa.workbench import vlm_eval
+
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    Image.new("RGB", (17, 11), "red").save(first)
+    Image.new("RGB", (17, 11), "blue").save(second)
+    return vlm_eval.VlmPreferenceComparisonRequest(
+        baseline_path=str(first),
+        candidate_path=str(second),
+        output_path=str(tmp_path / "preference"),
+        model=model,
+        task=task,
+        rubric=rubric,
+    )
 
 
 def test_preference_prompt_matches_frozen_contract() -> None:
@@ -672,43 +689,38 @@ def test_compare_judges_requires_canonical_artifact_filename(tmp_path) -> None:
         vlm_eval.judge_comparison_result_uri_for(str(tmp_path / "other.json"))
 
 
-def test_compare_preference_balances_orders_and_maps_candidate(
-    monkeypatch, tmp_path
-) -> None:
-    report, calls = _run_preference_comparison(
-        monkeypatch,
-        tmp_path,
-        [_preference_completion("B"), _preference_completion("A")],
-    )
+def _preference_request_image_urls(request):
+    return [
+        item["image_url"]["url"]
+        for item in request["messages"][0]["content"]
+        if item["type"] == "image_url"
+    ]
 
-    assert len(calls) == 2
-    first = calls[0]["request"]
-    second = calls[1]["request"]
+
+def _assert_balanced_preference_requests(report, calls) -> None:
+    first, second = (call["request"] for call in calls)
     assert first["max_tokens"] == second["max_tokens"] == 1000
     assert first["chat_template_kwargs"] == {"thinking_mode": "disabled"}
     assert "response_format" not in first
     assert first["messages"][0]["content"][1]["text"] == "IMAGE A"
     assert first["messages"][0]["content"][3]["text"] == "IMAGE B"
-    first_urls = [
-        item["image_url"]["url"]
-        for item in first["messages"][0]["content"]
-        if item["type"] == "image_url"
-    ]
-    second_urls = [
-        item["image_url"]["url"]
-        for item in second["messages"][0]["content"]
-        if item["type"] == "image_url"
-    ]
+    first_urls = _preference_request_image_urls(first)
+    second_urls = _preference_request_image_urls(second)
     assert first_urls == list(reversed(second_urls))
-    assert hashlib.sha256(
-        base64.b64decode(first_urls[0].split(",", 1)[1])
-    ).hexdigest() == (report.normalized_baseline_sha256)
-    assert hashlib.sha256(
-        base64.b64decode(first_urls[1].split(",", 1)[1])
-    ).hexdigest() == (report.normalized_candidate_sha256)
+    submitted = [
+        hashlib.sha256(base64.b64decode(url.split(",", 1)[1])).hexdigest()
+        for url in first_urls
+    ]
+    assert submitted == [
+        report.normalized_baseline_sha256,
+        report.normalized_candidate_sha256,
+    ]
     request_text = json.dumps([first, second]).lower()
     assert "baseline" not in request_text
     assert "candidate" not in request_text
+
+
+def _assert_candidate_preference_report(report) -> None:
     assert report.status == "consistent_candidate_preference"
     assert report.mapped_preferences == ("candidate", "candidate")
     assert report.escalation_required is False
@@ -727,6 +739,20 @@ def test_compare_preference_balances_orders_and_maps_candidate(
         report.first_order.request.frames[0].sha256
         == report.reversed_order.request.frames[1].sha256
     )
+
+
+def test_compare_preference_balances_orders_and_maps_candidate(
+    monkeypatch, tmp_path
+) -> None:
+    report, calls = _run_preference_comparison(
+        monkeypatch,
+        tmp_path,
+        [_preference_completion("B"), _preference_completion("A")],
+    )
+
+    assert len(calls) == 2
+    _assert_balanced_preference_requests(report, calls)
+    _assert_candidate_preference_report(report)
 
 
 @pytest.mark.parametrize(
@@ -891,12 +917,8 @@ def test_preference_parser_rejects_custom_model_mismatch(monkeypatch, tmp_path) 
     assert report.first_order.error.error_type == "response_contract_error"
 
 
-def test_compare_preference_retains_http_error_and_runs_reversed_order(
-    monkeypatch, tmp_path
-) -> None:
-    from npa.workbench import vlm_eval
-
-    responses = iter(
+def _preference_http_error_responses(vlm_eval):
+    return iter(
         [
             (
                 vlm_eval._VlmBackendResponse(
@@ -917,30 +939,25 @@ def test_compare_preference_retains_http_error_and_runs_reversed_order(
             ),
         ]
     )
-    calls = 0
+
+
+def test_compare_preference_retains_http_error_and_runs_reversed_order(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    responses = _preference_http_error_responses(vlm_eval)
+    calls = []
 
     def post(**_kwargs):
-        nonlocal calls
-        calls += 1
+        calls.append(True)
         return next(responses)
 
     monkeypatch.setattr(vlm_eval, "_post_comparison_request", post)
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
-    baseline = tmp_path / "first.png"
-    candidate = tmp_path / "second.png"
-    Image.new("RGB", (8, 8), "red").save(baseline)
-    Image.new("RGB", (8, 8), "blue").save(candidate)
-    report = vlm_eval.compare_vlm_preference(
-        vlm_eval.VlmPreferenceComparisonRequest(
-            baseline_path=str(baseline),
-            candidate_path=str(candidate),
-            output_path=str(tmp_path / "preference"),
-            task="Compare matched views.",
-            rubric="Prefer visible detail.",
-        )
-    )
+    report = vlm_eval.compare_vlm_preference(_preference_request(tmp_path))
 
-    assert calls == 2
+    assert len(calls) == 2
     assert report.status == "judge_error"
     assert report.first_order.error is not None
     assert report.first_order.error.stage == "provider_http_status"
@@ -958,33 +975,22 @@ def test_compare_preference_crash_journal_blocks_duplicate_transport(
 ) -> None:
     from npa.workbench import vlm_eval
 
-    baseline = tmp_path / "first.png"
-    candidate = tmp_path / "second.png"
-    Image.new("RGB", (8, 8), "red").save(baseline)
-    Image.new("RGB", (8, 8), "blue").save(candidate)
-    output = tmp_path / "preference"
-    calls = 0
+    request = _preference_request(tmp_path)
+    output = Path(request.output_path)
+    calls = []
 
     def crash(**_kwargs):
-        nonlocal calls
-        calls += 1
+        calls.append(True)
         request_path = output / ".vlm_preference_comparison" / "request-01.json"
         assert request_path.exists()
         raise RuntimeError("simulated process interruption")
 
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", crash)
-    request = vlm_eval.VlmPreferenceComparisonRequest(
-        baseline_path=str(baseline),
-        candidate_path=str(candidate),
-        output_path=str(output),
-        task="Compare matched views.",
-        rubric="Prefer visible detail.",
-    )
 
     with pytest.raises(RuntimeError, match="simulated process interruption"):
         vlm_eval.compare_vlm_preference(request)
-    assert calls == 1
+    assert len(calls) == 1
     journal = output / ".vlm_preference_comparison"
     assert (journal / "state.json").exists()
     assert (journal / "request-01.json").exists()
@@ -994,7 +1000,7 @@ def test_compare_preference_crash_journal_blocks_duplicate_transport(
 
     with pytest.raises(VlmEvalError, match="already exists"):
         vlm_eval.compare_vlm_preference(request)
-    assert calls == 1
+    assert len(calls) == 1
 
 
 def test_compare_preference_journals_response_at_transport_boundary(
@@ -1002,11 +1008,8 @@ def test_compare_preference_journals_response_at_transport_boundary(
 ) -> None:
     from npa.workbench import vlm_eval
 
-    baseline = tmp_path / "first.png"
-    candidate = tmp_path / "second.png"
-    output = tmp_path / "preference"
-    Image.new("RGB", (8, 8), "red").save(baseline)
-    Image.new("RGB", (8, 8), "blue").save(candidate)
+    request = _preference_request(tmp_path)
+    output = Path(request.output_path)
     raw_body = '{"id":"private-id","choices":[]}'
 
     def crash(*, response_sink, **_kwargs):
@@ -1023,13 +1026,6 @@ def test_compare_preference_journals_response_at_transport_boundary(
 
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", crash)
-    request = vlm_eval.VlmPreferenceComparisonRequest(
-        baseline_path=str(baseline),
-        candidate_path=str(candidate),
-        output_path=str(output),
-        task="Compare matched views.",
-        rubric="Prefer visible detail.",
-    )
 
     with pytest.raises(RuntimeError, match="after transport"):
         vlm_eval.compare_vlm_preference(request)
@@ -1042,6 +1038,32 @@ def test_compare_preference_journals_response_at_transport_boundary(
     assert boundary["request_id_header"] == "private-header-id"
     assert not (journal / "response-01.json").exists()
     assert (journal / "transport-boundary-01.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_preference_transport_aborts_when_response_journal_fails(monkeypatch) -> None:
+    from npa.workbench import vlm_eval
+
+    response = vlm_eval._coerce_backend_response(
+        _preference_completion(),
+        fallback_latency_s=0.1,
+    )
+
+    def post(*, response_sink, **_kwargs):
+        response_sink(response)
+        return response
+
+    def fail_retention(_response):
+        raise VlmEvalError("simulated journal failure")
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    with pytest.raises(VlmEvalError, match="could not be retained"):
+        vlm_eval._post_comparison_request(
+            url="https://provider.invalid/v1/chat/completions",
+            headers={},
+            request={"model": "test"},
+            timeout_s=1,
+            response_sink=fail_retention,
+        )
 
 
 def test_compare_preference_rejects_source_role_text_before_transport(
