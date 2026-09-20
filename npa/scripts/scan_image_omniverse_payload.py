@@ -351,12 +351,58 @@ def _require_saved_config(name, documents):
 #: Layer media types that carry build metadata instead of filesystem content.
 #: BuildKit, which is the default builder, records SLSA provenance and SBOMs as
 #: in-toto statements in a separate attestation manifest alongside the platform
-#: image. Those blobs are JSON rather than tar, so nothing can scan them as a
-#: layer, and they are never extracted into a container root filesystem, so they
-#: cannot deliver a restricted runtime payload. Requiring them to have been
-#: scanned rejects the entire image and blocks the byte-level verification that
-#: gates publication.
+#: image. Those blobs are JSON rather than tar, so nothing can walk them as a
+#: layer, and requiring them to have been scanned rejects the entire image and
+#: blocks the byte-level verification that gates publication.
+#:
+#: The exemption is narrow in two ways that matter, because this scanner gates a
+#: *redistribution* claim: what the image ships, not only what it can execute.
+#: An attestation blob ships with the image and is pulled by everyone who pulls
+#: it, so "cannot be extracted as a root filesystem" would not be sufficient
+#: grounds on its own.
+#:
+#: First, the exemption never suppresses a scan. A blob that parses as tar is
+#: walked by `_iter_saved_member` whatever the manifest calls it, so it lands in
+#: `scanned_layers` and takes the ordinary path below; a restricted payload in a
+#: tar wearing this label is still found. Second, for a blob that genuinely
+#: cannot be walked, the content is checked against the label rather than
+#: trusted: it must parse as an in-toto statement. Otherwise the media type,
+#: which the image builder controls, would be enough to turn "cannot be cleared"
+#: into "cleared" for arbitrary bytes.
+#:
+#: What this still does not do, stated so it is not mistaken for coverage: the
+#: statement's `predicate` is not inspected, so a well-formed statement carrying
+#: encoded content in its own fields is cleared. Scanning that text for restricted
+#: paths would be worse than leaving it: an SBOM's job is to enumerate every file
+#: in the image, so a legitimate attestation for a restricted image names those
+#: paths by design, and matching on them would fail every honest build while a
+#: base64 field slipped through anyway. Closing it properly needs a predicate-aware
+#: check against the declared predicateType, which is a larger change than the
+#: publication path needs today.
 NON_FILESYSTEM_LAYER_MEDIA_TYPES = frozenset({"application/vnd.in-toto+json"})
+
+#: Every in-toto statement carries this as its `_type`, versioned after the slash.
+IN_TOTO_STATEMENT_TYPE_PREFIX = "https://in-toto.io/Statement/"
+
+
+def _require_in_toto_statement(name, documents):
+    """Refuse a blob that claims to be build metadata but is not an in-toto statement."""
+
+    document = documents.get(name)
+    if not isinstance(document, dict):
+        raise RuntimeError(
+            f"Incomplete image archive: {name} is declared build metadata but does not "
+            "parse as a JSON document"
+        )
+    statement_type = document.get("_type")
+    if not isinstance(statement_type, str) or not statement_type.startswith(
+        IN_TOTO_STATEMENT_TYPE_PREFIX
+    ):
+        raise RuntimeError(
+            f"Incomplete image archive: {name} is declared build metadata but is not an "
+            f"in-toto statement (_type {statement_type!r})"
+        )
+    return statement_type
 
 
 def _require_saved_layer(name, scanned_layers):
@@ -433,13 +479,23 @@ def _check_oci_manifest(
         raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
     for descriptor in layers:
         layer = _saved_descriptor_path(descriptor, sizes)
-        if descriptor.get("mediaType") in NON_FILESYSTEM_LAYER_MEDIA_TYPES:
-            # _saved_descriptor_path already proved the blob is present at the
-            # declared size. It is metadata, so there is no filesystem to walk;
-            # record it so the report shows what was skipped and why.
+        if (
+            descriptor.get("mediaType") in NON_FILESYSTEM_LAYER_MEDIA_TYPES
+            and layer not in scanned_layers
+        ):
+            # _saved_descriptor_path already proved the blob is present at the declared
+            # size, and the `scanned_layers` test above means the walk could not read it
+            # as a filesystem -- a tar would have been walked and would take the ordinary
+            # path regardless of what the manifest called it. So this is the only case
+            # where the label buys an exemption, and the content has to earn it.
+            statement_type = _require_in_toto_statement(layer, documents)
             if attestations is not None:
                 attestations.append(
-                    {"member": layer, "media_type": descriptor["mediaType"]}
+                    {
+                        "member": layer,
+                        "media_type": descriptor["mediaType"],
+                        "statement_type": statement_type,
+                    }
                 )
             continue
         _require_saved_layer(layer, scanned_layers)
@@ -570,7 +626,11 @@ def scan(
     attestations: list[dict[str, str]] = []
     if docker_image is not None:
         report = ScanReport(image=docker_image, source="local-docker-stream")
-        entries = () if history_only else _iter_docker_save(docker_image, attestations=attestations)
+        entries = (
+            ()
+            if history_only
+            else _iter_docker_save(docker_image, attestations=attestations)
+        )
         history = _local_image_history(docker_image)
     elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")

@@ -1028,12 +1028,17 @@ def test_registry_digest_must_be_a_sha256(monkeypatch) -> None:
         scanner._image_history("registry.example/image:tag")
 
 
-def _buildkit_attested_members():
+def _buildkit_attested_members(provenance: bytes | None = None):
     """An OCI archive shaped the way BuildKit actually saves an attested image.
 
     `index.json` points at an image index holding two manifests: the platform
     image, and an attestation manifest whose single "layer" is an in-toto SLSA
     provenance statement. That blob is JSON, so nothing can walk it as a tar.
+
+    `provenance` substitutes the attestation blob's bytes. It has to be supplied here
+    rather than patched into the returned members, because the descriptor digest and
+    size are derived from the content and a later swap would fail an earlier integrity
+    check instead of the one under test.
     """
 
     layer = _tar_bytes({"opt/example/readme.txt": b"hello"})
@@ -1055,9 +1060,13 @@ def _buildkit_attested_members():
         "config": add_blob(config),
         "layers": [add_blob(layer)],
     }
-    provenance = json.dumps(
-        {"_type": "https://in-toto.io/Statement/v0.1", "subject": []}
-    ).encode()
+    provenance = (
+        provenance
+        if provenance is not None
+        else json.dumps(
+            {"_type": "https://in-toto.io/Statement/v0.1", "subject": []}
+        ).encode()
+    )
     attestation = {
         "schemaVersion": 2,
         "config": add_blob(config),
@@ -1107,6 +1116,49 @@ def test_a_skipped_metadata_layer_is_reported_not_swallowed() -> None:
         {"member": "blobs/sha256/abc", "media_type": "application/vnd.in-toto+json"}
     ]
     assert report.to_dict()["skipped_metadata_layers"] == report.skipped_metadata_layers
+
+
+@pytest.mark.parametrize(
+    ("case", "blob"),
+    [
+        ("raw_bytes", b"\x7fELF" + b"\x00" * 64),
+        ("json_without_a_type", b'{"predicate": {"anything": "at all"}}'),
+        (
+            "json_with_a_foreign_type",
+            b'{"_type": "https://example.invalid/Statement/v1"}',
+        ),
+        ("type_that_is_not_a_string", b'{"_type": 42}'),
+        (
+            "domain_that_only_looks_like_in_toto",
+            b'{"_type": "https://in-toto.io.evil.example/Statement/v0.1"}',
+        ),
+    ],
+)
+def test_content_labelled_as_build_metadata_must_actually_be_build_metadata(
+    case: str, blob: bytes
+) -> None:
+    """The label is the image builder's to set, so it cannot be the thing that clears a blob.
+
+    The exemption's whole job is to stop a passing scan being withheld from an image whose only
+    unwalkable blob is genuine provenance. Trusting `mediaType` to decide that would convert
+    "cannot be cleared" into "cleared" for arbitrary bytes, and this scanner gates a
+    redistribution claim -- what the image *ships* -- so "it is never mounted as a root
+    filesystem" is not sufficient grounds. An attestation blob is pulled by everyone who pulls
+    the image.
+
+    A blob that parses as tar is walked regardless of its label and is covered by
+    `test_a_real_filesystem_layer_is_still_required`. This is the other direction: not walkable,
+    so the content has to earn the exemption by being an in-toto statement.
+    """
+
+    members = _buildkit_attested_members(provenance=blob)
+
+    with pytest.raises(RuntimeError, match="declared build metadata"):
+        list(
+            scanner._iter_saved_image(
+                io.BytesIO(_tar_bytes(members)), mode="r|*", attestations=[]
+            )
+        )
 
 
 def test_a_real_filesystem_layer_is_still_required() -> None:
