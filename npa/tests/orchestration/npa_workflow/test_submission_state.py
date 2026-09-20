@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,96 @@ from npa.orchestration.npa_workflow.submission_state import (
     submission_state_path,
     update_submission_state,
 )
+
+
+def _receipt_bytes(**overrides: object) -> bytes:
+    payload: dict[str, object] = {
+        "schema_version": "npa.workflow.submission.v1",
+        "project": "demo",
+        "run_id": "run-1",
+        "workflow": {"name": "sim2real"},
+        "launch": {"status": "launching", "kind": "runtime"},
+    }
+    payload.update(overrides)
+    return json.dumps(payload, sort_keys=True).encode()
+
+
+UNVERIFIABLE_RECEIPTS = (
+    ("truncated_json", b'{"schema_version":'),
+    ("invalid_utf8", b'\xff\xfe{"schema_version":'),
+    ("non_object", b"[]"),
+    ("empty_object", b"{}"),
+    ("wrong_schema", _receipt_bytes(schema_version="npa.workflow.submission.v0")),
+    (
+        "missing_schema",
+        _receipt_bytes(schema_version=None),
+    ),
+    ("wrong_project", _receipt_bytes(project="other")),
+    ("wrong_run", _receipt_bytes(run_id="run-2")),
+)
+
+
+@pytest.mark.parametrize("operation", ["update", "plan"])
+@pytest.mark.parametrize(("case", "body"), UNVERIFIABLE_RECEIPTS)
+def test_mutation_rejects_unverifiable_existing_receipt_without_replacing_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    case: str,
+    body: bytes,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = submission_state_path("demo", "run-1")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(body)
+
+    with pytest.raises(
+        ValueError, match="existing workflow submission receipt is unavailable"
+    ):
+        if operation == "update":
+            update_submission_state(
+                "demo", "run-1", {"artifact_load": {"status": "ok"}}
+            )
+        else:
+            record_submission_plan(
+                "demo",
+                "run-1",
+                workflow={"name": "sim2real"},
+                planning={"state": "durable"},
+            )
+
+    assert path.read_bytes() == body, case
+
+
+@pytest.mark.parametrize("operation", ["update", "plan"])
+def test_mutation_rejects_symlink_receipt_without_replacing_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    path = submission_state_path("demo", "run-1")
+    path.parent.mkdir(parents=True)
+    target = tmp_path / "retained-receipt.json"
+    body = _receipt_bytes()
+    target.write_bytes(body)
+    path.symlink_to(target)
+
+    with pytest.raises(
+        ValueError, match="existing workflow submission receipt is unavailable"
+    ):
+        if operation == "update":
+            update_submission_state(
+                "demo", "run-1", {"artifact_load": {"status": "ok"}}
+            )
+        else:
+            record_submission_plan(
+                "demo",
+                "run-1",
+                workflow={"name": "sim2real"},
+                planning={"state": "durable"},
+            )
+
+    assert path.is_symlink()
+    assert target.read_bytes() == body
 
 
 def test_resume_planning_preserves_run_location_and_launch(tmp_path, monkeypatch):
@@ -161,6 +252,11 @@ def test_inspection_distinguishes_absent_and_corrupt_receipts(
     assert inspected.outcome == "unavailable"
     assert "invalid receipt JSON" in inspected.error
 
+    submission_state_path("demo", "run-1").write_bytes(b"\xff\xfe")
+    inspected = inspect_submission_state("demo", "run-1")
+    assert inspected.outcome == "unavailable"
+    assert load_submission_state("demo", "run-1") == {}
+
 
 def test_project_audit_requires_every_exact_ledger_to_prove_no_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -191,4 +287,7 @@ def test_project_audit_rejects_symlinks_and_unavailable_ledgers(
 
     link.unlink()
     submission_state_path("demo", "corrupt").write_text("not-json", encoding="utf-8")
+    assert audit_project_submissions("demo").outcome == "unavailable"
+
+    submission_state_path("demo", "corrupt").write_bytes(b"\xff\xfe")
     assert audit_project_submissions("demo").outcome == "unavailable"

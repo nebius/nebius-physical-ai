@@ -142,7 +142,7 @@ def audit_project_submissions(project: str) -> ProjectSubmissionAudit:
             )
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             return ProjectSubmissionAudit(
                 "unavailable", len(ledgers), f"could not read ledger {path}: {exc}"
             )
@@ -197,7 +197,7 @@ def _read(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     return dict(payload) if isinstance(payload, dict) else {}
 
@@ -209,10 +209,10 @@ def load_submission_state(project: str, run_id: str) -> dict[str, Any]:
 def inspect_submission_state(project: str, run_id: str) -> SubmissionStateRead:
     """Read one exact receipt and retain why it could not be read.
 
-    ``load_submission_state`` intentionally remains the forgiving API used by
-    restart-safe submit operations. Run resolution needs a stricter distinction:
-    an unreadable/corrupt owner receipt is verification-unavailable, not proof
-    that the run never launched.
+    ``load_submission_state`` intentionally remains a forgiving compatibility
+    API. Run resolution and every mutation need a stricter distinction: an
+    unreadable/corrupt owner receipt is verification-unavailable, not proof that
+    the run never launched.
     """
 
     path = submission_state_path(project, run_id)
@@ -224,7 +224,7 @@ def inspect_submission_state(project: str, run_id: str) -> SubmissionStateRead:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return SubmissionStateRead("absent", {})
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         return SubmissionStateRead("unavailable", {}, f"could not read {path}: {exc}")
     try:
         payload = json.loads(raw)
@@ -250,6 +250,18 @@ def inspect_submission_state(project: str, run_id: str) -> SubmissionStateRead:
             "unavailable", {}, f"receipt project does not match {expected_project!r}"
         )
     return SubmissionStateRead("found", dict(payload))
+
+
+def _read_existing_for_update(project: str, run_id: str) -> dict[str, Any]:
+    inspected = inspect_submission_state(project, run_id)
+    if inspected.outcome == "absent":
+        return {}
+    if inspected.outcome == "unavailable":
+        raise ValueError(
+            "existing workflow submission receipt is unavailable; preserve and "
+            f"repair or explicitly remove it before retrying: {inspected.error}"
+        )
+    return inspected.payload
 
 
 def _write_atomic(path: Path, payload: Mapping[str, Any]) -> None:
@@ -305,7 +317,7 @@ def update_submission_state(
         )
 
     def _update(path: Path) -> dict[str, Any]:
-        payload = _read(path)
+        payload = _read_existing_for_update(project, run_id)
         payload.update(dict(updates))
         payload.update(
             {
@@ -349,7 +361,7 @@ def record_submission_plan(
         OSError: The locked receipt cannot be persisted.
     """
     with submission_lock(project, run_id):
-        previous = load_submission_state(project, run_id)
+        previous = _read_existing_for_update(project, run_id)
         recorded = previous.get("workflow") or {}
         if recorded.get("name") and recorded["name"] != workflow.get("name"):
             raise ValueError("submission planning cannot change the workflow identity")
