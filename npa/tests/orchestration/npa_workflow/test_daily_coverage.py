@@ -38,6 +38,11 @@ def test_exempt_images_are_real_workflow_image_tools() -> None:
     assert dc.EXEMPT_IMAGE_TOOLS <= dc.WORKFLOW_IMAGE_TOOLS
 
 
+def test_image_less_tool_refs_are_not_required_images() -> None:
+    assert None not in dc.WORKFLOW_IMAGE_TOOLS
+    assert all(isinstance(image_tool, str) for image_tool in dc.WORKFLOW_IMAGE_TOOLS)
+
+
 def test_daily_plan_set_covers_every_covered_image() -> None:
     summaries = dc.spec_step_summary()
     report = dc.image_coverage(summaries)
