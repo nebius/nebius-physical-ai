@@ -1,10 +1,13 @@
 # Mypy baseline - known errors that are grandfathered in.
 # Format: one error per line, as output by mypy.
 # New errors beyond this baseline will fail CI.
-# Seeded from: mypy 2.3.1 (pinned in .github/workflows/typecheck.yml),
-#   `mypy src/npa --ignore-missing-imports --no-error-summary --python-version=3.12`
-# (CI runs the same command under Python 3.12) on ca4189407 (after merging
-# origin/main, 2026-09-19). Regenerate with the same command and re-sort if the tree moves on.
+# Seeded from: the typecheck-gate CI run (mypy 2.3.1, numpy 2.5.3, both pinned
+#   in .github/workflows/typecheck.yml), NOT from a local run: local
+#   dependency versions change mypy's inferred-type rendering and silently
+#   invalidate the baseline.
+# Command: `mypy src/npa --ignore-missing-imports --no-error-summary --python-version=3.12`
+# Comparison is line-number-insensitive (see typecheck.yml): the gate strips
+# `:line:` before diffing, so unrelated line shifts do not false-fail.
 src/npa/_sdk.py:47: error: "def wrapper(**kwargs: Any) -> Any" has no attribute "__npa_cli_module__"  [attr-defined]
 src/npa/_sdk.py:48: error: "def wrapper(**kwargs: Any) -> Any" has no attribute "__npa_cli_callback__"  [attr-defined]
 src/npa/adapter/groot.py:908: error: Incompatible return value type (got "dict[str, dict[str, int]]", expected "dict[str, dict[str, int | str]]")  [return-value]
@@ -285,7 +288,8 @@ src/npa/cli/genesis/__init__.py:478: error: Argument 1 to "create_job" of "Serve
 src/npa/cli/genesis/__init__.py:867: error: "BaseContext" has no attribute "Process"  [attr-defined]
 src/npa/cli/groot/__init__.py:242: error: Missing return statement  [return]
 src/npa/cli/isaac_lab/__init__.py:217: error: Missing return statement  [return]
-src/npa/cli/main.py:2259: error: Value of type "object" is not indexable  [index]
+src/npa/cli/main.py:2260: error: Value of type "object" is not indexable  [index]
+src/npa/cli/main.py:2261: error: Value of type "object" is not indexable  [index]
 src/npa/cli/main.py:2269: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
 src/npa/cli/main.py:2271: error: "object" has no attribute "items"  [attr-defined]
 src/npa/cli/nurec/__init__.py:292: error: Argument "rig_mode" to "ColmapConversionRequest" has incompatible type "str"; expected "Literal['derive', 'preserve']"  [arg-type]
@@ -306,9 +310,10 @@ src/npa/cli/workbench/curobo.py:45: error: Argument "mode" to "PrepareRequest" h
 src/npa/cli/workbench/detection_training.py:226: error: Argument "node_selector_value" to "_kubernetes_manifest" has incompatible type "str | None"; expected "str"  [arg-type]
 src/npa/cli/workbench/detection_training.py:263: error: Argument "selector_value" to "_verify_deployment_gpu" has incompatible type "str | None"; expected "str"  [arg-type]
 src/npa/cli/workbench/detection_training.py:676: error: Argument 1 to "discover_checkpoint_uri" has incompatible type "Any | None"; expected "Iterable[Mapping[str, Any]]"  [arg-type]
-src/npa/cli/workbench/health.py:430: error: Value of type "object" is not indexable  [index]
+src/npa/cli/workbench/health.py:431: error: Value of type "object" is not indexable  [index]
 src/npa/cli/workbench/health.py:436: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
-src/npa/cli/workbench/health.py:443: error: Value of type "object" is not indexable  [index]
+src/npa/cli/workbench/health.py:444: error: Value of type "object" is not indexable  [index]
+src/npa/cli/workbench/health.py:445: error: Value of type "object" is not indexable  [index]
 src/npa/cli/workbench/health.py:447: error: "object" has no attribute "items"  [attr-defined]
 src/npa/cli/workbench/lancedb/backfill.py:83: error: Argument 1 to "backfill_column" has incompatible type "**dict[str, object]"; expected "bool | None"  [arg-type]
 src/npa/cli/workbench/lancedb/backfill.py:83: error: Argument 1 to "backfill_column" has incompatible type "**dict[str, object]"; expected "bool"  [arg-type]
@@ -343,7 +348,8 @@ src/npa/cli/workbench/scenario_gen.py:220: error: Argument 1 to "rank" has incom
 src/npa/cli/workbench/scenario_gen.py:220: error: Argument 1 to "rank" has incompatible type "**dict[str, object]"; expected "str | None"  [arg-type]
 src/npa/cli/workbench/scenario_gen.py:220: error: Argument 1 to "rank" has incompatible type "**dict[str, object]"; expected "str"  [arg-type]
 src/npa/cli/workbench/workflow/__init__.py:2237: error: "Mapping[str, Any]" has no attribute "setdefault"  [attr-defined]
-src/npa/cli/workbench/workflow/__init__.py:257: error: Value of type "object" is not indexable  [index]
+src/npa/cli/workbench/workflow/__init__.py:258: error: Value of type "object" is not indexable  [index]
+src/npa/cli/workbench/workflow/__init__.py:259: error: Value of type "object" is not indexable  [index]
 src/npa/cli/workbench/workflow/__init__.py:267: error: "object" has no attribute "__iter__"; maybe "__dir__" or "__str__"? (not iterable)  [attr-defined]
 src/npa/cli/workbench/workflow/__init__.py:269: error: "object" has no attribute "items"  [attr-defined]
 src/npa/cli/workbench/workflow/__init__.py:3161: error: Generator has incompatible item type "Any | str | None"; expected "str"  [misc]
@@ -594,16 +600,16 @@ src/npa/studio_sources.py:80: error: Argument 3 to "_project_sources" has incomp
 src/npa/viz/adapters/groot_predictions_to_rerun.py:83: error: Argument "fps" to "_select_adapter_frames" has incompatible type "float"; expected "int"  [arg-type]
 src/npa/viz/adapters/lerobot_to_rerun.py:685: error: Argument "fps" to "_select_adapter_frames" has incompatible type "float"; expected "int"  [arg-type]
 src/npa/viz/adapters/lerobot_to_rerun.py:922: error: Incompatible return value type (got "tuple[int, ...]", expected "tuple[int, int, int]")  [return-value]
-src/npa/viz/backends/matplotlib.py:124: error: Item "None" of "ndarray[tuple[int, ...], dtype[floating[_32Bit]]] | None" has no attribute "shape"  [union-attr]
-src/npa/viz/backends/matplotlib.py:126: error: Value of type "ndarray[tuple[int, ...], dtype[floating[_32Bit]]] | None" is not indexable  [index]
-src/npa/viz/backends/matplotlib.py:143: error: Argument 2 to "FuncAnimation" has incompatible type "Callable[[int], list[object]]"; expected "Callable[..., Iterable[Artist]]"  [arg-type]
+src/npa/viz/backends/matplotlib.py:124: error: Item "None" of "ndarray[Any, Any] | None" has no attribute "shape"  [union-attr]
+src/npa/viz/backends/matplotlib.py:126: error: Value of type "ndarray[Any, Any] | None" is not indexable  [index]
+src/npa/viz/backends/matplotlib.py:143: error: Argument 2 to "FuncAnimation" has incompatible type "Callable[[int], list[object]]"; expected "Callable[..., Iterable[Artist] | None]"  [arg-type]
 src/npa/viz/backends/matplotlib.py:238: error: Need type annotation for "lines" (hint: "lines: list[<type>] = ...")  [var-annotated]
 src/npa/viz/backends/matplotlib.py:269: error: "object" has no attribute "set_data"  [attr-defined]
 src/npa/viz/backends/matplotlib.py:272: error: "object" has no attribute "set_3d_properties"  [attr-defined]
 src/npa/viz/backends/matplotlib.py:273: error: "object" has no attribute "_offsets3d"  [attr-defined]
 src/npa/viz/backends/matplotlib.py:278: error: "object" has no attribute "set_visible"  [attr-defined]
 src/npa/viz/backends/matplotlib.py:279: error: "object" has no attribute "set_visible"  [attr-defined]
-src/npa/viz/backends/matplotlib.py:88: error: Value of type "ndarray[tuple[int, ...], dtype[floating[_32Bit]]] | None" is not indexable  [index]
+src/npa/viz/backends/matplotlib.py:88: error: Value of type "ndarray[Any, Any] | None" is not indexable  [index]
 src/npa/viz/backends/rerun.py:724: error: Too many values to unpack (2 expected, 4 provided)  [misc]
 src/npa/viz/backends/rerun.py:725: error: If x = b'abc' then f"{x}" or "{}".format(x) produces "b'abc'", not "abc". If this is desired behavior, use f"{x!r}" or "{!r}".format(x). Otherwise, decode the bytes  [str-bytes-safe]
 src/npa/workbench/alpamayo2_super/runtime.py:241: error: Argument 1 to "isfinite" has incompatible type "Any | None"; expected "SupportsFloat | SupportsIndex"  [arg-type]
@@ -829,7 +835,6 @@ src/npa/workbench/sonic/__init__.py:535: error: Item "None" of "Any | dict[Any, 
 src/npa/workbench/sonic/__init__.py:536: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
 src/npa/workbench/sonic/__init__.py:537: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
 src/npa/workbench/sonic/__init__.py:561: error: Item "None" of "Any | dict[Any, Any] | None" has no attribute "get"  [union-attr]
-src/npa/workbench/sonic/eval.py:1003: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[floating[Any]]]", variable has type "ndarray[tuple[int], dtype[floating[_32Bit]]]")  [assignment]
 src/npa/workbench/sonic/eval.py:138: error: Argument 1 to "_required_dim" has incompatible type "Any | dict[Any, Any] | None"; expected "dict[str, Any]"  [arg-type]
 src/npa/workbench/sonic/eval.py:139: error: Argument 1 to "_required_dim" has incompatible type "Any | dict[Any, Any] | None"; expected "dict[str, Any]"  [arg-type]
 src/npa/workbench/sonic/eval.py:547: error: Argument "obs_spec" to "_observation_vector" has incompatible type "Any | dict[Any, Any] | None"; expected "dict[str, Any]"  [arg-type]
@@ -941,16 +946,13 @@ src/npa/workflows/data_factory_stages.py:514: error: Incompatible types in assig
 src/npa/workflows/data_factory_viz.py:1339: error: Item "None" of "dict[str, Any] | None" has no attribute "get"  [union-attr]
 src/npa/workflows/data_factory_viz.py:1340: error: Value of type "dict[str, Any] | None" is not indexable  [index]
 src/npa/workflows/data_factory_viz.py:951: error: Value of type "dict[str, Any] | None" is not indexable  [index]
-src/npa/workflows/franka_rl_capture.py:141: error: Argument 2 to "savez" has incompatible type "**dict[Any, ndarray[tuple[int, ...], dtype[Any]]]"; expected "bool"  [arg-type]
+src/npa/workflows/franka_rl_capture.py:141: error: Argument 2 to "savez" has incompatible type "**dict[Any, ndarray[tuple[Any, ...], dtype[Any]]]"; expected "bool"  [arg-type]
 src/npa/workflows/franka_rl_capture.py:59: error: Need type annotation for "recording"  [var-annotated]
 src/npa/workflows/franka_rl_capture_merge.py:27: error: Need type annotation for "rows" (hint: "rows: list[<type>] = ...")  [var-annotated]
 src/npa/workflows/franka_rl_capture_merge.py:68: error: Item "None" of "Any | None" has no attribute "update"  [union-attr]
 src/npa/workflows/franka_rl_learning.py:56: error: "object" has no attribute "update"  [attr-defined]
 src/npa/workflows/franka_rl_learning.py:57: error: "object" has no attribute "update"  [attr-defined]
 src/npa/workflows/franka_rl_learning.py:59: error: Unsupported target for indexed assignment ("object")  [index]
-src/npa/workflows/franka_rl_metrics.py:69: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[Any]]", variable has type "ndarray[tuple[int], dtype[signedinteger[_64Bit]]]")  [assignment]
-src/npa/workflows/franka_rl_metrics.py:72: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[Any]]", variable has type "ndarray[tuple[int], dtype[signedinteger[_64Bit]]]")  [assignment]
-src/npa/workflows/franka_rl_metrics.py:73: error: Incompatible types in assignment (expression has type "ndarray[tuple[int, ...], dtype[Any]]", variable has type "ndarray[tuple[int], dtype[Any]]")  [assignment]
 src/npa/workflows/franka_rl_physics.py:74: error: Argument 1 to "stability_profile" has incompatible type "Any | None"; expected "str"  [arg-type]
 src/npa/workflows/franka_rl_vlm.py:187: error: Unsupported left operand type for + ("None")  [operator]
 src/npa/workflows/franka_rl_vlm.py:271: error: Need type annotation for "rates" (hint: "rates: dict[<type>, <type>] = ...")  [var-annotated]

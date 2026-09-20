@@ -572,3 +572,18 @@ def test_blocking_mypy_runs_as_merge_gate() -> None:
         "mypy baseline is empty; seed it from a real mypy run "
         "(or, if mypy is genuinely clean, update this test to say so)"
     )
+
+    # The baseline comparison must be line-number-insensitive: grandfathered
+    # errors shift lines whenever their file is edited, and a line-sensitive
+    # diff would false-fail every future PR that touches such a file. The
+    # workflow strips `:line:` before diffing (multiset compare, so genuinely
+    # new errors of an already-seen shape are still caught).
+    baseline_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Check against baseline"
+    )
+    script = baseline_step["run"]
+    assert "sed -E 's|^([^:]+\\.py):[0-9]+:|\\1:|'" in script, (
+        "typecheck.yml must strip :line: before the baseline diff"
+    )
