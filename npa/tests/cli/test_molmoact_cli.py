@@ -26,12 +26,55 @@ from npa.workflows.byof.molmoact_pipeline import (
 )
 
 
-def test_hf_model_repo_accessible():
-    """allenai/MolmoAct-7B-O-0812 must be a public, ungated HF repo.
+class _FakeHTTPResponse:
+    def __init__(self, status: int, payload: dict):
+        self.status = status
+        self._payload = payload
 
-    The probe uses HTTPS against the fixed huggingface.co host; the pinned
-    repo id only ever lands in the request path.
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
+
+
+class _FakeHTTPSConnection:
+    """No real network in unit tests: asserts the probe's request shape and
+    replays a canned Hugging Face API response."""
+
+    def __init__(self, status: int, payload: dict):
+        self.status = status
+        self.payload = payload
+        self.requested: list[tuple[str, str]] = []
+
+    def request(self, method: str, path: str, headers=None) -> None:
+        assert method == "GET"
+        assert path == f"/api/models/{DEFAULT_MODEL_ID}"
+        self.requested.append((method, path))
+
+    def getresponse(self) -> _FakeHTTPResponse:
+        return _FakeHTTPResponse(self.status, self.payload)
+
+    def close(self) -> None:
+        pass
+
+
+def _fake_hf_conn(status: int, payload: dict, monkeypatch: pytest.MonkeyPatch):
+    def _connect(host: str, timeout: int | None = None) -> _FakeHTTPSConnection:
+        assert host == "huggingface.co"
+        return _FakeHTTPSConnection(status, payload)
+
+    monkeypatch.setattr(http.client, "HTTPSConnection", _connect)
+
+
+def test_hf_model_repo_accessible(monkeypatch: pytest.MonkeyPatch):
+    """The probe targets the fixed huggingface.co host with the pinned repo id
+    in the request path, and accepts a public, ungated repo.
+
+    The HTTPS exchange is faked: unit tests must not make live network calls.
     """
+    _fake_hf_conn(
+        200,
+        {"id": DEFAULT_MODEL_ID, "private": False, "gated": False},
+        monkeypatch,
+    )
     connection = http.client.HTTPSConnection("huggingface.co", timeout=30)
     try:
         connection.request(
