@@ -37,6 +37,7 @@ def test_seedvr2_workflow_validates_and_reaches_every_real_operation() -> None:
         "review",
     ]
     assert spec.states["restore"].resources == "gpu"
+    assert spec.states["verify"].resources == "gpu"
     assert spec.states["review"].terminal is True
     restore_argv = plan.steps[1].argv
     assert restore_argv[restore_argv.index("--probe-path") + 1].endswith("/probe.json")

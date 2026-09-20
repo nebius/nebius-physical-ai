@@ -10,10 +10,22 @@ This record is engineering classification, not legal advice.
 1. Source: the image bakes ByteDance-Seed/SeedVR at
    `e4de8c24441a67e1b7df56abea10645059bb1185`. Upstream's repository license
    and file headers are Apache-2.0.
-2. Baked runtime: the image uses a digest-pinned NVIDIA CUDA 13.0 development
-   base, current PyTorch/CUDA runtime wheels, pinned Python dependencies,
-   FlashAttention source, and NVIDIA Apex source. Their license notices are
-   retained in installed distributions and `THIRD_PARTY_NOTICES.md`. No SeedVR
+2. Baked runtime: extension compilation uses a digest-pinned NVIDIA CUDA 13.0
+   development build stage that is absent from the final manifest. The final
+   image uses the digest-pinned cuDNN runtime base, current PyTorch/CUDA runtime
+   wheels, pinned Python dependencies, compiled FlashAttention/Apex extensions,
+   and Apache-2.0 SeedVR source. cuDNN wheel SDK headers and static archives are
+   removed before the runtime-only environment is copied; the retained shared
+   libraries and notice are hash-inventoried in
+   `/usr/share/doc/npa-seedvr2/cudnn-runtime.json`. License notices are retained
+   in installed distributions and `THIRD_PARTY_NOTICES.md`. The PyTorch
+   closure's NVSHMEM SDK headers, device archive, and bitcode are also removed;
+   retained shared runtimes, the wheel license, and the exact v3.4.5-0 product
+   license containing DF-NVSHMEM/Sandia and other bundled third-party terms are
+   inventoried in `/usr/share/doc/npa-seedvr2/nvshmem-runtime.json`. Section 2
+   of the product-specific NVSHMEM supplement identifies any portion of the SDK
+   as distributable under its agreement; the image retains the full terms and
+   supplies material application functionality around the runtime. No SeedVR
    checkpoint, customer media, credential, or populated model cache is baked.
 3. Weights: `ByteDance-Seed/SeedVR2-3B` revision
    `37255ff8cccfb01071b87f635a5948ca8d53117c` is public and marked

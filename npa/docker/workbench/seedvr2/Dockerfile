@@ -1,5 +1,5 @@
 # Apache-2.0 SeedVR2 source/runtime only; public model weights stay runtime-only.
-FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:ae7f650405a3964972dacfa889273bf8e3fbe9709899afd187da01c4cdff3105
+FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@sha256:ae7f650405a3964972dacfa889273bf8e3fbe9709899afd187da01c4cdff3105 AS seedvr2-build
 
 ARG NPA_SOURCE_SHA
 ARG SOURCE_DATE_EPOCH
@@ -28,7 +28,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/workspace/.cache/huggingface \
     HF_HUB_CACHE=/workspace/.cache/huggingface/hub \
-    SEEDVR2_SOURCE_ROOT=/opt/seedvr2 \
     SEEDVR2_PYTHON=/opt/seedvr2-venv/bin/python \
     NPA_SEEDVR2_WORK_DIR=/workspace/seedvr2-runs \
     NPA_SKIP_EAGER_IMPORTS=1 \
@@ -58,9 +57,19 @@ RUN rm -f /etc/apt/sources.list.d/*.list \
     && chmod 0440 /etc/sudoers.d/npa-runtime
 
 COPY docker/workbench/seedvr2/requirements.lock /tmp/seedvr2-requirements.lock
+COPY --chmod=0555 docker/workbench/seedvr2/filter_cudnn_runtime.py /opt/npa-tools/filter_cudnn_runtime.py
+COPY --chmod=0555 docker/workbench/seedvr2/filter_nvshmem_runtime.py /opt/npa-tools/filter_nvshmem_runtime.py
+ADD --checksum=sha256:1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e \
+    https://raw.githubusercontent.com/NVIDIA/nvshmem/v3.4.5-0/License.txt \
+    /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt
 RUN python3.12 -m venv /opt/seedvr2-venv \
     && pip install --no-cache-dir --upgrade 'pip==26.2.1' \
-    && pip install --no-cache-dir --require-hashes -r /tmp/seedvr2-requirements.lock
+    && pip install --no-cache-dir --require-hashes -r /tmp/seedvr2-requirements.lock \
+    && install -d -m 0755 /opt/seedvr2-build-reports \
+    && /opt/seedvr2-venv/bin/python /opt/npa-tools/filter_cudnn_runtime.py \
+      > /opt/seedvr2-build-reports/cudnn-runtime.json \
+    && /opt/seedvr2-venv/bin/python /opt/npa-tools/filter_nvshmem_runtime.py \
+      > /opt/seedvr2-build-reports/nvshmem-runtime.json
 
 ARG FLASH_ATTN_CUDA_ARCHS=90
 RUN curl --fail --location \
@@ -126,6 +135,78 @@ RUN curl --fail --location \
     && test -z "$(find /opt/seedvr2 -type f \
       \( -iname '*.pth' -o -iname '*.pt' -o -iname '*.safetensors' \
          -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)"
+
+FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49
+
+ARG NPA_SOURCE_SHA
+ARG SOURCE_DATE_EPOCH
+ARG SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185
+ARG FLASH_ATTN_MAX_JOBS=2
+ARG FLASH_ATTN_NVCC_THREADS=1
+ARG FLASH_ATTN_CUDA_ARCHS=90
+ARG APEX_MAX_JOBS=2
+
+LABEL npa.tool="seedvr2" \
+      npa.version="0.1.0-cu130-unbuilt" \
+      npa.source.repo="https://github.com/ByteDance-Seed/SeedVR" \
+      npa.source.ref="${SEEDVR2_SOURCE_REF}" \
+      npa.weights="operator-runtime-fetch" \
+      npa.build.flash-attn.max-jobs="${FLASH_ATTN_MAX_JOBS}" \
+      npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
+      npa.build.flash-attn.cuda-archs="${FLASH_ATTN_CUDA_ARCHS}" \
+      npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    HF_HOME=/workspace/.cache/huggingface \
+    HF_HUB_CACHE=/workspace/.cache/huggingface/hub \
+    SEEDVR2_PYTHON=/opt/seedvr2-venv/bin/python \
+    NPA_SEEDVR2_WORK_DIR=/workspace/seedvr2-runs \
+    NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_LIGHT_WORKBENCH_TOOL=seedvr2 \
+    TORCH_CUDA_ARCH_LIST=9.0 \
+    PATH=/opt/npa-venv/bin:/opt/seedvr2-venv/bin:${PATH}
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+USER root
+
+RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
+    && printf '%s\n' "$NPA_SOURCE_SHA" > /opt/npa-source-revision
+
+RUN rm -f /etc/apt/sources.list.d/*.list \
+    && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates ffmpeg libgl1 libglib2.0-0 openssh-server \
+      python3.12 python3.12-venv rsync sudo \
+    && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
+    && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
+    && chmod 0440 /etc/sudoers.d/npa-runtime
+
+COPY --from=seedvr2-build /opt/seedvr2-venv /opt/seedvr2-venv
+COPY --from=seedvr2-build /opt/seedvr2 /opt/seedvr2
+COPY --from=seedvr2-build /usr/share/doc/npa-seedvr2/extension-arches /usr/share/doc/npa-seedvr2/extension-arches
+COPY --from=seedvr2-build /opt/seedvr2-build-reports/cudnn-runtime.json /usr/share/doc/npa-seedvr2/cudnn-runtime.json
+COPY --from=seedvr2-build /opt/seedvr2-build-reports/nvshmem-runtime.json /usr/share/doc/npa-seedvr2/nvshmem-runtime.json
+COPY --from=seedvr2-build /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt /usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt
+
+RUN /opt/seedvr2-venv/bin/pip check \
+    && /opt/seedvr2-venv/bin/python - <<'PY'
+import torch
+import torchvision
+from apex.normalization import FusedLayerNorm, FusedRMSNorm
+from flash_attn import flash_attn_varlen_func
+assert torch.version.cuda == "13.0", torch.version.cuda
+assert "sm_90" in set(torch._C._cuda_getArchFlags().split())
+assert torchvision.__version__.startswith("0.28.0")
+assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
+PY
 
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa

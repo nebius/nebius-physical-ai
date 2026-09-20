@@ -307,11 +307,17 @@ images:
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
     redistribution: public
     notes: >-
-      Bakes immutable Apache-2.0 ByteDance SeedVR source, a current CUDA/PyTorch
-      inference closure, BSD-3-Clause Apex, and required notices. The public
-      Apache-2.0 SeedVR2-3B weights, credentials, sensor inputs, generated media,
-      and populated caches are absent and fetched only at runtime. Publication
-      is quarantined pending complete built-byte security/license scans, a real
+      Bakes immutable Apache-2.0 ByteDance SeedVR source, a CUDA 13 runtime
+      base, hash-locked PyTorch runtime closure, BSD-3-Clause Apex, and required
+      notices. Compilation occurs in a separate devel stage that is not in the
+      final image; the cuDNN wheel SDK headers/static archives are validated and
+      removed before its runtime-only venv is copied; NVSHMEM SDK headers,
+      device archive, and bitcode are likewise removed while shared runtimes
+      plus the wheel and exact v3.4.5-0 product/third-party licenses remain
+      inventoried. The public Apache-2.0 SeedVR2-3B weights, credentials, sensor
+      inputs, generated media, and populated caches are absent and fetched only
+      at runtime. Publication is
+      quarantined pending complete built-byte security/license scans, a real
       H100 restoration through the S3 workflow path, objective preservation
       measurements, calibrated VLM review, and independent review.
   alpamayo2-super:

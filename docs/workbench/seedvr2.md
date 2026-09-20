@@ -26,13 +26,16 @@ The stages are:
 
 1. `probe`: fully decode and hash the exact input.
 2. `restore`: run the official pinned SeedVR2-3B one-step entrypoint on one H100.
-3. `verify`: read the uploaded result back, hash it, and decode it independently.
+3. `verify`: on the same digest-bound H100 image, recompute runtime identity,
+   read the uploaded result back, hash it, and decode it independently.
 4. `review`: render a non-blended bicubic-left/SeedVR2-right MP4, fixed-frame
    contact sheet, JSON manifest, and browser-readable HTML page.
 
 The output prefix contains `restored.mp4`, `upstream.log`, and `result.json`.
 The review prefix contains `comparison.mp4`, `contact-sheet.png`,
 `review.json`, and `index.html`. Existing output objects are never overwritten.
+After an interrupted multi-object publication, retain the partial prefix as
+failure evidence and retry with a new run ID and output prefix.
 
 The direct batch interface uses the same implementation. Bind restoration to a
 probe from the exact input bytes:
@@ -75,6 +78,13 @@ touching storage. The Python SDK exposes `probe`, `restore`, `verify`, and
   against fixed sizes and SHA-256 hashes before inference.
 - No weights, input videos, output videos, credentials, or populated model
   cache are baked into the image.
+- CUDA extension compilation occurs in a devel stage. The final image uses the
+  digest-pinned cuDNN runtime base; wheel SDK headers and static archives are
+  removed before the runtime-only environment is copied, with a retained
+  hash inventory for the remaining shared libraries and license notice. The
+  same boundary removes NVSHMEM headers, device archive, and bitcode while
+  retaining inventoried shared runtimes, the wheel license, and the exact
+  v3.4.5-0 product license containing bundled third-party notices.
 - Source builds record bounded compiler fanout in OCI labels. The reviewed
   defaults are two outer FlashAttention jobs with one NVCC thread each and two
   Apex jobs; `build.sh` exposes positive-integer overrides for a differently
@@ -95,6 +105,9 @@ network namespace, so keep the service internal and use pod-level identity and
 egress policy. Verification and review re-read the probe and bind the same
 workflow run, image digest,
 baked source revision, model files, command, media hashes, and artifact URIs.
+The verification document proves artifact/runtime consistency, not who
+produced the restore bytes; workload acceptance additionally requires the
+independently retained platform workflow receipt for the actual producer pod.
 
 See the [redistribution record](../../npa/docker/workbench/seedvr2/REDISTRIBUTION.md)
 and [operator skill](../../skills/tools/seedvr2/SKILL.md) for exact payload

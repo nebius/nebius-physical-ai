@@ -12,7 +12,23 @@ principal runtime components and immutable source identities.
 | TorchVision | `torchvision==0.28.0` | BSD-3-Clause; installed distribution license |
 | Hugging Face Diffusers | `diffusers==0.38.0` | Apache-2.0; installed distribution license |
 | Hugging Face Safetensors | `safetensors==0.8.0` | Apache-2.0; installed distribution license |
-| NVIDIA CUDA base/runtime | CUDA 13.0.2 base plus the hash-locked PyTorch CUDA closure | NVIDIA CUDA Toolkit End User License Agreement and component notices shipped in the base/wheels |
+| NVIDIA NVSHMEM runtime | `nvidia-nvshmem-cu13==3.4.5`; product notice `NVIDIA/nvshmem@v3.4.5-0` | `LicenseRef-NVIDIA-Proprietary` plus bundled third-party terms; installed wheel license and `/usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt` |
+| NVIDIA CUDA base/runtime | CUDA 13.0.2 cuDNN-runtime final base plus the hash-locked PyTorch CUDA closure | NVIDIA CUDA Toolkit End User License Agreement and component notices shipped in the base/wheels |
+
+The CUDA/cuDNN devel base is a build stage only and is absent from the final
+image manifest. The cuDNN wheel inventory is validated before final-stage copy;
+SDK headers and static archives are omitted while shared runtime libraries and
+the license notice remain hash-recorded in
+`/usr/share/doc/npa-seedvr2/cudnn-runtime.json`.
+The PyTorch closure also installs the NVSHMEM wheel. Its SDK headers, device
+static archive, and device bitcode are omitted; only reviewed shared runtime
+objects remain. The wheel's license plus the exact upstream v3.4.5-0 product
+license (SHA-256
+`1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e`)
+are retained. The latter carries the DF-NVSHMEM, Sandia OpenSHMEM, Argonne,
+RDMA Core, and libfabric notices missing from the wheel license. Their
+identities are recorded in
+`/usr/share/doc/npa-seedvr2/nvshmem-runtime.json`.
 
 SeedVR2-3B model payloads are not image members. Runtime fetch accepts only
 Hugging Face revision `37255ff8cccfb01071b87f635a5948ca8d53117c` and verifies:

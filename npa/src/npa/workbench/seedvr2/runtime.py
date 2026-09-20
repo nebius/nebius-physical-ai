@@ -31,6 +31,7 @@ from .schemas import (
 SOURCE_REVISION_PATH = Path("/opt/npa-source-revision")
 MAX_SOURCE_PIXELS = 1920 * 1080
 MIN_H100_MEMORY_MIB = 75_000
+SOURCE_ROOT = Path("/opt/seedvr2")
 
 
 class SeedVR2Error(RuntimeError):
@@ -55,6 +56,21 @@ def _canonical_json(document: dict[str, Any]) -> bytes:
     ).encode()
 
 
+def _require_canonical_s3_uri(
+    value: str,
+    target: Any,
+    *,
+    label: str,
+    allow_trailing_slash: bool = False,
+) -> None:
+    canonical = f"s3://{target.bucket}/{target.key}"
+    accepted = {canonical}
+    if allow_trailing_slash:
+        accepted.add(canonical + "/")
+    if value not in accepted:
+        raise SeedVR2Error(f"{label} must use one canonical, unescaped S3 key")
+
+
 def _validate_request(request: RestoreRequest) -> None:
     source = authorize_uri(request.input_path, operation="read SeedVR2 input")
     destination = authorize_uri(request.output_path, operation="write SeedVR2 output")
@@ -62,6 +78,13 @@ def _validate_request(request: RestoreRequest) -> None:
         raise SeedVR2Error("input_path must be one exact s3:// MP4 object")
     if destination.kind != "s3" or not destination.key:
         raise SeedVR2Error("output_path must be an s3:// bucket prefix")
+    _require_canonical_s3_uri(request.input_path, source, label="input_path")
+    _require_canonical_s3_uri(
+        request.output_path,
+        destination,
+        label="output_path",
+        allow_trailing_slash=True,
+    )
     if not request.dry_run and not request.probe_path:
         raise SeedVR2Error("non-dry SeedVR2 execution requires probe_path")
     if not request.probe_path:
@@ -69,6 +92,7 @@ def _validate_request(request: RestoreRequest) -> None:
     probe = authorize_uri(request.probe_path, operation="read SeedVR2 probe")
     if probe.kind != "s3" or not probe.key.lower().endswith(".json"):
         raise SeedVR2Error("probe_path must be one exact s3:// JSON object")
+    _require_canonical_s3_uri(request.probe_path, probe, label="probe_path")
 
 
 def _verify_probe_contract(
@@ -278,7 +302,8 @@ def _media_environment() -> dict[str, str]:
         "HOME": "/nonexistent",
         "LC_ALL": "C",
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        "TMPDIR": "/tmp",
+        # tempfile uses exclusive random names in the container namespace.
+        "TMPDIR": "/tmp",  # nosec B108
     }
 
 
@@ -288,7 +313,8 @@ def _model_fetch_environment() -> dict[str, str]:
         "HF_HOME": os.environ.get("HF_HOME", "/workspace/.cache/huggingface"),
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "PYTHONUNBUFFERED": "1",
-        "TMPDIR": "/tmp",
+        # Downloader temporary files are never accepted as model payloads.
+        "TMPDIR": "/tmp",  # nosec B108
     }
     for name in ("HF_TOKEN", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE"):
         value = os.environ.get(name)
@@ -345,18 +371,17 @@ def _verify_model_files(snapshot: Path) -> dict[str, Path]:
 
 
 def _prepare_upstream_workspace(directory: Path, model_files: dict[str, Path]) -> Path:
-    source = Path(os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2"))
     required_files = (
-        source / "projects" / "inference_seedvr2_3b.py",
-        source / "configs_3b" / "main.yaml",
-        source / "models" / "video_vae_v3" / "s8_c16_t4_inflation_sd3.yaml",
+        SOURCE_ROOT / "projects" / "inference_seedvr2_3b.py",
+        SOURCE_ROOT / "configs_3b" / "main.yaml",
+        SOURCE_ROOT / "models" / "video_vae_v3" / "s8_c16_t4_inflation_sd3.yaml",
     )
     if not all(path.is_file() for path in required_files):
         raise SeedVR2Error("the pinned SeedVR2 source tree is unavailable")
     workspace = directory / "upstream"
     workspace.mkdir()
     for name in ("configs_3b", "models", "projects"):
-        (workspace / name).symlink_to(source / name, target_is_directory=True)
+        (workspace / name).symlink_to(SOURCE_ROOT / name, target_is_directory=True)
     checkpoints = workspace / "ckpts"
     checkpoints.mkdir()
     for name, path in model_files.items():
@@ -369,12 +394,11 @@ def _prepare_upstream_workspace(directory: Path, model_files: dict[str, Path]) -
 def build_restore_argv(request: RestoreRequest, workspace: Path) -> list[str]:
     """Build the genuine upstream one-GPU SeedVR2 inference command."""
 
-    source = Path(os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2"))
     return [
         str(Path(_seedvr_python()).with_name("torchrun")),
         "--standalone",
         "--nproc-per-node=1",
-        str(source / "projects" / "inference_seedvr2_3b.py"),
+        str(SOURCE_ROOT / "projects" / "inference_seedvr2_3b.py"),
         "--video_path",
         str(workspace.parent / "input"),
         "--output_dir",
@@ -391,14 +415,14 @@ def build_restore_argv(request: RestoreRequest, workspace: Path) -> list[str]:
 
 
 def _inference_environment() -> dict[str, str]:
-    source = os.environ.get("SEEDVR2_SOURCE_ROOT", "/opt/seedvr2")
     environment = {
         "HOME": "/workspace",
         "HF_HOME": os.environ.get("HF_HOME", "/workspace/.cache/huggingface"),
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        "PYTHONPATH": source,
+        "PYTHONPATH": str(SOURCE_ROOT),
         "PYTHONUNBUFFERED": "1",
-        "TMPDIR": "/tmp",
+        # Upstream tempfile creation uses exclusive random names.
+        "TMPDIR": "/tmp",  # nosec B108
     }
     for name in (
         "CUDA_HOME",
@@ -544,6 +568,7 @@ def _ensure_artifacts_absent(storage: Any, uris: list[str]) -> None:
 def _publish_verified(storage: Any, source: Path, uri: str, readback_root: Path) -> str:
     expected = _sha256(source)
     storage.put_bytes_conditional(source.read_bytes(), uri, if_none_match=True)
+    readback_root.mkdir(parents=True, exist_ok=True)
     readback = readback_root / source.name
     storage.download_file(uri, str(readback))
     if _sha256(readback) != expected:

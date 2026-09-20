@@ -35,7 +35,13 @@ def test_seedvr2_packaging_is_public_runtime_fetch_only() -> None:
     assert entry["dockerfile"] == "seedvr2/Dockerfile"
     notes = entry["notes"].lower()
     assert "weights" in notes and "runtime" in notes
+    assert "cudnn" in notes and "separate devel stage" in notes
+    assert "nvshmem" in notes
     assert "quarantined" in notes
+    redistribution = (DOCKER_DIR / "REDISTRIBUTION.md").read_text()
+    assert "development build stage that is absent" in redistribution
+    assert "cudnn-runtime.json" in redistribution
+    assert "nvshmem-runtime.json" in redistribution
 
 
 def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
@@ -49,6 +55,31 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
     assert "NPA_LIGHT_WORKBENCH_TOOL=seedvr2" in dockerfile
     assert "printf '%s\\n' \"$NPA_SOURCE_SHA\" > /opt/npa-source-revision" in dockerfile
     assert "LicenseRef-NVIDIA-CUDA-Toolkit" in dockerfile
+    assert (
+        "nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04@"
+        "sha256:ae7f650405a3964972dacfa889273bf8e3fbe9709899afd187da01c4cdff3105 "
+        "AS seedvr2-build"
+    ) in dockerfile
+    assert (
+        "nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@"
+        "sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49"
+    ) in dockerfile
+    assert "filter_cudnn_runtime.py" in dockerfile
+    assert "filter_nvshmem_runtime.py" in dockerfile
+    assert "cudnn-runtime.json" in dockerfile
+    assert "nvshmem-runtime.json" in dockerfile
+    assert "NVIDIA/nvshmem/v3.4.5-0/License.txt" in dockerfile
+    assert (
+        "1f5b7ada702926bc73327e6eb02dc2d41facc844cc4512ac900451bda06a459e" in dockerfile
+    )
+    assert "NVSHMEM-License-v3.4.5-0.txt" in dockerfile
+    assert "COPY --from=seedvr2-build /opt/seedvr2-venv" in dockerfile
+    final_stage = dockerfile.split(
+        "FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@", 1
+    )[1]
+    assert "/opt/seedvr2-venv/bin/pip check" in final_stage
+    assert "from flash_attn import flash_attn_varlen_func" in final_stage
+    assert "from apex.normalization import FusedLayerNorm" in final_stage
     assert "find /opt/seedvr2 -type f" in dockerfile
     assert "HF_TOKEN" not in dockerfile
     source_layer = dockerfile[
@@ -59,7 +90,8 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
     ]
     assert "/opt/seedvr2/neg_emb.pt" in source_layer
     assert "/opt/seedvr2/pos_emb.pt" in source_layer
-    assert "/tmp/seedvr2.tar.gz" in source_layer
+    # This is a fixed Docker build-stage path, not a host temporary file.
+    assert "/tmp/seedvr2.tar.gz" in source_layer  # nosec B108
     assert source_layer.index("rm -f") < source_layer.index("find /opt/seedvr2")
 
 
@@ -148,7 +180,8 @@ def test_seedvr2_service_environment_is_hash_locked() -> None:
     assert "uvicorn==0.52.4" in service_lock
     assert "--hash=sha256:" in service_lock
     assert "--require-hashes" in dockerfile
-    assert "/tmp/seedvr2-service.lock" in dockerfile
+    # This asserts the fixed Docker build-stage lockfile contract.
+    assert "/tmp/seedvr2-service.lock" in dockerfile  # nosec B108
     assert "--no-build-isolation /opt/npa-src" in dockerfile
     assert "'uvicorn==" not in dockerfile
 

@@ -19,6 +19,7 @@ from npa.workbench.storage_scope import authorize_uri
 
 from .runtime import (
     MIN_H100_MEMORY_MIB,
+    SOURCE_ROOT,
     SOURCE_REVISION_PATH,
     SeedVR2Error,
     _canonical_json,
@@ -28,8 +29,11 @@ from .runtime import (
     _media_environment,
     _probe_video,
     _publish_verified,
+    _runtime_identity,
     _sha256,
     _utc_now,
+    _require_canonical_s3_uri,
+    _validate_request,
     _validate_source_geometry,
 )
 from .schemas import (
@@ -59,6 +63,13 @@ def _validate_artifact_request(
         raise SeedVR2Error(f"input_path must be one exact s3://{input_suffix} object")
     if destination.kind != "s3" or not destination.key:
         raise SeedVR2Error("output_path must use the S3 handoff contract")
+    _require_canonical_s3_uri(request.input_path, source, label="input_path")
+    _require_canonical_s3_uri(
+        request.output_path,
+        destination,
+        label="output_path",
+        allow_trailing_slash=output_kind != "json",
+    )
     if output_kind == "json" and not destination.key.lower().endswith(".json"):
         raise SeedVR2Error("output_path must name one exact s3:// JSON object")
 
@@ -111,6 +122,7 @@ def _authorized_result_uri(
         raise SeedVR2Error(
             f"SeedVR2 result {group}.{name} must be an S3 {suffix} object"
         )
+    _require_canonical_s3_uri(value, location, label=f"{group}.{name}")
     return value
 
 
@@ -124,6 +136,7 @@ def _validate_result_context(
         restore_request = RestoreRequest.model_validate(result["request"])
     except (KeyError, TypeError, ValidationError) as exc:
         raise SeedVR2Error("SeedVR2 result request is invalid") from exc
+    _validate_request(restore_request)
     if (
         restore_request.dry_run
         or not restore_request.probe_path
@@ -205,7 +218,7 @@ def _validate_result_context(
         and all(isinstance(item, str) for item in argv)
         and argv[0] == "/opt/seedvr2-venv/bin/torchrun"
         and argv[1:3] == ["--standalone", "--nproc-per-node=1"]
-        and argv[3].endswith("/projects/inference_seedvr2_3b.py")
+        and argv[3] == str(SOURCE_ROOT / "projects" / "inference_seedvr2_3b.py")
         and argv[4] == "--video_path"
         and Path(argv[5]).name == "input"
         and argv[6] == "--output_dir"
@@ -363,6 +376,7 @@ def verify(
     result_path = directory / "result.json"
     storage.download_file(request.input_path, str(result_path))
     result = _load_result(result_path)
+    verifier_runtime = _runtime_identity()
     video_uri = _authorized_result_uri(
         result,
         "artifacts",
@@ -371,6 +385,10 @@ def verify(
         suffix=".mp4",
     )
     _validate_result_context(result, request, storage, directory)
+    if verifier_runtime != result.get("runtime"):
+        raise SeedVR2Error(
+            "verification H100/image identity differs from the restore result"
+        )
     video = directory / "restored.mp4"
     storage.download_file(video_uri, str(video))
     media = _probe_video(video)
@@ -383,6 +401,8 @@ def verify(
     document = {
         "schema": VERIFICATION_SCHEMA,
         "status": "ok",
+        "attestation_scope": "artifact_and_runtime_consistency_only",
+        "producer_execution_attested": False,
         "run_id": request.run_id,
         "verified_at": _utc_now(),
         "result_uri": request.input_path,
@@ -398,6 +418,7 @@ def verify(
             "probe_sha256": result["input"]["probe"]["sha256"],
             "upstream_log_sha256": result["artifact_hashes"]["upstream_log"],
         },
+        "verifier_runtime": verifier_runtime,
     }
     target = directory / "verification.json"
     target.write_bytes(_canonical_json(document))

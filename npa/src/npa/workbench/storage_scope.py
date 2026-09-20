@@ -128,14 +128,9 @@ def _parse_s3_uri(value: str, parsed, *, operation: str) -> AuthorizedUri:
         raise StorageAuthorizationError(f"{operation} S3 URI is malformed")
     if parsed.path.startswith("//"):
         raise StorageAuthorizationError(
-            f"{operation} S3 URI must use one canonical, unescaped object key"
+            f"{operation} S3 URI must not contain an ambiguous leading delimiter"
         )
     key = _canonical_s3_key(parsed.path)
-    raw_key = parsed.path.lstrip("/")
-    if raw_key not in {key, f"{key}/"}:
-        raise StorageAuthorizationError(
-            f"{operation} S3 URI must use one canonical, unescaped object key"
-        )
     return AuthorizedUri(
         kind="s3",
         original=value,

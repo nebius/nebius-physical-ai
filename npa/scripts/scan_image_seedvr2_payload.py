@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -45,6 +46,23 @@ FORBIDDEN_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "sensor_or_output_media",
         re.compile(r"^.+\.(?:mp4|mov|avi|mkv|mcap)$", re.I),
+    ),
+    (
+        "cudnn_sdk_payload",
+        re.compile(
+            r"(?:^|/)(?:usr/include/cudnn[^/]*|"
+            r"(?:site-packages/)?nvidia/cudnn/include/.+|"
+            r"(?:site-packages/)?nvidia/cudnn/lib/[^/]+\.a)$",
+            re.I,
+        ),
+    ),
+    (
+        "nvshmem_sdk_payload",
+        re.compile(
+            r"(?:^|/)(?:(?:site-packages/)?nvidia/nvshmem/include/.+|"
+            r"(?:site-packages/)?nvidia/nvshmem/lib/[^/]+\.(?:a|bc))$",
+            re.I,
+        ),
     ),
     (
         "credential_file",
@@ -255,8 +273,14 @@ def scan_layer(path: Path, *, layer: str) -> list[Finding]:
 def scan_saved_image(image_tar: Path) -> tuple[list[Finding], int]:
     """Scan config plus every immutable layer in one docker-save archive."""
 
+    findings, identity = inspect_saved_image(image_tar)
+    return findings, len(identity["layers"])
+
+
+def inspect_saved_image(image_tar: Path) -> tuple[list[Finding], dict]:
+    """Scan and bind one docker-save archive to config and layer identities."""
+
     findings: list[Finding] = []
-    layers = 0
     with tarfile.open(image_tar) as archive:
         manifest_stream = archive.extractfile("manifest.json")
         if manifest_stream is None:
@@ -269,39 +293,89 @@ def scan_saved_image(image_tar: Path) -> tuple[list[Finding], int]:
         if config_stream is None:
             raise RuntimeError("docker-save archive has no image config")
         config_payload = config_stream.read()
+        config_digest = "sha256:" + hashlib.sha256(config_payload).hexdigest()
+        try:
+            config = json.loads(config_payload)
+            diff_ids = config["rootfs"]["diff_ids"]
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("docker-save config has no rootfs diff IDs") from exc
+        if not isinstance(diff_ids, list) or not all(
+            isinstance(item, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", item)
+            for item in diff_ids
+        ):
+            raise RuntimeError("docker-save config has invalid rootfs diff IDs")
         if any(pattern.search(config_payload) for pattern in SECRET_CONTENT):
             findings.append(Finding("credential_content", "image-config", config_name))
+        layer_identities = []
         for relative in manifests[0]["Layers"]:
-            layers += 1
+            layer_stream = archive.extractfile(relative)
+            if layer_stream is None:
+                raise RuntimeError(f"docker-save archive has no layer {relative}")
+            digest = hashlib.sha256()
+            size = 0
+            while block := layer_stream.read(1024 * 1024):
+                digest.update(block)
+                size += len(block)
+            layer_digest = "sha256:" + digest.hexdigest()
+            layer_identities.append(
+                {"path": relative, "diff_id": layer_digest, "bytes": size}
+            )
             layer_stream = archive.extractfile(relative)
             if layer_stream is None:
                 raise RuntimeError(f"docker-save archive has no layer {relative}")
             with tarfile.open(fileobj=layer_stream, mode="r|*") as layer_archive:
                 findings.extend(_scan_layer_archive(layer_archive, layer=relative))
-    return findings, layers
+    if [item["diff_id"] for item in layer_identities] != diff_ids:
+        raise RuntimeError("saved layer hashes do not match ordered rootfs diff IDs")
+    return findings, {
+        "image_config_digest": config_digest,
+        "rootfs_diff_ids": diff_ids,
+        "layers": layer_identities,
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", nargs="?", help="Local Docker image reference.")
     parser.add_argument("--tarball", type=Path, help="Existing docker-save tarball.")
+    parser.add_argument(
+        "--expected-image-id",
+        help="Required immutable sha256 image ID for a supplied tarball.",
+    )
     args = parser.parse_args()
     if bool(args.image) == bool(args.tarball):
         parser.error("provide exactly one image or --tarball")
+    if args.tarball and not re.fullmatch(
+        r"sha256:[0-9a-f]{64}", args.expected_image_id or ""
+    ):
+        parser.error("--tarball requires --expected-image-id")
     if args.tarball:
         source = str(args.tarball)
-        findings, layers = scan_saved_image(args.tarball)
+        expected_image_id = args.expected_image_id
+        findings, identity = inspect_saved_image(args.tarball)
     else:
         source = str(args.image)
+        expected_image_id = subprocess.check_output(
+            ["docker", "image", "inspect", "--format={{.Id}}", source],
+            text=True,
+        ).strip()
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_image_id):
+            raise RuntimeError("docker inspect did not return an immutable image ID")
         with tempfile.TemporaryDirectory(prefix="npa-seedvr2-image-") as scratch:
             tarball = Path(scratch) / "image.tar"
             subprocess.run(["docker", "save", source, "-o", str(tarball)], check=True)
-            findings, layers = scan_saved_image(tarball)
+            findings, identity = inspect_saved_image(tarball)
+    if identity["image_config_digest"] != expected_image_id:
+        raise RuntimeError("saved config digest differs from the expected image ID")
     report = {
         "format": "npa_seedvr2_payload_scan_v1",
         "source": source,
         "scan_complete": True,
-        "layers_scanned": layers,
+        "image_id": expected_image_id,
+        "image_config_digest": identity["image_config_digest"],
+        "rootfs_diff_ids": identity["rootfs_diff_ids"],
+        "layers": identity["layers"],
+        "layers_scanned": len(identity["layers"]),
         "verdict": "clean" if not findings else "runtime-only-payload-detected",
         "findings": [asdict(item) for item in findings],
     }

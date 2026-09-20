@@ -54,11 +54,13 @@ npa workbench workflow submit \
 ```
 
 The canonical graph is `probe -> restore -> verify -> review`. Keep the CPU
-probe, GPU inference, independent CPU readback, and review stages separate.
+probe, GPU inference, digest-bound GPU identity/readback verification, and
+review stages separate.
 Every command uses `--input-path`, `--output-path`, and `--run-id`; restore also
 receives mandatory `--probe-path` and must reject a changed run ID, input bytes,
-or media. Artifacts move through S3 and are create-only per object. Source and
-output frames must stay within the reviewed 1920x1080 area budget; output
+or media. Artifacts move through S3 and are create-only per object. A partial
+publication remains failure evidence; retry it under a new run ID and prefix.
+Source and output frames must stay within the reviewed 1920x1080 area budget; output
 dimensions must also preserve source aspect ratio and be divisible by 16.
 
 Configure the optional service with `SEEDVR2_TOKEN` and
@@ -72,6 +74,8 @@ Retain source, degraded input, bicubic baseline, restored candidate, and
 light-degradation negative control as separate MP4s. Record exact commands,
 frame mapping, source/model/image/commit identities, timestamps, hardware,
 decoded media properties, and SHA-256 values. Verify S3 bytes after upload.
+Treat `verification.json` as artifact/runtime consistency evidence only; pair it
+with the platform workflow receipt that identifies the actual producer pod.
 
 For the fixed real Aloha-Agilex proof, compare candidate and bicubic against the
 original high-resolution reference. Report per-frame, per-stratum, and aggregate

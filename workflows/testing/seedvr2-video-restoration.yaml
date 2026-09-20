@@ -61,7 +61,7 @@ states:
     next: verify
   verify:
     toolRef: workbench.seedvr2.verify
-    resources: cpu
+    resources: gpu
     inputs:
       - uri: "{{config.seedvr2_result_uri}}"
         schema: npa.workbench.seedvr2.result.v1

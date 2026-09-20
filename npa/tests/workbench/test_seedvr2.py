@@ -149,7 +149,9 @@ def _restore(
 ) -> tuple[dict, FakeStorage]:
     storage = FakeStorage({INPUT_URI: source_video.read_bytes()})
     monkeypatch.setenv("NPA_SEEDVR2_WORK_DIR", str(tmp_path / "runs"))
-    monkeypatch.setenv("SEEDVR2_SOURCE_ROOT", str(_source_tree(tmp_path)))
+    source_root = _source_tree(tmp_path)
+    monkeypatch.setattr(runtime, "SOURCE_ROOT", source_root)
+    monkeypatch.setattr(artifacts, "SOURCE_ROOT", source_root)
     monkeypatch.setenv("SEEDVR2_PYTHON", "/opt/seedvr2-venv/bin/python")
     monkeypatch.setenv("NPA_TASK_IMAGE", RUNTIME_IDENTITY["image"])
     monkeypatch.setenv("HF_TOKEN", "must-not-reach-inference")
@@ -157,6 +159,7 @@ def _restore(
     source_revision_path = tmp_path / "npa-source-revision"
     source_revision_path.write_text(RUNTIME_IDENTITY["npa_source_revision"] + "\n")
     monkeypatch.setattr(artifacts, "SOURCE_REVISION_PATH", source_revision_path)
+    monkeypatch.setattr(artifacts, "_runtime_identity", lambda: RUNTIME_IDENTITY)
     artifacts.probe(
         VideoArtifactRequest(
             input_path=INPUT_URI,
@@ -247,6 +250,10 @@ def test_verify_and_review_recompute_identity_and_make_nonblended_media(
         storage_factory=lambda: storage,
     )
     assert verification["restored_video_sha256"] == result["output"]["sha256"]
+    assert verification["attestation_scope"] == (
+        "artifact_and_runtime_consistency_only"
+    )
+    assert verification["producer_execution_attested"] is False
     assert verification["validated_execution"] == {
         "run_id": result["run_id"],
         "image": result["runtime"]["image"],
@@ -255,6 +262,7 @@ def test_verify_and_review_recompute_identity_and_make_nonblended_media(
         "probe_sha256": result["input"]["probe"]["sha256"],
         "upstream_log_sha256": result["artifact_hashes"]["upstream_log"],
     }
+    assert verification["verifier_runtime"] == result["runtime"]
     review = artifacts.review(
         VideoArtifactRequest(
             input_path=result["artifacts"]["result"],
@@ -401,6 +409,41 @@ def test_non_dry_restore_requires_probe() -> None:
                 run_id="missing-probe",
             )
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("input_path", "s3://test-bucket/inputs%2Flow.mp4"),
+        ("output_path", "s3://test-bucket/runs%2Funit/restoration/"),
+        ("probe_path", "s3://test-bucket/runs/unit/%70robe.json"),
+    ],
+)
+def test_restore_rejects_noncanonical_storage_keys(field: str, value: str) -> None:
+    values = {
+        "input_path": INPUT_URI,
+        "output_path": OUTPUT_PREFIX,
+        "probe_path": PROBE_URI,
+        "run_id": "canonical",
+    }
+    values[field] = value
+    with pytest.raises(runtime.SeedVR2Error, match="canonical, unescaped"):
+        runtime._validate_request(RestoreRequest(**values))
+
+
+def test_upstream_source_root_is_not_environment_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEEDVR2_SOURCE_ROOT", "/tmp/untrusted-seedvr")
+    request = RestoreRequest(
+        input_path=INPUT_URI,
+        output_path=OUTPUT_PREFIX,
+        probe_path=PROBE_URI,
+        run_id="source-root",
+    )
+    argv = runtime.build_restore_argv(request, Path("/workspace/run/upstream"))
+    assert argv[3] == "/opt/seedvr2/projects/inference_seedvr2_3b.py"
+    assert runtime._inference_environment()["PYTHONPATH"] == "/opt/seedvr2"
 
 
 def test_inference_environment_is_a_credential_free_allowlist(
