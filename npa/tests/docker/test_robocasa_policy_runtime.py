@@ -47,6 +47,11 @@ def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
     dependency_install = text.split("# Install RoboCasa source", maxsplit=1)[0]
+    assert dependency_install.count("python -m pip install --no-cache-dir \\\n") == 1
+    assert (
+        '${ROBOSUITE_COMMIT}" \\\n    && python -m pip install --no-cache-dir \\'
+        not in dependency_install
+    )
     assert dependency_install.count('"torch==2.9.0"') == 1
     assert dependency_install.count('"torchvision==0.24.0"') == 1
     assert '"torch==2.9.0" "torchvision==0.24.0" \\\n' in dependency_install

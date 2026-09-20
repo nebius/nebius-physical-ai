@@ -77,7 +77,6 @@ WORKDIR /opt/robocasa
 RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" wheel \
     && python -m pip install --no-cache-dir \
         "git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_COMMIT}" \
-    && python -m pip install --no-cache-dir \
         numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow \
         "opencv-python-headless>=4.9,<4.14" pyyaml pynput tqdm termcolor "imageio[ffmpeg]" \
         h5py lxml hidapi "gymnasium==0.29.1" huggingface_hub \
