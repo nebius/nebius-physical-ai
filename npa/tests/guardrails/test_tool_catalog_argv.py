@@ -191,6 +191,28 @@ def test_vlm_compare_judges_tool_ref_passes_both_explicit_models() -> None:
     )
 
 
+def test_vlm_compare_preference_tool_ref_passes_blind_pair_contract() -> None:
+    entry = TOOL_CATALOG["workbench.vlm_eval.compare_preference"]
+
+    assert entry.argv_template[:4] == [
+        "npa",
+        "workbench",
+        "vlm-eval",
+        "compare-preference",
+    ]
+    for flag in (
+        "--baseline-path",
+        "--candidate-path",
+        "--output-path",
+        "--model",
+        "--task",
+        "--rubric",
+        "--api-key-env",
+    ):
+        assert flag in entry.argv_template
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in entry.argv_template
+
+
 def test_non_cli_argv_entries_are_pinned() -> None:
     """Unchecked wrappers stay pinned; new module entries must pass their real parser."""
 

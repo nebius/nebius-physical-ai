@@ -14,7 +14,8 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
 `workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
 `workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`, and
-`workbench.vlm_eval.compare_judges`. The
+`workbench.vlm_eval.compare_judges` and
+`workbench.vlm_eval.compare_preference`. The
 reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
 `workbench.sim2real.run` surface is intentionally absent.
@@ -46,6 +47,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.vlm_eval.compare_judges` | `npa workbench vlm-eval compare-judges` | `config.rollouts_uri` | `<scores_uri>/vlm_judge_disagreement.json` | no |
+| `workbench.vlm_eval.compare_preference` | `npa workbench vlm-eval compare-preference` | `config.baseline_uri`, `config.candidate_uri` | `<scores_uri>/vlm_preference_comparison.json` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
 | `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval.json` | no |
 | `workbench.vlm_eval.loop` | `npa workbench vlm-eval loop` | `config.rollouts_uri` | `config.scores_uri` | no |
@@ -198,4 +200,7 @@ value leaves model selection to the CLI default for the chosen backend; an
 explicit value is passed as `--model`, including legacy dedicated model IDs.
 The audit-only `workbench.vlm_eval.compare_judges` primitive passes distinct
 `config.primary_vlm_model` and `config.secondary_vlm_model` values and never
-averages their outcomes.
+averages their outcomes. The audit-only
+`workbench.vlm_eval.compare_preference` primitive sends one matched pair under
+neutral labels in both orders and fails closed on errors, unresolved output,
+low confidence, or order disagreement.

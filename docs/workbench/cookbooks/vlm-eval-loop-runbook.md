@@ -90,6 +90,31 @@ in the submitted pixels or prove that a critical visible defect is absent. Full
 rationales and raw provider responses are written only to the private artifact;
 console output is a bounded summary.
 
+For a matched baseline/candidate image comparison, use neutral labels and both
+orders:
+
+```bash
+npa workbench vlm-eval compare-preference \
+  --baseline-path <matched-image-1> \
+  --candidate-path <matched-image-2> \
+  --output-path <private-evidence-prefix> \
+  --task "Compare two matched scene views." \
+  --rubric "Prefer visible measured detail and penalize unsupported surfaces."
+```
+
+The typed SDK request is
+`npa.sdk.workbench.vlm_eval.VlmPreferenceComparisonRequest`; call
+`npa.sdk.workbench.vlm_eval.compare_preference`. The command is hosted API-only
+and needs no local GPU. It writes `vlm_preference_comparison.json` exactly once,
+retains both full provider outcomes privately, and escalates errors, unresolved
+or low-confidence output, and
+`order_disagreement_or_nondeterminism`. Even an order-consistent candidate
+preference is an audit observation, not proof of geometry accuracy, physical
+validity, or robot safety. The prompt's instruction to ignore image text is not
+a defense against in-image instructions. For S3 output, private access remains
+an operator/storage-policy requirement; the client uses an atomic create-only
+write but does not infer bucket policy or ACL state.
+
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
 JSON file containing `input_path`, `output_path` (a local JSON filename),

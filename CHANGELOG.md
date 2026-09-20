@@ -7,6 +7,16 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM image preferences are blinded and order-balanced
+
+- New `vlm-eval compare-preference` API-only audit mode normalizes one matched
+  image pair, hides source roles behind neutral A/B labels, and submits both
+  orders without retries. Its private `vlm_preference_comparison.json` retains
+  exact requests, provider provenance, strict structured verdicts, and typed
+  errors. Errors, unresolved or low-confidence output, and order disagreement
+  require escalation; even consistent preference does not establish geometry
+  accuracy, physical validity, or robot safety.
+
 ### VLM benchmarks expose calibration failures
 
 - `vlm-eval benchmark` reports an explicit 2x2 confusion matrix, false-positive

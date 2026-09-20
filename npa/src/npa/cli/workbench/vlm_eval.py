@@ -13,6 +13,7 @@ import typer
 from rich.console import Console
 
 from npa.deploy.images import DEFAULT_VLM_IMAGE_ENV, default_vlm_image
+from npa.lifecycle_intent import json_stdout_contract
 from npa.workbench.vlm_eval import (
     DEFAULT_BENCHMARK_THRESHOLDS,
     DEFAULT_API_KEY_ENV,
@@ -27,12 +28,15 @@ from npa.workbench.vlm_eval import (
     SUPPORTED_FRAME_SELECTIONS,
     VlmEvalError,
     VlmJudgeComparisonRequest,
+    VlmPreferenceComparisonRequest,
     benchmark_result_uri_for,
     benchmark_vlm_eval,
+    compare_vlm_preference,
     compare_vlm_judges,
     evaluate_rollout_set,
     evaluate_vlm,
     write_benchmark_report,
+    write_preference_report,
     write_result,
 )
 
@@ -82,6 +86,20 @@ class _ComparisonCliOptions:
     rubric: str
     rubric_path: str
     success_threshold: float
+    timeout_s: float
+
+
+@dataclass(frozen=True)
+class _PreferenceCliOptions:
+    baseline_path: str
+    candidate_path: str
+    output_path: str
+    model: str
+    task: str
+    endpoint_url: str
+    api_key_env: str
+    rubric: str
+    rubric_path: str
     timeout_s: float
 
 
@@ -136,6 +154,43 @@ _COMPARE_DRY_RUN = typer.Option(
     False, "--dry-run", help="Run both judges without writing the artifact."
 )
 _COMPARE_OUTPUT = typer.Option(OutputFormat.text, "--output", help="Output format.")
+_PREFERENCE_BASELINE = typer.Option(
+    ..., "--baseline-path", help="First matched image path; kept out of provider text."
+)
+_PREFERENCE_CANDIDATE = typer.Option(
+    ...,
+    "--candidate-path",
+    help="Second matched image path; kept out of provider text.",
+)
+_PREFERENCE_OUTPUT_PATH = typer.Option(
+    ..., "--output-path", help="Private path for vlm_preference_comparison.json."
+)
+_PREFERENCE_MODEL = typer.Option(
+    "MiniMaxAI/MiniMax-M3", "--model", help="Hosted vision model ID."
+)
+_PREFERENCE_TASK = typer.Option(
+    ..., "--task", help="Shared comparison task without source-role words."
+)
+_PREFERENCE_ENDPOINT = typer.Option(
+    "", "--endpoint-url", help="Explicit hosted OpenAI-compatible endpoint."
+)
+_PREFERENCE_API_KEY = typer.Option(
+    DEFAULT_API_KEY_ENV,
+    "--api-key-env",
+    help="Environment variable containing the hosted API key.",
+)
+_PREFERENCE_RUBRIC = typer.Option(
+    "", "--rubric", help="Shared comparison rubric without source-role words."
+)
+_PREFERENCE_RUBRIC_PATH = typer.Option(
+    "", "--rubric-path", help="Local path to the shared comparison rubric."
+)
+_PREFERENCE_TIMEOUT = typer.Option(
+    DEFAULT_TIMEOUT_S, "--timeout-s", help="Timeout for each one-shot hosted request."
+)
+_PREFERENCE_OUTPUT = typer.Option(
+    "text", "--output-format", "--output", help="Output format: text or json."
+)
 
 
 @app.command("run")
@@ -336,6 +391,97 @@ def _execute_judge_comparison(
             result_uri=report.result_uri,
         )
     return payload
+
+
+@app.command("compare-preference")
+@json_stdout_contract
+def compare_preference_cmd(
+    baseline_path: str = _PREFERENCE_BASELINE,
+    candidate_path: str = _PREFERENCE_CANDIDATE,
+    output_path: str = _PREFERENCE_OUTPUT_PATH,
+    model: str = _PREFERENCE_MODEL,
+    task: str = _PREFERENCE_TASK,
+    endpoint_url: str = _PREFERENCE_ENDPOINT,
+    api_key_env: str = _PREFERENCE_API_KEY,
+    rubric: str = _PREFERENCE_RUBRIC,
+    rubric_path: str = _PREFERENCE_RUBRIC_PATH,
+    timeout_s: float = _PREFERENCE_TIMEOUT,
+    output_format: str = _PREFERENCE_OUTPUT,
+) -> None:
+    """Compare two images under blinded labels in both orders."""
+    output = _parse_output_format(output_format)
+    options = _PreferenceCliOptions(
+        baseline_path,
+        candidate_path,
+        output_path,
+        model,
+        task,
+        endpoint_url,
+        api_key_env,
+        rubric,
+        rubric_path,
+        timeout_s,
+    )
+    try:
+        payload = _execute_preference_comparison(options)
+    except VlmEvalError:
+        _fail("Blinded preference comparison failed; inspect private evidence.")
+        return
+    _emit(_preference_console_summary(payload), output)
+
+
+def _parse_output_format(value: str) -> OutputFormat:
+    try:
+        return OutputFormat(value)
+    except ValueError:
+        _fail("--output-format must be text or json")
+        raise AssertionError("unreachable")
+
+
+def _execute_preference_comparison(
+    options: _PreferenceCliOptions,
+) -> dict[str, Any]:
+    report = compare_vlm_preference(VlmPreferenceComparisonRequest(**asdict(options)))
+    payload = asdict(report)
+    payload["written"] = write_preference_report(
+        payload,
+        result_uri=report.result_uri,
+    )
+    return payload
+
+
+def _preference_console_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": payload["schema_version"],
+        "status": payload["status"],
+        "escalation_required": payload["escalation_required"],
+        "agreement_eligible": payload["agreement_eligible"],
+        "deployment_status": payload["deployment_status"],
+        "operational_rate_estimated": payload["operational_rate_estimated"],
+        "model": payload["model"],
+        "requests_counterbalanced": payload["requests_counterbalanced"],
+        "first_order": _preference_order_summary(payload["first_order"]),
+        "reversed_order": _preference_order_summary(payload["reversed_order"]),
+        "artifact_written": "written" in payload,
+    }
+
+
+def _preference_order_summary(outcome: dict[str, Any]) -> dict[str, Any]:
+    verdict = outcome.get("verdict")
+    if isinstance(verdict, dict):
+        return {
+            "order_id": outcome["order_id"],
+            "status": "completed",
+            "preference": verdict["preference"],
+            "confidence": verdict["confidence"],
+        }
+    error = outcome.get("error") or {}
+    return {
+        "order_id": outcome["order_id"],
+        "status": "error",
+        "error_stage": error.get("stage"),
+        "error_type": error.get("error_type"),
+    }
 
 
 #: How much of a plan to carry into the judge prompt; the retired template used this budget.

@@ -11,6 +11,7 @@ from npa.workbench.vlm_eval import (
     DEFAULT_SAMPLE_BENCHMARK_PATH,
     JUDGE_COMPARISON_RESULT_FILENAME,
     LEGACY_RESULT_FILENAME,
+    PREFERENCE_COMPARISON_RESULT_FILENAME,
     RESULT_FILENAME,
     VlmEvalResult,
 )
@@ -290,6 +291,149 @@ def test_workbench_vlm_eval_compare_judges_rejects_same_model(
     assert called is False
 
 
+def test_workbench_vlm_eval_compare_preference_writes_private_report(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    baseline = tmp_path / "first.png"
+    candidate = tmp_path / "second.png"
+    Image.new("RGB", (8, 8), "red").save(baseline)
+    Image.new("RGB", (8, 8), "blue").save(candidate)
+    requests = []
+
+    def post(**kwargs):
+        request = kwargs["request"]
+        requests.append(request)
+        preference = "B" if len(requests) == 1 else "A"
+        content = {
+            "preference": preference,
+            "confidence": "high",
+            "observable_support": ["private visible support"],
+            "critical_defects": {
+                "A": ["private A defect"],
+                "B": ["private B defect"],
+            },
+            "uncertainty": "private uncertainty",
+        }
+        return {
+            "id": f"private-request-{len(requests)}",
+            "model": request["model"],
+            "usage": {"completion_tokens": 12},
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": json.dumps(content)},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    output_dir = tmp_path / "preference"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "compare-preference",
+            "--baseline-path",
+            str(baseline),
+            "--candidate-path",
+            str(candidate),
+            "--output-path",
+            str(output_dir),
+            "--task",
+            "Compare matched scene views.",
+            "--rubric",
+            "Prefer visible measured detail.",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "consistent_candidate_preference"
+    assert payload["requests_counterbalanced"] is True
+    assert payload["artifact_written"] is True
+    assert len(requests) == 2
+    for private_value in (
+        str(baseline),
+        str(candidate),
+        str(output_dir),
+        "private visible support",
+        "private uncertainty",
+        "private-request-1",
+        "raw_response",
+    ):
+        assert private_value not in result.output
+    written = output_dir / PREFERENCE_COMPARISON_RESULT_FILENAME
+    retained = json.loads(written.read_text(encoding="utf-8"))
+    assert retained["first_order"]["provider"]["provider_request_id"] == (
+        "private-request-1"
+    )
+    assert retained["reversed_order"]["verdict"]["preference"] == "A"
+    assert written.stat().st_mode & 0o777 == 0o600
+    journal = output_dir / ".vlm_preference_comparison"
+    assert {path.name for path in journal.iterdir()} == {
+        "state.json",
+        "request-01.json",
+        "transport-boundary-01.json",
+        "response-01.json",
+        "request-02.json",
+        "transport-boundary-02.json",
+        "response-02.json",
+        "report-ready.json",
+    }
+    assert journal.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in journal.iterdir())
+
+
+def test_workbench_vlm_eval_compare_preference_sanitizes_failure(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    baseline = tmp_path / "private-baseline-name.png"
+    candidate = tmp_path / "private-candidate-name.png"
+    Image.new("RGB", (8, 8), "red").save(baseline)
+    Image.new("RGB", (8, 8), "blue").save(candidate)
+    called = False
+
+    def post(**_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    secret_task = "Prefer the candidate over the baseline for operator-task-17."
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "compare-preference",
+            "--baseline-path",
+            str(baseline),
+            "--candidate-path",
+            str(candidate),
+            "--output-path",
+            str(tmp_path / "private-output"),
+            "--task",
+            secret_task,
+            "--rubric",
+            "Prefer visible detail.",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Blinded preference comparison failed" in result.output
+    assert str(baseline) not in result.output
+    assert str(candidate) not in result.output
+    assert secret_task not in result.output
+    assert called is False
+
+
 def test_workbench_vlm_eval_workflow_path() -> None:
     result = runner.invoke(
         app, ["workbench", "vlm-eval", "workflow", "--output", "json"]
@@ -409,6 +553,19 @@ def test_vlm_eval_sdk_exports_direct_paired_judge_surface() -> None:
     assert sdk_vlm_eval.compare_judges is compare_vlm_judges
     assert sdk_vlm_eval.VlmJudgeComparisonRequest is VlmJudgeComparisonRequest
     assert "VlmJudgeComparisonRequest" in core_vlm_eval.__all__
+
+
+def test_vlm_eval_sdk_exports_blinded_preference_surface() -> None:
+    from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
+    from npa.workbench import vlm_eval as core_vlm_eval
+    from npa.workbench.vlm_eval import (
+        VlmPreferenceComparisonRequest,
+        compare_vlm_preference,
+    )
+
+    assert sdk_vlm_eval.compare_preference is compare_vlm_preference
+    assert sdk_vlm_eval.VlmPreferenceComparisonRequest is VlmPreferenceComparisonRequest
+    assert "VlmPreferenceComparisonRequest" in core_vlm_eval.__all__
 
 
 def test_vlm_eval_sdk_wrapper_accepts_string_flags(capsys, tmp_path) -> None:
