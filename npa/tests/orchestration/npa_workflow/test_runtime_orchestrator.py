@@ -4125,6 +4125,69 @@ def test_runtime_preserves_unverified_output_reuse_cancellation(
     assert len(cancels) == 2
 
 
+def test_runtime_rejects_failed_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-cancel-failed",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancellation_calls: list[dict[str, Any]] = []
+
+    def cancel(**kwargs: Any) -> dict[str, Any]:
+        cancellation_calls.append(kwargs)
+        if len(cancellation_calls) == 1:
+            return {"cancel_returncode": 0}
+        return {
+            "cancel_returncode": 1,
+            "cancel_stderr": "controller unavailable",
+        }
+
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-cancel-failed",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["PENDING", "CANCELLED", "PENDING"]),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._canceller = cancel
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "failed"
+    assert attempt.cancellation_error == "controller unavailable"
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancellation_calls) == 2
+
+
 @pytest.mark.parametrize(
     "declaration",
     [

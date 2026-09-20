@@ -1703,7 +1703,9 @@ class SkyPilotWaveExecutor:
             attempt.cancellation_error = error
             return {
                 "provider_job_id": current.provider_job_id,
-                "status": "cancelled" if state == "verified" else state,
+                "status": (
+                    "cancelled" if state == "verified" else f"cancellation_{state}"
+                ),
                 "exact": True,
                 "error": error,
             }
