@@ -1,0 +1,116 @@
+{
+  "cases": {
+    "none-call1": {
+      "injected_fault": null,
+      "post_fix": {
+        "reads": 8,
+        "recovered_on_next_read": null,
+        "stage_completed": true
+      },
+      "pre_fix": null
+    },
+    "raise-call1": {
+      "injected_fault": {
+        "call": 1,
+        "injected": "IncompleteRead",
+        "uri_suffix": "anifest.json"
+      },
+      "post_fix": {
+        "reads": 9,
+        "recovered_on_next_read": true,
+        "stage_completed": true
+      },
+      "pre_fix": {
+        "failure": "OSError: IncompleteRead(5848412 bytes read, 276537 more expected)",
+        "reads": 2,
+        "stage_completed": false
+      }
+    },
+    "raise-call2": {
+      "injected_fault": {
+        "call": 2,
+        "injected": "IncompleteRead",
+        "uri_suffix": "ud_bin_0.pcd"
+      },
+      "post_fix": {
+        "reads": 9,
+        "recovered_on_next_read": true,
+        "stage_completed": true
+      },
+      "pre_fix": {
+        "failure": "OSError: IncompleteRead(5848412 bytes read, 276537 more expected)",
+        "reads": 3,
+        "stage_completed": false
+      }
+    },
+    "short-call1": {
+      "injected_fault": {
+        "call": 1,
+        "delivered_bytes": 481,
+        "injected": "silent truncation",
+        "real_bytes": 963,
+        "uri_suffix": "anifest.json"
+      },
+      "post_fix": {
+        "reads": 9,
+        "recovered_on_next_read": true,
+        "stage_completed": true
+      },
+      "pre_fix": {
+        "failure": "s3://<bucket>/open3d-support-<run-id>/prepared/manifest.json is not valid JSON; run `npa workbench open3d prepare` against this prefix first",
+        "reads": 1,
+        "stage_completed": false
+      }
+    },
+    "short-call2": {
+      "injected_fault": {
+        "call": 2,
+        "delivered_bytes": 3181482,
+        "injected": "silent truncation",
+        "real_bytes": 6362965,
+        "uri_suffix": "ud_bin_0.pcd"
+      },
+      "post_fix": {
+        "reads": 9,
+        "recovered_on_next_read": true,
+        "stage_completed": true
+      },
+      "pre_fix": {
+        "failure": "fragment cloud_bin_0 no longer matches the digest recorded at prepare time; the manifest and the stored scan disagree",
+        "reads": 2,
+        "stage_completed": false
+      }
+    }
+  },
+  "defect": {
+    "exposure": "Both the manifest read and the three fragment reads; neither retried.",
+    "identified_object": "5848412 + 276537 = 6124949 bytes, which is exactly the size of prepared/fragments/cloud_bin_2.pcd. The live failure was a truncated read of that fragment; the stored object was and remains intact.",
+    "observed": "A live `register` stage failed with IncompleteRead(5848412 bytes read, 276537 more expected) while `multiway` read the same three fragments successfully seconds later.",
+    "title": "A transient truncated object-store read ended a registration stage that would have succeeded"
+  },
+  "found_by_real_execution_that_unit_tests_missed": "The first fix covered only the fragment reads. Injecting one fault into the built image showed the manifest read was equally exposed and ended the stage before any registration began; the unit mocks had not distinguished the two.",
+  "lane": "geometry",
+  "method": {
+    "harness": "evidence/open3d/harness/inject_truncation.py",
+    "harness_limitation": "The harness calls the CLI with standalone_mode=False, so its recorded exit_code is 0 even when the stage fails. The real entrypoint was checked separately and exits 1 on this failure, so this is a harness artifact and not a product exit-code defect. Read stage_completed, not exit_code.",
+    "kind": "fault injection in the built image against the real object store",
+    "post_fix_image": "npa-open3d:retry-proof (sha256:0da0a5ad8c76...)",
+    "pre_fix_image": "npa-open3d:0.20.0-cpu-20260918 (sha256:e4996abccabc...)",
+    "what_is_injected": "One transport exception, or one silently halved payload.",
+    "what_is_real": "Real objects, real credentials, real Open3D RANSAC/FPFH + ICP registration. Exactly one read per run is disturbed; every other read is untouched."
+  },
+  "regression_tests": [
+    "test_download_retries_a_truncated_read_rather_than_losing_the_stage",
+    "test_download_retries_bytes_that_arrive_short_without_raising",
+    "test_download_names_every_failed_attempt_in_the_error",
+    "test_download_refuses_a_scan_that_changed_since_prepare (extended: bounded attempts)",
+    "test_manifest_read_retries_a_truncated_stream",
+    "test_manifest_read_stops_after_bounded_attempts"
+  ],
+  "schema": "npa.evidence.hardening/v0.0.1",
+  "what_the_fix_does_and_does_not_buy": {
+    "availability": "This is the whole of the gain. Four distinct transient faults each ended a stage that had already read up to 6 MB of real data. All four now recover.",
+    "integrity": "NOT a gain, and the earlier framing of this commit was wrong. The prepare-time digest already refused a silently truncated fragment before this change, and the pre-fix run below proves it: cloud_bin_0 delivered at 3181482 of 6362965 bytes was rejected, not registered. The fix reuses that existing guard to decide when a retry is safe.",
+    "manifest_caveat": "The manifest has no digest recorded ahead of it, so its retry is guarded only by JSON well-formedness and schema validation. That catches a stream that ended early, because truncated JSON does not close, and cannot detect a complete document that is the wrong one. Weaker than the fragment guard."
+  }
+}

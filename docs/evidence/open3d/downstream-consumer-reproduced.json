@@ -1,0 +1,34 @@
+{
+  "cell_size": 0.1,
+  "cells": 11520,
+  "cells_with_samples": 1884,
+  "improvement": {
+    "phantom_cells_removed": 733,
+    "phantom_rate_baseline": 0.3245156482861401,
+    "phantom_rate_candidate": 0.07084188911704312,
+    "phantom_volume_removed_m3": 0.7330000000000002,
+    "recall_delta": -0.0015923566878980333
+  },
+  "variants": {
+    "baseline": {
+      "artifact": "mesh-baseline/mesh.ply",
+      "missed_structure_cells": 71,
+      "occupied_cells": 2684,
+      "phantom_obstacle_cells": 871,
+      "phantom_obstacle_rate": 0.3245156482861401,
+      "phantom_volume_m3": 0.8710000000000002,
+      "precision_wrt_observation": 0.6754843517138599,
+      "recall_of_observed_cells": 0.9623142250530785
+    },
+    "candidate": {
+      "artifact": "mesh/mesh.ply",
+      "missed_structure_cells": 74,
+      "occupied_cells": 1948,
+      "phantom_obstacle_cells": 138,
+      "phantom_obstacle_rate": 0.07084188911704312,
+      "phantom_volume_m3": 0.13800000000000004,
+      "precision_wrt_observation": 0.9291581108829569,
+      "recall_of_observed_cells": 0.9607218683651805
+    }
+  }
+}

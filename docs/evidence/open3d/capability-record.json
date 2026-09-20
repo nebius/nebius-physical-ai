@@ -1,0 +1,136 @@
+{
+  "acceptance_checks": {
+    "decoded_counts_match_reported": {
+      "aligned_points": true,
+      "fused_points": true,
+      "mesh_counts": true,
+      "mesh_surface_area_identical": true
+    },
+    "fpfh_dimension_33": true,
+    "icp_improved_rmse_over_ransac": "2/2 register pairs and 3/3 multiway pairs",
+    "published_object_count": 17,
+    "real_upstream_api": "registration_ransac_based_on_feature_matching + registration_icp(PointToPlane) + global_optimization(LevenbergMarquardt) + create_from_point_cloud_poisson, all invoked in-container",
+    "rrd_entities": [
+      "/provenance",
+      "/world/fragments/cloud_bin_0",
+      "/world/fragments/cloud_bin_1",
+      "/world/fragments/cloud_bin_2",
+      "/world/fused",
+      "/world/mesh"
+    ],
+    "rrd_recording_id_matches_run_id": true,
+    "rrd_verified_independently": "npa/.venv/bin/rerun rrd verify -> '1 file verified without error.' (host venv, not the producing container)",
+    "s3_read_after_write_digest": "every published artifact re-read and digest-compared by runtime._publish",
+    "transform_is_rigid": "det=1.0000000000000018, orthonormality max err=1.5543122344752192e-15",
+    "validate_stage_independent": true
+  },
+  "artifact_hashes": {
+    "mesh__mesh.ply": "46ec90c468ed45d1c0520dffefb507d9ffa6098f041d3f737829a9d5f85bbae2",
+    "mesh__result.json": "238ff73cceaef8e0d267d0963a30fb9be04ca6355bd14538da472ebe2320311d",
+    "multiway__fused.ply": "664940c49c070b741c2ef83f2c2e065e40541e6160779923e481724f5ec29108",
+    "multiway__pose_graph.json": "27ef43538b1223d6562f3c87f9b68f40fd7b9cdea198031e4f88beb492c7afc6",
+    "multiway__result.json": "ab576927200e16ae1d5507c1844dbd55357329b764b228488336e693be962dae",
+    "prepared__manifest.json": "1655e840bc1f048ab2947b9e66dc23e44b3a25fdfe3fb9c2f0d1fb59144c6f35",
+    "registered__aligned__cloud_bin_0__cloud_bin_1.ply": "846b79b3a2d1da64879a73f4b7ce05217b5eb7a5ef5624e1f2cd1c8d034002af",
+    "registered__pairs.jsonl": "5920154528d8cab5c198b51579fc72c9970eccbc46c43d199369b8bdc15ac854",
+    "registered__result.json": "e41ecb9aea379a6f67eeb3b23b338ef69d9eb226b2fa662a9a4042119283ea09",
+    "review__point_cloud.rrd": "3bb8b52fac4ab6f0516755a9decda7a56efd0075621163ffcb1285fe8c98f808",
+    "validated__validation.json": "d86ad7bd088bae3473a95b96919a0632cf4a3f3ad91ac519727484791e3cf2d8"
+  },
+  "capability": "open3d_point_cloud_registration_and_reconstruction",
+  "cleanup_status": "S3 proof prefix retained for operator review (listed in 07-s3-inventory.log); local docker working dirs removed by runtime._discard; no cluster resources created by this run.",
+  "command_record": [
+    "npa workbench open3d prepare --output-path <prefix>/prepared --stage-demo-fragments --voxel-size 0.05",
+    "npa workbench open3d register --input-path <prefix>/prepared --output-path <prefix>/registered --run-id <run>",
+    "npa workbench open3d validate --input-path <prefix>/registered --output-path <prefix>/validated --run-id <run>",
+    "npa workbench open3d multiway --input-path <prefix>/prepared --output-path <prefix>/multiway --run-id <run>",
+    "npa workbench open3d reconstruct --input-path <prefix>/multiway --output-path <prefix>/mesh --run-id <run>",
+    "npa workbench open3d visualize --input-path <prefix>/mesh --output-path <prefix>/review --run-id <run>"
+  ],
+  "exit_code": 0,
+  "hardware": {
+    "class": "x86_64 CPU-only dev VM (no GPU present; nvidia-smi absent)",
+    "docker": "29.1.3",
+    "note": "Open3D geometry/pipelines.registration are CPU implementations; no accelerator requested or used."
+  },
+  "image_digest": "sha256:484f5d41a10598c3d905ab2296c3023690ad9c6b60de77664153816ff8a9d935 (local build npa-open3d:dev-local; NOT published)",
+  "image_size_bytes": 1047753654,
+  "input_hashes": {
+    "cloud_bin_0": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+    "cloud_bin_1": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+    "cloud_bin_2": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a"
+  },
+  "input_points": {
+    "cloud_bin_0": 198835,
+    "cloud_bin_1": 137833,
+    "cloud_bin_2": 191397
+  },
+  "limitations": [
+    "Poisson surface is not watertight and not edge-manifold; these are reported facts about a partial indoor scan, not a defect hidden from the record.",
+    "No ground-truth pose is available for these upstream fragments, so registration accuracy is reported as Open3D fitness/inlier_rmse, not as absolute pose error.",
+    "The image is a local build; it is NOT published to any registry and carries no publication claim.",
+    "CPU-only. No GPU capability is claimed for this tool.",
+    "The staged demo fragments are upstream indoor scans; this run makes no claim about operator sensor data beyond the same code path accepting an S3 prefix."
+  ],
+  "measurements": {
+    "multiway": {
+      "fused_points": 6340,
+      "fused_points_before_downsample": 528065,
+      "icp_fitness": {
+        "max": 0.7459679467181299,
+        "mean": 0.6805316580509793,
+        "min": 0.6210677194658888
+      },
+      "icp_inlier_rmse": {
+        "max": 0.0072436580051338,
+        "mean": 0.006744201344112392,
+        "min": 0.006424206488271165
+      },
+      "input_points": 535503,
+      "pair_count": 3,
+      "pose_graph_edges": 3,
+      "pose_graph_nodes": 3,
+      "subprocess_wall_seconds": 2.778870509006083
+    },
+    "reconstruct": {
+      "extent": [
+        3.9182933270931244,
+        2.1769074499607086,
+        2.717814549803734
+      ],
+      "input_points": 6340,
+      "is_edge_manifold": false,
+      "is_vertex_manifold": true,
+      "is_watertight": false,
+      "low_density_vertices_removed": 376,
+      "poisson_depth": 9,
+      "surface_area": 22.244807509999795,
+      "triangle_count": 36681,
+      "vertex_count": 18424
+    },
+    "register": {
+      "icp_fitness": {
+        "max": 0.7459606915615273,
+        "mean": 0.683514205513708,
+        "min": 0.6210677194658888
+      },
+      "icp_inlier_rmse": {
+        "max": 0.007243416346702278,
+        "mean": 0.006904077942817246,
+        "min": 0.006564739538932215
+      },
+      "input_points": 336668,
+      "pair_count": 2,
+      "pairs_refined_by_icp": 2,
+      "subprocess_wall_seconds": 2.273253181949258
+    }
+  },
+  "run_id": "open3d-proof-20260918T234410Z",
+  "source_commit": "3ae5a7a3c902214cb8415de1d06a2e224bd75e13 (npa worktree HEAD at build)",
+  "upstream": {
+    "demo_data": "open3d.data.DemoICPPointClouds, isl-org/open3d_downloads release 20220301-data",
+    "package": "open3d==0.20.0 (PyPI, MIT)",
+    "wheel": "open3d-0.20.0-cp311-cp311-manylinux_2_35_x86_64.whl",
+    "wheel_sha256": "18ae25cbc9f8fcabc06bad71e00cca3cd0ff0a762ce0fbec093f2e2a4d05eddf"
+  }
+}
