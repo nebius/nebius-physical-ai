@@ -126,9 +126,18 @@ be able to open the thing being asserted.
   tracked the area genuinely further than one voxel from the true surface to within
   0.06 absolute. The headline fraction did not: at 0.708 voxels of spacing it
   reported **0.5659** unsupported where only **0.0027** of area was actually
-  fabricated, overstating by roughly 200-fold. The reverse error — a real shell
-  reading as near-threshold — is not covered by that sweep and rests only on the
-  scenes above. Measurements: `evidence/open3d/band-validity-sweep.json`.
+  fabricated, overstating by roughly 200-fold. Measurements:
+  `evidence/open3d/band-validity-sweep.json`.
+- **The reverse error is open, and cannot be closed with a watertight reference.**
+  A real shell reading as near-threshold is the error that matters more, since it
+  would tell you to loosen a crop that was working. Measuring it needs ground
+  truth, and that is self-defeating: Poisson closure over a hole in a *closed*
+  object tracks the true surface — occluding 205947 of 300000 samples left only
+  0.0003 of area beyond one voxel — so there is no invented surface to miss. The
+  failure the crop exists for is a shell wrapped around an *open scene*, and an
+  open scene has no watertight reference by definition. Don't repeat the sweep
+  expecting a different answer; it is at `band_false_negative_sweep.py` with its
+  result labelled inconclusive. This is why nothing gates on the reading.
 - Both surfaces ship: `mesh.ply` is the cropped result and `mesh_uncropped.ply`
   is what Poisson returned, so the crop is a checkable claim rather than a
   deletion. `reconstruct` also publishes the support measurement before and

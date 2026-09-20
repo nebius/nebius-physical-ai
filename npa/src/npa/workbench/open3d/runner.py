@@ -406,8 +406,14 @@ def _sample_distances(o3d, cloud, vertices):
 #: no case where a correct surface read as a shell. Over that range the share tracked
 #: the area genuinely further than one voxel from the true surface to within 0.06
 #: absolute, while `unsupported_area_fraction` overstated it by up to 200-fold — 0.5659
-#: reported against 0.0027 actual. The reverse error, a real shell reading as
-#: near-threshold, is not covered by that sweep and rests only on the scenes above.
+#: reported against 0.0027 actual.
+#:
+#: The reverse error, a real shell reading as near-threshold, is open and cannot be closed
+#: the same way. It needs ground truth, and a watertight reference removes the failure
+#: mode: Poisson closure over a hole in a closed object tracks the true surface, so
+#: occluding 205947 of 300000 samples left only 0.0003 of area beyond one voxel and there
+#: was no invented surface to miss. A shell of the kind this crop exists for wraps an open
+#: scene, which has no watertight reference by definition.
 #:
 #: This is still a reporting boundary and nothing gates on it. Deliberately so, while a
 #: case as close to it as Eagle exists.
