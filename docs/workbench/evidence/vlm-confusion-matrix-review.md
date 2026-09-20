@@ -42,7 +42,7 @@ excluded from this public report.
 
 | Component | Placement | Evidence boundary |
 | --- | --- | --- |
-| Hosted judges | Nebius Token Factory, provider-managed accelerator | Existing image requests only; provider GPU SKU was not reported |
+| Hosted judges | Nebius Token Factory hosted API; provider hardware unavailable | Existing image requests only; no provider hardware identity was retained |
 | B052 recomputation | CPU-only NPA client | No cluster, GPU, or new hosted request |
 | Applicable workload | Labeled visual-judge calibration | Reports classification errors; does not evaluate policy physics |
 
