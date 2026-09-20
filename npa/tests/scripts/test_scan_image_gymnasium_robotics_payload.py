@@ -1363,6 +1363,32 @@ def test_docker_save_without_oci_graph_is_incomplete_for_publication(
     assert result["distributed_blob_scan_complete"] is False
 
 
+def test_graphless_gzip_layer_refuses_before_unbounded_expansion(
+    tmp_path: Path,
+    structural_scan: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = tmp_path / "graphless-gzip-bounded.tar"
+    _docker_save(image, _required())
+    rendered = io.BytesIO()
+    base_size = 0
+    with tarfile.open(image) as source, tarfile.open(fileobj=rendered, mode="w") as output:
+        for member in source:
+            body = source.extractfile(member).read() if member.isfile() else None
+            if member.name == "base/layer.tar":
+                assert body is not None
+                base_size = len(body)
+            if member.name == "app/layer.tar":
+                assert body is not None
+                body = gzip.compress(body, mtime=0)
+                member.size = len(body)
+            output.addfile(member, io.BytesIO(body) if body is not None else None)
+    image.write_bytes(rendered.getvalue())
+    monkeypatch.setattr(SCAN, "MAX_LAYER_ARCHIVE_BYTES", base_size + 1)
+    with pytest.raises(ValueError, match="expanded stream exceeds scan bound"):
+        SCAN.scan(image)
+
+
 def test_selected_runtime_layer_scans_decoded_secret_policy() -> None:
     raw = _tar_bytes({"etc/neutral-secret": b"password=" + (b"x" * 16)})
     with pytest.raises(ValueError, match="forbidden secret signature"):
@@ -1459,6 +1485,32 @@ def test_forbidden_layer_directory_refuses_even_when_empty(
         layer_directories={"workspace/.cache": b""},
     )
     with pytest.raises(ValueError, match="forbidden image path"):
+        SCAN.scan(image)
+
+
+def test_forbidden_upstream_layer_directory_refuses_even_when_empty(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "forbidden-upstream-directory.tar"
+    _docker_save(
+        image,
+        _required(),
+        layer_directories={"Gymnasium-Robotics-abcdef0": b""},
+    )
+    with pytest.raises(ValueError, match="forbidden image path"):
+        SCAN.scan(image)
+
+
+def test_forbidden_upstream_layer_link_target_refuses(
+    tmp_path: Path, structural_scan: None
+) -> None:
+    image = tmp_path / "forbidden-upstream-link.tar"
+    _docker_save(
+        image,
+        _required(),
+        symlinks={"opt/neutral-link": "Gymnasium-Robotics-abcdef0"},
+    )
+    with pytest.raises(ValueError, match="forbidden image link target"):
         SCAN.scan(image)
 
 
@@ -2189,6 +2241,14 @@ def test_link_to_forbidden_cache_refuses(tmp_path: Path, structural_scan: None) 
     )
     with pytest.raises(ValueError, match="forbidden image link target"):
         SCAN.scan(image)
+
+
+def test_nested_link_to_upstream_tree_refuses() -> None:
+    nested = _tar_bytes(
+        {}, symlinks={"neutral-link": "Gymnasium-Robotics-abcdef0"}
+    )
+    with pytest.raises(ValueError, match="forbidden nested archive link"):
+        SCAN._nested_archive_members("nested.tar", nested)
 
 
 @pytest.mark.parametrize("kind", ["symlink", "hardlink"])

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import bz2
-import gzip
 import hashlib
 import io
 import json
@@ -907,13 +906,21 @@ def _declared_compression(path: str) -> str | None:
     )
 
 
-def _decompress(path: str, content: bytes, kind: str) -> bytes:
+def _decompress(
+    path: str,
+    content: bytes,
+    kind: str,
+    *,
+    max_bytes: int = MAX_NESTED_ARCHIVE,
+) -> bytes:
     """Expand one recognized stream with a strict output-size bound."""
 
     try:
         if kind == "gzip":
             decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
-            expanded = decompressor.decompress(content, MAX_NESTED_ARCHIVE + 1)
+            expanded = decompressor.decompress(content, max_bytes + 1)
+            if len(expanded) > max_bytes:
+                raise ValueError(f"expanded stream exceeds scan bound: {path}")
             if (
                 not decompressor.eof
                 or decompressor.unconsumed_tail
@@ -923,21 +930,23 @@ def _decompress(path: str, content: bytes, kind: str) -> bytes:
         elif kind == "bzip2":
             decompressor = bz2.BZ2Decompressor()
             expanded = decompressor.decompress(
-                content, max_length=MAX_NESTED_ARCHIVE + 1
+                content, max_length=max_bytes + 1
             )
+            if len(expanded) > max_bytes:
+                raise ValueError(f"expanded stream exceeds scan bound: {path}")
             if not decompressor.eof or decompressor.unused_data:
                 raise ValueError(f"ambiguous compressed stream: {path}")
         else:
             decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_AUTO)
             expanded = decompressor.decompress(
-                content, max_length=MAX_NESTED_ARCHIVE + 1
+                content, max_length=max_bytes + 1
             )
+            if len(expanded) > max_bytes:
+                raise ValueError(f"expanded stream exceeds scan bound: {path}")
             if not decompressor.eof or decompressor.unused_data:
                 raise ValueError(f"ambiguous compressed stream: {path}")
     except (EOFError, OSError, lzma.LZMAError, zlib.error) as error:
         raise ValueError(f"unreadable compressed stream: {path}") from error
-    if len(expanded) > MAX_NESTED_ARCHIVE:
-        raise ValueError(f"expanded stream exceeds scan bound: {path}")
     return expanded
 
 
@@ -1058,6 +1067,8 @@ def _nested_archive_members(
                         if not reviewed_system_wheel and (
                             FORBIDDEN_PATH.search(target.lstrip("/"))
                             or FORBIDDEN_PATH.search(resolved)
+                            or UPSTREAM_TREE_PATH.search(target.lstrip("/"))
+                            or UPSTREAM_TREE_PATH.search(resolved)
                         ):
                             raise ValueError(
                                 f"forbidden nested archive link: {path}:{safe}"
@@ -1151,7 +1162,9 @@ def _nested_archive_members(
                         )
                         if FORBIDDEN_PATH.search(
                             target_text.lstrip("/")
-                        ) or FORBIDDEN_PATH.search(resolved):
+                        ) or FORBIDDEN_PATH.search(resolved) or UPSTREAM_TREE_PATH.search(
+                            target_text.lstrip("/")
+                        ) or UPSTREAM_TREE_PATH.search(resolved):
                             raise ValueError(
                                 f"forbidden nested archive link: {path}:{safe}"
                             )
@@ -1337,7 +1350,7 @@ def _layers_from_bytes(
                         and item.size == 0
                         and path in ALLOWED_EMPTY_BASE_PATHS
                     )
-                    or (UPSTREAM_TREE_PATH.search(path) and not item.isdir())
+                    or UPSTREAM_TREE_PATH.search(path)
                 ):
                     raise ValueError(f"forbidden image path: {path}")
                 current_order.append(path)
@@ -1381,7 +1394,9 @@ def _layers_from_bytes(
                     )
                     if FORBIDDEN_PATH.search(
                         target.lstrip("/")
-                    ) or FORBIDDEN_PATH.search(resolved):
+                    ) or FORBIDDEN_PATH.search(resolved) or UPSTREAM_TREE_PATH.search(
+                        target.lstrip("/")
+                    ) or UPSTREAM_TREE_PATH.search(resolved):
                         raise ValueError(
                             f"forbidden image link target: {path} -> {target}"
                         )
@@ -2301,12 +2316,9 @@ def scan(
             )
             _scan_raw_blob_bytes(f"stored layer bytes: {name}", stored)
             if stored.startswith(b"\x1f\x8b"):
-                try:
-                    decoded = gzip.decompress(stored)
-                except (OSError, EOFError) as error:
-                    raise ValueError(f"unreadable gzip layer: {name}") from error
-                if len(decoded) > MAX_LAYER_ARCHIVE_BYTES:
-                    raise ValueError(f"archive member exceeds scan bound: {name}")
+                decoded = _decompress(
+                    name, stored, "gzip", max_bytes=MAX_LAYER_ARCHIVE_BYTES
+                )
                 raw_layers.append((name, decoded))
             else:
                 raw_layers.append((name, stored))
