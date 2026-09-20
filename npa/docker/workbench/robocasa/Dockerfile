@@ -116,7 +116,7 @@ COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
 RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
-    && chown -R ubuntu:ubuntu /app /opt/robocasa
+    && chown -R ubuntu:ubuntu /app /opt/robocasa/source
 
 EXPOSE 8791
 
