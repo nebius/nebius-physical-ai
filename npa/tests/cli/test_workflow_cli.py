@@ -1267,13 +1267,17 @@ def test_workflow_logs_after_driver_crash_without_task_timeline(
 
 
 def _log_wave(
-    job_id: str, *, key: str = "wave-1", tasks: list[dict[str, object]] | None = None
+    job_id: str,
+    *,
+    key: str = "wave-1",
+    tasks: list[dict[str, object]] | None = None,
+    attempt: object = 1,
 ) -> dict[str, object]:
     return {
         "key": key,
         "kind": "serial",
         "states": ["rollout"],
-        "attempt": 1,
+        "attempt": attempt,
         "status": "running",
         "sky_status": "RUNNING",
         "job_id": job_id,
@@ -1282,8 +1286,13 @@ def _log_wave(
     }
 
 
-def _set_partial_stage_projection(
-    fake_s3: FakeWorkflowS3, *, stage_key: str, wave_key: str
+def _set_stage_projection(
+    fake_s3: FakeWorkflowS3,
+    *,
+    stage_key: str,
+    wave_key: str,
+    job_id: str,
+    task_id: object | None,
 ) -> None:
     runtime_key = "crashed-driver/npa-workflow/runtime.json"
     runtime = json.loads(fake_s3.objects[("bucket", runtime_key)])
@@ -1292,10 +1301,13 @@ def _set_partial_stage_projection(
         "stage": "rollout",
         "attempt": 1,
         "logical_state": "RUNNING",
-        "managed_job_id": "",
+        "managed_job_id": job_id,
+        "provenance": "runtime_wave_projection",
     }
     if wave_key:
         stage["wave_key"] = wave_key
+    if task_id is not None:
+        stage["sky_task_id"] = task_id
     runtime["stages"] = [stage]
     fake_s3.put_object(
         Bucket="bucket",
@@ -1304,17 +1316,9 @@ def _set_partial_stage_projection(
     )
 
 
-def _invoke_logs_with_partial_stage(
+def _patch_stage_log_tail(
     monkeypatch: pytest.MonkeyPatch,
-    waves: list[dict[str, object]],
-    *,
-    stage_key: str = "wave-1",
-    wave_key: str = "",
-) -> tuple[object, list[tuple[str, str]]]:
-    fake_s3 = FakeWorkflowS3()
-    _patch_workflow_s3(monkeypatch, fake_s3)
-    uri = _put_workflow_log_waves(fake_s3, waves)
-    _set_partial_stage_projection(fake_s3, stage_key=stage_key, wave_key=wave_key)
+) -> list[tuple[str, str]]:
     calls: list[tuple[str, str]] = []
 
     def logs(**kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -1329,6 +1333,30 @@ def _invoke_logs_with_partial_stage(
         "npa.cli.workbench.workflow._resolve_sky_bin",
         lambda value: "synthetic-sky",
     )
+    return calls
+
+
+def _invoke_logs_with_partial_stage(
+    monkeypatch: pytest.MonkeyPatch,
+    waves: list[dict[str, object]],
+    *,
+    stage_key: str = "rollout",
+    wave_key: str = "wave-1",
+    job_id: str = "",
+    task_id: object | None = None,
+    cached: bool = False,
+) -> tuple[object, list[tuple[str, str]]]:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_workflow_log_waves(fake_s3, waves)
+    _set_stage_projection(
+        fake_s3,
+        stage_key=stage_key,
+        wave_key=wave_key,
+        job_id=job_id,
+        task_id=task_id,
+    )
+    calls = _patch_stage_log_tail(monkeypatch)
     result = runner.invoke(
         app,
         [
@@ -1338,6 +1366,7 @@ def _invoke_logs_with_partial_stage(
             uri,
             "--stage",
             "rollout",
+            *(["--cached"] if cached else []),
             "--json",
         ],
     )
@@ -1348,22 +1377,14 @@ def _invoke_logs_with_partial_stage(
     ("tasks", "expected_task"),
     [([{"task_id": 7}], "7"), ([], "rollout")],
 )
-@pytest.mark.parametrize(
-    ("stage_key", "wave_key"),
-    [("wave-1", ""), ("rollout", "wave-1")],
-)
 def test_workflow_logs_recovers_exact_wave_job_for_partial_stage_projection(
     monkeypatch: pytest.MonkeyPatch,
     tasks: list[dict[str, object]],
     expected_task: str,
-    stage_key: str,
-    wave_key: str,
 ) -> None:
     result, calls = _invoke_logs_with_partial_stage(
         monkeypatch,
         [_log_wave("42", tasks=tasks)],
-        stage_key=stage_key,
-        wave_key=wave_key,
     )
 
     assert result.exit_code == 0, result.output
@@ -1392,13 +1413,69 @@ def test_workflow_logs_does_not_recover_from_a_different_wave_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result, calls = _invoke_logs_with_partial_stage(
-        monkeypatch, [_log_wave("42")], stage_key="wave-other"
+        monkeypatch, [_log_wave("42")], wave_key="wave-other"
     )
 
     assert result.exit_code == 2, result.output
     assert calls == []
     payload = json.loads(result.output)
     assert payload["error_code"] == "STAGE_JOB_ID_UNAVAILABLE"
+
+
+def test_workflow_logs_does_not_treat_stage_key_as_wave_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, calls = _invoke_logs_with_partial_stage(
+        monkeypatch,
+        [_log_wave("42")],
+        stage_key="wave-1",
+        wave_key="",
+    )
+
+    assert result.exit_code == 2, result.output
+    assert calls == []
+    assert json.loads(result.output)["error_code"] == "STAGE_JOB_ID_UNAVAILABLE"
+
+
+def test_workflow_logs_explicit_projection_ignores_malformed_wave_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, calls = _invoke_logs_with_partial_stage(
+        monkeypatch,
+        [_log_wave("42", attempt="later")],
+        job_id="42",
+        task_id="7",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("42", "7")]
+
+
+def test_workflow_logs_partial_projection_ignores_malformed_wave_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, calls = _invoke_logs_with_partial_stage(
+        monkeypatch, [_log_wave("42", attempt="later")]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert calls == []
+    assert json.loads(result.output)["error_code"] == "STAGE_JOB_ID_UNAVAILABLE"
+
+
+def test_workflow_cached_logs_do_not_recover_live_wave_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result, calls = _invoke_logs_with_partial_stage(
+        monkeypatch, [_log_wave("42")], cached=True
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == []
+    payload = json.loads(result.output)
+    assert payload["managed_job_id"] == ""
+    assert payload["provenance"] == "runtime_wave_projection"
+    assert payload["verification_status"] == "CACHED"
 
 
 def test_workflow_logs_reports_remote_task_not_found_as_unavailable(

@@ -5892,11 +5892,7 @@ def _matching_stage_log_waves(
     """Return waves that can belong to one durable stage attempt."""
 
     job_id = str(stage_attempt.get("managed_job_id") or "")
-    stage_key = str(
-        stage_attempt.get("wave_key")
-        or ("" if job_id else stage_attempt.get("key"))
-        or ""
-    )
+    stage_key = str(stage_attempt.get("wave_key") or "")
     attempt = int(stage_attempt.get("attempt") or 1)
     if not stage_key and not job_id:
         return []
@@ -5906,7 +5902,11 @@ def _matching_stage_log_waves(
             continue
         if stage not in list(raw_wave.get("states") or []):
             continue
-        if int(raw_wave.get("attempt") or 1) != attempt:
+        try:
+            wave_attempt = int(raw_wave.get("attempt") or 1)
+        except (TypeError, ValueError):
+            continue
+        if wave_attempt != attempt:
             continue
         if stage_key and str(raw_wave.get("key") or "") != stage_key:
             continue
@@ -5959,6 +5959,8 @@ def _recover_stage_log_wave_attribution(
     recovered = dict(stage_attempt)
     job_id = str(recovered.get("managed_job_id") or "")
     had_job_id = bool(job_id)
+    if job_id and recovered.get("sky_task_id") not in (None, ""):
+        return recovered, job_id, ""
     matching_waves = _matching_stage_log_waves(runtime_state, recovered, stage)
     if not job_id:
         wave_job_ids = {
@@ -6220,13 +6222,17 @@ def logs_cmd(
                 ]
                 stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
                 selected_attempt = stage_attempts[-1] if stage_attempts else {}
-                selected_attempt, job_id, attribution_error = (
-                    _recover_stage_log_wave_attribution(
-                        resolution.runtime_state,
-                        selected_attempt,
-                        selected_stage,
+                attribution_error = ""
+                if cached:
+                    job_id = str(selected_attempt.get("managed_job_id") or "")
+                else:
+                    selected_attempt, job_id, attribution_error = (
+                        _recover_stage_log_wave_attribution(
+                            resolution.runtime_state,
+                            selected_attempt,
+                            selected_stage,
+                        )
                     )
-                )
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
