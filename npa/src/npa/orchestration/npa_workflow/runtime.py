@@ -63,7 +63,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_steps_yaml,
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
-from npa.orchestration.npa_workflow.supervisor import PreflightEvidence
+from npa.orchestration.npa_workflow.supervisor import PreflightEvidence, RecoveryAction
 from npa.orchestration.npa_workflow.waves import split_into_batches
 from npa.orchestration.skypilot.launch_transaction import logical_launch_identity
 from npa.verification import sanitize_reason
@@ -1474,12 +1474,6 @@ class SkyPilotWaveExecutor:
             attempt.cancellation_error = cancel_error
             if state == "verified":
                 attempt.sky_status = "CANCELLED"
-        elif (
-            not attempt.job_id
-            or not should_cancel
-            or attempt.supervisor_blocks_cancellation
-        ):
-            attempt.cancellation_state = "not_applicable"
         self.ledger.record(attempt)
 
     def _submit_and_wait(
@@ -1628,7 +1622,11 @@ class SkyPilotWaveExecutor:
             # sleep, so a driver crash cannot erase the last-known transition.
             self.ledger.record(attempt)
             if last in {"PENDING", "STARTING", "RETRYING"}:
-                self._supervise_pending(attempt, scheduler_status=last)
+                supervisor_action = self._supervise_pending(
+                    attempt, scheduler_status=last
+                )
+                if supervisor_action is RecoveryAction.REUSE_COMPLETED_WAVE:
+                    return "SUCCEEDED"
             if is_terminal(last):
                 return last
             if deadline is not None and self._clock() >= deadline:
@@ -1640,7 +1638,7 @@ class SkyPilotWaveExecutor:
 
     def _supervise_pending(
         self, attempt: WaveAttempt, *, scheduler_status: str
-    ) -> None:
+    ) -> RecoveryAction | None:
         """Reconcile a pending wave through the shared production supervisor."""
 
         if not self.options.supervise_pending or not attempt.job_id:
@@ -1649,7 +1647,6 @@ class SkyPilotWaveExecutor:
             ArtifactValidation,
             AttemptIdentity,
             CheckpointValidation,
-            RecoveryAction,
             RecoveryContext,
             SkyPilotSupervisorAdapter,
             SupervisorLedger,
@@ -1788,6 +1785,7 @@ class SkyPilotWaveExecutor:
                 f"{reason_code}. {attempt.operator_remedy}",
                 relaunch_allowed=True,
             )
+        return action
 
     def _resolve_job_id(self, job_name: str, parsed: str, attempt: WaveAttempt) -> str:
         """Trust the launched job NAME, not the id scraped from launch output.

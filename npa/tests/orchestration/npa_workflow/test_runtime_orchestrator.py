@@ -24,6 +24,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.run_state import RunStateStore, RuntimeRunState
 from npa.orchestration.npa_workflow.runtime import (
+    CANCELLATION_VERIFY_ATTEMPTS,
     MAX_TERMINAL_PLAN_MIGRATIONS,
     RuntimeLedger,
     RuntimeOptions,
@@ -4006,6 +4007,122 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
     ]
     assert executor.attempts[-1].infrastructure_recovery_exhausted
     assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
+
+
+def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-valid-output-limit", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    status = FakeStatus(["PENDING", "CANCELLED", "PENDING", "CANCELLED"])
+    executor = _executor(
+        spec,
+        run_id="rt-valid-output-limit",
+        submitter=FakeSubmitter(),
+        status_fn=status,
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+
+    result = executor.execute(gate)
+    attempt = executor.attempts[-1]
+
+    assert result["status"] == "ok"
+    assert attempt.status == "succeeded"
+    assert attempt.sky_status == "SUCCEEDED"
+    assert attempt.recovery_decision == "reuse_completed_wave"
+    assert attempt.infrastructure_recovery_count == 1
+    assert attempt.cancellation_state == "verified"
+    assert runtime_sdk_submission.preflight.call_count == 2
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
+    assert len(executor.attempts) == 2
+    assert len(status.calls) == 4
+
+
+def test_runtime_preserves_unverified_output_reuse_cancellation(
+    tmp_path: Path,
+    mocker,
+    runtime_sdk_submission,
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec,
+            run_id="rt-output-reuse-unverified",
+            assume_decision="promote_checkpoint",
+        ).steps
+        if step.state == "gate"
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(
+            job_id="job", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+    cancels: list[dict[str, Any]] = []
+    executor = _executor(
+        spec,
+        run_id="rt-output-reuse-unverified",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(
+            [
+                "PENDING",
+                "CANCELLED",
+                "PENDING",
+                *(["PENDING"] * CANCELLATION_VERIFY_ATTEMPTS),
+            ]
+        ),
+        options=RuntimeOptions(
+            poll_seconds=0,
+            retries=5,
+            max_infrastructure_recoveries=1,
+            preflight_evidence=_supervisor_preflight(),
+        ),
+        cancels=cancels,
+        output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
+        store=MemoryStore(),
+    )
+    executor._submitter = None
+
+    with pytest.raises(NpaWorkflowError, match="CANCELLATION_UNVERIFIED"):
+        executor.execute(gate)
+
+    attempt = executor.attempts[-1]
+    assert attempt.recovery_decision == "block_relaunch"
+    assert attempt.cancellation_state == "requested"
+    assert attempt.cancellation_error == ""
+    assert attempt.supervisor_blocks_cancellation
+    assert runtime_sdk_submission.job.call_count == 2
+    assert len(cancels) == 2
 
 
 @pytest.mark.parametrize(
