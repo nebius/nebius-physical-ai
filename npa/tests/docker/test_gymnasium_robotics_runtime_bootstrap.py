@@ -1188,7 +1188,7 @@ def test_exec_path_uses_descriptor_bound_interpreter_and_runtime_root() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert 'bound_root = Path(f"/proc/self/fd/{directory_fd}")' in source
     assert 'f"/proc/self/fd/{directory_fd}"' in source
-    assert 'python_name = f"/proc/self/fd/{directory_fd}/runtime/bin/python"' in source
+    assert 'python_name = f"/proc/{os.getpid()}/fd/{directory_fd}/runtime/bin/python"' in source
     assert "os.execve(" in source
     assert "python_fd," in source
     assert 'result["_runtime_monitor_fd"]' in source
@@ -1228,7 +1228,7 @@ def test_untrusted_runtime_environment_is_an_exact_minimal_allowlist(
     assert BOOTSTRAP._runtime_environment() == expected
     assert BOOTSTRAP._runtime_environment(17) == {
         **expected,
-        "NPA_GYMNASIUM_RUNTIME_ROOT": "/proc/self/fd/17",
+        "NPA_GYMNASIUM_RUNTIME_ROOT": f"/proc/{os.getpid()}/fd/17",
     }
     assert set(BOOTSTRAP.RUNTIME_ENVIRONMENT_ALLOWLIST) == set(required)
     assert not set(authority).intersection(BOOTSTRAP._runtime_environment(17))
@@ -1280,6 +1280,27 @@ def _execute_script_from_runtime(tmp_path: Path, source: str) -> int:
         int(result["_runtime_monitor_fd"]),
         [str(script)],
     )
+
+
+def test_runtime_nested_python_survives_close_fds_and_cwd_change(tmp_path: Path) -> None:
+    probe = """
+import os,socket,subprocess,sys
+from pathlib import Path
+assert sys.executable.startswith(f'/proc/{os.getpid()}/fd/')
+nested = '''
+import os,socket,sys
+from pathlib import Path
+root = Path(os.environ['NPA_GYMNASIUM_RUNTIME_ROOT'])
+assert Path(sys.prefix).samefile(root / 'runtime')
+assert 'NoNewPrivs:\\t1' in Path('/proc/self/status').read_text()
+try: socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+except PermissionError: pass
+else: raise AssertionError('nested process acquired network authority')
+'''
+result = subprocess.run([sys.executable, '-I', '-B', '-c', nested], cwd='/', close_fds=True)
+assert result.returncode == 0
+"""
+    assert _execute_script_from_runtime(tmp_path, probe) == 0
 
 
 def test_runtime_cannot_read_credential_parent_environment(

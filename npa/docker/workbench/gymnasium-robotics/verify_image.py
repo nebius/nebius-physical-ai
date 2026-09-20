@@ -22,7 +22,7 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "corresponding-source.lock.json": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
     "runtime-fetch-manifest.json": "72597bda8363f54ef1d243d6f8b2a7660aebdaf54875fd161b11b0097444f957",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "d4b8b2e04d054d8e055b0310f70117e88bf4ed9a9299e23b35acdebb9e0a7687",
+    "runtime-bootstrap.py": "4686d636c32faf790204ba53de42228c97bc19c2ec621ec9cf3cf895afa9f23e",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
 }
 KNOWN_FORBIDDEN_CONTENT_SHA256 = frozenset(

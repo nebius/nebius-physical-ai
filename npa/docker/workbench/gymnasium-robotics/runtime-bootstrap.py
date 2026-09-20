@@ -1720,7 +1720,7 @@ def _runtime_environment(directory_fd: int | None = None) -> dict[str, str]:
     }
     environment["PATH"] = RUNTIME_PATH
     if directory_fd is not None:
-        environment["NPA_GYMNASIUM_RUNTIME_ROOT"] = f"/proc/self/fd/{directory_fd}"
+        environment["NPA_GYMNASIUM_RUNTIME_ROOT"] = f"/proc/{os.getpid()}/fd/{directory_fd}"
     return environment
 
 
@@ -1872,8 +1872,6 @@ def _wait_for_runtime_child(process_id: int, monitor_fd: int) -> int:
 def _execute_validated_runtime(
     directory_fd: int, python_fd: int, monitor_fd: int, command: list[str]
 ) -> int:
-    environment = _runtime_environment(directory_fd)
-    python_name = f"/proc/self/fd/{directory_fd}/runtime/bin/python"
     previous_dumpable = _prctl(PR_GET_DUMPABLE)
     previous_subreaper = ctypes.c_int()
     _prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(previous_subreaper))
@@ -1891,6 +1889,11 @@ def _execute_validated_runtime(
         os.close(monitor_fd)
         try:
             os.setsid()
+            # Nested Python probes close their own inherited descriptors. Keep
+            # their executable/runtime paths bound to this monitored child's
+            # verified directory descriptor, which remains open until it exits.
+            environment = _runtime_environment(directory_fd)
+            python_name = f"/proc/{os.getpid()}/fd/{directory_fd}/runtime/bin/python"
             _install_runtime_network_filter()
             os.execve(python_fd, [python_name, "-I", "-B", *command], environment)
         except (BootstrapRefusal, OSError) as error:
