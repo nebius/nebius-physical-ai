@@ -70,6 +70,11 @@ supported.
 The result is augmented video and review artifacts for one episode/camera, not
 a reconstructed LeRobot dataset containing action/state records.
 
+For extending this data pipeline into training and policy evaluation, see the
+[Cosmos 3 model factory assessment](../../architecture/cosmos3-model-factory.md).
+It maps current NPA capabilities and defines the
+dataset, checkpoint, and simulation evidence needed for each proposed addition.
+
 The committed `example-bucket` and run-scoped fixture path are placeholders.
 The generic workflow submit command stages a verified, pinned starter video
 when no input is supplied; use `--input-video` or `--input-uri` for your own
@@ -97,7 +102,24 @@ The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
 
-The canonical workflow enables `structural_control: edge`. `conditioning_fps`
+The canonical workflow enables `structural_control: edge`. The optional
+`transfer_edge_threshold` selects a native Canny preset from `very_low`, `low`,
+`medium` (default), `high`, and `very_high`; the native control receipt records
+the actual preset and verified pixel hash. Lower thresholds retain weaker
+edges, which can help expose small or dark features, but also admit noise.
+Inspect the controls and qualify the generated output independently.
+`transfer_rgb_weight` optionally adds native RGB conditioning to retain source
+color and surface cues that edges omit. Zero (the default) disables it; a
+positive weight is relative to edge weight 1. This uses the framework's `blur`
+hint with its `none` preset and verified lossless RGB controls. It changes model
+conditioning, never output-pixel blending, and can suppress the requested edit.
+`transfer_first_chunk_conditional_frames` separately controls whether the original
+RGB first frame anchors generation. Its compatibility default is 1; set 0 with
+edge transfer to test a changed appearance from the first frame. Complete source
+edges remain active, and later windows retain five generated overlap frames.
+Releasing the first-frame anchor may reduce object-identity preservation; review
+paired clips before adopting it. Native receipts record both conditioning counts.
+`conditioning_fps`
 defaults to 24; preparation letterboxes to 832×480 and preserves duration within
 one prepared frame. `transfer_chunk_frames` defaults to 93 and `control_guidance`
 to 1.5. Native chunks cover every prepared source frame, including a final
@@ -134,6 +156,19 @@ native structural controls across the complete prepared video. Inspect visual
 identity, motion and contacts independently of successful timeline validation;
 lowering a quality threshold changes acceptance criteria without improving pixels.
 
+### Task-specific appearance profiles
+
+`appearance_profiles_json` defaults to an empty string (the starter profiles).
+Supply a JSON array with `lighting`, `background`, `color_grade`, and
+`surface_finish` in every profile to select plausible edits for the chosen
+camera and task. The manifest retains those profiles and evaluator choices.
+Source captions sampled across the episode are separated from the requested
+appearance edit in the effective prompt. `caption_instruction` supplies task
+context from `augment_subject` and asks for uncertainty when features are unclear;
+override it for the selected camera and inspect the resulting captions. See the
+[realistic manipulation guide](paidf-realistic-augmentation.md) for battery
+insertion, controlled sampling experiments and review criteria.
+
 ## Artifact contract
 
 Every successful generation pass preserves the downstream layout:
@@ -148,6 +183,20 @@ cosmos_augmented/
     source_edges.mkv
     transfer.json
 ```
+
+Each successful variant is published as soon as generation and alignment checks
+finish. `cosmos_augmented/generation-progress.json` records the requested,
+published and failed counts, with clip IDs and failure phases. A blocked or
+failed variant still fails the stage; the batch does not write a new successful
+`manifest.json`. Other completed variants remain available as review evidence.
+Consumers must use the committed manifest, never infer a complete batch by
+listing the prefix. Progress evidence is not a training-data promotion signal.
+Recovery remains at workflow-stage granularity; retaining variants does not
+skip them automatically when a failed stage is retried.
+
+Concurrent generations lease distinct available GPUs. A faster variant can
+release its GPU to the next waiting variant without assigning that work to a GPU
+still occupied by another generation.
 
 Each metadata file records the real engine (`nvidia-cosmos/cosmos-framework`),
 `video2video` mode, source-video conditioning, checkpoint, seed, guidance,

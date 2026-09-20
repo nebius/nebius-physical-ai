@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and static planning completed successfully with argv-safe module execution and S3 input/output URIs.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/lerobot-subtask-proof.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/lerobot-subtask-proof.yaml --run-id subtask-proof-preview --var bucket=example-bucket --var reviewed_dataset_uri=s3://example-bucket/reviewed-dataset/ --var proof_uri=s3://example-bucket/subtask-proof-preview/proof.json --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The workflow completed through run-spec --execute on a synthetic LeRobot v3 fixture. Tests resolve grasp at episode 0/frame 2/timestamp 0.2, prove 8/8 labeled frames, verify source immutability, and independently read back live-harness proof and dataset bytes including tampering rejection.",
+      "evidence": [
+        "npa/tests/workflows/test_lerobot_subtask_proof.py",
+        "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py::test_lerobot_subtask_proof_seeds_real_parquet_rows",
+        "npa/tests/orchestration/npa_workflow/test_live_e2e_prefix_scope.py::test_subtask_live_readback_resolves_real_source_bytes"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed workflow uses an example bucket; each run must select a writable operator-owned bucket and proof URI.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The local and live-harness fixtures satisfy the LeRobot v3 subtask contract, but each operator's reviewed S3 dataset remains to be staged and checked.",
+      "evidence": [
+        "docs/workbench/guides/lerobot-subtask-labeling.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The operator's S3 and Nebius authentication checks passed on September 16, 2026. This does not establish exact output-prefix write access; future operators must run their own preflight.",
+      "evidence": [
+        "npa workbench health preflight --checks s3,nebius --json: both PASS"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The workflow selects the submitted checkout through source_overlay; each submission must verify that revision and the default worker image are staged and pullable.",
+      "evidence": [
+        "workflows/testing/lerobot-subtask-proof.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The exact configured kubeconfig failed NPA SkyPilot verification: kubernetes_enabled=false. The pinned SkyPilot 0.12.2 runtime is installed, but no cloud workflow was submitted. Local run-spec execution completed successfully.",
+      "evidence": [
+        "npa skypilot verify --kubeconfig <selected-kubeconfig> --controller-backend kubernetes --output-format json: status=failed, kubernetes_enabled=false"
+      ]
+    }
+  }
+}

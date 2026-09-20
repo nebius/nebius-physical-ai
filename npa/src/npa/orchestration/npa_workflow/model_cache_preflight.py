@@ -52,7 +52,11 @@ def _namespace(explicit: str) -> str:
 def _already_configured(environ: dict[str, str]) -> bool:
     return any(
         str(environ.get(name, "") or "").strip()
-        for name in (MODEL_CACHE_PVC_ENV, MODEL_CACHE_HOST_PATH_ENV, MODEL_CACHE_DIR_ENV)
+        for name in (
+            MODEL_CACHE_PVC_ENV,
+            MODEL_CACHE_HOST_PATH_ENV,
+            MODEL_CACHE_DIR_ENV,
+        )
     )
 
 

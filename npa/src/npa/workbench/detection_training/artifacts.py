@@ -42,7 +42,9 @@ def eval_result_uri_for(output_uri: str) -> str:
     return output_uri.rstrip("/") + f"/{EVAL_METRICS_FILENAME}"
 
 
-def discover_checkpoint_uri(runs: Iterable[Mapping[str, Any]], *, output_uri: str) -> str:
+def discover_checkpoint_uri(
+    runs: Iterable[Mapping[str, Any]], *, output_uri: str
+) -> str:
     """Resolve the checkpoint the last completed run under ``output_uri`` produced.
 
     ``runs`` is the ``runs`` list from ``GET /runs``. The retired template matched on
@@ -69,14 +71,18 @@ def discover_checkpoint_uri(runs: Iterable[Mapping[str, Any]], *, output_uri: st
     run = matches[-1]
     if "artifacts" in run:
         checkpoints = [
-            artifact for artifact in run.get("artifacts", [])
+            artifact
+            for artifact in run.get("artifacts", [])
             if artifact.get("role") == "checkpoint"
             and artifact.get("epoch") == run.get("total_epochs")
-            and artifact.get("exists") and artifact.get("integrity_verified")
+            and artifact.get("exists")
+            and artifact.get("integrity_verified")
             and str(artifact.get("uri", "")).startswith(prefix)
         ]
         if not checkpoints:
-            raise DetectionTrainingArtifactError("completed run has no verified final checkpoint artifact")
+            raise DetectionTrainingArtifactError(
+                "completed run has no verified final checkpoint artifact"
+            )
         return str(checkpoints[-1]["uri"])
     pattern = str(run.get("checkpoint_uri_pattern") or "")
     epochs = run.get("total_epochs")

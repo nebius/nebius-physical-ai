@@ -54,14 +54,26 @@ def test_insights_record_and_query(tmp_path: Path) -> None:
     _record(tmp_path, store, "r1", "accuracy", 0.9)
     result = runner.invoke(
         app,
-        ["workbench", "insights", "query", "--input-path", store, "--metric-name", "accuracy", "--output", "json"],
+        [
+            "workbench",
+            "insights",
+            "query",
+            "--input-path",
+            store,
+            "--metric-name",
+            "accuracy",
+            "--output",
+            "json",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["count"] == 1
 
 
 def test_insights_record_requires_output_path() -> None:
-    result = runner.invoke(app, ["workbench", "insights", "record", "--metric", "x", "--value", "1"])
+    result = runner.invoke(
+        app, ["workbench", "insights", "record", "--metric", "x", "--value", "1"]
+    )
     assert result.exit_code != 0
 
 
@@ -77,14 +89,29 @@ def test_insights_ingest_run_cli(tmp_path: Path) -> None:
                 "record_count": 2,
                 "modalities": ["camera"],
                 "lineage": {"workflow_run": "r", "input_uris": []},
-                "quality_stats": {"record_count": 2, "mean_completeness": 1.0, "corrupt_count": 0, "modalities": ["camera"]},
+                "quality_stats": {
+                    "record_count": 2,
+                    "mean_completeness": 1.0,
+                    "corrupt_count": 0,
+                    "modalities": ["camera"],
+                },
                 "records": [],
             }
         )
     )
     result = runner.invoke(
         app,
-        ["workbench", "insights", "ingest-run", "--input-path", str(run), "--output-path", str(tmp_path / "store"), "--output", "json"],
+        [
+            "workbench",
+            "insights",
+            "ingest-run",
+            "--input-path",
+            str(run),
+            "--output-path",
+            str(tmp_path / "store"),
+            "--output",
+            "json",
+        ],
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["recorded_count"] == 5
@@ -97,14 +124,36 @@ def test_insights_compare_and_dashboard_cli(tmp_path: Path) -> None:
 
     compare = runner.invoke(
         app,
-        ["workbench", "insights", "compare", "--input-path", store, "--base-run", "r1", "--candidate-run", "r2", "--output", "json"],
+        [
+            "workbench",
+            "insights",
+            "compare",
+            "--input-path",
+            store,
+            "--base-run",
+            "r1",
+            "--candidate-run",
+            "r2",
+            "--output",
+            "json",
+        ],
     )
     assert compare.exit_code == 0, compare.output
     assert json.loads(compare.output)["improved"] == ["accuracy"]
 
     dashboard = runner.invoke(
         app,
-        ["workbench", "insights", "dashboard", "--input-path", store, "--output-path", str(tmp_path / "dash"), "--output", "json"],
+        [
+            "workbench",
+            "insights",
+            "dashboard",
+            "--input-path",
+            store,
+            "--output-path",
+            str(tmp_path / "dash"),
+            "--output",
+            "json",
+        ],
     )
     assert dashboard.exit_code == 0, dashboard.output
     payload = json.loads(dashboard.output)
@@ -117,7 +166,17 @@ def test_insights_compare_zero_match_fails(tmp_path: Path) -> None:
     _record(tmp_path, store, "r1", "accuracy", 0.8)
     result = runner.invoke(
         app,
-        ["workbench", "insights", "compare", "--input-path", store, "--base-run", "r1", "--candidate-run", "nope"],
+        [
+            "workbench",
+            "insights",
+            "compare",
+            "--input-path",
+            store,
+            "--base-run",
+            "r1",
+            "--candidate-run",
+            "nope",
+        ],
     )
     assert result.exit_code != 0
 
@@ -126,12 +185,14 @@ def test_insights_service_mode_parity(monkeypatch: Any, tmp_path: Path) -> None:
     import npa.cli.workbench.insights as cli_module
     from npa.workbench.insights.service import create_app
 
-    client = TestClient(
-        create_app(auth_mode="none", allowed_local_roots=[tmp_path])
-    )
+    client = TestClient(create_app(auth_mode="none", allowed_local_roots=[tmp_path]))
 
-    def fake_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        response = client.request(method, path, json=kwargs.get("payload"), params=kwargs.get("params"))
+    def fake_request(
+        method: str, endpoint: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        response = client.request(
+            method, path, json=kwargs.get("payload"), params=kwargs.get("params")
+        )
         assert response.status_code == 200, response.text
         return response.json()
 

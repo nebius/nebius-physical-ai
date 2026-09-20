@@ -72,7 +72,89 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
-        "curobo-benchmark.yaml", "gpu",
+        "xr1-antioch-finetune.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-owned Antioch session, physically qualified "
+            "demonstrations, pinned XR1 assets, and the verified SM120 runtime in S3."
+        ),
+        notes="Native eight-RTX-PRO-6000 XR1 fine-tuning; paired Antioch robot evaluation is a separate operator step.",
+    ),
+    SubmitLiveCase(
+        "franka-rl-transfer.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        runtime=True,
+        requires_token_factory=True,
+        notes="Real Franka PPO with USD parts, paired physics tests, blinded Token Factory audit, and LeRobot/RRD capture.",
+    ),
+    SubmitLiveCase(
+        "lerobot-transfer.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        expected_parallel_tasks=2,
+        image_tool="lerobot",
+        notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
+    ),
+    SubmitLiveCase(
+        "byof-mochi-1.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-cogvideox-2b.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-wan2.1-14b.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-lingbot-world.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-depth-anything-v2.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-sam2.1.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
+        notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "cosmos3-policy-model-factory.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3",
+        notes="Native LIBERO policy SFT, matching simulator evaluation, failure feedback, and guarded video candidates. Requires eight GPUs by default and runtime training dependency fetch.",
+    ),
+    SubmitLiveCase(
+        "curobo-benchmark.yaml",
+        "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
@@ -89,13 +171,35 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
-        "alpamayo2-ray-sweep.yaml", "gpu",
+        "isaac-arena-evaluation-b200.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="isaac-arena",
+        notes=(
+            "Real completed-episode, state-only Isaac Lab-Arena policy_runner "
+            "evaluation on one B200; publishes scored JSONL and HTML report."
+        ),
+    ),
+    SubmitLiveCase(
+        "isaac-arena-evaluation-rtxpro.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="isaac-arena",
+        notes=(
+            "Real completed-episode Isaac Lab-Arena policy_runner evaluation "
+            "on RTX PRO 6000; additionally requires a recorded viewport MP4."
+        ),
+    ),
+    SubmitLiveCase(
+        "alpamayo2-ray-sweep.yaml",
+        "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="alpamayo2-super",
         notes="Real Ray scenario/seed/diffusion sweep; requires current staged NPA source and gated PhysicalAI-AV access.",
     ),
     SubmitLiveCase(
-        "alpamayo2-ray-hardcases.yaml", "gpu",
+        "alpamayo2-ray-hardcases.yaml",
+        "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="alpamayo2-super",
         notes="Ray baseline followed by error-threshold selection and matched-seed refinement; requires current staged NPA source.",
@@ -230,6 +334,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "CPU-only fail-closed execution of the installed SONIC accelerator "
             "resolver; publishes a manifest, test report, and time-structured RRD. "
             "Provider recognition and GPU execution remain separate assertions."
+        ),
+    ),
+    SubmitLiveCase(
+        "lerobot-subtask-proof.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes=(
+            "CPU-only post-review gate over real LeRobot v3 Parquet rows. The "
+            "harness seeds complete approach/grasp labels; the workflow publishes "
+            "a grasp proof bound to the source data-file digest."
         ),
     ),
     SubmitLiveCase(
@@ -933,6 +1047,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "robocasa-smoke.yaml",
         "gpu",
+        secret_envs=("ROBOCASA_TOKEN",),
         plan_only=True,
         plan_only_justification="npa-robocasa is a validation candidate; its image is not yet built or GPU-validated, so the native RoboCasa smoke cannot submit until the accepted digest and GPU evidence are recorded",
         notes="Native RoboCasa workbench smoke: task registration, asset availability, EGL reset, random rollout.",
@@ -940,8 +1055,18 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "robocasa-data-policy.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
+    ),
+    SubmitLiveCase(
+        "openarm-simulators.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="openarm",
+        notes=(
+            "Real Enactic OpenArm v2 MuJoCo control/render rollout followed by "
+            "runtime-fetched Isaac Sim/Lab reach rollout and upstream RSL-RL training."
+        ),
     ),
     SubmitLiveCase(
         "byof-openpi.yaml",

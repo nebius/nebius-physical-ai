@@ -348,9 +348,7 @@ def test_check_workbench_access_flags_failure_on_gated_denial() -> None:
     results = check_workbench_access(
         hf_token="hf_x",
         ngc_key="nvapi-x",
-        hf_validator=lambda *args: _HFResult(
-            ok=False, status_code=403, error="denied"
-        ),
+        hf_validator=lambda *args: _HFResult(ok=False, status_code=403, error="denied"),
         capabilities=["groot"],
     )
     assert has_failure(results) is True

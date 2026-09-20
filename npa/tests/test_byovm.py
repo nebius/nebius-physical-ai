@@ -28,7 +28,9 @@ class FakeSSH:
 
 
 def test_resolve_byovm_target_prefers_cli_then_env_then_credentials() -> None:
-    creds = CredentialsConfig(ssh_host="creds-host", ssh_user="creds-user", ssh_key_path="/creds/key")
+    creds = CredentialsConfig(
+        ssh_host="creds-host", ssh_user="creds-user", ssh_key_path="/creds/key"
+    )
 
     from_env = resolve_byovm_target(
         credentials=creds,
@@ -114,7 +116,9 @@ def test_byovm_uses_container_runtime_path() -> None:
     assert runtime_uses_container("byovm")
 
 
-def test_apply_storage_env_vars_respects_explicit_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_storage_env_vars_respects_explicit_vars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-access")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-secret")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")

@@ -106,7 +106,10 @@ def supervise_serverless_job(
             recoveries += 1
             continue
         reason = str(recovery.get("reason_code") or "UNCLASSIFIED")
-        if observation.get("reason_code") in {"AUTHORIZATION", "SERVERLESS_PROVIDER_ERROR"}:
+        if observation.get("reason_code") in {
+            "AUTHORIZATION",
+            "SERVERLESS_PROVIDER_ERROR",
+        }:
             reason = str(observation["reason_code"])
         remediation = str(recovery.get("remediation") or "")
         raise ServerlessSupervisionError(f"{reason}: {remediation}".strip())

@@ -209,6 +209,7 @@ UPLOAD_FAILURE_ERRORS = (
     S3UploadFailedError,
 )
 
+
 def _cosmos_gated_models(model: str) -> list[str]:
     return [model or DEFAULT_MODEL]
 
@@ -377,7 +378,9 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
-def _fail_serverless(exc: ServerlessClientError, output: OutputFormat = OutputFormat.text) -> None:
+def _fail_serverless(
+    exc: ServerlessClientError, output: OutputFormat = OutputFormat.text
+) -> None:
     typer.echo(format_error_for_user(exc, output_format=output.value), err=True)
     raise typer.Exit(1)
 
@@ -499,7 +502,9 @@ def _shared_cosmos_env_or_fail(cfg: Any, credentials: Any) -> dict[str, str]:
         if key in COSMOS_CREDENTIAL_ENV_NAMES and value
     }
     if not credential_env:
-        _fail("No shared credentials found in environment, ~/.npa/credentials.yaml, or project config.")
+        _fail(
+            "No shared credentials found in environment, ~/.npa/credentials.yaml, or project config."
+        )
     return credential_env
 
 
@@ -617,7 +622,9 @@ def _parse_env_read(stdout: str) -> tuple[str, str, str]:
     return env_path, mode, "\n".join(body) + ("\n" if body else "")
 
 
-def _read_current_env_for_dry_run(cfg: Any, credential_env: dict[str, str]) -> tuple[str, str, str]:
+def _read_current_env_for_dry_run(
+    cfg: Any, credential_env: dict[str, str]
+) -> tuple[str, str, str]:
     ssh = _ssh_client(cfg, extra_tokens=credential_env)
     try:
         _, stdout, _ = ssh.run_or_raise(_build_read_env_command(), stream=False)
@@ -883,7 +890,9 @@ def ensure_ingress_cmd(
         "-n",
         help="Workbench alias to repair. Defaults to the active workbench alias.",
     ),
-    source: str = ingress_source_option("Source CIDR allowed to reach the Cosmos server."),
+    source: str = ingress_source_option(
+        "Source CIDR allowed to reach the Cosmos server."
+    ),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Ensure public ingress for the saved Cosmos BYOVM alias."""
@@ -1170,7 +1179,9 @@ def _run_inference(req: InferRequest) -> dict[str, Any]:
 '''
 
 
-def _build_service_env_script(model: str, port: int, *, no_guardrails: bool = False) -> str:
+def _build_service_env_script(
+    model: str, port: int, *, no_guardrails: bool = False
+) -> str:
     """Publish a systemd environment atomically without exposing token bytes."""
     values = {
         "COSMOS_MODEL_ID": model,
@@ -1181,8 +1192,14 @@ def _build_service_env_script(model: str, port: int, *, no_guardrails: bool = Fa
         "HF_HOME": COSMOS_HF_CACHE,
         "HUGGINGFACE_HUB_CACHE": COSMOS_HF_CACHE,
     }
-    if any(ord(char) < 32 or ord(char) == 127 for value in values.values() for char in value):
-        raise ValueError("Cosmos environment values must not contain control characters")
+    if any(
+        ord(char) < 32 or ord(char) == 127
+        for value in values.values()
+        for char in value
+    ):
+        raise ValueError(
+            "Cosmos environment values must not contain control characters"
+        )
     encoded = base64.b64encode(json.dumps(values).encode()).decode("ascii")
     return f"""\
 (
@@ -1212,7 +1229,9 @@ sudo mv -fT -- "$stage/env" /etc/npa-cosmos-server/env
 """
 
 
-def _build_install_command(model: str, port: int, *, no_guardrails: bool = False) -> str:
+def _build_install_command(
+    model: str, port: int, *, no_guardrails: bool = False
+) -> str:
     server_py = _build_server_py(model)
     model_slug = _model_slug(model)
     service_env = _build_service_env_script(model, port, no_guardrails=no_guardrails)
@@ -1266,10 +1285,10 @@ curl -L -o "$transformer_engine_wheel" "{COSMOS_TRANSFORMER_ENGINE_WHEEL_URL}"
 cat > {COSMOS_HOME}/server.py <<'PY'
 {server_py}
 PY
-{load_env_file_script('/opt/lerobot/.env', required=False)}
+{load_env_file_script("/opt/lerobot/.env", required=False)}
 export HF_HOME={COSMOS_HF_CACHE}
 export HUGGINGFACE_HUB_CACHE={COSMOS_HF_CACHE}
-{COSMOS_VENV}/bin/huggingface-cli download {shlex.quote(model)} --local-dir {shlex.quote(f'{COSMOS_MODEL_DIR}/{model_slug}')}
+{COSMOS_VENV}/bin/huggingface-cli download {shlex.quote(model)} --local-dir {shlex.quote(f"{COSMOS_MODEL_DIR}/{model_slug}")}
 {service_env}
 sudo tee /etc/systemd/system/{COSMOS_SERVICE}.service >/dev/null <<'UNIT'
 [Unit]
@@ -1430,7 +1449,8 @@ def _serverless_job_env(
         or shared_env.get("HUGGING_FACE_HUB_TOKEN")
     )
     s3_credentials = {
-        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_access_key_id": storage.aws_access_key_id
+        or shared_env.get("AWS_ACCESS_KEY_ID", ""),
         "aws_secret_access_key": storage.aws_secret_access_key
         or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
         "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
@@ -1469,9 +1489,8 @@ print("NPA_COSMOS_TRAIN_SMOKE_DONE", uri.rstrip("/") + "/checkpoint.json", flush
 
 def _serverless_project_id(cfg: Any) -> str:
     serverless = getattr(cfg, "serverless", None)
-    return (
-        str(getattr(serverless, "project_id", "") or "")
-        or str(getattr(cfg, "project_id", "") or "")
+    return str(getattr(serverless, "project_id", "") or "") or str(
+        getattr(cfg, "project_id", "") or ""
     )
 
 
@@ -1485,7 +1504,9 @@ def _delete_serverless_endpoint_for_config(
     if not project_id:
         raise ServerlessClientError("Serverless project_id is not saved for this alias")
     if not endpoint_ref:
-        raise ServerlessClientError("Serverless endpoint ID/name is not saved for this alias")
+        raise ServerlessClientError(
+            "Serverless endpoint ID/name is not saved for this alias"
+        )
     if dry_run:
         return {
             "status": "dry_run",
@@ -1507,7 +1528,9 @@ def _serverless_endpoint_status(cfg: Any) -> EndpointInfo:
     if not project_id:
         raise ServerlessClientError("Serverless project_id is not saved for this alias")
     if not endpoint_ref:
-        raise EndpointNotFoundError("Serverless endpoint ID/name is not saved for this alias")
+        raise EndpointNotFoundError(
+            "Serverless endpoint ID/name is not saved for this alias"
+        )
     return ServerlessClient().get_endpoint(project_id, endpoint_ref)
 
 
@@ -1600,7 +1623,11 @@ def _deploy_serverless_endpoint(
     extra_env = _serverless_hf_env()
 
     existing = workbench_entry(proj_alias, wb_name)
-    if existing and str(existing.get("runtime", "")).lower() == "serverless" and not replace:
+    if (
+        existing
+        and str(existing.get("runtime", "")).lower() == "serverless"
+        and not replace
+    ):
         _fail(
             f"Serverless alias {proj_alias}/{wb_name} already exists. "
             "Use --replace to delete and recreate the endpoint."
@@ -1723,7 +1750,9 @@ def _deploy_serverless_endpoint(
     }
     if output == OutputFormat.text:
         console.print("")
-        console.print(f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})")
+        console.print(
+            f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})"
+        )
     _output(result, output)
 
 
@@ -1744,8 +1773,12 @@ def autoscale_cmd(
         "--target-concurrency",
         help="Optional target concurrent requests per replica.",
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show the autoscale plan only."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show the autoscale plan only."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Configure Cosmos serverless endpoint autoscaling."""
     if min_replicas < 0:
@@ -1763,7 +1796,9 @@ def autoscale_cmd(
     project_id = _serverless_project_id(cfg)
     endpoint_ref = _serverless_endpoint_ref(cfg)
     if not project_id or not endpoint_ref:
-        _fail("Cosmos autoscale requires saved serverless project and endpoint metadata.")
+        _fail(
+            "Cosmos autoscale requires saved serverless project and endpoint metadata."
+        )
 
     plan = {
         "project": getattr(cfg, "project", ""),
@@ -1823,9 +1858,11 @@ def autoscale_cmd(
 
 
 def _env_dry_run() -> bool:
-    return os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
-        "DRY_RUN", ""
-    ).lower() in {"1", "true", "yes"}
+    return os.environ.get("NPA_DRY_RUN", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    } or os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
 
 
 def _read_existing_outputs(
@@ -1958,13 +1995,19 @@ def cleanup_partial_cmd(
 
     state = classify_alias_state(proj_alias, wb_name)
     if state == "fresh":
-        typer.echo(f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up.")
+        typer.echo(
+            f"No terraform state found for {proj_alias}/{wb_name}. Nothing to clean up."
+        )
         return
     if state == "byovm":
-        typer.echo(f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} is BYOVM. No terraform resources to clean."
+        )
         return
     if state == "fully_deployed":
-        typer.echo(f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead.")
+        typer.echo(
+            f"Alias {proj_alias}/{wb_name} appears fully deployed. Use `teardown` instead."
+        )
         raise typer.Exit(code=1)
 
     try:
@@ -2181,7 +2224,9 @@ def deploy_cmd(
     env_region = region or (saved_env.region if saved_env else "")
 
     if not proj_alias:
-        proj_alias = env_region or ("serverless" if serverless else ("byovm" if byovm else "default"))
+        proj_alias = env_region or (
+            "serverless" if serverless else ("byovm" if byovm else "default")
+        )
 
     credentials = resolve_credentials()
     if not destroy and not skip_app:
@@ -2514,7 +2559,9 @@ def deploy_cmd(
                         )
                     )
                 if plan_analysis.decision == PlanDecision.NO_CHANGES:
-                    console.print("    Terraform plan has no changes; deploy is a no-op.")
+                    console.print(
+                        "    Terraform plan has no changes; deploy is a no-op."
+                    )
                     tf_outputs = provisioner.outputs(tf_dir=resolved_tf_dir or None)
                 else:
                     tf_outputs = provisioner.apply(
@@ -2864,7 +2911,10 @@ def deploy_cmd(
                     name=wb_name,
                 ),
                 source=str(merged_vars.get("application_cidr_block", "")),
-                allow_world_open=str(merged_vars.get("allow_world_open_application", "false")).lower() == "true",
+                allow_world_open=str(
+                    merged_vars.get("allow_world_open_application", "false")
+                ).lower()
+                == "true",
                 warn=console.print,
             )
 
@@ -2924,7 +2974,9 @@ def teardown_cmd(
     """Delete a Cosmos serverless endpoint and remove its local alias."""
     cfg = _get_config()
     if not is_serverless_runtime(getattr(cfg, "runtime", "")):
-        _fail("Cosmos teardown currently supports --runtime serverless aliases. Use deploy --destroy for VM aliases.")
+        _fail(
+            "Cosmos teardown currently supports --runtime serverless aliases. Use deploy --destroy for VM aliases."
+        )
 
     if not yes and not dry_run:
         _confirm_or_exit(f"Delete serverless endpoint for '{cfg.project}/{cfg.name}'?")
@@ -2991,7 +3043,9 @@ def reload_env_cmd(
                     "port": service_port,
                     "diff": diff,
                     "commands": [
-                        f"systemctl restart {COSMOS_SERVICE}" if restart else "no restart",
+                        f"systemctl restart {COSMOS_SERVICE}"
+                        if restart
+                        else "no restart",
                         f"curl http://127.0.0.1:{service_port}/health",
                     ],
                 },
@@ -3100,7 +3154,9 @@ def serve_cmd(
                 _build_serve_command(model, port, no_guardrails=no_guardrails),
                 label="Cosmos serve",
             )
-            ssh.run_or_raise(_build_load_command(port, model), label="Cosmos model load")
+            ssh.run_or_raise(
+                _build_load_command(port, model), label="Cosmos model load"
+            )
         except SSHError as exc:
             _fail(f"SSH error: {exc}")
             return
@@ -3133,22 +3189,54 @@ def finetune_cmd() -> None:
 def train_cmd(
     action: str = typer.Argument("submit", help="submit, status, or cancel."),
     job_id: str = typer.Argument("", help="Job ID or name for status/cancel."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Application runtime. serverless creates a Nebius AI Job for Cosmos training."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
-    image: str = typer.Option("", "--image", help="Container image for the training job."),
-    gpu_type: str = typer.Option("gpu-h200-sxm", "--gpu-type", help="Nebius GPU platform."),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help="Application runtime. serverless creates a Nebius AI Job for Cosmos training.",
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless Jobs."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image for the training job."
+    ),
+    gpu_type: str = typer.Option(
+        "gpu-h200-sxm", "--gpu-type", help="Nebius GPU platform."
+    ),
     gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count."),
-    gpu_preset: str = typer.Option("1gpu-16vcpu-200gb", "--gpu-preset", help="Nebius GPU preset."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
-    output_path: str = typer.Option("", "--output-path", "--output", help="S3 checkpoint output URI."),
-    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
-    smoke: bool = typer.Option(False, "--smoke", help="Run the minimal e2e smoke workload."),
-    smoke_seconds: int = typer.Option(0, "--smoke-seconds", help="Seconds the smoke job should run."),
-    require_hf: bool = typer.Option(False, "--require-hf", help="Require HF token inside the job."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit and return before polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between status checks."),
-    timeout: float = typer.Option(2400.0, "--timeout", help="Seconds to wait for completion."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="CLI output format."),
+    gpu_preset: str = typer.Option(
+        "1gpu-16vcpu-200gb", "--gpu-preset", help="Nebius GPU preset."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
+    ),
+    output_path: str = typer.Option(
+        "", "--output-path", "--output", help="S3 checkpoint output URI."
+    ),
+    job_name: str = typer.Option(
+        "", "--job-name", help="Explicit serverless Job name."
+    ),
+    smoke: bool = typer.Option(
+        False, "--smoke", help="Run the minimal e2e smoke workload."
+    ),
+    smoke_seconds: int = typer.Option(
+        0, "--smoke-seconds", help="Seconds the smoke job should run."
+    ),
+    require_hf: bool = typer.Option(
+        False, "--require-hf", help="Require HF token inside the job."
+    ),
+    submit_only: bool = typer.Option(
+        False, "--submit-only", help="Submit and return before polling."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between status checks."
+    ),
+    timeout: float = typer.Option(
+        2400.0, "--timeout", help="Seconds to wait for completion."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="CLI output format."
+    ),
 ) -> None:
     if not is_serverless_runtime(runtime):
         _fail("Cosmos train currently supports --runtime serverless only.")
@@ -3178,16 +3266,22 @@ def train_cmd(
         if not ref:
             _fail("Provide a job ID or name for train cancel.")
         info = client.cancel_job(ref, resolved_project_id)
-        _output({"job_id": info.id, "job_name": info.name, "status": info.status}, output)
+        _output(
+            {"job_id": info.id, "job_name": info.name, "status": info.status}, output
+        )
         return
     if action != "submit":
         _fail("Cosmos train action must be submit, status, or cancel.")
     if not smoke:
-        _fail("Cosmos train requires --smoke until full Cosmos training is implemented.")
+        _fail(
+            "Cosmos train requires --smoke until full Cosmos training is implemented."
+        )
     try:
-        resolved_gpu_type, resolved_gpu_preset, resolved_gpu_count = resolve_gpu_platform(
-            gpu_type,
-            gpu_count,
+        resolved_gpu_type, resolved_gpu_preset, resolved_gpu_count = (
+            resolve_gpu_platform(
+                gpu_type,
+                gpu_count,
+            )
         )
     except ValueError as exc:
         _fail(str(exc))
@@ -3204,8 +3298,26 @@ def train_cmd(
     except EndpointNotFoundError:
         existing = None
     if existing is not None:
-        info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
-        _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output)
+        info = (
+            existing
+            if submit_only or existing.status in {"succeeded", "failed", "cancelled"}
+            else client.poll_job(
+                existing.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=timeout,
+            )
+        )
+        _output(
+            {
+                "status": "existing",
+                "job_id": info.id,
+                "job_name": info.name,
+                "job_status": info.status,
+                "output_path": out,
+            },
+            output,
+        )
         return
     try:
         subnet_id = resolve_subnet(
@@ -3214,7 +3326,9 @@ def train_cmd(
         )
     except SubnetResolutionError as exc:
         _fail(str(exc))
-    env, extra_env = _serverless_job_env(proj_alias, require_hf=require_hf, output_path=out)
+    env, extra_env = _serverless_job_env(
+        proj_alias, require_hf=require_hf, output_path=out
+    )
     env.update({"COSMOS_TRAIN_SMOKE": "1", "NPA_JOB_NAME": name})
     try:
         info = client.create_job(
@@ -3231,14 +3345,27 @@ def train_cmd(
             extra_env=extra_env,
         )
         if not submit_only:
-            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=timeout,
+            )
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
         _fail_serverless(exc, output)
     except TimeoutError as exc:
         _fail(str(exc))
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+        },
+        output,
+    )
 
 
 @app.command(

@@ -23,6 +23,9 @@ def _successful_storage_probe(monkeypatch):
     resolved_binaries: list[str] = []
     from npa.clients import storage_validation
     from npa.clients.storage_validation import StorageProbeResult
+    from npa.orchestration.skypilot import local_api
+
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
 
     monkeypatch.setattr(
         storage_validation,
@@ -90,6 +93,7 @@ def _successful_storage_probe(monkeypatch):
         "npa.cli.cluster.terraform_lifecycle._check_skypilot_kubernetes",
         lambda *_args, **_kwargs: ("sky", {}, "config"),
     )
+
     # provision_if_absent resolves kubectl before calling the validator stubbed
     # above, so without this the cached-cluster tests pass only on a machine that
     # happens to have kubectl installed. Nothing here ever executes the binary.
@@ -167,7 +171,9 @@ def _capture_mk8s_backend_plan(monkeypatch: pytest.MonkeyPatch) -> dict[str, obj
         def preflight(self, desired, request):  # noqa: ANN001, ANN202
             return backend.preflight(desired, request)
 
-    monkeypatch.setattr(cluster_backends, "get_backend", lambda _name: CapturingBackend())
+    monkeypatch.setattr(
+        cluster_backends, "get_backend", lambda _name: CapturingBackend()
+    )
     return seen
 
 
@@ -213,6 +219,72 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
+def test_provision_dry_run_keeps_absent_project_quota_unknown_after_tenant_rbac_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty project response must not authorize a quota-backed mutation."""
+    _write_runtime(tmp_path, monkeypatch)
+    from npa import provisioning_preflight
+    from npa.clients import nebius
+
+    calls: list[str] = []
+
+    def tenant_denied(parent_id: str, _region: str, _names):
+        calls.append(parent_id)
+        raise nebius.NebiusError("PermissionDenied")
+
+    monkeypatch.setattr(provisioning_preflight, "read_provider_quotas", tenant_denied)
+    monkeypatch.setattr(
+        nebius,
+        "list_quota_allowances",
+        lambda parent_id: calls.append(parent_id) or {"items": []},
+    )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+    )
+
+    assert result.status == "unknown"
+    assert calls == ["tenant-1", "project-1"]
+    scope = next(
+        item
+        for item in result.preflight["checks"]
+        if item["name"] == "quota_evidence_scope"
+    )
+    assert scope["status"] == "unknown"
+
+
+def test_provision_blocks_mutation_when_project_quota_is_absent_after_rbac_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The project fallback is fail-closed before Terraform can create nodes."""
+    _write_runtime(tmp_path, monkeypatch)
+    from npa import provisioning_preflight
+    from npa.clients import nebius
+    from npa.provisioning_preflight import PreflightBlockedError
+
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "read_provider_quotas",
+        lambda *_args: (_ for _ in ()).throw(nebius.NebiusError("PermissionDenied")),
+    )
+    monkeypatch.setattr(nebius, "list_quota_allowances", lambda _parent: {"items": []})
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd",
+        lambda **_kwargs: pytest.fail("quota-blocked plan must not create a cluster"),
+    )
+
+    with pytest.raises(PreflightBlockedError, match="quota"):
+        provisioning.provision_if_absent(
+            project="proj",
+            kubeconfig=tmp_path / "missing-kubeconfig",
+            skip_s3=True,
+        )
+
+
 def test_provision_if_absent_dry_run_preserves_strict_reserved_topology(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -254,6 +326,7 @@ def test_reserved_capacity_recovery_uses_the_effective_topology(
 ) -> None:
     _write_runtime(tmp_path, monkeypatch)
     from npa.provisioning_journal import ProvisioningOperation
+
     monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
     monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_a, **_k: False)
     applied: dict[str, object] = {}
@@ -281,6 +354,52 @@ def test_reserved_capacity_recovery_uses_the_effective_topology(
     )
     assert applied["capacity_block_group"] == "capacityblockgroup-example"
     assert applied["preemptible"] is False
+
+
+def test_empty_failed_operation_can_start_a_new_topology_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A GPU preflight failure must not block a later CPU-only retry forever."""
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    calls: list[dict] = []
+
+    def up_cmd(**kwargs):
+        calls.append(kwargs)
+        if kwargs["gpu_nodes"] == 1:
+            raise RuntimeError("synthetic pre-resource failure")
+
+    monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", up_cmd)
+    kubeconfig = tmp_path / "missing-kubeconfig"
+    with pytest.raises(RuntimeError, match="synthetic pre-resource failure"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="retry-shape",
+            kubeconfig=kubeconfig,
+            skip_s3=True,
+            cpu_nodes=0,
+            gpu_nodes=1,
+        )
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="retry-shape",
+        kubeconfig=kubeconfig,
+        skip_s3=True,
+        cpu_nodes=1,
+        gpu_nodes=0,
+    )
+
+    assert result.operation_id.endswith("-r1")
+    assert [call["gpu_nodes"] for call in calls] == [1, 0]
+    from npa.provisioning_journal import ProvisioningOperation
+
+    first = ProvisioningOperation(result.operation_id.removesuffix("-r1")).read()
+    second = ProvisioningOperation(result.operation_id).read()
+    assert first["phase"] == "rolled-back"
+    assert first["rollback"]["completed"] is True
+    assert second["preflight_plan"]["topology"]["gpu_nodes"] == 0
+    assert second["preflight_plan"]["topology"]["cpu_nodes"] == 1
 
 
 def test_provision_if_absent_preflight_uses_terraform_disk_overrides(

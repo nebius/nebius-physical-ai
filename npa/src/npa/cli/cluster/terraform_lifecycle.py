@@ -67,6 +67,11 @@ from npa.provisioning_journal import (
     operation_context,
 )
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+from npa.orchestration.skypilot.cluster_validation import (
+    cluster_validation_session,
+    current_validation_session,
+    validation_session,
+)
 
 _DEFAULT_TERRAFORM_SUBDIR = Path("deploy") / "cluster"
 _DEFAULT_SKYPILOT_BIN = Path.home() / ".npa" / "skypilot-venv" / "bin" / "sky"
@@ -79,6 +84,10 @@ _GIB = 1024**3
 # wall of "Unsupported Terraform Core version" / "Unsupported block type" errors
 # from vendored files the operator never wrote. Check up front instead.
 _MIN_TERRAFORM_VERSION = (1, 12, 0)
+
+
+class _ClusterNameCollisionError(RuntimeError):
+    """Terraform rejected creation because the requested cluster name exists."""
 
 
 def _redacted_exception_message(prefix: str, exc: BaseException) -> str:
@@ -579,10 +588,7 @@ def up_cmd(
                 _tfvar_value(tfvars, env, "existing_filestore", "") or ""
             ),
             filesystem_csi_chart_repository=str(
-                _tfvar_value(
-                    tfvars, env, "filesystem_csi_chart_repository", ""
-                )
-                or ""
+                _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
             ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
@@ -671,7 +677,10 @@ def up_cmd(
             # legacy Terraform state keeps its established reconciliation
             # checks below instead of being reclassified as fleet state.
             provider_preflight=(
-                mig_enabled or (not legacy_state_exists and shared_recipe_available)
+                inherited_plan is None
+                and (
+                    mig_enabled or (not legacy_state_exists and shared_recipe_available)
+                )
             ),
             scope=MK8sExecutionScope(
                 fleet_name=one_target.name,
@@ -778,19 +787,7 @@ def up_cmd(
                     "Terraform apply and identity persistence still completed."
                 )
             if sky_smoke and mig_desired is None:
-                from npa.orchestration.skypilot.k8s_gpu_catalog import (
-                    wait_for_kubernetes_accelerators,
-                )
-
-                wait_for_kubernetes_accelerators(
-                    [sky_gpus] if sky_gpus.strip() else [],
-                    context=context,
-                    kubeconfig=kubeconfig_path,
-                    sky_bin=sky_bin or None,
-                    label_known_gpus=True,
-                    on_status=lambda message: typer.echo(message, err=True),
-                )
-                _run_skypilot_smoke(
+                _validate_skypilot_readiness(
                     kubeconfig_path,
                     context,
                     backend_desired.name,
@@ -897,13 +894,19 @@ def up_cmd(
                     terraform_env=env,
                     terraform_timeout_seconds=timeout * 60,
                     terraform_cancel_reason=lambda: watcher.fatal_reason,
-                    command_runner=_run_stream,
+                    command_runner=_run_stream_with_captured_output,
                 ),
             )
         except BaseException as exc:
             watcher.stop()
+            error_to_report: BaseException = exc
+            if _is_cluster_name_collision(exc):
+                error_to_report = _ClusterNameCollisionError(
+                    "Terraform rejected the requested cluster name because it already exists"
+                )
             typer.echo(
-                _redacted_exception_message("terraform apply error", exc), err=True
+                _redacted_exception_message("terraform apply error", error_to_report),
+                err=True,
             )
             operation = current_operation()
             rolled_back = False
@@ -924,6 +927,8 @@ def up_cmd(
                 )
             if not rolled_back:
                 _echo_apply_recovery(tf_dir, tfvars, isinstance(exc, KeyboardInterrupt))
+            if isinstance(error_to_report, _ClusterNameCollisionError):
+                raise error_to_report from exc
             raise
         finally:
             watcher.stop()
@@ -1058,30 +1063,12 @@ def up_cmd(
                 f"default StorageClass {validation['default_storage_class']}"
             )
         if sky_smoke and mig_desired is None:
-            from npa.orchestration.skypilot.k8s_gpu_catalog import (
-                wait_for_kubernetes_accelerators,
-            )
-
-            _check_skypilot_kubernetes(
-                kubeconfig_path,
-                context,
-                sky_bin=sky_bin,
-            )
-            wait_for_kubernetes_accelerators(
-                [sky_gpus] if sky_gpus.strip() else [],
-                context=context,
-                kubeconfig=kubeconfig_path,
-                sky_bin=sky_bin or None,
-                label_known_gpus=True,
-                on_status=lambda message: typer.echo(message, err=True),
-            )
-            _run_skypilot_smoke(
+            _validate_skypilot_readiness(
                 kubeconfig_path,
                 context,
                 cluster_name,
                 sky_gpus,
                 sky_bin=sky_bin,
-                credentials_checked=True,
             )
         elif sky_smoke and mig_desired is not None:
             typer.echo(
@@ -2251,6 +2238,31 @@ def _run_stream(
         raise typer.BadParameter(str(exc)) from exc
 
 
+def _run_stream_with_captured_output(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout: int | None = None,
+    cancel: Callable[[], str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run Terraform while retaining diagnostics for a safe error classification."""
+    return _run_stream(
+        args,
+        cwd=cwd,
+        env=env,
+        timeout=timeout,
+        cancel=cancel,
+        capture_output=True,
+    )
+
+
+def _is_cluster_name_collision(exc: BaseException) -> bool:
+    """Return whether Terraform reported that creation collided with an existing name."""
+    message = str(exc).lower()
+    return "alreadyexists" in message or "already exists" in message
+
+
 def _stop_process(process: subprocess.Popen[str]) -> None:
     """Compatibility alias for tests and older internal callers."""
 
@@ -2463,6 +2475,20 @@ def _capacity_block_group_var_args(capacity_block_group: str) -> list[str]:
 _SSH_PUBLIC_KEY_NAMES = ("id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub")
 
 
+def _authorized_key_from_file(path: Path) -> str:
+    """Return the first plain public-key entry from an ``authorized_keys`` file."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        value = line.strip()
+        if value.startswith(("ssh-ed25519 ", "ssh-rsa ", "ecdsa-sha2-")):
+            return value
+    return ""
+
+
 def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) -> str:
     """Resolve legacy path-or-key tfvars into the shared recipe's key value."""
 
@@ -2470,6 +2496,24 @@ def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) 
     if raw is None:
         raw = env.get("TF_VAR_ssh_public_key", "")
     document = str(raw or "").strip()
+    # ``TF_VAR_*`` is commonly set from shell or service-manager environments.
+    # Accept the JSON object representation too: an earlier agent backend used
+    # ``json.dumps({"path": ...})`` while Terraform's CLI examples use HCL.
+    # Keeping both forms makes an in-place agent upgrade safe.
+    try:
+        json_object = json.loads(document)
+    except json.JSONDecodeError:
+        json_object = None
+    if isinstance(json_object, dict):
+        key = json_object.get("key")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+        path_value = json_object.get("path")
+        if isinstance(path_value, str) and path_value.strip():
+            path = Path(path_value).expanduser()
+            if not path.is_file():
+                raise typer.BadParameter(f"SSH public key path does not exist: {path}")
+            return path.read_text(encoding="utf-8").strip()
     key_match = re.search(r'\bkey\s*=\s*"([^"]+)"', document, re.DOTALL)
     if key_match:
         return key_match.group(1).strip()
@@ -2482,6 +2526,12 @@ def _resolve_shared_ssh_public_key(tfvars: dict[str, Any], env: dict[str, str]) 
     if document and document.startswith(("ssh-", "ecdsa-")):
         return document
     explicit = os.environ.get("NPA_SSH_PUBLIC_KEY", "").strip()
+    if explicit:
+        explicit_path = Path(explicit).expanduser()
+        if explicit_path.name == "authorized_keys":
+            authorized_key = _authorized_key_from_file(explicit_path)
+            if authorized_key:
+                return authorized_key
     candidates = (
         [Path(explicit).expanduser()]
         if explicit
@@ -2526,6 +2576,13 @@ def _ssh_public_key_var_args(
     )
     for candidate in candidates:
         if candidate.is_file():
+            if candidate.name == "authorized_keys":
+                authorized_key = _authorized_key_from_file(candidate)
+                if authorized_key:
+                    return [
+                        "-var",
+                        "ssh_public_key={key=" + json.dumps(authorized_key) + "}",
+                    ]
             return ["-var", f'ssh_public_key={{path="{candidate}"}}']
     if allow_placeholder:
         return [
@@ -4000,6 +4057,34 @@ def _gpus_per_node(preset: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+def _validate_skypilot_readiness(
+    kubeconfig_path, context, cluster_name, sky_gpus, *, sky_bin=""
+):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        wait_for_kubernetes_accelerators,
+    )
+
+    with cluster_validation_session(kubeconfig_path, context):
+        _check_skypilot_kubernetes(kubeconfig_path, context, sky_bin=sky_bin)
+        _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_bin=sky_bin)
+        wait_for_kubernetes_accelerators(
+            [sky_gpus] if sky_gpus.strip() else [],
+            context=context,
+            kubeconfig=kubeconfig_path,
+            sky_bin=sky_bin or None,
+            label_known_gpus=True,
+            on_status=lambda message: typer.echo(message, err=True),
+        )
+        _run_skypilot_smoke(
+            kubeconfig_path,
+            context,
+            cluster_name,
+            sky_gpus,
+            sky_bin=sky_bin,
+            credentials_checked=True,
+        )
+
+
 def _skypilot_context(
     kubeconfig_path: Path,
     context: str,
@@ -4010,8 +4095,6 @@ def _skypilot_context(
         sky_bin or os.environ.get("NPA_SKYPILOT_BIN") or str(_DEFAULT_SKYPILOT_BIN)
     )
     sky = _require_bin(executable)
-    env = os.environ.copy()
-    env["KUBECONFIG"] = str(kubeconfig_path)
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
         exact_kubernetes_context_config,
     )
@@ -4025,21 +4108,19 @@ def _skypilot_context(
     return sky, env, config_override
 
 
+@validation_session
 def _check_skypilot_kubernetes(
     kubeconfig_path: Path,
     context: str,
     *,
     sky_bin: str = "",
 ) -> tuple[str, dict[str, str], str]:
-    """Enable and verify SkyPilot against the exact Kubernetes context."""
+    """Verify the exact context; a direct call closes its no-launch API session."""
 
     sky, env, config_override = _skypilot_context(
         kubeconfig_path, context, sky_bin=sky_bin
     )
-    # SkyPilot auto-starts a long-lived local API server and that daemon inherits
-    # the CLI process's cwd.  Keep it on the durable cluster state directory: a
-    # deleted Terraform/temp cwd later makes every rsync fail with getcwd(2).
-    sky_cwd = kubeconfig_path.parent
+    sky_cwd = Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"])
     check_result = _run_stream(
         [
             sky,
@@ -4062,10 +4143,12 @@ def _check_skypilot_kubernetes(
         raise RuntimeError(
             "SkyPilot returned success without enabling the exact Kubernetes context"
         )
+    current_validation_session().credentials_checked = True
     typer.echo(f"SkyPilot Kubernetes credentials verified for context {context!r}.")
     return sky, env, config_override
 
 
+@validation_session
 def _run_skypilot_smoke(
     kubeconfig_path: Path,
     context: str,
@@ -4075,7 +4158,7 @@ def _run_skypilot_smoke(
     sky_bin: str = "",
     credentials_checked: bool = False,
 ) -> None:
-    if credentials_checked:
+    if credentials_checked and current_validation_session().credentials_checked:
         sky, env, config_override = _skypilot_context(
             kubeconfig_path, context, sky_bin=sky_bin
         )
@@ -4084,46 +4167,85 @@ def _run_skypilot_smoke(
             kubeconfig_path, context, sky_bin=sky_bin
         )
     infra = f"k8s/{context}"
-    sky_cwd = kubeconfig_path.parent
+    sky_cwd = Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"])
+    session = current_validation_session()
+    smoke_name = _sky_cluster_name(cluster_name)
+    _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, sky_bin=sky_bin)
     accelerator = sky_gpus.strip() or _detect_skypilot_gpu(
         sky, infra, env, config_override=config_override, cwd=sky_cwd
     )
-    smoke_name = _sky_cluster_name(cluster_name)
-    try:
-        _run_stream(
-            [
-                sky,
-                "launch",
-                "--config",
-                config_override,
-                "-c",
-                smoke_name,
-                "--infra",
-                infra,
-                "--gpus",
-                accelerator,
-                "-y",
-                "nvidia-smi",
-            ],
-            cwd=sky_cwd,
-            env=env,
-            timeout=1800,
-        )
-    finally:
-        _run_stream(
-            [sky, "down", "--config", config_override, "--yes", smoke_name],
-            cwd=sky_cwd,
-            env=env,
-            timeout=600,
-        )
-        _wait_for_sky_down(
-            sky,
-            smoke_name,
-            env,
-            config_override=config_override,
-            cwd=sky_cwd,
-        )
+    session.begin_smoke(smoke_name)
+    _skypilot_smoke_attempt(
+        sky, smoke_name, infra, accelerator, env, config_override, sky_cwd
+    )
     typer.echo(f"SkyPilot smoke passed and {smoke_name} was removed.")
+
+
+@validation_session
+def _recover_skypilot_smoke(kubeconfig_path, context, cluster_name, *, sky_bin=""):
+    session = current_validation_session()
+    if not session.pending_smoke:
+        return
+    name = _sky_cluster_name(cluster_name)
+    if session.pending_smoke != name:
+        raise RuntimeError(
+            "Recover the recorded validation smoke with its original cluster command first"
+        )
+    sky, env, override = _skypilot_context(kubeconfig_path, context, sky_bin=sky_bin)
+    _remove_skypilot_smoke(
+        sky, name, env, override, Path(env["NPA_SKYPILOT_ISOLATED_API_DIR"])
+    )
+
+
+def _launch_skypilot_smoke(sky, name, infra, accelerator, env, config_override, cwd):
+    _run_stream(
+        [
+            sky,
+            "launch",
+            "--config",
+            config_override,
+            "-c",
+            name,
+            "--infra",
+            infra,
+            "--gpus",
+            accelerator,
+            "-y",
+            "nvidia-smi",
+        ],
+        cwd=cwd,
+        env=env,
+        timeout=1800,
+    )
+
+
+def _skypilot_smoke_attempt(sky, name, infra, accelerator, env, config_override, cwd):
+    try:
+        _launch_skypilot_smoke(sky, name, infra, accelerator, env, config_override, cwd)
+    except BaseException as primary:
+        try:
+            _remove_skypilot_smoke(sky, name, env, config_override, cwd)
+        except Exception:
+            note = "Owned smoke cleanup also failed; preserve the validation session for recovery."
+            add_note = getattr(primary, "add_note", None)
+            if callable(add_note):
+                add_note(note)
+            else:
+                typer.echo(note, err=True)
+        raise
+    else:
+        _remove_skypilot_smoke(sky, name, env, config_override, cwd)
+
+
+def _remove_skypilot_smoke(sky, name, env, config_override, cwd):
+    _run_stream(
+        [sky, "down", "--config", config_override, "--yes", name],
+        cwd=cwd,
+        env=env,
+        timeout=600,
+    )
+    _wait_for_sky_down(sky, name, env, config_override=config_override, cwd=cwd)
+    current_validation_session().smoke_removed()
 
 
 def _detect_skypilot_gpu(
@@ -4196,7 +4318,9 @@ def _wait_for_sky_down(
             )
         names = [row["name"] for row in rows]
         if len(set(names)) != len(names):
-            raise typer.BadParameter("SkyPilot cleanup status contains ambiguous identities")
+            raise typer.BadParameter(
+                "SkyPilot cleanup status contains ambiguous identities"
+            )
         if cluster_name not in names:
             return
         time.sleep(10)

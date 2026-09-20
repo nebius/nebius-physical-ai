@@ -167,12 +167,12 @@ for "it worked in my shell but the submit could not resolve the secret": submit
 resolves each requested secret from the explicit process environment first, then
 the selected project's configured NPA credentials.
 
-## Hidden sim2real check
+## Sim2real preflight check
 
-`npa workbench health sim2real` exists but is hidden, and is specific to the
-14-stage Sim2Real graph rather than general readiness. It adds cluster-shaped
-checks (`config`, `coherence`, `s3`, `registry`, `tokens`, `cluster`) including
-schedulable GPU count and kube-context pinning:
+`npa workbench health sim2real` is specific to the 14-stage Sim2Real graph
+rather than general readiness. It adds cluster-shaped checks (`config`,
+`coherence`, `s3`, `registry`, `tokens`, `cluster`) including schedulable GPU
+count and kube-context pinning:
 
 ```bash
 npa workbench health sim2real --checks all --json

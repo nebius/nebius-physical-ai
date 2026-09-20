@@ -15,9 +15,14 @@ from npa.cluster.config import DEFAULT_REGION, SUPPORTED_REGIONS
 from npa.deploy.images import container_image_for_tool, sonic_image_entry
 from npa.workbench.gpu_classes import DATACENTER_HEADLESS, classify_gpu_target
 from npa.workbench.sonic.routing import FINETUNE, validate_gpu_routing
-from npa.orchestration.skypilot.controller import DEFAULT_CONTROLLER_BACKEND, ControllerBackend
+from npa.orchestration.skypilot.controller import (
+    DEFAULT_CONTROLLER_BACKEND,
+    ControllerBackend,
+)
 from npa.orchestration.skypilot.workflow import WorkflowResult
-from npa.orchestration.skypilot.workflow import submit_workflow as _submit_skypilot_workflow
+from npa.orchestration.skypilot.workflow import (
+    submit_workflow as _submit_skypilot_workflow,
+)
 
 
 DEFAULT_S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud"
@@ -123,9 +128,13 @@ def materialize_sonic_workflow(
         image_variant=resolved_variant,
         workload=FINETUNE,
     )
-    resolved_retargeting_image = container_image_for_tool("retargeting", registry=registry or None)
+    resolved_retargeting_image = container_image_for_tool(
+        "retargeting", registry=registry or None
+    )
     resolved_npa_image = npa_image
-    resolved_aws_profile = aws_profile or os.environ.get("AWS_PROFILE", "") or DEFAULT_AWS_PROFILE
+    resolved_aws_profile = (
+        aws_profile or os.environ.get("AWS_PROFILE", "") or DEFAULT_AWS_PROFILE
+    )
     resolved_endpoint = _resolve_s3_endpoint(s3_endpoint)
     resolved_bucket = s3_bucket or os.environ.get("NPA_S3_BUCKET", "")
     resolved_prefix = _resolve_s3_prefix(s3_prefix, resolved_run_id)
@@ -193,9 +202,15 @@ def materialize_sonic_workflow(
         cloud=resolved_cloud,
         region=resolved_region,
         use_spot=use_spot,
-        registry_auth_server=resolved_registry_auth.server if resolved_registry_auth else "",
-        registry_auth_username=resolved_registry_auth.username if resolved_registry_auth else "",
-        registry_auth_source=resolved_registry_auth.source if resolved_registry_auth else "",
+        registry_auth_server=resolved_registry_auth.server
+        if resolved_registry_auth
+        else "",
+        registry_auth_username=resolved_registry_auth.username
+        if resolved_registry_auth
+        else "",
+        registry_auth_source=resolved_registry_auth.source
+        if resolved_registry_auth
+        else "",
     )
 
 
@@ -310,7 +325,9 @@ def _resolve_s3_endpoint(explicit: str) -> str:
 
 
 def _resolve_s3_prefix(explicit: str, run_id: str) -> str:
-    prefix = explicit.strip("/") if explicit else f"{DEFAULT_SONIC_WORKFLOW_PREFIX}/{run_id}"
+    prefix = (
+        explicit.strip("/") if explicit else f"{DEFAULT_SONIC_WORKFLOW_PREFIX}/{run_id}"
+    )
     return prefix.rstrip("/") + "/"
 
 
@@ -351,12 +368,16 @@ def _uses_workstation_target(normalized: str) -> bool:
 
 
 def _resolve_region(region: str) -> str:
-    resolved = (region or os.environ.get("NPA_SKYPILOT_REGION", "") or DEFAULT_REGION).strip()
+    resolved = (
+        region or os.environ.get("NPA_SKYPILOT_REGION", "") or DEFAULT_REGION
+    ).strip()
     if resolved == "me-west1":
         raise ValueError("SONIC H100/H200 workflows explicitly exclude me-west1")
     if resolved and resolved not in SUPPORTED_REGIONS:
         choices = ", ".join(sorted(SUPPORTED_REGIONS))
-        raise ValueError(f"Unsupported SONIC SkyPilot region {resolved!r}; choose one of: {choices}")
+        raise ValueError(
+            f"Unsupported SONIC SkyPilot region {resolved!r}; choose one of: {choices}"
+        )
     return resolved
 
 
@@ -384,7 +405,9 @@ def _replace_strings(value: Any, replacements: dict[str, str]) -> Any:
     if isinstance(value, list):
         return [_replace_strings(item, replacements) for item in value]
     if isinstance(value, dict):
-        return {key: _replace_strings(item, replacements) for key, item in value.items()}
+        return {
+            key: _replace_strings(item, replacements) for key, item in value.items()
+        }
     return value
 
 
@@ -418,9 +441,15 @@ def _materialize_task_doc(
         resources["image_id"] = f"docker:{retargeting_image}"
         envs["NPA_RETARGETING_IMAGE"] = retargeting_image
 
-    payload_mode = str(
-        env_overrides.get("SONIC_PAYLOAD_MODE", envs.get("SONIC_PAYLOAD_MODE", "direct"))
-    ).strip().lower()
+    payload_mode = (
+        str(
+            env_overrides.get(
+                "SONIC_PAYLOAD_MODE", envs.get("SONIC_PAYLOAD_MODE", "direct")
+            )
+        )
+        .strip()
+        .lower()
+    )
     has_sonic_env = _has_sonic_env(doc)
     uses_sonic_runtime_image = _uses_sonic_runtime_image(doc)
     if uses_sonic_runtime_image:
@@ -446,10 +475,19 @@ def _materialize_task_doc(
     for key in ("POLICY_IMAGE", "CONTAINER_IMAGE", "SONIC_EVAL_CONTAINER_IMAGE"):
         if key in envs and has_sonic_env:
             envs[key] = policy_image
-    for key in ("SONIC_GPU_TYPE", "SONIC_GPU_TARGET", "CONTAINER_GPU_TARGET", "SONIC_EVAL_CONTAINER_GPU_TARGET"):
+    for key in (
+        "SONIC_GPU_TYPE",
+        "SONIC_GPU_TARGET",
+        "CONTAINER_GPU_TARGET",
+        "SONIC_EVAL_CONTAINER_GPU_TARGET",
+    ):
         if key in envs and has_sonic_env:
             envs[key] = gpu_target
-    for key in ("SONIC_IMAGE_VARIANT", "CONTAINER_IMAGE_VARIANT", "SONIC_EVAL_CONTAINER_IMAGE_VARIANT"):
+    for key in (
+        "SONIC_IMAGE_VARIANT",
+        "CONTAINER_IMAGE_VARIANT",
+        "SONIC_EVAL_CONTAINER_IMAGE_VARIANT",
+    ):
         if key in envs and has_sonic_env:
             envs[key] = image_variant
     if "AWS_PROFILE" in envs:
@@ -463,14 +501,18 @@ def _materialize_task_doc(
         envs["NPA_PIPELINE_RUN_ID"] = run_id
     if "SONIC_OUTPUT_PREFIX" in envs:
         current_prefix = str(envs["SONIC_OUTPUT_PREFIX"]).strip()
-        if not current_prefix or not current_prefix.strip("/").startswith(s3_prefix.strip("/")):
+        if not current_prefix or not current_prefix.strip("/").startswith(
+            s3_prefix.strip("/")
+        ):
             envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
     for key, value in env_overrides.items():
         if key in envs:
             envs[key] = value
     if has_sonic_env:
         envs["ACCEPT_EULA"] = "Y" if accept_eula else ""
-    if registry_auth and _uses_registry_auth_target(doc, registry_auth.server, policy_image):
+    if registry_auth and _uses_registry_auth_target(
+        doc, registry_auth.server, policy_image
+    ):
         envs[SKYPILOT_DOCKER_USERNAME] = registry_auth.username
         envs[SKYPILOT_DOCKER_PASSWORD] = registry_auth.password
         envs[SKYPILOT_DOCKER_SERVER] = registry_auth.server
@@ -491,7 +533,9 @@ def _uses_sonic_runtime_image(doc: dict[str, Any]) -> bool:
     envs = doc.get("envs")
     resources = doc.get("resources")
     image_id = str(resources.get("image_id", "")) if isinstance(resources, dict) else ""
-    return isinstance(envs, dict) and ("npa-sonic" in image_id or "POLICY_IMAGE" in envs)
+    return isinstance(envs, dict) and (
+        "npa-sonic" in image_id or "POLICY_IMAGE" in envs
+    )
 
 
 def _looks_like_npa_helper_image(doc: dict[str, Any]) -> bool:
@@ -591,7 +635,9 @@ def _normalize_registry_server(server: str) -> str:
     return normalized.rstrip("/")
 
 
-def _uses_registry_auth_target(doc: dict[str, Any], server: str, policy_image: str) -> bool:
+def _uses_registry_auth_target(
+    doc: dict[str, Any], server: str, policy_image: str
+) -> bool:
     resources = doc.get("resources")
     envs = doc.get("envs")
     if not isinstance(resources, dict) or not isinstance(envs, dict):
@@ -600,5 +646,7 @@ def _uses_registry_auth_target(doc: dict[str, Any], server: str, policy_image: s
         return False
     normalized_server = _normalize_registry_server(server)
     image_server = _registry_server_from_image(str(resources.get("image_id", "")))
-    policy_server = _registry_server_from_image(str(envs.get("POLICY_IMAGE", policy_image)))
+    policy_server = _registry_server_from_image(
+        str(envs.get("POLICY_IMAGE", policy_image))
+    )
     return normalized_server in {image_server, policy_server}

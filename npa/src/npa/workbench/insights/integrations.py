@@ -36,7 +36,13 @@ def index_metrics_in_lancedb(
     if not lancedb_endpoint.strip():
         return {"indexed": False, "backend": "jsonl", "table": table}
     payload = {"table": table, "lance_uri": lance_uri, "records": records}
-    data = _post(lancedb_endpoint, "/index", payload=payload, token_env=token_env, timeout=timeout)
+    data = _post(
+        lancedb_endpoint,
+        "/index",
+        payload=payload,
+        token_env=token_env,
+        timeout=timeout,
+    )
     return {"indexed": True, "backend": "lancedb", "table": table, **data}
 
 
@@ -50,7 +56,13 @@ def query_metrics_in_lancedb(
 ) -> list[dict[str, Any]]:
     """Query the LanceDB-backed metric index by the given facet predicate."""
     payload = {"filter": filter_predicate, "limit": limit}
-    data = _post(lancedb_endpoint, "/query", payload=payload, token_env=token_env, timeout=timeout)
+    data = _post(
+        lancedb_endpoint,
+        "/query",
+        payload=payload,
+        token_env=token_env,
+        timeout=timeout,
+    )
     records = data.get("records", [])
     if not isinstance(records, list):
         raise InsightsIntegrationError("LanceDB query returned an unexpected response")
@@ -71,14 +83,22 @@ def _post(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.post(f"{resolved}{path}", headers=headers, json=payload, timeout=timeout)
+        response = httpx.post(
+            f"{resolved}{path}", headers=headers, json=payload, timeout=timeout
+        )
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        raise InsightsIntegrationError(f"workbench service call failed ({resolved}{path}): {exc}") from exc
+        raise InsightsIntegrationError(
+            f"workbench service call failed ({resolved}{path}): {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise InsightsIntegrationError("workbench service returned non-JSON response") from exc
+        raise InsightsIntegrationError(
+            "workbench service returned non-JSON response"
+        ) from exc
     if not isinstance(data, dict):
-        raise InsightsIntegrationError("workbench service returned an unexpected response")
+        raise InsightsIntegrationError(
+            "workbench service returned an unexpected response"
+        )
     return data

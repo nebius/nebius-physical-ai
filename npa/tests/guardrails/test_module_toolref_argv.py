@@ -32,6 +32,8 @@ PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
 #: Modules whose CLI parser is reachable. A module without one cannot be checked, and is
 #: listed here so adding a module toolRef without an entry point is a visible choice.
 PARSER_FACTORIES = {
+    "npa.workflows.xr1_antioch.training": "build_parser",
+    "npa.workflows.lerobot_transfer": "build_parser",
     "npa.workflows.sim2real_envgen": "build_parser",
     "npa.workflows.token_factory_triage": "build_parser",
     "npa.workbench.lerobot.policy_container": "build_parser",
@@ -73,6 +75,8 @@ def _dummy(value: str, *, action: argparse.Action | None) -> str:
 
     if not PLACEHOLDER.search(value):
         return value
+    if action is not None and action.choices:
+        return str(next(iter(action.choices)))
     caster = getattr(action, "type", None) if action is not None else None
     if caster is None:
         return "dummy"

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import re
+
 import yaml
 
 
@@ -16,6 +18,18 @@ SECURITY_SCAN = WORKFLOWS / "image-security-scan.yml"
 
 def _spec(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+_PINNED_ACTION = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
+
+
+def _assert_pinned(uses: object, action: str) -> None:
+    """Third-party actions must be digest-pinned; the `# vN` tag comment is
+    stripped by YAML parsing, so only the 40-hex SHA remains to assert on."""
+    assert isinstance(uses, str) and _PINNED_ACTION.fullmatch(uses), (
+        f"expected digest-pinned {action}, got {uses!r}"
+    )
+    assert uses.startswith(action + "@")
 
 
 def _runs(path: Path) -> str:
@@ -56,7 +70,9 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         assert stale_variable not in text
 
 
-def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> None:
+def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
+    None
+):
     spec = _spec(PUBLISH)
     triggers = spec.get("on") or spec[True]
     inputs = triggers["workflow_dispatch"]["inputs"]
@@ -113,6 +129,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_omniverse_payload.py",
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
+        "scan_image_alpamayo2_payload.py",
         "scan_image_cosmos3_ray_serve_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
@@ -134,7 +151,7 @@ def test_public_base_pull_authentication_precedes_local_build() -> None:
     auth = names.index("Authenticate immutable public base pulls")
     build = names.index("Build immutable development image locally")
     push = names.index("Push only after every pre-publication gate passes")
-    assert steps[auth]["uses"] == "docker/login-action@v3"
+    _assert_pinned(steps[auth]["uses"], "docker/login-action")
     assert auth < build < push
 
 
@@ -171,23 +188,24 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
 
 
 def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
-    spec = _spec(SECURITY_SCAN)
-    steps = spec["jobs"]["base-image-cve-scan"]["steps"]
-    scans = [
-        step
-        for step in steps
-        if step.get("uses") == "aquasecurity/trivy-action@v0.36.0"
-    ]
-
-    assert len(scans) == 2
-    assert all(step["with"]["timeout"] == "2562047h47m16s" for step in scans)
+    script = (ROOT / "npa/scripts/scan_base_images.py").read_text()
+    # Tokens, not one contiguous line: ruff format may split the arg list.
+    assert '"--timeout"' in script and '"2562047h47m16s"' in script
+    job = _spec(SECURITY_SCAN)["jobs"]["base-image-cve-scan"]
+    command = next(
+        step["run"]
+        for step in job["steps"]
+        if step.get("name") == "Scan all pinned bases with three local workers"
+    )
+    assert "scan_base_images.py" in command
+    assert "--workers 3" in command
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
     text = PUBLISH.read_text(encoding="utf-8")
     for required in (
-        "attest-build-provenance@v3",
-        "attest-sbom@v3",
+        "attest-build-provenance@",
+        "attest-sbom@",
         "subject-name: ${{ steps.push.outputs.repository }}",
         "Require both digest-bound attestation results",
         "crane digest",
@@ -198,12 +216,26 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "Retained immutable dev tags as release provenance",
     ):
         assert required in text
+    for action in ("actions/attest-build-provenance", "actions/attest-sbom"):
+        assert re.search(rf"{re.escape(action)}@[0-9a-f]{{40}}", text), (
+            f"{action} must be digest-pinned"
+        )
     visibility = text.index('gh api --method PATCH "$package_api" -f visibility=public')
     anonymous = text.index('DOCKER_CONFIG="$anonymous_config" crane manifest')
     pushed_scan = text.index(
         "scan_image_cosmos3_ray_serve_payload.py", text.index("Verify pushed bytes")
     )
     assert pushed_scan < visibility < anonymous
+    alpamayo_scans = [
+        index
+        for index in range(len(text))
+        if text.startswith("scan_image_alpamayo2_payload.py", index)
+    ]
+    assert len(alpamayo_scans) == 2
+    assert alpamayo_scans[0] < text.index(
+        "Push only after every pre-publication gate passes"
+    )
+    assert text.index("Verify pushed bytes") < alpamayo_scans[1] < visibility
     prepush = text.index("Prove destination cannot expose unvalidated tagged bytes")
     push = text.index("Push only after every pre-publication gate passes")
     assert prepush < push
@@ -225,10 +257,17 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     # Two calls bind the pulled digest to the local image; the third binds the
     # independent cuRobo archive verifier to that same inspected remote image.
     assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
-    assert ('test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
-            '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"') in post_push
-    assert '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"' in post_push
-    assert 'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+    assert (
+        'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
+        '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
+    ) in post_push
+    assert (
+        '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"'
+        in post_push
+    )
+    assert (
+        'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+    )
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
@@ -273,21 +312,37 @@ def test_additive_release_inputs_are_scoped_to_promotion() -> None:
     inputs = (spec.get("on") or spec[True])["workflow_dispatch"]["inputs"]
     assert inputs["release_tag"]["default"] == ""
     assert inputs["expected_source_digest"]["default"] == ""
-    assert "inputs.release_tag || inputs.development_sha" in spec["concurrency"]["group"]
+    assert (
+        "inputs.release_tag || inputs.development_sha" in spec["concurrency"]["group"]
+    )
     assert spec["concurrency"]["cancel-in-progress"] is False
-    assert "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
-    resolve = next(step for step in spec["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+    assert (
+        "needs.resolve.result == 'success'" in spec["jobs"]["cleanup-requested"]["if"]
+    )
+    resolve = next(
+        step
+        for step in spec["jobs"]["resolve"]["steps"]
+        if step.get("name")
+        == "Validate additive release selection without changing defaults"
+    )
     assert 'test "$BUILD_COUNT" = 0 && test "$CLEANUP_COUNT" = 0' in resolve["run"]
     assert resolve["env"]["DEVELOPMENT_SHA"] == "${{ inputs.development_sha }}"
     assert "--mode plan" in resolve["run"]
     promote = spec["jobs"]["promote"]
     assert promote["env"]["RELEASE_TAG"] == "${{ inputs.release_tag }}"
-    assert promote["env"]["EXPECTED_SOURCE_DIGEST"] == "${{ inputs.expected_source_digest }}"
+    assert (
+        promote["env"]["EXPECTED_SOURCE_DIGEST"]
+        == "${{ inputs.expected_source_digest }}"
+    )
     for name in ("build-development", "cleanup-requested", "cleanup-failed-build"):
-        assert "--release-tag" not in "\n".join(step.get("run", "") for step in spec["jobs"][name]["steps"])
+        assert "--release-tag" not in "\n".join(
+            step.get("run", "") for step in spec["jobs"][name]["steps"]
+        )
 
 
-def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(tmp_path) -> None:
+def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expansion(
+    tmp_path,
+) -> None:
     """Run the checked-in trusted shell adapter against an argv-recording executable."""
     import json
     import os
@@ -303,22 +358,66 @@ def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expa
         "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
     )
     executable.chmod(0o700)
-    env = {**os.environ, "TARGET": "ghcr.io/nebius/nebius-physical-ai", "DEVELOPMENT_SHA": "b" * 40, "SELECTED_TOOLS": "detection-training", "RELEASE_TAG": "runtime-recovery-1", "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64, "ARGV_RECORD": str(recorder)}
+    env = {
+        **os.environ,
+        "TARGET": "ghcr.io/nebius/nebius-physical-ai",
+        "DEVELOPMENT_SHA": "b" * 40,
+        "SELECTED_TOOLS": "detection-training",
+        "RELEASE_TAG": "runtime-recovery-1",
+        "EXPECTED_SOURCE_DIGEST": "sha256:" + "a" * 64,
+        "ARGV_RECORD": str(recorder),
+    }
     steps = _spec(PUBLISH)["jobs"]["promote"]["steps"]
-    scripts = [step["run"] for step in steps if step.get("name") in {"Plan and preflight immutable public development digests", "Promote exact validated digests and verify public parity"}]
+    scripts = [
+        step["run"]
+        for step in steps
+        if step.get("name")
+        in {
+            "Plan and preflight immutable public development digests",
+            "Promote exact validated digests and verify public parity",
+        }
+    ]
     # These trusted steps have one harmless GitHub expression in the unselected
     # all-image branch. Render that expression as Actions does before bash parses it.
     for script in scripts:
-        script = script.replace("${{ inputs.skip_missing && '--skip-missing' || '' }}", "")
-        subprocess.run(["bash", "-euo", "pipefail", "-c", script], cwd=tmp_path, env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")}, check=True, capture_output=True)
+        script = script.replace(
+            "${{ inputs.skip_missing && '--skip-missing' || '' }}", ""
+        )
+        subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", script],
+            cwd=tmp_path,
+            env={**env, "GITHUB_STEP_SUMMARY": str(tmp_path / "summary")},
+            check=True,
+            capture_output=True,
+        )
     records = [json.loads(line) for line in recorder.read_text().splitlines()]
     assert [record[-1] for record in records] == ["plan", "preflight", "publish"]
     for record in records:
-        assert record == [".github/scripts/publish_selected_public_image.py", "--target", env["TARGET"], "--development-sha", env["DEVELOPMENT_SHA"], "--release-tag", env["RELEASE_TAG"], "--expected-source-digest", env["EXPECTED_SOURCE_DIGEST"], "--tool", "detection-training", "--mode", record[-1]]
-    resolve = next(step for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"] if step.get("name") == "Validate additive release selection without changing defaults")
+        assert record == [
+            ".github/scripts/publish_selected_public_image.py",
+            "--target",
+            env["TARGET"],
+            "--development-sha",
+            env["DEVELOPMENT_SHA"],
+            "--release-tag",
+            env["RELEASE_TAG"],
+            "--expected-source-digest",
+            env["EXPECTED_SOURCE_DIGEST"],
+            "--tool",
+            "detection-training",
+            "--mode",
+            record[-1],
+        ]
+    resolve = next(
+        step
+        for step in _spec(PUBLISH)["jobs"]["resolve"]["steps"]
+        if step.get("name")
+        == "Validate additive release selection without changing defaults"
+    )
     for build_count, cleanup_count in [("1", "0"), ("0", "1"), ("1", "1")]:
         result = subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", resolve["run"]], cwd=tmp_path,
+            ["bash", "-euo", "pipefail", "-c", resolve["run"]],
+            cwd=tmp_path,
             env={**env, "BUILD_COUNT": build_count, "CLEANUP_COUNT": cleanup_count},
             capture_output=True,
         )

@@ -64,12 +64,14 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.golden_eval import app as golden_eval_app
     from npa.cli.workbench.health import app as health_app
     from npa.cli.workbench.insights import app as insights_app
+    from npa.cli.workbench.isaac_arena import app as isaac_arena_app
     from npa.cli.workbench.lancedb import app as lancedb_app
     from npa.cli.workbench.leisaac import app as leisaac_app
     from npa.cli.workbench.lerobot import app as lerobot_app
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
+    from npa.cli.workbench.openarm import app as openarm_app
     from npa.cli.workbench.robocasa import app as robocasa_app
     from npa.cli.workbench.scenario_gen import app as scenario_gen_app
     from npa.cli.workbench.sim2real import app as sim2real_app
@@ -78,6 +80,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.token_factory import app as token_factory_app
     from npa.cli.workbench.vlm_eval import app as vlm_eval_app
     from npa.cli.workbench.workflow import app as workflow_app
+
     full = typer.Typer(
         name="workbench",
         help="Physical AI workbench tools.",
@@ -104,10 +107,12 @@ def _full_app() -> typer.Typer:
     full.add_typer(genesis_app, name="genesis")
     full.add_typer(groot_app, name="groot")
     full.add_typer(isaac_lab_app, name="isaac-lab")
+    full.add_typer(isaac_arena_app, name="isaac-arena")
     full.add_typer(leisaac_app, name="leisaac")
     full.add_typer(nurec_app, name="nurec")
     full.add_typer(sonic_app, name="sonic")
     full.add_typer(mjlab_app, name="mjlab")
+    full.add_typer(openarm_app, name="openarm")
     full.add_typer(robocasa_app, name="robocasa")
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
@@ -175,7 +180,9 @@ if _LIGHT_IMPORT:
     elif _LIGHT_TOOL in ("cosmos3-ray-serve",):
         from npa.cli.workbench.cosmos3 import app as cosmos3_app
 
-        light = typer.Typer(name="workbench", help="Physical AI workbench tools.", no_args_is_help=True)
+        light = typer.Typer(
+            name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
+        )
 
         @light.callback()
         def _light_cosmos3_main() -> None:
@@ -185,6 +192,16 @@ if _LIGHT_IMPORT:
         app = light
     elif _LIGHT_TOOL == "rerun-viewer":
         app = _rerun_viewer_light_app()
+    elif _LIGHT_TOOL == "isaac-arena":
+        from npa.cli.workbench.isaac_arena import app
+    elif _LIGHT_TOOL == "openarm":
+        from npa.cli.workbench.openarm import app as openarm_app
+
+        light = typer.Typer(
+            name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
+        )
+        light.add_typer(openarm_app, name="openarm")
+        app = light
     else:
         from npa.cli.workbench.cosmos2 import app
 else:

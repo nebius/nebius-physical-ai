@@ -19,11 +19,17 @@ _SPEC.loader.exec_module(source_scanner)
 
 def _python_report(root: Path, line: int = 1) -> dict:
     return {
-        "errors": [], "metrics": {str(root / "candidate.py"): {}},
-        "results": [{
-            "filename": str(root / "candidate.py"), "line_number": line,
-            "col_offset": 0, "test_id": "B307", "issue_text": "Unsafe evaluation",
-        }],
+        "errors": [],
+        "metrics": {str(root / "candidate.py"): {}},
+        "results": [
+            {
+                "filename": str(root / "candidate.py"),
+                "line_number": line,
+                "col_offset": 0,
+                "test_id": "B307",
+                "issue_text": "Unsafe evaluation",
+            }
+        ],
     }
 
 
@@ -57,11 +63,15 @@ def test_unscanned_python_files_fail_closed(tmp_path: Path) -> None:
     """
     with pytest.raises(RuntimeError, match="every Python file"):
         source_scanner._python_findings(
-            _python_report(tmp_path), tmp_path, {"candidate.py", "omitted.py"},
+            _python_report(tmp_path),
+            tmp_path,
+            {"candidate.py", "omitted.py"},
         )
 
 
-def test_python_identity_survives_line_moves_and_counts_duplicates(tmp_path: Path) -> None:
+def test_python_identity_survives_line_moves_and_counts_duplicates(
+    tmp_path: Path,
+) -> None:
     """Preserve finding identity across line moves without losing duplicates.
 
     Args:
@@ -74,9 +84,13 @@ def test_python_identity_survives_line_moves_and_counts_duplicates(tmp_path: Pat
     candidate = tmp_path / "candidate.py"
     candidate.write_text("eval(request)\n", encoding="utf-8")
     original = source_scanner._python_findings(
-        _python_report(tmp_path), tmp_path, {"candidate.py"},
+        _python_report(tmp_path),
+        tmp_path,
+        {"candidate.py"},
     )
-    candidate.write_text("# An unrelated header.\neval(request)\neval(request)\n", encoding="utf-8")
+    candidate.write_text(
+        "# An unrelated header.\neval(request)\neval(request)\n", encoding="utf-8"
+    )
     report = _python_report(tmp_path, line=2)
     report["results"].append({**report["results"][0], "line_number": 3})
     changed = source_scanner._python_findings(report, tmp_path, {"candidate.py"})
@@ -98,16 +112,22 @@ def test_python_identity_changes_with_vulnerable_expression(tmp_path: Path) -> N
     candidate = tmp_path / "candidate.py"
     candidate.write_text("eval(request)\n", encoding="utf-8")
     original = source_scanner._python_findings(
-        _python_report(tmp_path), tmp_path, {"candidate.py"},
+        _python_report(tmp_path),
+        tmp_path,
+        {"candidate.py"},
     )
     candidate.write_text("eval(other_request)\n", encoding="utf-8")
     changed = source_scanner._python_findings(
-        _python_report(tmp_path), tmp_path, {"candidate.py"},
+        _python_report(tmp_path),
+        tmp_path,
+        {"candidate.py"},
     )
     assert original[0]["identity"] != changed[0]["identity"]
 
 
-def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: Path) -> None:
+def test_multiline_call_uses_full_expression_when_issue_marks_keyword(
+    tmp_path: Path,
+) -> None:
     """Attribute a keyword finding to its complete multiline expression.
 
     Args:
@@ -118,7 +138,9 @@ def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: 
         AssertionError: The scanner safety or finding-identity contract regresses.
     """
     candidate = tmp_path / "candidate.py"
-    candidate.write_text("result = run(\n    request,\n    shell=True,\n)\n", encoding="utf-8")
+    candidate.write_text(
+        "result = run(\n    request,\n    shell=True,\n)\n", encoding="utf-8"
+    )
     report = _python_report(tmp_path, line=3)
     report["results"][0].update(col_offset=9, line_range=[1, 2, 3, 4])
     findings = source_scanner._python_findings(report, tmp_path, {"candidate.py"})
@@ -128,7 +150,10 @@ def test_multiline_call_uses_full_expression_when_issue_marks_keyword(tmp_path: 
 
 @pytest.mark.parametrize("returncode,stdout", [(2, "{}"), (0, "{"), (1, "[]")])
 def test_workflow_scanner_failures_do_not_become_clean_reports(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, returncode: int, stdout: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    stdout: str,
 ) -> None:
     """Reject failed or malformed workflow scanner responses.
 
@@ -143,8 +168,11 @@ def test_workflow_scanner_failures_do_not_become_clean_reports(
         AssertionError: The scanner safety or finding-identity contract regresses.
     """
     monkeypatch.setattr(
-        source_scanner.subprocess, "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args, returncode, stdout, "diagnostic"),
+        source_scanner.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(
+            args, returncode, stdout, "diagnostic"
+        ),
     )
     with pytest.raises(RuntimeError):
         source_scanner._run_report(["zizmor"], tmp_path, tmp_path / "zizmor.json")
@@ -153,18 +181,23 @@ def test_workflow_scanner_failures_do_not_become_clean_reports(
 
 def _workflow_issue(root: Path, step: int, row: int) -> dict:
     return {
-        "ident": "template-injection", "desc": "Attacker-controlled template",
-        "locations": [{
-            "symbolic": {
-                "kind": "Primary",
-                "key": {"Local": {"verbatim_path": str(root / "workflow.yml")}},
-                "route": {"route": [{"Key": "jobs"}, {"Key": "build"}, {"Index": step}]},
-            },
-            "concrete": {
-                "feature": "echo ${{ github.event.pull_request.title }}",
-                "location": {"start_point": {"row": row}},
-            },
-        }],
+        "ident": "template-injection",
+        "desc": "Attacker-controlled template",
+        "locations": [
+            {
+                "symbolic": {
+                    "kind": "Primary",
+                    "key": {"Local": {"verbatim_path": str(root / "workflow.yml")}},
+                    "route": {
+                        "route": [{"Key": "jobs"}, {"Key": "build"}, {"Index": step}]
+                    },
+                },
+                "concrete": {
+                    "feature": "echo ${{ github.event.pull_request.title }}",
+                    "location": {"start_point": {"row": row}},
+                },
+            }
+        ],
     }
 
 
@@ -178,8 +211,12 @@ def test_workflow_identity_survives_step_and_line_moves(tmp_path: Path) -> None:
     Raises:
         AssertionError: The scanner safety or finding-identity contract regresses.
     """
-    original = source_scanner._workflow_finding(_workflow_issue(tmp_path, 0, 1), tmp_path)
-    changed = source_scanner._workflow_finding(_workflow_issue(tmp_path, 2, 5), tmp_path)
+    original = source_scanner._workflow_finding(
+        _workflow_issue(tmp_path, 0, 1), tmp_path
+    )
+    changed = source_scanner._workflow_finding(
+        _workflow_issue(tmp_path, 2, 5), tmp_path
+    )
     assert original["identity"] == changed["identity"]
     assert original["line"] == 2
     assert changed["line"] == 6

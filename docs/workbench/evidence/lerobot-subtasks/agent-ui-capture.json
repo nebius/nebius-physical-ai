@@ -1,0 +1,37 @@
+{
+  "schema": "npa.lerobot.agent_ui_capture.v1",
+  "status": "verified",
+  "capture": {
+    "surface": "Deployed NPA Agent UI, View tab, fullscreen embedded Rerun viewer",
+    "method": "Playwright browser screen recording of the actual viewer",
+    "input_method": "Drop the local RRD into the embedded viewer",
+    "interaction": "Step through dataset_row 0 through 7; hold row 2 for eight seconds",
+    "processing": "Trim setup footage; transcode VP8 browser capture to H.264 MP4; no recreated frames",
+    "audio": false
+  },
+  "source": {
+    "path": "lerobot-subtasks.rrd",
+    "sha256": "a9a3c049743d1bb6297b7a22377512f1979c7720a4d10278d97092f84f91c760",
+    "recording_id": "lerobot-subtask-recorded-proof"
+  },
+  "video": {
+    "path": "agent-ui-playback.mp4",
+    "sha256": "52f3155e01e185558fefb4324b20e7277fe202ef02ab672e11e38ce4255ec7b5",
+    "bytes": 1464008,
+    "codec": "h264",
+    "width": 1680,
+    "height": 1120,
+    "frame_rate": "25/1",
+    "duration_seconds": 32.92,
+    "decoded_frame_count": 823
+  },
+  "verification": {
+    "authenticated_agent_ui_http_status": 200,
+    "unauthenticated_agent_ui_http_status": 401,
+    "full_video_decode": "passed without errors",
+    "visually_checked_video_seconds": [9, 24],
+    "grasp_visible_at_seconds": 9,
+    "place_visible_at_seconds": 24
+  },
+  "limitations": "The UI capture is real; its RRD contains the existing synthetic numeric LeRobot fixture and programmatic labels. This is not real robot footage, FiftyOne labeling interaction, native dataset export, training, or cloud workflow execution. Playback timing is for human review, not robot capture time."
+}

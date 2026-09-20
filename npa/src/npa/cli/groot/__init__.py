@@ -241,7 +241,9 @@ def _groot_deploy_models(model: str = DEFAULT_MODEL) -> list[str]:
 
 def _require_groot_isaac_consent(context: str) -> str:
     try:
-        return require_isaac_eula_acceptance(context=context, resume_command="npa workbench groot deploy ...")
+        return require_isaac_eula_acceptance(
+            context=context, resume_command="npa workbench groot deploy ..."
+        )
     except MissingIsaacEulaAcceptanceError as exc:
         _fail(str(exc))
 
@@ -479,7 +481,9 @@ def ensure_ingress_cmd(
         "-n",
         help="Workbench alias to repair. Defaults to the active workbench alias.",
     ),
-    source: str = ingress_source_option("Source CIDR allowed to reach the GR00T server."),
+    source: str = ingress_source_option(
+        "Source CIDR allowed to reach the GR00T server."
+    ),
     allow_world_open: bool = world_open_ack_option(),
 ) -> None:
     """Ensure public ingress for the saved GR00T BYOVM alias."""
@@ -908,8 +912,7 @@ def _groot_serverless_infer(
         info = client.create_job(
             project_id=resolved_project_id,
             name=name,
-            image=image
-            or container_image_for_tool("groot", tag=GROOT_RUNTIME_VERSION),
+            image=image or container_image_for_tool("groot", tag=GROOT_RUNTIME_VERSION),
             command=_groot_serverless_infer_command(
                 input_path=input_path,
                 dataset_path=dataset_path,
@@ -3160,7 +3163,10 @@ def deploy_cmd(
                     name=wb_name,
                 ),
                 source=str(merged_vars.get("application_cidr_block", "")),
-                allow_world_open=str(merged_vars.get("allow_world_open_application", "false")).lower() == "true",
+                allow_world_open=str(
+                    merged_vars.get("allow_world_open_application", "false")
+                ).lower()
+                == "true",
                 warn=console.print,
             )
 
@@ -3504,7 +3510,9 @@ def finetune_cmd(
         None, "--dataloader-num-workers", help="Override dataloader workers."
     ),
     logging_steps: int | None = typer.Option(
-        None, "--logging-steps", help="Emit a real trainer loss every N optimizer steps."
+        None,
+        "--logging-steps",
+        help="Emit a real trainer loss every N optimizer steps.",
     ),
     save_steps: int | None = typer.Option(
         None, "--save-steps", help="Override checkpoint save interval."
@@ -3697,7 +3705,8 @@ def eval_cmd(
         False, "--sim", help="Create a sim-eval request for an Isaac Lab workbench."
     ),
     accept_eula: bool = typer.Option(
-        True, "--accept-eula/--no-accept-eula",
+        True,
+        "--accept-eula/--no-accept-eula",
         help="Isaac EULA routing for --sim; defaults on, with --no-accept-eula as opt-out.",
     ),
     isaac_lab_workbench: str = typer.Option(

@@ -153,8 +153,30 @@ def _declared_output_uri(output: Any) -> str:
 
     if isinstance(output, Mapping):
         uri = str(output.get("uri") or "").strip()
-        return uri.rstrip("/") + "/" if output.get("kind") == "directory" and uri else uri
+        return (
+            uri.rstrip("/") + "/" if output.get("kind") == "directory" and uri else uri
+        )
     return str(output or "").strip()
+
+
+def _verified_absent_pre_id_attempt(
+    attempt: WaveAttempt, record: Mapping[str, Any]
+) -> bool:
+    """Preserve verified launch absence across a later storage-read block."""
+    if attempt.job_id:
+        return False
+    if attempt.recovery_decision == "verified_absent_no_retry":
+        return True
+    if attempt.recovery_decision not in {
+        "resume_block_output_present",
+        "resume_block_output_indeterminate",
+    }:
+        return False
+    return any(
+        item.get("state") == "absent"
+        for item in record.get("reconciliation") or []
+        if isinstance(item, Mapping)
+    )
 
 
 def _workflow_identity(spec: NpaWorkflowSpec) -> str:
@@ -312,6 +334,13 @@ class WaveAttempt:
     infrastructure_recovery_limit: int = 1
     infrastructure_recovery_exhausted: bool = False
     supervisor_blocks_cancellation: bool = False
+    #: Default-SDK failure proof and its outgoing reservation, if verified.
+    partial_launch: dict[str, Any] = field(default_factory=dict)
+    #: Incoming immutable parent-to-successor reservation; never overwritten by
+    #: this attempt's own later failure or outgoing reservation.
+    recovery_reservation: dict[str, Any] = field(default_factory=dict)
+    #: Driver recovery reused this record/intent; this does not imply payload replay.
+    recovery_resumed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -365,6 +394,9 @@ class WaveAttempt:
                 "exhausted": self.infrastructure_recovery_exhausted,
             },
             "supervisor_blocks_cancellation": self.supervisor_blocks_cancellation,
+            "partial_launch": dict(self.partial_launch),
+            "recovery_reservation": dict(self.recovery_reservation),
+            "recovery_resumed": self.recovery_resumed,
         }
 
 
@@ -560,10 +592,20 @@ class SkyPilotWaveExecutor:
     def _run_wave(
         self, steps: Sequence[PlanStep], *, kind: str, group: str
     ) -> WaveAttempt:
+        from npa.orchestration.npa_workflow.launch_recovery import (
+            _recover_partial_launch,
+            _resume_launch_recovery,
+        )
+
         self._sequence += 1
         key = wave_key(steps, group=group, sequence_number=self._sequence)
-
+        reserved = None
         if self.options.resume:
+            reserved = _resume_launch_recovery(self, steps, key, kind, group)
+            if isinstance(reserved, WaveAttempt):
+                return reserved
+
+        if self.options.resume and reserved is None:
             adopted = self._reconcile_in_flight(key, steps, kind=kind, group=group)
             if adopted is not None:
                 return adopted
@@ -605,7 +647,7 @@ class SkyPilotWaveExecutor:
         retrying_prior_terminal = False
         prior_attempt = 0
         infrastructure_recoveries = 0
-        if self.options.resume:
+        if self.options.resume and reserved is None:
             latest = self.ledger.latest_wave(key)
             if latest is not None and str(latest.get("status") or "") == "failed":
                 prior_attempt = int(latest.get("attempt") or 1)
@@ -618,8 +660,7 @@ class SkyPilotWaveExecutor:
                 reached_running = any(
                     isinstance(item, Mapping)
                     and (
-                        str(item.get("scheduler_state") or "").upper()
-                        == "RUNNING"
+                        str(item.get("scheduler_state") or "").upper() == "RUNNING"
                         or "RUNNING"
                         in {
                             str(value or "").upper()
@@ -682,15 +723,16 @@ class SkyPilotWaveExecutor:
                 # work.  A terminal-success scheduler observation plus the durable
                 # outputs is the same evidence accepted for an ordinary completed
                 # replay, so converge the failed driver record to succeeded.
-                if is_terminal_ok(sky_status) and self._outputs_exist(
-                    list(latest.get("outputs") or [])
-                ):
+                completion = self._verified_completion(latest)
+                if completion is not None:
                     attempt = self._attempt_from_record(
                         latest, steps=steps, kind=kind, group=group
                     )
                     attempt.status = "succeeded"
+                    attempt.sky_status = "SUCCEEDED"
                     attempt.adopted = True
                     attempt.replayed = True
+                    attempt.reconciliation.append(completion)
                     attempt.recovery_decision = (
                         "adopted_terminal_success_after_driver_failure"
                     )
@@ -767,6 +809,10 @@ class SkyPilotWaveExecutor:
             if retrying_prior_terminal
             else max(1, self.options.retries + 1)
         )
+        reservation = dict(reserved.reservation) if reserved is not None else {}
+        if reserved is not None:
+            attempt_start = reserved.attempt_number
+            infrastructure_recoveries = reserved.used
         attempt_offset = 0
         while attempt_offset < attempt_count:
             attempt_number = attempt_start + attempt_offset
@@ -779,16 +825,29 @@ class SkyPilotWaveExecutor:
                 started_at=utc_now(),
                 outputs=[dict(item) for step in steps for item in step.outputs],
                 scheduler_fence_sequence=self._sequence,
+                recovery_reservation=dict(reservation),
                 infrastructure_recovery_count=infrastructure_recoveries,
                 infrastructure_recovery_limit=(
                     self.options.max_infrastructure_recoveries
                 ),
             )
+            if (
+                reserved is not None
+                and reserved.existing_attempt is not None
+                and attempt_offset == 0
+            ):
+                attempt = reserved.existing_attempt
             self.attempts.append(attempt)
             try:
                 self._submit_and_wait(steps, kind=kind, group=group, attempt=attempt)
                 self._require_outputs(attempt.outputs, key=key)
             except BaseException as exc:  # noqa: BLE001 - see _abort_wave
+                if isinstance(exc, Exception) and attempt.partial_launch:
+                    try:
+                        if _recover_partial_launch(self, steps, attempt):
+                            return attempt
+                    except SupervisedWaveFailure as recovery_error:
+                        exc = recovery_error
                 # Abort the managed job unless this is the explicit
                 # no-cancel-on-timeout contract, which leaves an adoptable ledger
                 # record for a later ``--resume`` driver.
@@ -815,6 +874,9 @@ class SkyPilotWaveExecutor:
                     # operator-requested payload retry. Preserve every attempt
                     # and continue under the same run ID with a new exact job.
                     infrastructure_recoveries += 1
+                    reservation = dict(
+                        attempt.partial_launch.get("recovery_reservation") or {}
+                    )
                     attempt_count += 1
                 elif isinstance(exc, SupervisedWaveFailure) or (
                     attempt.recovery_decision == "block_relaunch"
@@ -827,6 +889,8 @@ class SkyPilotWaveExecutor:
                 attempt.ended_at = utc_now()
                 self.ledger.record(attempt)
                 return attempt
+            if reservation.get("successor", {}).get("attempt") != attempt_number + 1:
+                reservation = {}
             attempt_offset += 1
             if attempt_offset < attempt_count:
                 self._log(
@@ -836,6 +900,46 @@ class SkyPilotWaveExecutor:
         failed = self.attempts[-1]
         failed.error = last_error or "wave failed"
         return failed
+
+    def _verified_completion(self, record: Mapping[str, Any]) -> dict[str, Any] | None:
+        """Recover a completed wave whose driver failed while recording success."""
+        outputs = list(record.get("outputs") or [])
+        status = str(record.get("sky_status") or "").upper()
+        source = "recorded_scheduler_success"
+        if not is_terminal_ok(status):
+            # Older drivers recorded every verified cancellation as CANCELLED,
+            # even when verification actually observed a job finish successfully.
+            if (
+                status != "CANCELLED"
+                or (record.get("cancellation") or {}).get("state") != "verified"
+                or not all(
+                    record.get(key)
+                    for key in ("job_id", "job_name", "logical_launch_id")
+                )
+                or not outputs
+            ):
+                return None
+            evidence = self._reconcile_exact(
+                str(record["job_name"]), str(record["job_id"])
+            )
+            status = str(getattr(evidence, "status", "") or "").upper()
+            if (
+                getattr(evidence, "outcome", "") != "found"
+                or not getattr(evidence, "workload_observable", True)
+                or not is_terminal_ok(status)
+            ):
+                return None
+            source = "exact_managed_job_reconciliation"
+        if not self._outputs_exist(outputs):
+            return None
+        return {
+            "outcome": "found",
+            "source": source,
+            "status": status,
+            "job_id": str(record.get("job_id") or ""),
+            "declared_outputs_valid": True,
+            "checked_at": utc_now(),
+        }
 
     @staticmethod
     def _attempt_from_record(
@@ -866,12 +970,11 @@ class SkyPilotWaveExecutor:
             started_at=str(record.get("started_at") or ""),
             ended_at=str(record.get("ended_at") or ""),
             tasks=list(record.get("tasks") or []),
+            observations=list(record.get("observations") or []),
             outputs=list(record.get("outputs") or []),
             error=str(record.get("error") or ""),
             logical_launch_id=str(record.get("logical_launch_id") or ""),
-            scheduler_fence_sequence=int(
-                record.get("scheduler_fence_sequence") or 0
-            ),
+            scheduler_fence_sequence=int(record.get("scheduler_fence_sequence") or 0),
             launch_sequence=int(record.get("launch_sequence") or 0),
             error_category=str(record.get("error_category") or ""),
             readiness=list(record.get("readiness") or []),
@@ -906,6 +1009,9 @@ class SkyPilotWaveExecutor:
             supervisor_blocks_cancellation=bool(
                 record.get("supervisor_blocks_cancellation", False)
             ),
+            partial_launch=dict(record.get("partial_launch") or {}),
+            recovery_reservation=dict(record.get("recovery_reservation") or {}),
+            recovery_resumed=bool(record.get("recovery_resumed", False)),
         )
 
     def _reconcile_in_flight(
@@ -1072,13 +1178,15 @@ class SkyPilotWaveExecutor:
                 and attempt.recovery_decision
                 in {
                     "block_indeterminate",
+                    # A prior default resume records absence without authorizing
+                    # retry; it must not erase the typed transport failure.
+                    "resume_block_terminal_or_legacy_absence",
                     "resume_block_output_present",
                     "resume_block_output_indeterminate",
                 }
             )
-            verified_pre_id_launch_failure = (
-                not job_id
-                and attempt.recovery_decision == "verified_absent_no_retry"
+            verified_pre_id_launch_failure = _verified_absent_pre_id_attempt(
+                attempt, record
             )
             explicit_retry = (
                 self.options.retry_absent_in_flight
@@ -1394,6 +1502,9 @@ class SkyPilotWaveExecutor:
         attempt.workflow_sha256 = _workflow_identity(self.spec)
         attempt.source_sha256 = _source_identity()
         attempt.image_digest = _image_identity(self.render_options)
+        from npa.orchestration.npa_workflow.launch_recovery import _check_consumption
+
+        _check_consumption(self, steps, attempt)
         yaml_text = render_skypilot_steps_yaml(
             self.spec,
             steps,
@@ -1545,6 +1656,7 @@ class SkyPilotWaveExecutor:
             WorkflowRunSupervisor,
             validate_declared_outputs,
         )
+
         if self.ledger.store is None:
             raise NpaWorkflowError(
                 "runtime supervision requires a durable run-state store"
@@ -1583,10 +1695,9 @@ class SkyPilotWaveExecutor:
             preflight=preflight,
             checkpoint=checkpoint,
             infrastructure_recoveries=attempt.infrastructure_recovery_count,
-            max_infrastructure_recoveries=(
-                self.options.max_infrastructure_recoveries
-            ),
+            max_infrastructure_recoveries=(self.options.max_infrastructure_recoveries),
         )
+
         def cancel_exact(current: AttemptIdentity) -> Mapping[str, Any]:
             state, error = self._cancel(
                 current.provider_job_id, current.provider_job_name
@@ -1841,6 +1952,37 @@ class SkyPilotWaveExecutor:
         if self.options.pre_submit_hook is not None:
             self.options.pre_submit_hook(path)
 
+        secret_values = self._wave_credentials(attempt)
+        kwargs: dict[str, Any] = {
+            "config_path": self.options.config_path,
+            "isolated_config_dir": self.options.isolated_config_dir,
+            "controller_backend": self.options.controller_backend,
+            "infra": self.options.infra,
+            "secret_envs": list(self.options.secret_envs),
+            "extra_env": secret_values,
+            "timeout": self.options.submit_timeout,
+        }
+        if self._submitter is None:
+            kwargs.update(
+                {
+                    "logical_launch_id": attempt.logical_launch_id,
+                    "project": self.options.project,
+                    "transaction_recorder": lambda payload: (
+                        self._record_launch_transaction(
+                            attempt, payload, rendered_wave_sha256
+                        )
+                    ),
+                }
+            )
+        if self.options.sky_bin:
+            kwargs["sky_bin"] = self.options.sky_bin
+        rendered_wave_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        result = submitter(path, job_name, **kwargs)
+        if self._submitter is None:
+            self._record_submit_preflight(attempt, rendered_wave_sha256)
+        return result
+
+    def _wave_credentials(self, attempt: WaveAttempt) -> dict[str, str]:
         secret_values = dict(self.options.secret_env_values)
         if self.options.credential_resolver is not None:
             secret_values = dict(self.options.credential_resolver())
@@ -1870,32 +2012,7 @@ class SkyPilotWaveExecutor:
         ).hexdigest()[:16]
         attempt.credential_source = f"project:{self.options.project}"
         self.ledger.record(attempt)
-        kwargs: dict[str, Any] = {
-            "config_path": self.options.config_path,
-            "isolated_config_dir": self.options.isolated_config_dir,
-            "controller_backend": self.options.controller_backend,
-            "infra": self.options.infra,
-            "secret_envs": list(self.options.secret_envs),
-            "extra_env": secret_values,
-            "timeout": self.options.submit_timeout,
-        }
-        if self._submitter is None:
-            kwargs.update(
-                {
-                    "logical_launch_id": attempt.logical_launch_id,
-                    "project": self.options.project,
-                    "transaction_recorder": lambda payload: (
-                        self._record_launch_transaction(attempt, payload)
-                    ),
-                }
-            )
-        if self.options.sky_bin:
-            kwargs["sky_bin"] = self.options.sky_bin
-        rendered_wave_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
-        result = submitter(path, job_name, **kwargs)
-        if self._submitter is None:
-            self._record_submit_preflight(attempt, rendered_wave_sha256)
-        return result
+        return secret_values
 
     def _attempt_preflight(self, attempt: WaveAttempt) -> PreflightEvidence:
         """Adoption has no current-driver proof that the wave launch gate ran."""
@@ -1906,7 +2023,11 @@ class SkyPilotWaveExecutor:
         )
 
     def _record_submit_preflight(
-        self, attempt: WaveAttempt, rendered_wave_sha256: str
+        self,
+        attempt: WaveAttempt,
+        rendered_wave_sha256: str,
+        *,
+        source: str = "default_sdk_submit",
     ) -> None:
         # Returning from the default SDK proves its mandatory wave gate passed.
         # This is a submit-time observation, not a new free-capacity check at poll.
@@ -1914,7 +2035,7 @@ class SkyPilotWaveExecutor:
             checks={**self._preflight_checks, "gang_capacity": "pass"},
             observed_at=utc_now(),
             scope={
-                "source": "default_sdk_submit",
+                "source": source,
                 "run_id": self.run_id,
                 "wave_key": attempt.key,
                 "attempt": attempt.attempt,
@@ -1923,8 +2044,17 @@ class SkyPilotWaveExecutor:
         )
 
     def _record_launch_transaction(
-        self, attempt: WaveAttempt, payload: Mapping[str, Any]
+        self,
+        attempt: WaveAttempt,
+        payload: Mapping[str, Any],
+        rendered_wave_sha256: str = "",
     ) -> None:
+        from npa.orchestration.npa_workflow.launch_recovery import (
+            _capture_partial_launch,
+        )
+
+        if rendered_wave_sha256:
+            _capture_partial_launch(attempt, payload, rendered_wave_sha256, self.run_id)
         self._apply_launch_transaction(attempt, payload)
         self.ledger.record(attempt)
 
@@ -2033,8 +2163,7 @@ class SkyPilotWaveExecutor:
             for verification_attempt in range(CANCELLATION_VERIFY_ATTEMPTS):
                 try:
                     observed = str(
-                        getattr(self._status(str(job_id)), "status", "")
-                        or "UNKNOWN"
+                        getattr(self._status(str(job_id)), "status", "") or "UNKNOWN"
                     ).upper()
                     verification_error = ""
                 except Exception as verify_exc:  # noqa: BLE001 - retry exact query
@@ -2101,7 +2230,7 @@ class RuntimeLedger:
     def latest_wave(self, key: str) -> dict[str, Any] | None:
         return self.state.latest_wave(key)
 
-    def outputs_not_from_succeeded_waves(self, outputs: Sequence[str]) -> list[str]:
+    def outputs_not_from_succeeded_waves(self, outputs: Sequence[Any]) -> list[str]:
         """Return outputs that are not already attributed to completed waves.
 
         Looping workflows may intentionally rewrite a shared component record while
@@ -2116,10 +2245,11 @@ class RuntimeLedger:
             if str(wave.get("status") or "") != "succeeded":
                 continue
             for output in wave.get("outputs") or []:
-                uri = output.get("uri") if isinstance(output, Mapping) else output
-                if str(uri or ""):
-                    previously_succeeded.add(str(uri))
-        return [str(uri) for uri in outputs if str(uri) not in previously_succeeded]
+                uri = _declared_output_uri(output)
+                if uri:
+                    previously_succeeded.add(uri)
+        remaining = [_declared_output_uri(output) for output in outputs]
+        return [uri for uri in remaining if uri not in previously_succeeded]
 
     def record(self, attempt: WaveAttempt) -> None:
         self.state.record_wave(attempt.to_dict())
@@ -2492,9 +2622,7 @@ def run_workflow_runtime(
             )
         migrations = ledger.state.plan_migrations
         if len(migrations) >= MAX_TERMINAL_PLAN_MIGRATIONS:
-            raise NpaWorkflowError(
-                "terminal plan migration limit reached for this run"
-            )
+            raise NpaWorkflowError("terminal plan migration limit reached for this run")
         seen_fingerprints: set[str] = set()
         expected_old = ""
         for index, migration in enumerate(migrations, 1):

@@ -449,12 +449,15 @@ def registry(accepted, monkeypatch):
         "_scan_trivy_exact_digest",
         lambda ref, **kwargs: calls.append(ref) or vulnerability,
     )
+
     def selected_scan(ref, *, platform_digest, config_digest):
         assert platform_digest == PLATFORM and config_digest == CONFIG
         calls.append(ref)
         return copy.deepcopy(accepted["selected_base_scan"])
 
-    monkeypatch.setattr(publish, "_scan_ncore_selected_base_exact_digest", selected_scan)
+    monkeypatch.setattr(
+        publish, "_scan_ncore_selected_base_exact_digest", selected_scan
+    )
     return index, statements, layers, config, calls
 
 

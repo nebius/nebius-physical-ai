@@ -82,13 +82,19 @@ def test_generate_scenarios_ranks_and_threads_lineage(tmp_path: Path) -> None:
 
 
 def test_generate_scenarios_default_backend_is_deterministic(tmp_path: Path) -> None:
-    first = generate_scenarios(_generate_request(tmp_path / "a", num_scenarios=4, seed=7), run_id="r")
-    second = generate_scenarios(_generate_request(tmp_path / "b", num_scenarios=4, seed=7), run_id="r")
+    first = generate_scenarios(
+        _generate_request(tmp_path / "a", num_scenarios=4, seed=7), run_id="r"
+    )
+    second = generate_scenarios(
+        _generate_request(tmp_path / "b", num_scenarios=4, seed=7), run_id="r"
+    )
     assert first.scenario_count == 4
     first_scenarios = json.loads(Path(first.manifest_uri).read_text())["scenarios"]
     second_scenarios = json.loads(Path(second.manifest_uri).read_text())["scenarios"]
     # Same seed => same mined perturbations and severities, independent of output path.
-    assert [s["perturbation"] for s in first_scenarios] == [s["perturbation"] for s in second_scenarios]
+    assert [s["perturbation"] for s in first_scenarios] == [
+        s["perturbation"] for s in second_scenarios
+    ]
     assert first.top_severity == second.top_severity
 
 
@@ -117,17 +123,28 @@ def test_render_adversarial_rrd_direct(tmp_path: Path) -> None:
     from npa.workbench.scenario_gen.generation import generate_scenarios as gen
     from npa.workbench.scenario_gen.visualization import render_adversarial_rrd
 
-    response = gen(_generate_request(tmp_path, visualize=False), run_id="r", adversary_backend=_fake_backend)
+    response = gen(
+        _generate_request(tmp_path, visualize=False),
+        run_id="r",
+        adversary_backend=_fake_backend,
+    )
     manifest = json.loads(Path(response.manifest_uri).read_text())
     from npa.workbench.scenario_gen.schemas import ScenarioRecord
 
     records = [ScenarioRecord.model_validate(s) for s in manifest["scenarios"]]
-    uri = render_adversarial_rrd(records, output_uri=str(tmp_path / "viz"), task_name="Isaac-Cartpole-v0", run_id="r")
+    uri = render_adversarial_rrd(
+        records,
+        output_uri=str(tmp_path / "viz"),
+        task_name="Isaac-Cartpole-v0",
+        run_id="r",
+    )
     assert uri.endswith("scenarios.rrd")
     assert Path(uri).exists() and Path(uri).stat().st_size > 0
 
 
-def test_generate_skips_viz_when_rerun_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_skips_viz_when_rerun_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import npa.workbench.scenario_gen.visualization as viz
 
     def _no_rerun() -> Any:
@@ -146,9 +163,16 @@ def test_generate_skips_viz_when_rerun_unavailable(tmp_path: Path, monkeypatch: 
 
 def test_generate_request_validation() -> None:
     with pytest.raises(ValueError):
-        GenerateRequest(policy_uri="", base_config_uri="s3://b/x", output_uri="s3://b/o")
+        GenerateRequest(
+            policy_uri="", base_config_uri="s3://b/x", output_uri="s3://b/o"
+        )
     with pytest.raises(ValueError):
-        GenerateRequest(policy_uri="s3://b/p", base_config_uri="s3://b/x", output_uri="s3://b/o", num_scenarios=0)
+        GenerateRequest(
+            policy_uri="s3://b/p",
+            base_config_uri="s3://b/x",
+            output_uri="s3://b/o",
+            num_scenarios=0,
+        )
 
 
 def test_rank_scenarios_orders_by_weighted_score(tmp_path: Path) -> None:
@@ -158,7 +182,9 @@ def test_rank_scenarios_orders_by_weighted_score(tmp_path: Path) -> None:
         adversary_backend=_fake_backend,
     )
     ranked = rank_scenarios(
-        RankRequest(input_uri=gen.manifest_uri, output_uri=str(tmp_path / "ranked"), top_k=1),
+        RankRequest(
+            input_uri=gen.manifest_uri, output_uri=str(tmp_path / "ranked"), top_k=1
+        ),
         run_id="rank-1",
     )
     assert ranked.ranked_count == 1
@@ -171,7 +197,10 @@ def test_rank_scenarios_orders_by_weighted_score(tmp_path: Path) -> None:
 def test_rank_scenarios_missing_input_raises(tmp_path: Path) -> None:
     with pytest.raises(ScenarioRankError):
         rank_scenarios(
-            RankRequest(input_uri=str(tmp_path / "missing.json"), output_uri=str(tmp_path / "out"))
+            RankRequest(
+                input_uri=str(tmp_path / "missing.json"),
+                output_uri=str(tmp_path / "out"),
+            )
         )
 
 
@@ -179,7 +208,9 @@ def test_rank_scenarios_empty_set_raises(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"schema": ADVERSARIAL_SET_SCHEMA, "scenarios": []}))
     with pytest.raises(ScenarioRankError):
-        rank_scenarios(RankRequest(input_uri=str(manifest), output_uri=str(tmp_path / "out")))
+        rank_scenarios(
+            RankRequest(input_uri=str(manifest), output_uri=str(tmp_path / "out"))
+        )
 
 
 def test_generate_endpoint_success_and_status_list(tmp_path: Path) -> None:
@@ -209,7 +240,9 @@ def test_generate_endpoint_success_and_status_list(tmp_path: Path) -> None:
     assert any(run["run_id"] == run_id for run in listing.json()["runs"])
 
 
-def test_generate_endpoint_failure_returns_400(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generate_endpoint_failure_returns_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import npa.workbench.scenario_gen.service as service_module
     from npa.workbench.scenario_gen.service import create_app
 
@@ -234,18 +267,27 @@ def test_rank_endpoint_success_and_failure(tmp_path: Path) -> None:
     from npa.workbench.scenario_gen.service import create_app
 
     client = TestClient(create_app(auth_mode="none"))
-    gen = generate_scenarios(_generate_request(tmp_path), run_id="run-1", adversary_backend=_fake_backend)
+    gen = generate_scenarios(
+        _generate_request(tmp_path), run_id="run-1", adversary_backend=_fake_backend
+    )
 
     ok = client.post(
         "/rank",
-        json={"input_uri": gen.manifest_uri, "output_uri": str(tmp_path / "ranked"), "top_k": 2},
+        json={
+            "input_uri": gen.manifest_uri,
+            "output_uri": str(tmp_path / "ranked"),
+            "top_k": 2,
+        },
     )
     assert ok.status_code == 200, ok.text
     assert ok.json()["ranked_count"] == 2
 
     missing = client.post(
         "/rank",
-        json={"input_uri": str(tmp_path / "nope.json"), "output_uri": str(tmp_path / "ranked")},
+        json={
+            "input_uri": str(tmp_path / "nope.json"),
+            "output_uri": str(tmp_path / "ranked"),
+        },
     )
     assert missing.status_code == 400
 
@@ -264,7 +306,10 @@ def test_token_auth_rejects_missing_and_invalid_tokens() -> None:
 
     client = TestClient(create_app(auth_mode="token", token="s3cr3t"))
     assert client.get("/health").status_code == 401
-    assert client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert (
+        client.get("/health", headers={"Authorization": "Bearer wrong"}).status_code
+        == 401
+    )
     ok = client.get("/health", headers={"Authorization": "Bearer s3cr3t"})
     assert ok.status_code == 200
 

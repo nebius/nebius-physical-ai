@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-09-12T00:00:00Z",
+  "as_of": "2026-09-15T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -319,9 +319,17 @@
         "sm_100",
         "sm_120"
       ],
-      "validated_tag": "0.1.0-cu128",
-      "validated_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
-      "validated_registry_scope": "operator"
+      "published_tag": "0.1.0-cu128-r3",
+      "published_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
+      "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
+      "validated_tag": "0.1.0-cu128-r3",
+      "validated_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
+      "validated_registry_scope": "public"
     },
     {
       "name": "npa-cosmos3-reason",
@@ -539,6 +547,29 @@
       "notes": "Isaac Sim is fetched at first run under the operator's own EULA acceptance rather than baked, so the image is redistributable. Keep render workloads on L40S / RTX PRO 6000 regardless of what CUDA the vendor ships."
     },
     {
+      "name": "npa-isaac-arena",
+      "dockerfile": "isaac-arena/Dockerfile",
+      "build_script": "isaac-arena/build.sh",
+      "redistribution": "public",
+      "verdict": "ready",
+      "validation": "validated",
+      "torch": "2.11.0+cu128 inherited from the exact accepted npa-isaac-lab runtime-fetch base",
+      "source_compiled_extensions": [],
+      "smoke": "Complete real state evaluation on B200; RTX visual qualification additionally requires current-run task success, simulator-ground-truth progress, and coherent denoised viewport motion.",
+      "notes": "The exact recovery candidate passed trusted source/license, complete-payload, security, SBOM, provenance, bootstrap, and anonymous-pull gates. Fresh B200 seeds 42-45 each completed 1,050 native state-only steps with success_rate=0.0 and no video. Fresh RTX replay executed its exact 43-action native terminal prefix with zero padding, success_rate=1.0, door openness 0.200 to 0.815, and four spatially bound motion pairs overlapping native progress. Native lighting samples are pinned and read back at 32/32/16; all 44 physics bindings and native actions match the preceding rejected visual run. Both new workflows are independently verified SUCCEEDED with zero active workers; controllers and shared capacity are retained. Historical rejected visual runs remain rejected. Isaac runtime and provider-controlled assets remain runtime fetches; upstream Arena remains alpha.",
+      "validated_tag": "dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+      "validated_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+      "published_tag": "0.3.0-isaaclab3-20260917-r4",
+      "published_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+      "publication_model": "exact-digest-promoted",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
+      "validation_scope": "B200 four-seed state-only evaluation plus successful RTX task/progress/visual evaluation on the exact accepted digest.",
+      "candidate_validation": "qualified"
+    },
+    {
       "name": "npa-leisaac",
       "dockerfile": "leisaac/Dockerfile",
       "verdict": "blocked",
@@ -706,12 +737,22 @@
         "guardrail_state": {
           "requested": true,
           "discovered": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "evaluated": {
-            "prompt_input": ["Blocklist", "Qwen3Guard"],
-            "generated_media": ["VideoContentSafetyFilter"]
+            "prompt_input": [
+              "Blocklist",
+              "Qwen3Guard"
+            ],
+            "generated_media": [
+              "VideoContentSafetyFilter"
+            ]
           },
           "media_attempted_inputs": 1,
           "media_successful_inputs": 1,
@@ -837,6 +878,40 @@
       "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
     },
     {
+      "name": "npa-openarm",
+      "dockerfile": "openarm/Dockerfile",
+      "build_script": "openarm/build.sh",
+      "redistribution": "public",
+      "verdict": "blocked",
+      "validation": "validated",
+      "torch": "runtime-fetched with Isaac Sim 5.1.0.0 and Isaac Lab 2.3.2.post1",
+      "source_compiled_extensions": [
+        "Isaac Sim and Isaac Lab runtime-fetched extensions"
+      ],
+      "smoke": "real 500-step OpenArm v2 bimanual MuJoCo rollout plus upstream Isaac reach rollout and RSL-RL checkpoint",
+      "notes": "The public image contains Apache-2.0 OpenArm MuJoCo/Isaac source and assets but no Isaac, Kit, credentials, accepted terms, caches, or generated data. The exact public development digest passed full-byte and supply-chain gates, then a one-GPU RTX PRO 6000 workflow produced finite MuJoCo and Isaac traces, a fully decoded rendered video, a real upstream RSL-RL checkpoint, and a matching fail-closed qualification report. This proves the RTX path only; B200/B300 remain blocked because they have no RT cores.",
+      "blocked_reason": "The accepted Isaac Sim/Isaac Lab capability requires an RT-capable GPU. B200 and B300 are datacenter Blackwell parts without RT cores and are not substitutes for the validated RTX target.",
+      "upstream_tracking": "NVIDIA Isaac Sim rendering support; route the complete OpenArm qualification to L40S or RTX PRO 6000.",
+      "validation_run": "private-access-controlled-validation-record",
+      "validated_tag": "dev-01fbf3a554cb7b15066283fd171c5b81f6207eda",
+      "validated_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+      "publication_model": "exact-digest-promoted",
+      "published_tag": "2.2.0-isaac0.1.0-rtfetch",
+      "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+      "published_registries": [
+        "public-development",
+        "public-release"
+      ],
+      "validated_gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": "12.0",
+        "platform": "gpu-rtx6000",
+        "result": "OPENARM_DUAL_SIMULATOR_QUALIFICATION_PASSED",
+        "tag": "dev-01fbf3a554cb7b15066283fd171c5b81f6207eda",
+        "digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a"
+      }
+    },
+    {
       "name": "npa-curobo",
       "dockerfile": "curobo/Dockerfile",
       "build_script": "curobo/build.sh",
@@ -847,9 +922,77 @@
       ],
       "smoke": "npa.smoke.test_curobo_functional: actual Franka pose solve, validated joint/FK artifacts and decoded RRD",
       "notes": "The 0.8.0-cuda13-b300-unbuilt candidate has no built-image or GPU evidence. The tag family is a build target, not an observed B300 compatibility claim. Complete MotionBenchMaker/MPiNets kinematic and dynamics benchmarks are a separate workload gate."
+    },
+    {
+      "name": "npa-diffusers",
+      "dockerfile": "diffusers/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The exact public image passed native B200 inference, complete artifact hashes and full MP4 decode on 2026-09-16. See docs/workbench/validation/studio-public-models-20260916.json. CUDA packages and checkpoints remain runtime fetches. B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model",
+      "measured_torch": "2.13.0+cu130",
+      "validated_tag": "0.38.0-rtfetch-20260916",
+      "validated_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "validated_registry_scope": "public"
+    },
+    {
+      "name": "npa-lingbot-world",
+      "dockerfile": "lingbot-world/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The exact public image passed native B200 inference, complete artifact hashes and full MP4 decode on 2026-09-16. See docs/workbench/validation/studio-public-models-20260916.json. CUDA packages and checkpoints remain runtime fetches. B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model",
+      "measured_torch": "2.13.0+cu130",
+      "validated_tag": "a43bec7-rtfetch-20260916",
+      "validated_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+      "validated_registry_scope": "public"
+    },
+    {
+      "name": "npa-sam2",
+      "dockerfile": "sam2/Dockerfile",
+      "verdict": "ready",
+      "validation": "validated",
+      "runtime": "Torch 2.13.0 and CUDA 13.0, fetched at runtime",
+      "notes": "The exact public image passed native B200 inference, complete artifact hashes and full MP4 decode on 2026-09-16. See docs/workbench/validation/studio-public-models-20260916.json. CUDA packages and checkpoints remain runtime fetches. B300 remains unvalidated.",
+      "smoke": "model-runtime golden: native generation or perception, raw evidence and fully decoded MP4; individual workflow validation for each advertised model",
+      "measured_torch": "2.13.0+cu130",
+      "validated_tag": "2.1-rtfetch-20260916",
+      "validated_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+      "validated_registry_scope": "public"
     }
   ],
   "validation_evidence": {
+    "npa-isaac-arena": {
+      "built": true,
+      "payload_scan": "Public build workflow 35211514544 verified the exact development digest through source/license policy, complete built-image filesystem/layer/history and secret scans, vulnerability policy, SBOM generation, digest-bound provenance and SBOM attestations, bootstrap, and anonymous registry resolution. Independent anonymous full pull and packaged-source hashes were also verified.",
+      "hardware_run": "Fresh runs arena-b200-reconcile-ae5adea6-20260917-r3 and arena-rtx-reconcile-ae5adea6-20260917-r3 qualified this exact digest. B200 completed four 1,050-step state-only seeds with success_rate=0.0; independent retrieval verified 60 objects / 51,006,097 bytes. RTX completed 43 exact replay actions through native terminal with zero padding, success_rate=1.0 and door openness 0.200 to 0.815; independent retrieval verified 24 objects / 4,978,517 bytes and fully decoded both 43-frame MP4s. Evidence MP4 SHA-256: fd4390bdb1e3a66454efc4375abd628327b528286c24c978e790915e3ae84893. A separate factual post-download RRD contains 44 verified captures and native metrics: f274b5657d944a2f8f7f764c5a6507c02e4e12b005650f1f7284b9fce445c993. Native controllers report SUCCEEDED with zero active workers; controllers and shared infrastructure are retained.",
+      "validated_gpus": {
+        "B200": {
+          "platform": "gpu-b200-sxm",
+          "capability": "10.0",
+          "result": "REAL_ISAAC_ARENA_STATE_EVALUATION_PASSED"
+        },
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "REAL_ISAAC_ARENA_TASK_VISUAL_EVALUATION_PASSED"
+        }
+      },
+      "validated_tag": "dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+      "validated_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+      "validated_registry_scope": "public-development",
+      "rejected_visual_evidence": {
+        "RTX PRO 6000": {
+          "platform": "gpu-rtx6000",
+          "capability": "12.0",
+          "result": "REJECTED_NOISE_SENSITIVE_VIDEO_ACCEPTANCE",
+          "success_rate": 0.0
+        }
+      },
+      "candidate_validation": "qualified"
+    },
     "npa-cosmos3": {
       "built": true,
       "payload_scan": "passed all built-image filesystem, layer, history, secret, vulnerability, licensing, SBOM, provenance, and anonymous-pull publication gates",
@@ -868,8 +1011,8 @@
     },
     "npa-alpamayo2-super": {
       "built": true,
-      "payload_scan": "passed all 26 OCI layers; no model checkpoint, PhysicalAI-AV media, populated Hugging Face cache, token, or credential payload was found",
-      "hardware_run": "The exact release index completed real pinned upstream inference independently on physical B200 and RTX PRO 6000 on 2026-08-18. Both runs fetched the OpenMDW checkpoint and separately gated PhysicalAI-AV sample only at runtime, produced a projected trajectory of shape [1,1,1,64,3], and uploaded non-empty result JSON, trajectory JSON, and calibrated-camera PNG artifacts in one wave with no recovery. RTX telemetry observed 71,447 MiB peak allocation and 100% utilization. B200 peak allocation was not sampled and is not claimed.",
+      "payload_scan": "passed all 25 OCI layers; no model checkpoint, PhysicalAI-AV media, populated Hugging Face cache, token, or credential payload was found",
+      "hardware_run": "The exact public r3 release index, built from source commit 5b693476c113c833e9d9d4f8c7aa492492a27505 with the HTTPConnection loopback healthcheck fix, completed real pinned upstream inference independently on physical B200 and RTX PRO 6000 on 2026-09-16. Both runs fetched the OpenMDW checkpoint and separately gated PhysicalAI-AV sample only at runtime, produced a projected trajectory of shape [1,1,1,64,3], and uploaded non-empty result JSON, trajectory JSON, and independently decoded calibrated-camera PNG artifacts. B200 measured ADE 1.503835 and FDE 4.357265; RTX measured ADE 1.501321 and FDE 4.351557. No r3 peak-memory value is claimed.",
       "validated_gpus": {
         "B200": {
           "platform": "gpu-b200-sxm",
@@ -879,13 +1022,13 @@
         "RTX PRO 6000": {
           "platform": "gpu-rtx6000",
           "capability": "12.0",
-          "result": "REAL_ALPAMAYO2_INFERENCE_PASSED",
-          "peak_memory_mib": 71447
+          "result": "REAL_ALPAMAYO2_INFERENCE_PASSED"
         }
       },
-      "validated_tag": "0.1.0-cu128",
-      "validated_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5",
-      "validated_registry_scope": "operator"
+      "validated_tag": "0.1.0-cu128-r3",
+      "validated_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
+      "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
+      "validated_registry_scope": "public"
     },
     "npa-base": {
       "built": true,
@@ -1277,6 +1420,57 @@
       "payload_scan": "All 45 OCI layers assessed; extension adds no weights, task/customer media, credentials or acceptance state. Inherited public vendor fixtures remain present.",
       "security_scan": "Zero fixable CRITICAL findings and zero detected secrets; 218 HIGH and six unfixed CRITICAL findings retained and disclosed. Baseline NIXL metadata conflict adds no new dependency conflict.",
       "measurement_reference": "npa/deploy/cosmos3-nano-video/README.md"
+    },
+    "npa-diffusers": {
+      "built": true,
+      "validated_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "payload_scan": "Passed mandatory public development build, payload, vulnerability, secret, licensing, SBOM and provenance gates; anonymous full image pulls verified.",
+      "hardware_run": "Native model capability inference on the exact image; successful worker summary and every output hash checked. Complete MP4 decoded independently.",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "NATIVE_CAPABILITY_PASSED"
+        }
+      },
+      "capability_evidence": "docs/workbench/validation/studio-public-models-20260916.json",
+      "not_validated": [
+        "B300"
+      ]
+    },
+    "npa-lingbot-world": {
+      "built": true,
+      "validated_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "payload_scan": "Passed mandatory public development build, payload, vulnerability, secret, licensing, SBOM and provenance gates; anonymous full image pulls verified.",
+      "hardware_run": "Native model capability inference on the exact image; successful worker summary and every output hash checked. Complete MP4 decoded independently.",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "NATIVE_CAPABILITY_PASSED"
+        }
+      },
+      "capability_evidence": "docs/workbench/validation/studio-public-models-20260916.json",
+      "not_validated": [
+        "B300"
+      ]
+    },
+    "npa-sam2": {
+      "built": true,
+      "validated_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "payload_scan": "Passed mandatory public development build, payload, vulnerability, secret, licensing, SBOM and provenance gates; anonymous full image pulls verified.",
+      "hardware_run": "Native model capability inference on the exact image; successful worker summary and every output hash checked. Complete MP4 decoded independently.",
+      "validated_gpus": {
+        "B200": {
+          "capability": "10.0",
+          "result": "NATIVE_CAPABILITY_PASSED"
+        }
+      },
+      "capability_evidence": "docs/workbench/validation/studio-public-models-20260916.json",
+      "not_validated": [
+        "B300"
+      ]
     }
   },
   "known_gaps": {

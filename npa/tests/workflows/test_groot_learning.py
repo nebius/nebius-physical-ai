@@ -129,7 +129,9 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
         lambda *_args: {"uri": "s3://bucket/baseline", "sha256": "a" * 64},
     )
     monkeypatch.setattr(
-        learning, "checkpoint_model_config_contract", lambda *_args: learning.GROOT_MODEL_CONFIG_CONTRACT
+        learning,
+        "checkpoint_model_config_contract",
+        lambda *_args: learning.GROOT_MODEL_CONFIG_CONTRACT,
     )
     monkeypatch.setattr(
         learning,
@@ -193,9 +195,7 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
     assert [seed for seed, _runtime, _embodiment in calls] == [11, 11, 22, 33]
     assert calls[0][1] is None
     assert all(supplied is runtime for _seed, supplied, _embodiment in calls[1:])
-    assert {embodiment for _seed, _runtime, embodiment in calls} == {
-        "NEW_EMBODIMENT"
-    }
+    assert {embodiment for _seed, _runtime, embodiment in calls} == {"NEW_EMBODIMENT"}
     assert initialized["embodiment"] == "NEW_EMBODIMENT"
     assert result["repeat_evaluation"]["configured_repeats"] == 4
     assert result["repeat_evaluation"]["policy_constructions"] == 1
@@ -322,7 +322,9 @@ def test_posttrain_evaluation_consumes_resolved_checkpoint_reference(
     monkeypatch.setattr(
         learning,
         "evaluate",
-        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs) or {"ok": True},
+        lambda *args, **kwargs: (
+            captured.update(args=args, kwargs=kwargs) or {"ok": True}
+        ),
     )
     result = learning.posttrain_eval(
         "s3://bucket/split.json",
@@ -516,9 +518,7 @@ class _Blueprint:
         return make
 
 
-def test_rrd_blueprint_has_only_panels_that_render_on_the_default_timeline() -> (
-    None
-):
+def test_rrd_blueprint_has_only_panels_that_render_on_the_default_timeline() -> None:
     rrb = _Blueprint()
     learning._learning_blueprint(rrb)
     origins = {str(view.get("origin")) for view in rrb.views}
@@ -764,7 +764,9 @@ def test_comparison_video_canvas_never_crops_large_or_portrait_native_frames(
         baseline_mse=0.0,
         posttrain_mse=0.0,
     )
-    canvas_width, canvas_height = (int(value) for value in meta["resolution"].split("x"))
+    canvas_width, canvas_height = (
+        int(value) for value in meta["resolution"].split("x")
+    )
     region = meta["camera_region"]
     assert canvas_width >= region["x"] + size[0]
     assert canvas_height >= region["y"] + size[1]
@@ -809,16 +811,17 @@ def test_publish_learning_uses_report_primary_camera_everywhere(
     monkeypatch.setattr(
         learning,
         "_validate_learning_mcap",
-        lambda _path, *, run_id, camera_name: calls.update(
-            mcap_camera=camera_name, mcap_run=run_id
-        )
-        or {"size_bytes": 8, "channels": {f"/camera/{camera_name}": 1}},
+        lambda _path, *, run_id, camera_name: (
+            calls.update(mcap_camera=camera_name, mcap_run=run_id)
+            or {"size_bytes": 8, "channels": {f"/camera/{camera_name}": 1}}
+        ),
     )
     monkeypatch.setattr(
         learning,
         "inspect_rrd",
-        lambda _path, **kwargs: calls.update(rrd_entities=kwargs["expected_entities"])
-        or {"bytes": 8},
+        lambda _path, **kwargs: (
+            calls.update(rrd_entities=kwargs["expected_entities"]) or {"bytes": 8}
+        ),
     )
     monkeypatch.setattr(
         learning,
@@ -997,7 +1000,11 @@ def test_learning_ui_is_replay_first_groups_frames_and_never_upscales() -> None:
     assert "native; preview is not enlarged" in source
     assert "width: auto" in source and "object-fit: contain" in source
     path_contract = (
-        Path(__file__).resolve().parents[2] / "src" / "npa" / "workflows" / "artifacts.py"
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "npa"
+        / "workflows"
+        / "artifacts.py"
     ).read_text(encoding="utf-8")
     assert "Prepare leakage-free split" in path_contract
     assert "Synchronized diagnostics" in path_contract
@@ -1062,12 +1069,8 @@ def test_not_improved_report_remains_valid_artifact_input(
         "s3://bucket/baseline.npz": {"predicted": np.zeros((2, 1))},
         "s3://bucket/trained.npz": {"predicted": np.ones((2, 1))},
     }
-    monkeypatch.setattr(
-        learning, "_read_s3_json", lambda _client, uri: documents[uri]
-    )
-    monkeypatch.setattr(
-        learning, "validate_evaluation", lambda *_args, **_kwargs: None
-    )
+    monkeypatch.setattr(learning, "_read_s3_json", lambda _client, uri: documents[uri])
+    monkeypatch.setattr(learning, "validate_evaluation", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(learning, "_read_npz", lambda _client, uri: arrays[uri])
 
     bundle = learning._evaluation_bundle(object(), "s3://bucket/report.json")

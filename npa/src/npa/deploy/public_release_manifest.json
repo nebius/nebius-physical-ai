@@ -12,10 +12,11 @@
     "cosmos3-serving": {"tag": "0.2.0-oss", "published_digest": "sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180", "development_sha": "d854f6a76cd87ec05ad97ccde6d596f3329efa0e"},
     "detection-training": {"tag": "runtime-v1-20260905", "published_digest": "sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d", "development_sha": "408700158b2e9cc9e9f6aad499e9d9c810bebeb1"},
     "envgen": {"tag": "0.1.2-sim2real-coherent-20260904", "published_digest": "sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
-    "fiftyone": {"tag": "1.15.0.post1", "published_digest": "sha256:cdc0cb7b1f59f3db3f9e6f899be17f27235d5aa7fe6ad171289bee7b3d995fc3"},
+    "fiftyone": {"tag": "1.21.0-skypilot-v1-20260915", "published_digest": "sha256:9ba5e723b2af8bad4e442781f3e09e2e5649499352ae583b7508bfdd902d7119", "development_sha": "17e3c9e82ceee7db1af59efef132b4c1187ede3b"},
     "foxglove-embed": {"tag": "0.58.0", "published_digest": "sha256:dc8e55ca8697bae7e9473d32451614b7c4a1d508b29d98e2bc8063bde2ec7828"},
     "genesis": {"tag": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"},
     "groot": {"tag": "0.1.0", "published_digest": "sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b"},
+    "isaac-arena": {"tag": "0.3.0-isaaclab3-20260917-r4", "published_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e", "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5"},
     "isaac-lab": {"tag": "3.0.0b2.post1-sim2real-coherent-20260904", "published_digest": "sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
     "lancedb": {"tag": "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z", "published_digest": "sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5"},
     "leisaac": {"tag": "0.4.0-20260817T231825Z", "published_digest": "sha256:82069eb74a18a88f77ad3149b6c5ed220c4eed33b1d550c26d361947805e8280"},
@@ -32,8 +33,12 @@
     "sonic-mujoco": {"tag": "0.2.0-runtime", "published_digest": "sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57", "development_sha": "5b5b5e69e9e686f8d5f305fd735a02f402f6da4b"},
     "sim2real-control": {"tag": "0.1.2-sim2real-coherent-20260904", "published_digest": "sha256:87fe8530710eea43364a21ad76dbe4b4c2d60e4b49705824fcdb62dc7d185af7", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
     "wan2-2": {"tag": "2.2-ti2v5b-rtfetch-cu130-20260817", "published_digest": "sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837", "development_sha": "bc18684d35fa171f7912cb84ef1ae16d4fc116e6"},
-    "alpamayo2-super": {"tag": "0.1.0-cu128", "published_digest": "sha256:2164450f8baf57d8798f64063ea27bf11611f5b695c467de0c2e319e3134ebd5"},
-    "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"}
+    "alpamayo2-super": {"tag": "0.1.0-cu128-r3", "published_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07", "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505"},
+    "content-agents": {"tag": "0.5.2-npa2", "published_digest": "sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db"},
+    "diffusers": {"tag": "0.38.0-rtfetch-20260916", "published_digest": "sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
+    "lingbot-world": {"tag": "a43bec7-rtfetch-20260916", "published_digest": "sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
+    "sam2": {"tag": "2.1-rtfetch-20260916", "published_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
+    "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"}
   },
   "publication_pending": {}
 }

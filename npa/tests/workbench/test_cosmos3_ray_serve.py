@@ -180,7 +180,9 @@ def test_server_removes_management_credential_when_runtime_fails(monkeypatch, tm
     assert not credential.exists()
 
 
-def test_guarded_server_prepares_verified_tokenizer_before_runtime(monkeypatch, tmp_path):
+def test_guarded_server_prepares_verified_tokenizer_before_runtime(
+    monkeypatch, tmp_path
+):
     import os
 
     from npa.workbench.cosmos import ray_server, transfer
@@ -295,9 +297,7 @@ def test_model_admission_capacity_can_form_configured_batch(monkeypatch, tmp_pat
     monkeypatch.setenv("NPA_COSMOS3_RAY_MAX_BATCH_SIZE", "8")
     _capture_batch_router(monkeypatch, tmp_path)
 
-    deployment = sys.modules[
-        "cosmos_framework.inference.ray.serve"
-    ].OmniModelDeployment
+    deployment = sys.modules["cosmos_framework.inference.ray.serve"].OmniModelDeployment
     assert deployment.options.call_args.kwargs["max_ongoing_requests"] == 8
 
 
@@ -311,34 +311,44 @@ def _rewritten_batch_api(router):
     parameters = list(signature.parameters.values())
     # Ray's class-based ingress injects self and makes the remaining arguments
     # keyword-only, then FastAPI analyzes the rewritten endpoint again.
-    endpoint.__signature__ = signature.replace(parameters=[
-        parameters[0].replace(default=Depends(lambda: router)),
-        *(parameter.replace(kind=inspect.Parameter.KEYWORD_ONLY)
-          for parameter in parameters[1:]),
-    ])
+    endpoint.__signature__ = signature.replace(
+        parameters=[
+            parameters[0].replace(default=Depends(lambda: router)),
+            *(
+                parameter.replace(kind=inspect.Parameter.KEYWORD_ONLY)
+                for parameter in parameters[1:]
+            ),
+        ]
+    )
     api = FastAPI()
     api.post("/v1/batches")(endpoint)
     return api
 
 
-def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(monkeypatch, tmp_path):
+def test_batch_ingress_keeps_json_body_after_ray_signature_rewrite(
+    monkeypatch, tmp_path
+):
     from fastapi.testclient import TestClient
 
     api = _rewritten_batch_api(_capture_batch_router(monkeypatch, tmp_path))
     schema = api.openapi()["paths"]["/v1/batches"]["post"]
     assert "application/json" in schema["requestBody"]["content"]
-    assert all(parameter["name"] != "body" for parameter in schema.get("parameters", []))
+    assert all(
+        parameter["name"] != "body" for parameter in schema.get("parameters", [])
+    )
     payload = {"model": "not-loaded", "samples": [{"name": "one", "prompt": "cube"}]}
     with TestClient(api) as client:
         assert client.post("/v1/batches", json=payload).status_code == 401
         response = client.post(
-            "/v1/batches", json=payload,
+            "/v1/batches",
+            json=payload,
             headers={"Authorization": "Bearer test-application-token"},
         )
         assert response.status_code == 404
         assert response.json()["detail"] == "model 'not-loaded' is not loaded"
         missing_body = client.post(
-            "/v1/batches", params={"body": json.dumps(payload)},
+            "/v1/batches",
+            params={"body": json.dumps(payload)},
             headers={"Authorization": "Bearer test-application-token"},
         )
         assert missing_body.status_code == 422
@@ -710,8 +720,11 @@ def test_unsupported_request_fails_before_inference(
             9,
         ),
         (
-            {"name": "one", "vision_path": "s3://test-bucket/input.%70ng",
-             "num_frames": 1},
+            {
+                "name": "one",
+                "vision_path": "s3://test-bucket/input.%70ng",
+                "num_frames": 1,
+            },
             "image2image",
             1,
         ),
@@ -744,7 +757,9 @@ def test_implicit_native_mode_is_bound_before_sample_defaults(
     get.assert_not_called()
 
 
-@pytest.mark.parametrize("key", ["input%2Epng", "input.%70ng", "input.JPG", "input.mp4"])
+@pytest.mark.parametrize(
+    "key", ["input%2Epng", "input.%70ng", "input.JPG", "input.mp4"]
+)
 def test_implicit_mode_matches_authorized_server_staging(tmp_path: Path, key: str):
     from npa.workbench.cosmos.ray_inputs import stage_sample_inputs
     from npa.workbench.cosmos.ray_serve import _requested_mode
@@ -754,7 +769,8 @@ def test_implicit_mode_matches_authorized_server_staging(tmp_path: Path, key: st
     storage = Mock()
     storage.download_file.side_effect = lambda uri, path: Path(path).write_bytes(MEDIA)
     staged = stage_sample_inputs(
-        sample, tmp_path / "staged",
+        sample,
+        tmp_path / "staged",
         scope=StorageScope.from_config(s3_roots=["s3://test-bucket/inputs/"]),
         storage_client=storage,
     )
@@ -762,11 +778,20 @@ def test_implicit_mode_matches_authorized_server_staging(tmp_path: Path, key: st
     storage.download_file.assert_called_once()
 
 
-@pytest.mark.parametrize("key", [
-    "input%252Epng", "input.png?query=1", "input.png#fragment",
-    "%2E%2E/input.png", "input%5C.png", "input.gif",
-])
-def test_unbindable_implicit_s3_mode_fails_before_inference(tmp_path: Path, transport, key):
+@pytest.mark.parametrize(
+    "key",
+    [
+        "input%252Epng",
+        "input.png?query=1",
+        "input.png#fragment",
+        "%2E%2E/input.png",
+        "input%5C.png",
+        "input.gif",
+    ],
+)
+def test_unbindable_implicit_s3_mode_fails_before_inference(
+    tmp_path: Path, transport, key
+):
     source = tmp_path / "batch.json"
     _batch(source, samples=[{"name": "one", "vision_path": "s3://test-bucket/" + key}])
     _, post, get = transport
@@ -1021,10 +1046,15 @@ def test_transfer_dispatch_precedes_reasoner_file_contract(tmp_path: Path, trans
 @pytest.mark.parametrize("encoded", ["%3F", "%23", "%09", "%0D", "%0A"])
 @pytest.mark.parametrize("mode", [None, "image2image"])
 @pytest.mark.parametrize("field", ["vision_path", "prompt_path", "edge"])
-def test_reinterpreted_conditioning_key_fails_before_post(tmp_path, transport, encoded, mode, field):
+def test_reinterpreted_conditioning_key_fails_before_post(
+    tmp_path, transport, encoded, mode, field
+):
     source = tmp_path / "batch.json"
     value = f"s3://test-bucket/media/input{encoded}variant.png"
-    sample = {"name": "one", field: {"control_path": value} if field == "edge" else value}
+    sample = {
+        "name": "one",
+        field: {"control_path": value} if field == "edge" else value,
+    }
     if mode is not None:
         sample["model_mode"] = mode
     _batch(source, samples=[sample])

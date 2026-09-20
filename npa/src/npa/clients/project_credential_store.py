@@ -39,7 +39,9 @@ def _path(path: Path | None) -> Path:
 def _legacy_owner(document: Mapping[str, Any]) -> str:
     iam = document.get("storage_iam")
     if isinstance(iam, Mapping):
-        owner = str(iam.get("service_account_project_id") or iam.get("project_id") or "").strip()
+        owner = str(
+            iam.get("service_account_project_id") or iam.get("project_id") or ""
+        ).strip()
         if owner:
             return owner
     nebius = document.get("nebius")
@@ -53,7 +55,11 @@ def _legacy_owner(document: Mapping[str, Any]) -> str:
             return owner
     storage = document.get("storage")
     storage = storage if isinstance(storage, Mapping) else {}
-    bucket = str(storage.get("bucket") or storage.get("s3_bucket") or "").removeprefix("s3://").strip("/")
+    bucket = (
+        str(storage.get("bucket") or storage.get("s3_bucket") or "")
+        .removeprefix("s3://")
+        .strip("/")
+    )
     setup = document.get("storage_setup")
     projects = setup.get("projects") if isinstance(setup, Mapping) else None
     matches: list[str] = []
@@ -80,15 +86,22 @@ def _root(document: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         raise ProjectCredentialStoreError("project credential store is not a mapping")
     schema = value.get("schema_version")
     if schema != SCHEMA_VERSION:
-        raise ProjectCredentialStoreError(f"unsupported project credential schema {schema!r}")
+        raise ProjectCredentialStoreError(
+            f"unsupported project credential schema {schema!r}"
+        )
     projects = value.get("projects")
     if not isinstance(projects, Mapping):
-        raise ProjectCredentialStoreError("project credential store projects must be a mapping")
+        raise ProjectCredentialStoreError(
+            "project credential store projects must be a mapping"
+        )
     return deepcopy(dict(value)), deepcopy(dict(projects))
 
 
 def _migrate_legacy(
-    document: dict[str, Any], root: dict[str, Any], projects: dict[str, Any], project_id: str
+    document: dict[str, Any],
+    root: dict[str, Any],
+    projects: dict[str, Any],
+    project_id: str,
 ) -> None:
     legacy_fields = {
         key: deepcopy(document[key])
@@ -138,12 +151,15 @@ def _compatibility_views(document: dict[str, Any], root: Mapping[str, Any]) -> N
         document.pop(key, None)
     current = str(root.get("current_project_id") or "").strip()
     projects = root.get("projects")
-    selected = projects.get(current) if current and isinstance(projects, Mapping) else None
+    selected = (
+        projects.get(current) if current and isinstance(projects, Mapping) else None
+    )
     if isinstance(selected, Mapping):
         for key in ("storage", "storage_iam", "nebius"):
-            if key in {"storage", "storage_iam"} and selected.get(
-                "storage_selected"
-            ) is False:
+            if (
+                key in {"storage", "storage_iam"}
+                and selected.get("storage_selected") is False
+            ):
                 continue
             value = selected.get(key)
             if isinstance(value, Mapping) and value:
@@ -187,7 +203,9 @@ def project_credential_record(
         record = projects.get(exact)
         result = deepcopy(dict(record)) if isinstance(record, Mapping) else {}
         if result and alias:
-            aliases = sorted({*(str(item) for item in result.get("aliases", []) if item), alias})
+            aliases = sorted(
+                {*(str(item) for item in result.get("aliases", []) if item), alias}
+            )
             if aliases != result.get("aliases") or result.get("project_id") != exact:
                 result["aliases"] = aliases
                 result["project_id"] = exact
@@ -374,7 +392,10 @@ def merge_project_credentials_document(
     if isinstance(existing_iam, Mapping) and isinstance(incoming_iam, dict):
         generations: list[dict[str, Any]] = []
         seen: set[tuple[str, tuple[str, ...]]] = set()
-        for source in (existing_iam.get("generations"), incoming_iam.get("generations")):
+        for source in (
+            existing_iam.get("generations"),
+            incoming_iam.get("generations"),
+        ):
             if not isinstance(source, list):
                 continue
             for item in source:
@@ -382,7 +403,13 @@ def merge_project_credentials_document(
                     continue
                 marker = (
                     str(item.get("service_account_id") or ""),
-                    tuple(sorted(str(value) for value in item.get("access_key_ids", []) if value)),
+                    tuple(
+                        sorted(
+                            str(value)
+                            for value in item.get("access_key_ids", [])
+                            if value
+                        )
+                    ),
                 )
                 if marker not in seen:
                     generations.append(deepcopy(dict(item)))

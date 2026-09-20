@@ -1,0 +1,149 @@
+{
+  "schema": "npa.manipulation-physics-counterexamples.v1",
+  "status": "counterexamples; no qualified success established",
+  "scope": "Retrospective inspection of retained capture arrays, not a full held-out re-evaluation or a replacement acceptance protocol.",
+  "interpretation": "Raw height-threshold event counts from these frozen experiments are not accepted as validated lifts. These capture counterexamples do not identify how many held-out trials had invalid physics.",
+  "timing": "Zero-based frame index divided by 50 Hz, relative to the captured episode; timestamps are not wall-clock times.",
+  "native_bound_precision": "Bounds shown here are the native runtime log values; its printed decimals are less precise than the underlying float tensors.",
+  "physical_robot_tested": false,
+  "qualification_established": false,
+  "cases": [
+    {
+      "embodiment": "ur10e_robotiq85",
+      "learning_profile": "adaptive-exploration",
+      "source_commit": "4c1babdfd3e5b9ef92ce9f4b794ef6fb6b5c3a61",
+      "episode_index": 27,
+      "policy": "trained",
+      "condition": "nominal",
+      "capture_reset_index": 3,
+      "frame_count": 250,
+      "fps": 50,
+      "raw_array_sha256": {
+        "joint_state": "8ba7881f7967b31bf95acf05c33511fe123a4b4ac1b98be941fa70a14117c05e",
+        "policy_actions": "192d937b4347f28b8b9949d921022caf6d26cc5aaa6c1c71d2e68b9161d11e58",
+        "object_metrics": "c93f35d4e7e2b46a96ee16b54ea2c74de75f868c1ed62b265abb31ea161d5625",
+        "synchronized_telemetry": "07282fcd33d3e81b23af9bf8642649e392a2e7513cdca5ada8e8a107da806171"
+      },
+      "retained_source_receipt_sha256": "64679a4952d39de33d59f97e1ff68cbeb22cdea38063e4a7149fb33f5f73cdcf",
+      "retained_worker_source_receipt_sha256": {
+        "train": "b435514bda48de91230c9640ef25fb403d137a2d33da2fea7c8ffd99bf4d44a9",
+        "evaluate": "ff211cbaf777d2b1e970cef450f68dd0c3c93f33f925cbec96d389387e52a1ca"
+      },
+      "counterexample": {
+        "joint": "finger_joint",
+        "joint_type": "revolute",
+        "position_unit": "rad",
+        "native_position_bounds": [
+          0.0,
+          0.82
+        ],
+        "first_position_excess_over_0_1_rad_frame": 45,
+        "time_s": 0.9,
+        "position_at_that_frame": 2.5118558406829834,
+        "earlier_sampled_velocity_divergence": {
+          "frame": 44,
+          "time_s": 0.88,
+          "finite_difference_over_native_velocity_limit_ratio": 16.871176660060883
+        },
+        "later_object_height": {
+          "frame": 249,
+          "time_s": 4.98,
+          "value_m": 6544.8720703125
+        },
+        "interpretation": "Gripper divergence precedes a finite but nonphysical object trajectory; the height event is not a valid lift reference."
+      },
+      "retained_diagnostic_receipt_sha256": {
+        "geometry": "273f1e787618649ea04bc8af7943a80112abdaeb96e67f0aec89dafd4d532bd3",
+        "joint_onset": "0cfcc73563c3cf6b3392a92247d8aded72a12c8c83b19864e55615b1c59bee79",
+        "commands": "95220f05f8c4269162d0b25637122ae20c6bcac6fd341e3d7c3974ef716034dd"
+      }
+    },
+    {
+      "embodiment": "kinova_jaco7",
+      "learning_profile": "adaptive-bounded-exploration",
+      "source_commit": "8dcf36fbf61af1eb70164feb2898ab0cdde61c19",
+      "episode_index": 19,
+      "policy": "trained",
+      "condition": "delay",
+      "capture_reset_index": 3,
+      "frame_count": 234,
+      "fps": 50,
+      "raw_array_sha256": {
+        "joint_state": "66d055c8797768b9cd0f7df20567724c2531159a1a6fb1251e595fa8ef0fd794",
+        "policy_actions": "364fe6f0a566b1ff1f427994600707e52c1ebbfec8da5ce5f3cf177089329553",
+        "object_metrics": "4e3b34e0dc339962ee0aa8d7654c8e3f1f45b40dd6ac59b41fc1c42c658ba9a9",
+        "synchronized_telemetry": "9fa1215f1d85c27e782179be8c884ed73f35ef7fa45536cbce115f8d2dba1869"
+      },
+      "retained_source_receipt_sha256": "dc4c323afb75d3b956bcb41873fbaecf1744f58edc656d7d399b0c7cb04826ad",
+      "retained_worker_source_receipt_sha256": {
+        "train": "94ff5ff604babebfd4777b51528b8683a74b045050fd08087900727da11a6502",
+        "evaluate": "7e3ebace6121c20753362e705f865052edbd46da0380667c9089be39103fe946"
+      },
+      "counterexample": {
+        "joint": "j2n7s300_joint_finger_tip_3",
+        "joint_type": "revolute",
+        "position_unit": "rad",
+        "native_position_bounds": [
+          0.0,
+          2.0
+        ],
+        "frame": 131,
+        "time_s": 2.62,
+        "joint_position": -1.23305344581604,
+        "lower_limit_excess": 1.23305344581604,
+        "interpretation": "A bounded arm target and finite object trajectory do not establish gripper constraint validity."
+      },
+      "retained_diagnostic_receipt_sha256": {
+        "geometry": "8378b3f579298a8490acd4bebb18f915d0f1f8ddca1ab265fcf8c6f94bfaaaa0",
+        "joint_screen": "9f85dd7a20597e79936d2d6c378ad06e5d2b29faf7ca9a2051de73cbaa6d921b",
+        "joint_onset": "794ed9c81f991692504c9b23029aa5123f4bf0562e113122ecd46cd7790a45c6"
+      }
+    },
+    {
+      "embodiment": "franka",
+      "learning_profile": "adaptive-bounded-exploration",
+      "source_commit": "8dcf36fbf61af1eb70164feb2898ab0cdde61c19",
+      "episode_index": 16,
+      "policy": "trained",
+      "condition": "delay",
+      "capture_reset_index": 0,
+      "frame_count": 191,
+      "fps": 50,
+      "raw_array_sha256": {
+        "joint_state": "748a4965b4024489fb5d1aaeecc3c0353eeffd5e39e2da6a9040977835038059",
+        "policy_actions": "910136bcf87d5f5d71ac358fb60ff891a2c92e85821080c3c6b0354797768625",
+        "object_metrics": "e094475a0b6033cfea1dad6cc9ccc6d2881b8d86480eb98e78386ab16432730d",
+        "synchronized_telemetry": "adac513c76b8e8ec1dba9713197006825dcfe821efbdd222dcd26647bdc02197"
+      },
+      "retained_source_receipt_sha256": "6c7eaadb519877eb9750fc493d613359573b281521f7ac95d36c4f3acfec10e6",
+      "retained_worker_source_receipt_sha256": {
+        "train": "474e434261e15631ed491f3bf8f5c2034edc9f61b0db0d08f02ef6f1c19e4ff7",
+        "evaluate": "585e9bbebd2fdd84bb0ad41dc760a72de43a38b2c370295ef25f0db900de63f0"
+      },
+      "counterexample": {
+        "joint": "panda_finger_joint2",
+        "joint_type": "prismatic",
+        "position_unit": "m",
+        "native_position_bounds": [
+          0.0,
+          0.04
+        ],
+        "frame": 144,
+        "time_s": 2.88,
+        "joint_position": 0.08890914171934128,
+        "upper_limit_excess": 0.04890914171934128,
+        "interpretation": "Finger extension exceeds that joint's native travel limit despite ordinary object-height and speed ranges."
+      },
+      "retained_diagnostic_receipt_sha256": {
+        "complete_capture_screen": "939cc7c4cee40d2731cc5d2f5f77bb1a93a7af162018a224e3bc03439790bf69",
+        "joint_onset": "454794305f6047950bd578957c2c30d120118ff8be91a4cf75d24b607e5b6940",
+        "lossless_frame_export": "86ddac8206350f069f332441adeb823b78f9786447f8cd88f380441c807c00d5"
+      }
+    }
+  ],
+  "historical_baseline_caveat": {
+    "physical_validity_verified": false,
+    "detail": "Original baselines also lack measured-state validity gates; additional Franka and UR finger-limit excursions were found. A coarse numerical screen is not a physics certificate.",
+    "retained_per_joint_receipt_sha256": "6ca441666149a548adc80e4dc3d64403d326ef7061ed4b569af3cd7359e4e13f"
+  }
+}

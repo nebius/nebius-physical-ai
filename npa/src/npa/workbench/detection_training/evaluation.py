@@ -32,7 +32,13 @@ def evaluate_detector(request: EvalRequest) -> EvalResponse:
     )
     output_uri = uri_join(request.output_uri, eval_run_id, "eval_metrics.json")
     receipt = write_json_uri(output_uri, result.model_dump(mode="json"))
-    artifact = describe_artifact(output_uri, role="evaluation_metrics", media_type="application/json", schema_version="npa.detection.evaluation-metrics.v1", write_receipt=receipt)
+    artifact = describe_artifact(
+        output_uri,
+        role="evaluation_metrics",
+        media_type="application/json",
+        schema_version="npa.detection.evaluation-metrics.v1",
+        write_receipt=receipt,
+    )
     return result.model_copy(update={"artifacts": [artifact]})
 
 
@@ -40,7 +46,9 @@ def _evaluate_with_model(request: EvalRequest) -> dict[str, Any]:
     try:
         import torch
     except ImportError as exc:
-        raise DetectionEvaluationError("torch is required for detection evaluation") from exc
+        raise DetectionEvaluationError(
+            "torch is required for detection evaluation"
+        ) from exc
 
     checkpoint = _load_checkpoint(request.checkpoint_uri)
     label_map, numeric_map = checkpoint_labels(checkpoint, requested=request.label_map)
@@ -53,7 +61,9 @@ def _evaluate_with_model(request: EvalRequest) -> dict[str, Any]:
     try:
         model.load_state_dict(state, strict=True)
     except RuntimeError as exc:
-        raise DetectionEvaluationError("checkpoint weights do not match the detector architecture") from exc
+        raise DetectionEvaluationError(
+            "checkpoint weights do not match the detector architecture"
+        ) from exc
     model.to(device)
     model.eval()
     dataloader = make_dataloader(
@@ -67,15 +77,22 @@ def _evaluate_with_model(request: EvalRequest) -> dict[str, Any]:
     result = _compute_map_metrics(model, dataloader, device=device)
     if label_map:
         names = {f"class_{value}": name for name, value in label_map.items()}
-        result["per_category_AP"] = {names.get(key, key): value for key, value in result.get("per_category_AP", {}).items()}
+        result["per_category_AP"] = {
+            names.get(key, key): value
+            for key, value in result.get("per_category_AP", {}).items()
+        }
     return result
 
 
 def checkpoint_labels(checkpoint: dict[str, Any], *, requested: dict[str, int] | None):
     """New checkpoints are authoritative; old checkpoints keep their original IDs."""
-    original = checkpoint.get("label_map", (checkpoint.get("request") or {}).get("label_map"))
+    original = checkpoint.get(
+        "label_map", (checkpoint.get("request") or {}).get("label_map")
+    )
     if original is not None and requested is not None and requested != original:
-        raise DetectionEvaluationError("evaluation label_map differs from checkpoint category identity")
+        raise DetectionEvaluationError(
+            "evaluation label_map differs from checkpoint category identity"
+        )
     source = original if original is not None else requested
     if "detector_label_map" in checkpoint:
         model_labels = checkpoint["detector_label_map"]
@@ -83,7 +100,11 @@ def checkpoint_labels(checkpoint: dict[str, Any], *, requested: dict[str, int] |
             # Numeric-only checkpoints have no recorded category identity. An
             # explicit eval map names those existing detector IDs; do not shift it.
             return requested, None
-        numeric = {category_id: model_labels[name] for name, category_id in source.items()} if source and model_labels else None
+        numeric = (
+            {category_id: model_labels[name] for name, category_id in source.items()}
+            if source and model_labels
+            else None
+        )
         return model_labels, numeric
     return source, None
 
@@ -92,7 +113,9 @@ def _compute_map_metrics(model: Any, dataloader: Any, *, device: Any) -> dict[st
     try:
         from torchmetrics.detection.mean_ap import MeanAveragePrecision
     except ImportError as exc:
-        raise DetectionEvaluationError("torchmetrics and its COCO backend are required for real detection evaluation") from exc
+        raise DetectionEvaluationError(
+            "torchmetrics and its COCO backend are required for real detection evaluation"
+        ) from exc
 
     metric = MeanAveragePrecision(class_metrics=True)
     try:
@@ -139,7 +162,11 @@ def _load_checkpoint(uri: str) -> dict[str, Any]:
 def _eval_manifest(request: EvalRequest) -> str:
     digest = hashlib.sha256()
     digest.update(b"eval\n")
-    digest.update(json.dumps(request.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    digest.update(
+        json.dumps(
+            request.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    )
     digest.update(b"\n")
     return digest.hexdigest()
 

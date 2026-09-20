@@ -23,14 +23,66 @@ _LOG = logging.getLogger(__name__)
 # Canonical stage order + the component that produces each stage's artifacts.
 # runtime is where the compute actually runs (grounds the "which needs a GPU" story).
 _STAGE_COMPONENTS: list[tuple[str, dict[str, str]]] = [
-    ("configs", {"stage": "Config generation", "component": "Appearance-variable sampler", "runtime": "CPU"}),
-    ("input", {"stage": "Source + conditioning", "component": "Verified run input and derived conditioning", "runtime": "operator-side prepare"}),
-    ("labeled_original", {"stage": "Annotate originals", "component": "Token Factory VLM", "runtime": "hosted GPU (Token Factory)"}),
-    ("cosmos_augmented", {"stage": "Augment", "component": "Cosmos Transfer 2.5", "runtime": "GPU (Nebius K8s)"}),
-    ("grade", {"stage": "Attribute verify + quality gate", "component": "Token Factory vlm_eval + CPU gate", "runtime": "hosted GPU (Token Factory) + CPU"}),
-    ("labeled_augmented", {"stage": "Pseudo-label augmented", "component": "Token Factory VLM", "runtime": "hosted GPU (Token Factory)"}),
-    ("curation", {"stage": "Curation", "component": "Dataset curation report", "runtime": "CPU"}),
-    ("reports", {"stage": "Visualize + finalize", "component": "Rerun recording + aggregate report", "runtime": "CPU"}),
+    (
+        "configs",
+        {
+            "stage": "Config generation",
+            "component": "Appearance-variable sampler",
+            "runtime": "CPU",
+        },
+    ),
+    (
+        "input",
+        {
+            "stage": "Source + conditioning",
+            "component": "Verified run input and derived conditioning",
+            "runtime": "operator-side prepare",
+        },
+    ),
+    (
+        "labeled_original",
+        {
+            "stage": "Annotate originals",
+            "component": "Token Factory VLM",
+            "runtime": "hosted GPU (Token Factory)",
+        },
+    ),
+    (
+        "cosmos_augmented",
+        {
+            "stage": "Augment",
+            "component": "Cosmos Transfer 2.5",
+            "runtime": "GPU (Nebius K8s)",
+        },
+    ),
+    (
+        "grade",
+        {
+            "stage": "Attribute verify + quality gate",
+            "component": "Token Factory vlm_eval + CPU gate",
+            "runtime": "hosted GPU (Token Factory) + CPU",
+        },
+    ),
+    (
+        "labeled_augmented",
+        {
+            "stage": "Pseudo-label augmented",
+            "component": "Token Factory VLM",
+            "runtime": "hosted GPU (Token Factory)",
+        },
+    ),
+    (
+        "curation",
+        {"stage": "Curation", "component": "Dataset curation report", "runtime": "CPU"},
+    ),
+    (
+        "reports",
+        {
+            "stage": "Visualize + finalize",
+            "component": "Rerun recording + aggregate report",
+            "runtime": "CPU",
+        },
+    ),
 ]
 
 
@@ -39,9 +91,9 @@ def _stage_of(key: str, run_id: str) -> str:
     marker = "/" + str(run_id or "") + "/"
     idx = scoped.find(marker)
     if idx >= 0:
-        scoped = scoped[idx + len(marker):]
+        scoped = scoped[idx + len(marker) :]
     elif run_id and scoped.startswith(str(run_id) + "/"):
-        scoped = scoped[len(str(run_id)) + 1:]
+        scoped = scoped[len(str(run_id)) + 1 :]
     parts = [p for p in scoped.split("/") if p]
     return parts[0] if parts else ""
 
@@ -98,11 +150,15 @@ def build_run_provenance(
                 entry["model"] = "nvidia/Cosmos-Transfer2.5-2B"
             elif mode:
                 entry["engine"] = mode
-                entry["detail"] = "CPU appearance-transform stand-in (GPU Cosmos Transfer is the heavy variant)"
+                entry["detail"] = (
+                    "CPU appearance-transform stand-in (GPU Cosmos Transfer is the heavy variant)"
+                )
             else:
                 entry["model"] = "nvidia/Cosmos-Transfer2.5-2B"
         elif stage in {"labeled_original", "labeled_augmented"}:
-            cap = _read(stage_key_sample.get(stage, "").rsplit("/", 1)[0] + "/captions.json")
+            cap = _read(
+                stage_key_sample.get(stage, "").rsplit("/", 1)[0] + "/captions.json"
+            )
             model = str(cap.get("model") or "")
             if model:
                 entry["model"] = model
@@ -115,17 +171,27 @@ def build_run_provenance(
             rep = _read(_stage_json_key(keys, run_id, "curation", "report.json"))
             engine = str(rep.get("curation_engine") or "")
             if engine == "fiftyone-brain":
-                fo = rep.get("fiftyone") if isinstance(rep.get("fiftyone"), dict) else {}
+                fo = (
+                    rep.get("fiftyone") if isinstance(rep.get("fiftyone"), dict) else {}
+                )
                 entry["component"] = "Real FiftyOne Brain curation"
                 entry["engine"] = "fiftyone_brain"
                 entry["runtime"] = "CPU (npa-fiftyone image)"
                 kept = rep.get("curated_kept")
                 dropped = rep.get("curated_dropped")
-                bits = ["uniqueness + near-duplicate detection + PCA visualization (real FiftyOne Brain)"]
+                bits = [
+                    "uniqueness + near-duplicate detection + PCA visualization (real FiftyOne Brain)"
+                ]
                 if kept is not None:
-                    bits.append(f"{kept} kept" + (f", {dropped} dropped" if dropped else ""))
+                    bits.append(
+                        f"{kept} kept" + (f", {dropped} dropped" if dropped else "")
+                    )
                 entry["detail"] = "; ".join(bits)
-                version = str(fo.get("fiftyone_version") or "") if isinstance(fo, dict) else ""
+                version = (
+                    str(fo.get("fiftyone_version") or "")
+                    if isinstance(fo, dict)
+                    else ""
+                )
                 if version:
                     entry["model"] = f"fiftyone {version}"
             elif engine == "report-only":
@@ -156,9 +222,9 @@ def _scoped_key(key: str, run_id: str) -> str:
     marker = "/" + str(run_id or "") + "/"
     idx = text.find(marker)
     if idx >= 0:
-        return text[idx + len(marker):]
+        return text[idx + len(marker) :]
     prefix = str(run_id or "") + "/"
-    return text[len(prefix):] if run_id and text.startswith(prefix) else text
+    return text[len(prefix) :] if run_id and text.startswith(prefix) else text
 
 
 def _authoritative_groot_learning_report(
@@ -203,12 +269,17 @@ def _build_groot_learning_provenance(
     scoped = [(_scoped_key(key, run_id), key) for key in keys]
 
     def _count(*prefixes: str) -> int:
-        return sum(1 for relative, _ in scoped if any(relative.startswith(prefix) for prefix in prefixes))
+        return sum(
+            1
+            for relative, _ in scoped
+            if any(relative.startswith(prefix) for prefix in prefixes)
+        )
 
     def _count_semantics(*semantics: str) -> int:
         return _count(
             *(path for semantic in semantics for path in GROOT_ARTIFACT_PATHS[semantic])
         )
+
     training_value = report.get("training")
     training: dict[str, Any] = (
         training_value if isinstance(training_value, dict) else {}
@@ -218,9 +289,7 @@ def _build_groot_learning_provenance(
         evaluation_value if isinstance(evaluation_value, dict) else {}
     )
     dataset_value = report.get("dataset")
-    dataset: dict[str, Any] = (
-        dataset_value if isinstance(dataset_value, dict) else {}
-    )
+    dataset: dict[str, Any] = dataset_value if isinstance(dataset_value, dict) else {}
     gpu_count = training.get("distinct_gpu_count") or training.get("gpu_count")
     gpu_detail = f"{gpu_count} GPUs" if gpu_count else "multi-GPU"
     components = [
@@ -247,7 +316,10 @@ def _build_groot_learning_provenance(
             "component": "GR00T N1.7 distributed fine-tune",
             "runtime": f"GPU (Nebius K8s, {gpu_detail})",
             "artifact_count": _count("checkpoints/candidate/"),
-            "detail": str(training.get("coverage_criterion") or "training cohort coverage recorded"),
+            "detail": str(
+                training.get("coverage_criterion")
+                or "training cohort coverage recorded"
+            ),
         },
         {
             "stage": "Post-training held-out inference",
@@ -290,15 +362,17 @@ def _build_groot_learning_provenance(
         for component in components
         if int(str(component["artifact_count"])) > 0
     ]
-    summary = (
-        "Offline held-out GR00T policy evaluation (not a rollout): "
-        + "; ".join(
-            f"{component['stage']} — {component['component']} [{component['runtime']}]"
-            for component in components
-        )
+    summary = "Offline held-out GR00T policy evaluation (not a rollout): " + "; ".join(
+        f"{component['stage']} — {component['component']} [{component['runtime']}]"
+        for component in components
     )
     origin = _build_groot_learning_origin(keys, run_id=run_id, dataset=dataset)
-    return {"run_id": run_id, "components": components, "summary": summary, "origin": origin}
+    return {
+        "run_id": run_id,
+        "components": components,
+        "summary": summary,
+        "origin": origin,
+    }
 
 
 def _build_groot_learning_origin(
@@ -320,8 +394,7 @@ def _build_groot_learning_origin(
         and _artifact_kind(key) == "video"
     )
     originals = [
-        {"key": key, "stage": "data/heldout", "kind": "video"}
-        for key in heldout_videos
+        {"key": key, "stage": "data/heldout", "kind": "video"} for key in heldout_videos
     ]
     camera_names_value = dataset.get("camera_names")
     camera_names: list[Any] = (
@@ -386,7 +459,11 @@ def _keys_for_stage(keys: list[str], run_id: str, stage: str) -> list[str]:
 
 
 def _visual_keys_for_stage(keys: list[str], run_id: str, stage: str) -> list[str]:
-    return [k for k in _keys_for_stage(keys, run_id, stage) if _artifact_kind(k) in {"image", "video"}]
+    return [
+        k
+        for k in _keys_for_stage(keys, run_id, stage)
+        if _artifact_kind(k) in {"image", "video"}
+    ]
 
 
 def _stage_json_key(keys: list[str], run_id: str, stage: str, suffix: str) -> str:
@@ -476,9 +553,17 @@ def build_run_origin(
                 "detail": "real Cosmos Transfer 2.5 diffusion on GPU",
             }
         elif mode:
-            augment = {"engine": mode, "model": "", "detail": "CPU appearance-transform stand-in"}
+            augment = {
+                "engine": mode,
+                "model": "",
+                "detail": "CPU appearance-transform stand-in",
+            }
         else:
-            augment = {"engine": "", "model": "nvidia/Cosmos-Transfer2.5-2B", "detail": ""}
+            augment = {
+                "engine": "",
+                "model": "nvidia/Cosmos-Transfer2.5-2B",
+                "detail": "",
+            }
 
     # What the VLM actually pseudo-labeled (captions input_path) — proves whether
     # there was a separate original set or the augmented frames were labeled.
@@ -616,7 +701,10 @@ def _origin_summary(
         origin_bits = "Cosmos Transfer 2.5's control example"
         if config_variables:
             var_names = ", ".join(sorted(config_variables.keys()))
-            origin_bits = f"the config sampler's appearance variables ({var_names}) and " + origin_bits
+            origin_bits = (
+                f"the config sampler's appearance variables ({var_names}) and "
+                + origin_bits
+            )
         parts.append(
             f"They were produced on GPU by Cosmos Transfer 2.5 ({augment.get('model')}) from "
             f"{origin_bits}; no user-uploaded source clip is recorded for this run."
@@ -632,7 +720,9 @@ def _origin_summary(
 
 def _augment_manifest_key(keys: list[str], run_id: str) -> str:
     for key in keys:
-        if _stage_of(key, run_id) == "cosmos_augmented" and key.endswith("/manifest.json"):
+        if _stage_of(key, run_id) == "cosmos_augmented" and key.endswith(
+            "/manifest.json"
+        ):
             return key
     return ""
 
@@ -653,7 +743,9 @@ def _augment_mode(keys: list[str], run_id: str, read: Callable[[str], dict]) -> 
         if mode:
             return mode
     for key in keys:
-        if _stage_of(key, run_id) == "cosmos_augmented" and key.endswith("/metadata.json"):
+        if _stage_of(key, run_id) == "cosmos_augmented" and key.endswith(
+            "/metadata.json"
+        ):
             mode = str((read(key) or {}).get("mode") or "")
             if mode:
                 return mode
@@ -662,6 +754,10 @@ def _augment_mode(keys: list[str], run_id: str, read: Callable[[str], dict]) -> 
 
 def _grade_result_key(keys: list[str], run_id: str) -> str:
     for key in keys:
-        if _stage_of(key, run_id) == "grade" and key.endswith(".json") and "decision" not in key:
+        if (
+            _stage_of(key, run_id) == "grade"
+            and key.endswith(".json")
+            and "decision" not in key
+        ):
             return key
     return ""
