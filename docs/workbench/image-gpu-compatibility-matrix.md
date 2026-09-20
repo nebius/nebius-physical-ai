@@ -42,7 +42,8 @@ Two compatibility rules govern every cell:
 Image-specific publication and capability status is authoritative in each
 measured row and its linked exact-digest record: a verified cell requires its
 own accepted run evidence, while an unmeasured platform remains unverified.
-This LIBERO entry is historical/unverified and makes no claim about any other
+This LIBERO entry is unbuilt and not validated; any older private observations
+remain historical, non-qualifying evidence. It makes no claim about any other
 image's build, publication, or GPU qualification; other images retain the
 status and evidence recorded in their own rows and catalog records.
 
