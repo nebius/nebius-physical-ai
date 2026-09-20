@@ -243,6 +243,7 @@ def test_preparation_accepts_bound_generic_verification(
 
 def test_cli_writes_owner_only_bound_report(tmp_path: Path) -> None:
     archive, image_id = _archive(tmp_path, oci_layout=True)
+    archive.chmod(0o600)
     output = tmp_path / "cli-output"
 
     result = subprocess.run(
