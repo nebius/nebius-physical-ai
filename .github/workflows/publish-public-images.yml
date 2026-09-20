@@ -231,7 +231,10 @@ jobs:
         if: matrix.tool == 'robotwin'
         env:
           ROBOTWIN_DOCKER_SOCKET: ${{ steps.robotwin-docker.outputs.sock }}
-        run: echo "NPA_DOCKER_SOCKET=$ROBOTWIN_DOCKER_SOCKET" >> "$GITHUB_ENV"
+        run: |
+          socket="${ROBOTWIN_DOCKER_SOCKET#unix://}"
+          [[ "$socket" == /* ]]
+          echo "NPA_DOCKER_SOCKET=$socket" >> "$GITHUB_ENV"
 
       - name: Install NPA validation environment
         run: |
@@ -424,7 +427,7 @@ jobs:
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
           fi
           if [[ "$TOOL" == robotwin ]]; then
-            build_args+=(--provenance=mode=max --sbom=true)
+            build_args+=(--provenance=mode=max)
           fi
           docker buildx build \
             --load \

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import io
 import json
 from pathlib import Path
 import tarfile
+from contextlib import contextmanager
+
+import httpx
 
 import pytest
 
@@ -29,7 +31,7 @@ def test_source_archive_is_deterministic_and_rejects_changed_cached_bytes(
                            "size": len(source), "sha256": hashlib.sha256(source).hexdigest()}]}
     (tmp_path / "corresponding-sources.json").write_text(json.dumps(lock))
     monkeypatch.setattr(ANNEX, "ROOT", tmp_path)
-    monkeypatch.setattr(ANNEX, "urlopen", lambda url: io.BytesIO(source))
+    monkeypatch.setattr(ANNEX.httpx, "get", lambda url, **kwargs: httpx.Response(200, content=source, request=httpx.Request("GET", url)))
     first = ANNEX.build(tmp_path / "first")
     second = ANNEX.build(tmp_path / "second")
     assert first == second
@@ -60,13 +62,20 @@ def test_anonymous_source_verification_rejects_changed_public_bytes(
         public_source += b"extra"
     urls = []
 
-    def anonymous_download(url):
-        assert isinstance(url, str)  # No authenticated Request object.
+    def anonymous_download(url, **kwargs):
+        assert isinstance(url, str)
+        assert "auth" not in kwargs and "headers" not in kwargs
         urls.append(url)
-        return io.BytesIO(json.dumps(manifest).encode() if url.endswith(".json") else public_source)
+        return httpx.Response(200, content=json.dumps(manifest).encode() if url.endswith(".json") else public_source, request=httpx.Request("GET", url))
+
+    @contextmanager
+    def anonymous_stream(method, url, **kwargs):
+        assert method == "GET"
+        yield anonymous_download(url, **kwargs)
 
     monkeypatch.setattr(ANNEX, "ROOT", tmp_path)
-    monkeypatch.setattr(ANNEX, "urlopen", anonymous_download)
+    monkeypatch.setattr(ANNEX.httpx, "get", anonymous_download)
+    monkeypatch.setattr(ANNEX.httpx, "stream", anonymous_stream)
     if mutation:
         with pytest.raises(ValueError, match="differs"):
             ANNEX.verify_public(source_sha)

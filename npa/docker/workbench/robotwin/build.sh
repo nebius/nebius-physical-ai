@@ -106,7 +106,7 @@ if not isinstance(manifest, str) or f"FROM ubuntu:22.04@{manifest}" not in docke
 PY
 
 # A local build supplies bytes for inspection; every publication gate runs before push.
-docker buildx build --platform linux/amd64 --load --provenance=mode=max --sbom=true \
+docker buildx build --platform linux/amd64 --load --provenance=mode=max \
   --label "org.opencontainers.image.revision=$SOURCE_SHA" \
   --label "org.opencontainers.image.source=https://github.com/nebius/nebius-physical-ai" \
   --build-arg "NPA_SOURCE_SHA=$SOURCE_SHA" --tag "$IMAGE" \

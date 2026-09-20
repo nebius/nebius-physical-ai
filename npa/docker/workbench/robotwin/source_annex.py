@@ -10,7 +10,8 @@ import json
 from pathlib import Path
 import re
 import tarfile
-from urllib.request import urlopen
+
+import httpx
 
 ROOT = Path(__file__).resolve().parent
 ARCHIVE_NAME = "robotwin-corresponding-sources.tar"
@@ -21,8 +22,9 @@ def _fetch_artifact(row, destination):
     if path.exists():
         raw = path.read_bytes()
     else:
-        with urlopen(row["url"]) as response:  # noqa: S310 - committed official source lock.
-            raw = response.read()
+        response = httpx.get(row["url"], follow_redirects=True)
+        response.raise_for_status()
+        raw = response.content
     if len(raw) != row["size"] or hashlib.sha256(raw).hexdigest() != row["sha256"]:
         raise ValueError("Ubuntu source archive differs from its exact lock")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,14 +81,16 @@ def verify_public(source_sha):
     expected = json.loads((ROOT / "source-bundle.json").read_text())
     base = "https://github.com/nebius/nebius-physical-ai/releases/download/"
     base += f"robotwin-sources-dev-{source_sha}/"
-    with urlopen(base + "source-manifest.json") as response:  # noqa: S310
-        manifest = json.load(response)
+    response = httpx.get(base + "source-manifest.json", follow_redirects=True)
+    response.raise_for_status()
+    manifest = response.json()
     if manifest != {**expected, "source_revision": source_sha}:
         raise ValueError("Public source manifest differs from the source commit")
     digest = hashlib.sha256()
     size = 0
-    with urlopen(base + ARCHIVE_NAME) as response:  # noqa: S310
-        while data := response.read(1024 * 1024):
+    with httpx.stream("GET", base + ARCHIVE_NAME, follow_redirects=True) as response:
+        response.raise_for_status()
+        for data in response.iter_bytes(1024 * 1024):
             size += len(data)
             digest.update(data)
     if size != expected["bytes"] or digest.hexdigest() != expected["sha256"]:
