@@ -1086,12 +1086,19 @@ def test_resolve_task_image_rejects_glob_like_override_selector() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "selector",
+    ["workbench.vlm_eval.rnu", "workbench.vlm_eval.ru"],
+)
 @pytest.mark.parametrize("boundary", ["plan-images", "pull-secrets", "render"])
-def test_unmatched_image_override_selector_fails_before_output(boundary: str) -> None:
+def test_unmatched_image_override_selector_fails_before_output(
+    boundary: str,
+    selector: str,
+) -> None:
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     plan = build_plan(spec, run_id="unmatched-image-override")
     options = SkypilotRenderOptions(
-        image_overrides={"workbench.vlm_eval.rnu": "cr.example/custom:1"},
+        image_overrides={selector: "cr.example/custom:1"},
         materialize_registry_secrets=False,
     )
 
