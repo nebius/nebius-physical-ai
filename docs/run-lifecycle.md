@@ -120,7 +120,9 @@ the path and its exact ownership, back it up, then repair the receipt before
 retrying; do not delete it merely to bypass the check because it may retain the
 only exact managed-job identity. If corruption occurs after provider acceptance,
 submit still prints the accepted status and job ID with a
-`submission_warnings` entry so the job can be cancelled or reconciled.
+`submission_warnings` entry so the job can be cancelled or reconciled. Receipt
+warnings and optional post-success artifact-handoff diagnostics redact URL query
+strings and secret assignments before JSON output or local persistence.
 
 **A stale or ambiguous run is never selected silently.** Resume by naming it:
 

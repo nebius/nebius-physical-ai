@@ -199,3 +199,62 @@ def test_optional_handoff_keeps_workflow_success_when_receipt_is_corrupt(
     assert "receipt_warning" in result
     assert secret not in str(result)
     assert path.read_bytes() == body
+
+
+def test_optional_handoff_redacts_storage_failure_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.cli.workbench.workflow import _load_paidf_artifact
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    query_secret = "synthetic-query-value"
+    assignment_secret = "synthetic-assignment-value"
+    credential_secret = "synthetic-credential-value"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.src_staging._storage_client",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(
+                "storage failed at "
+                f"https://storage.invalid/object?signature={query_secret} "
+                f"custom_secret={assignment_secret} {credential_secret}"
+            )
+        ),
+    )
+
+    result = _load_paidf_artifact(
+        project="demo",
+        run_id="paidf-redaction",
+        run_prefix_uri="s3://bucket/paidf-redaction",
+        credential_values={"AWS_SECRET_ACCESS_KEY": credential_secret},
+    )
+
+    detail = str(result["detail"])
+    assert result["status"] == "partial"
+    assert query_secret not in detail
+    assert assignment_secret not in detail
+    assert credential_secret not in detail
+    assert "https://storage.invalid/object?<redacted>" in detail
+    assert "custom_secret=<redacted>" in detail
+
+
+def test_submission_receipt_warning_redacts_failure_context() -> None:
+    from npa.cli.workbench.workflow import _submission_receipt_warning
+
+    query_secret = "synthetic-warning-query"
+    assignment_secret = "synthetic-warning-assignment"
+    token_secret = "hf_syntheticwarningtoken"
+
+    warning = _submission_receipt_warning(
+        ValueError(
+            "write failed at "
+            f"https://storage.invalid/receipt?token={query_secret} "
+            f"custom_secret={assignment_secret} {token_secret}"
+        )
+    )
+
+    assert query_secret not in warning
+    assert assignment_secret not in warning
+    assert token_secret not in warning
+    assert "https://storage.invalid/receipt?<redacted>" in warning
+    assert "custom_secret=<redacted>" in warning

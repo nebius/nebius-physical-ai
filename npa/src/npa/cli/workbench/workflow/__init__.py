@@ -2876,10 +2876,19 @@ def _resolve_runtime_secret_values(
     return dict(context.secret_values)
 
 
-def _submission_receipt_warning(exc: BaseException) -> str:
-    from npa.orchestration.skypilot.workflow_state import redact_text
+def _sanitized_failure_reason(
+    exc: BaseException, *, secrets: Sequence[str] = ()
+) -> str:
+    """Redact credential values and provider URL context from a diagnostic."""
 
-    return "submission receipt was not updated: " + redact_text(str(exc))
+    from npa.orchestration.skypilot.workflow_state import redact_text
+    from npa.verification import sanitize_reason
+
+    return sanitize_reason(redact_text(str(exc), secrets))
+
+
+def _submission_receipt_warning(exc: BaseException) -> str:
+    return "submission receipt was not updated: " + _sanitized_failure_reason(exc)
 
 
 def _try_optional_submission_update(
@@ -2950,7 +2959,12 @@ def _load_paidf_artifact(
     except Exception as exc:  # noqa: BLE001 - optional post-success operation
         result = {
             "status": "partial",
-            "detail": f"workflow succeeded; artifact load is incomplete: {exc}",
+            "detail": (
+                "workflow succeeded; artifact load is incomplete: "
+                + _sanitized_failure_reason(
+                    exc, secrets=tuple((credential_values or {}).values())
+                )
+            ),
             "retry_command": (
                 f"npa workbench workflow load-artifact {run_id}"
                 + (f" --project {project}" if project else "")
