@@ -103,9 +103,22 @@ be able to open the thing being asserted.
   the discarded shell reached 18 voxels. So when spacing approaches the voxel,
   raise the factor to 1.5–2.0; at `1.0` the crop removed 8.45% of *correct*
   vertices there. Coverage did not catch it and cannot — coverage asks whether
-  observations are explained, not whether correct surface was discarded. Read the
-  unsupported fraction with `max_vertex_distance_to_sample` beside it; the
-  fraction alone does not distinguish the two cases.
+  observations are explained, not whether correct surface was discarded.
+- **Read `crop_justification`, not the unsupported fraction.** The fraction alone
+  cannot distinguish the two cases and measurably ranks them wrong: across three
+  scenes the complete capture reported **0.2009** unsupported while a genuinely
+  partial scan of a solid object reported **0.1249**, so thresholding the headline
+  number calls the correct surface the worse one. What separates them is how far
+  past the voxel the unsupported area lies — the share of it beyond three voxels
+  was 0.7297 on the partial demo scans, 0.1012 on that solid-object scan, and
+  **0.0000** on the complete capture. `reconstruct` reports those bands as
+  `unsupported_area_beyond_1_5_voxels` and `unsupported_area_beyond_3_voxels`, and
+  summarizes them as `crop_justification.removed_surface_reads_as`: either
+  `extrapolated shell` or `near-threshold surface`, the latter meaning the crop may
+  have taken correct geometry. Nothing gates on that reading and it should not be
+  treated as a verdict — the solid-object scan sits on the 0.1 boundary, so any
+  scene near it is undecided and the bands themselves are the evidence.
+  Measurements: `evidence/open3d/band-profile-across-scenes.json`.
 - Both surfaces ship: `mesh.ply` is the cropped result and `mesh_uncropped.ply`
   is what Poisson returned, so the crop is a checkable claim rather than a
   deletion. `reconstruct` also publishes the support measurement before and

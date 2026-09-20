@@ -43,6 +43,11 @@ MAX_TRANSLATION = VOXEL_SIZE
 #: Surface the scan never supported. The crop targets zero; the allowance covers
 #: the boundary triangles whose worst corner sits a hair past a voxel.
 MAX_UNSUPPORTED_AREA_FRACTION = 0.02
+#: The demo scans leave 0.3848 of all surface area more than three voxels from any
+#: sample before cropping. Sample spacing cannot produce that — a watertight mesh
+#: sampled at roughly voxel spacing leaves none at all there — so this floor is what
+#: says the scene still contains the invented shell the crop is being measured on.
+MIN_SHELL_AREA_BEYOND_3_VOXELS = 0.30
 #: The other direction, and the reason the crop is defensible: the observations
 #: have to still lie on what survives it.
 MIN_COVERAGE_WITHIN_VOXEL = 0.97
@@ -129,6 +134,24 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     assert coverage["fraction_within_voxel"] >= MIN_COVERAGE_WITHIN_VOXEL, (
         f"only {coverage['fraction_within_voxel']:.4f} of samples lie within a "
         "voxel of the cropped surface; the crop took observed structure"
+    )
+    # The crop being justified on this scene is the reason the smoke can assert
+    # `before > after` at all. On a complete capture the same arithmetic holds while
+    # the crop destroys correct geometry, so the assertion above is only meaningful
+    # alongside this one: these scans really do carry an extrapolated shell.
+    justification = report["crop_justification"]
+    assert justification["removed_surface_reads_as"] == "extrapolated shell", (
+        "these demo scans are a partial capture, so the unsupported area should sit "
+        "well past three voxels; a near-threshold reading here means the scene or the "
+        f"voxel changed ({justification['unsupported_area_share_beyond_3_voxels']:.4f} "
+        "of unsupported area past three voxels)"
+    )
+    assert (
+        report["support_before_crop"]["unsupported_area_beyond_3_voxels"]
+        >= MIN_SHELL_AREA_BEYOND_3_VOXELS
+    ), (
+        "the shell this crop exists to remove is not present at the distance that "
+        "distinguishes it from sample spacing"
     )
     assert coverage["sample_to_surface_rmse"] <= MAX_SAMPLE_TO_SURFACE_RMSE, (
         f"sample-to-surface RMSE {coverage['sample_to_surface_rmse']:.5f} exceeds "
@@ -237,7 +260,10 @@ def main() -> None:
             f"reconstructed {mesh_report['mesh']['triangle_count']} triangles, "
             "cropped surface the scan did not support "
             f"({mesh_report['support_before_crop']['unsupported_area_fraction']:.4f} "
-            f"-> {mesh_report['support']['unsupported_area_fraction']:.4f} of area) "
+            f"-> {mesh_report['support']['unsupported_area_fraction']:.4f} of area, "
+            f"{mesh_report['support_before_crop']['unsupported_area_beyond_3_voxels']:.4f} "
+            f"of it beyond three voxels so it reads as "
+            f"{mesh_report['crop_justification']['removed_surface_reads_as']}) "
             "and wrote a verified RRD"
         )
 

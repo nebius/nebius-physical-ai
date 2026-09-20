@@ -391,6 +391,66 @@ def _sample_distances(o3d, cloud, vertices):
     )
 
 
+#: Below this share of the pre-crop unsupported area lying past three voxels, what the
+#: crop removed is near-threshold surface rather than an extrapolated shell.
+#:
+#: Measured across three scenes: 0.0 on a watertight mesh sampled at roughly voxel
+#: spacing, 0.7297 on the partial demo scans, and 0.1012 on a real scan of a solid
+#: object with real holes. The two poles are three orders of magnitude apart and any
+#: boundary between them would do. The third is not: it sits on this one, so its reading
+#: is a coin toss and the `note` is advice rather than a finding. Treat a share within
+#: roughly a factor of two of this value as undecided and read the bands directly.
+#:
+#: This is a reporting boundary and nothing gates on it. Deliberately so, while a case
+#: this close to it exists.
+FABRICATION_AREA_SHARE = 0.1
+
+
+def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str, Any]:
+    """Say whether the crop removed an extrapolated shell or near-threshold surface.
+
+    The coverage pair cannot answer this. Coverage asks whether the observations are
+    still explained, and surface removed from a *correct* reconstruction leaves coverage
+    almost untouched because the remaining surface still passes under every sample. That
+    is measured, not hypothetical: on a watertight mesh sampled at roughly one voxel
+    spacing, cropping at factor 1.0 discarded 8.45 percent of vertices that were within
+    one voxel of ground truth, and coverage moved by 6.6e-4.
+
+    So a run can crop correct geometry with every published number looking healthy. What
+    separates the cases is how far past the threshold the removed area lay, which is why
+    this reads the distance bands rather than the headline fraction.
+    """
+
+    unsupported = float(before.get("unsupported_area_fraction") or 0.0)
+    far = float(before.get("unsupported_area_beyond_3_voxels") or 0.0)
+    share = (far / unsupported) if unsupported > 0 else 0.0
+    shell = share >= FABRICATION_AREA_SHARE
+    return {
+        "unsupported_area_share_beyond_3_voxels": share,
+        "removed_surface_reads_as": "extrapolated shell"
+        if shell
+        else "near-threshold surface",
+        "vertices_removed": removed,
+        "vertex_fraction_removed": (
+            removed / (removed + len(mesh.vertices))
+            if removed + len(mesh.vertices) > 0
+            else 0.0
+        ),
+        "note": (
+            "Most of the unsupported area lay more than three voxels from any sample, "
+            "which sample spacing cannot explain, so the crop removed invented surface."
+            if shell
+            else (
+                "The unsupported area was concentrated within three voxels of a sample, "
+                "which is where a correct surface reconstructed from samples of this "
+                "spacing also falls. The crop may have removed correct geometry, and "
+                "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
+                "or 2.0, or pass 0, unless the tighter crop is wanted deliberately."
+            )
+        ),
+    }
+
+
 def _support(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     """Measure how much of this surface any observation actually supports.
 
@@ -416,10 +476,36 @@ def _support(o3d, mesh, cloud, voxel: float) -> dict[str, Any]:
     total = float(areas.sum())
     per_triangle = distances[triangles].max(axis=1)
     unsupported = float(areas[per_triangle > voxel].sum())
+
+    def beyond(multiple: float) -> float:
+        """Unsupported area past `multiple` voxels, as a fraction of all area."""
+
+        if total <= 0:
+            return 0.0
+        return float(areas[per_triangle > voxel * multiple].sum() / total)
+
     return {
         "voxel_size": voxel,
         "unsupported_area_fraction": (unsupported / total) if total > 0 else 0.0,
         "unsupported_area": unsupported,
+        # How far past the threshold the unsupported area actually lies. Without this
+        # the headline fraction cannot distinguish invented surface from discretization,
+        # and the two need opposite responses.
+        #
+        # A correct surface reconstructed from samples roughly one voxel apart puts a
+        # fifth of its area past one voxel purely because a vertex interpolating between
+        # two samples can sit slightly further than one voxel from the nearer of them.
+        # Measured on a watertight mesh sampled uniformly: 0.2055 past one voxel, 0.0075
+        # past 1.5, 0.000084 past 2, and nothing at all past 3 — while no vertex sat
+        # further than one voxel from the ground-truth surface.
+        #
+        # An extrapolated Poisson shell does not fall off like that. On the demo scans:
+        # 0.5273 past one voxel, still 0.3848 past three, reaching 18.1 voxels.
+        #
+        # So these two numbers, not the headline fraction, are what says which case a
+        # run is in.
+        "unsupported_area_beyond_1_5_voxels": beyond(1.5),
+        "unsupported_area_beyond_3_voxels": beyond(3.0),
         "max_vertex_distance_to_sample": float(distances.max()),
         "median_vertex_distance_to_sample": float(np.median(distances)),
         "p95_vertex_distance_to_sample": float(np.percentile(distances, 95)),
@@ -538,6 +624,7 @@ def run_reconstruct(
         "support_before_crop": before,
         "support": _support(o3d, mesh, cloud, voxel),
         "coverage": _coverage(o3d, mesh, cloud, voxel),
+        "crop_justification": _crop_justification(before, unsupported_removed, mesh),
         "cloud_extent": [
             float(value) for value in cloud.get_axis_aligned_bounding_box().get_extent()
         ],

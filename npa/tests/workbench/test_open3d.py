@@ -24,6 +24,7 @@ from npa.workbench.open3d.artifacts import (
     read_journal,
     sha256_bytes,
     summarize,
+    validate_distance_bands,
     validate_mesh,
     validate_overlay_matches_crop,
     validate_pair,
@@ -996,3 +997,119 @@ def test_overlay_check_requires_the_counts_it_compares() -> None:
         validate_overlay_matches_crop({}, {"support_distance_factor": 1.0})
     with pytest.raises(Open3dError, match="support_distance_factor"):
         validate_overlay_matches_crop({"unsupported_triangles_shown": 0}, {})
+
+
+def _support_block(*, unsupported, beyond_1_5, beyond_3):
+    return {
+        "voxel_size": 0.05,
+        "unsupported_area_fraction": unsupported,
+        "unsupported_area_beyond_1_5_voxels": beyond_1_5,
+        "unsupported_area_beyond_3_voxels": beyond_3,
+        "max_vertex_distance_to_sample": 0.9,
+        "median_vertex_distance_to_sample": 0.01,
+        "p95_vertex_distance_to_sample": 0.2,
+    }
+
+
+def test_nested_distance_bands_must_decrease() -> None:
+    validate_distance_bands(
+        _support_block(unsupported=0.527324, beyond_1_5=0.484153, beyond_3=0.384809)
+    )
+    with pytest.raises(Open3dError, match="the further band is a subset"):
+        validate_distance_bands(
+            _support_block(unsupported=0.527324, beyond_1_5=0.3, beyond_3=0.4)
+        )
+
+
+def test_a_report_written_before_the_bands_existed_still_validates() -> None:
+    """`validate` re-verifies already-published reports, which predate these keys."""
+
+    older = _support_block(unsupported=0.527324, beyond_1_5=0.0, beyond_3=0.0)
+    del older["unsupported_area_beyond_1_5_voxels"]
+    del older["unsupported_area_beyond_3_voxels"]
+    validate_distance_bands(older)
+
+
+def test_a_band_that_is_not_a_fraction_is_rejected() -> None:
+    for bad in (1.4, -0.1, "0.2", True, None):
+        block = _support_block(unsupported=0.2, beyond_1_5=0.1, beyond_3=0.05)
+        block["unsupported_area_beyond_3_voxels"] = bad
+        with pytest.raises(Open3dError, match="must be a fraction"):
+            validate_distance_bands(block)
+
+
+def test_an_extrapolated_shell_and_near_threshold_surface_read_differently() -> None:
+    """The distinction coverage cannot make, from the numbers that can.
+
+    Both profiles below are measured. The demo scans leave 0.3848 of all surface area
+    further than three voxels from any sample, which sample spacing cannot explain. A
+    watertight mesh sampled at roughly one voxel spacing leaves exactly none there, and
+    no vertex further than one voxel from ground truth — yet still reports 0.2055
+    unsupported, a fifth of its area, from discretization alone.
+
+    A headline fraction of 0.2055 on correct geometry against 0.5273 on an invented
+    shell is a difference of degree that a threshold could not safely split. The share
+    past three voxels, 0.0 against 0.7297, is the separation this reads instead.
+    """
+
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(14736)
+
+    shell = _crop_justification(
+        _support_block(unsupported=0.527324, beyond_1_5=0.484153, beyond_3=0.384809),
+        3677,
+        _Mesh(),
+    )
+    assert shell["removed_surface_reads_as"] == "extrapolated shell"
+    assert "invented surface" in shell["note"]
+
+    discretization = _crop_justification(
+        _support_block(unsupported=0.205530, beyond_1_5=0.007524, beyond_3=0.0),
+        44230,
+        _Mesh(),
+    )
+    assert discretization["removed_surface_reads_as"] == "near-threshold surface"
+    assert "coverage cannot rule that out" in discretization["note"]
+    assert "1.5" in discretization["note"]
+
+
+def test_crop_justification_is_silent_when_nothing_was_unsupported() -> None:
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(100)
+
+    result = _crop_justification(
+        _support_block(unsupported=0.0, beyond_1_5=0.0, beyond_3=0.0), 0, _Mesh()
+    )
+    assert result["unsupported_area_share_beyond_3_voxels"] == 0.0
+    assert result["vertex_fraction_removed"] == 0.0
+
+
+def test_a_real_scan_lands_on_the_boundary_and_that_is_recorded() -> None:
+    """The measured case that makes this a reporting aid and not a gate.
+
+    A real scan of a solid object with real holes measured 0.1012 past three voxels as a
+    share of its unsupported area, against a boundary of 0.1. Nothing gates on the
+    reading, and this pins the fact that it is decided by the fourth decimal place so a
+    later change cannot quietly start trusting it.
+    """
+
+    from npa.workbench.open3d.runner import (
+        FABRICATION_AREA_SHARE,
+        _crop_justification,
+    )
+
+    class _Mesh:
+        vertices = range(100000)
+
+    eagle = _crop_justification(
+        _support_block(unsupported=0.1249, beyond_1_5=0.0642, beyond_3=0.0126),
+        1000,
+        _Mesh(),
+    )
+    share = eagle["unsupported_area_share_beyond_3_voxels"]
+    assert abs(share - 0.1009) < 0.001
+    assert abs(share - FABRICATION_AREA_SHARE) / FABRICATION_AREA_SHARE < 0.02

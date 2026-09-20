@@ -306,6 +306,56 @@ def validate_mesh(mesh: Any) -> None:
         raise Open3dError("mesh must carry a sha256 digest")
 
 
+def validate_distance_bands(report: Any) -> None:
+    """Check the unsupported-area bands against each other.
+
+    The bands are nested by construction — area past three voxels is also past 1.5, which
+    is also past one — so they must decrease. If they do not, the distances and the areas
+    were not measured over the same triangles, and the band that says whether a crop
+    removed invented surface or correct geometry cannot be trusted.
+
+    Absent bands are accepted. `validate` is also how an already-published report gets
+    re-verified, and a report written before the bands existed is not wrong, only older.
+    Demanding them would reject artifacts this tool itself produced.
+    """
+
+    if not isinstance(report, dict):
+        raise Open3dError("support report must be an object")
+    keys = tuple(
+        key
+        for key in (
+            "unsupported_area_fraction",
+            "unsupported_area_beyond_1_5_voxels",
+            "unsupported_area_beyond_3_voxels",
+        )
+        if key in report
+    )
+    if len(keys) < 2:
+        return
+    values = []
+    for key in keys:
+        value = report.get(key)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise Open3dError(
+                f"support report {key} must be a fraction between 0 and 1"
+            )
+        values.append(float(value))
+    for (near_key, near), (far_key, far) in zip(
+        list(zip(keys, values, strict=True))[:-1],
+        list(zip(keys, values, strict=True))[1:],
+        strict=True,
+    ):
+        if far > near + 1e-9:
+            raise Open3dError(
+                f"support report is inconsistent: {far_key} ({far}) exceeds {near_key} "
+                f"({near}), but the further band is a subset of the nearer one"
+            )
+
+
 def validate_overlay_matches_crop(recording: Any, reconstruction: Any) -> None:
     """Hold the "removed surface" overlay to the crop it claims to show.
 
@@ -374,6 +424,7 @@ def validate_support(report: Any, *, voxel_size: float) -> None:
         fraction = block["unsupported_area_fraction"]
         if not _finite_number(fraction) or not 0.0 <= float(fraction) <= 1.0:
             raise Open3dError(f"{key} area fraction must be a fraction in [0, 1]")
+        validate_distance_bands(block)
     within = coverage["fraction_within_voxel"]
     if not _finite_number(within) or not 0.0 <= float(within) <= 1.0:
         raise Open3dError("coverage fraction must be a fraction in [0, 1]")
