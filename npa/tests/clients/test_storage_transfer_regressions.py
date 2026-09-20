@@ -3,14 +3,14 @@
 import io
 import os
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock, Thread
 from unittest.mock import Mock
 
 import pytest
 from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
 
-from npa.clients.storage import StorageClient
+from npa.clients.storage import StorageClient, _run_bounded
 
 
 class _ObservedBody:
@@ -201,6 +201,59 @@ def test_upload_starts_before_entire_tree_is_walked(
     client.upload_directory(str(tmp_path), "s3://bucket/models/")
 
     assert client._s3.upload_file.call_count == 17
+
+
+def test_bounded_runner_does_not_eagerly_consume_blocked_source() -> None:
+    """Keep producer consumption at the worker bound while every task blocks."""
+
+    total = 40
+    max_workers = 4
+    release = Event()
+    all_workers_started = Event()
+    source_exhausted = Event()
+    counter_lock = Lock()
+    consumed: list[int] = []
+    started = 0
+    results: list[int] = []
+    errors: list[BaseException] = []
+
+    def tasks():
+        nonlocal started
+        for index in range(total):
+            consumed.append(index)
+
+            def task(value: int = index) -> int:
+                nonlocal started
+                with counter_lock:
+                    started += 1
+                    if started == max_workers:
+                        all_workers_started.set()
+                assert release.wait(timeout=5), "blocked worker was never released"
+                return value
+
+            yield task
+        source_exhausted.set()
+
+    def consume() -> None:
+        try:
+            results.extend(_run_bounded(tasks(), max_workers=max_workers))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    consumer = Thread(target=consume)
+    consumer.start()
+    try:
+        assert all_workers_started.wait(timeout=5)
+        assert not source_exhausted.wait(timeout=0.2)
+        assert len(consumed) == max_workers
+    finally:
+        release.set()
+        consumer.join(timeout=5)
+
+    assert not consumer.is_alive()
+    assert errors == []
+    assert source_exhausted.is_set()
+    assert sorted(results) == list(range(total))
 
 
 def test_single_file_tree_retains_managed_transfer_defaults(
