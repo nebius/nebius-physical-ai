@@ -1,0 +1,101 @@
+{
+  "schema": "npa.public-workload-proof.v1",
+  "candidate": {
+    "implementation_commit": "0bcfa853f8e0da21c91fa778032bdc36390371bc",
+    "upstream_commit": "94be783968e5091bcc9972c72c84fd63efce2935",
+    "upstream_release": "v3.4.5",
+    "executed_image_index_digest": "sha256:05c43f838da6bd96dcb41e0ca48816a56b3d0859a4ab39b3941f799f5e8ced58",
+    "scanned_platform_manifest_digest": "sha256:a2f0bdddcc1bffb3c2aa0408c6abf0f9e52086ee3fa760de27dfc7244e4c8da5",
+    "scanned_platform_is_child_of_executed_index": true
+  },
+  "hardware_applicability": {
+    "cpu": "required and exercised in a Kubernetes CPU workload",
+    "gpu": "not applicable; the admitted AprilTag detector path is CPU-only and requests no accelerator",
+    "hosted_api": "not part of detector execution; used only for the separately disclosed visual-review attempts"
+  },
+  "smoke": {
+    "native_ctest_cases": 3,
+    "native_ctest_passed": 3,
+    "log_sha256": "89481c065f9e3aa32f8769c9a333d46ea30176b96dd810b2827aea40af3f4898"
+  },
+  "artifacts": {
+    "capture_manifest_sha256": "d84025355fbf91ff4a0f863ac1c02e706d5c566ab7b4805edfb07dba329875b2",
+    "consumer_observations_sha256": "d6cef3e9d85683781ade89bcb542af467f35d06fa79d6a8079120de7d9609c7b"
+  },
+  "full_workload": {
+    "description": "Pinned detector over the complete upstream labeled real-image regression set, with consumer observations and annotated outputs",
+    "real_images": 3,
+    "expected_detections": 47,
+    "detected_detections": 47,
+    "true_positive": 47,
+    "false_positive": 0,
+    "false_negative": 0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "aggregate_corner_rmse_px": 2.7388904934718525e-05,
+    "maximum_corner_absolute_error_px": 4.995117194539489e-05,
+    "consumer_observations": 47,
+    "terminal_status": "SUCCEEDED"
+  },
+  "cases": {
+    "33369213973_9d9bb4cc96_c": {
+      "expected": 12,
+      "detected": 12,
+      "precision": 1.0,
+      "recall": 1.0,
+      "corner_rmse_px": 2.6654275422164356e-05,
+      "source_sha256": "6f2888334e65440576a6424928a230b82461b1a0a42d87d3b8835d6385901481",
+      "annotation_sha256": "4512047fbbea2e349f72f4d9691aa06939b43300a2498f195ed0b285f209881b"
+    },
+    "34085369442_304b6bafd9_c": {
+      "expected": 25,
+      "detected": 25,
+      "precision": 1.0,
+      "recall": 1.0,
+      "corner_rmse_px": 2.790197750174625e-05,
+      "source_sha256": "386c70bbd4d98dc0954d053240e73824fa8e07bdf8dc7f99ea50cac872b9b065",
+      "annotation_sha256": "fac47dcc68d2b3a23cd69b6c86cdcac8d157d260a0dc4592eff428651e77943c"
+    },
+    "34139872896_defdb2f8d9_c": {
+      "expected": 10,
+      "detected": 10,
+      "precision": 1.0,
+      "recall": 1.0,
+      "corner_rmse_px": 2.696059317507183e-05,
+      "source_sha256": "435a619d642e2d50fb32224dc8e12992b08c2a596b02deee3fba497d3bff672a",
+      "annotation_sha256": "6df49800c829b1e03d59105cd4dea5be1645e254bfd0f9a2505975004c4ad285"
+    }
+  },
+  "negative_controls": {
+    "blank": {
+      "expected_detections": 0,
+      "observed_detections": 0,
+      "sha256": "96accbb2c9def382b2ac007b997f32a1b481f666bb68c3e6b51aa44dce0edd02"
+    },
+    "fixed_noise": {
+      "seed": 20260920,
+      "expected_detections": 0,
+      "observed_detections": 0,
+      "sha256": "f506804aeabfe91a605130114dd632995480d1ea571d3da04dc8c70a513b9d3c"
+    }
+  },
+  "image_scan": {
+    "complete_byte_scan": true,
+    "entries_scanned": 18926,
+    "payload_hits": 0,
+    "history_hits": 0,
+    "verdict": "clean"
+  },
+  "cleanup": {
+    "ephemeral_compute_removed": true,
+    "run_scoped_pull_secret_removed": true,
+    "leaked_compute": false
+  },
+  "evaluation_plan_sha256": "542dae723ce69d9d61201a3e7e2753220eb8e1aeee600e5906772997fc92ccfd",
+  "limitations": [
+    "Three upstream photographs do not establish generalization to arbitrary cameras, lighting, blur, occlusion, or tag families.",
+    "Corner detection does not establish camera-pose accuracy without calibrated intrinsics and known tag geometry.",
+    "No navigation success, robot safety, or sensor-calibration accuracy claim is made.",
+    "Hosted visual-judge calibration did not pass; no final VLM acceptance claim is made."
+  ]
+}

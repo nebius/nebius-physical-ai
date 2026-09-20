@@ -160,23 +160,26 @@ NPA pins `AprilRobotics/apriltag` release `v3.4.5`
 (`94be783968e5091bcc9972c72c84fd63efce2935`) under BSD-2-Clause. The
 representative upstream test photographs depict NASA Swarmathon and are
 separately identified upstream as CC-BY-SA-2.0. This is an operator-built BYOF
-candidate; no image publication is claimed.
+candidate; no container-image publication is claimed. The derived
+[CPU workload proof](evidence/apriltag-fiducial/README.md) retains the required
+photo attribution and share-alike license.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `native_apriltag_ctest` | qualification pending | Build and rerun the pinned upstream native detector regression suite |
-| `apriltag_real_image_fiducial_detection` | qualification pending hard gate | Detect every labeled `tag36h11` marker across all three upstream photographs with precision/recall 1.0 and ≤0.1-pixel per-coordinate error |
-| `blank_and_noise_false_positive_controls` | qualification pending hard gate | Blank and fixed-seed random-noise images must both produce zero detections |
-| `camera_consumer_observation_export` | qualification pending | Emit source-hashed IDs, centers, ordered corners, margins, and hamming distances for a later localization or calibration consumer |
-| `source_linked_annotation_capture` | qualification pending | Preserve full source images and emit annotated PNGs whose manifests bind each review image to its source hash |
+| `native_apriltag_ctest` | accepted (live CPU) | Pinned native detector regression suite passed 3/3 in the digest-pinned Kubernetes workload |
+| `apriltag_real_image_fiducial_detection` | accepted objective gate (live CPU) | 47/47 labeled `tag36h11` detections across all three photographs; precision/recall 1.0; maximum coordinate error 0.000050 px |
+| `blank_and_noise_false_positive_controls` | accepted objective gate (live CPU) | Blank and fixed-seed random-noise images both produced zero detections |
+| `camera_consumer_observation_export` | accepted (live CPU) | 47 source-hashed records with IDs, centers, ordered corners, margins, and hamming distances |
+| `source_linked_annotation_capture` | accepted objective bytes; visual review unaccepted | Three source-bound annotated PNGs reproduced local hashes exactly; hosted VLM calibration failed and the final call was gated off |
 
 The detector produces image-space fiducial observations, not a camera-pose or
 navigation-success claim. Pose accuracy additionally requires calibrated
 intrinsics and known tag size/layout. The three real photographs do not prove
 generalization to arbitrary cameras, lighting, motion blur, occlusion, or tag
-families. Registry admission requires the planned digest-pinned CPU Kubernetes
-run, calibrated visual review, complete-byte payload scan, and independent
-review.
+families. The digest-pinned CPU workload and complete-byte payload scan passed.
+Registry admission remains pending because hosted visual-judge calibration did
+not discriminate its controls and independent/current-head review is not yet
+complete.
 
 ### Open Dreamer (world model, 2-GPU minimum)
 
