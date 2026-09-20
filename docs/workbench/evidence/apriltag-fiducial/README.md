@@ -18,7 +18,7 @@ final VLM acceptance is claimed and the pull request remains a draft.
 | GPU | Not applicable | N/A | The admitted detector path is CPU-only; allocating a GPU would not prove an additional capability |
 | Container smoke | Required, separately reported within the same runtime invocation | PASS | Upstream native CTest: 3/3 real-image cases; log SHA-256 `89481c…f4898` |
 | Actual full workload | Required | PASS | Complete pinned upstream labeled real-image set: 3 images, 47/47 detections, 47 consumer records |
-| Objective acceptance | Required | PASS | Precision/recall 1.0 per image; 0 FP/FN; aggregate corner RMSE `0.0000273889 px` |
+| Upstream regression parity | Required | PASS | Reproduced all 47 recorded IDs/corners; 0 FP/FN; residual RMSE `0.0000273889 px` is the four-decimal reference rounding quantum, against upstream's `0.1 px` tolerance |
 | Failure controls | Required | PASS | Blank: 0 detections; fixed-seed noise: 0 detections |
 | Restricted-payload scan | Required | PASS | Complete filesystem/layer-history traversal: 18,926 entries, zero payload/history hits |
 | Hosted visual review | Applicable to overlay presentation only | FAIL (retained) | Every image-capable judge failed at least one disclosed control; final VLM call was gated off |
@@ -37,9 +37,12 @@ a favorable run.
 | `34085369442_304b6bafd9_c` | 25 / 25 | 1.0 / 1.0 | `0.0000279020` | `fac47dcc…943c` |
 | `34139872896_defdb2f8d9_c` | 10 / 10 | 1.0 / 1.0 | `0.0000269606` | `6df49800…285` |
 
-These are native detector corner/ID measurements, recomputed after artifact
-download from the retained arrays. Visible labels are review aids, not the task
-outcome.
+These are parity measurements against upstream's recorded detector output,
+recomputed after artifact download from the retained arrays. The labels store
+corners to four decimal places, so the roughly `2.74e-5 px` residual is their
+rounding floor, not detector localization accuracy. Precision/recall 1.0 and
+zero FP/FN likewise mean exact ID-set parity on this regression set. Visible
+labels are review aids, not the task outcome.
 
 ## Review media
 
@@ -121,7 +124,9 @@ full image reference and configured artifact root.
 
 - Three upstream photographs do not prove generalization to arbitrary cameras,
   lighting, blur, occlusion, or tag families.
-- Corner accuracy does not prove camera-pose accuracy without calibrated
+- The sub-millipixel residual is reference quantization, not corner-localization
+  accuracy; upstream itself accepts coordinate differences up to `0.1 px`.
+- Corner parity does not prove camera-pose accuracy without calibrated
   intrinsics and known tag geometry.
 - The direct runner uses one fresh pod per invocation. Repeating the embedded
   smoke command in the same container requires removing its fixed temporary

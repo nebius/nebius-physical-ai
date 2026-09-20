@@ -301,8 +301,11 @@ Hard-gate capability: `apriltag_real_image_fiducial_detection`.
 
 - Build and rerun `native_apriltag_ctest`; an import is not acceptance.
 - Evaluate all three pinned real photographs and their upstream tag-ID/corner
-  labels. Every case must have precision and recall 1.0, aggregate corner RMSE
-  at most 0.1 pixel, and no coordinate error above 0.1 pixel.
+  records. Every case must reproduce the recorded ID set (precision and recall
+  1.0), with aggregate corner RMSE at most 0.1 pixel and no coordinate residual
+  above 0.1 pixel. This is upstream regression parity. The records store four
+  decimal places, so a roughly `2.74e-5 px` residual is their quantization
+  floor, not detector localization accuracy.
 - Run blank and fixed-seed random-noise controls. Both must produce zero
   detections.
 - Emit `fiducial_observations.json` with source image hash, family, tag ID,
@@ -313,10 +316,10 @@ Hard-gate capability: `apriltag_real_image_fiducial_detection`.
 
 Calibrate visual review with a correct overlay, a deliberately shifted overlay,
 a blank image, and a mismatched annotation before scoring final exact-run
-captures. Visual alignment is review evidence; objective corner metrics are the
-accuracy gate. Do not call image-space corners camera-pose accuracy. Pose claims
-require calibrated intrinsics, known tag geometry, and separate translation /
-rotation error against ground truth.
+captures. Visual alignment is review evidence; objective corner metrics are
+the upstream-parity gate. Do not call image-space corners camera-pose accuracy.
+Pose claims require calibrated intrinsics, known tag geometry, and separate
+translation / rotation error against ground truth.
 
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 

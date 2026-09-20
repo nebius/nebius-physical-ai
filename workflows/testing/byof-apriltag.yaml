@@ -5,7 +5,7 @@ metadata:
   description: >
     Plan-only operator-built AprilTag 3 CPU candidate; execute it through the
     direct BYOF runner. Runs the pinned native detector on the complete upstream
-    real-image regression set, measures labeled corner accuracy, rejects
+    real-image regression set, checks parity with recorded IDs/corners, rejects
     blank/noise controls, and emits consumer records plus annotated PNGs.
 config:
   bucket: example-bucket

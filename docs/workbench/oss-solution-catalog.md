@@ -167,7 +167,7 @@ photo attribution and share-alike license.
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
 | `native_apriltag_ctest` | accepted (live CPU) | Pinned native detector regression suite passed 3/3 in the digest-pinned Kubernetes workload |
-| `apriltag_real_image_fiducial_detection` | accepted objective gate (live CPU) | 47/47 labeled `tag36h11` detections across all three photographs; precision/recall 1.0; maximum coordinate error 0.000050 px |
+| `apriltag_real_image_fiducial_detection` | accepted upstream-parity gate (live CPU) | Reproduced all 47 recorded `tag36h11` IDs/corners across three photographs; precision/recall 1.0 and the 0.000050 px maximum residual describe parity with four-decimal upstream records, not localization accuracy (upstream tolerance: 0.1 px) |
 | `blank_and_noise_false_positive_controls` | accepted objective gate (live CPU) | Blank and fixed-seed random-noise images both produced zero detections |
 | `camera_consumer_observation_export` | accepted (live CPU) | 47 source-hashed records with IDs, centers, ordered corners, margins, and hamming distances |
 | `source_linked_annotation_capture` | accepted objective bytes; visual review unaccepted | Three source-bound annotated PNGs reproduced local hashes exactly; hosted VLM calibration failed and the final call was gated off |
