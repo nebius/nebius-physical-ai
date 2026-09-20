@@ -11,6 +11,10 @@ DOCKERFILE = (
     / "Dockerfile"
 )
 BUILD_SCRIPT = DOCKERFILE.with_name("build.sh")
+PINNED_CUDA_BASE = (
+    "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
+    "@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4"
+)
 
 
 def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
@@ -45,6 +49,8 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     build_script = BUILD_SCRIPT.read_text(encoding="utf-8")
 
+    assert f"ARG BASE_IMAGE={PINNED_CUDA_BASE}" in dockerfile
+    assert PINNED_CUDA_BASE in build_script
     assert "ARG NPA_SOURCE_SHA" in dockerfile
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile

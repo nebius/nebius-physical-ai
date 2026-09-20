@@ -16,7 +16,7 @@
 #     the documented download_kitchen_assets script under the operator's own
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
-ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4
 FROM --platform=linux/amd64 ${BASE_IMAGE}
 
 ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
