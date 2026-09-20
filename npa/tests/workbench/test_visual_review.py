@@ -226,6 +226,33 @@ def test_backend_posts_frozen_canonical_body(monkeypatch) -> None:
     assert returned.latency_s == observed[0].latency_s == 0.125
 
 
+def test_backend_error_evidence_preserves_observed_latency(monkeypatch) -> None:
+    import httpx
+
+    response = httpx.Response(
+        429,
+        json={"error": {"message": "rate limited"}},
+        request=httpx.Request("POST", "https://provider.invalid/v1/chat/completions"),
+    )
+    ticks = iter((0.125, 9.999))
+    observed = []
+    errors = []
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _capturing_http_client(response, {}))
+    monkeypatch.setattr(vlm_eval.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(vlm_eval.VlmEvalError):
+        vlm_eval._post_backend_once(
+            url="https://provider.invalid/v1/chat/completions",
+            headers={},
+            request={},
+            request_body=b"{}",
+            timeout_s=10,
+            started_at=0,
+            response_sink=observed.append,
+            error_response_sink=errors.append,
+        )
+    assert errors[0].latency_s == observed[0].latency_s == 0.125
+
+
 def _write_frames(root: Path, count: int = 1, color: str = "green") -> Path:
     root.mkdir(parents=True)
     for index in range(count):
