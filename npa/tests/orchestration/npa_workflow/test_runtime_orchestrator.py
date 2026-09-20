@@ -4019,7 +4019,7 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
 
 
 def _seed_block_relaunch_case(
-    tmp_path: Path,
+    tmp_path: Path, *, terminal_verified: bool = False
 ) -> tuple[Any, Any, MemoryStore, WaveAttempt]:
     from npa.orchestration.npa_workflow.runtime import (
         _image_identity,
@@ -4057,6 +4057,9 @@ def _seed_block_relaunch_case(
         recovery_decision="block_relaunch",
         operator_remedy="restore exact queue access and resume",
     )
+    if terminal_verified:
+        blocked.sky_status = "CANCELLED"
+        blocked.cancellation_state = "verified"
     seed.ledger.record(blocked)
     return spec, gate, store, blocked
 
@@ -4127,6 +4130,43 @@ def test_resume_keeps_block_relaunch_fail_closed_when_queue_is_unavailable(
     attempt = resumed.attempts[-1]
     assert attempt.attempt == 2
     assert attempt.recovery_decision == "block_indeterminate"
+
+
+def test_resume_retries_verified_terminal_block_without_queue_dependency(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, gate, store, blocked = _seed_block_relaunch_case(
+        tmp_path, terminal_verified=True
+    )
+    reconciled: list[tuple[str, str]] = []
+
+    def reconcile(job_name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        reconciled.append((job_name, job_id))
+        return ManagedJobEvidence("error", error="retained row unavailable")
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="rt-block-relaunch",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=RuntimeOptions(poll_seconds=0, resume=True, retries=3),
+        store=store,
+        reconcile_fn=reconcile,
+    )
+
+    result = resumed.execute(gate)
+
+    assert result["status"] == "ok"
+    # The legacy verified-completion probe remains best-effort. Its unavailable
+    # result must not turn already verified terminality back into an in-flight
+    # block.
+    assert reconciled == [(blocked.job_name, blocked.job_id)]
+    assert len(submitter.calls) == 1
+    assert submitter.calls[0]["job_name"].endswith("-a3")
+    assert resumed.attempts[-1].attempt == 3
 
 
 @pytest.mark.parametrize(

@@ -204,8 +204,13 @@ class RuntimeRunState:
             if status == "succeeded":
                 return None
             recovery = str(record.get("recovery_decision") or "")
-            unresolved = recovery in {
-                "block_relaunch",
+            cancellation = record.get("cancellation") or {}
+            cancellation_verified = isinstance(cancellation, Mapping) and (
+                str(cancellation.get("state") or "").lower() == "verified"
+            )
+            unresolved = (
+                recovery == "block_relaunch" and not cancellation_verified
+            ) or recovery in {
                 "block_indeterminate",
                 "block_after_uncertain_success",
                 "recovery_deadline_exhausted_verified_absent",

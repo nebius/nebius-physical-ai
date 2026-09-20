@@ -133,11 +133,13 @@ launch absence; a new lookup must still prove absence. Existing outputs,
 unreadable storage, missing output declarations, or uncertain scheduler status
 continue to block a new launch. Prior attempts remain in the run history.
 
-A durable `block_relaunch` decision remains an unresolved in-flight attempt.
-After the reported dependency is repaired, resume reconciles the exact recorded
-job ID before doing anything else: a live job is adopted and polled, unavailable
-queue evidence remains blocked, and neither case resets the attempt number or
-submits replacement work.
+A durable `block_relaunch` decision remains unresolved unless the same record
+already contains verified terminal cancellation. After the reported dependency
+is repaired, resume reconciles the exact recorded job ID before doing anything
+else: a live job is adopted and polled, unavailable queue evidence remains
+blocked, and neither case resets the attempt number or submits replacement
+work. A previously verified terminal attempt keeps the ordinary terminal retry
+path and does not become queue-dependent again.
 
 Directory-style output evidence scans every S3 list page for a non-empty
 descendant. Zero-byte directory markers do not prove completion or absence,
