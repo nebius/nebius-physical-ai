@@ -1,10 +1,59 @@
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import os
 from pathlib import Path
+import subprocess
+import tarfile
+import textwrap
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCANNER = ROOT / "npa/scripts/scan_image_gymnasium_robotics_payload.py"
 WORKFLOW = ROOT / ".github/workflows/publish-public-images.yml"
+
+
+@pytest.mark.parametrize("mutation", [None, "manifest-bytes", "duplicate", "config-digest"])
+def test_workflow_authenticates_manifest_before_reading_config(
+    tmp_path: Path, mutation: str | None
+) -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index('            metadata_manifest="$RUNNER_TEMP/')
+    end = text.index("            expected_layer_diff_ids_json=", start)
+    fragment = textwrap.dedent(text[start:end])
+    expected_config = "b" * 64
+    manifest = json.dumps(
+        {"config": {"digest": "invalid" if mutation == "config-digest" else f"sha256:{expected_config}"}}
+    ).encode()
+    digest = hashlib.sha256(manifest).hexdigest()
+    if mutation == "manifest-bytes":
+        manifest += b" "
+    with tarfile.open(tmp_path / "gymnasium-robotics.tar", "w") as archive:
+        for _ in range(2 if mutation == "duplicate" else 1):
+            member = tarfile.TarInfo(f"blobs/sha256/{digest}")
+            member.size = len(manifest)
+            archive.addfile(member, io.BytesIO(manifest))
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", fragment + 'printf "%s" "$expected_config_sha256"'],
+        env={
+            **os.environ,
+            "TOOL": "gymnasium-robotics",
+            "RUNNER_TEMP": str(tmp_path),
+            "metadata_image_digest": f"sha256:{digest}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if mutation is None:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == expected_config
+    else:
+        assert result.returncode != 0
+        assert result.stdout == ""
 
 
 def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None:
@@ -105,7 +154,7 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
     assert source_gate < push
     for token in (
         '--metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json"',
-        '.["containerimage.config.digest"]',
+        '.["containerimage.digest"]',
         'payload="$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"',
         '.status == "passed"',
         '.distributed_blob_scan_complete == true',
@@ -120,7 +169,9 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
     first_step_text = text[first_step:first_scan]
     assert 'if [ "$TOOL" = gymnasium-robotics ]; then' in first_step_text
     assert 'metadata_config_digest="$(jq -er' in first_step_text
-    assert 'containerimage.config.digest' in first_step_text
+    assert 'containerimage.digest' in first_step_text
+    assert '"blobs/sha256/${metadata_image_digest#sha256:}"' in first_step_text
+    assert 'sha256sum --check --status' in first_step_text
     first_output = text.index(
         '"$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"', first_scan
     )
@@ -137,6 +188,7 @@ def test_neutral_payload_scan_is_verified_before_development_image_push() -> Non
         '"$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"', pushed_scan
     )
     pushed_invocation = text[pushed_scan:pushed_output]
+    assert 'expected_config_sha256="${GYMNASIUM_CONFIG_DIGEST#sha256:}"' in text
     assert '--expected-config-sha256 "$expected_config_sha256"' in pushed_invocation
     assert (
         '--expected-layer-diff-ids-json "$expected_layer_diff_ids_json"'

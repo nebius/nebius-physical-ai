@@ -342,7 +342,23 @@ jobs:
             exit 1
           fi
 
+      # The classic store emits unreferenced legacy v1 config blobs in docker
+      # save. Preserve the complete OCI graph for Gymnasium's strict scanner.
+      - name: Set up Gymnasium OCI image store
+        if: matrix.tool == 'gymnasium-robotics'
+        id: gymnasium-docker
+        uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          version: v29.1.3
+          context: gymnasium-public-build
+          set-host: true
+          daemon-config: |
+            {"features":{"containerd-snapshotter":true}}
+
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        with:
+          version: ${{ matrix.tool == 'gymnasium-robotics' && 'v0.30.1' || '' }}
+          driver-opts: ${{ matrix.tool == 'gymnasium-robotics' && 'image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8' || '' }}
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
 
@@ -420,8 +436,8 @@ jobs:
           set -euo pipefail
           if [ "$TOOL" = gymnasium-robotics ]; then
             metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
-            metadata_config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
-            test "$metadata_config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+            metadata_image_digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
+            test "$metadata_image_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
           fi
           npa/.venv/bin/python - <<'PY'
           import json
@@ -460,6 +476,13 @@ jobs:
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
           if [ "$TOOL" = gymnasium-robotics ]; then
+            # With the containerd store, the image ID is the OCI manifest digest.
+            # Authenticate that BuildKit-bound manifest before reading its config.
+            metadata_manifest="$RUNNER_TEMP/${TOOL}-build-manifest.json"
+            tar -xOf "$RUNNER_TEMP/${TOOL}.tar" \
+              "blobs/sha256/${metadata_image_digest#sha256:}" > "$metadata_manifest"
+            printf '%s  %s\n' "${metadata_image_digest#sha256:}" "$metadata_manifest" | sha256sum --check --status
+            metadata_config_digest="$(jq -er '.config.digest | select(test("^sha256:[0-9a-f]{64}$"))' "$metadata_manifest")"
             expected_config_sha256="${metadata_config_digest#sha256:}"
             expected_layer_diff_ids_json="$(docker image inspect --format '{{json .RootFS.Layers}}' "$IMAGE")"
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
@@ -467,6 +490,7 @@ jobs:
               --expected-config-sha256 "$expected_config_sha256" \
               --expected-layer-diff-ids-json "$expected_layer_diff_ids_json" \
               --output "$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
+            echo "GYMNASIUM_CONFIG_DIGEST=$metadata_config_digest" >> "$GITHUB_ENV"
           fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
@@ -539,6 +563,7 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
+          DOCKER_SOCKET: ${{ steps.gymnasium-docker.outputs.sock || '/var/run/docker.sock' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -547,7 +572,7 @@ jobs:
           # gives this mandatory gate no practical analysis deadline.
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$DOCKER_SOCKET:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
@@ -565,12 +590,13 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
+          DOCKER_SOCKET: ${{ steps.gymnasium-docker.outputs.sock || '/var/run/docker.sock' }}
         shell: bash
         run: |
           set -euo pipefail
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$DOCKER_SOCKET:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$RUNNER_TEMP:/output" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
@@ -615,8 +641,7 @@ jobs:
           set -euo pipefail
           metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
           image_digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
-          config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
-          test "$config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          test "$image_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
           npa/.venv/bin/python -m npa.deploy.runtime_fetch_contract \
             --manifest npa/docker/workbench/gymnasium-robotics/runtime-fetch-manifest.json \
             --source-lock npa/docker/workbench/gymnasium-robotics/source-lock.json \
@@ -632,8 +657,8 @@ jobs:
         run: |
           set -euo pipefail
           metadata="$RUNNER_TEMP/${TOOL}-build-metadata.json"
-          metadata_config_digest="$(jq -er '.["containerimage.config.digest"]' "$metadata")"
-          test "$metadata_config_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+          metadata_image_digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
+          test "$metadata_image_digest" = "$(docker image inspect --format '{{.Id}}' "$IMAGE")"
           payload="$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"
           test -s "$payload"
           jq -e '
@@ -783,7 +808,9 @@ jobs:
             sleep 5
           done
           if [ "$TOOL" = gymnasium-robotics ]; then
-            expected_config_sha256="${config_digest#sha256:}"
+            # The pulled immutable image ID above equals the pre-scanned image.
+            # Its config digest was authenticated through that image's manifest.
+            expected_config_sha256="${GYMNASIUM_CONFIG_DIGEST#sha256:}"
             expected_layer_diff_ids_json="$layer_diff_ids"
             npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \

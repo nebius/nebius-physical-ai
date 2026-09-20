@@ -496,6 +496,7 @@ def test_coordinator_refuses_same_uid_smoke_log_path_substitution(
     target.write_text("unchanged\n", encoding="utf-8")
     if replacement == "regular":
         (root / name).write_text("replacement\n", encoding="utf-8")
+        (root / name).chmod(0o600)
         expected = "path identity changed"
     else:
         (root / name).symlink_to(target)
