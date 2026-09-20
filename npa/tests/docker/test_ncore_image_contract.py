@@ -55,11 +55,15 @@ def test_ncore_is_public_eligible_but_has_no_automatic_release() -> None:
     assert images.build_and_push_command("local.invalid/npa-ncore:unbuilt") == ""
 
 
-def test_conversion_has_pinned_cpu_setup_without_vendor_reinstallation() -> None:
-    assert tool_image_key("workbench.nurec.convert_colmap") == "ncore"
-    setup = render_setup_for_tool(
-        "workbench.nurec.convert_colmap", config={}, options=SkypilotRenderOptions()
-    )
+@pytest.mark.parametrize(
+    "tool_ref",
+    ["workbench.nurec.convert_colmap", "workbench.nurec.audit_colmap"],
+)
+def test_conversion_has_pinned_cpu_setup_without_vendor_reinstallation(
+    tool_ref: str,
+) -> None:
+    assert tool_image_key(tool_ref) == "ncore"
+    setup = render_setup_for_tool(tool_ref, config={}, options=SkypilotRenderOptions())
     assert "/opt/venv/bin/python /opt/ncore/bin/verify-packaging.py" in setup
     # Setup must record the pinned interpreter at the path the run shell reads.
     # Read the actual writer/consumer contract instead of assuming a temp path.

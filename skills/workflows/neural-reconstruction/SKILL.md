@@ -271,6 +271,10 @@ the planned native arguments without writing initialization artifacts.
 Retain `initialization/ncore-sfm.json` with the source/conversion and PLY hashes,
 selected cameras, count, and recipe/image identity. Native `parsed.yaml` records
 effective configuration, while USDZ `data_info.json` is input sequence metadata.
+Retain `reconstruction/reconstruction.json` and
+`novel_views/nre-render.json`; they bind the exact input member inventory,
+digest-pinned NRE invocation, observed RT-core GPU, resolved recipe, metrics,
+USDZ and independently decoded render bytes.
 Available frames and exported ground truth do not establish split membership or
 actual sampled training frames. Require separate native split/sampler evidence
 before claiming that every source image participated in training. The COLMAP

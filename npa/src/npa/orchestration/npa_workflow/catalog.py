@@ -604,6 +604,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.render_image_scale}}",
             "--renderer",
             "{{config.renderer}}",
+            "--image",
+            "{{config.nurec_image}}",
             "--rig-translation-offset",
             "{{config.rig_translation_offset}}",
             "--rig-rotation-offset",

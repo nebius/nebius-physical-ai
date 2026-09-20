@@ -1060,6 +1060,7 @@ def _publish_reconstruction(result: Any, output_uri: str) -> str:
         (result.usdz_path, "last.usdz"),
         (result.parsed_config_path, "parsed.yaml"),
         (result.metrics_path, "metrics.yaml"),
+        (result.evidence_path, "reconstruction.json"),
     ):
         if local and Path(local).is_file():
             published.append(_publish(Path(local), _join_uri(output_uri, name)))

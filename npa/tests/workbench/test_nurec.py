@@ -806,7 +806,11 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
 
     config = NurecConfig.from_env(environ={}, out_dir=out)
     result = reconstruct_scene(
-        config, ncore_json="/d/s.json", environ={}, runner=fake_runner
+        config,
+        ncore_json="/d/s.json",
+        environ={},
+        runner=fake_runner,
+        gt_frame_step=7,
     )
 
     assert result.ok is True
@@ -815,6 +819,7 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
     assert result.metrics["test/psnr"] == pytest.approx(27.75)
     assert result.gt_dir.endswith("gt")
     assert len(calls) == 2
+    assert calls[1][-1] == "7"
 
 
 def test_reconstruct_fails_loudly_without_an_artifact(tmp_path: Path) -> None:

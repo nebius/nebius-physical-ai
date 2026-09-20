@@ -40,56 +40,51 @@ def _camera_counts(parent: dict[str, Any], name: str, minimum: int = 1) -> dict:
     return value
 
 
-def _frame_coverage(conversion: dict, training: dict) -> None:
+def _input_coverage(conversion: dict, training: dict) -> None:
     source = _camera_counts(conversion, "camera_frame_counts")
     _require(len(source) == conversion["source_counts"]["cameras"], "source cameras")
     _require(
         sum(source.values()) == conversion["source_counts"]["images"], "source frames"
     )
-    loaded = _camera_counts(training, "loaded_camera_frame_counts")
-    train = _camera_counts(training, "eligible_training_camera_frame_counts")
-    val = _camera_counts(training, "validation_camera_frame_counts", 0)
-    covered = _camera_counts(training, "covered_camera_frame_counts")
-    _require(loaded == covered == source, "complete loaded and covered source frames")
-    _require(train.keys() == val.keys() == source.keys(), "all source training cameras")
-    for camera, count in source.items():
-        _require(
-            train[camera] + val[camera] == count,
-            "disjoint training/validation frame accounting",
-        )
-    source_hash = _hash(conversion, "camera_frame_inventory_sha256")
-    for field in ("source_frame_inventory_sha256", "covered_frame_inventory_sha256"):
-        _require(_hash(training, field) == source_hash, field)
-    for field in (
-        "training_frame_inventory_sha256",
-        "validation_frame_inventory_sha256",
-    ):
-        _hash(training, field)
     _require(
-        _hash(training, "split_union_frame_inventory_sha256") == source_hash,
-        "split union frame inventory",
+        _camera_counts(training, "source_camera_frame_counts") == source,
+        "complete source frame accounting",
     )
-    _require(training.get("split_overlap_frames") == 0, "disjoint split identities")
-    _require(training.get("independent_frame_readback") is True, "frame readback")
+    _require(
+        _hash(training, "source_frame_inventory_sha256")
+        == _hash(conversion, "camera_frame_inventory_sha256"),
+        "source frame inventory",
+    )
+    _require(
+        _hash(training, "conversion_report_sha256") == conversion["report_sha256"],
+        "bound conversion report",
+    )
+    _hash(training, "sequence_inventory_sha256")
+    _require(
+        training.get("complete_source_sequence_bound") is True,
+        "complete source sequence binding",
+    )
+    # NRE does not currently export native split or random-sampler identities.
+    # The release therefore proves the exact complete input sequence and makes no
+    # stronger per-frame participation claim.
+    _require(training.get("sampling_claim") == "not_asserted", "sampling non-claim")
 
 
 def _recipe_evidence(training: dict) -> None:
     # These are acceptance comparisons against the pinned 26.04 recipe. They
     # never set or truncate a caller's runtime training configuration.
     for field in (
-        "inventory_report_sha256",
+        "reconstruction_receipt_sha256",
+        "render_receipt_sha256",
         "parsed_config_sha256",
-        "native_recipe_sha256",
-        "datasource_summary_sha256",
-        "split_report_sha256",
     ):
         _hash(training, field)
     _require(
         training.get("native_recipe") == "configs/experimental/3dgut/3dgut_colmap.yaml",
         "native COLMAP recipe",
     )
+    _require(training.get("max_epochs_argument") == 0, "native epoch selection")
     for field, native in (("epochs", 1), ("samples_per_epoch", 30000)):
-        _require(_count(training, f"native_{field}") == native, f"native {field}")
         _require(_count(training, f"resolved_{field}") == native, f"resolved {field}")
     _require(training.get("native_recipe_completed") is True, "completed native recipe")
 
@@ -110,9 +105,10 @@ def _visualization_evidence(conversion: dict, proof: dict) -> None:
 def validate_full_input_proof(conversion: dict, proof: dict) -> None:
     """Check source-bound frame, recipe and RRD accounting in retained evidence.
 
-    Frame counts describe eligible training inputs and validation splits, not a
-    fabricated history of the native random sampler. Hashes identify independently
-    inspected artifacts; this offline check does not itself execute a workload.
+    Frame counts describe the exact accepted input sequence, not a fabricated
+    training/validation split or native random-sampler history. Hashes identify
+    independently inspected artifacts; this offline check does not execute a
+    workload.
 
     Args:
         conversion: Independently validated full-capture conversion evidence.
@@ -123,7 +119,7 @@ def validate_full_input_proof(conversion: dict, proof: dict) -> None:
         RuntimeError: Required evidence is absent, partial or inconsistent.
     """
     training = _record(proof, "training_input")
-    _frame_coverage(conversion, training)
+    _input_coverage(conversion, training)
     _recipe_evidence(training)
     _visualization_evidence(conversion, proof)
 

@@ -786,6 +786,9 @@ class NurecReconstructResult:
     output_uri: str = ""
     errors: tuple[str, ...] = ()
     initialization: dict[str, Any] = field(default_factory=dict)
+    train_exit_code: int = -1
+    gpu_names: tuple[str, ...] = ()
+    evidence_path: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -803,6 +806,9 @@ class NurecReconstructResult:
             "command": list(self.command),
             "output_uri": self.output_uri,
             "errors": list(self.errors),
+            "train_exit_code": self.train_exit_code,
+            "gpu_names": list(self.gpu_names),
+            "evidence_path": self.evidence_path,
         }
 
 
@@ -822,6 +828,9 @@ class NurecRenderResult:
     command: tuple[str, ...] = ()
     output_uri: str = ""
     errors: tuple[str, ...] = ()
+    render_exit_code: int = -1
+    gpu_names: tuple[str, ...] = ()
+    evidence_path: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -837,6 +846,9 @@ class NurecRenderResult:
             "command": list(self.command),
             "output_uri": self.output_uri,
             "errors": list(self.errors),
+            "render_exit_code": self.render_exit_code,
+            "gpu_names": list(self.gpu_names),
+            "evidence_path": self.evidence_path,
         }
 
 
@@ -1167,6 +1179,22 @@ def _check_gpu(
         return "unavailable", "unknown"
     name = names[0]
     return name, "yes" if has_rt_cores(name) else "no"
+
+
+def _gpu_names_for_receipt(
+    env: Mapping[str, str], run: RunCallable, timeout: float | None
+) -> tuple[str, ...]:
+    result = _run(
+        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+        env=env,
+        run=run,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        return ()
+    return tuple(
+        line.strip() for line in (result.stdout or "").splitlines() if line.strip()
+    )
 
 
 def _check_entrypoint(config: NurecConfig) -> str:
@@ -1639,6 +1667,7 @@ def reconstruct_scene(
     runner: RunCallable | None = None,
     dry_run: bool = False,
     export_gt: bool = True,
+    gt_frame_step: int = DEFAULT_GT_FRAME_STEP_CAMERA,
     timeout: float | None = None,
 ) -> NurecReconstructResult:
     """Train a 3DGUT Gaussian reconstruction and collect its USDZ + metrics."""
@@ -1674,8 +1703,32 @@ def reconstruct_scene(
 
     initialization = export_initialization(ncore_json, initialization)
     out_dir.mkdir(parents=True, exist_ok=True)
+    gpu_names = _gpu_names_for_receipt(env, run, timeout) if runner is None else ()
     result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
+        receipt_path = config.nre_run_dir / "evidence" / "nre-reconstruction.json"
+        evidence_path = ""
+        try:
+            from npa.workbench.nurec.evidence import (
+                NurecEvidenceError,
+                write_reconstruction_receipt,
+            )
+
+            write_reconstruction_receipt(
+                receipt_path=receipt_path,
+                ncore_json=Path(ncore_json),
+                nre_image=config.image,
+                config_name=config.config_name,
+                mode=config.mode,
+                max_epochs_argument=config.max_epochs,
+                command=command,
+                train_exit_code=result.returncode,
+                gpu_names=gpu_names,
+                error=_sanitize(result, config, env),
+            )
+            evidence_path = str(receipt_path)
+        except (NurecEvidenceError, OSError, ValueError):
+            pass
         return NurecReconstructResult(
             ok=False,
             image=config.image,
@@ -1691,6 +1744,9 @@ def reconstruct_scene(
                 f"NRE reconstruction failed (exit {result.returncode}): "
                 f"{_sanitize(result, config, env)}",
             ),
+            train_exit_code=result.returncode,
+            gpu_names=gpu_names,
+            evidence_path=evidence_path,
         )
 
     run_dir = resolve_nre_run_dir(out_dir, config.nre_run_id)
@@ -1715,6 +1771,7 @@ def reconstruct_scene(
         gt_args = build_nre_export_gt_args(
             ncore_json=ncore_json,
             output_dir=str(gt_target),
+            frame_step_camera=gt_frame_step,
         )
         gt_result = _run(
             nre_command(
@@ -1728,6 +1785,33 @@ def reconstruct_scene(
         # not ship the sub-command must not fail the reconstruction.
         if gt_result.returncode == 0 and gt_target.exists():
             gt_dir = str(gt_target)
+
+    receipt_path = run_dir / "evidence" / "nre-reconstruction.json"
+    evidence_path = ""
+    try:
+        from npa.workbench.nurec.evidence import (
+            NurecEvidenceError,
+            write_reconstruction_receipt,
+        )
+
+        write_reconstruction_receipt(
+            receipt_path=receipt_path,
+            ncore_json=Path(ncore_json),
+            nre_image=config.image,
+            config_name=config.config_name,
+            mode=config.mode,
+            max_epochs_argument=config.max_epochs,
+            command=command,
+            train_exit_code=result.returncode,
+            gpu_names=gpu_names,
+            parsed_config_path=parsed,
+            metrics_path=metrics_path,
+            usdz_path=usdz,
+            metrics=metrics,
+        )
+        evidence_path = str(receipt_path)
+    except (NurecEvidenceError, OSError, ValueError) as exc:
+        _logger.warning("NRE reconstruction evidence was not retained: %s", exc)
 
     return NurecReconstructResult(
         ok=not errors,
@@ -1743,6 +1827,9 @@ def reconstruct_scene(
         command=tuple(command),
         errors=tuple(errors),
         initialization=initialization,
+        train_exit_code=result.returncode,
+        gpu_names=gpu_names,
+        evidence_path=evidence_path,
     )
 
 
@@ -1981,8 +2068,33 @@ def render_novel_views(
         )
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
+    gpu_names = _gpu_names_for_receipt(env, run, timeout) if runner is None else ()
     result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
+        receipt_path = Path(output_dir) / "nre-render.json"
+        evidence_path = ""
+        try:
+            from npa.workbench.nurec.evidence import (
+                NurecEvidenceError,
+                write_render_receipt,
+            )
+
+            write_render_receipt(
+                receipt_path=receipt_path,
+                artifact_path=Path(artifact_path),
+                output_dir=Path(output_dir),
+                nre_image=config.image,
+                command=command,
+                render_exit_code=result.returncode,
+                novel_view=not replicate_training_views,
+                rig_translation_offset=_offset_text(translation),
+                rig_rotation_offset=_offset_text(rotation),
+                gpu_names=gpu_names,
+                error=_sanitize(result, config, env),
+            )
+            evidence_path = str(receipt_path)
+        except (NurecEvidenceError, OSError, ValueError):
+            pass
         return NurecRenderResult(
             ok=False,
             artifact_path=artifact_path,
@@ -1996,11 +2108,37 @@ def render_novel_views(
                 f"NRE render failed (exit {result.returncode}): "
                 f"{_sanitize(result, config, env)}",
             ),
+            render_exit_code=result.returncode,
+            gpu_names=gpu_names,
+            evidence_path=evidence_path,
         )
 
     frames = count_render_frames(output_dir)
     videos = len(list(Path(output_dir).rglob("*.mp4")))
     errors = [] if frames else ["render produced no frames"]
+    receipt_path = Path(output_dir) / "nre-render.json"
+    evidence_path = ""
+    try:
+        from npa.workbench.nurec.evidence import (
+            NurecEvidenceError,
+            write_render_receipt,
+        )
+
+        write_render_receipt(
+            receipt_path=receipt_path,
+            artifact_path=Path(artifact_path),
+            output_dir=Path(output_dir),
+            nre_image=config.image,
+            command=command,
+            render_exit_code=result.returncode,
+            novel_view=not replicate_training_views,
+            rig_translation_offset=_offset_text(translation),
+            rig_rotation_offset=_offset_text(rotation),
+            gpu_names=gpu_names,
+        )
+        evidence_path = str(receipt_path)
+    except (NurecEvidenceError, OSError, ValueError) as exc:
+        _logger.warning("NRE render evidence was not retained: %s", exc)
     return NurecRenderResult(
         ok=not errors,
         artifact_path=artifact_path,
@@ -2013,6 +2151,9 @@ def render_novel_views(
         rig_rotation_offset=_offset_text(rotation),
         command=tuple(command),
         errors=tuple(errors),
+        render_exit_code=result.returncode,
+        gpu_names=gpu_names,
+        evidence_path=evidence_path,
     )
 
 

@@ -168,6 +168,8 @@ states:
     outputs:
       - uri: "{{config.reconstruction_uri}}metrics.yaml"
         schema: npa.nurec.reconstruction.v1
+      - uri: "{{config.reconstruction_uri}}reconstruction.json"
+        schema: npa.nurec.reconstruction-receipt.v1
     next: render
 
   render:

@@ -132,6 +132,12 @@ The reconstruction JSON and published `initialization/ncore-sfm.json` retain the
 recipe, configured image, selected cameras, source metadata/conversion hashes,
 decoded component counts, and exported PLY hash. An image digest in the runtime
 configuration binds this evidence to that image; a version tag alone does not.
+The stage also publishes `reconstruction/reconstruction.json`, which hashes the
+exact NCore member inventory, parsed config, native metrics and USDZ and records
+the observed GPU and NRE digest. Rendering publishes
+`novel_views/nre-render.json`, which binds the same USDZ, the nonzero offset and
+every independently decoded frame hash. These are workload receipts, not a
+substitute for reopening the USDZ, render tree and RRD after S3 read-back.
 
 The native parsed configuration records effective recipe settings. The USDZ's
 `data_info.json` copies the input sequence metadata; it proves available data,

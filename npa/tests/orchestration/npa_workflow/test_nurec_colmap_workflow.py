@@ -105,6 +105,7 @@ def test_conversion_hands_exact_portable_sequence_to_existing_nre():
         _flag(reconstruct.argv, "--config-name")
         == "configs/experimental/3dgut/3dgut_colmap.yaml"
     )
+    assert _flag(reconstruct.argv, "--image") == _flag(render.argv, "--image")
     assert _flag(render.argv, "--artifact-uri") == _flag(
         reconstruct.argv, "--output-uri"
     )
@@ -404,6 +405,17 @@ def _write_synthetic_nurec_lineage(root, helpers):
         },
     )
     _write_synthetic_conversion_report(root, helpers)
+    (root / "ncore/sequence/capture.zarr.itar").write_bytes(b"synthetic-ncore-store")
+    _write_proof_document(
+        root,
+        "ncore/sequence/sequence.json",
+        {
+            "version": "v4",
+            "component_stores": [
+                {"path": "capture.zarr.itar", "components": {"cameras": {}}}
+            ],
+        },
+    )
     _write_proof_document(
         root,
         "ncore/sequence/npa-rig.json",
@@ -434,7 +446,8 @@ def downstream_run(tmp_path, helpers):
     _write_synthetic_nurec_lineage(root, helpers)
     (root / "reconstruction").mkdir()
     (root / "reconstruction/parsed.yaml").write_text(
-        "dataset:\n  camera_ids: [camera1, camera2]\n"
+        "trainer:\n  max_epochs: 1\n"
+        "dataset:\n  camera_ids: [camera1, camera2]\n  samples_per_epoch: 30000\n"
     )
     (root / "reconstruction/metrics.yaml").write_text(
         yaml.safe_dump(
@@ -454,10 +467,53 @@ def downstream_run(tmp_path, helpers):
         directory = root / "novel_views" / camera
         directory.mkdir(parents=True)
         for index in range(2):
-            Image.new("RGB", (32, 24), (30 + index * 20, 40, 60)).save(
-                directory / f"{index:06}.png"
-            )
+            image = Image.new("RGB", (32, 24), (30 + index * 20, 40, 60))
+            image.putpixel((0, 0), (200, 100, 20))
+            image.save(directory / f"{index:06}.png")
     return root
+
+
+def _write_native_receipts(root):
+    from npa.workbench.nurec.evidence import (
+        write_reconstruction_receipt,
+        write_render_receipt,
+    )
+    from npa.workbench.nurec.nurec import parse_metrics_yaml
+
+    image = (
+        "nvcr.io/nvidia/nre/nre-ga@"
+        "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+    )
+    gpu = ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]
+    metrics = root / "reconstruction/metrics.yaml"
+    usdz = root / "reconstruction/last.usdz"
+    write_reconstruction_receipt(
+        receipt_path=root / "reconstruction/reconstruction.json",
+        ncore_json=root / "ncore/sequence/sequence.json",
+        nre_image=image,
+        config_name="configs/experimental/3dgut/3dgut_colmap.yaml",
+        mode="trainval",
+        max_epochs_argument=0,
+        command=["/app/run", "--config-name=3dgut_colmap"],
+        train_exit_code=0,
+        gpu_names=gpu,
+        parsed_config_path=root / "reconstruction/parsed.yaml",
+        metrics_path=metrics,
+        usdz_path=usdz,
+        metrics=parse_metrics_yaml(metrics),
+    )
+    write_render_receipt(
+        receipt_path=root / "novel_views/nre-render.json",
+        artifact_path=usdz,
+        output_dir=root / "novel_views",
+        nre_image=image,
+        command=["/app/run", "render"],
+        render_exit_code=0,
+        novel_view=True,
+        rig_translation_offset="0.0,0.25,0.0",
+        rig_rotation_offset="0.0,0.0,0.0",
+        gpu_names=gpu,
+    )
 
 
 def _write_proof_rrd(root):
@@ -470,6 +526,7 @@ def _write_proof_rrd(root):
 
 def test_actual_usdz_aggregated_metrics_media_and_rrd_pass(helpers, downstream_run):
     _write_synthetic_usdz(downstream_run / "reconstruction/last.usdz")
+    _write_native_receipts(downstream_run)
     _write_proof_rrd(downstream_run)
     helpers._assert_nurec_downstream_proof(
         downstream_run, recording_id=downstream_run.name
@@ -676,6 +733,7 @@ def _publish_synthetic_conversion(root, helpers):
 def published_proof(helpers, downstream_run, monkeypatch):
     _write_synthetic_usdz(downstream_run / "reconstruction/last.usdz")
     _publish_synthetic_conversion(downstream_run, helpers)
+    _write_native_receipts(downstream_run)
     _write_proof_rrd(downstream_run)
     root = "npa-workflow-e2e/unit/nurec-colmap-reconstruct/"
     bodies = {
@@ -715,6 +773,8 @@ def test_live_entrypoint_reads_published_bodies_through_real_decoders(
     for relative in (
         "reconstruction/last.usdz",
         "reconstruction/metrics.yaml",
+        "reconstruction/reconstruction.json",
+        "novel_views/nre-render.json",
         "reports/sim2real.rrd",
         "novel_views/camera1/000001.png",
         "novel_views/camera2/000001.png",
@@ -728,6 +788,8 @@ def test_live_entrypoint_reads_published_bodies_through_real_decoders(
         "reconstruction/last.usdz",
         "reconstruction/metrics.yaml",
         "reconstruction/parsed.yaml",
+        "reconstruction/reconstruction.json",
+        "novel_views/nre-render.json",
         "reports/sim2real.rrd",
     ],
 )

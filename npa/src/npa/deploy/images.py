@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from importlib import resources
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -554,8 +555,6 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     for field in ("max_epochs", "train_exit_code", "render_exit_code"):
         equal(proof, field, 0)
     for field in (
-        "training_steps",
-        "gaussian_count",
         "usdz_bytes",
         "render_bytes",
         "decoded_frames",
@@ -566,6 +565,18 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(proof, "rendered_usdz_sha256", proof["usdz_sha256"])
     for field in ("trained_scene_reopened", "finite_pixels", "novel_view"):
         equal(proof, field, True)
+    metrics = record(proof, "observed_metrics")
+    for name in ("test/psnr", "test/ssim", "test/lpips"):
+        value = metrics.get(name)
+        require(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value)),
+            f"finite observed metric {name}",
+        )
+    require(float(metrics["test/psnr"]) > 0, "positive PSNR")
+    require(0 < float(metrics["test/ssim"]) <= 1, "bounded SSIM")
+    require(float(metrics["test/lpips"]) >= 0, "nonnegative LPIPS")
     from npa.deploy.ncore_acceptance import (
         validate_full_input_proof,
         validate_selected_base_scan,

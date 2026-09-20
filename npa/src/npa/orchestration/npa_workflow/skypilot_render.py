@@ -1603,10 +1603,14 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
-    if tool_ref == "workbench.nurec.convert_colmap":
-        # Conversion uses the committed CPU image and its hash-locked runtime
-        # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
-        # a floating PyPI nvidia-ncore onto the actual pinned source reader.
+    if tool_ref in {
+        "workbench.nurec.convert_colmap",
+        "workbench.nurec.audit_colmap",
+    }:
+        # Conversion and its independent read-back use the committed CPU image and
+        # its hash-locked runtime bootstrap. Do not run the NRE vendor-image
+        # dependency installer or overlay a floating PyPI nvidia-ncore onto the
+        # actual pinned source reader.
         return (
             "set -e\n"
             "export PATH=/opt/venv/bin:/opt/ncore/bin:$PATH\n"
