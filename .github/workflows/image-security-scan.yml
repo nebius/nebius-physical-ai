@@ -30,6 +30,10 @@ concurrency:
 
 jobs:
   image-policy:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'policy' || 'security' }}
+      queue: max
+      cancel-in-progress: false
     name: Image policy and complete-byte security
     runs-on: ubuntu-latest
     steps:
@@ -136,6 +140,10 @@ jobs:
           category: trivy-config
 
   base-image-cve-scan:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'runtime' || 'security' }}
+      queue: max
+      cancel-in-progress: false
     name: Base image CVE inventory
     runs-on: ubuntu-latest
     steps:
@@ -254,6 +262,10 @@ jobs:
           category: trivy-image-python-3-11-slim-trixie
 
   omniverse-payload-scan:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'runtime' || 'security' }}
+      queue: max
+      cancel-in-progress: false
     name: Omniverse payload scan (built image)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
