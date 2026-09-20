@@ -14,6 +14,9 @@ resources:
   image_id: "docker:<your-registry>/<namespace>/npa-byof:<your-run-id>"
 config:
   kubernetes:
+    # Check neutral image bytes before SkyPilot creates its trusted runtime cache.
+    post_provision_runcmd:
+      - /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py || exit $?
     pod_config:
       spec:
         automountServiceAccountToken: false
@@ -28,9 +31,12 @@ config:
               runAsUser: 1000
               runAsGroup: 1000
               privileged: false
-              allowPrivilegeEscalation: false
+              # The packaging contract permits passwordless-root SkyPilot setup.
+              # Fetched code separately enters runtime-bootstrap's NNP sandbox.
+              allowPrivilegeEscalation: true
               capabilities:
                 drop: [ALL]
+                add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SYS_CHROOT, NET_BIND_SERVICE]
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "descriptor-bound-runtime-cache"
@@ -52,7 +58,6 @@ setup: |
   test -f /opt/npa/gymnasium-robotics/capability_smoke.py
   test -f /opt/npa/gymnasium-robotics/runtime-bootstrap.py
   test -f /opt/npa/gymnasium-robotics/source-lock.json
-  /usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py
   /usr/bin/python3 -I -B -c 'import boto3, botocore'
   install -d -m 0700 "${NPA_GYMNASIUM_RUNTIME_CACHE}"
   unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
@@ -194,8 +199,11 @@ run: |
       pod_security = {"runAsNonRoot": True, "seccompProfile": {"type": "RuntimeDefault"}}
       container_security = {
           "runAsUser": 1000, "runAsGroup": 1000,
-          "runAsNonRoot": True, "privileged": False, "allowPrivilegeEscalation": False,
-          "capabilities": {"drop": ["ALL"]},
+          "runAsNonRoot": True, "privileged": False, "allowPrivilegeEscalation": True,
+          "capabilities": {
+              "drop": ["ALL"],
+              "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "SYS_CHROOT", "NET_BIND_SERVICE"],
+          },
       }
       if not same_facts(policy["pod_security_context"], pod_security):
           raise SystemExit("Pod policy receipt has unapproved Pod security facts")

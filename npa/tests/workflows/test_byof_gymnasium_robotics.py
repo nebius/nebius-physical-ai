@@ -765,6 +765,23 @@ def test_gymnasium_configuration_is_explicit_in_both_task_shapes() -> None:
     }])
 
 
+@pytest.mark.parametrize(("key", "value"), [
+    ("runAsNonRoot", 1), ("runAsNonRoot", False),
+    ("runAsUser", 0), ("runAsUser", 1000.0), ("runAsUser", "1000"),
+    ("runAsGroup", 0), ("runAsGroup", 1001),
+    ("privileged", True), ("allowPrivilegeEscalation", 1),
+    ("capabilities", {"drop": ["ALL"]}),
+    ("capabilities", {"drop": ["ALL"], "add": ["NET_ADMIN"]}),
+    ("seccompProfile", {"type": "Unconfined"}), ("procMount", "Unmasked"),
+])
+def test_gymnasium_bootstrap_requires_exact_reviewed_context(key: str, value: object) -> None:
+    documents = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))
+    context = documents[1]["config"]["kubernetes"]["pod_config"]["spec"]["containers"][0]["securityContext"]
+    context[key] = value
+    with pytest.raises(ExecutionPreflightError):
+        validate_gymnasium_task_configuration(documents)
+
+
 def test_gymnasium_configuration_survives_allocated_task_rendering() -> None:
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.skypilot_render import (

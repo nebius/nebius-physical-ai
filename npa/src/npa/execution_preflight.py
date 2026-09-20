@@ -360,6 +360,19 @@ def _validate_gymnasium_pod_environment(container: Mapping[str, Any]) -> None:
 
 def _validate_gymnasium_security_context(context: Any, *, required: bool = False, container: bool = False) -> None:
     value = _gymnasium_mapping(context)
+    # The neutral image's packaging contract permits trusted SkyPilot sudo/SSH
+    # bootstrap. Fetched code independently enters runtime-bootstrap's NNP,
+    # seccomp and credential sandbox. Only this exact bootstrap envelope passes.
+    bootstrap_context = {
+        "runAsNonRoot": True, "runAsUser": 1000, "runAsGroup": 1000,
+        "privileged": False, "allowPrivilegeEscalation": True,
+        "capabilities": {
+            "drop": ["ALL"],
+            "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "SYS_CHROOT", "NET_BIND_SERVICE"],
+        },
+    }
+    if container and json.dumps(value, sort_keys=True) == json.dumps(bootstrap_context, sort_keys=True):
+        return
     if ("privileged" in value and value["privileged"] is not False) or value.get("runAsUser") == 0:
         _gymnasium_configuration_error("privileged or UID-zero pod overrides are forbidden")
     if required or "runAsNonRoot" in value:

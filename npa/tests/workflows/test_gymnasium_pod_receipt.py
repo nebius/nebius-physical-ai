@@ -41,6 +41,10 @@ def test_profile_defers_runtime_fetch_until_after_admitted_receipt_validation() 
     setup = str(documents[1]["setup"])
     run = str(documents[1]["run"])
     assert "prepare-runtime" not in setup
+    assert "verify_image.py" not in setup
+    assert documents[1]["config"]["kubernetes"]["post_provision_runcmd"] == [
+        "/usr/bin/python3 -I -B /opt/npa/gymnasium-robotics/verify_image.py || exit $?"
+    ]
     assert "owner-side Pod image receipt" in run
     assert run.index("owner-side Pod image receipt") < run.index(
         "run-smoke"
@@ -81,8 +85,11 @@ def _pod(*, image_id: str) -> dict[str, object]:
                         "runAsUser": 1000,
                         "runAsGroup": 1000,
                         "privileged": False,
-                        "allowPrivilegeEscalation": False,
-                        "capabilities": {"drop": ["ALL"]},
+                        "allowPrivilegeEscalation": True,
+                        "capabilities": {
+                            "drop": ["ALL"],
+                            "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "SYS_CHROOT", "NET_BIND_SERVICE"],
+                        },
                     },
                     "resources": {
                         "requests": {"nvidia.com/gpu": "1"},
@@ -387,8 +394,11 @@ def test_profile_requires_every_admitted_policy_fact(tmp_path: Path, key: str) -
         ("container_security_context.runAsGroup", 0),
         ("container_security_context.runAsGroup", 1001),
         ("container_security_context.privileged", True),
-        ("container_security_context.allowPrivilegeEscalation", True),
+        ("container_security_context.allowPrivilegeEscalation", False),
+        ("container_security_context.allowPrivilegeEscalation", 1),
         ("container_security_context.capabilities", {"drop": []}),
+        ("container_security_context.capabilities.add", ["NET_ADMIN"]),
+        ("container_security_context.capabilities.add", []),
         ("volumes", [{"name": "injected", "secret": {"secretName": "synthetic"}}]),
         ("volumes", None),
         ("mounts", [{"name": "injected", "mountPath": "/data"}]),
