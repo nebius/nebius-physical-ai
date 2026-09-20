@@ -542,6 +542,53 @@ def test_explicit_nested_uri_supports_manifest_pending_exact_prefix(
     ]
 
 
+def test_ambiguous_manifest_pending_prefix_never_lists_sibling_workflow(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "inflight-probe"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    owned_key = f"{exact_prefix}/artifacts/mine.json"
+    sibling_key = f"checkpoints/{run_id}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", owned_key)] = b"mine"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.manifest_pending is True
+    assert artifacts == [f"s3://alias-bucket/{owned_key}"]
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[0][1] == f"{exact_prefix}/"
+    assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
+
+
+def test_ambiguous_manifest_pending_prefix_is_not_found_from_sibling_only(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "sibling-only-probe"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    resolver_env.objects[
+        ("alias-bucket", f"checkpoints/{run_id}/other-workflow/secret.bin")
+    ] = b"sibling"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+
+    assert resolved.found is False
+    explicit = next(
+        check for check in resolved.checks if check.source == "explicit_workflow_s3_uri"
+    )
+    assert explicit.outcome == "absent"
+    assert resolver_env.queries[0][1] == f"{exact_prefix}/"
+
+
 def _resolved_declarative_run(
     resolver_env: ExactS3, *, run_id: str = "declarative-artifacts"
 ) -> tuple[RunResolution, str]:
