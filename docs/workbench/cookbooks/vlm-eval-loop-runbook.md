@@ -115,6 +115,70 @@ a defense against in-image instructions. For S3 output, private access remains
 an operator/storage-policy requirement; the client uses an atomic create-only
 write but does not infer bucket policy or ACL state.
 
+## Rich visual review (separate, audit-only record)
+
+`review-visual` records visible task evidence, content fidelity, reviewability,
+subjective impressiveness, and a bounded Physical AI usefulness hypothesis. It
+does not modify `vlm_eval.json`, the normalized task-completion score, `passed`,
+or any workflow gate:
+
+```bash
+npa workbench vlm-eval review-visual \
+  --input-path <visual-artifact> \
+  --baseline-path <matched-visual-artifact> \
+  --output-path <private-review-prefix> \
+  --model <hosted-vision-model> \
+  --task "Assess visible task evidence and artifact quality." \
+  --api-key-env VLM_EVAL_API_KEY \
+  --frame-selection keyframes \
+  --max-frames 4 \
+  --output-format json
+```
+
+The output must be a prefix or the exact canonical filename
+`vlm_visual_review.json`; another explicit JSON filename is rejected before
+transport. The backend reserves private append-only evidence, makes no hosted
+retry, and finalizes the canonical report before either the CLI or SDK returns.
+The JSON console response contains exactly `schema_version`, `status`,
+`escalation_required`, `attempt_count`, and `model`. Paths, prompts, references,
+raw provider text, rationale, request IDs, credentials, and endpoints remain
+only in private evidence.
+
+Without `--baseline-path`, single mode sends one neutral set A request and code
+sets comparison status to `not_provided`. With a baseline, paired mode sends two
+separately journaled requests with the source order reversed behind neutral A/B
+labels. An error, unresolved or non-high-confidence comparison, order
+disagreement, or disagreement in a material rich-review dimension requires
+escalation. “Materially better” describes only visible evidence quality for the
+named review task; it is not a policy-performance or physical-correctness claim.
+
+Use `--objective-evidence-path` for a private JSON file containing either a list
+of locator strings or `{"references": [...]}`. Use
+`--matched-view-map-path` for a private JSON object supplied by the producer.
+Both are retained as unverified metadata and never sent to the model or treated
+as proof. Task, rubric, and model text must also omit the private source-role
+words `current`, `baseline`, and `candidate`.
+
+The direct SDK has the same arguments and finalized-report semantics:
+
+```python
+from npa.sdk.workbench.vlm_eval import review_visual
+
+report = review_visual(
+    input_path="<visual-artifact>",
+    output_path="<private-review-prefix>",
+    model="<hosted-vision-model>",
+    task="Assess visible task evidence and artifact quality.",
+)
+```
+
+The rich record is audit-only. Citations prove only that a submitted frame ID
+was named, not that an observation is true. Selected pixels cannot prove hidden
+simulator state, objective completion, physical correctness, release mechanics,
+stability, downstream benefit, policy success, or robot safety. Image-borne
+instructions remain an unresolved input-integrity risk, and paired views or
+matched-view metadata do not establish geometric registration.
+
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
 JSON file containing `input_path`, `output_path` (a local JSON filename),

@@ -7,6 +7,20 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM rich visual reviews remain separate from gates
+
+- New API-only `vlm-eval review-visual` CLI and SDK surfaces write a private,
+  schema-validated `vlm_visual_review.json`. Single reviews use one neutral
+  request; paired reviews reverse neutral A/B order and escalate errors,
+  uncertainty, order effects, or material dimension disagreement. The record is
+  audit-only, retains objective and matched-view references as unverified
+  metadata, and never changes the normalized task-completion score or gate.
+- A retained six-attempt hosted contract smoke failed closed: four HTTP-200
+  outputs violated the strict response schema, and two paired MiniCPM requests
+  exceeded that provider interface's ten-image limit. No report was accepted
+  and no score or gate changed. See the
+  [rich visual review evidence](docs/workbench/evidence/vlm-rich-visual-review.md).
+
 ### VLM rollout gates require visible terminal evidence
 
 - The default rollout rubric no longer treats likely progress as completion
