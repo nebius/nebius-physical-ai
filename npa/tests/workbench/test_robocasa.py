@@ -674,6 +674,28 @@ def test_robot_state_requires_the_pinned_panda_omron_layout() -> None:
         _obs_state(observation)
 
 
+@pytest.mark.parametrize(
+    ("key", "wrong_width"),
+    [
+        ("state.base_position", 2),
+        ("state.base_rotation", 3),
+        ("state.end_effector_position_relative", 4),
+        ("state.end_effector_rotation_relative", 3),
+        ("state.gripper_qpos", 1),
+    ],
+)
+def test_robot_state_rejects_wrong_panda_omron_component_width(
+    key: str, wrong_width: int
+) -> None:
+    from npa.workbench.robocasa.capabilities import _obs_state
+
+    observation = _FakeEnv()._obs()
+    observation[key] = np.zeros(wrong_width, dtype=np.float32)
+
+    with pytest.raises(RoboCasaError, match=rf"{key!r} has width"):
+        _obs_state(observation)
+
+
 def test_matched_eval_rejects_different_initial_workspace_frames() -> None:
     from npa.workbench.robocasa.capabilities import _require_matched_initial_state
 

@@ -48,13 +48,15 @@ SUPPORTED_CAPABILITIES = {
 
 ROBOCASA_EMBODIMENT = "PandaOmron"
 ROBOCASA_OBJECT_REGISTRIES = ("objaverse",)
-ROBOCASA_STATE_KEYS = (
-    "state.base_position",
-    "state.base_rotation",
-    "state.end_effector_position_relative",
-    "state.end_effector_rotation_relative",
-    "state.gripper_qpos",
+ROBOCASA_STATE_LAYOUT = (
+    ("state.base_position", 3),
+    ("state.base_rotation", 4),
+    ("state.end_effector_position_relative", 3),
+    ("state.end_effector_rotation_relative", 4),
+    ("state.gripper_qpos", 2),
 )
+ROBOCASA_STATE_KEYS = tuple(key for key, _width in ROBOCASA_STATE_LAYOUT)
+ROBOCASA_STATE_DIM = sum(width for _key, width in ROBOCASA_STATE_LAYOUT)
 _SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -808,15 +810,27 @@ def _obs_state(obs: dict[str, Any]) -> np.ndarray:
     """Build a float32 robot-state vector from a RoboCasa observation."""
     parts: list[np.ndarray] = []
     missing: list[str] = []
-    for key in ROBOCASA_STATE_KEYS:
+    for key, expected_width in ROBOCASA_STATE_LAYOUT:
         value = obs.get(key)
         if value is None:
             missing.append(key)
             continue
-        parts.append(np.asarray(value, dtype=np.float32).reshape(-1))
+        part = np.asarray(value, dtype=np.float32).reshape(-1)
+        if part.size != expected_width:
+            raise RoboCasaError(
+                f"RoboCasa robot state key {key!r} has width {part.size}; "
+                f"expected {expected_width} for {ROBOCASA_EMBODIMENT}"
+            )
+        parts.append(part)
     if missing:
         raise RoboCasaError(f"RoboCasa observation missing robot state keys: {missing}")
-    return np.concatenate(parts)
+    state = np.concatenate(parts)
+    if state.size != ROBOCASA_STATE_DIM:
+        raise RoboCasaError(
+            f"RoboCasa robot state has width {state.size}; "
+            f"expected {ROBOCASA_STATE_DIM} for {ROBOCASA_EMBODIMENT}"
+        )
+    return state
 
 
 def _write_run_metadata(
