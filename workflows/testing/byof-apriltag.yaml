@@ -1,0 +1,583 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-apriltag
+  description: >
+    Operator-built AprilTag 3 CPU candidate. Runs the pinned native detector on
+    the complete upstream real-image regression set, measures labeled corner
+    accuracy, rejects blank/noise controls, and emits camera-consumer records
+    plus source-linked annotated PNGs.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/AprilRobotics/apriltag.git"
+  repo_ref: "94be783968e5091bcc9972c72c84fd63efce2935"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: ubuntu
+  base_image: "ubuntu:22.04"
+  build_command: |
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential ca-certificates cmake fonts-dejavu-core ninja-build \
+      python3 python3-dev python3-pip
+    rm -rf /var/lib/apt/lists/*
+    python3 -m pip install --no-cache-dir numpy==1.26.4 pillow==11.3.0
+    cmake -S . -B build -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_TESTING=ON \
+      -DCMAKE_INSTALL_PREFIX=/usr/local
+    cmake --build build --parallel
+    ctest --test-dir build --output-on-failure
+    cmake --install build
+    ldconfig
+    cat >/tmp/apriltag_pjpeg_gray.c <<'EOF'
+    #include <stdio.h>
+    #include "common/pjpeg.h"
+    #include "common/image_u8.h"
+
+    int main(int argc, char **argv) {
+        int error = 0;
+        if (argc != 3) return 2;
+        pjpeg_t *jpeg = pjpeg_create_from_file(argv[1], 0, &error);
+        if (jpeg == NULL || error != PJPEG_OKAY) return 3;
+        image_u8_t *image = pjpeg_to_u8_baseline(jpeg);
+        if (image == NULL) {
+            pjpeg_destroy(jpeg);
+            return 4;
+        }
+        int result = image_u8_write_pnm(image, argv[2]);
+        image_u8_destroy(image);
+        pjpeg_destroy(jpeg);
+        return result == 0 ? 0 : 5;
+    }
+    EOF
+    cc -I. /tmp/apriltag_pjpeg_gray.c \
+      -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lapriltag -lm \
+      -o /usr/local/bin/apriltag-pjpeg-gray
+    PYTHONPATH=/usr/local/lib/python3.10/site-packages \
+      python3 -c "from apriltag import apriltag; assert apriltag('tag36h11')"
+  workload: solution-smoke
+  smoke_command: |
+    export PYTHONPATH="/usr/local/lib/python3.10/site-packages:${PYTHONPATH:-}"
+    python3 - <<'PY'
+    import hashlib
+    import json
+    import math
+    import os
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import numpy as np
+    from apriltag import apriltag
+    from PIL import Image, ImageDraw, ImageFont, ImageStat
+
+    output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+    input_dir = output_dir / "inputs"
+    control_dir = output_dir / "controls"
+    annotation_dir = output_dir / "annotations"
+    decoded_dir = output_dir / "decoded-pgm"
+    for path in (input_dir, control_dir, annotation_dir, decoded_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    source_root = Path("test/data")
+    case_stems = (
+        "33369213973_9d9bb4cc96_c",
+        "34085369442_304b6bafd9_c",
+        "34139872896_defdb2f8d9_c",
+    )
+    family = "tag36h11"
+    detector = apriltag(
+        family,
+        threads=2,
+        maxhamming=2,
+        decimate=1.0,
+        refine_edges=False,
+    )
+
+    def sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def parse_labels(path: Path) -> list[dict]:
+        pattern = re.compile(
+            r"^(\d+), \(([-0-9.]+) ([-0-9.]+)\), "
+            r"\(([-0-9.]+) ([-0-9.]+)\), "
+            r"\(([-0-9.]+) ([-0-9.]+)\), "
+            r"\(([-0-9.]+) ([-0-9.]+)\)$"
+        )
+        labels = []
+        for line_number, line in enumerate(path.read_text().splitlines(), 1):
+            match = pattern.fullmatch(line.strip())
+            if match is None:
+                raise RuntimeError(f"{path}:{line_number}: invalid label")
+            values = match.groups()
+            labels.append(
+                {
+                    "id": int(values[0]),
+                    "corners": np.asarray(
+                        [float(value) for value in values[1:]],
+                        dtype=np.float64,
+                    ).reshape(4, 2),
+                }
+            )
+        if not labels:
+            raise RuntimeError(f"{path}: empty label set")
+        return labels
+
+    def decoded_detections(gray: np.ndarray) -> list[dict]:
+        rows = []
+        for detection in detector.detect(gray):
+            rows.append(
+                {
+                    "id": int(detection["id"]),
+                    "hamming": int(detection["hamming"]),
+                    "decision_margin": float(detection["margin"]),
+                    "center": np.asarray(
+                        detection["center"], dtype=np.float64
+                    ),
+                    "corners": np.asarray(
+                        detection["lb-rb-rt-lt"], dtype=np.float64
+                    ),
+                }
+            )
+        return rows
+
+    def match_detections(
+        labels: list[dict], detections: list[dict]
+    ) -> tuple[list[dict], list[int]]:
+        unmatched = set(range(len(detections)))
+        matches = []
+        for expected_index, expected in enumerate(labels):
+            candidates = [
+                index
+                for index in unmatched
+                if detections[index]["id"] == expected["id"]
+            ]
+            if not candidates:
+                continue
+            selected = min(
+                candidates,
+                key=lambda index: float(
+                    np.sqrt(
+                        np.mean(
+                            np.square(
+                                detections[index]["corners"]
+                                - expected["corners"]
+                            )
+                        )
+                    )
+                ),
+            )
+            unmatched.remove(selected)
+            delta = detections[selected]["corners"] - expected["corners"]
+            matches.append(
+                {
+                    "expected_index": expected_index,
+                    "detection_index": selected,
+                    "corner_rmse_px": float(
+                        np.sqrt(np.mean(np.square(delta)))
+                    ),
+                    "corner_absolute_error_px_max": float(
+                        np.max(np.abs(delta))
+                    ),
+                    "errors": delta,
+                }
+            )
+        return matches, sorted(unmatched)
+
+    def annotate(
+        source: Path,
+        destination: Path,
+        labels: list[dict],
+        detections: list[dict],
+        source_sha256: str,
+    ) -> dict:
+        with Image.open(source) as opened:
+            rgb = opened.convert("RGB")
+        banner_height = 96
+        canvas = Image.new(
+            "RGB", (rgb.width, rgb.height + banner_height), "white"
+        )
+        canvas.paste(rgb, (0, banner_height))
+        draw = ImageDraw.Draw(canvas)
+        font_root = Path("/usr/share/fonts/truetype/dejavu")
+        title_font = ImageFont.truetype(
+            str(font_root / "DejaVuSans-Bold.ttf"), 24
+        )
+        detail_font = ImageFont.truetype(
+            str(font_root / "DejaVuSans.ttf"), 16
+        )
+        draw.text(
+            (18, 8),
+            (
+                f"AprilTag overlay | {len(labels)} expected | "
+                f"{len(detections)} detected"
+            ),
+            fill="black",
+            font=title_font,
+        )
+        draw.text(
+            (18, 40),
+            (
+                f"cyan = expected corners | magenta = detected corners | "
+                f"family {family}"
+            ),
+            fill="#374151",
+            font=detail_font,
+        )
+        draw.text(
+            (18, 66),
+            f"{source.name} | source sha256 {source_sha256[:16]}…",
+            fill="#374151",
+            font=detail_font,
+        )
+        for expected in labels:
+            points = [
+                (float(x), float(y) + banner_height)
+                for x, y in expected["corners"]
+            ]
+            draw.line(points + [points[0]], fill="#00d9ff", width=5)
+        for detection in detections:
+            points = [
+                (float(x), float(y) + banner_height)
+                for x, y in detection["corners"]
+            ]
+            draw.line(points + [points[0]], fill="#ff00cc", width=2)
+            center = detection["center"]
+            draw.text(
+                (float(center[0]) + 5, float(center[1]) + banner_height),
+                f"id {detection['id']}",
+                fill="#9d007e",
+                font=detail_font,
+            )
+        canvas.save(destination)
+        with Image.open(destination) as review:
+            review.load()
+            deviation = ImageStat.Stat(review.convert("RGB")).stddev
+            dimensions = list(review.size)
+        if max(deviation) < 5.0:
+            raise RuntimeError(f"{destination}: annotation is uniform")
+        return {
+            "path": str(destination),
+            "sha256": sha256(destination),
+            "width": dimensions[0],
+            "height": dimensions[1],
+            "source_path": str(source),
+            "source_sha256": source_sha256,
+            "legend": {
+                "expected": "cyan",
+                "detected": "magenta",
+            },
+        }
+
+    runtime_ctest_dir = Path("/tmp/npa-apriltag-ctest-build")
+    shutil.copytree(Path("build"), runtime_ctest_dir)
+    ctest = subprocess.run(
+        [
+            "ctest",
+            "--test-dir",
+            str(runtime_ctest_dir),
+            "--output-on-failure",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    ctest_log = output_dir / "native_ctest.log"
+    ctest_log.write_text(ctest.stdout + ctest.stderr)
+    if ctest.returncode != 0:
+        raise RuntimeError(f"native CTest failed: {ctest.returncode}")
+
+    observations = []
+    cases = {}
+    all_errors = []
+    capture_rows = {}
+    for stem in case_stems:
+        source = source_root / f"{stem}.jpg"
+        labels_path = source_root / f"{stem}.txt"
+        retained_source = input_dir / source.name
+        retained_labels = input_dir / labels_path.name
+        shutil.copyfile(source, retained_source)
+        shutil.copyfile(labels_path, retained_labels)
+        source_hash = sha256(retained_source)
+        labels_hash = sha256(retained_labels)
+        decoded_path = decoded_dir / f"{stem}.pgm"
+        decode = subprocess.run(
+            [
+                "apriltag-pjpeg-gray",
+                str(retained_source),
+                str(decoded_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if decode.returncode != 0:
+            raise RuntimeError(
+                f"{stem}: upstream pjpeg decode failed: "
+                f"{decode.returncode}: {decode.stderr}"
+            )
+        with Image.open(retained_source) as opened:
+            source_dimensions = list(opened.size)
+        with Image.open(decoded_path) as opened:
+            gray = np.asarray(opened, dtype=np.uint8)
+        labels = parse_labels(retained_labels)
+        detections = decoded_detections(gray)
+        matches, unmatched = match_detections(labels, detections)
+        matched_expected = {item["expected_index"] for item in matches}
+        true_positive = sum(
+            item["corner_absolute_error_px_max"] <= 0.1
+            for item in matches
+        )
+        false_positive = len(detections) - true_positive
+        false_negative = len(labels) - true_positive
+        precision = (
+            true_positive / (true_positive + false_positive)
+            if true_positive + false_positive
+            else 0.0
+        )
+        recall = true_positive / len(labels)
+        errors = [
+            float(value)
+            for item in matches
+            for value in item["errors"].ravel()
+        ]
+        all_errors.extend(errors)
+        corner_rmse = (
+            float(np.sqrt(np.mean(np.square(errors))))
+            if errors
+            else math.inf
+        )
+        max_error = (
+            float(np.max(np.abs(errors))) if errors else math.inf
+        )
+        annotation_path = annotation_dir / f"{stem}_detections.png"
+        annotation = annotate(
+            retained_source,
+            annotation_path,
+            labels,
+            detections,
+            source_hash,
+        )
+        passed = (
+            true_positive == len(labels)
+            and not false_positive
+            and not false_negative
+            and not unmatched
+            and len(matched_expected) == len(labels)
+            and corner_rmse <= 0.1
+            and max_error <= 0.1
+        )
+        cases[stem] = {
+            "source_sha256": source_hash,
+            "labels_sha256": labels_hash,
+            "decoded_gray_sha256": hashlib.sha256(
+                gray.tobytes()
+            ).hexdigest(),
+            "decoder": "upstream common/pjpeg baseline grayscale",
+            "source_dimensions": source_dimensions,
+            "expected_count": len(labels),
+            "detected_count": len(detections),
+            "true_positive": true_positive,
+            "false_positive": false_positive,
+            "false_negative": false_negative,
+            "precision": precision,
+            "recall": recall,
+            "corner_rmse_px": corner_rmse,
+            "corner_absolute_error_px_max": max_error,
+            "passed": passed,
+            "annotation": annotation,
+        }
+        capture_rows[stem] = annotation
+        for match in matches:
+            if match["corner_absolute_error_px_max"] > 0.1:
+                continue
+            detection = detections[match["detection_index"]]
+            observations.append(
+                {
+                    "source_image": retained_source.name,
+                    "source_sha256": source_hash,
+                    "family": family,
+                    "tag_id": detection["id"],
+                    "center_xy_px": detection["center"].tolist(),
+                    "corners_lb_rb_rt_lt_xy_px": (
+                        detection["corners"].tolist()
+                    ),
+                    "decision_margin": detection["decision_margin"],
+                    "hamming": detection["hamming"],
+                }
+            )
+        if not passed:
+            raise RuntimeError(f"{stem}: objective gate failed")
+
+    blank = np.full((480, 640), 255, dtype=np.uint8)
+    noise = np.random.default_rng(20260920).integers(
+        0, 256, size=(480, 640), dtype=np.uint8
+    )
+    blank_path = control_dir / "blank.png"
+    noise_path = control_dir / "fixed_noise.png"
+    Image.fromarray(blank).save(blank_path)
+    Image.fromarray(noise).save(noise_path)
+    blank_detections = decoded_detections(blank)
+    noise_detections = decoded_detections(noise)
+    controls = {
+        "blank": {
+            "expected_detections": 0,
+            "observed_detections": len(blank_detections),
+            "sha256": sha256(blank_path),
+            "passed": not blank_detections,
+        },
+        "fixed_noise": {
+            "seed": 20260920,
+            "expected_detections": 0,
+            "observed_detections": len(noise_detections),
+            "sha256": sha256(noise_path),
+            "passed": not noise_detections,
+        },
+    }
+    if not all(item["passed"] for item in controls.values()):
+        raise RuntimeError(f"false-positive controls failed: {controls}")
+
+    observations_path = output_dir / "fiducial_observations.json"
+    observations_path.write_text(
+        json.dumps(
+            {
+                "schema": "npa.apriltag.fiducial-observations.v1",
+                "coordinate_system": "image pixels, origin top-left",
+                "corner_order": "left-bottom, right-bottom, right-top, left-top",
+                "observations": observations,
+                "limitations": [
+                    "Camera pose requires calibrated intrinsics and known tag geometry.",
+                    "These observations do not establish navigation or robot safety.",
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    capture_path = output_dir / "capture-manifest.json"
+    capture_path.write_text(
+        json.dumps(
+            {
+                "schema": "npa.apriltag.capture-manifest.v1",
+                "captures": capture_rows,
+                "controls": controls,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    aggregate_rmse = float(
+        np.sqrt(np.mean(np.square(all_errors)))
+    )
+    result = {
+        "solution": "apriltag",
+        "capability": "apriltag_real_image_fiducial_detection",
+        "capabilities_exercised": [
+            "native_apriltag_ctest",
+            "real_image_fiducial_detection",
+            "labeled_corner_accuracy",
+            "blank_and_noise_false_positive_controls",
+            "camera_consumer_observation_export",
+            "source_linked_annotation_capture",
+        ],
+        "upstream": {
+            "repo": "https://github.com/AprilRobotics/apriltag.git",
+            "commit": "94be783968e5091bcc9972c72c84fd63efce2935",
+            "release": "v3.4.5",
+            "license": "BSD-2-Clause",
+            "test_data_license": "CC-BY-SA-2.0",
+        },
+        "thresholds": {
+            "per_image_precision_min": 1.0,
+            "per_image_recall_min": 1.0,
+            "corner_coordinate_absolute_error_px_max": 0.1,
+            "aggregate_corner_rmse_px_max": 0.1,
+            "blank_false_detections_max": 0,
+            "noise_false_detections_max": 0,
+        },
+        "native_ctest": {
+            "returncode": ctest.returncode,
+            "log_sha256": sha256(ctest_log),
+        },
+        "cases": cases,
+        "aggregate": {
+            "images": len(cases),
+            "expected_detections": sum(
+                item["expected_count"] for item in cases.values()
+            ),
+            "detected_detections": sum(
+                item["detected_count"] for item in cases.values()
+            ),
+            "true_positive": sum(
+                item["true_positive"] for item in cases.values()
+            ),
+            "false_positive": sum(
+                item["false_positive"] for item in cases.values()
+            ),
+            "false_negative": sum(
+                item["false_negative"] for item in cases.values()
+            ),
+            "corner_rmse_px": aggregate_rmse,
+        },
+        "controls": controls,
+        "consumer_artifact": {
+            "path": str(observations_path),
+            "sha256": sha256(observations_path),
+            "observation_count": len(observations),
+        },
+        "capture_manifest_sha256": sha256(capture_path),
+        "evaluation_plan_sha256": (
+            "542dae723ce69d9d61201a3e7e2753220eb8e1aeee600e5906772997fc92ccfd"
+        ),
+        "limitations": [
+            "The three upstream photographs do not establish generalization to arbitrary cameras, lighting, blur, occlusion, or tag families.",
+            "Corner detection does not establish camera-pose accuracy without calibrated intrinsics and known tag geometry.",
+            "No navigation success, robot safety, or sensor-calibration accuracy claim is made.",
+        ],
+    }
+    artifact_path = output_dir / "apriltag_fiducial_evaluation.json"
+    artifact_path.write_text(json.dumps(result, indent=2, sort_keys=True))
+    print(json.dumps(result, sort_keys=True))
+    PY
+  solution_name: "apriltag"
+  capability_name: "apriltag_real_image_fiducial_detection"
+  smoke_artifact_name: "apriltag_fiducial_evaluation.json"
+  resource_profile_yaml: "byof-container-smoke-rtxpro"
+  task: "fiducial-detection"
+  iterations: 1
+  num_envs: 1
+  num_demos: 3
+  wait_timeout: 21600
+  poll_interval: 60
+  output_root: s3://{{config.bucket}}/oss-solutions/apriltag/{{run.id}}
+  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
+  artifact_uri: "{{config.output_root}}/apriltag_fiducial_evaluation.json"
+  observations_uri: "{{config.output_root}}/fiducial_observations.json"
+resources:
+  cpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    cpus: 4
+    memory: 8
+initial: detect
+states:
+  detect:
+    description: >
+      Build the pinned AprilTag source and run native, labeled real-image
+      fiducial detection with false-positive controls and consumer records.
+    toolRef: workbench.byof.repo
+    resources: cpu
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.artifact_uri}}"
+        schema: npa.workbench.apriltag.fiducial-evaluation.v1
+      - uri: "{{config.observations_uri}}"
+        schema: npa.apriltag.fiducial-observations.v1
+    terminal: true

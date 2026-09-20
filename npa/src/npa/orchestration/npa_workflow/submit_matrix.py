@@ -1112,6 +1112,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "byof-apriltag.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
+        ),
+        notes=(
+            "The direct BYOF runner owns real build/push/pull execution. This "
+            "operator-built CPU candidate remains qualification-pending."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-droid-policy-learning.yaml",
         "multi",
         plan_only=True,
