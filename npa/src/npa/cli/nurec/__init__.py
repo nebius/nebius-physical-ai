@@ -26,7 +26,7 @@ from typing import Any
 
 import typer
 
-from npa.lifecycle_intent import json_stdout_contract
+from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 from npa.workbench.ncore_staging import (
     DEFAULT_COLMAP_CACHE_DIR,
     DEFAULT_COLMAP_SCRATCH_DIR,
@@ -226,6 +226,11 @@ def convert_colmap_cmd(
         "--output-path",
         help="Exact S3 destination for the self-contained NCore V4 sequence.",
     ),
+    expected_archive_sha256: str = typer.Option(
+        "",
+        "--expected-archive-sha256",
+        help="Optional lowercase SHA-256 required before ZIP extraction or conversion.",
+    ),
     cache_dir: Path = typer.Option(
         DEFAULT_COLMAP_CACHE_DIR,
         "--cache-dir",
@@ -284,6 +289,7 @@ def convert_colmap_cmd(
         request = ColmapConversionRequest(
             input_path=input_path,
             output_path=output_path,
+            expected_archive_sha256=expected_archive_sha256,
             cache_dir=cache_dir,
             scratch_dir=scratch_dir,
             dataset_root=dataset_root,
@@ -404,6 +410,7 @@ def audit_colmap_cmd(
 
 
 @app.command("probe-storage")
+@intent_boundary(OperationIntent.MUTATE)
 @json_stdout_contract
 def probe_storage_cmd(
     prefix: str = typer.Option(
@@ -416,8 +423,8 @@ def probe_storage_cmd(
         "--receipt-path",
         help="Fresh private local path for the sanitized capability receipt.",
     ),
-    output: OutputFormat = typer.Option(
-        OutputFormat.text, "--output", help="Output format: text or json."
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
     ),
 ) -> None:
     """Prove conditional write, exact read, enumeration, and deletion on S3."""
@@ -428,9 +435,106 @@ def probe_storage_cmd(
 
     try:
         result = probe_s3_handoff(prefix, receipt_path)
-    except (NcoreS3ProbeError, OSError) as exc:
+    except NcoreS3ProbeError as exc:
         result = {"status": "failed", "error": str(exc)}
-    _finish_nurec_result(result, output)
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private probe receipt could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
+@app.command("observe-runtime")
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def observe_runtime_cmd(
+    stage: str = typer.Option(..., "--stage", help="reconstruct or render."),
+    pod_name: str = typer.Option(..., "--pod-name", help="Exact Kubernetes pod name."),
+    namespace: str = typer.Option(
+        ..., "--namespace", help="Exact Kubernetes namespace."
+    ),
+    container_name: str = typer.Option(
+        "ray-node", "--container-name", help="Exact workload container name."
+    ),
+    expected_image: str = typer.Option(
+        ..., "--expected-image", help="Expected immutable NRE image digest."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private local stage receipt."
+    ),
+    context: str = typer.Option("", "--context", help="Optional kubectl context."),
+    kubectl_bin: str = typer.Option("kubectl", "--kubectl-bin"),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Observe one live/retained NRE pod through the Kubernetes control plane."""
+    from npa.workbench.nurec.runtime_attestation import (
+        NurecRuntimeAttestationError,
+        observe_kubernetes_stage,
+    )
+
+    try:
+        result = observe_kubernetes_stage(
+            stage=stage,
+            pod_name=pod_name,
+            namespace=namespace,
+            container_name=container_name,
+            expected_image=expected_image,
+            output_path=receipt_path,
+            context=context,
+            kubectl_bin=kubectl_bin,
+        )
+        result = {**result, "evidence_status": result["status"], "status": "ok"}
+    except NurecRuntimeAttestationError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private runtime receipt could not be written",
+        }
+    _finish_nurec_result(result, output_format)
+
+
+@app.command("bundle-runtime")
+@intent_boundary(OperationIntent.OBSERVE)
+@json_stdout_contract
+def bundle_runtime_cmd(
+    reconstruct_receipt: Path = typer.Option(
+        ..., "--reconstruct-receipt", help="Observed reconstruct stage receipt."
+    ),
+    render_receipt: Path = typer.Option(
+        ..., "--render-receipt", help="Observed render stage receipt."
+    ),
+    receipt_path: Path = typer.Option(
+        ..., "--receipt-path", help="Fresh private combined runtime receipt."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format: text or json."
+    ),
+) -> None:
+    """Bind separately observed reconstruct and render runtime identities."""
+    from npa.workbench.nurec.runtime_attestation import (
+        NurecRuntimeAttestationError,
+        bundle_runtime_attestations,
+    )
+
+    try:
+        result = bundle_runtime_attestations(
+            reconstruct_path=reconstruct_receipt,
+            render_path=render_receipt,
+            output_path=receipt_path,
+        )
+        result = {**result, "evidence_status": result["status"], "status": "ok"}
+    except NurecRuntimeAttestationError as exc:
+        result = {"status": "failed", "error": str(exc)}
+    except OSError:
+        result = {
+            "status": "failed",
+            "error": "private runtime receipt could not be written",
+        }
+    _finish_nurec_result(result, output_format)
 
 
 @app.command("fetch")

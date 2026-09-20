@@ -29,6 +29,7 @@ def convert_colmap(
     colmap_dir: str = "sparse/0",
     images_dir: str = "images",
     masks_dir: str = "",
+    expected_archive_sha256: str = "",
     rig_mode: Literal["derive", "preserve"] = "derive",
     reference_camera: str = "",
     include_downsampled_images: bool = True,
@@ -49,6 +50,7 @@ def convert_colmap(
             colmap_dir=colmap_dir,
             images_dir=images_dir,
             masks_dir=masks_dir,
+            expected_archive_sha256=expected_archive_sha256,
             rig_mode=rig_mode,
             reference_camera=reference_camera,
             include_downsampled_images=include_downsampled_images,
@@ -97,6 +99,54 @@ def audit_colmap(
     )
 
 
+def probe_storage(prefix: str, receipt_path: Path | str) -> dict[str, Any]:
+    """Prove conditional create/read/list/delete on one fresh S3 run prefix."""
+    from npa.workbench.nurec.s3_probe import probe_s3_handoff
+
+    return probe_s3_handoff(prefix, Path(receipt_path))
+
+
+def observe_runtime(
+    *,
+    stage: str,
+    pod_name: str,
+    namespace: str,
+    expected_image: str,
+    receipt_path: Path | str,
+    container_name: str = "ray-node",
+    context: str = "",
+    kubectl_bin: str = "kubectl",
+) -> dict[str, Any]:
+    """Observe one NRE stage image/GPU identity through Kubernetes."""
+    from npa.workbench.nurec.runtime_attestation import observe_kubernetes_stage
+
+    return observe_kubernetes_stage(
+        stage=stage,
+        pod_name=pod_name,
+        namespace=namespace,
+        container_name=container_name,
+        expected_image=expected_image,
+        output_path=Path(receipt_path),
+        context=context,
+        kubectl_bin=kubectl_bin,
+    )
+
+
+def bundle_runtime(
+    reconstruct_receipt: Path | str,
+    render_receipt: Path | str,
+    receipt_path: Path | str,
+) -> dict[str, Any]:
+    """Bind reconstruct and render control-plane observations."""
+    from npa.workbench.nurec.runtime_attestation import bundle_runtime_attestations
+
+    return bundle_runtime_attestations(
+        reconstruct_path=Path(reconstruct_receipt),
+        render_path=Path(render_receipt),
+        output_path=Path(receipt_path),
+    )
+
+
 check = make_cli_wrapper(
     "npa.cli.nurec",
     "check_cmd",
@@ -131,10 +181,13 @@ status = make_cli_wrapper(
 
 __all__ = [
     "audit_colmap",
+    "bundle_runtime",
     "check",
     "convert_colmap",
     "fetch",
     "finalize",
+    "observe_runtime",
+    "probe_storage",
     "reconstruct",
     "render",
     "status",

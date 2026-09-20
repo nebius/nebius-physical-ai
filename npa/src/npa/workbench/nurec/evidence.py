@@ -21,13 +21,18 @@ class NurecEvidenceError(NpaError):
 
 
 def validate_runtime_attestation(
-    payload: Any, *, expected_image: str
+    payload: Any,
+    *,
+    expected_image: str,
+    required_stages: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Validate a sanitized control-plane image-ID and GPU observation."""
     expected_digest = _requested_digest(expected_image)
     if not expected_digest:
         raise NurecEvidenceError("expected NRE image must use an exact digest")
-    if not isinstance(payload, dict) or set(payload) != {
+    if not isinstance(payload, dict):
+        raise NurecEvidenceError("runtime attestation has an invalid schema")
+    legacy_fields = {
         "format",
         "status",
         "source",
@@ -36,23 +41,92 @@ def validate_runtime_attestation(
         "gpu_names",
         "gpu_count",
         "resource_identity_sha256",
+    }
+    if payload.get("format") == "npa_nurec_runtime_attestation_v1":
+        if required_stages or set(payload) != legacy_fields:
+            raise NurecEvidenceError("runtime attestation has an invalid schema")
+        names = payload.get("gpu_names")
+        identity = payload.get("resource_identity_sha256")
+        if (
+            payload.get("status") != "pass"
+            or payload.get("source") != "kubernetes_pod_status"
+            or payload.get("requested_image") != expected_image
+            or payload.get("observed_image_digest") != expected_digest
+            or names != ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]
+            or payload.get("gpu_count") != 1
+            or not isinstance(identity, str)
+            or re.fullmatch(r"[0-9a-f]{64}", identity) is None
+        ):
+            raise NurecEvidenceError("runtime image or GPU attestation differs")
+        return payload
+    from npa.workbench.nurec.runtime_attestation import (
+        BUNDLE_FORMAT,
+        GPU_NAME,
+        STAGE_FORMAT,
+    )
+
+    if set(payload) != {
+        "format",
+        "status",
+        "source",
+        "requested_image",
+        "observed_image_digest",
+        "gpu_names",
+        "gpu_count",
+        "stages",
     }:
         raise NurecEvidenceError("runtime attestation has an invalid schema")
-    names = payload.get("gpu_names")
-    identity = payload.get("resource_identity_sha256")
+    stages = payload.get("stages")
+    required = tuple(required_stages) or ("reconstruct", "render")
     if (
-        payload.get("format") != "npa_nurec_runtime_attestation_v1"
+        payload.get("format") != BUNDLE_FORMAT
         or payload.get("status") != "pass"
-        or payload.get("source") != "kubernetes_pod_status"
+        or payload.get("source") != "kubernetes_control_plane"
         or payload.get("requested_image") != expected_image
         or payload.get("observed_image_digest") != expected_digest
-        or not isinstance(names, list)
-        or names != ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]
+        or payload.get("gpu_names") != [GPU_NAME]
         or payload.get("gpu_count") != 1
-        or not isinstance(identity, str)
-        or re.fullmatch(r"[0-9a-f]{64}", identity) is None
+        or not isinstance(stages, dict)
+        or set(stages) != set(required)
     ):
         raise NurecEvidenceError("runtime image or GPU attestation differs")
+    stage_fields = {
+        "format",
+        "status",
+        "source",
+        "stage",
+        "requested_image",
+        "observed_image_digest",
+        "gpu_names",
+        "gpu_count",
+        "resource_identity_sha256",
+        "control_plane_record_sha256",
+        "container_state",
+        "receipt_sha256",
+    }
+    for stage_name in required:
+        stage = stages.get(stage_name)
+        if not isinstance(stage, dict) or set(stage) != stage_fields:
+            raise NurecEvidenceError("runtime stage attestation has an invalid schema")
+        if (
+            stage.get("format") != STAGE_FORMAT
+            or stage.get("status") != "pass"
+            or stage.get("source") != "kubernetes_control_plane"
+            or stage.get("stage") != stage_name
+            or stage.get("requested_image") != expected_image
+            or stage.get("observed_image_digest") != expected_digest
+            or stage.get("gpu_names") != [GPU_NAME]
+            or stage.get("gpu_count") != 1
+            or stage.get("container_state") not in {"running", "terminated_zero"}
+        ):
+            raise NurecEvidenceError("runtime stage image or GPU differs")
+        for field in (
+            "resource_identity_sha256",
+            "control_plane_record_sha256",
+            "receipt_sha256",
+        ):
+            if re.fullmatch(r"[0-9a-f]{64}", str(stage.get(field) or "")) is None:
+                raise NurecEvidenceError("runtime stage identity hash differs")
     return payload
 
 
@@ -312,6 +386,52 @@ def _decode_image(path: Path) -> dict[str, Any]:
         ) from exc
 
 
+def _decode_video(path: Path) -> dict[str, Any]:
+    reader = None
+    try:
+        import imageio_ffmpeg
+
+        source = _regular_file(path, "rendered video")
+        reader = imageio_ffmpeg.read_frames(str(source), pix_fmt="rgb24")
+        metadata = next(reader)
+        size = metadata.get("size")
+        if (
+            not isinstance(size, tuple)
+            or len(size) != 2
+            or type(size[0]) is not int
+            or type(size[1]) is not int
+            or size[0] <= 0
+            or size[1] <= 0
+        ):
+            raise ValueError("video dimensions are invalid")
+        expected_bytes = size[0] * size[1] * 3
+        frames = 0
+        for frame in reader:
+            if len(frame) != expected_bytes:
+                raise ValueError("decoded frame size differs")
+            frames += 1
+        if frames <= 0:
+            raise ValueError("video has no decoded frames")
+        reader.close()
+        reader = None
+        return {
+            **_file_record(path),
+            "width": size[0],
+            "height": size[1],
+            "decoded_frames": frames,
+        }
+    except Exception as exc:  # noqa: BLE001 - receipt must fail closed
+        raise NurecEvidenceError(
+            "rendered video is not independently decodable"
+        ) from exc
+    finally:
+        if reader is not None:
+            try:
+                reader.close()
+            except Exception:
+                pass
+
+
 def write_render_receipt(
     *,
     receipt_path: Path,
@@ -336,7 +456,7 @@ def write_render_receipt(
         if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
     ]
     videos = [
-        _file_record(path, root=output_dir)
+        _decode_video(path)
         for path in sorted(output_dir.rglob("*.mp4"))
         if path.is_file()
     ]
@@ -347,6 +467,12 @@ def write_render_receipt(
             for path in sorted(output_dir.rglob("*"))
             if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES
         ),
+        strict=True,
+    ):
+        record["path"] = path.relative_to(output_dir).as_posix()
+    for record, path in zip(
+        videos,
+        (path for path in sorted(output_dir.rglob("*.mp4")) if path.is_file()),
         strict=True,
     ):
         record["path"] = path.relative_to(output_dir).as_posix()
@@ -390,6 +516,8 @@ def write_render_receipt(
             "inventory_sha256": _canonical_sha(inventory),
             "inventory": inventory,
             "all_frames_decoded": bool(frames),
+            "all_videos_decoded": all(item["decoded_frames"] > 0 for item in videos),
+            "decoded_video_frames": sum(item["decoded_frames"] for item in videos),
             "finite_pixels": bool(frames)
             and all(item["finite_pixels"] for item in frames),
             "nonuniform_frames": bool(frames)

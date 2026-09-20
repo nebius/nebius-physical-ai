@@ -74,6 +74,7 @@ class ColmapConversionRequest(BaseModel):
     colmap_dir: str = "sparse/0"
     images_dir: str = "images"
     masks_dir: str = ""
+    expected_archive_sha256: str = ""
     rig_mode: Literal["derive", "preserve"] = "derive"
     reference_camera: str = ""
     include_downsampled_images: bool = True
@@ -103,6 +104,16 @@ class ColmapConversionRequest(BaseModel):
         if info.field_name == "masks_dir" and not value:
             return value
         _relative(value, allow_dot=info.field_name in {"dataset_root", "colmap_dir"})
+        return value
+
+    @field_validator("expected_archive_sha256")
+    @classmethod
+    def expected_archive(cls, value: str) -> str:
+        if value and (
+            len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError("expected lowercase SHA-256")
         return value
 
 
@@ -1024,9 +1035,20 @@ def convert_colmap(
             if urlparse(request.input_path).path.lower().endswith(".zip"):
                 archive = Path(cache) / "input.zip"
                 client.download_file(request.input_path, str(archive))
-                extract_colmap_zip(archive, staged)
                 archive_hash = _hash_file(archive)
+                if (
+                    request.expected_archive_sha256
+                    and archive_hash != request.expected_archive_sha256
+                ):
+                    raise NcoreConversionError(
+                        "source archive SHA-256 differs from the required digest"
+                    )
+                extract_colmap_zip(archive, staged)
             else:
+                if request.expected_archive_sha256:
+                    raise NcoreConversionError(
+                        "source archive SHA-256 requires an exact ZIP object"
+                    )
                 client.download_directory(
                     request.input_path.rstrip("/") + "/", str(staged)
                 )
@@ -1121,7 +1143,13 @@ def convert_colmap(
                 },
                 "options": request.model_dump(
                     mode="json",
-                    exclude={"input_path", "output_path", "cache_dir", "scratch_dir"},
+                    exclude={
+                        "input_path",
+                        "output_path",
+                        "cache_dir",
+                        "scratch_dir",
+                        "expected_archive_sha256",
+                    },
                 ),
                 "counts": counts,
                 "members": inventory,

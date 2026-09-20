@@ -181,8 +181,77 @@ contains only hashes, counts, and dispositions:
 npa workbench nurec probe-storage \
   --prefix 's3://<bucket>/<fresh-run-prefix>/' \
   --receipt-path '<private-evidence>/s3-handoff-probe.json' \
-  --output json
+  --output-format json
 ```
+
+Pre-publication qualification does not push the candidate converter merely to
+make it reachable from Kubernetes. Load the checked OCI archive into one
+controlled local daemon, verify `local-image-binding.json`, and run its immutable
+local image ID with pulling disabled:
+
+```bash
+docker run --rm --pull=never --env-file '<private-s3-env>' \
+  '<immutable-local-image-id>' \
+  npa workbench nurec convert-colmap \
+  --input-path 's3://<bucket>/<run>/source/struktur28_colmap.zip' \
+  --output-path 's3://<bucket>/<run>/ncore/sequence/' \
+  --expected-archive-sha256 \
+  cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --dataset-root struktur28 --output-format json
+```
+
+After the independent conversion audit, submit
+`workflows/testing/nurec-reconstruct-render.yaml`. This downstream-only spec
+pulls the separately licensed, digest-pinned NRE image and never needs the
+candidate image in a registry. While each GPU-stage pod remains observable,
+capture its exact control-plane identity and bind both receipts:
+
+```bash
+npa workbench nurec observe-runtime --stage reconstruct \
+  --pod-name '<exact-pod>' --namespace '<namespace>' \
+  --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
+  --receipt-path '<private-evidence>/reconstruct-runtime.json' --output-format json
+npa workbench nurec observe-runtime --stage render \
+  --pod-name '<exact-pod>' --namespace '<namespace>' \
+  --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \
+  --receipt-path '<private-evidence>/render-runtime.json' --output-format json
+npa workbench nurec bundle-runtime \
+  --reconstruct-receipt '<private-evidence>/reconstruct-runtime.json' \
+  --render-receipt '<private-evidence>/render-runtime.json' \
+  --receipt-path '<private-evidence>/nre-runtime.json' --output-format json
+```
+
+Visual review uses the committed one-shot harness only after objective workload
+checks pass. `freeze` deterministically selects two source-camera positives,
+builds uniform and fixed 32-pixel block-rotation negatives, and selects four
+novel-view frames by index. Independently review its owner-only label commitment
+before `calibrate`; run `final` once only when calibration has TP=2, TN=2,
+FP=0, and FN=0:
+
+```bash
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py freeze \
+  --source-zip '<private>/struktur28_colmap.zip' \
+  --source-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
+  --render-dir '<read-back>/novel_views' \
+  --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
+  --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt \
+  --final-task npa/scripts/ncore_publication/vlm-final-task-v2.txt \
+  --output-root '<fresh-private-evidence>/vlm'
+# Record the emitted freeze SHA-256 after independent label/control review.
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py calibrate \
+  --evidence-root '<fresh-private-evidence>/vlm' --freeze-sha256 '<sha256>' \
+  --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
+  --calibration-task npa/scripts/ncore_publication/vlm-calibration-task-v2.txt
+npa/.venv/bin/python npa/scripts/ncore_publication/vlm_evidence.py final \
+  --evidence-root '<fresh-private-evidence>/vlm' --freeze-sha256 '<sha256>' \
+  --calibration-sha256 '<sha256>' \
+  --rubric npa/scripts/ncore_publication/vlm-rubric-v2.txt \
+  --final-task npa/scripts/ncore_publication/vlm-final-task-v2.txt
+```
+
+The harness makes no retries, requires exact served-model identity, writes an
+immutable attempt marker before every call, and retains request/response bytes,
+prompt/frame hashes, HTTP/finish/usage metadata, and a transport manifest.
 
 The converter image fetches its immutable, hash-locked Python dependencies on
 first use. Downloads require no artificial credential gate. A writable cache
@@ -194,6 +263,7 @@ published layers. The standalone command is:
 npa workbench nurec convert-colmap \
   --input-path 's3://<bucket>/<source-prefix>/struktur28_colmap.zip' \
   --output-path 's3://<bucket>/<run-prefix>/ncore/sequence/' \
+  --expected-archive-sha256 cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d \
   --dataset-root struktur28 --colmap-dir sparse/0 --images-dir images \
   --rig-mode derive --output-format json
 

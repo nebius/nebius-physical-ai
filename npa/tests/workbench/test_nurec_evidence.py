@@ -167,6 +167,23 @@ def _rgb(path: Path, *, uniform: bool = False) -> None:
     image.save(path)
 
 
+def _mp4(path: Path) -> None:
+    import imageio_ffmpeg
+
+    writer = imageio_ffmpeg.write_frames(
+        str(path),
+        (16, 16),
+        fps=2,
+        codec="libx264",
+        pix_fmt_in="rgb24",
+        pix_fmt_out="yuv420p",
+    )
+    writer.send(None)
+    writer.send(bytes((20, 40, 60)) * (16 * 16))
+    writer.send(bytes((60, 40, 20)) * (16 * 16))
+    writer.close()
+
+
 def test_render_receipt_decodes_and_hashes_every_frame(tmp_path: Path) -> None:
     usdz = tmp_path / "last.usdz"
     usdz.write_bytes(b"trained-scene")
@@ -174,6 +191,7 @@ def test_render_receipt_decodes_and_hashes_every_frame(tmp_path: Path) -> None:
     (output / "camera1").mkdir(parents=True)
     _rgb(output / "camera1" / "000000.png")
     _rgb(output / "camera1" / "000001.png")
+    _mp4(output / "camera1" / "novel.mp4")
 
     receipt = evidence.write_render_receipt(
         receipt_path=output / "nre-render.json",
@@ -191,11 +209,14 @@ def test_render_receipt_decodes_and_hashes_every_frame(tmp_path: Path) -> None:
     assert receipt["status"] == "pass"
     assert receipt["output"]["frame_count"] == 2
     assert receipt["output"]["all_frames_decoded"] is True
+    assert receipt["output"]["all_videos_decoded"] is True
+    assert receipt["output"]["decoded_video_frames"] == 2
     assert receipt["output"]["finite_pixels"] is True
     assert receipt["output"]["nonuniform_frames"] is True
     assert [item["path"] for item in receipt["output"]["inventory"]] == [
         "camera1/000000.png",
         "camera1/000001.png",
+        "camera1/novel.mp4",
     ]
 
 

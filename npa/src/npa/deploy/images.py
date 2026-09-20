@@ -544,6 +544,16 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(conversion, "rig_mode", "derive")
     equal(conversion, "poses_component_group", "npa_rig")
 
+    controls = record(payload, "qualification_controls")
+    equal(controls, "status", "pass")
+    for field in ("s3_probe_receipt_sha256", "wrong_source_receipt_sha256"):
+        match(controls, field, r"[0-9a-f]{64}")
+    require(
+        count(controls, "wrong_source_exit_code", 1) > 0,
+        "wrong-source nonzero exit",
+    )
+    equal(controls, "wrong_source_output_objects", 0)
+
     proof = record(payload, "rtx_proof")
     equal(proof, "status", "pass")
     equal(proof, "conversion_report_sha256", conversion["report_sha256"])
@@ -552,6 +562,8 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     equal(proof, "nre_image", NCORE_ACCEPTED_NRE_IMAGE)
     equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
     match(proof, "runtime_image_attestation_sha256", r"[0-9a-f]{64}")
+    equal(proof, "runtime_attestation_format", "npa_nurec_runtime_attestation_v2")
+    equal(proof, "runtime_attested_stages", ["reconstruct", "render"])
     equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
     equal(proof, "gpu_count", 1)
     # Zero means NRE's full native recipe, not a zero-epoch training workload.
@@ -580,6 +592,51 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     require(float(metrics["test/psnr"]) > 0, "positive PSNR")
     require(0 < float(metrics["test/ssim"]) <= 1, "bounded SSIM")
     require(float(metrics["test/lpips"]) >= 0, "nonnegative LPIPS")
+    visual = record(proof, "visual_review")
+    equal(visual, "status", "pass")
+    equal(visual, "model", "openbmb/MiniCPM-V-4_5")
+    equal(visual, "served_model", visual["model"])
+    equal(visual, "threshold", 0.8)
+    equal(
+        visual,
+        "rubric_sha256",
+        "0669fb4ad6c762ce12df4c11092e9f1752ae6e50026e4cb646ad944710bd2624",
+    )
+    equal(
+        visual,
+        "calibration_task_sha256",
+        "b72beeaab6d47bad1e6080edefb40975c0e259dd03b6d713534f105d5844af10",
+    )
+    equal(
+        visual,
+        "task_sha256",
+        "9587ae239e2a6bd99e61fd2942fbb63f643373407b41a31b81f05cc11ff1d26c",
+    )
+    for field in (
+        "control_manifest_sha256",
+        "label_commitment_sha256",
+        "calibration_result_sha256",
+        "final_frame_manifest_sha256",
+        "final_result_sha256",
+        "raw_transport_manifest_sha256",
+    ):
+        match(visual, field, r"[0-9a-f]{64}")
+    equal(visual, "calibration_total", 4)
+    equal(visual, "true_positives", 2)
+    equal(visual, "true_negatives", 2)
+    equal(visual, "false_positives", 0)
+    equal(visual, "false_negatives", 0)
+    score = visual.get("final_score")
+    require(
+        isinstance(score, (int, float))
+        and not isinstance(score, bool)
+        and math.isfinite(float(score))
+        and 0.8 <= float(score) <= 1,
+        "VLM final score",
+    )
+    equal(visual, "final_passed", True)
+    equal(visual, "one_shot", True)
+    equal(visual, "claim", "visual_coherence_only")
     from npa.deploy.ncore_acceptance import (
         validate_full_input_proof,
         validate_selected_base_scan,
@@ -587,6 +644,26 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
 
     validate_full_input_proof(conversion, proof)
     validate_selected_base_scan(payload)
+    cleanup = record(payload, "cleanup")
+    equal(cleanup, "status", "pass")
+    match(cleanup, "receipt_sha256", r"[0-9a-f]{64}")
+    equal(cleanup, "jobs_terminal_or_absent", True)
+    equal(cleanup, "cancel_before_destroy", True)
+    require(
+        cleanup.get("controller_disposition")
+        in {"retained_not_owned", "destroyed_by_owner", "not_present"},
+        "controller disposition",
+    )
+    for field in (
+        "storage_disposition",
+        "registry_disposition",
+        "local_runtime_disposition",
+    ):
+        require(
+            cleanup.get(field) in {"removed", "retained_declared", "not_present"},
+            field,
+        )
+    equal(cleanup, "orphan_count", 0)
     return payload
 
 

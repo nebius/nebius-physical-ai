@@ -391,12 +391,22 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 )
 
                 runtime = resolve_config()
-                cancel_workflow_job(
+                cancellation = cancel_workflow_job(
                     sky_bin=str(runtime.sky_bin),
                     job_id=str(job_id),
                     run_id=run_id,
                     cluster=run_id,
                 )
+                if (
+                    cancellation.get("cancel_returncode") != 0
+                    or cancellation.get("terminal_confirmed") is not True
+                    or cancellation.get("down_attempted") is not True
+                    or cancellation.get("down_returncode") != 0
+                ):
+                    pytest.fail(
+                        "timed-out workflow cancellation did not converge before "
+                        "cluster teardown; inspect private runtime evidence"
+                    )
             except Exception:
                 pytest.fail(
                     "timed-out workflow cancellation failed; retained job state "

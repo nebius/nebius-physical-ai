@@ -9,7 +9,12 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workbench.nurec import colmap, ncore_audit, s3_probe
+from npa.workbench.nurec import (
+    colmap,
+    ncore_audit,
+    runtime_attestation,
+    s3_probe,
+)
 
 
 @pytest.mark.parametrize("has_unrelated_file", [False, True])
@@ -110,7 +115,7 @@ def test_storage_probe_cli_uses_fresh_prefix_and_private_receipt(monkeypatch, tm
             "s3://example-bucket/run-owned/future/",
             "--receipt-path",
             str(receipt),
-            "--output",
+            "--output-format",
             "json",
         ],
     )
@@ -118,6 +123,49 @@ def test_storage_probe_cli_uses_fresh_prefix_and_private_receipt(monkeypatch, tm
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["status"] == "ok"
     assert seen == [("s3://example-bucket/run-owned/future/", receipt)]
+
+
+def test_runtime_observer_cli_forwards_exact_pod_identity(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(
+        runtime_attestation,
+        "observe_kubernetes_stage",
+        lambda **kwargs: (
+            seen.append(kwargs)
+            or {
+                "format": runtime_attestation.STAGE_FORMAT,
+                "status": "pass",
+                "stage": "reconstruct",
+            }
+        ),
+    )
+    receipt = tmp_path / "runtime.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "observe-runtime",
+            "--stage",
+            "reconstruct",
+            "--pod-name",
+            "exact-pod",
+            "--namespace",
+            "exact-namespace",
+            "--expected-image",
+            "registry/image@sha256:" + "a" * 64,
+            "--receipt-path",
+            str(receipt),
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["evidence_status"] == "pass"
+    assert seen[0]["pod_name"] == "exact-pod"
+    assert seen[0]["output_path"] == receipt
 
 
 def test_cli_json_contract_and_shared_request(monkeypatch):
@@ -139,6 +187,8 @@ def test_cli_json_contract_and_shared_request(monkeypatch):
             "s3://test-bucket/input.zip",
             "--output-path",
             "s3://test-bucket/output/",
+            "--expected-archive-sha256",
+            "a" * 64,
             "--rig-mode",
             "preserve",
             "--output-format",
@@ -148,6 +198,7 @@ def test_cli_json_contract_and_shared_request(monkeypatch):
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["counts"]["images"] == 2
     assert seen[0].rig_mode == "preserve"
+    assert seen[0].expected_archive_sha256 == "a" * 64
 
 
 def test_cli_validation_errors_do_not_echo_input():

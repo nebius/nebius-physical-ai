@@ -1310,7 +1310,11 @@ def _assert_nurec_native_receipts(local: Path) -> None:
     from npa.workbench.nurec.evidence import validate_runtime_attestation
 
     runtime = json.loads((local / "evidence/nre-runtime.json").read_text())
-    validate_runtime_attestation(runtime, expected_image=expected_image)
+    validate_runtime_attestation(
+        runtime,
+        expected_image=expected_image,
+        required_stages=("reconstruct", "render"),
+    )
 
     reconstruction = json.loads(
         (local / "reconstruction/reconstruction.json").read_text()

@@ -17,6 +17,7 @@ from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 
 ROOT = Path(__file__).resolve().parents[4]
 SPEC = ROOT / "workflows/testing/nurec-colmap-reconstruct.yaml"
+DOWNSTREAM_SPEC = ROOT / "workflows/testing/nurec-reconstruct-render.yaml"
 NRE_IMAGE = (
     "nvcr.io/nvidia/nre/nre-ga@sha256:"
     "97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
@@ -80,6 +81,9 @@ def test_conversion_hands_exact_portable_sequence_to_existing_nre():
     assert _flag(convert.argv, "--cache-dir") == str(DEFAULT_COLMAP_CACHE_DIR)
     assert _flag(convert.argv, "--scratch-dir") == str(DEFAULT_COLMAP_SCRATCH_DIR)
     assert convert.argv[:4] == ["npa", "workbench", "nurec", "convert-colmap"]
+    assert _flag(convert.argv, "--expected-archive-sha256") == (
+        "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
+    )
     output = _flag(convert.argv, "--output-path")
     assert output.endswith("/ncore/sequence/")
     assert audit.argv[:4] == ["npa", "workbench", "nurec", "audit-colmap"]
@@ -111,6 +115,25 @@ def test_conversion_hands_exact_portable_sequence_to_existing_nre():
     )
     assert visualize.tool_ref == "workbench.nurec.visualize"
     assert finalize.tool_ref == "workbench.nurec.finalize"
+
+
+def test_downstream_qualification_route_never_pulls_candidate_converter() -> None:
+    plan = build_plan(load_spec(DOWNSTREAM_SPEC), run_id="qualification-route")
+
+    assert [step.state for step in plan.steps] == [
+        "reconstruct",
+        "render",
+        "visualize",
+        "finalize",
+    ]
+    assert all(
+        step.tool_ref
+        not in {"workbench.nurec.convert_colmap", "workbench.nurec.audit_colmap"}
+        for step in plan.steps
+    )
+    reconstruct, render, _, _ = plan.steps
+    assert _flag(reconstruct.argv, "--image") == NRE_IMAGE
+    assert _flag(render.argv, "--image") == NRE_IMAGE
 
 
 def test_cpu_converter_and_proprietary_rtx_stages_are_separate():
@@ -485,18 +508,34 @@ def _write_native_receipts(root):
         "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
     )
     gpu = ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]
-    _write_proof_document(
-        root,
-        "evidence/nre-runtime.json",
-        {
-            "format": "npa_nurec_runtime_attestation_v1",
+    stages = {}
+    for index, stage in enumerate(("reconstruct", "render"), start=1):
+        stages[stage] = {
+            "format": "npa_nurec_kubernetes_runtime_stage_v1",
             "status": "pass",
-            "source": "kubernetes_pod_status",
+            "source": "kubernetes_control_plane",
+            "stage": stage,
             "requested_image": image,
             "observed_image_digest": image.split("@", 1)[1],
             "gpu_names": gpu,
             "gpu_count": 1,
-            "resource_identity_sha256": "a" * 64,
+            "resource_identity_sha256": f"{index}" * 64,
+            "control_plane_record_sha256": f"{index + 2}" * 64,
+            "container_state": "terminated_zero",
+            "receipt_sha256": f"{index + 4}" * 64,
+        }
+    _write_proof_document(
+        root,
+        "evidence/nre-runtime.json",
+        {
+            "format": "npa_nurec_runtime_attestation_v2",
+            "status": "pass",
+            "source": "kubernetes_control_plane",
+            "requested_image": image,
+            "observed_image_digest": image.split("@", 1)[1],
+            "gpu_names": gpu,
+            "gpu_count": 1,
+            "stages": stages,
         },
     )
     metrics = root / "reconstruction/metrics.yaml"

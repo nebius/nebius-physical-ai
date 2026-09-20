@@ -108,6 +108,8 @@ Every stage is a real command; nothing here is a manifest stub.
 ```bash
 npa workbench nurec check       # NGC pullability + HF download rights + RT-core GPU
 npa workbench nurec probe-storage # S3 conditional write/read/list/delete preflight
+npa workbench nurec observe-runtime # control-plane pod image/GPU observation
+npa workbench nurec bundle-runtime # bind reconstruct + render pod receipts
 npa workbench nurec convert-colmap # CPU: official Apache-2.0 COLMAP -> NCore V4
 npa workbench nurec audit-colmap # CPU: independent post-S3 object/V4 read-back
 npa workbench nurec fetch       # real NCore V4 shards + derived rig pose edge
@@ -128,6 +130,7 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 | SkyPilot workflow | `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml` |
 | Main declarative workflow | `workflows/main/nurec-reconstruct.yaml` |
 | COLMAP source workflow (not yet live validated) | `workflows/testing/nurec-colmap-reconstruct.yaml` |
+| Pre-publication downstream-only route | `workflows/testing/nurec-reconstruct-render.yaml` |
 | Rerun recording | `npa.workflows.data_factory_viz.build_run_rrd` |
 
 ## Input Data
@@ -148,7 +151,7 @@ metadata visibility, because a gated repo still answers 200 for
 ### COLMAP source ingestion (not yet live validated)
 
 Use `workflows/testing/nurec-colmap-reconstruct.yaml` for original COLMAP images,
-camera calibration/poses and sparse points. Its five states are conversion ->
+camera calibration/poses and sparse points. Its states are conversion -> audit ->
 existing NRE reconstruction -> render -> visualize -> finalize; the workflow
 owns the graph, with no separate Python orchestrator. The exact CLI/toolRef
 contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
@@ -172,6 +175,10 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
   re-lists the fresh prefix, downloads every object plus the original ZIP,
   rejects changed or extra members, and independently reopens every V4 image,
   calibration, pose and point before NRE starts.
+- For qualification before registry publication, run conversion locally by the
+  checked OCI archive's immutable loaded ID with `--pull=never`, then submit
+  `nurec-reconstruct-render.yaml`. Observe and bind the reconstruct and render
+  pod image IDs separately; a requested digest is never observed identity.
 - Preserve virtual per-camera **1 FPS** timestamps as photographic ordering,
   not synchronized capture time. Sparse SfM points are not physical LiDAR.
   Record upstream's near-origin point filtering and any derived rig changes.

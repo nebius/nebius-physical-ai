@@ -47,8 +47,9 @@ class Storage:
         key = uri.split("/", 3)[-1]
         return self.objects.get(key)
 
-    def delete_object(self, *, Bucket, Key):
+    def delete_object(self, *, Bucket, Key, IfMatch):
         del Bucket
+        assert self.objects[Key][1] == IfMatch
         self.objects.pop(Key, None)
         return {"ResponseMetadata": {"HTTPStatusCode": 204}}
 
@@ -87,6 +88,28 @@ def test_probe_failure_still_deletes_the_probe_object(tmp_path: Path) -> None:
 
     assert storage.objects == {}
     assert not (tmp_path / "probe.json").exists()
+
+
+def test_probe_response_loss_after_committed_put_still_cleans_up(
+    tmp_path: Path,
+) -> None:
+    class LostResponse(Storage):
+        def put_bytes_conditional(self, payload, uri, *, if_none_match):
+            super().put_bytes_conditional(payload, uri, if_none_match=if_none_match)
+            raise RuntimeError("simulated response loss")
+
+    storage = LostResponse()
+
+    with pytest.raises(
+        s3_probe.NcoreS3ProbeError, match="object-store probe operation failed"
+    ):
+        s3_probe.probe_s3_handoff(
+            "s3://example-bucket/run-owned/future/",
+            tmp_path / "probe.json",
+            storage_client=storage,
+        )
+
+    assert storage.objects == {}
 
 
 @pytest.mark.parametrize(

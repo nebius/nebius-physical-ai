@@ -233,6 +233,35 @@ def test_exact_self_contained_publication(monkeypatch, tmp_path, as_zip):
     assert list(storage.uploads)[-1] == result["ncore_meta_uri"]
 
 
+def test_wrong_archive_hash_stops_before_extract_convert_or_upload(
+    monkeypatch, tmp_path
+):
+    storage, events = fake_conversion(monkeypatch, tmp_path)
+    archive = tmp_path / "dataset.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for file in storage.source.rglob("*"):
+            if file.is_file():
+                bundle.write(
+                    file, "scene/" + file.relative_to(storage.source).as_posix()
+                )
+    storage.source = archive
+    request = colmap.ColmapConversionRequest(
+        input_path="s3://test-bucket/input.zip",
+        output_path="s3://test-bucket/negative-control/",
+        expected_archive_sha256="0" * 64,
+        cache_dir=tmp_path / "cache",
+        scratch_dir=tmp_path / "scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+
+    with pytest.raises(colmap.NcoreConversionError, match="SHA-256 differs"):
+        colmap.convert_colmap(request, storage_client=storage)
+
+    assert events == []
+    assert storage.uploads == {}
+
+
 def _published_audit_fixture(monkeypatch, tmp_path):
     storage, _ = fake_conversion(monkeypatch, tmp_path)
     source_info = {

@@ -67,6 +67,26 @@ def _canonical_sha(value: Any) -> str:
     ).hexdigest()
 
 
+def _delete_owned_probe(
+    client: Any,
+    *,
+    bucket: str,
+    key: str,
+    uri: str,
+    owned_payloads: tuple[bytes, ...],
+) -> None:
+    readback = client.read_bytes_with_etag(uri)
+    if readback is None:
+        return
+    payload, etag = readback
+    if payload not in owned_payloads:
+        raise NcoreS3ProbeError("probe cleanup refused an ownership mismatch")
+    deleted = client.s3.delete_object(Bucket=bucket, Key=key, IfMatch=etag)
+    status = int(deleted.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
+    if status and status not in {200, 204}:
+        raise NcoreS3ProbeError("probe object deletion failed")
+
+
 def probe_s3_handoff(
     prefix_uri: str,
     output_path: Path,
@@ -85,18 +105,23 @@ def probe_s3_handoff(
     key = prefix + ".npa-capability-probe-" + nonce
     uri = f"s3://{bucket}/{key}"
     payload = secrets.token_bytes(257)
+    overwrite_control = b"must-not-win"
     payload_sha = hashlib.sha256(payload).hexdigest()
     key_sha = hashlib.sha256(key.encode()).hexdigest()
-    created = False
+    may_have_created = False
     try:
         before = _snapshot(client, bucket, prefix)
-        etag = client.put_bytes_conditional(payload, uri, if_none_match=True)
-        created = True
+        may_have_created = True
+        try:
+            etag = client.put_bytes_conditional(payload, uri, if_none_match=True)
+        except StoragePreconditionFailed as exc:
+            may_have_created = False
+            raise NcoreS3ProbeError("fresh random probe key was not absent") from exc
         readback = client.read_bytes_with_etag(uri)
         if readback is None or readback[0] != payload or readback[1] != etag:
             raise NcoreS3ProbeError("conditional object read-back differs")
         try:
-            client.put_bytes_conditional(b"must-not-win", uri, if_none_match=True)
+            client.put_bytes_conditional(overwrite_control, uri, if_none_match=True)
         except StoragePreconditionFailed:
             nonoverwrite_rejected = True
         else:
@@ -109,16 +134,19 @@ def probe_s3_handoff(
             or matches[0]["etag_sha256"] != hashlib.sha256(etag.encode()).hexdigest()
         ):
             raise NcoreS3ProbeError("prefix enumeration did not bind the probe object")
-        deleted = client.s3.delete_object(Bucket=bucket, Key=key)
-        status = int(deleted.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0)
-        if status and status not in {200, 204}:
-            raise NcoreS3ProbeError("probe object deletion failed")
+        _delete_owned_probe(
+            client,
+            bucket=bucket,
+            key=key,
+            uri=uri,
+            owned_payloads=(payload, overwrite_control),
+        )
         if client.read_bytes_with_etag(uri) is not None:
             raise NcoreS3ProbeError("probe object remained readable after deletion")
         after = _snapshot(client, bucket, prefix)
         if any(row["key_sha256"] == key_sha for row in after):
             raise NcoreS3ProbeError("probe object remained in prefix enumeration")
-        created = False
+        may_have_created = False
         receipt = {
             "format": PROBE_FORMAT,
             "status": "ok",
@@ -155,8 +183,14 @@ def probe_s3_handoff(
     except Exception as exc:
         raise NcoreS3ProbeError("object-store probe operation failed") from exc
     finally:
-        if created:
+        if may_have_created:
             try:
-                client.s3.delete_object(Bucket=bucket, Key=key)
+                _delete_owned_probe(
+                    client,
+                    bucket=bucket,
+                    key=key,
+                    uri=uri,
+                    owned_payloads=(payload, overwrite_control),
+                )
             except Exception as exc:
                 raise NcoreS3ProbeError("probe object cleanup failed") from exc

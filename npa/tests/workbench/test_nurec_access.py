@@ -459,9 +459,15 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
     )
     for verb in sorted(cli_verbs):
         wrapper = getattr(sdk, verb)
-        if verb == "convert_colmap":
-            # New capabilities use the shared workbench module directly; their
-            # behavior is covered by test_nurec_colmap_cli.test_sdk_calls_module_directly.
+        if verb in {
+            "audit_colmap",
+            "bundle_runtime",
+            "convert_colmap",
+            "observe_runtime",
+            "probe_storage",
+        }:
+            # Evidence capabilities use shared workbench modules directly; their
+            # behavior is covered by focused CLI/SDK and receipt tests.
             assert callable(wrapper)
             assert not hasattr(wrapper, "__npa_cli_module__")
             continue

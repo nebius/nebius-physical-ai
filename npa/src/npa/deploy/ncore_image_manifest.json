@@ -123,6 +123,13 @@
     "camera_frame_counts": null,
     "camera_frame_inventory_sha256": null
   },
+  "qualification_controls": {
+    "status": null,
+    "s3_probe_receipt_sha256": null,
+    "wrong_source_receipt_sha256": null,
+    "wrong_source_exit_code": null,
+    "wrong_source_output_objects": null
+  },
   "rtx_proof": {
     "status": null,
     "report_sha256": null,
@@ -132,6 +139,8 @@
     "nre_image": null,
     "observed_nre_digest": null,
     "runtime_image_attestation_sha256": null,
+    "runtime_attestation_format": null,
+    "runtime_attested_stages": null,
     "gpu_model": null,
     "gpu_count": null,
     "max_epochs": null,
@@ -150,6 +159,30 @@
       "test/psnr": null,
       "test/ssim": null,
       "test/lpips": null
+    },
+    "visual_review": {
+      "status": null,
+      "model": null,
+      "served_model": null,
+      "threshold": null,
+      "rubric_sha256": null,
+      "calibration_task_sha256": null,
+      "task_sha256": null,
+      "control_manifest_sha256": null,
+      "label_commitment_sha256": null,
+      "calibration_result_sha256": null,
+      "final_frame_manifest_sha256": null,
+      "final_result_sha256": null,
+      "raw_transport_manifest_sha256": null,
+      "calibration_total": null,
+      "true_positives": null,
+      "true_negatives": null,
+      "false_positives": null,
+      "false_negatives": null,
+      "final_score": null,
+      "final_passed": null,
+      "one_shot": null,
+      "claim": null
     },
     "training_input": {
       "reconstruction_receipt_sha256": null,
@@ -178,5 +211,16 @@
       "lineage_verified": null,
       "frame_artifacts_verified": null
     }
+  },
+  "cleanup": {
+    "status": null,
+    "receipt_sha256": null,
+    "jobs_terminal_or_absent": null,
+    "cancel_before_destroy": null,
+    "controller_disposition": null,
+    "storage_disposition": null,
+    "registry_disposition": null,
+    "local_runtime_disposition": null,
+    "orphan_count": null
   }
 }
