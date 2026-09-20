@@ -284,6 +284,7 @@ def _docker_save(
     files: dict[str, bytes],
     *,
     user: str = "ubuntu",
+    revision: str | None = None,
     env: list[str] | None = None,
     symlinks: dict[str, str] | None = None,
     symlink_bodies: dict[str, bytes] | None = None,
@@ -328,7 +329,15 @@ def _docker_save(
     ]
     config = json.dumps(
         {
-            "config": {"User": user, "Env": env or []},
+            "config": {
+                "User": user,
+                "Env": env or [],
+                **(
+                    {"Labels": {"org.opencontainers.image.revision": revision}}
+                    if revision
+                    else {}
+                ),
+            },
             "rootfs": {
                 "type": "layers",
                 "diff_ids": configured_diff_ids or diff_ids,
@@ -339,9 +348,7 @@ def _docker_save(
     ).encode()
     config_digest = hashlib.sha256(config).hexdigest()
     actual_name = config_name or (
-        f"blobs/sha256/{config_digest}"
-        if oci_config_path
-        else f"{config_digest}.json"
+        f"blobs/sha256/{config_digest}" if oci_config_path else f"{config_digest}.json"
     )
     manifest = json.dumps(
         [
@@ -674,18 +681,12 @@ def _oci_layout(
 def _measure_oci_nested_archive_budget(
     files: dict[str, bytes],
 ) -> tuple[list[dict[str, int]], dict[str, int]]:
-    """Measure descriptor and materialized-layer work for the OCI fixture."""
+    """Measure actual nested members once, after layer graph validation."""
 
-    raw_layers = [
-        _tar_bytes({"etc/neutral-base": b"base"}),
-        _tar_bytes(files),
-    ]
     descriptor_budgets = []
-    for index, raw in enumerate(raw_layers):
+    for name, raw in {"etc/neutral-base": b"base", **files}.items():
         budget = SCAN._NestedArchiveBudget()
-        SCAN._nested_archive_members(
-            f"layer-{index}", _gzip_layer(raw), budget=budget
-        )
+        SCAN._nested_archive_members(name, raw, budget=budget)
         descriptor_budgets.append(
             {
                 "member_count": budget.member_count,
@@ -838,7 +839,7 @@ def test_oci_repeated_descriptors_scan_each_distinct_blob_once(
         ("work_bytes", "MAX_NESTED_ARCHIVE_WORK_BYTES", "work budget exceeded"),
     ],
 )
-def test_oci_layout_refuses_cumulative_nested_budget_across_descriptors(
+def test_oci_layout_refuses_cumulative_nested_budget_across_members(
     tmp_path: Path,
     structural_scan: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -852,6 +853,7 @@ def test_oci_layout_refuses_cumulative_nested_budget_across_descriptors(
             {"neutral.txt": b"neutral nested member"}
         ),
     }
+    files["opt/second-fixture.zip"] = _zip_with_files({"second.txt": b"nested"})
     image = tmp_path / f"cumulative-{field}.tar"
     _oci_layout(image, files)
     descriptor_budgets, _materialized_budget = _measure_oci_nested_archive_budget(
@@ -892,15 +894,15 @@ def test_oci_layout_refuses_cumulative_budget_in_materialized_layers(
             {"neutral.txt": b"neutral nested member"}
         ),
     }
+    files["opt/second-fixture.zip"] = _zip_with_files({"second.txt": b"nested"})
     image = tmp_path / f"materialized-{field}.tar"
     _oci_layout(image, files)
     descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(
         files
     )
-    before_materialization = sum(item[field] for item in descriptor_budgets)
     materialized = materialized_budget[field]
     assert materialized > 0
-    monkeypatch.setattr(SCAN, limit_name, before_materialization + materialized - 1)
+    monkeypatch.setattr(SCAN, limit_name, materialized - 1)
 
     with pytest.raises(ValueError, match=message):
         SCAN.scan_oci_layout(image)
@@ -922,11 +924,7 @@ def test_oci_layout_accepts_exact_scanwide_nested_budget_boundaries(
     descriptor_budgets, materialized_budget = _measure_oci_nested_archive_budget(
         files
     )
-    totals = {
-        field: sum(item[field] for item in descriptor_budgets)
-        + materialized_budget[field]
-        for field in ("member_count", "expanded_bytes", "work_bytes")
-    }
+    totals = materialized_budget
     monkeypatch.setattr(SCAN, "MAX_NESTED_ARCHIVE_MEMBERS", totals["member_count"])
     monkeypatch.setattr(
         SCAN, "MAX_NESTED_ARCHIVE_EXPANDED_BYTES", totals["expanded_bytes"]
@@ -1187,34 +1185,130 @@ def test_source_and_built_graph_trust_roots_are_pinned() -> None:
         assert locked[record["package"]]["sha256"] == record["package_sha256"]
 
 
+@pytest.mark.parametrize("workflow_binding", [False, True])
 @pytest.mark.parametrize("mutation", ["entrypoint", "notice", "extra", "partial"])
 def test_reviewed_image_graph_closes_every_candidate_added_byte(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    workflow_binding: bool,
 ) -> None:
     accepted = tmp_path / "accepted.tar"
-    config_digest, layer_diff_ids = _docker_save(accepted, _required())
-    monkeypatch.setattr(SCAN, "EXPECTED_IMAGE_CONFIG_SHA256", config_digest)
-    monkeypatch.setattr(
-        SCAN, "EXPECTED_ORDERED_LAYER_DIFF_IDS", tuple(layer_diff_ids)
+    config_digest, layer_diff_ids = _docker_save(
+        accepted, _required(), revision="a" * 40
     )
+    monkeypatch.setattr(SCAN, "EXPECTED_IMAGE_CONFIG_SHA256", config_digest)
+    monkeypatch.setattr(SCAN, "EXPECTED_ORDERED_LAYER_DIFF_IDS", tuple(layer_diff_ids))
     monkeypatch.setattr(SCAN, "_neutral_candidate", lambda *_: None)
+    with tarfile.open(accepted) as archive:
+        manifest = json.load(archive.extractfile("manifest.json"))[0]
+        config = json.load(archive.extractfile(manifest["Config"]))
+        monkeypatch.setattr(
+            SCAN,
+            "EXPECTED_CANONICAL_CONFIG_SHA256",
+            SCAN._canonical_config_sha256(config),
+        )
+        monkeypatch.setattr(
+            SCAN,
+            "EXPECTED_CANONICAL_LAYER_SHA256",
+            tuple(
+                SCAN._canonical_layer_sha256(archive.extractfile(path).read())
+                for path in manifest["Layers"]
+            ),
+        )
     assert SCAN.scan(accepted)["status"] == "passed"
+    if workflow_binding:
+        assert (
+            SCAN.scan(
+                accepted,
+                expected_config_digest=config_digest,
+                expected_layer_diff_ids=layer_diff_ids,
+            )["status"]
+            == "passed"
+        )
 
     changed = _required()
     if mutation == "entrypoint":
         changed["usr/local/bin/npa-gymnasium-entrypoint"] += b"\nchanged"
     elif mutation == "notice":
-        changed[
-            "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md"
-        ] += b"\nchanged"
+        changed["usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md"] += (
+            b"\nchanged"
+        )
     elif mutation == "extra":
         changed["opt/innocent-extra.bin"] = b"arbitrary renamed payload"
     else:
         changed["opt/innocent-fragment.bin"] = b"truncated-or-encoded-payload-fragment"
     candidate = tmp_path / f"{mutation}.tar"
-    _docker_save(candidate, changed)
-    with pytest.raises(ValueError, match="reviewed neutral image config bytes changed"):
-        SCAN.scan(candidate)
+    changed_digest, changed_layers = _docker_save(candidate, changed, revision="a" * 40)
+    arguments = (
+        {
+            "expected_config_digest": changed_digest,
+            "expected_layer_diff_ids": changed_layers,
+        }
+        if workflow_binding
+        else {}
+    )
+    reason = "member closure changed" if workflow_binding else "config bytes changed"
+    with pytest.raises(ValueError, match=reason):
+        SCAN.scan(candidate, **arguments)
+
+
+@pytest.mark.parametrize(
+    "field", ["mode", "uid", "gid", "linkname", "name", "type", "pax_headers"]
+)
+def test_canonical_closure_preserves_member_semantics(field: str) -> None:
+    def layer(change: bool) -> bytes:
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            item = tarfile.TarInfo("opt/link")
+            item.type = tarfile.SYMTYPE
+            item.linkname = "/opt/target"
+            if change:
+                value = {
+                    "mode": 0o777,
+                    "uid": 1000,
+                    "gid": 1000,
+                    "linkname": "/opt/other",
+                    "name": "opt/other",
+                    "type": tarfile.LNKTYPE,
+                    "pax_headers": {"comment": "unreviewed"},
+                }[field]
+                setattr(item, field, value)
+            archive.addfile(item)
+        return stream.getvalue()
+
+    assert SCAN._canonical_layer_sha256(layer(False)) != SCAN._canonical_layer_sha256(
+        layer(True)
+    )
+
+
+def test_canonical_closure_permits_only_timestamp_and_revision_changes() -> None:
+    config = {
+        "config": {
+            "Labels": {"org.opencontainers.image.revision": "a" * 40},
+            "User": "ubuntu",
+        },
+        "rootfs": {"diff_ids": []},
+        "history": [{"created_by": "build", "created": "old"}],
+        "created": "old",
+    }
+    expected = SCAN._canonical_config_sha256(config)
+    config["created"] = "new"
+    config["history"][0]["created"] = "new"
+    config["config"]["Labels"]["org.opencontainers.image.revision"] = "b" * 40
+    assert SCAN._canonical_config_sha256(config) == expected
+    config["config"]["User"] = "root"
+    assert SCAN._canonical_config_sha256(config) != expected
+    digests = []
+    for timestamp in [1, 2]:
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            item = tarfile.TarInfo("opt/empty")
+            item.mtime = timestamp
+            item.pax_headers = {"mtime": str(timestamp)}
+            archive.addfile(item, io.BytesIO(b""))
+        digests.append(SCAN._canonical_layer_sha256(stream.getvalue()))
+    assert digests[0] == digests[1]
 
 
 @pytest.mark.parametrize("oci_config_path", [False, True], ids=["legacy", "oci"])
@@ -1553,6 +1647,38 @@ def test_only_exact_locked_system_bootstrap_wheel_path_and_bytes_are_allowed(
     _docker_save(renamed, {**_required(), "opt/innocent.bin": content})
     with pytest.raises(ValueError, match="system bootstrap wheel at unauthorized"):
         SCAN.scan(renamed)
+
+
+def test_credential_source_disposition_binds_path_and_complete_contents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = b"password = credential_variable"
+    path = "usr/lib/authentication.py"
+    monkeypatch.setattr(SCAN, "REVIEWED_CREDENTIAL_SOURCE_SHA256", {
+        path: hashlib.sha256(source).hexdigest(),
+    })
+    SCAN._scan_decoded_member_bytes(f"decoded member: {path}", source)
+    with pytest.raises(ValueError, match="forbidden secret signature"):
+        SCAN._scan_decoded_member_bytes(f"decoded member: {path}", source + b" changed")
+    with pytest.raises(ValueError, match="forbidden secret signature"):
+        SCAN._scan_decoded_member_bytes("decoded member: renamed.py", source)
+
+
+@pytest.mark.parametrize("contents", [b"", b"payload"])
+def test_ubuntu_apt_lock_allows_only_zero_bytes(
+    tmp_path: Path, structural_scan: None, contents: bytes,
+) -> None:
+    path = "var/cache/apt/archives/lock"
+    image = tmp_path / "apt-lock.tar"
+    _docker_save(image, {**_required(), path: contents})
+    if contents:
+        with pytest.raises(ValueError, match="forbidden image path"):
+            SCAN.scan(image)
+        with pytest.raises(ValueError, match="forbidden nested archive member"):
+            SCAN._nested_archive_members("nested.tar", _tar_bytes({path: contents}))
+    else:
+        assert SCAN.scan(image)["status"] == "passed"
+        assert SCAN._nested_archive_members("nested.tar", _tar_bytes({path: contents})) == 1
 
 
 def test_in_pod_verifier_ignores_unreadable_locked_base_files(

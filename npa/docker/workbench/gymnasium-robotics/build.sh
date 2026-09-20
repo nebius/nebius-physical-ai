@@ -94,6 +94,20 @@ EOF
   fi
   rm -f /etc/apt/apt.conf.d/99npa-snapshot-tls /etc/ssh/ssh_host_*
   rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
+  # Build timestamps and inode caches are not runtime inputs. Normalize them
+  # before this layer commits so independent rebuilds have identical contents.
+  truncate -s 0 /var/log/apt/history.log /var/log/apt/term.log \
+    /var/log/dpkg.log /var/cache/ldconfig/aux-cache
+  python3 - <<'PY'
+from pathlib import Path
+
+shadow = Path("/etc/shadow")
+records = [line.split(":") for line in shadow.read_text().splitlines()]
+for record in records:
+    if record[0] == "sshd":
+        record[2] = "0"
+shadow.write_text("\n".join(":".join(record) for record in records) + "\n")
+PY
 }
 
 prepare_runtime() {

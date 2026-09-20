@@ -8,10 +8,13 @@ transfer.
 ## Neutral public-image quarantine
 
 The repository describes a zero-Shadow-payload neutral bootstrap. An owner-only
-reference build produced the exact config and ordered 20-DiffID graph now pinned
-by the product scanner, but its transaction stopped before the complete product
-scan, SBOM, push, or immutable-digest gates and cleaned the artifact. Those
-anchors are scanner inputs, not accepted image or current-head capability proof.
+reference build supplies the independent closure for all 21 layers. Fresh builds
+must match every ordered member's contents, type, mode, owner, link target and
+non-time metadata; only timestamps vary. Exact current config and DiffIDs are
+also bound to the build metadata, while the publication workflow independently
+checks the requested full Git revision. Build logs and the ldconfig inode cache
+are emptied before their layer commits, and the locked sshd account's password
+age is fixed. These anchors are scanner inputs, not release acceptance.
 `npa-gymnasium-robotics` now has an immutable **development-build path** but
 remains release-quarantined: it has no supported release tag, accepted manifest,
 SM120 compatibility record, retained registry object, or anonymous-pull evidence.
@@ -124,14 +127,14 @@ private custody does not change that boundary. The built bytes must still be
 scanned to prove the absence of upstream source/assets, MuJoCo/Python workload
 runtime, vendor runtime, secrets, datasets, checkpoints, and persistent caches.
 The acceptance scanner binds independently reviewed hashes for every completed
-neutral-image lock, the Ubuntu base diff ID, and the owner-only reference
-build's exact config and ordered 20-DiffID graph. The reference transaction did
-not complete the product scan and left no accepted artifact, so those anchors
-do not qualify this head or any future rebuild. The scanner checks the exact
-Docker config, every raw ordered layer (including header/padding bytes), all
-retained regular files, directories, links and metadata, and recursively nested
-source/package archives. A locally self-consistent lock or rootfs classification
-cannot pass.
+neutral-image lock, the Ubuntu base DiffID, and the canonical closure of all 21
+ordered layers. It checks every raw layer including headers and padding,
+retained and later-deleted files, directories, links, and nested archives. The
+current graph is checked in addition to that independent closure. Exact-path,
+complete-file-hash dispositions cover authentication implementation strings in
+the locked Ubuntu packages; changed or relocated bytes receive the ordinary
+secret policy. OCI attestations retain separate recursive scanning. A locally
+self-consistent lock or rootfs classification cannot pass.
 
 ## Hard-gate capability
 

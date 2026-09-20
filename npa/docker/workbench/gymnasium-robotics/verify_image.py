@@ -89,10 +89,10 @@ EXPECTED_LOCK_FILENAMES = frozenset(
 )
 EXPECTED_FIXED_FILE_SHA256 = {
     "opt/npa/gymnasium-robotics/build.sh": (
-        "e02bb4b0137e1e6b5db555b9dd04d89e5c5c8ca9730dbba7a1c9ff5244c8029a"
+        "f5d17e186cada2b3b268676448a7122f4d9daabee886cc37c9265a990eb2cb06"
     ),
     "usr/local/bin/npa-gymnasium-entrypoint": (
-        "e02bb4b0137e1e6b5db555b9dd04d89e5c5c8ca9730dbba7a1c9ff5244c8029a"
+        "f5d17e186cada2b3b268676448a7122f4d9daabee886cc37c9265a990eb2cb06"
     ),
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": (
         "0b6c38b84bf8e386cfaba6caf50634a99e8c1804efec433608ad6438cd5b3d9e"
