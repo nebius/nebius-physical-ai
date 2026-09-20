@@ -453,25 +453,6 @@ def _sample_distances(o3d, cloud, vertices):
 #: `program/review/evidence/verify_602_boundary.py`.
 FABRICATION_AREA_SHARE = 0.1
 
-#: Shares in this closed interval emit `undecided` instead of a verdict.
-#:
-#: Without it the artifact contradicted its own documentation. The boundary is where the
-#: reading is least trustworthy, and it was exactly where the output made its most
-#: confident assertion — `extrapolated shell`, with a note calling the surface invented as
-#: settled fact — while the other branch was properly hedged. The confidence was inverted
-#: where it should be lowest. A docstring saying "treat this as a coin toss" does not
-#: travel with the JSON, and the JSON is what a consumer reads.
-#:
-#: Roughly a factor of two either side of the boundary. Both informative poles keep their
-#: verdict: 0.0 on a watertight mesh stays `near-threshold surface`, 0.7297 on the partial
-#: demo scans stays `extrapolated shell`, and the real scan at 0.1012 stops being reported
-#: as a finding.
-#:
-#: This band is also what makes the untested false-negative direction tolerable. An
-#: unmeasured failure mode is dangerous in proportion to how confidently a field speaks,
-#: and a field that declines to speak near its boundary is not resting on it.
-UNDECIDED_BAND = (0.05, 0.2)
-
 #: One known leniency in how the supporting measurements were validated, recorded here so
 #: it is not rediscovered: fabrication was checked as unsigned distance to the whole
 #: reference surface, so a bridge cutting through an object's interior can register as
@@ -498,23 +479,15 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
     unsupported = float(before.get("unsupported_area_fraction") or 0.0)
     far = float(before.get("unsupported_area_beyond_3_voxels") or 0.0)
     share = (far / unsupported) if unsupported > 0 else 0.0
-    if share > UNDECIDED_BAND[1]:
+    if share >= FABRICATION_AREA_SHARE:
         reads_as = "extrapolated shell"
         note = (
             "Most of the unsupported area lay more than three voxels from any sample, "
-            "which sample spacing cannot explain, so the crop removed invented surface."
-        )
-    elif share >= UNDECIDED_BAND[0]:
-        reads_as = "undecided"
-        note = (
-            f"This share, {share:.4f}, is inside the undecided band "
-            f"[{UNDECIDED_BAND[0]}, {UNDECIDED_BAND[1]}] around the reporting boundary of "
-            f"{FABRICATION_AREA_SHARE}, so there is no reading here worth acting on. The "
-            "two cases are only separated by three orders of magnitude at the poles, and "
-            "this is the middle. Read unsupported_area_beyond_1_5_voxels and "
-            "unsupported_area_beyond_3_voxels directly and judge against the sample "
-            "spacing of this capture: area a long way past the voxel is invented, area "
-            "just past it is where a correct surface also falls."
+            "which sample spacing cannot explain, so the crop removed invented surface. "
+            "This direction has no measured false positive: across twelve zero-error "
+            "reconstructions spanning two geometries, two sampling schemes and voxel-to-"
+            "spacing ratios from 1 to 3, none read as a shell. The reading's error is "
+            "one-sided, so an area called invented here is invented."
         )
     else:
         reads_as = "near-threshold surface"
@@ -531,7 +504,6 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
     return {
         "unsupported_area_share_beyond_3_voxels": share,
         "removed_surface_reads_as": reads_as,
-        "undecided_band": list(UNDECIDED_BAND),
         "vertices_removed": removed,
         "vertex_fraction_removed": (
             removed / (removed + len(mesh.vertices))

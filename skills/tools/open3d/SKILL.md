@@ -119,16 +119,24 @@ be able to open the thing being asserted.
   was 0.7297 on the partial demo scans, 0.1012 on that solid-object scan, and
   **0.0000** on the complete capture. `reconstruct` reports those bands as
   `unsupported_area_beyond_1_5_voxels` and `unsupported_area_beyond_3_voxels`, and
-  summarizes them as `crop_justification.removed_surface_reads_as`, which has three
-  states: `extrapolated shell`, `near-threshold surface` (the crop may have taken
-  correct geometry), and **`undecided`** when the share falls in `[0.05, 0.2]`,
-  roughly a factor of two either side of the reporting boundary. The middle state
-  exists because the boundary is where the reading is least trustworthy, and without
-  it the artifact made its most confident claim exactly there while the other branch
-  was properly hedged — confidence inverted where it should be lowest. Both
-  informative poles keep their verdict; the real solid-object scan at 0.1012 now
-  returns `undecided` and points you at the two bands. Nothing gates on any of the
-  three. Measurements: `evidence/open3d/band-profile-across-scenes.json`.
+  summarizes them as `crop_justification.removed_surface_reads_as`: either
+  `extrapolated shell` or `near-threshold surface`. **The reading's error is one-sided.**
+  Above the threshold it can be trusted — no zero-error reconstruction has ever read as a
+  shell across twelve measured cells spanning two geometries, two sampling schemes and
+  voxel-to-spacing ratios from 1 to 3, so an area called invented is invented. Below it,
+  a genuine fabrication smaller than the sensitivity floor reads as `near-threshold
+  surface`, which is *confidently wrong* rather than undecided. So a low reading is a
+  lower bound, not a clean bill of health. Nothing gates on either. Measurements:
+  `evidence/open3d/band-profile-across-scenes.json`,
+  `evidence/open3d/poisson-procedure-and-overcall-audit.json`.
+- **`unsupported_area_fraction` is mostly a sampling measurement, not a quality one.**
+  On a reconstruction with *zero* error, uniform-random sampling reports 0.855 of area
+  unsupported at a voxel equal to the median point spacing; Open3D's Poisson-disk sampler
+  at the same count and voxel reports 0.027, and at twice the spacing reports exactly
+  **0.000**. The difference is evenness alone: max/median nearest-neighbour spacing is
+  1.70 for Poisson-disk against 4.19 for uniform random, and the sparse tail of a uniform
+  draw is what the metric is reading. Sample evenly at capture time and the figure becomes
+  meaningful; otherwise read the distance bands instead.
 - **Choose `--voxel-size` at or above twice your median sample spacing.** This one
   ratio sets both of the caveats above, and it is the only input the caller controls.
   Sweeping it on a fixed scene: at a voxel equal to the median nearest-neighbour

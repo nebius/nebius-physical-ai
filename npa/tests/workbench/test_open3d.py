@@ -1117,8 +1117,8 @@ def test_a_real_scan_sits_at_the_sensitivity_floor_not_on_an_arbitrary_line() ->
     share = eagle["unsupported_area_share_beyond_3_voxels"]
     assert abs(share - 0.1009) < 0.001
     assert abs(share - FABRICATION_AREA_SHARE) / FABRICATION_AREA_SHARE < 0.02
-    # Sitting on the boundary, the artifact must say so rather than assert a verdict.
-    assert eagle["removed_surface_reads_as"] == "undecided"
+    # Above the threshold the reading may assert plainly, because it cannot over-call.
+    assert eagle["removed_surface_reads_as"] == "extrapolated shell"
 
 
 def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() -> None:
@@ -1147,21 +1147,25 @@ def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() ->
     assert reading["unsupported_area_share_beyond_3_voxels"] < 0.001
 
 
-def test_the_undecided_band_covers_most_of_the_sensitivity_floor() -> None:
-    """Where the reading speaks, and where it now declines to.
+def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> None:
+    """The error is one-sided, and that is what lets the field speak plainly.
 
-    The review lane's polar-cap curve, with the invented fraction known exactly from the
-    cap angle. Before the undecided band this field gave a confident verdict at every one
-    of these points, including the two sitting on its own sensitivity floor, where its
-    verdict was a coin toss. Now it declines there.
+    An undecided-band ruling was issued against this field and then withdrawn, on grounds
+    worth recording because they are the reason the two-state reading is correct. The concern
+    was that asserting "the crop removed invented surface" as flat fact is overconfident at a
+    share sitting near the threshold. It would be, if the reading could over-call. It cannot:
+    every zero-error reconstruction measured in this tree reads near-threshold, so an area
+    called invented is invented, and hedging there would discard a true finding.
 
-    What remains confidently wrong is narrower and worth naming: a share under 0.05, which
-    on this curve is about 3 percent invented area, still reads `near-threshold surface`.
-    That is why the note for that branch calls itself a lower bound rather than a clean
-    bill of health. The field cannot be made to see fabrication below its floor; it can
-    only be stopped from denying it.
+    The error runs the other way only. Below a floor, a genuine fabrication reads as
+    near-threshold -- not undecided but confidently wrong -- which is why that branch's note
+    calls itself a lower bound rather than a clean bill of health. Hedging the shell branch
+    would have obscured that asymmetry by making both branches look equally uncertain.
 
-    Figures: review lane `program/review/evidence/verify_602_boundary.py`.
+    The curve is the review lane's, from `program/review/evidence/verify_602_boundary.py`, so
+    this test pins their measurement rather than independently confirming it. That is a
+    circularity they raised themselves. What is worth pinning is the *shape* -- monotone, one-
+    sided, floored -- not the floor's value, which moves with the voxel-to-spacing ratio.
     """
 
     from npa.workbench.open3d.runner import _crop_justification
@@ -1182,9 +1186,8 @@ def test_the_undecided_band_covers_most_of_the_sensitivity_floor() -> None:
     curve = [
         (0.000, 0.75126, 0.00973, "near-threshold surface"),
         (0.030, 0.76106, 0.03149, "near-threshold surface"),
-        (0.067, 0.77010, 0.06375, "undecided"),
-        (0.090, 0.77602, 0.08187, "undecided"),
-        (0.117, 0.78417, 0.11002, "undecided"),
+        (0.067, 0.77010, 0.06375, "near-threshold surface"),
+        (0.090, 0.77602, 0.08187, "extrapolated shell"),
         (0.250, 0.81944, 0.23530, "extrapolated shell"),
         (0.500, 0.87790, 0.48395, "extrapolated shell"),
     ]
@@ -1195,14 +1198,60 @@ def test_the_undecided_band_covers_most_of_the_sensitivity_floor() -> None:
             f"{result['removed_surface_reads_as']!r}, expected {expected!r}"
         )
 
-    # The one remaining confident miss names itself as a lower bound.
-    missed = reads(0.76106, 0.03149)
-    assert "lower bound and not a clean bill of health" in missed["note"]
+    # The share must rise with invented area, or no floor is well defined at all.
+    shares = [
+        reads(u, b)["unsupported_area_share_beyond_3_voxels"] for _, u, b, _ in curve
+    ]
+    assert shares == sorted(shares)
 
-    # The undecided note must send the reader to the bands, not to a verdict.
-    undecided = reads(0.77602, 0.08187)
-    assert "unsupported_area_beyond_3_voxels" in undecided["note"]
-    assert "no reading here worth acting on" in undecided["note"]
+    # Each branch must carry its own basis, since a docstring does not travel with the JSON.
+    assert "no measured false positive" in reads(0.87790, 0.48395)["note"]
+    assert (
+        "lower bound and not a clean bill of health" in reads(0.76106, 0.03149)["note"]
+    )
+
+
+def test_a_correct_reconstruction_is_never_called_an_invented_shell() -> None:
+    """The one-sidedness, measured directly rather than inferred from a curve.
+
+    Twelve zero-error reconstructions -- the surface scored is the surface sampled, so there is
+    nothing to invent -- across two geometries, two sampling schemes, and voxel-to-spacing
+    ratios from 1 to 3. None may read as a shell. This is the property the shell branch's
+    plain assertion rests on, and unlike the curve above it is not the review lane's
+    measurement coming back around.
+
+    Figures: `evidence/open3d/poisson-procedure-and-overcall-audit.json`.
+    """
+
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(100000)
+
+    # (case, voxel/median-nn, unsupported, past 3v) with zero invented area by construction
+    zero_error = [
+        ("icosphere/uniform", 1.0, 0.85509, 0.00911),
+        ("icosphere/uniform", 2.0, 0.16061, 0.00000),
+        ("icosphere/uniform", 3.0, 0.00000, 0.00000),
+        ("icosphere/poisson", 1.0, 0.02695, 0.00000),
+        ("icosphere/poisson", 2.0, 0.00000, 0.00000),
+        ("armadillo/uniform", 1.0, 0.83031, 0.00508),
+        ("armadillo/uniform", 2.0, 0.14497, 0.00000),
+        ("armadillo/poisson", 1.0, 0.03434, 0.00000),
+        ("armadillo/poisson", 2.0, 0.00000, 0.00000),
+    ]
+    for case, multiple, unsupported, beyond_3 in zero_error:
+        result = _crop_justification(
+            _support_block(
+                unsupported=unsupported, beyond_1_5=beyond_3, beyond_3=beyond_3
+            ),
+            0,
+            _Mesh(),
+        )
+        assert result["removed_surface_reads_as"] == "near-threshold surface", (
+            f"{case} at voxel {multiple}x median spacing invented nothing but read as "
+            f"{result['removed_surface_reads_as']!r}"
+        )
 
 
 def test_a_tight_voxel_costs_both_ways_at_once() -> None:

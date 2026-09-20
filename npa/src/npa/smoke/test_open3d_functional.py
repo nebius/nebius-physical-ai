@@ -139,10 +139,10 @@ def _assert_support_crop_kept_the_observations(report) -> None:
     # `before > after` at all. On a complete capture the same arithmetic holds while
     # the crop destroys correct geometry, so the assertion above is only meaningful
     # alongside this one: these scans really do carry an extrapolated shell.
-    # Demanding a verdict is only legitimate because this scene is nowhere near the
-    # undecided band: it reads 0.985 of unsupported area past three voxels against a band
-    # topping out at 0.2. A scene that landed in the band would correctly refuse to answer,
-    # and this assertion would be wrong to make of it.
+    # Demanding a verdict here is legitimate because the reading cannot over-call: no
+    # zero-error reconstruction has been measured reading as a shell, so above the threshold
+    # the assertion is sound. This scene reads 0.985 of its unsupported area past three
+    # voxels, which is the far pole rather than a marginal call.
     justification = report["crop_justification"]
     assert justification["removed_surface_reads_as"] == "extrapolated shell", (
         "these demo scans are a partial capture, so the unsupported area should sit "
