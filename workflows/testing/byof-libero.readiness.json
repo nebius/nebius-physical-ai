@@ -3,10 +3,10 @@
   "solution": "libero",
   "status": "quarantined_unbuilt_unvalidated",
   "workflow_sha256": "51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a",
-  "resource_profile_sha256": "55239cff0c36cc0290c81e35ba867e0c3a73633de0453d56774899a57561ad7e",
+  "resource_profile_sha256": "8aa0a7788e729187459e9a9953ba0be5d747f7e7140ad2e481c48ff749431ee7",
   "input_sha256": {
     "workflow": "51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a",
-    "resource_profile": "55239cff0c36cc0290c81e35ba867e0c3a73633de0453d56774899a57561ad7e",
+    "resource_profile": "8aa0a7788e729187459e9a9953ba0be5d747f7e7140ad2e481c48ff749431ee7",
     "runtime_manifest": "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44",
     "runtime_requirements": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
     "runtime_bootstrap": "b92cfae6acb12af159cdc563cd97ef0366be97d4b0f9b6860fd2d39ab179a645",

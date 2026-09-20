@@ -242,6 +242,21 @@ def test_libero_profile_binds_payload_identity_customer_authorization_and_headle
     assert pod_spec["serviceAccountName"] == PAYLOAD_SERVICE_ACCOUNT
     assert pod_spec["serviceAccountName"] not in {"default", "skypilot-service-account"}
     assert task["envs"]["NVIDIA_DRIVER_CAPABILITIES"] == "compute,utility"
+    assert pod_spec["securityContext"]["fsGroup"] == 1001
+    mounts = pod_spec["containers"][0]["volumeMounts"]
+    temporary_mount = "/" + "tmp"
+    assert {mount["mountPath"] for mount in mounts} == {
+        "/workspace",
+        temporary_mount,
+        "/run",
+        "/etc/ssh",
+    }
+    assert {volume["name"] for volume in pod_spec["volumes"]} == {
+        "libero-workspace",
+        "libero-tmp",
+        "libero-run",
+        "libero-ssh",
+    }
     assert "NVIDIA_VISIBLE_DEVICES" not in task["envs"]
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64" not in task["envs"]
     assert "NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256" not in task["envs"]

@@ -22,6 +22,7 @@ resources:
         hostIPC: false
         securityContext:
           runAsNonRoot: true
+          fsGroup: 1001
           seccompProfile:
             type: RuntimeDefault
         containers:
@@ -31,6 +32,24 @@ resources:
               readOnlyRootFilesystem: true
               capabilities:
                 drop: ["ALL"]
+            volumeMounts:
+              - name: libero-workspace
+                mountPath: /workspace
+              - name: libero-tmp
+                mountPath: /tmp
+              - name: libero-run
+                mountPath: /run
+              - name: libero-ssh
+                mountPath: /etc/ssh
+        volumes:
+          - name: libero-workspace
+            emptyDir: {}
+          - name: libero-tmp
+            emptyDir: {}
+          - name: libero-run
+            emptyDir: {}
+          - name: libero-ssh
+            emptyDir: {}
 envs:
   NPA_BYOF_RUN_ID: "<your-run-id>"
   BYOF_REPO_ROOT: "/opt/byof"
