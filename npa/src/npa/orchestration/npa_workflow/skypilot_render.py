@@ -30,10 +30,13 @@ from npa.workbench.model_cache import (
 # Token Factory is a hosted HTTP API client. Do not pin the heavy cosmos image:
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
-TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
+    # Paired judging is hosted API-only and must not inherit the self-hosted
+    # VLM family's heavy Cosmos image.
+    "workbench.vlm_eval.compare_judges": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -87,6 +90,7 @@ OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workbench.vlm_eval.compare_judges": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
@@ -1734,7 +1738,9 @@ def render_setup_for_tool(
         parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
     if tool_ref.startswith("workbench.sonic"):
         parts.append(_sonic_deps_setup())
-    if tool_ref.startswith("workbench.token_factory"):
+    if tool_ref.startswith("workbench.token_factory") or tool_ref == (
+        "workbench.vlm_eval.compare_judges"
+    ):
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(
             'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'

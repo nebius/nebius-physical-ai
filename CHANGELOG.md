@@ -7,6 +7,16 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Paired VLM reviews preserve disagreement
+
+- New `vlm-eval compare-judges` API-only audit mode sends one immutable prompt
+  and normalized frame set to two explicitly distinct hosted models. Its
+  `vlm_judge_disagreement.json` artifact retains both complete outcomes or typed
+  errors, never averages scores, and requires escalation on disagreement or
+  judge error. The report is explicitly audit-only and does not qualify either
+  model, defend against in-image instructions, prove a critical defect absent,
+  or establish physical correctness or safety.
+
 ### VLM result artifacts use a backend-neutral filename
 
 - New `vlm-eval run` directory and object-prefix outputs are named

@@ -174,6 +174,23 @@ def test_tool_ref_argv_resolves_to_a_real_command(tool_ref: str) -> None:
     assert command.flags, f"{tool_ref}: {command.path} declares no options"
 
 
+def test_vlm_compare_judges_tool_ref_passes_both_explicit_models() -> None:
+    entry = TOOL_CATALOG["workbench.vlm_eval.compare_judges"]
+
+    assert entry.argv_template[:4] == [
+        "npa",
+        "workbench",
+        "vlm-eval",
+        "compare-judges",
+    ]
+    assert "--primary-model" in entry.argv_template
+    assert "--secondary-model" in entry.argv_template
+    assert (
+        entry.config_defaults["primary_vlm_model"]
+        != (entry.config_defaults["secondary_vlm_model"])
+    )
+
+
 def test_non_cli_argv_entries_are_pinned() -> None:
     """Unchecked wrappers stay pinned; new module entries must pass their real parser."""
 

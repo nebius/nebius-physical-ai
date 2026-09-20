@@ -62,6 +62,29 @@ score-derived label. Before reviewing thin geometry or skeletons, compare
 retained submitted-frame dimensions with the source because normalization can
 remove the defect.
 
+For a consequential or disputed review, `compare-judges` preserves two hosted
+outcomes without averaging:
+
+```bash
+npa workbench vlm-eval compare-judges \
+  --input-path <one-rollout> \
+  --output-path <private-evidence-prefix> \
+  --primary-model <hosted-vision-model-a> \
+  --secondary-model <hosted-vision-model-b> \
+  --task "Describe the exact visible completion evidence."
+```
+
+The command materializes and selects frames once, builds one prompt, and proves
+the transported request objects differ only in `model`. It writes
+`vlm_judge_disagreement.json`, retains each complete result or typed error, and
+requires escalation on disagreement or judge error. The report is always
+`audit_only`; agreement does not qualify either model, estimate an operational
+disagreement rate, establish physical correctness, or certify robot safety.
+It also does not defend against instructions embedded in the submitted pixels
+or prove that a critical visible defect is absent. Full rationales and raw
+provider responses are written only to the private artifact; console output is
+a bounded summary.
+
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
 JSON file containing `input_path`, `output_path` (a local JSON filename),
