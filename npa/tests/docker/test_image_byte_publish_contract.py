@@ -19,6 +19,7 @@ PUBLISH = ROOT / ".github/workflows/publish-public-images.yml"
 SECURITY = ROOT / ".github/workflows/image-security-scan.yml"
 PRE = "Enforce runtime, revision, bootstrap, config, and history contracts"
 POST = "Verify pushed bytes, revision, payload, visibility, and anonymous pull"
+DESTINATION = "Prove destination cannot expose unvalidated tagged bytes"
 
 
 def steps():
@@ -35,6 +36,57 @@ def curobo_block(name):
     start = script.index(opening)
     end = script.index("\nfi", start) + len("\nfi")
     return script[start:end]
+
+
+@pytest.mark.parametrize(
+    "tags,accepted",
+    [
+        ([], True),
+        (["dev-" + "b" * 40], True),
+        (["dev-" + "a" * 40], False),
+    ],
+)
+def test_destination_proof_refuses_existing_immutable_development_tag(
+    tmp_path, tags, accepted
+):
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    gh = binary / "gh"
+    gh.write_text(
+        f"#!{sys.executable}\n"
+        + r"""
+import json, os, sys
+args = sys.argv[1:]
+assert args[0] == "api"
+if "--silent" in args and "--include" in args:
+    print("HTTP/2 200")
+elif "--jq" in args:
+    print("public")
+elif "--paginate" in args and "--slurp" in args:
+    print(json.dumps([[{"metadata": {"container": {"tags": json.loads(os.environ["GH_TAGS"])}}}]]))
+else:
+    raise SystemExit(29)
+"""
+    )
+    gh.chmod(0o755)
+    summary = tmp_path / "summary"
+    env = {
+        **os.environ,
+        "PATH": str(binary) + os.pathsep + os.defpath,
+        "IMAGE": "ghcr.io/nebius/nebius-physical-ai/npa-curobo:dev-" + "a" * 40,
+        "GH_TAGS": json.dumps(tags),
+        "GITHUB_STEP_SUMMARY": str(summary),
+    }
+    result = subprocess.run(
+        ["bash", "-c", named(DESTINATION)["run"]],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is accepted, result.stderr
+    if not accepted:
+        assert "refusing overwrite" in result.stdout
 
 
 @pytest.fixture

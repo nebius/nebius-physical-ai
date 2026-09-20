@@ -309,16 +309,22 @@ jobs:
           package_api="/orgs/${owner}/packages/container/${encoded}"
           if [ "$status" = 0 ]; then
             visibility="$(gh api "$package_api" --jq .visibility)"
+            versions="$(mktemp)"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+            development_tag="${IMAGE##*:}"
+            exact_tagged_count="$(jq --arg tag "$development_tag" '[.[] | select((.metadata.container.tags // []) | index($tag))] | length' "$versions")"
+            if [ "$exact_tagged_count" != 0 ]; then
+              echo "::error::Immutable public development tag already exists; refusing overwrite"
+              exit 1
+            fi
             if [ "$visibility" = public ]; then
-              echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
+              echo "Existing package is public and the exact development tag is absent." >> "$GITHUB_STEP_SUMMARY"
             elif [ "$visibility" = private ]; then
               # A failed first publication can leave private, untagged OCI
               # attestations behind after its exact tagged image version is deleted.
               # Those referrers must not prevent a clean retry, but a private package
               # containing any tagged image could expose unvalidated bytes when the
               # successful retry switches the package to public below.
-              versions="$(mktemp)"
-              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
               tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
               if [ "$tagged_count" != 0 ]; then
                 echo "::error::Private destination contains tagged versions; refusing a visibility change"
