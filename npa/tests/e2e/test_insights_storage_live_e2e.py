@@ -10,6 +10,8 @@ Proves, against real object storage rather than a mock, that:
 * Querying a store prefix that was never written returns an empty result
   rather than an error — genuine absence is preserved, not just the failure
   path.
+* A real provider authentication rejection while reading record input remains
+  a typed storage failure, using a deliberately invalid signing secret.
 
 No infrastructure is provisioned by this test. It resolves only the exact,
 explicitly named project's already-configured storage credentials — never an
@@ -53,6 +55,8 @@ from npa.clients.project_credentials import (
     s3_client_for_project,
     storage_env_for_project,
 )
+
+from .s3_fixture_cleanup import delete_owned_prefix, list_owned_versions
 
 pytestmark = pytest.mark.e2e
 
@@ -146,50 +150,6 @@ def insights_s3(live_project: str):
     return s3_client_for_project(live_project, allow_host_creds=False)
 
 
-def _list_prefix_versions(s3: Any, bucket: str, prefix: str) -> list[dict[str, str]]:
-    """Inventory exact versions, including delete markers, under an owned prefix."""
-    paginator = s3.get_paginator("list_object_versions")
-    versions: list[dict[str, str]] = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for item in [*page.get("Versions", []), *page.get("DeleteMarkers", [])]:
-            assert str(item["Key"]).startswith(prefix)
-            versions.append({"Key": item["Key"], "VersionId": item["VersionId"]})
-    return versions
-
-
-def _delete_prefix_and_verify(s3: Any, bucket: str, prefix: str) -> None:
-    """Delete every object under ``prefix`` and positively confirm it is gone.
-
-    A ``DeleteObjects`` call can return HTTP 200 while its body still lists
-    per-key ``Errors`` (a key that was locked, throttled, or otherwise not
-    actually removed), and a 200 status alone never proves every key was
-    deleted. Versioned buckets also retain data after a key-only deletion.
-    Delete exact versions and markers, then verify both inventories are empty.
-    """
-    versions = _list_prefix_versions(s3, bucket, prefix)
-    errors: list[dict[str, Any]] = []
-    for start in range(0, len(versions), 1000):
-        batch = versions[start : start + 1000]
-        if not batch:
-            continue
-        response = s3.delete_objects(
-            Bucket=bucket,
-            Delete={"Objects": batch},
-        )
-        errors.extend(response.get("Errors") or [])
-    assert not errors, (
-        f"failed to delete {len(errors)} object(s) under {prefix}: {errors}"
-    )
-
-    remaining = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-    assert not remaining.get("Contents"), (
-        f"objects remain under owned prefix {prefix} after cleanup delete"
-    )
-    assert not _list_prefix_versions(s3, bucket, prefix), (
-        "object versions or delete markers remain after fixture cleanup"
-    )
-
-
 @pytest.fixture
 def owned_prefix_cleanup(
     insights_s3: Any, insights_bucket_and_prefix: tuple[str, str]
@@ -199,7 +159,7 @@ def owned_prefix_cleanup(
     try:
         yield
     finally:
-        _delete_prefix_and_verify(insights_s3, bucket, prefix + "/")
+        delete_owned_prefix(insights_s3, bucket, prefix + "/")
 
 
 def _put_json(s3: Any, bucket: str, key: str, payload: dict[str, Any]) -> None:
@@ -220,13 +180,50 @@ def test_cleanup_removes_overwritten_objects_and_delete_markers(
     key = f"{prefix}/cleanup/probe.json"
     _put_json(insights_s3, bucket, key, {"generation": 1})
     _put_json(insights_s3, bucket, key, {"generation": 2})
-    before_delete = _list_prefix_versions(insights_s3, bucket, prefix + "/")
+    before_delete = list_owned_versions(insights_s3, bucket, prefix + "/")
     assert before_delete
     insights_s3.delete_object(Bucket=bucket, Key=key)
 
-    _delete_prefix_and_verify(insights_s3, bucket, prefix + "/")
+    delete_owned_prefix(insights_s3, bucket, prefix + "/")
 
-    assert not _list_prefix_versions(insights_s3, bucket, prefix + "/")
+    assert not list_owned_versions(insights_s3, bucket, prefix + "/")
+
+
+def test_record_input_authentication_failure_is_a_typed_storage_error(
+    live_project: str,
+    insights_bucket_and_prefix: tuple[str, str],
+    owned_prefix_cleanup: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Send one intentionally invalid signed read to this test's own S3 prefix."""
+    import boto3
+    from botocore.config import Config
+
+    from npa.sdk.workbench import insights as sdk
+    from npa.workbench.insights import storage as st
+
+    storage = _require_storage(live_project)
+    client = boto3.client(
+        "s3",
+        endpoint_url=storage.endpoint_url,
+        aws_access_key_id=storage.aws_access_key_id,
+        aws_secret_access_key="invalid",
+        config=Config(signature_version="s3v4"),
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+    bucket, prefix = insights_bucket_and_prefix
+    try:
+        with pytest.raises(st.InsightsStorageError) as failure:
+            sdk.record(
+                input_uri=f"s3://{bucket}/{prefix}/unreadable.json",
+                output_uri=f"s3://{bucket}/{prefix}/store",
+            )
+        assert any(
+            code in str(failure.value)
+            for code in ("AccessDenied", "SignatureDoesNotMatch", "InvalidAccessKeyId")
+        )
+    finally:
+        client.close()
 
 
 def test_ingest_run_excludes_sibling_run_prefix_on_real_s3(

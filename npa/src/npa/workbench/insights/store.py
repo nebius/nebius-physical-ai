@@ -240,7 +240,7 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
     if request.input_uri.strip():
         try:
             payload = read_json_uri(request.input_uri)
-        except StorageAuthorizationError:
+        except (StorageAuthorizationError, InsightsStorageError):
             raise
         except FileNotFoundError as exc:
             raise InsightsStoreError(

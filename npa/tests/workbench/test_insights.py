@@ -6,7 +6,7 @@ from typing import Any
 from unittest.mock import Mock
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, EndpointConnectionError
 from fastapi.testclient import TestClient
 
 from npa.workbench.insights.analytics import (
@@ -97,6 +97,38 @@ def test_record_reads_input_uri_document(tmp_path: Path) -> None:
         RecordRequest(output_uri=str(tmp_path / "store"), input_uri=str(doc))
     )
     assert response.recorded_count == 1
+
+
+@pytest.mark.parametrize("failure", ["AccessDenied", "ExpiredToken", "transport"])
+def test_record_input_storage_failure_preserves_type_and_http_status(
+    failure: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.workbench.insights import storage as st
+    from npa.workbench.insights.service import create_app
+
+    upstream = Mock()
+    upstream.get_object.side_effect = (
+        EndpointConnectionError(endpoint_url="https://storage.example.test")
+        if failure == "transport"
+        else ClientError({"Error": {"Code": failure, "Message": "denied"}}, "GetObject")
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: upstream)
+    target = tmp_path / "store"
+    request = RecordRequest(input_uri="s3://bucket/input.json", output_uri=str(target))
+    with pytest.raises(st.InsightsStorageError):
+        record_metrics(request)
+
+    app = create_app(
+        auth_mode="none",
+        allowed_s3_roots=["s3://bucket"],
+        allowed_local_roots=[tmp_path],
+    )
+    with TestClient(app) as client:
+        response = client.post("/record", json=request.model_dump(mode="json"))
+    assert response.status_code == 502
+    assert "cannot read" in response.json()["detail"]
+    assert not target.exists()
+    upstream.put_object.assert_not_called()
 
 
 def test_record_without_payload_raises(tmp_path: Path) -> None:
