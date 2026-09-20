@@ -21,6 +21,12 @@ before integrating a tool programmatically.
 
 ## Install
 
+For a persistent remote development environment, use
+[`npa tools desktop`](../docs/tools/development-desktop.md). This operator tool
+installs VS Code and Codex on an existing Ubuntu VM, provides a sharp browser
+desktop with adjustable workspace size, and can enable authenticated HTTPS on a
+public IP. Its setup and operation commands live under `npa tools`.
+
 From the repository root, with your virtual environment active:
 
 ```bash
