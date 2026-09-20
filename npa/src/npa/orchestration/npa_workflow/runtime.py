@@ -215,16 +215,24 @@ def _source_identity() -> str:
 
 
 def _image_identity(render_options: SkypilotRenderOptions) -> str:
-    """Recompute the exact reference-to-image bindings selected for rendering."""
+    """Recompute the exact image-selection inputs and immutable bindings."""
 
     bindings = sorted(
         (str(reference), str(resolved))
         for reference, resolved in render_options.image_digest_pins.items()
     )
+    overrides = sorted(
+        (str(selector), str(reference))
+        for selector, reference in render_options.image_overrides.items()
+    )
     digest_material = json.dumps(
         {
-            "bindings": bindings,
-            "schema": "npa.workflow.image-pin-bindings/v2",
+            "gpu_target": str(render_options.gpu_target),
+            "image_digest_pins": bindings,
+            "image_overrides": overrides,
+            "image_variant": str(render_options.image_variant),
+            "registry": str(render_options.registry),
+            "schema": "npa.workflow.image-selection/v3",
         },
         ensure_ascii=False,
         separators=(",", ":"),

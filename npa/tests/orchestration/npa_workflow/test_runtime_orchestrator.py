@@ -1503,6 +1503,155 @@ def test_completed_replay_accepts_reordered_image_pin_bindings(tmp_path: Path) -
     assert submitter.calls == []
 
 
+def _image_selection_options(
+    overrides: dict[str, str],
+    *,
+    pins: dict[str, str] | None = None,
+    registry: str = "",
+    gpu_target: str = "",
+    image_variant: str = "",
+) -> SkypilotRenderOptions:
+    return SkypilotRenderOptions(
+        registry=registry,
+        image_overrides=overrides,
+        image_digest_pins=pins or {},
+        gpu_target=gpu_target,
+        image_variant=image_variant,
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["swap", "rename", "add", "remove", "registry", "gpu_target", "image_variant"],
+)
+def test_image_identity_binds_render_selection_inputs(change: str) -> None:
+    from npa.orchestration.npa_workflow.runtime import _image_identity
+    from npa.orchestration.npa_workflow.skypilot_render import resolve_task_image
+
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {
+        "workbench.train": references[0],
+        "workbench.evaluate": references[1],
+    }
+    changed_overrides = dict(overrides)
+    kwargs: dict[str, str] = {}
+    if change == "swap":
+        changed_overrides = {
+            "workbench.train": references[1],
+            "workbench.evaluate": references[0],
+        }
+    elif change == "rename":
+        changed_overrides = {
+            "workbench.builder": references[0],
+            "workbench.evaluate": references[1],
+        }
+    elif change == "add":
+        changed_overrides["workbench.publish"] = references[0]
+    elif change == "remove":
+        changed_overrides.pop("workbench.evaluate")
+    else:
+        kwargs[change] = f"changed-{change}"
+
+    initial = _image_selection_options(overrides, pins=pins)
+    changed = _image_selection_options(changed_overrides, pins=pins, **kwargs)
+    reordered = _image_selection_options(
+        dict(reversed(list(overrides.items()))),
+        pins=dict(reversed(list(pins.items()))),
+    )
+
+    if change == "swap":
+        assert (
+            resolve_task_image("workbench.train", {}, options=initial)
+            == pins[references[0]]
+        )
+        assert (
+            resolve_task_image("workbench.train", {}, options=changed)
+            == pins[references[1]]
+        )
+    assert _image_identity(reordered) == _image_identity(initial)
+    assert _image_identity(changed) != _image_identity(initial)
+
+
+@pytest.mark.parametrize("pinned", [True, False])
+def test_completed_replay_rejects_changed_image_selection(
+    tmp_path: Path,
+    pinned: bool,
+) -> None:
+    pins = _image_pin_bindings() if pinned else {}
+    references = list(_image_pin_bindings())
+    initial_reference = (
+        references[0] if pinned else "cr.example/tool-a@sha256:" + "a" * 64
+    )
+    changed_reference = (
+        references[1] if pinned else "cr.example/tool-b@sha256:" + "b" * 64
+    )
+    spec, store = _completed_replay_case(
+        tmp_path,
+        render_options=_image_selection_options({"*": initial_reference}, pins=pins),
+    )
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        options=options,
+        output_checker=lambda _uri: True,
+        store=store,
+        render_options=_image_selection_options({"*": changed_reference}, pins=pins),
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_accepts_reordered_image_selection(tmp_path: Path) -> None:
+    pins = _image_pin_bindings()
+    references = list(pins)
+    overrides = {
+        "workbench.train": references[0],
+        "*": references[1],
+    }
+    spec, store = _completed_replay_case(
+        tmp_path,
+        render_options=_image_selection_options(overrides, pins=pins),
+    )
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        options=options,
+        output_checker=lambda _uri: True,
+        store=store,
+        render_options=_image_selection_options(
+            dict(reversed(list(overrides.items()))),
+            pins=dict(reversed(list(pins.items()))),
+        ),
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+
+    assert report.status == "succeeded"
+    assert report.waves[0]["replayed"] is True
+    assert submitter.calls == []
+
+
 @pytest.mark.parametrize(
     ("identity_field", "identity_function"),
     [

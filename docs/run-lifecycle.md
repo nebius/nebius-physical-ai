@@ -169,11 +169,12 @@ Valid outputs from a provider-succeeded attempt are reused only when the
 recorded workflow, source, and image identities still match the requested run.
 Missing or changed immutable identity evidence blocks reuse and requires the
 recorded identity to be restored or a new run ID to be started.
-Image identity binds each preflight input reference to its resolved immutable
-image, independent of mapping order; the same digest set assigned to different
-references is a different identity. Older runtime records whose image identity
-was derived from digest values alone cannot prove those bindings and therefore
-require a new run ID rather than an unsafe compatibility guess.
+Image identity binds the render registry, GPU target, image variant, and each
+tool override to the image reference it selects, then binds each preflight
+reference to its resolved immutable image. Mapping order does not matter, but
+changing any assignment changes identity. Older value-only or pin-only runtime
+identities cannot prove the complete selection and therefore require a new run
+ID rather than an unsafe compatibility guess.
 
 ## Reading status
 
