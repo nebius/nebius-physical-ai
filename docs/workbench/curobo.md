@@ -5,7 +5,9 @@
 The image candidate remains `0.8.0-cuda13-b300-unbuilt` and publication-quarantined
 until built-image checks and real GPU validation pass. Build from committed inputs;
 `build.sh` checks scoped source cleanliness and archives the exact commit for Docker.
-The tag family does not establish B300 validation.
+The image also locks the Ubuntu package closure to an immutable snapshot; changing
+that closure requires a new built-byte policy review. The tag family does not
+establish B300 validation.
 
 cuRobo adds GPU motion planning to the workbench: operator-defined Franka
 start/goal problems and full MotionBenchMaker/MPiNets benchmarks produce actual
@@ -25,8 +27,12 @@ All input problems remain in the success denominator, including invalid queries
 that upstream excludes. The eligible success rate is also reported. Results
 include measured plan/solve times, pose errors, joint and FK tool path lengths,
 motion duration, jerk, inverse-dynamics energy proxy and torque violations.
-No upstream published performance number is presented as a Nebius measurement.
-Planner feasibility is not independent collision certification.
+The exact optimized trajectory and torque samples behind dynamics metrics are
+retained so the CPU validation stage independently recomputes energy, maximum
+torque and violations. Its Pinocchio replay is a measured downstream consumer,
+not hardware-execution permission. No upstream published performance number is
+presented as a Nebius measurement. Planner feasibility is not independent
+collision certification.
 
 For custom inputs, write a `npa.curobo.plan.v1` JSON manifest to S3:
 
@@ -56,3 +62,11 @@ results are accepted. Source/robot assets and benchmark datasets have separate
 Apache-2.0/MIT/BSD notices; no model weights or gated data are required. See the
 [packaging record](../../npa/docker/workbench/curobo/REDISTRIBUTION.md) and
 [operator skill](../../skills/tools/curobo/SKILL.md) for exact revisions and limits.
+
+The real-GPU golden command preserves its input, journal, result, independent
+audit, RRD, full `rerun rrd print -vv` output, controls and SHA-256 manifest
+under `NPA_SMOKE_OUTPUT_DIR`. It requires one feasible pose to succeed and a
+separately declared valid-but-goal-blocked pose to fail; malformed manifest
+rejection is retained as a second negative control. RRD manifests bind the run,
+journal and result hashes and record decoded status, goal-marker and trajectory
+coverage instead of treating a viewer opening as proof.

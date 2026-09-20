@@ -5,8 +5,9 @@ metadata:
   description: >-
     Run the complete pinned MotionBenchMaker and MPiNets benchmarks with NVIDIA
     cuRobo V2, both kinematic and 3 kg dynamics configurations. Preserve failed
-    and excluded inputs, real trajectory/pose/timing/dynamics metrics, verified
-    S3 artifacts, and factual Rerun joint timelines and FK tool paths.
+    and excluded inputs, real trajectory/pose/timing/dynamics evidence,
+    independently recomputed validation, verified S3 artifacts, and factual
+    Rerun joint timelines, goal markers and FK tool paths.
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/curobo"

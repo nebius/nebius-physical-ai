@@ -6,6 +6,10 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
 from typing import Any
 
 import numpy as np
@@ -361,6 +365,15 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
                     )
                 ),
             )
+            if row["status"] != "invalid":
+                recording.log(
+                    root + "/goal",
+                    rr.Points3D(
+                        [row["query"]["goal_pose"]["position_xyz"]],
+                        radii=0.015,
+                        colors=[0, 255, 0],
+                    ),
+                )
             for name, value in row.get("metrics", {}).items():
                 recording.log(f"metrics/{name}", rr.Scalars(value))
             if row["status"] != "success":
@@ -379,8 +392,128 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
         del recording
     if not output.is_file() or output.stat().st_size == 0:
         raise CuroboError("RRD writer produced no bytes")
-    return {
-        "problem_count": len(rows),
-        "successful_trajectories": sum(r["status"] == "success" for r in rows),
-        "sha256": hashlib.sha256(output.read_bytes()).hexdigest(),
+    status_counts = {
+        status: sum(row["status"] == status for row in rows)
+        for status in ("success", "failed", "invalid")
     }
+    journal_sha256 = hashlib.sha256(journal.read_bytes()).hexdigest()
+    rrd_sha256 = hashlib.sha256(output.read_bytes()).hexdigest()
+    return {
+        "schema_version": "npa.curobo.rrd-manifest.v1",
+        "run_id": run_id,
+        "source_revision": SOURCE_REVISION,
+        "dataset_revision": DATASET_REVISION
+        if any(row["dataset"] != "operator" for row in rows)
+        else None,
+        "journal_sha256": journal_sha256,
+        "problem_count": len(rows),
+        "status_counts": status_counts,
+        "successful_trajectories": status_counts["success"],
+        "status_entities": len(rows),
+        "goal_markers": sum(row["status"] != "invalid" for row in rows),
+        "trajectory_samples": sum(
+            len(row["trajectory"]["position"])
+            for row in rows
+            if row["status"] == "success"
+        ),
+        "sha256": rrd_sha256,
+        "rrd_sha256": rrd_sha256,
+    }
+
+
+def _hash_and_find(path: Path, markers: list[bytes]) -> tuple[str, int, list[str]]:
+    digest = hashlib.sha256()
+    found = [False] * len(markers)
+    overlap = max((len(marker) for marker in markers), default=1) - 1
+    previous = b""
+    size = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+            window = previous + chunk
+            for index, marker in enumerate(markers):
+                if not found[index] and marker in window:
+                    found[index] = True
+            previous = window[-overlap:] if overlap else b""
+    missing = [
+        marker.decode("utf-8") for marker, seen in zip(markers, found) if not seen
+    ]
+    return digest.hexdigest(), size, missing
+
+
+def _decode_rrd_to(
+    path: Path,
+    decoded_output: Path,
+    *,
+    rows: list[dict[str, Any]],
+    run_id: str,
+) -> dict[str, Any]:
+    sibling = Path(sys.executable).with_name("rerun")
+    rerun = str(sibling) if sibling.is_file() else shutil.which("rerun")
+    if not rerun:
+        raise CuroboError("Rerun CLI is unavailable")
+    verified = subprocess.run(
+        [rerun, "rrd", "verify", str(path)], capture_output=True, check=False
+    )
+    if verified.returncode:
+        raise CuroboError("Rerun rejected the generated recording")
+    with decoded_output.open("wb") as stream:
+        printed = subprocess.run(
+            [rerun, "rrd", "print", "-vv", str(path)],
+            stdout=stream,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    if printed.returncode:
+        raise CuroboError("Rerun could not decode the generated recording")
+    markers = [
+        b"npa.curobo",
+        run_id.encode(),
+        b"provenance",
+        b"problems/000000/status",
+        f"problems/{len(rows) - 1:06d}/status".encode(),
+    ]
+    executed = next(
+        (index for index, row in enumerate(rows) if row["status"] != "invalid"), None
+    )
+    solved = next(
+        (index for index, row in enumerate(rows) if row["status"] == "success"), None
+    )
+    if executed is not None:
+        markers.append(f"problems/{executed:06d}/goal".encode())
+    if solved is not None:
+        markers.extend(
+            [
+                f"problems/{solved:06d}/tool_path".encode(),
+                b"trajectory_time",
+                b"problem_index",
+            ]
+        )
+    digest, size, missing = _hash_and_find(decoded_output, markers)
+    if missing:
+        raise CuroboError("decoded RRD omits required factual coverage")
+    return {
+        "verify": "passed",
+        "print": "passed",
+        "print_sha256": digest,
+        "print_bytes": size,
+        "required_marker_count": len(markers),
+        "missing_markers": [],
+    }
+
+
+def decode_rrd(
+    path: Path,
+    *,
+    rows: list[dict[str, Any]],
+    run_id: str,
+    decoded_output: Path | None = None,
+) -> dict[str, Any]:
+    """Verify and fully decode an RRD while bounding in-memory evidence."""
+    if decoded_output is not None:
+        return _decode_rrd_to(path, decoded_output, rows=rows, run_id=run_id)
+    with tempfile.TemporaryDirectory(prefix="npa-curobo-rrd-decode-") as directory:
+        return _decode_rrd_to(
+            path, Path(directory) / "rrd-print.txt", rows=rows, run_id=run_id
+        )

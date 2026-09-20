@@ -22,6 +22,7 @@ from .artifacts import (
     CuroboError,
     build_rrd,
     canonical,
+    decode_rrd,
     read_journal,
     validate_report,
 )
@@ -165,22 +166,16 @@ def validate(request: RunRequest):
 def visualize(request: RunRequest):
     with tempfile.TemporaryDirectory(prefix="npa-curobo-viz-") as directory:
         root = Path(directory)
-        _download_artifacts(request, root)
+        result_bytes, _journal, _report, rows = _download_artifacts(request, root)
         result = build_rrd(
             root / "problems.jsonl", root / "planning.rrd", run_id=request.run_id
         )
-        # Decode/verify the recording, not just its extension or producer success.
-        sibling = Path(sys.executable).with_name("rerun")
-        rerun = str(sibling) if sibling.is_file() else shutil.which("rerun")
-        if not rerun:
-            raise CuroboError("Rerun CLI is unavailable")
-        checked = subprocess.run(
-            [rerun, "rrd", "verify", str(root / "planning.rrd")],
-            capture_output=True,
-            check=False,
+        result["result_sha256"] = hashlib.sha256(result_bytes).hexdigest()
+        result["decode"] = decode_rrd(
+            root / "planning.rrd",
+            rows=rows,
+            run_id=request.run_id,
         )
-        if checked.returncode:
-            raise CuroboError("Rerun rejected the generated recording")
         _publish(
             uri_join(request.output_path, "planning.rrd"),
             (root / "planning.rrd").read_bytes(),

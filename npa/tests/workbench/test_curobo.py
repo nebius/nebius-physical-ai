@@ -18,6 +18,7 @@ from npa.workbench.curobo.artifacts import (
     CuroboError,
     build_rrd,
     canonical,
+    decode_rrd,
     summarize,
     validate_report,
 )
@@ -426,6 +427,18 @@ def test_factual_rrd_round_trip(tmp_path):
     target = tmp_path / "planning.rrd"
     result = build_rrd(journal, target, run_id="unit-rrd")
     assert result["successful_trajectories"] == 1
+    assert result["run_id"] == "unit-rrd"
+    assert result["journal_sha256"] == hashlib.sha256(journal.read_bytes()).hexdigest()
+    assert result["goal_markers"] == 1
+    assert result["trajectory_samples"] == 2
+    decoded_path = tmp_path / "rrd-print.txt"
+    decoded = decode_rrd(
+        target, rows=[row()], run_id="unit-rrd", decoded_output=decoded_path
+    )
+    assert decoded["verify"] == "passed"
+    assert decoded["print"] == "passed"
+    assert decoded["print_bytes"] == decoded_path.stat().st_size
+    assert decoded["missing_markers"] == []
     import sys
 
     executable = Path(sys.executable).with_name("rerun")
@@ -445,9 +458,95 @@ def test_factual_rrd_round_trip(tmp_path):
         "problem_index",
         "trajectory_time",
         "tool_path",
+        "problems/000000/goal",
         "joints/0/position",
     ):
         assert entity in printed
+
+
+def test_functional_smoke_retains_complete_positive_and_failure_evidence(
+    tmp_path, monkeypatch, capsys
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    def execute(_kind, manifest, output, *, run_id):
+        assert [problem["id"] for problem in manifest["problems"]] == [
+            "franka-pose",
+            "blocked-goal-control",
+        ]
+        solved = plan_row()
+        solved["problem_id"] = "franka-pose"
+        failed = {
+            "mode": "kinematic",
+            "dataset": "operator",
+            "problem_id": "blocked-goal-control",
+            "status": "failed",
+            "query": copy.deepcopy(solved["query"]),
+            "metrics": {"wall_plan_seconds": 0.02},
+        }
+        rows = [solved, failed]
+        output.mkdir(parents=True)
+        (output / "problems.jsonl").write_bytes(
+            b"".join(canonical(item) + b"\n" for item in rows)
+        )
+        report = {
+            "schema_version": "npa.curobo.result.v1",
+            "engine": "nvidia-curobo-v2",
+            "source_revision": SOURCE_REVISION,
+            "dataset_revision": None,
+            "kind": "plan",
+            "requested_modes": ["kinematic"],
+            "run_id": run_id,
+            "gpu": {
+                "name": "synthetic-gpu",
+                "compute_capability": [10, 0],
+                "torch_version": "test",
+                "cuda_version": "test",
+            },
+            "summary": summarize(rows),
+            "limitations": ["unit fixture"],
+        }
+        (output / "result.json").write_bytes(canonical(report))
+        return report
+
+    monkeypatch.setattr(smoke, "execute", execute)
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("NPA_SMOKE_RUN_ID", "retained-smoke")
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    smoke.main()
+    root = tmp_path / "retained-smoke"
+    expected = {
+        "artifact-manifest.json",
+        "controls.json",
+        "independent-validation.json",
+        "input.json",
+        "output/problems.jsonl",
+        "output/result.json",
+        "planning.rrd",
+        "rrd-manifest.json",
+        "rrd-print.txt",
+    }
+    assert {
+        str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()
+    } == expected
+    manifest = json.loads((root / "artifact-manifest.json").read_text())
+    assert manifest["source_commit"] == "a" * 40
+    assert manifest["image_digest"] == "sha256:" + "b" * 64
+    assert manifest["objective"] == {
+        "success": 1,
+        "failed_control": 1,
+        "invalid": 0,
+        "independent_validation": True,
+        "rrd_decode": "passed",
+    }
+    assert (
+        json.loads((root / "controls.json").read_text())["valid_but_infeasible"][
+            "observed_status"
+        ]
+        == "failed"
+    )
+    assert json.loads(capsys.readouterr().out)["status"] == "passed"
 
 
 def test_partial_benchmark_cannot_pass_with_self_consistent_summary():

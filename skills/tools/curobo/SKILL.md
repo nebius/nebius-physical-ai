@@ -8,7 +8,10 @@ description: Use when running, validating or reviewing NVIDIA cuRobo V2 Franka p
 The image candidate remains `0.8.0-cuda13-b300-unbuilt` and publication-quarantined
 until built-image checks and real GPU validation pass. Build from committed inputs;
 `build.sh` checks scoped source cleanliness and archives the exact commit for Docker.
-The tag family does not establish B300 validation.
+The Dockerfile pins the full Ubuntu package closure to an exact snapshot and
+rejects a build-arg override; a snapshot change requires a rebuilt-image scan
+and fresh independent native-byte policy review. The tag family does not
+establish B300 validation.
 
 For image changes, inspect actual dependency wheels and base layers. The cuDNN
 development base carries headers; deleting inherited files in a later layer
@@ -48,6 +51,12 @@ real pose; it does not prove full-benchmark completion.
   separately. Failed solves remain failed; inverse-dynamics errors fail the job
   instead of becoming zero energy. FK path lengths are computed from actual
   tool positions, not upstream's placeholder end-effector metrics.
+- Every solved benchmark row retains the exact optimized joint trajectory,
+  torque samples, payload mass and torque limits used for Pinocchio dynamics.
+  The CPU audit is deliberately separate from producer validation and
+  recomputes energy, maximum torque, violations, path measures, timeline
+  duration, jerk, exact identities and per-dataset/mode rates from durable
+  bytes. Treat this replay as a downstream dynamics consumer, not robot safety.
 - A matching total count is insufficient evidence. Validate exact problem
   identities and invalid indices against `benchmark_inventory.py`, independently
   derived from the pinned YAML with file hashes. The runner checks those bytes,
@@ -62,8 +71,18 @@ real pose; it does not prove full-benchmark completion.
 The workflow writes its recipe, `results/problems.jsonl`, `results/result.json`,
 `validation.json`, `reports/planning.rrd` and `reports/rrd-manifest.json` under the
 same run prefix. S3 publication reads back and hashes every object. The mandatory
-RRD contains actual joint traces, tool paths from FK, timing/pose/dynamics
-metrics and every problem status. It contains no invented robot meshes.
+RRD contains actual joint traces, tool paths from FK, goal markers,
+timing/pose/dynamics metrics and every problem status. Its manifest binds the
+run, journal, result and RRD hashes plus logged sample/status/goal counts and a
+streamed full-decode receipt. It contains no invented robot meshes.
+
+The golden command writes a non-overwriting run directory beneath
+`NPA_SMOKE_OUTPUT_DIR`. Retain its input, journal, result, independent
+validation, RRD, full `rerun rrd print -vv` output, control record and artifact
+manifest. Acceptance requires the feasible pose to succeed and the separately
+declared goal-blocked pose to fail; malformed manifest rejection is additional
+failure evidence. Set `NPA_IMAGE_DIGEST` to the exact immutable digest for live
+qualification so the artifact manifest binds source, image, GPU and outputs.
 
 On a GPU or upload failure the runtime retains a mode-0700 working directory
 and the already flushed problem journal. Inspect that evidence before any
@@ -104,7 +123,7 @@ Read `health-preflight`, `gpu-selection`, `secure-image-build` and
 ## Verify source changes
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/workbench/test_curobo.py npa/tests/cli/test_curobo_cli.py npa/tests/workflows/test_curobo_workflow.py -q
+npa/.venv/bin/python -m pytest npa/tests/workbench/test_curobo.py npa/tests/workbench/test_curobo_audit.py npa/tests/workbench/test_curobo_report_contract.py npa/tests/cli/test_curobo_cli.py npa/tests/workflows/test_curobo_workflow.py -q
 ```
 
 Then run applicable `pre-pr-validation`, container, catalog, skill and live-submit
