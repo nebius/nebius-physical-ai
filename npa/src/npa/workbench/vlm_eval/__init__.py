@@ -466,6 +466,12 @@ class VlmBenchmarkConfusionRow:
     Args:
         predicted_positive: Cases predicted as passing.
         predicted_negative: Cases predicted as failing.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
     """
 
     predicted_positive: int
@@ -479,6 +485,12 @@ class VlmBenchmarkConfusionMatrix:
     Args:
         actual_positive: Prediction counts for positive labeled examples.
         actual_negative: Prediction counts for negative labeled examples.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
     """
 
     actual_positive: VlmBenchmarkConfusionRow
