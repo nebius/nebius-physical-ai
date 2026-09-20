@@ -221,6 +221,15 @@ Use the best threshold and rubric from the benchmark report to update
 `workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
 a workflow stage.
 
+Benchmark report schema `npa_vlm_eval_benchmark_report_v2` makes calibration
+errors explicit for every model/rubric/threshold configuration. Inspect its 2x2
+`confusion_matrix`, `false_positive_rate`, `false_negative_rate`, and ordered
+failure item IDs, then resolve each ID in that configuration's complete
+`results` list. A null rate means the labeled set lacked the denominator class;
+it does not mean zero errors. Dataset item IDs must be unique. Reports without
+`schema_version` are legacy v1 records: their complete item results can be
+recomputed, but consumers must not invent v2 fields.
+
 ## Troubleshooting
 
 - `sky check` does not show Nebius enabled: fix SkyPilot credentials before

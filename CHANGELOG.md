@@ -7,6 +7,16 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM benchmarks expose calibration failures
+
+- `vlm-eval benchmark` reports an explicit 2x2 confusion matrix, false-positive
+  and false-negative rates, and ordered IDs for every false-positive and
+  false-negative example under each model/rubric/threshold configuration.
+  Reports carry schema `npa_vlm_eval_benchmark_report_v2`; historical
+  unversioned reports remain interpretable as v1 and can be recomputed from
+  their complete per-item results. Duplicate benchmark item IDs are rejected so
+  each failure ID resolves unambiguously.
+
 ### Paired VLM reviews preserve disagreement
 
 - New `vlm-eval compare-judges` API-only audit mode sends one immutable prompt
