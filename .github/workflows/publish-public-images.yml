@@ -342,6 +342,16 @@ jobs:
             exit 1
           fi
 
+      - name: Use the verified LIBERO containerd image store
+        if: matrix.tool == 'libero'
+        id: libero-docker
+        uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        with:
+          version: v29.1.3
+          set-host: true
+          daemon-config: |
+            {"features": {"containerd-snapshotter": true}}
+
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
@@ -618,15 +628,17 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
+          LIBERO_DOCKER_SOCKET: ${{ steps.libero-docker.outputs.sock }}
         shell: bash
         run: |
           set -euo pipefail
+          docker_socket="${LIBERO_DOCKER_SOCKET#unix://}"
           # Trivy 0.70 always wraps scans in context.WithTimeout and a zero
           # duration expires immediately. Go's largest whole-second duration
           # gives this mandatory gate no practical analysis deadline.
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${docker_socket:-/var/run/docker.sock}:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$GITHUB_WORKSPACE/.trivyignore:/.trivyignore:ro" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
@@ -644,12 +656,14 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
+          LIBERO_DOCKER_SOCKET: ${{ steps.libero-docker.outputs.sock }}
         shell: bash
         run: |
           set -euo pipefail
+          docker_socket="${LIBERO_DOCKER_SOCKET#unix://}"
           docker run --rm \
             -e TMPDIR=/tmp/trivy \
-            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${docker_socket:-/var/run/docker.sock}:/var/run/docker.sock" \
             -v "$TRIVY_TEMP_DIR:/tmp/trivy" \
             -v "$RUNNER_TEMP:/output" \
             aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image \
