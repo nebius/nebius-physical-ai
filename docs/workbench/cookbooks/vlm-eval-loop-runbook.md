@@ -149,6 +149,11 @@ item, then run the sweep below.
 
 ## Tune
 
+Use neutral identify-then-judge task text. Ask what the frames show before
+asking whether they satisfy the target; do not ask the model to confirm the
+desired answer. A blank and an unrelated rollout must score low under the exact
+same task-plus-rubric prompt before the positive score is usable evidence.
+
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
 ```bash

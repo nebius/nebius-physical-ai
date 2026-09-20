@@ -96,6 +96,10 @@ npa workbench vlm-eval run \
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric
   reserves 1.0 for clear completion and 0.0 for clear failure, with intermediate
   values for partial progress, and penalizes unsafe or ambiguous outcomes.
+- Write `--task` as identify-then-judge: ask what the frames show before asking
+  whether they meet the target. A leading confirmation question such as "does
+  this show X rather than a blank?" can make an unrelated negative control pass.
+  Run blank and unrelated controls through the exact same task-plus-rubric prompt.
 - `--success-threshold` (default 0.8) is the gate. In `loop` it applies to the
   **mean** score across rollouts, which is a coarser claim than per-rollout
   success — do not report it as a per-rollout success rate.
