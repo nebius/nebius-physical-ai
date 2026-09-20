@@ -61,8 +61,10 @@ RUN apt-get update \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3.12 python3.12-dev python3.12-venv \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3.12 -m venv /opt/robocasa/venv
+    && python3.12 -m venv /opt/robocasa/venv \
+    && rm -rf /var/lib/apt/lists/* /run/systemd/resolve \
+    && test ! -e /run/systemd/resolve \
+    && test ! -L /run/systemd/resolve
 
 WORKDIR /opt/robocasa
 

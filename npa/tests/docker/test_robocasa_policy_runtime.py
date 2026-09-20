@@ -1,5 +1,6 @@
 """Static contract for the combined RoboCasa + LeRobot ACT evaluation runtime."""
 
+import shlex
 from pathlib import Path
 
 
@@ -84,6 +85,38 @@ def test_robocasa_public_runtime_excludes_restricted_optional_payloads() -> None
         "*/robosuite/scripts/__pycache__/render_dataset_with_omniverse*.pyc"
         in dependency_install
     )
+
+
+def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    start = next(
+        index for index, line in enumerate(lines) if line.startswith("RUN apt-get update")
+    )
+    end = start
+    while lines[end].rstrip().endswith("\\"):
+        end += 1
+    install_run = "".join(lines[start : end + 1]).replace("\\\n", " ")
+    commands = [command.strip() for command in install_run.split("&&")]
+
+    install = next(
+        index for index, command in enumerate(commands) if "apt-get install" in command
+    )
+    venv = commands.index("python3.12 -m venv /opt/robocasa/venv")
+    cleanup = next(
+        index
+        for index, command in enumerate(commands)
+        if (tokens := shlex.split(command))
+        and tokens[0] == "rm"
+        and "/run/systemd/resolve" in tokens
+    )
+    absent_path = commands.index("test ! -e /run/systemd/resolve")
+    absent_symlink = commands.index("test ! -L /run/systemd/resolve")
+
+    cleanup_tokens = shlex.split(commands[cleanup])
+    assert "/var/lib/apt/lists/*" in cleanup_tokens
+    assert install < venv < cleanup < absent_path < absent_symlink
+    assert absent_symlink == len(commands) - 1
 
 
 def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
