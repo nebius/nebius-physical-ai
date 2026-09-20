@@ -119,14 +119,17 @@ be able to open the thing being asserted.
   was 0.7297 on the partial demo scans, 0.1012 on that solid-object scan, and
   **0.0000** on the complete capture. `reconstruct` reports those bands as
   `unsupported_area_beyond_1_5_voxels` and `unsupported_area_beyond_3_voxels`, and
-  summarizes them as `crop_justification.removed_surface_reads_as`: either
-  `extrapolated shell` or `near-threshold surface`. **The reading's error is one-sided.**
-  Above the threshold it can be trusted — no zero-error reconstruction has ever read as a
-  shell across twelve measured cells spanning two geometries, two sampling schemes and
-  voxel-to-spacing ratios from 1 to 3, so an area called invented is invented. Below it,
-  a genuine fabrication smaller than the sensitivity floor reads as `near-threshold
-  surface`, which is *confidently wrong* rather than undecided. So a low reading is a
-  lower bound, not a clean bill of health. Nothing gates on either. Measurements:
+  summarizes them as `crop_justification.removed_surface_reads_as`, which has three
+  states. **`extrapolated shell`** (share above 0.2) can be trusted: no zero-error
+  reconstruction has read as a shell across twelve measured cells spanning two
+  geometries, two sampling schemes and voxel-to-spacing ratios from 1 to 3, so an area
+  called invented there is invented. **`near-threshold surface`** (below 0.05) is a
+  *lower bound, not a clean bill of health* — a fabrication smaller than the sensitivity
+  floor reads exactly like none at all, which is confidently wrong rather than unknown.
+  **`undecided`** covers the band between, published in the artifact as `undecided_band`,
+  because that is where a real fabrication is most likely to be reported as clean; it
+  declines and points you at the two raw bands. Nothing gates on any of the three.
+  Measurements:
   `evidence/open3d/band-profile-across-scenes.json`,
   `evidence/open3d/poisson-procedure-and-overcall-audit.json`.
 - **`unsupported_area_fraction` is mostly a sampling measurement, not a quality one.**

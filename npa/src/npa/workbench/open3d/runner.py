@@ -453,6 +453,26 @@ def _sample_distances(o3d, cloud, vertices):
 #: `program/review/evidence/verify_602_boundary.py`.
 FABRICATION_AREA_SHARE = 0.1
 
+#: Shares in this closed interval emit `undecided` instead of a verdict.
+#:
+#: The case for the band is on the **false-negative** side, which the reading's one-sidedness
+#: does not address. Never over-calling means a share above the threshold is trustworthy; it
+#: says nothing about a genuine fabrication sitting below it, which reads as a clean
+#: near-threshold surface. Applied to the review lane's polar-cap curve, the band converts two
+#: confidently-wrong clean readings (4.7 and 6.7 percent invented) into `undecided`, and costs
+#: two correct shell calls (9.0 and 11.7 percent). On a path where a falsely clean reading is
+#: worse than "I do not know", that is the right trade: the reader who gets `undecided` looks
+#: at the bands, while the reader who gets a clean verdict ships invented geometry.
+#:
+#: Roughly a factor of two either side of the boundary. Both informative poles keep their
+#: verdict: 0.0 on a watertight mesh stays `near-threshold surface` and 0.7297 on the partial
+#: demo scans stays `extrapolated shell`. The real solid-object scan at 0.1012 has no ground
+#: truth, and now stops being reported as though it did.
+#:
+#: Publishing this interval in the artifact is the load-bearing part. A docstring saying "treat
+#: this as a coin toss" does not travel with the JSON, and the JSON is what a consumer reads.
+UNDECIDED_BAND = (0.05, 0.2)
+
 #: One known leniency in how the supporting measurements were validated, recorded here so
 #: it is not rediscovered: fabrication was checked as unsigned distance to the whole
 #: reference surface, so a bridge cutting through an object's interior can register as
@@ -479,15 +499,27 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
     unsupported = float(before.get("unsupported_area_fraction") or 0.0)
     far = float(before.get("unsupported_area_beyond_3_voxels") or 0.0)
     share = (far / unsupported) if unsupported > 0 else 0.0
-    if share >= FABRICATION_AREA_SHARE:
+    if share > UNDECIDED_BAND[1]:
         reads_as = "extrapolated shell"
         note = (
             "Most of the unsupported area lay more than three voxels from any sample, "
             "which sample spacing cannot explain, so the crop removed invented surface. "
             "This direction has no measured false positive: across twelve zero-error "
             "reconstructions spanning two geometries, two sampling schemes and voxel-to-"
-            "spacing ratios from 1 to 3, none read as a shell. The reading's error is "
-            "one-sided, so an area called invented here is invented."
+            "spacing ratios from 1 to 3, none read as a shell. So an area called invented "
+            "above this band is invented."
+        )
+    elif share >= UNDECIDED_BAND[0]:
+        reads_as = "undecided"
+        note = (
+            f"This share, {share:.4f}, is inside the undecided band "
+            f"[{UNDECIDED_BAND[0]}, {UNDECIDED_BAND[1]}] around the reporting boundary of "
+            f"{FABRICATION_AREA_SHARE}, so there is no reading here worth acting on. Below "
+            "this band a real fabrication reads as a clean surface, which is the error worth "
+            "protecting against, and that is why the band declines rather than guesses. Read "
+            "unsupported_area_beyond_1_5_voxels and unsupported_area_beyond_3_voxels directly "
+            "and judge against the sample spacing of this capture: area a long way past the "
+            "voxel is invented, area just past it is where a correct surface also falls."
         )
     else:
         reads_as = "near-threshold surface"
@@ -504,6 +536,7 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
     return {
         "unsupported_area_share_beyond_3_voxels": share,
         "removed_surface_reads_as": reads_as,
+        "undecided_band": list(UNDECIDED_BAND),
         "vertices_removed": removed,
         "vertex_fraction_removed": (
             removed / (removed + len(mesh.vertices))
