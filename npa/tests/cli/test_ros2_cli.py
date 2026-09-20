@@ -16,7 +16,8 @@ import typer
 from typer.testing import CliRunner
 
 import npa.workbench
-from npa.cli.ros2 import SUPPORTED_ROS_DISTRO, app, preflight_cmd
+from npa.cli.workbench.ros2 import app, preflight_cmd
+from npa.workbench.ros2 import SUPPORTED_ROS_DISTRO
 from npa.workflows.byof import ros2_pipeline
 from npa.workflows.byof.ros2_pipeline import (
     ISAAC_ROS_RELEASE,
@@ -65,11 +66,22 @@ def test_preflight_help_works():
     assert result.exit_code == 0, result.output
 
 
-def test_workbench_wrappers_resolve():
+def test_workbench_surface_is_first_class():
+    """The SDK surface exposes the real preflight function directly.
+
+    New tools must not route through ``npa._sdk.make_cli_wrapper``: the
+    workbench package is the primary surface and the CLI is a thin client.
+    """
     module = importlib.import_module("npa.workbench.ros2")
-    assert module.preflight.__npa_cli_module__ == "npa.cli.ros2"
-    assert module.preflight.__npa_cli_callback__ == "preflight_cmd"
+    assert callable(module.preflight)
     assert module.TOOLREF == "workbench.ros2"
+    assert module.SUPPORTED_ROS_DISTRO == "jazzy"
+    assert not hasattr(module.preflight, "__npa_cli_module__")
+    assert set(module.__all__) == {
+        "TOOLREF",
+        "SUPPORTED_ROS_DISTRO",
+        "preflight",
+    }
 
 
 def test_workbench_lazy_namespace():
@@ -78,9 +90,14 @@ def test_workbench_lazy_namespace():
     assert not hasattr(module, "bridge")
 
 
+def _canned_preflight(ok: bool, detail: str):
+    return {"ok": ok, "detail": detail, "supported_distro": "jazzy"}
+
+
 def test_preflight_ok_when_ros2_usable(monkeypatch):
     monkeypatch.setattr(
-        "npa.cli.ros2._ros2_status", lambda: (True, "ROS 2 Jazzy (stubbed)")
+        "npa.workbench.ros2.preflight",
+        lambda: _canned_preflight(True, "ROS 2 Jazzy (stubbed)"),
     )
     payload = preflight_cmd()
     assert payload["ok"] is True
@@ -89,7 +106,8 @@ def test_preflight_ok_when_ros2_usable(monkeypatch):
 
 def test_preflight_cli_ok(monkeypatch):
     monkeypatch.setattr(
-        "npa.cli.ros2._ros2_status", lambda: (True, "ROS 2 Jazzy (stubbed)")
+        "npa.workbench.ros2.preflight",
+        lambda: _canned_preflight(True, "ROS 2 Jazzy (stubbed)"),
     )
     result = runner.invoke(app, [])
     assert result.exit_code == 0, result.output
@@ -98,8 +116,8 @@ def test_preflight_cli_ok(monkeypatch):
 
 def test_preflight_fails_fast_without_ros2(monkeypatch):
     monkeypatch.setattr(
-        "npa.cli.ros2._ros2_status",
-        lambda: (False, "the `ros2` CLI is not on PATH"),
+        "npa.workbench.ros2.preflight",
+        lambda: _canned_preflight(False, "the `ros2` CLI is not on PATH"),
     )
     with pytest.raises(typer.Exit) as exc_info:
         preflight_cmd()
@@ -107,7 +125,7 @@ def test_preflight_fails_fast_without_ros2(monkeypatch):
 
 
 def test_preflight_cli_reports_missing_ros2(monkeypatch):
-    monkeypatch.setattr("npa.cli.ros2.shutil.which", lambda name: None)
+    monkeypatch.setattr("npa.workbench.ros2.shutil.which", lambda name: None)
     result = runner.invoke(app, [])
     assert result.exit_code == 3
     assert "preflight FAILED" in result.output
@@ -115,13 +133,13 @@ def test_preflight_cli_reports_missing_ros2(monkeypatch):
 
 
 def test_preflight_detects_wrong_distro(monkeypatch):
-    monkeypatch.setattr("npa.cli.ros2.shutil.which", lambda name: "/usr/bin/ros2")
+    monkeypatch.setattr("npa.workbench.ros2.shutil.which", lambda name: "/usr/bin/ros2")
     monkeypatch.setenv("ROS_DISTRO", "humble")
-    from npa.cli import ros2 as ros2_cli
+    from npa.workbench import ros2 as ros2_workbench
 
-    ok, detail = ros2_cli._ros2_status()
-    assert ok is False
-    assert "humble" in detail
+    payload = ros2_workbench.preflight()
+    assert payload["ok"] is False
+    assert "humble" in payload["detail"]
 
 
 def test_toolref_argv_is_exact():
@@ -139,7 +157,8 @@ def test_toolref_argv_is_exact():
 
 def test_pipeline_main_preflight_ok(monkeypatch, capsys):
     monkeypatch.setattr(
-        "npa.cli.ros2._ros2_status", lambda: (True, "ROS 2 Jazzy (stubbed)")
+        "npa.workbench.ros2.preflight",
+        lambda: _canned_preflight(True, "ROS 2 Jazzy (stubbed)"),
     )
     assert ros2_pipeline.main(["--preflight"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -148,7 +167,8 @@ def test_pipeline_main_preflight_ok(monkeypatch, capsys):
 
 def test_pipeline_main_preflight_fails(monkeypatch, capsys):
     monkeypatch.setattr(
-        "npa.cli.ros2._ros2_status", lambda: (False, "the `ros2` CLI is not on PATH")
+        "npa.workbench.ros2.preflight",
+        lambda: _canned_preflight(False, "the `ros2` CLI is not on PATH"),
     )
     assert ros2_pipeline.main(["--preflight"]) == 3
     payload = json.loads(capsys.readouterr().out)

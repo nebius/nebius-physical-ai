@@ -154,6 +154,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.fiftyone.launch_app` | FiftyOne review hook | `config.lance_uri` | review session | yes |
 | `workbench.fiftyone.curate_augmented` | `npa workbench fiftyone curate-augmented` | `config.augment_uri`, `config.curator_report_uri` | `config.curation_report_uri` (real FiftyOne Brain keep/drop report) | no |
 | `workbench.fiftyone.review_augmented` | `npa workbench fiftyone review-augmented` | canonical run + quality disposition | portable real FiftyOneDataset for every accepted/rejected terminal candidate, with non-promoting rejected fields | no |
+| `workbench.ros2.preflight` | `python3 -m npa.workflows.byof.ros2_pipeline --preflight` | host ROS 2 environment (ros2 CLI, ROS_DISTRO, rclpy) | preflight report (stdout JSON) | no |
 
 Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
 

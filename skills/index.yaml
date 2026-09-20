@@ -500,6 +500,16 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/robocasa-smoke.yaml
+  - name: ros2
+    category: tools
+    when_to_use: "ROS 2 Jazzy prerequisite detection (ros2 CLI, ROS_DISTRO, rclpy), the ROS 2 bridge / bag-conversion / Open-RMF fleet deployment planning specs, or the npa workbench ros2 CLI."
+    path: skills/tools/ros2/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "ros2", "preflight", "--help"]
+        contains: "Jazzy"
+      - type: file_exists
+        path: skills/tools/ros2/SKILL.md
   - name: openarm
     category: tools
     when_to_use: "Package, run, validate, or troubleshoot Enactic OpenArm v2 workloads through the first-class MuJoCo and NVIDIA Isaac Sim/Isaac Lab surfaces."

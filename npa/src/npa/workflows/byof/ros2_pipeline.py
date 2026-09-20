@@ -8,7 +8,7 @@ nodes.
 Stage functions return plain ``dict`` specs (name / image / argv / env) so
 schedulers (the orchestration catalog, skypilot, plain k8s) can materialize
 them without importing ROS 2.  Nothing in this module executes ROS 2 code;
-see :mod:`npa.cli.ros2` for the operator-facing commands.
+see :mod:`npa.cli.workbench.ros2` for the operator-facing commands.
 """
 
 from __future__ import annotations
@@ -212,8 +212,8 @@ def build_plan(config: Ros2PipelineConfig, image: str = "") -> list[dict[str, An
     return plan
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry: ``python -m npa.workflows.byof.ros2_pipeline ...``."""
+def build_parser() -> argparse.ArgumentParser:
+    """Build the ``python -m npa.workflows.byof.ros2_pipeline`` argument parser."""
     parser = argparse.ArgumentParser(
         description="ROS 2 bridge + Open-RMF fleet workflow plan builder."
     )
@@ -245,14 +245,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Bridge direction.",
     )
     parser.add_argument("--topics", default="", help="Comma-separated ROS 2 topics.")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry: ``python -m npa.workflows.byof.ros2_pipeline ...``."""
+    args = build_parser().parse_args(argv)
 
     if args.preflight:
-        from npa.cli.ros2 import _ros2_status
+        from npa.workbench import ros2 as ros2_workbench
 
-        ok, detail = _ros2_status()
-        print(json.dumps({"ok": ok, "detail": detail}, indent=2, sort_keys=True))
-        return 0 if ok else 3
+        payload = ros2_workbench.preflight()
+        print(
+            json.dumps(
+                {"ok": payload["ok"], "detail": payload["detail"]},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if payload["ok"] else 3
 
     target = JetsonThorTarget()
     if args.isaac_ros_image:
@@ -269,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.plan:
         print(json.dumps(build_plan(config, args.image), indent=2))
         return 0
-    parser.print_help()
+    build_parser().print_help()
     return 0
 
 
