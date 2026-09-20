@@ -76,6 +76,17 @@ class SmokeFailure(RuntimeError):
     """
 
 
+def _add_exception_note(error: BaseException, note: str) -> None:
+    """Retain cleanup diagnostics without replacing failures on Python 3.10."""
+    add_note = getattr(error, "add_note", None)
+    if callable(add_note):
+        add_note(note)
+    else:
+        notes = list(getattr(error, "__notes__", []))
+        notes.append(note)
+        error.__notes__ = notes
+
+
 @dataclass
 class _ObjectWriteLedger:
     attempted: list[str] = field(default_factory=list)
@@ -1314,11 +1325,12 @@ def _claim_runtime_cache(
         _initialize_cache(owner)
     except BaseException as primary:
         diagnostics = _release_cache_descriptors(owner)
-        primary.add_note(
+        _add_exception_note(
+            primary,
             "Runtime cache claim incomplete; namespace preserved, not adopted."
         )
         for diagnostic in diagnostics:
-            primary.add_note(diagnostic)
+            _add_exception_note(primary, diagnostic)
         raise
     return owner
 
@@ -1357,7 +1369,7 @@ def _clear_cache_members(owner: _RuntimeCacheOwnership, members: dict) -> None:
     if diagnostics:
         failure = SmokeFailure("runtime cache cleanup incomplete; ownership unresolved")
         for diagnostic in diagnostics:
-            failure.add_note(diagnostic)
+            _add_exception_note(failure, diagnostic)
         raise failure
 
 
@@ -1402,10 +1414,10 @@ def _finish_runtime_cache(
         target = SmokeFailure("runtime cache descriptor release incomplete")
     if target is not None:
         if failure is not None and primary is not None:
-            target.add_note(f"Cache cleanup: {type(failure).__name__}: {failure}")
+            _add_exception_note(target, f"Cache cleanup: {type(failure).__name__}: {failure}")
             diagnostics.extend(getattr(failure, "__notes__", []))
         for diagnostic in diagnostics:
-            target.add_note(diagnostic)
+            _add_exception_note(target, diagnostic)
         if primary is None:
             raise target
 
