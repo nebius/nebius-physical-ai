@@ -5884,6 +5884,107 @@ def status_cmd(
             console.print(f"  {stage}: {info.get('status', 'unknown')}")
 
 
+def _matching_stage_log_waves(
+    runtime_state: Mapping[str, object],
+    stage_attempt: Mapping[str, object],
+    stage: str,
+) -> list[dict[str, object]]:
+    """Return waves that can belong to one durable stage attempt."""
+
+    job_id = str(stage_attempt.get("managed_job_id") or "")
+    stage_key = str(
+        stage_attempt.get("wave_key")
+        or ("" if job_id else stage_attempt.get("key"))
+        or ""
+    )
+    attempt = int(stage_attempt.get("attempt") or 1)
+    if not stage_key and not job_id:
+        return []
+    matches: list[dict[str, object]] = []
+    for raw_wave in runtime_state.get("waves") or []:
+        if not isinstance(raw_wave, dict):
+            continue
+        if stage not in list(raw_wave.get("states") or []):
+            continue
+        if int(raw_wave.get("attempt") or 1) != attempt:
+            continue
+        if stage_key and str(raw_wave.get("key") or "") != stage_key:
+            continue
+        if job_id and str(raw_wave.get("job_id") or "") != job_id:
+            continue
+        matches.append(raw_wave)
+    return matches
+
+
+def _wave_task_id(wave: Mapping[str, object], stage: str) -> str:
+    """Return an exact task ID only when wave state/task positions align."""
+
+    states = list(wave.get("states") or [])
+    tasks = [item for item in wave.get("tasks") or [] if isinstance(item, dict)]
+    if len(states) != len(tasks) or states.count(stage) != 1:
+        return ""
+    task_id = tasks[states.index(stage)].get("task_id")
+    return "" if task_id is None else str(task_id)
+
+
+def _stage_log_task_id(
+    waves: Sequence[Mapping[str, object]],
+    stage: str,
+    *,
+    allow_serial_zero: bool,
+) -> str:
+    """Choose a task selector without guessing across conflicting waves."""
+
+    task_ids = {_wave_task_id(wave, stage) for wave in waves} - {""}
+    if len(task_ids) == 1:
+        return next(iter(task_ids))
+    if (
+        allow_serial_zero
+        and len(waves) == 1
+        and waves[0].get("kind") == "serial"
+        and list(waves[0].get("states") or []) == [stage]
+        and waves[0].get("tasks", []) == []
+    ):
+        return "0"
+    return ""
+
+
+def _recover_stage_log_wave_attribution(
+    runtime_state: Mapping[str, object],
+    stage_attempt: Mapping[str, object],
+    stage: str,
+) -> tuple[dict[str, object], str, str]:
+    """Recover missing log identity from one unambiguous matching wave."""
+
+    recovered = dict(stage_attempt)
+    job_id = str(recovered.get("managed_job_id") or "")
+    had_job_id = bool(job_id)
+    matching_waves = _matching_stage_log_waves(runtime_state, recovered, stage)
+    if not job_id:
+        wave_job_ids = {
+            str(wave.get("job_id") or "")
+            for wave in matching_waves
+            if str(wave.get("job_id") or "")
+        }
+        if len(wave_job_ids) > 1:
+            return recovered, "", "matching durable waves disagree on managed-job ID"
+        if len(wave_job_ids) == 1:
+            job_id = next(iter(wave_job_ids))
+            recovered["managed_job_id"] = job_id
+            recovered["provenance"] = "runtime_wave_attribution_recovery"
+            matching_waves = [
+                wave
+                for wave in matching_waves
+                if str(wave.get("job_id") or "") == job_id
+            ]
+    if recovered.get("sky_task_id") not in (None, ""):
+        return recovered, job_id, ""
+    task_id = _stage_log_task_id(matching_waves, stage, allow_serial_zero=had_job_id)
+    if task_id:
+        recovered["sky_task_id"] = task_id
+    return recovered, job_id, ""
+
+
 @app.command("logs")
 def logs_cmd(
     run_id: str = typer.Argument(help="Run ID."),
@@ -6119,44 +6220,13 @@ def logs_cmd(
                 ]
                 stage_attempts.sort(key=lambda item: int(item.get("attempt") or 1))
                 selected_attempt = stage_attempts[-1] if stage_attempts else {}
-                job_id = str(selected_attempt.get("managed_job_id") or "")
-                if selected_attempt.get("sky_task_id") in (None, ""):
-                    matching_waves = [
-                        wave
-                        for wave in resolution.runtime_state.get("waves") or []
-                        if isinstance(wave, dict)
-                        and selected_stage in list(wave.get("states") or [])
-                        and (not job_id or str(wave.get("job_id") or "") == job_id)
-                    ]
-                    matching_waves.sort(key=lambda wave: int(wave.get("attempt") or 1))
-                    if matching_waves:
-                        selected_wave = matching_waves[-1]
-                        wave_states = list(selected_wave.get("states") or [])
-                        wave_tasks = [
-                            item
-                            for item in selected_wave.get("tasks") or []
-                            if isinstance(item, dict)
-                        ]
-                        if len(wave_states) == len(wave_tasks):
-                            index = wave_states.index(selected_stage)
-                            task_id = wave_tasks[index].get("task_id")
-                            if task_id is not None:
-                                selected_attempt = {
-                                    **selected_attempt,
-                                    "sky_task_id": str(task_id),
-                                }
-                        elif (
-                            job_id
-                            and len(matching_waves) == 1
-                            and selected_wave.get("kind") == "serial"
-                            and wave_states == [selected_stage]
-                            and selected_wave.get("tasks", []) == []
-                        ):
-                            # A driver can stop after recording the job ID but
-                            # before its first task observation. The renderer's
-                            # single-state serial wave has exactly task 0; its
-                            # provider name is the full job name, not the stage.
-                            selected_attempt = {**selected_attempt, "sky_task_id": "0"}
+                selected_attempt, job_id, attribution_error = (
+                    _recover_stage_log_wave_attribution(
+                        resolution.runtime_state,
+                        selected_attempt,
+                        selected_stage,
+                    )
+                )
                 if not job_id and not resolution.runtime_state.get("waves"):
                     # Root job IDs are compatible only for the historical one-job
                     # manifest contract. Never broadcast one ID across runtime waves.
@@ -6242,9 +6312,14 @@ def logs_cmd(
                         _emit_log_truncation(log_metadata)
                     return
                 if not job_id:
-                    reason = (
-                        "no exact managed-job identity is recorded for this stage/attempt; "
-                        "live logs cannot be attributed safely"
+                    reason = attribution_error or (
+                        "no exact managed-job identity is recorded for this "
+                        "stage/attempt; live logs cannot be attributed safely"
+                    )
+                    error_code = (
+                        "STAGE_JOB_ID_AMBIGUOUS"
+                        if attribution_error
+                        else "STAGE_JOB_ID_UNAVAILABLE"
                     )
                     source_payload = apply_verification(
                         source_payload,
@@ -6258,10 +6333,10 @@ def logs_cmd(
                         + (f" --project {project}" if project else ""),
                     )
                     source_payload["live_log_state"] = "unavailable"
-                    source_payload["error_code"] = "STAGE_JOB_ID_UNAVAILABLE"
+                    source_payload["error_code"] = error_code
                     live_verification = source_payload["live_verification"]
                     assert isinstance(live_verification, dict)
-                    live_verification["error_code"] = "STAGE_JOB_ID_UNAVAILABLE"
+                    live_verification["error_code"] = error_code
                     live_verification["category"] = "ATTRIBUTION"
                     if json_output:
                         typer.echo(json.dumps(source_payload, indent=2, sort_keys=True))
