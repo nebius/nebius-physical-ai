@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 
+from botocore.exceptions import ClientError
 import pytest
 from typer.testing import CliRunner
 import yaml
@@ -1824,6 +1825,78 @@ def test_workflow_cancel_distinguishes_terminal_launched_run(monkeypatch) -> Non
     assert payload["outcome"] == "terminal"
     assert payload["status"] == "SUCCEEDED"
     assert payload["cloud_calls"] is False
+
+
+def test_workflow_cancel_denied_stage_status_records_verification_failure(
+    monkeypatch,
+) -> None:
+    class StageStatusDeniedS3(FakeWorkflowS3):
+        def get_object(self, *, Bucket: str, Key: str):
+            if Key.endswith("/logs/train/status.json"):
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "AccessDenied",
+                            "Message": "synthetic stage-status denial",
+                        }
+                    },
+                    "GetObject",
+                )
+            return super().get_object(Bucket=Bucket, Key=Key)
+
+    fake_s3 = StageStatusDeniedS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    fake_s3.put_object(
+        Bucket="bucket",
+        Key="denied-terminal/manifest.json",
+        Body=json.dumps(
+            {
+                "schema_version": 1,
+                "run_id": "denied-terminal",
+                "workflow_name": "legacy",
+                "status": "succeeded",
+                "stages": {"train": {"status": "succeeded"}},
+            }
+        ).encode(),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stage-status denial must stop before provider lookup")
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.cleanup.cleanup_launched_workflows",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("stage-status denial must stop before cancellation")
+        ),
+    )
+    receipts: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "npa.teardown_receipts.record_teardown_event",
+        lambda **kwargs: receipts.append(kwargs),
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "cancel", "s3://bucket/denied-terminal", "--json"],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "verification_failed"
+    assert payload["detected_state"] == "VERIFICATION_UNAVAILABLE"
+    assert payload["cloud_calls"] is False
+    assert payload["errors"] == [
+        "stage train status verification failed: S3 object not found or unreadable: "
+        "s3://bucket/denied-terminal/logs/train/status.json"
+    ]
+    assert len(receipts) == 1
+    assert receipts[0]["terminal_state"] == "verification_failed"
+    assert receipts[0]["action"] == {
+        "kind": "none",
+        "cancelled_job_ids": [],
+    }
 
 
 def test_paidf_terminal_multistage_cancel_without_root_job_id_exits_zero(

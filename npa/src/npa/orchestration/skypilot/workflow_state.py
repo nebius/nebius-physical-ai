@@ -316,7 +316,7 @@ def read_stage_status(state: WorkflowS3Config, stage: str) -> dict[str, Any] | N
     try:
         return get_json(state, "logs", stage, "status.json")
     except WorkflowStateError as exc:
-        if "not found" in str(exc).lower():
+        if workflow_state_error_is_missing(exc):
             return None
         raise
 

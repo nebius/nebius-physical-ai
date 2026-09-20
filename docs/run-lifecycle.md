@@ -154,6 +154,11 @@ text output identify every source they checked.
 
 Unrelated nested S3 keys are never guessed as runs.
 
+`cancel` applies the same cause-aware rule to each durable stage status. A
+genuinely missing optional status object may fall back to manifest evidence;
+denied, throttled, or unreachable storage yields `VERIFICATION_UNAVAILABLE`,
+makes no cancellation call, and records only a verification-failed receipt.
+
 If a shell cannot resolve the project storage location, point status at the
 prefix explicitly:
 
