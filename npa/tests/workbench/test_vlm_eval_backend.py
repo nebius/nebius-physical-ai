@@ -962,8 +962,160 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
     assert report.best_config.metrics.recall == 1.0
     assert report.best_config.metrics.true_positives == 2
     assert report.best_config.metrics.true_negatives == 2
+    assert report.schema_version == "npa_vlm_eval_benchmark_report_v2"
+    assert asdict(report.best_config.metrics.confusion_matrix) == {
+        "actual_positive": {
+            "predicted_positive": 2,
+            "predicted_negative": 0,
+        },
+        "actual_negative": {
+            "predicted_positive": 0,
+            "predicted_negative": 2,
+        },
+    }
+    assert report.best_config.metrics.false_positive_rate == 0.0
+    assert report.best_config.metrics.false_negative_rate == 0.0
+    assert report.best_config.metrics.false_positive_item_ids == ()
+    assert report.best_config.metrics.false_negative_item_ids == ()
     assert all(0.0 <= case.score <= 1.0 for case in report.best_config.results)
     assert {case.score_source for case in report.best_config.results} == {"fixture"}
+
+
+def _benchmark_case(
+    item_id: str, *, expected_label: bool, predicted_label: bool
+) -> VlmBenchmarkCaseResult:
+    return VlmBenchmarkCaseResult(
+        item_id=item_id,
+        rollout=f"retained://{item_id}",
+        expected_label=expected_label,
+        predicted_label=predicted_label,
+        score=float(predicted_label),
+        status="passed" if predicted_label else "needs_iteration",
+        passed=predicted_label,
+        task="retained labelled control",
+        rationale="retained response",
+        frame_count=1,
+        score_source="retained",
+        evidence=None,
+    )
+
+
+def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() -> None:
+    results = [
+        _benchmark_case("tp-a", expected_label=True, predicted_label=True),
+        _benchmark_case(
+            "mismatched-run-negative",
+            expected_label=False,
+            predicted_label=True,
+        ),
+        _benchmark_case(
+            "missing-outcome-a", expected_label=True, predicted_label=False
+        ),
+        _benchmark_case("tn-a", expected_label=False, predicted_label=False),
+        _benchmark_case("tp-b", expected_label=True, predicted_label=True),
+        _benchmark_case("tn-b", expected_label=False, predicted_label=False),
+        _benchmark_case(
+            "missing-outcome-b", expected_label=True, predicted_label=False
+        ),
+        _benchmark_case("tn-c", expected_label=False, predicted_label=False),
+    ]
+
+    metrics = vlm_eval._benchmark_metrics(results)
+
+    assert metrics.false_positive_item_ids == ("mismatched-run-negative",)
+    assert metrics.false_negative_item_ids == (
+        "missing-outcome-a",
+        "missing-outcome-b",
+    )
+    assert asdict(metrics.confusion_matrix) == {
+        "actual_positive": {"predicted_positive": 2, "predicted_negative": 2},
+        "actual_negative": {"predicted_positive": 1, "predicted_negative": 3},
+    }
+    matrix = metrics.confusion_matrix
+    assert matrix.actual_positive.predicted_positive == metrics.true_positives == 2
+    assert matrix.actual_positive.predicted_negative == metrics.false_negatives == 2
+    assert matrix.actual_negative.predicted_positive == metrics.false_positives == 1
+    assert matrix.actual_negative.predicted_negative == metrics.true_negatives == 3
+    assert metrics.false_positive_rate == 0.25
+    assert metrics.false_negative_rate == 0.5
+    assert (
+        sum(asdict(metrics.confusion_matrix)["actual_positive"].values())
+        + sum(asdict(metrics.confusion_matrix)["actual_negative"].values())
+        == metrics.total
+    )
+
+
+@pytest.mark.parametrize(
+    ("results", "undefined_rate"),
+    [
+        (
+            [_benchmark_case("positive", expected_label=True, predicted_label=True)],
+            "false_positive_rate",
+        ),
+        (
+            [_benchmark_case("negative", expected_label=False, predicted_label=False)],
+            "false_negative_rate",
+        ),
+    ],
+)
+def test_benchmark_error_rates_are_null_without_required_label_class(
+    results, undefined_rate
+) -> None:
+    metrics = vlm_eval._benchmark_metrics(results)
+
+    assert getattr(metrics, undefined_rate) is None
+
+
+def test_legacy_benchmark_metrics_constructor_keeps_additive_defaults() -> None:
+    metrics = vlm_eval.VlmBenchmarkMetrics(
+        total=1,
+        correct=1,
+        agreement=1.0,
+        accuracy=1.0,
+        precision=1.0,
+        recall=1.0,
+        f1=1.0,
+        true_positives=1,
+        true_negatives=0,
+        false_positives=0,
+        false_negatives=0,
+    )
+
+    assert metrics.confusion_matrix is None
+    assert metrics.false_positive_item_ids == ()
+    assert metrics.false_negative_item_ids == ()
+
+
+def test_legacy_benchmark_report_constructor_keeps_legacy_schema_default() -> None:
+    config = vlm_eval.VlmBenchmarkConfig(
+        backend="stub",
+        model="fixture-model",
+        rubric_name="default",
+        rubric="fixture",
+        success_threshold=0.8,
+        frame_selection="final",
+        max_frames=1,
+    )
+    result = vlm_eval.VlmBenchmarkConfigResult(
+        rank=1,
+        config=config,
+        metrics=vlm_eval._benchmark_metrics(
+            [_benchmark_case("positive", expected_label=True, predicted_label=True)]
+        ),
+        results=[],
+    )
+    report = vlm_eval.VlmBenchmarkReport(
+        status="completed",
+        dataset_path="retained://legacy",
+        dataset_format="npa_vlm_eval_benchmark_v1",
+        item_count=1,
+        generated_at="2026-09-20T00:00:00Z",
+        sweep={},
+        best_config=result,
+        ranked_configs=[result],
+    )
+
+    assert report.schema_version == "npa_vlm_eval_benchmark_report_v1"
 
 
 def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
@@ -973,6 +1125,25 @@ def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
     assert len(dataset.items) == 4
     assert all(Path(item.rollout).exists() for item in dataset.items)
     assert {"default", "strict"} <= set(dataset.rubrics)
+
+
+def test_load_benchmark_dataset_rejects_duplicate_item_ids(tmp_path) -> None:
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "black").save(frame)
+    manifest = tmp_path / "benchmark.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {"id": "duplicate", "rollout": frame.name, "expected_label": True},
+                    {"id": "duplicate", "rollout": frame.name, "expected_label": False},
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="item IDs must be unique"):
+        load_benchmark_dataset(str(manifest))
 
 
 def test_select_rollout_frames_accepts_sample_ppm_fixture() -> None:

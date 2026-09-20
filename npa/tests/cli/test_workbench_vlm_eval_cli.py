@@ -333,8 +333,54 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     assert payload["best_config"]["metrics"]["accuracy"] == 1.0
     assert payload["best_config"]["metrics"]["true_positives"] == 2
     assert payload["best_config"]["metrics"]["true_negatives"] == 2
+    assert payload["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
+    assert payload["best_config"]["metrics"]["confusion_matrix"] == {
+        "actual_positive": {
+            "predicted_positive": 2,
+            "predicted_negative": 0,
+        },
+        "actual_negative": {
+            "predicted_positive": 0,
+            "predicted_negative": 2,
+        },
+    }
+    assert payload["best_config"]["metrics"]["false_positive_item_ids"] == []
+    assert payload["best_config"]["metrics"]["false_negative_item_ids"] == []
     assert payload["written_uri"] == str(output_path)
-    assert json.loads(output_path.read_text(encoding="utf-8"))["item_count"] == 4
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert written["item_count"] == 4
+    assert written["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
+    assert (
+        written["ranked_configs"][0]["metrics"]["confusion_matrix"]
+        == payload["best_config"]["metrics"]["confusion_matrix"]
+    )
+    for ranked in written["ranked_configs"]:
+        metrics = ranked["metrics"]
+        matrix = metrics["confusion_matrix"]
+        assert (
+            matrix["actual_positive"]["predicted_positive"] == metrics["true_positives"]
+        )
+        assert (
+            matrix["actual_positive"]["predicted_negative"]
+            == metrics["false_negatives"]
+        )
+        assert (
+            matrix["actual_negative"]["predicted_positive"]
+            == metrics["false_positives"]
+        )
+        assert (
+            matrix["actual_negative"]["predicted_negative"] == metrics["true_negatives"]
+        )
+        negative_count = metrics["false_positives"] + metrics["true_negatives"]
+        positive_count = metrics["false_negatives"] + metrics["true_positives"]
+        assert metrics["false_positive_rate"] == round(
+            metrics["false_positives"] / negative_count, 4
+        )
+        assert metrics["false_negative_rate"] == round(
+            metrics["false_negatives"] / positive_count, 4
+        )
+        assert len(metrics["false_positive_item_ids"]) == metrics["false_positives"]
+        assert len(metrics["false_negative_item_ids"]) == metrics["false_negatives"]
 
 
 def test_vlm_eval_sdk_benchmark_returns_report() -> None:

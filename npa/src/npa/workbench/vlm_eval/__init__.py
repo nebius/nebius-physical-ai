@@ -61,6 +61,8 @@ LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
 JUDGE_COMPARISON_RESULT_FILENAME = "vlm_judge_disagreement.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
+LEGACY_BENCHMARK_REPORT_SCHEMA_VERSION = "npa_vlm_eval_benchmark_report_v1"
+BENCHMARK_REPORT_SCHEMA_VERSION = "npa_vlm_eval_benchmark_report_v2"
 EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v2"
 JUDGE_COMPARISON_SCHEMA_VERSION = "npa_vlm_judge_comparison_v1"
 HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
@@ -458,6 +460,44 @@ class VlmBenchmarkConfig:
 
 
 @dataclass(frozen=True)
+class VlmBenchmarkConfusionRow:
+    """Store predicted-label counts for one actual-label class.
+
+    Args:
+        predicted_positive: Cases predicted as passing.
+        predicted_negative: Cases predicted as failing.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    predicted_positive: int
+    predicted_negative: int
+
+
+@dataclass(frozen=True)
+class VlmBenchmarkConfusionMatrix:
+    """Store the complete actual-by-predicted 2x2 benchmark matrix.
+
+    Args:
+        actual_positive: Prediction counts for positive labeled examples.
+        actual_negative: Prediction counts for negative labeled examples.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    actual_positive: VlmBenchmarkConfusionRow
+    actual_negative: VlmBenchmarkConfusionRow
+
+
+@dataclass(frozen=True)
 class VlmBenchmarkMetrics:
     total: int
     correct: int
@@ -470,6 +510,11 @@ class VlmBenchmarkMetrics:
     true_negatives: int
     false_positives: int
     false_negatives: int
+    confusion_matrix: VlmBenchmarkConfusionMatrix | None = None
+    false_positive_rate: float | None = None
+    false_negative_rate: float | None = None
+    false_positive_item_ids: tuple[str, ...] = ()
+    false_negative_item_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -508,12 +553,15 @@ class VlmBenchmarkReport:
     sweep: dict[str, Any]
     best_config: VlmBenchmarkConfigResult
     ranked_configs: list[VlmBenchmarkConfigResult]
+    schema_version: str = LEGACY_BENCHMARK_REPORT_SCHEMA_VERSION
 
 
 __all__ = [
     "VlmBenchmarkCaseResult",
     "VlmBenchmarkConfig",
     "VlmBenchmarkConfigResult",
+    "VlmBenchmarkConfusionMatrix",
+    "VlmBenchmarkConfusionRow",
     "VlmBenchmarkDataset",
     "VlmBenchmarkItem",
     "VlmBenchmarkMetrics",
@@ -652,6 +700,7 @@ def benchmark_vlm_eval(
         },
         best_config=ranked[0],
         ranked_configs=ranked,
+        schema_version=BENCHMARK_REPORT_SCHEMA_VERSION,
     )
 
 
@@ -706,6 +755,7 @@ def load_benchmark_dataset(
         )
         for index, raw_item in enumerate(raw_items, start=1)
     ]
+    _require_unique_benchmark_item_ids(items)
     return VlmBenchmarkDataset(
         path=dataset,
         format=dataset_format,
@@ -1903,26 +1953,65 @@ def _run_benchmark_case(
     )
 
 
+def _benchmark_outcome_name(result: VlmBenchmarkCaseResult) -> str:
+    if result.expected_label:
+        return "true_positive" if result.predicted_label else "false_negative"
+    return "false_positive" if result.predicted_label else "true_negative"
+
+
+def _benchmark_outcome_buckets(
+    results: Sequence[VlmBenchmarkCaseResult],
+) -> dict[str, list[VlmBenchmarkCaseResult]]:
+    buckets = {
+        name: []
+        for name in (
+            "true_positive",
+            "true_negative",
+            "false_positive",
+            "false_negative",
+        )
+    }
+    for result in results:
+        buckets[_benchmark_outcome_name(result)].append(result)
+    return buckets
+
+
+def _benchmark_confusion_matrix(
+    *,
+    true_positives: int,
+    true_negatives: int,
+    false_positives: int,
+    false_negatives: int,
+) -> VlmBenchmarkConfusionMatrix:
+    return VlmBenchmarkConfusionMatrix(
+        actual_positive=VlmBenchmarkConfusionRow(
+            predicted_positive=true_positives,
+            predicted_negative=false_negatives,
+        ),
+        actual_negative=VlmBenchmarkConfusionRow(
+            predicted_positive=false_positives,
+            predicted_negative=true_negatives,
+        ),
+    )
+
+
+def _benchmark_bucket_ids(
+    buckets: dict[str, list[VlmBenchmarkCaseResult]], name: str
+) -> tuple[str, ...]:
+    return tuple(result.item_id for result in buckets[name])
+
+
 def _benchmark_metrics(
     results: Sequence[VlmBenchmarkCaseResult],
 ) -> VlmBenchmarkMetrics:
-    total = len(results)
-    if total == 0:
+    if not results:
         raise VlmEvalError("benchmark dataset must include at least one item")
-    tp = sum(
-        1 for result in results if result.expected_label and result.predicted_label
-    )
-    tn = sum(
-        1
-        for result in results
-        if not result.expected_label and not result.predicted_label
-    )
-    fp = sum(
-        1 for result in results if not result.expected_label and result.predicted_label
-    )
-    fn = sum(
-        1 for result in results if result.expected_label and not result.predicted_label
-    )
+    buckets = _benchmark_outcome_buckets(results)
+    tp = len(buckets["true_positive"])
+    tn = len(buckets["true_negative"])
+    fp = len(buckets["false_positive"])
+    fn = len(buckets["false_negative"])
+    total = len(results)
     correct = tp + tn
     precision = _safe_ratio(tp, tp + fp)
     recall = _safe_ratio(tp, tp + fn)
@@ -1942,6 +2031,16 @@ def _benchmark_metrics(
         true_negatives=tn,
         false_positives=fp,
         false_negatives=fn,
+        confusion_matrix=_benchmark_confusion_matrix(
+            true_positives=tp,
+            true_negatives=tn,
+            false_positives=fp,
+            false_negatives=fn,
+        ),
+        false_positive_rate=_safe_ratio(fp, fp + tn),
+        false_negative_rate=_safe_ratio(fn, fn + tp),
+        false_positive_item_ids=_benchmark_bucket_ids(buckets, "false_positive"),
+        false_negative_item_ids=_benchmark_bucket_ids(buckets, "false_negative"),
     )
 
 
@@ -2039,6 +2138,20 @@ def _parse_benchmark_item(
         task=str(raw_item.get("task") or raw_item.get("instruction") or default_task),
         fixture_score=fixture_score,
     )
+
+
+def _require_unique_benchmark_item_ids(items: Sequence[VlmBenchmarkItem]) -> None:
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for item in items:
+        if item.id in seen and item.id not in duplicates:
+            duplicates.append(item.id)
+        seen.add(item.id)
+    if duplicates:
+        joined = ", ".join(repr(item_id) for item_id in duplicates)
+        raise VlmEvalError(
+            f"benchmark dataset item IDs must be unique; repeated: {joined}"
+        )
 
 
 def _coerce_expected_label(value: Any) -> bool:
