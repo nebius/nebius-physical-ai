@@ -15,6 +15,11 @@ a versioned heading when a release is cut.
   uncertainty, order effects, or material dimension disagreement. The record is
   audit-only, retains objective and matched-view references as unverified
   metadata, and never changes the normalized task-completion score or gate.
+- A retained six-attempt hosted contract smoke failed closed: four HTTP-200
+  outputs violated the strict response schema, and two paired MiniCPM requests
+  exceeded that provider interface's ten-image limit. No report was accepted
+  and no score or gate changed. See the
+  [rich visual review evidence](docs/workbench/evidence/vlm-rich-visual-review.md).
 
 ### VLM rollout gates require visible terminal evidence
 
