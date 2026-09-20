@@ -46,7 +46,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.cosmos import app as cosmos_app
     from npa.cli.fiftyone import app as fiftyone_app
     from npa.cli.genesis import app as genesis_app
-    from npa.cli.newton import app as newton_app
+    from npa.cli.workbench.newton import app as newton_app
     from npa.cli.groot import app as groot_app
     from npa.cli.isaac_lab import app as isaac_lab_app
     from npa.cli.nurec import app as nurec_app

@@ -1,8 +1,9 @@
 """Tests for the Newton physics engine workbench surface (issue #499).
 
 Covers:
-- workbench CLI wrappers import correctly via ``npa._sdk.make_cli_wrapper``
-- the ``npa.cli.newton`` Typer app registers the three stub commands
+- the workbench-first SDK surface (``npa.workbench.newton``) re-exports the
+  pipeline stages; no ``make_cli_wrapper`` indirection for new tools
+- the ``npa.cli.workbench.newton`` Typer app registers the three stub commands
 - the workflow module exposes ``train_teacher`` / ``generate_demos`` / ``evaluate``
   with argument validation, stub-manifest plumbing, and clear
   not-yet-implemented errors
@@ -19,24 +20,36 @@ import pytest
 typer = pytest.importorskip("typer")
 
 
-def test_workbench_wrappers_import():
-    import npa.workbench.newton as wb
+def test_workbench_surface_is_pipeline_first():
+    """The SDK surface re-exports the pipeline stages directly.
 
-    for name, module, callback in [
-        ("train_teacher", "npa.cli.newton", "train_teacher_cmd"),
-        ("generate_demos", "npa.cli.newton", "generate_demos_cmd"),
-        ("eval", "npa.cli.newton", "eval_cmd"),
-    ]:
-        wrapper = getattr(wb, name)
-        assert callable(wrapper)
-        assert wrapper.__npa_cli_module__ == module
-        assert wrapper.__npa_cli_callback__ == callback
-        assert wrapper.__name__ == callback.removesuffix("_cmd")
-    assert set(wb.__all__) == {"train_teacher", "generate_demos", "eval"}
+    New tools must not route through ``npa._sdk.make_cli_wrapper``: the
+    workbench package is the primary surface and the CLI is a thin client.
+    """
+    import npa.workbench.newton as wb
+    from npa.workflows.byof import newton_pipeline as pipe
+
+    assert wb.train_teacher is pipe.train_teacher
+    assert wb.generate_demos is pipe.generate_demos
+    assert wb.evaluate is pipe.evaluate
+    assert wb.eval is pipe.evaluate
+    assert wb.NewtonPipelineError is pipe.NewtonPipelineError
+    assert not any(
+        hasattr(getattr(wb, name), "__npa_cli_module__")
+        for name in ("train_teacher", "generate_demos", "eval")
+    )
+    assert set(wb.__all__) == {
+        "NewtonPipelineError",
+        "train_teacher",
+        "generate_demos",
+        "evaluate",
+        "eval",
+        "newton_version",
+    }
 
 
 def test_cli_app_registers_stub_commands():
-    import npa.cli.newton as cli
+    import npa.cli.workbench.newton as cli
 
     assert cli.app.info.name == "newton"
     command_names = {cmd.name for cmd in cli.app.registered_commands}
@@ -46,7 +59,7 @@ def test_cli_app_registers_stub_commands():
 def test_cli_stubs_exit_not_implemented():
     from typer.testing import CliRunner
 
-    import npa.cli.newton as cli
+    import npa.cli.workbench.newton as cli
 
     runner = CliRunner()
     cases = [
