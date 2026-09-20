@@ -147,11 +147,11 @@ def _agent_inventory_credential_context() -> tuple[dict[str, str], str, str, str
     profile = str(os.environ.get("NPA_NEBIUS_PROFILE") or "cursor-sa").strip()
     env["HOME"] = str(Path(config_path).parent.parent) if config_path else "/root"
     env["NEBIUS_PROFILE"] = profile
-    try:
-        metadata_available = Path("/mnt/cloud-metadata/token").is_file()
-    except OSError:
-        metadata_available = False
-    source = "instance_metadata" if metadata_available else "configured_profile"
+    source = str(
+        os.environ.get("NPA_NEBIUS_CREDENTIAL_SOURCE") or "configured_profile"
+    ).strip()
+    if source not in {"configured_profile", "instance_metadata"}:
+        source = "configured_profile"
     return env, profile, config_path, source
 
 
@@ -181,11 +181,7 @@ def _agent_nebius_json(args: list[str], *, operation: str) -> dict:
     # bootstrap token, metadata credentials rotate and reflect the running VM's
     # current tenant/project grants.
     env, profile, config_path, _source = _agent_inventory_credential_context()
-    try:
-        config_available = bool(config_path and Path(config_path).is_file())
-    except OSError:
-        config_available = False
-    if config_available:
+    if config_path:
         command.extend(["--config", config_path])
     if profile:
         command.extend(["--profile", profile])
