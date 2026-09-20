@@ -225,6 +225,10 @@ class ScanReport:
     #: True when only the layer history was inspected. Recorded in the JSON report so a
     #: consumer can never mistake a fast gate result for a full-filesystem proof.
     history_only: bool = False
+    #: Metadata blobs referenced as layers that carry no filesystem, so there was
+    #: nothing to walk. Recorded rather than silently dropped: a reviewer needs to
+    #: see that something in the archive was present but not scanned as a layer.
+    skipped_metadata_layers: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -250,6 +254,10 @@ class ScanReport:
             "history_hits": self.history_hits,
             "allowlisted_paths_present": sorted(self.allowlisted_hits),
             "weight_shaped_paths": sorted(self.weight_shaped_paths),
+            # Build-metadata blobs that a manifest lists as layers. They were proved
+            # present at their declared size but carry no filesystem, so a reviewer can
+            # see exactly what the walk did not cover instead of having to infer it.
+            "skipped_metadata_layers": self.skipped_metadata_layers,
         }
 
 
@@ -340,6 +348,17 @@ def _require_saved_config(name, documents):
         )
 
 
+#: Layer media types that carry build metadata instead of filesystem content.
+#: BuildKit, which is the default builder, records SLSA provenance and SBOMs as
+#: in-toto statements in a separate attestation manifest alongside the platform
+#: image. Those blobs are JSON rather than tar, so nothing can scan them as a
+#: layer, and they are never extracted into a container root filesystem, so they
+#: cannot deliver a restricted runtime payload. Requiring them to have been
+#: scanned rejects the entire image and blocks the byte-level verification that
+#: gates publication.
+NON_FILESYSTEM_LAYER_MEDIA_TYPES = frozenset({"application/vnd.in-toto+json"})
+
+
 def _require_saved_layer(name, scanned_layers):
     if name not in scanned_layers:
         raise RuntimeError(
@@ -382,7 +401,9 @@ def _saved_descriptor_path(descriptor, sizes):
     return name
 
 
-def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
+def _check_oci_manifest(
+    name, documents, scanned_layers, sizes, ancestors=(), attestations=None
+):
     if name in ancestors:
         raise RuntimeError("Invalid OCI image archive: cyclic index reference")
     document = documents.get(name)
@@ -397,7 +418,12 @@ def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
         for descriptor in children:
             child = _saved_descriptor_path(descriptor, sizes)
             _check_oci_manifest(
-                child, documents, scanned_layers, sizes, (*ancestors, name)
+                child,
+                documents,
+                scanned_layers,
+                sizes,
+                (*ancestors, name),
+                attestations,
             )
         return
     config = _saved_descriptor_path(document.get("config"), sizes)
@@ -407,10 +433,19 @@ def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
         raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
     for descriptor in layers:
         layer = _saved_descriptor_path(descriptor, sizes)
+        if descriptor.get("mediaType") in NON_FILESYSTEM_LAYER_MEDIA_TYPES:
+            # _saved_descriptor_path already proved the blob is present at the
+            # declared size. It is metadata, so there is no filesystem to walk;
+            # record it so the report shows what was skipped and why.
+            if attestations is not None:
+                attestations.append(
+                    {"member": layer, "media_type": descriptor["mediaType"]}
+                )
+            continue
         _require_saved_layer(layer, scanned_layers)
 
 
-def _check_saved_image(documents, scanned_layers, sizes):
+def _check_saved_image(documents, scanned_layers, sizes, attestations=None):
     if "manifest.json" not in documents and "index.json" not in documents:
         raise RuntimeError("Incomplete image archive: no Docker or OCI manifest")
     if "manifest.json" in documents:
@@ -421,10 +456,12 @@ def _check_saved_image(documents, scanned_layers, sizes):
             raise RuntimeError(
                 "Incomplete image archive: missing or invalid oci-layout"
             )
-        _check_oci_manifest("index.json", documents, scanned_layers, sizes)
+        _check_oci_manifest(
+            "index.json", documents, scanned_layers, sizes, (), attestations
+        )
 
 
-def _iter_saved_image(fileobj, *, mode: str):
+def _iter_saved_image(fileobj, *, mode: str, attestations=None):
     """Stream layer paths and require complete Docker/OCI references before success."""
     documents, scanned_layers, sizes = {}, set(), {}
     with tarfile.open(fileobj=fileobj, mode=mode) as archive:
@@ -440,23 +477,25 @@ def _iter_saved_image(fileobj, *, mode: str):
             assert handle is not None
             with handle:
                 yield from _iter_saved_member(handle, name, documents, scanned_layers)
-    _check_saved_image(documents, scanned_layers, sizes)
+    _check_saved_image(documents, scanned_layers, sizes, attestations)
 
 
-def _iter_tarball(tarball: Path):
+def _iter_tarball(tarball: Path, *, attestations=None):
     """Yield member names from a `docker save` tarball, including inside layer blobs."""
     with tarball.open("rb") as handle:
-        yield from _iter_saved_image(handle, mode="r")
+        yield from _iter_saved_image(handle, mode="r", attestations=attestations)
 
 
-def _iter_docker_save(image: str):
+def _iter_docker_save(image: str, *, attestations=None):
     """Stream all local image layers without materialising a second image-sized file."""
     docker = _require("docker")
     command = [docker, "save", image]
     process = subprocess.Popen(command, stdout=subprocess.PIPE)  # noqa: S603
     assert process.stdout is not None
     try:
-        yield from _iter_saved_image(process.stdout, mode="r|*")
+        yield from _iter_saved_image(
+            process.stdout, mode="r|*", attestations=attestations
+        )
     finally:
         process.stdout.close()
         returncode = process.wait()
@@ -528,13 +567,14 @@ def scan(
     as a fast gate in front of an irreversible action, never as the proof itself -- the
     full scan is what the redistribution claim actually rests on.
     """
+    attestations: list[dict[str, str]] = []
     if docker_image is not None:
         report = ScanReport(image=docker_image, source="local-docker-stream")
-        entries = () if history_only else _iter_docker_save(docker_image)
+        entries = () if history_only else _iter_docker_save(docker_image, attestations=attestations)
         history = _local_image_history(docker_image)
     elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")
-        entries = _iter_tarball(tarball)
+        entries = _iter_tarball(tarball, attestations=attestations)
         history: list[str] = []
     else:
         assert image is not None
@@ -566,6 +606,7 @@ def scan(
         if why:
             report.history_hits.append({"command": command.strip()[:400], "why": why})
 
+    report.skipped_metadata_layers = attestations
     return report
 
 
