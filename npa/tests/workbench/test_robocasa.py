@@ -442,7 +442,7 @@ def test_kitchen_trajectory_export(monkeypatch: pytest.MonkeyPatch, tmp_path) ->
         assert ws.dtype == np.uint8
         st = np.load(ep_dir / "state.npy")
         assert st.shape == (3, 16)
-        assert (ep_dir / "rollout.mp4").stat().st_size > 0
+        assert (ep_dir / "rollout.mp4").read_bytes() == b"video:4"
     assert (tmp_path / "metadata.json").exists()
     assert (tmp_path / "metrics.json").exists()
 
@@ -492,12 +492,16 @@ class _TemporalEnv(_FakeEnv):
 def test_trajectory_rows_store_observation_before_same_index_action() -> None:
     from npa.workbench.robocasa.capabilities import _collect_trajectory_episode
 
-    arrays, episode = _collect_trajectory_episode(_TemporalEnv(), iterations=3, seed=7)
+    arrays, episode, video_frames = _collect_trajectory_episode(
+        _TemporalEnv(), iterations=3, seed=7
+    )
 
     assert [float(state[0]) for state in arrays["state"]] == [0.0, 1.0, 2.0]
     assert [float(action[0]) for action in arrays["actions"]] == [10.0, 11.0, 12.0]
+    assert [int(frame[0, 0, 0]) for frame in video_frames] == [0, 1, 2, 3]
     assert episode["seed"] == 7
     assert episode["length"] == 3
+    assert episode["video_frames"] == 4
     assert episode["success"] is False
 
 
@@ -559,14 +563,146 @@ def test_eval_rejects_non_finite_initial_state() -> None:
         )
 
 
+def test_robot_state_requires_the_pinned_panda_omron_layout() -> None:
+    from npa.workbench.robocasa.capabilities import _obs_state
+
+    observation = _FakeEnv()._obs()
+    observation.pop("state.gripper_qpos")
+
+    with pytest.raises(RoboCasaError, match="missing robot state keys"):
+        _obs_state(observation)
+
+
 def test_matched_eval_rejects_different_initial_workspace_frames() -> None:
     from npa.workbench.robocasa.capabilities import _require_matched_initial_state
 
     with pytest.raises(RoboCasaError, match="initial workspace frames do not match"):
         _require_matched_initial_state(
-            {"initial_workspace_sha256": "policy"},
-            {"initial_workspace_sha256": "baseline"},
+            {
+                "initial_workspace_sha256": "policy",
+                "initial_state_sha256": "same",
+            },
+            {
+                "initial_workspace_sha256": "baseline",
+                "initial_state_sha256": "same",
+            },
         )
+
+
+def test_matched_eval_rejects_different_initial_robot_states() -> None:
+    from npa.workbench.robocasa.capabilities import _require_matched_initial_state
+
+    with pytest.raises(RoboCasaError, match="initial robot states do not match"):
+        _require_matched_initial_state(
+            {
+                "initial_workspace_sha256": "same",
+                "initial_state_sha256": "policy",
+            },
+            {
+                "initial_workspace_sha256": "same",
+                "initial_state_sha256": "baseline",
+            },
+        )
+
+
+def test_act_selector_maps_pixels_state_and_distinct_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.robocasa.capabilities import _act_action_selector
+
+    class FakeTensor:
+        def __init__(self, value) -> None:
+            self.value = np.asarray(value)
+
+        @property
+        def shape(self):
+            return self.value.shape
+
+        def permute(self, *axes):
+            return FakeTensor(self.value.transpose(axes))
+
+        def float(self):
+            return FakeTensor(self.value.astype(np.float32))
+
+        def div(self, value):
+            return FakeTensor(self.value / value)
+
+        def unsqueeze(self, axis):
+            return FakeTensor(np.expand_dims(self.value, axis))
+
+        def to(self, _device):
+            return self
+
+        def squeeze(self, axis):
+            return FakeTensor(np.squeeze(self.value, axis=axis))
+
+        def detach(self):
+            return self
+
+        def cpu(self):
+            return self
+
+        def __array__(self, dtype=None):
+            return np.asarray(self.value, dtype=dtype)
+
+    class FakeTorch:
+        @staticmethod
+        def from_numpy(value):
+            return FakeTensor(value)
+
+        @staticmethod
+        def inference_mode():
+            class Context:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, *_args):
+                    return False
+
+            return Context()
+
+    class FakePolicy:
+        observation = None
+
+        def select_action(self, observation):
+            self.observation = observation
+            return FakeTensor(np.full((1, 7), 0.25, dtype=np.float32))
+
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
+    policy = FakePolicy()
+    selector = _act_action_selector(
+        (policy, "cpu", lambda value: value, lambda value: value, FakeTorch)
+    )
+
+    observation = _FakeEnv()._obs()
+    observation["video.robot0_agentview_left"].fill(255)
+    observation["video.robot0_eye_in_hand"].fill(255)
+    for index, key in enumerate(
+        (
+            "state.base_position",
+            "state.base_rotation",
+            "state.end_effector_position_relative",
+            "state.end_effector_rotation_relative",
+            "state.gripper_qpos",
+        ),
+        start=1,
+    ):
+        observation[key].fill(index)
+    action = selector(_FakeEnv(), observation)
+
+    assert set(policy.observation) == {
+        "observation.images.workspace",
+        "observation.images.wrist",
+        "observation.state",
+    }
+    assert policy.observation["observation.images.workspace"].shape == (1, 3, 64, 64)
+    assert policy.observation["observation.images.wrist"].shape == (1, 3, 64, 64)
+    assert policy.observation["observation.state"].shape == (1, 16)
+    assert np.all(policy.observation["observation.images.workspace"].value == 1.0)
+    assert policy.observation["observation.state"].value.tolist() == [
+        [1.0] * 3 + [2.0] * 4 + [3.0] * 3 + [4.0] * 4 + [5.0] * 2
+    ]
+    assert np.asarray(action).tolist() == pytest.approx([0.25] * 7)
 
 
 def test_required_video_fails_closed(
@@ -640,6 +776,8 @@ def test_kitchen_trajectory_export_records_panda_omron_multitask_metadata(
     metadata = json.loads((tmp_path / "metadata.json").read_text())
     assert result["embodiment"] == "PandaOmron"
     assert metadata["robot_type"] == "panda_omron"
+    assert metadata["state_dim"] == 16
+    assert len(metadata["state_keys"]) == 5
     assert metadata["task_env_ids"] == ["robocasa/TrainA", "robocasa/TrainB"]
     assert [episode["env_id"] for episode in metadata["episodes"]] == [
         "robocasa/TrainA",
@@ -674,6 +812,8 @@ def test_checkpoint_identity_hashes_exact_pretrained_model_separately(tmp_path) 
     checkpoint.mkdir(parents=True)
     (checkpoint / "config.json").write_text('{"type":"act"}')
     (checkpoint / "model.safetensors").write_bytes(b"real-act-weights")
+    (tmp_path / "config.json").write_text('{"type":"act"}')
+    (tmp_path / "model.safetensors").write_bytes(b"flat-upload-copy")
     (tmp_path / "training.log").write_text("first log")
 
     resolved, checkpoint_sha, first_tree_sha = _checkpoint_identity(tmp_path)
@@ -685,13 +825,23 @@ def test_checkpoint_identity_hashes_exact_pretrained_model_separately(tmp_path) 
     assert first_tree_sha != second_tree_sha
 
 
+def test_checkpoint_identity_rejects_ambiguous_numbered_checkpoints(tmp_path) -> None:
+    from npa.workbench.robocasa.capabilities import _checkpoint_identity
+
+    for step in ("000100", "000200"):
+        checkpoint = tmp_path / "checkpoints" / step / "pretrained_model"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "config.json").write_text('{"type":"act"}')
+        (checkpoint / "model.safetensors").write_bytes(step.encode())
+
+    with pytest.raises(RoboCasaError, match="multiple loadable pretrained_model"):
+        _checkpoint_identity(tmp_path)
+
+
 def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from npa.workbench.robocasa.capabilities import (
-        _random_action_selector,
-        kitchen_policy_eval,
-    )
+    from npa.workbench.robocasa.capabilities import kitchen_policy_eval
 
     class SuccessfulEnv(_TemporalEnv):
         def step(self, action):
@@ -724,7 +874,7 @@ def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
     )
     monkeypatch.setattr(
         "npa.workbench.robocasa.capabilities._act_action_selector",
-        lambda _runtime: _random_action_selector,
+        lambda _runtime: lambda _env, _observation: np.full(7, 0.25, dtype=np.float32),
     )
     _install_fake_video_writer(monkeypatch)
 
@@ -740,6 +890,7 @@ def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
     )
 
     assert result["success_rate"] == 1.0
+    assert result["checkpoint_selection"] == "."
     assert result["baseline_success_rate"] == 1.0
     assert result["success_rate_delta"] == 0.0
     assert result["paired_outcomes"] == {
@@ -753,6 +904,17 @@ def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
         == pair["random_baseline"]["initial_workspace_sha256"]
         for pair in result["paired_episodes"]
     )
+    assert all(
+        pair["policy"]["initial_state_sha256"]
+        == pair["random_baseline"]["initial_state_sha256"]
+        for pair in result["paired_episodes"]
+    )
+    assert all(
+        pair["policy"]["action_sha256"] != pair["random_baseline"]["action_sha256"]
+        for pair in result["paired_episodes"]
+    )
+    assert result["split_proof"]["configured_task_sets_disjoint"] is True
+    assert result["split_proof"]["checkpoint_training_tasks_verified"] is False
     assert all(
         episode["success_sources"] == ["binary_reward", "environment._check_success"]
         for episode in result["episodes"]

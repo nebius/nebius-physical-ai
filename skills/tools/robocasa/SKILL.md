@@ -94,10 +94,13 @@ Trajectory rows use the observation-before-action convention required by
 behavior cloning. The checked-in workflow deliberately labels its source as a
 seeded random-action baseline rather than expert demonstrations.
 
-Policy evaluation runs the exact ACT checkpoint and a random-action arm on the
-same held-out task IDs and reset seeds. It fails when paired initial workspace
-frames do not match, when native success signals disagree, when actions or
-states are non-finite, or when either arm does not produce its MP4. Use
+Policy evaluation runs one unambiguous exact ACT checkpoint and a random-action
+arm on the same held-out task IDs and reset seeds. It fails when paired initial
+workspace frames or robot-state hashes do not match, when native success
+signals disagree, when actions or states are non-finite, or when either arm does
+not produce its MP4. The split record proves the configured task sets are
+disjoint but explicitly does not claim the checkpoint's training tasks were
+independently recovered. Use
 `success_rate_delta` and the paired win/loss/tie counts for comparison; do not
 turn a zero or negative delta into a policy-improvement claim.
 

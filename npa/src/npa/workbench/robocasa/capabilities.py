@@ -46,6 +46,13 @@ SUPPORTED_CAPABILITIES = {
 
 ROBOCASA_EMBODIMENT = "PandaOmron"
 ROBOCASA_OBJECT_REGISTRIES = ("objaverse",)
+ROBOCASA_STATE_KEYS = (
+    "state.base_position",
+    "state.base_rotation",
+    "state.end_effector_position_relative",
+    "state.end_effector_rotation_relative",
+    "state.gripper_qpos",
+)
 
 
 class RoboCasaError(RuntimeError):
@@ -547,13 +554,13 @@ def _collect_trajectory_episodes(
                 download_assets=download_assets and episode_index == 0,
             )
             episode_seed = seed + episode_index if seed is not None else episode_index
-            arrays, outcome = _collect_trajectory_episode(
+            arrays, outcome, video_frames = _collect_trajectory_episode(
                 env, iterations=iterations, seed=episode_seed
             )
             if output_dir is not None:
                 episode_dir = output_dir / f"episode_{episode_index:04d}"
                 episode_dir.mkdir(parents=True, exist_ok=True)
-                _write_trajectory_artifacts(episode_dir, arrays)
+                _write_trajectory_artifacts(episode_dir, arrays, video_frames)
             episodes.append(
                 _trajectory_episode_identity(episode_index, episode_env_id, outcome)
             )
@@ -601,7 +608,7 @@ def _trajectory_export_result(
 
 def _collect_trajectory_episode(
     env: Any, *, iterations: int, seed: int
-) -> tuple[dict[str, list[Any]], dict[str, Any]]:
+) -> tuple[dict[str, list[Any]], dict[str, Any], list[np.ndarray]]:
     """Collect causally aligned observation/action rows from one random rollout."""
     _seed_action_space(env.action_space, seed)
     observation, _ = env.reset(seed=seed)
@@ -621,8 +628,11 @@ def _collect_trajectory_episode(
             break
     terminal_frame = _obs_image(observation, "video.robot0_agentview_left")
     _validate_trajectory_arrays(arrays)
-    return arrays, _trajectory_episode_record(
-        arrays, outcome, terminal_frame, seed=seed
+    video_frames = [*arrays["workspace"], terminal_frame]
+    return (
+        arrays,
+        _trajectory_episode_record(arrays, outcome, terminal_frame, seed=seed),
+        video_frames,
     )
 
 
@@ -686,19 +696,24 @@ def _trajectory_episode_record(
         "success_sources": sorted(outcome["success_sources"]),
         "terminated": outcome["terminated"],
         "truncated": outcome["truncated"],
+        "state_keys": list(ROBOCASA_STATE_KEYS),
+        "state_dim": int(np.asarray(arrays["state"][0]).size),
         "initial_workspace_sha256": _sha256_array(workspace[0]),
         "terminal_workspace_sha256": _sha256_array(terminal_frame),
+        "video_frames": len(workspace) + 1,
     }
 
 
 def _write_trajectory_artifacts(
-    episode_dir: Path, arrays: dict[str, list[Any]]
+    episode_dir: Path,
+    arrays: dict[str, list[Any]],
+    video_frames: list[np.ndarray],
 ) -> None:
     np.save(episode_dir / "obs_workspace.npy", np.stack(arrays["workspace"]))
     np.save(episode_dir / "obs_wrist.npy", np.stack(arrays["wrist"]))
     np.save(episode_dir / "state.npy", np.stack(arrays["state"]))
     np.save(episode_dir / "actions.npy", np.stack(arrays["actions"]))
-    _write_required_video(arrays["workspace"], episode_dir / "rollout.mp4")
+    _write_required_video(video_frames, episode_dir / "rollout.mp4")
 
 
 def _validate_trajectory_arrays(arrays: dict[str, list[Any]]) -> None:
@@ -740,18 +755,15 @@ def _obs_image(obs: dict[str, Any], key: str) -> Any:
 def _obs_state(obs: dict[str, Any]) -> np.ndarray:
     """Build a float32 robot-state vector from a RoboCasa observation."""
     parts: list[np.ndarray] = []
-    for key in (
-        "state.base_position",
-        "state.base_rotation",
-        "state.end_effector_position_relative",
-        "state.end_effector_rotation_relative",
-        "state.gripper_qpos",
-    ):
+    missing: list[str] = []
+    for key in ROBOCASA_STATE_KEYS:
         value = obs.get(key)
-        if value is not None:
-            parts.append(np.asarray(value, dtype=np.float32).reshape(-1))
-    if not parts:
-        raise RoboCasaError("RoboCasa observation has no robot state keys")
+        if value is None:
+            missing.append(key)
+            continue
+        parts.append(np.asarray(value, dtype=np.float32).reshape(-1))
+    if missing:
+        raise RoboCasaError(f"RoboCasa observation missing robot state keys: {missing}")
     return np.concatenate(parts)
 
 
@@ -769,6 +781,8 @@ def _write_run_metadata(
         "policy": "random_action_baseline",
         "embodiment": ROBOCASA_EMBODIMENT,
         "robot_type": "panda_omron",
+        "state_keys": list(ROBOCASA_STATE_KEYS),
+        "state_dim": int(episodes[0]["state_dim"]) if episodes else 0,
         "task_env_ids": sorted({str(ep["env_id"]) for ep in episodes}),
     }
     (output_dir / "metadata.json").write_text(
@@ -840,13 +854,31 @@ def _download_s3_tree(uri: str, destination: Path) -> Path:
 
 
 def _resolve_pretrained_dir(root: Path) -> Path:
-    candidates = [root, *root.rglob("pretrained_model")]
-    for candidate in candidates:
-        if (candidate / "config.json").is_file() and any(
+    def is_loadable(candidate: Path) -> bool:
+        return (candidate / "config.json").is_file() and any(
             (candidate / name).is_file()
             for name in ("model.safetensors", "pytorch_model.bin")
-        ):
-            return candidate
+        )
+
+    preferred = root / "checkpoints" / "last" / "pretrained_model"
+    if is_loadable(preferred):
+        return preferred
+
+    nested = sorted(
+        candidate
+        for candidate in root.rglob("pretrained_model")
+        if candidate != preferred and is_loadable(candidate)
+    )
+    if len(nested) == 1:
+        return nested[0]
+    if len(nested) > 1:
+        choices = [candidate.relative_to(root).as_posix() for candidate in nested]
+        raise RoboCasaError(
+            "exact checkpoint prefix contains multiple loadable pretrained_model "
+            f"directories without checkpoints/last: {choices}"
+        )
+    if is_loadable(root):
+        return root
     raise RoboCasaError("exact checkpoint contains no loadable pretrained_model")
 
 
@@ -994,7 +1026,8 @@ def _rollout_eval_episode(
     observation: dict[str, Any],
 ) -> tuple[list[np.ndarray], dict[str, Any]]:
     frames = [_obs_image(observation, "video.robot0_agentview_left")]
-    _validated_finite("robot state", _obs_state(observation))
+    initial_state = _validated_finite("robot state", _obs_state(observation))
+    terminal_state = initial_state
     outcome = _empty_episode_outcome()
     action_digest = hashlib.sha256()
     steps = 0
@@ -1004,12 +1037,19 @@ def _rollout_eval_episode(
         action_digest.update(flat.tobytes())
         observation, reward, terminated, truncated, info = env.step(action)
         frames.append(_obs_image(observation, "video.robot0_agentview_left"))
-        _validated_finite("robot state", _obs_state(observation))
+        terminal_state = _validated_finite("robot state", _obs_state(observation))
         _update_episode_outcome(outcome, env, reward, terminated, truncated, info)
         steps += 1
         if terminated or truncated:
             break
-    return frames, _eval_episode_record(frames, outcome, steps, action_digest)
+    return frames, _eval_episode_record(
+        frames,
+        outcome,
+        steps,
+        action_digest,
+        initial_state=initial_state,
+        terminal_state=terminal_state,
+    )
 
 
 def _eval_episode_record(
@@ -1017,6 +1057,9 @@ def _eval_episode_record(
     outcome: dict[str, Any],
     steps: int,
     action_digest: Any,
+    *,
+    initial_state: np.ndarray,
+    terminal_state: np.ndarray,
 ) -> dict[str, Any]:
     return {
         "steps": steps,
@@ -1026,6 +1069,10 @@ def _eval_episode_record(
         "success_sources": sorted(outcome["success_sources"]),
         "terminated": outcome["terminated"],
         "truncated": outcome["truncated"],
+        "state_keys": list(ROBOCASA_STATE_KEYS),
+        "state_dim": int(initial_state.size),
+        "initial_state_sha256": _sha256_array(initial_state),
+        "terminal_state_sha256": _sha256_array(terminal_state),
         "initial_workspace_sha256": _sha256_array(frames[0]),
         "terminal_workspace_sha256": _sha256_array(frames[-1]),
         "action_sha256": action_digest.hexdigest(),
@@ -1165,6 +1212,7 @@ def _evaluate_policy_checkpoint(
         pretrained, checkpoint_sha256, artifact_tree_sha256 = _checkpoint_identity(
             checkpoint_root
         )
+        checkpoint_selection = pretrained.relative_to(checkpoint_root).as_posix()
         runtime = _load_act_policy(pretrained)
         policy, *_ = runtime
         selector = _act_action_selector(runtime)
@@ -1178,6 +1226,7 @@ def _evaluate_policy_checkpoint(
         )
     return {
         "checkpoint_sha256": checkpoint_sha256,
+        "checkpoint_selection": checkpoint_selection,
         "artifact_tree_sha256": artifact_tree_sha256,
         "pairs": pairs,
     }
@@ -1190,9 +1239,10 @@ def _policy_eval_split_proof(
     return {
         "train_env_ids": train_ids,
         "heldout_env_ids": heldout_ids,
-        "task_sets_disjoint": task_sets_disjoint,
-        "episode_sets_disjoint_by_task": task_sets_disjoint,
-        "train_task_set_sha256": hashlib.sha256(
+        "configured_task_sets_disjoint": task_sets_disjoint,
+        "basis": "caller-declared task ids plus held-out evaluation manifest",
+        "checkpoint_training_tasks_verified": False,
+        "declared_train_task_set_sha256": hashlib.sha256(
             json.dumps(sorted(train_ids), separators=(",", ":")).encode()
         ).hexdigest(),
         "heldout_task_set_sha256": hashlib.sha256(
@@ -1221,6 +1271,7 @@ def _policy_eval_result(
         "embodiment": ROBOCASA_EMBODIMENT,
         "checkpoint_uri": checkpoint_uri,
         "checkpoint_sha256": execution["checkpoint_sha256"],
+        "checkpoint_selection": execution["checkpoint_selection"],
         "training_artifact_tree_sha256": execution["artifact_tree_sha256"],
         "checkpoint_loadable": True,
         "split_proof": _policy_eval_split_proof(
@@ -1304,6 +1355,10 @@ def _require_matched_initial_state(
     ):
         raise RoboCasaError(
             "policy and random baseline initial workspace frames do not match"
+        )
+    if policy_result["initial_state_sha256"] != baseline_result["initial_state_sha256"]:
+        raise RoboCasaError(
+            "policy and random baseline initial robot states do not match"
         )
 
 

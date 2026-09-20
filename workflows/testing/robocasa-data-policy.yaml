@@ -14,6 +14,7 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "robocasa-data-policy/{{run.id}}"
+  source_overlay: true
 
   robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
   robocasa_token_env: ROBOCASA_TOKEN
@@ -39,14 +40,11 @@ config:
   train_batch_size: "8"
   policy_device: cuda
 
-  policy_checkpoint: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
   rollout_output_dir: /tmp/lerobot_rollout
   eval_iterations: "100"
   rollout_episodes: "6"
 
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/trajectories/"
-  trajectory_uri: "s3://{{config.bucket}}/{{config.prefix}}/trajectories/"
-  dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
   artifacts_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/"
   run_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
@@ -84,7 +82,7 @@ states:
     toolRef: workbench.robocasa.trajectory_export
     resources: sim-gpu
     outputs:
-      - uri: "{{config.trajectory_uri}}"
+      - uri: "{{config.output_uri}}"
         schema: npa.robocasa.trajectory_export.v1
     next: lerobot-convert
 
@@ -98,9 +96,9 @@ states:
         - adapter
         - convert
         - --input-path
-        - "{{config.trajectory_uri}}"
+        - "{{config.output_uri}}"
         - --output-path
-        - "{{config.dataset_uri}}"
+        - "{{config.lerobot_dataset}}"
         - --fps
         - "{{config.dataset_fps}}"
         - --robot
@@ -109,10 +107,10 @@ states:
         - "{{config.dataset_task}}"
         - --task-from-metadata
     inputs:
-      - uri: "{{config.trajectory_uri}}"
+      - uri: "{{config.output_uri}}"
         schema: npa.robocasa.trajectory_export.v1
     outputs:
-      - uri: "{{config.dataset_uri}}"
+      - uri: "{{config.lerobot_dataset}}"
         schema: npa.lerobot.dataset.v3
     next: policy-train
 
@@ -145,7 +143,7 @@ states:
     resources: insights-cpu
     needs: [policy-eval]
     inputs:
-      - uri: "{{config.prefix}}"
+      - uri: "{{config.run_prefix_uri}}"
     outputs:
       - uri: "{{config.insights_uri}}"
         schema: npa.insights.store.v1

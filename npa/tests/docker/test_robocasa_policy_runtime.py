@@ -10,6 +10,7 @@ DOCKERFILE = (
     / "robocasa"
     / "Dockerfile"
 )
+BUILD_SCRIPT = DOCKERFILE.with_name("build.sh")
 
 
 def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
@@ -38,3 +39,20 @@ def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     assert "NOPASSWD" not in text
     assert "openssh-server" not in text
     assert "rsync sudo" not in text
+
+
+def test_robocasa_image_binds_committed_source_revision() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    build_script = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    assert "ARG NPA_SOURCE_SHA" in dockerfile
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in dockerfile
+    assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in dockerfile
+    assert (
+        "COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py" in dockerfile
+    )
+    assert "from npa.workbench.robocasa.service import app" in dockerfile
+    assert 'rev-parse HEAD)" != "${NPA_SOURCE_SHA}"' in build_script
+    assert "status --porcelain --untracked-files=no -- ." in build_script

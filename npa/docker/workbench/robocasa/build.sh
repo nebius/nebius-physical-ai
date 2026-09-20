@@ -36,6 +36,14 @@ if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
   exit 2
 fi
+if [[ "$(git -C "${NPA_ROOT}" rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]]; then
+  echo "ERROR: NPA_SOURCE_SHA must equal the build-context checkout HEAD" >&2
+  exit 2
+fi
+if [[ -n "$(git -C "${NPA_ROOT}" status --porcelain --untracked-files=no -- .)" ]]; then
+  echo "ERROR: commit tracked NPA build-context changes before building" >&2
+  exit 2
+fi
 
 TAG="${TAG:-dev-${NPA_SOURCE_SHA}}"
 IMAGE="${REGISTRY}/npa-robocasa:${TAG}"

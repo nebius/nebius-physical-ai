@@ -23,14 +23,17 @@ ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
 ARG ROBOCASA_REPO_REF=v1.0
 ARG ROBOSUITE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4
 ARG ROBOCASA_VERSION=0.1.0
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.base_image="${BASE_IMAGE}" \
       npa.runtime_user="ubuntu" \
-      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120"
+      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     MUJOCO_GL=egl \
@@ -89,13 +92,19 @@ RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
     && python -m pip install --no-cache-dir --no-deps -e /opt/robocasa/source
 
 # Fail the image build if the exact held-out evaluator import path is incomplete.
-RUN python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
+RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
 # Copy the shared workbench implementation into the image.
-RUN mkdir -p /app/npa/workbench
-RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py
+RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/cli
+RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py \
+    /app/npa/clients/__init__.py /app/npa/cli/__init__.py
+COPY src/npa/clients/storage.py /app/npa/clients/storage.py
+COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py
 COPY src/npa/workbench/robocasa /app/npa/workbench/robocasa
 COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
+
+RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /app /opt/robocasa

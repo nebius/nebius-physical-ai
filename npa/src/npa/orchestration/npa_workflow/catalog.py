@@ -3446,8 +3446,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Run a batch of real RoboCasa kitchen rollouts across task/env "
             "configs and export per-episode trajectories (workspace/wrist "
-            "images, robot state, actions) plus metadata, metrics, and MP4 "
-            "video to S3 for LeRobotDataset materialization."
+            "images, explicit robot-state layout, actions) plus native outcome "
+            "metadata, metrics, and terminal-inclusive MP4 video to S3 for "
+            "LeRobotDataset materialization."
         ),
         argv_template=[
             "npa",
@@ -3483,7 +3484,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Load the exact produced ACT checkpoint and evaluate it on explicitly "
             "disjoint held-out RoboCasa tasks against matched random-action "
-            "episodes, with native outcomes, videos, and hashes."
+            "episodes, checking reset frame and robot state and retaining native "
+            "outcomes, videos, selected-checkpoint identity, and hashes."
         ),
         argv_template=[
             "npa",

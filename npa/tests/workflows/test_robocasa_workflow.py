@@ -153,7 +153,19 @@ def test_data_policy_uses_panda_omron_and_disjoint_robocasa_eval() -> None:
 
 def test_data_policy_routes_raw_cpu_stages_to_native_images() -> None:
     spec = load_spec(DATA_POLICY)
+    assert spec.config["source_overlay"] is True
     assert spec.states["lerobot-convert"].resources == "convert-cpu"
     assert spec.resources["convert-cpu"]["image"] == "tool://lerobot"
     assert spec.states["insights"].resources == "insights-cpu"
     assert spec.resources["insights-cpu"]["image"] == "tool://lancedb"
+
+
+def test_data_policy_uses_one_uri_per_artifact_edge() -> None:
+    spec = load_spec(DATA_POLICY)
+
+    assert "trajectory_uri" not in spec.config
+    assert "dataset_uri" not in spec.config
+    assert spec.states["trajectory-export"].outputs[0].uri == "{{config.output_uri}}"
+    assert spec.states["lerobot-convert"].inputs[0].uri == "{{config.output_uri}}"
+    assert spec.states["lerobot-convert"].outputs[0].uri == "{{config.lerobot_dataset}}"
+    assert spec.states["insights"].inputs[0].uri == "{{config.run_prefix_uri}}"
