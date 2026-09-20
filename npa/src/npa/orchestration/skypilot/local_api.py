@@ -1081,7 +1081,13 @@ def _listener_owned(
             "isolated SkyPilot API belongs to another network namespace"
         )
     inodes = set()
-    for row in Path(f"/proc/{root_pid}/net/tcp").read_text().splitlines()[1:]:
+    try:
+        tcp_rows = Path(f"/proc/{root_pid}/net/tcp").read_text().splitlines()[1:]
+    except FileNotFoundError:
+        # The process can exit after its namespace was verified but before its
+        # listener table is read. Treat that ordinary lifecycle race as absent.
+        return False
+    for row in tcp_rows:
         fields = row.split()
         if fields[1] == f"0100007F:{selected_port:04X}" and fields[3] == "0A":
             inodes.add(fields[9])

@@ -314,6 +314,31 @@ def test_real_listener_owned_and_same_process_adopted_on_retry(local_runtime):
     ).stat().st_mode & 0o777 == 0o600
 
 
+def test_listener_owned_treats_exit_between_proc_reads_as_absent(monkeypatch):
+    pid = 731
+    process_netns = Path(f"/proc/{pid}/ns/net")
+    self_netns = Path("/proc/self/ns/net")
+    process_tcp = Path(f"/proc/{pid}/net/tcp")
+    original_readlink = Path.readlink
+    original_read_text = Path.read_text
+
+    def readlink(path: Path) -> Path:
+        if path in {process_netns, self_netns}:
+            return Path("net:[4026531840]")
+        return original_readlink(path)
+
+    def read_text(path: Path, *args, **kwargs) -> str:
+        if path == process_tcp:
+            raise FileNotFoundError(process_tcp)
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(api.sys, "platform", "linux")
+    monkeypatch.setattr(Path, "readlink", readlink)
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert not api._listener_owned({"port": 43127}, {"pid": pid})
+
+
 @pytest.mark.parametrize("missed_scans", [1, 3])
 def test_live_new_server_waits_for_process_discovery(
     local_runtime, monkeypatch, missed_scans
