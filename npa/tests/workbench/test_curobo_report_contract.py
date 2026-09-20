@@ -24,7 +24,16 @@ def benchmark_rows(modes=("kinematic",)):
             **(
                 {"reason": "upstream collision_buffer_ik is negative"}
                 if invalid
-                else {"metrics": {"wall_plan_seconds": 0.01}}
+                else {
+                    "query": {
+                        "start": [0.0] * 7,
+                        "goal_pose": {
+                            "position_xyz": [0.1, 0.0, 0.0],
+                            "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+                        },
+                    },
+                    "metrics": {"wall_plan_seconds": 0.01},
+                }
             ),
         }
         for (mode, dataset, identity), invalid in benchmark_identities(
@@ -212,15 +221,27 @@ def solved_row(monkeypatch):
         upstream = (
             SimpleNamespace(
                 compute_trajectory_energy=lambda *_args: {
-                    "energy": 1.0,
-                    "max_torque": 2.0,
+                    "energy": 0.07,
+                    "max_torque": 1.0,
                     "torque_violation": False,
+                    "torques": np.ones((2, 7)),
                 }
             )
             if benchmark
             else None
         )
-        return runner._solve(planner, problem, benchmark_module=upstream)
+        dynamics_model = (
+            (None, None, np.asarray([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]))
+            if benchmark
+            else None
+        )
+        return runner._solve(
+            planner,
+            problem,
+            benchmark_module=upstream,
+            dynamics_model=dynamics_model,
+            attached_mass_kg=0.0 if benchmark else None,
+        )
 
     return solve
 
@@ -325,6 +346,10 @@ def test_plan_report_rejects_bad_status_metrics_timeline_or_scope(solved_row, ch
         "torque_indicator",
         "failed_missing_wall",
         "invalid_metrics",
+        "torque_evidence",
+        "torque_limits",
+        "payload_mass",
+        "missing_evidence",
     ],
 )
 def test_benchmark_report_requires_the_actual_metrics_for_each_status(
@@ -340,11 +365,21 @@ def test_benchmark_report_requires_the_actual_metrics_for_each_status(
         rows[0]["metrics"]["torque_violation"] = 2
     elif change == "failed_missing_wall":
         rows[1].pop("metrics")
-    else:
+    elif change == "invalid_metrics":
         next(r for r in rows if r["status"] == "invalid")["metrics"] = {
             "wall_plan_seconds": 0.1
         }
-    with pytest.raises(CuroboError, match="(metrics|torque violation)"):
+    elif change == "torque_evidence":
+        rows[0]["dynamics_evidence"]["torques_nm"][1][0] = 2.0
+    elif change == "torque_limits":
+        rows[0]["dynamics_evidence"]["torque_limits_nm"][0] = 88.0
+    elif change == "payload_mass":
+        rows[0]["dynamics_evidence"]["attached_mass_kg"] = 3.0
+    else:
+        rows[0].pop("dynamics_evidence")
+    with pytest.raises(
+        CuroboError, match="(metrics|torque violation|dynamics|inverse)"
+    ):
         validate_report(report_for(rows), rows, run_id="report-test")
 
 

@@ -1,0 +1,145 @@
+"""Independent cuRobo audit recomputes durable facts without producer helpers."""
+
+from __future__ import annotations
+
+import hashlib
+import inspect
+import json
+
+import pytest
+
+from npa.workbench.curobo import audit
+from npa.workbench.curobo.artifacts import canonical, summarize
+from npa.workbench.curobo.schemas import SOURCE_REVISION
+
+
+def plan_row():
+    return {
+        "mode": "kinematic",
+        "dataset": "operator",
+        "problem_id": "pose",
+        "status": "success",
+        "query": {
+            "start": [0.0],
+            "goal_pose": {
+                "position_xyz": [0.1, 0.0, 0.0],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+        },
+        "metrics": {
+            "wall_plan_seconds": 0.01,
+            "planner_total_seconds": 0.008,
+            "solver_seconds": 0.006,
+            "position_error_m": 0.001,
+            "rotation_error_rad": 0.002,
+            "joint_path_length_rad": 0.2,
+            "tool_path_length_m": 0.1,
+            "trajectory_duration_seconds": 0.1,
+            "max_abs_jerk_rad_s3": 0.0,
+        },
+        "trajectory": {
+            "joint_names": ["joint"],
+            "dt": 0.1,
+            "position": [[0.0], [0.2]],
+            "velocity": [[0.0], [0.1]],
+            "acceleration": [[0.0], [0.0]],
+            "jerk": [[0.0], [0.0]],
+            "tool_position": [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]],
+        },
+    }
+
+
+def plan_bytes():
+    row = plan_row()
+    journal = canonical(row) + b"\n"
+    report = {
+        "schema_version": "npa.curobo.result.v1",
+        "engine": "nvidia-curobo-v2",
+        "source_revision": SOURCE_REVISION,
+        "dataset_revision": None,
+        "run_id": "audit-run",
+        "kind": "plan",
+        "requested_modes": ["kinematic"],
+        "journal_sha256": hashlib.sha256(journal).hexdigest(),
+        "summary": summarize([row]),
+    }
+    return canonical(report), journal
+
+
+def test_audit_recomputes_plan_metrics_and_terminal_consumer():
+    result_bytes, journal = plan_bytes()
+    result = audit.audit_bytes(result_bytes, journal, run_id="audit-run")
+    assert result["valid"] is True
+    assert result["problem_count"] == 1
+    assert result["successful_trajectory_count"] == 1
+    assert result["dynamics_recomputation_count"] == 0
+    assert result["terminal_goal_distance_m"] == {"max": 0.0, "mean": 0.0}
+    assert result["result_sha256"] == hashlib.sha256(result_bytes).hexdigest()
+    assert result["journal_sha256"] == hashlib.sha256(journal).hexdigest()
+
+
+@pytest.mark.parametrize("mutation", ["path", "goal", "run_id", "journal_hash"])
+def test_audit_fails_closed_on_inconsistent_durable_facts(mutation):
+    result_bytes, journal = plan_bytes()
+    report = json.loads(result_bytes)
+    row = json.loads(journal)
+    if mutation == "path":
+        row["metrics"]["joint_path_length_rad"] = 0.1
+        journal = canonical(row) + b"\n"
+        report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+        report["summary"] = summarize([row])
+    elif mutation == "goal":
+        row["query"]["goal_pose"]["quaternion_wxyz"] = [2.0, 0.0, 0.0, 0.0]
+        journal = canonical(row) + b"\n"
+        report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+        report["summary"] = summarize([row])
+    elif mutation == "run_id":
+        report["run_id"] = "other"
+    else:
+        report["journal_sha256"] = "0" * 64
+    with pytest.raises(audit.AuditError):
+        audit.audit_bytes(canonical(report), journal, run_id="audit-run")
+
+
+@pytest.mark.parametrize("mutation", ["none", "torque", "limit", "mass", "energy"])
+def test_dynamics_audit_recomputes_torque_and_energy(mutation):
+    row = {
+        "mode": "kinematic",
+        "metrics": {
+            "energy_proxy_j": 0.07,
+            "max_torque_nm": 1.0,
+            "torque_violation": 0,
+        },
+        "dynamics_evidence": {
+            "attached_mass_kg": 0.0,
+            "trajectory": {
+                "joint_names": [f"joint{i}" for i in range(7)],
+                "dt": 0.1,
+                "position": [[0.0] * 7, [0.1] * 7],
+                "velocity": [[0.0] * 7, [0.1] * 7],
+                "acceleration": [[0.0] * 7, [0.0] * 7],
+                "jerk": [[0.0] * 7, [0.0] * 7],
+            },
+            "torques_nm": [[1.0] * 7, [1.0] * 7],
+            "torque_limits_nm": [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0],
+        },
+    }
+    if mutation == "torque":
+        row["dynamics_evidence"]["torques_nm"][1][0] = 2.0
+    elif mutation == "limit":
+        row["dynamics_evidence"]["torque_limits_nm"][0] = 88.0
+    elif mutation == "mass":
+        row["dynamics_evidence"]["attached_mass_kg"] = 3.0
+    elif mutation == "energy":
+        row["metrics"]["energy_proxy_j"] = 1.0
+    if mutation == "none":
+        audit._audit_dynamics(row)
+    else:
+        with pytest.raises(audit.AuditError):
+            audit._audit_dynamics(row)
+
+
+def test_independent_audit_does_not_import_producer_validation_helpers():
+    source = inspect.getsource(audit)
+    assert ".artifacts import" not in source
+    assert ".runner import" not in source

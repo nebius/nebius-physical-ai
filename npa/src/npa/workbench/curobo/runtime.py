@@ -17,12 +17,12 @@ from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.dataset.storage import read_bytes_uri, uri_join, write_bytes_uri
 from npa.workbench.storage_scope import authorize_uri
 
+from .audit import audit_bytes
 from .artifacts import (
     CuroboError,
     build_rrd,
     canonical,
     read_journal,
-    summarize,
     validate_report,
 )
 from .schemas import BenchmarkManifest, PlanManifest, PrepareRequest, RunRequest
@@ -139,27 +139,25 @@ def plan(request: RunRequest):
 def _download_artifacts(request: RunRequest, root: Path):
     _paths(request)
     journal = read_bytes_uri(uri_join(request.input_path, "problems.jsonl"))
-    report = json.loads(read_bytes_uri(uri_join(request.input_path, "result.json")))
+    result_bytes = read_bytes_uri(uri_join(request.input_path, "result.json"))
+    report = json.loads(result_bytes)
     (root / "problems.jsonl").write_bytes(journal)
+    (root / "result.json").write_bytes(result_bytes)
     rows = read_journal(root / "problems.jsonl")
     validate_report(report, rows, run_id=request.run_id)
     if report["journal_sha256"] != hashlib.sha256(journal).hexdigest():
         raise CuroboError("artifact journal hash mismatch")
     if not any(row["status"] == "success" for row in rows):
         raise CuroboError("no successful trajectory exists for review")
-    return rows
+    return result_bytes, journal, report, rows
 
 
 def validate(request: RunRequest):
     with tempfile.TemporaryDirectory(prefix="npa-curobo-validate-") as directory:
-        rows = _download_artifacts(request, Path(directory))
-        result = {
-            "schema_version": "npa.curobo.validation.v1",
-            "run_id": request.run_id,
-            "problem_count": len(rows),
-            "summary": summarize(rows),
-            "valid": True,
-        }
+        result_bytes, journal, _report, _rows = _download_artifacts(
+            request, Path(directory)
+        )
+        result = audit_bytes(result_bytes, journal, run_id=request.run_id)
         _publish(request.output_path, canonical(result))
         return result
 

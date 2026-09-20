@@ -87,7 +87,25 @@ def _array(tensor):
     return tensor.detach().cpu().reshape(-1, tensor.shape[-1]).numpy()
 
 
-def _solve(planner, problem, *, benchmark_module=None, dynamics_model=None):
+def _joint_series(state):
+    return {
+        "joint_names": list(state.joint_names),
+        "dt": float(state.dt.item()),
+        **{
+            key: _array(getattr(state, key)).tolist()
+            for key in ("position", "velocity", "acceleration", "jerk")
+        },
+    }
+
+
+def _solve(
+    planner,
+    problem,
+    *,
+    benchmark_module=None,
+    dynamics_model=None,
+    attached_mass_kg=None,
+):
     import numpy as np
     import torch
     from curobo.types import GoalToolPose, JointState
@@ -116,7 +134,21 @@ def _solve(planner, problem, *, benchmark_module=None, dynamics_model=None):
     result = planner.plan_pose(goal, q_start, **kwargs)
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - start
-    record = {"status": "failed", "metrics": {"wall_plan_seconds": elapsed}}
+    record = {
+        "status": "failed",
+        "query": {
+            "start": [float(value) for value in problem["start"]],
+            "goal_pose": {
+                "position_xyz": [
+                    float(value) for value in problem["goal_pose"]["position_xyz"]
+                ],
+                "quaternion_wxyz": [
+                    float(value) for value in problem["goal_pose"]["quaternion_wxyz"]
+                ],
+            },
+        },
+        "metrics": {"wall_plan_seconds": elapsed},
+    }
     if result is None or not bool(result.success.item()):
         return record
     interpolated = result.get_interpolated_plan()
@@ -134,12 +166,7 @@ def _solve(planner, problem, *, benchmark_module=None, dynamics_model=None):
         fk.tool_poses.get_link_pose(planner.tool_frames[0]).position
     )
     trajectory = {
-        "joint_names": list(interpolated.joint_names),
-        "dt": float(interpolated.dt.item()),
-        **{
-            key: _array(getattr(interpolated, key)).tolist()
-            for key in ("position", "velocity", "acceleration", "jerk")
-        },
+        **_joint_series(interpolated),
         "tool_position": tool_positions.tolist(),
     }
     validate_trajectory(trajectory)
@@ -161,10 +188,28 @@ def _solve(planner, problem, *, benchmark_module=None, dynamics_model=None):
         }
     )
     if benchmark_module is not None:
+        if dynamics_model is None or attached_mass_kg not in (0.0, 3.0):
+            raise CuroboError("benchmark dynamics identity is unavailable")
         # Upstream inverse dynamics errors are fatal, never reported as zero energy.
         dynamic = benchmark_module.compute_trajectory_energy(
             result.js_solution, dynamics_model
         )
+        dynamics_trajectory = _joint_series(result.js_solution)
+        torques = np.asarray(dynamic["torques"], dtype=float)
+        torque_limits = np.asarray(dynamics_model[2], dtype=float)
+        if (
+            torques.shape != np.asarray(dynamics_trajectory["velocity"]).shape
+            or torque_limits.shape != (torques.shape[1],)
+            or not np.isfinite(torques).all()
+            or not np.isfinite(torque_limits).all()
+        ):
+            raise CuroboError("inverse-dynamics evidence shape or values are invalid")
+        record["dynamics_evidence"] = {
+            "attached_mass_kg": attached_mass_kg,
+            "trajectory": dynamics_trajectory,
+            "torques_nm": torques.tolist(),
+            "torque_limits_nm": torque_limits.tolist(),
+        }
         record["metrics"].update(
             energy_proxy_j=float(dynamic["energy"]),
             max_torque_nm=float(dynamic["max_torque"]),
@@ -285,6 +330,7 @@ def execute(kind: str, manifest: dict, output: Path, *, run_id: str):
                                             problem,
                                             benchmark_module=upstream,
                                             dynamics_model=dynamics_model,
+                                            attached_mass_kg=args.mass,
                                         ),
                                     }
                                 )

@@ -38,6 +38,13 @@ def row():
         "dataset": "synthetic",
         "problem_id": "case",
         "status": "success",
+        "query": {
+            "start": [0.0],
+            "goal_pose": {
+                "position_xyz": [0.1, 0.0, 0.0],
+                "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
+            },
+        },
         "metrics": {"wall_plan_seconds": 0.01},
         "trajectory": {
             "joint_names": ["joint"],

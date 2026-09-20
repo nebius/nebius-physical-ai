@@ -130,7 +130,40 @@ def validate_report(
         _validate_planner_metrics(row, kind=report["kind"])
 
 
+def _validate_query(row: dict[str, Any]) -> None:
+    if row["status"] == "invalid":
+        if "query" in row:
+            raise CuroboError("excluded benchmark input cannot carry an executed query")
+        return
+    query = row.get("query")
+    if not isinstance(query, dict) or set(query) != {"start", "goal_pose"}:
+        raise CuroboError("planner row lacks the executed start and goal query")
+    start = np.asarray(query["start"], dtype=float)
+    goal = query["goal_pose"]
+    if (
+        start.ndim != 1
+        or not len(start)
+        or not np.isfinite(start).all()
+        or not isinstance(goal, dict)
+        or set(goal) != {"position_xyz", "quaternion_wxyz"}
+    ):
+        raise CuroboError("planner query shape or values are invalid")
+    position = np.asarray(goal["position_xyz"], dtype=float)
+    quaternion = np.asarray(goal["quaternion_wxyz"], dtype=float)
+    if (
+        position.shape != (3,)
+        or quaternion.shape != (4,)
+        or not np.isfinite(position).all()
+        or not np.isfinite(quaternion).all()
+        or not math.isclose(
+            float(np.linalg.norm(quaternion)), 1.0, rel_tol=1e-6, abs_tol=1e-6
+        )
+    ):
+        raise CuroboError("planner goal pose is invalid")
+
+
 def _validate_planner_metrics(row: dict[str, Any], *, kind: str) -> None:
+    _validate_query(row)
     metrics = row.get("metrics", {})
     expected = set()
     if row["status"] in {"success", "failed"}:
@@ -169,9 +202,13 @@ def _validate_planner_metrics(row: dict[str, Any], *, kind: str) -> None:
             metrics["trajectory_duration_seconds"], duration, rel_tol=1e-9, abs_tol=1e-9
         ):
             raise CuroboError("trajectory duration does not match its sample timeline")
+    if kind == "benchmark" and row["status"] == "success":
+        _validate_dynamics_evidence(row)
+    elif "dynamics_evidence" in row:
+        raise CuroboError("only solved benchmark rows can carry dynamics evidence")
 
 
-def validate_trajectory(value: dict[str, Any]) -> None:
+def validate_joint_series(value: dict[str, Any]) -> np.ndarray:
     names = value["joint_names"]
     position = np.asarray(value["position"], dtype=float)
     if position.ndim != 2 or len(position) < 2 or position.shape[1] != len(names):
@@ -189,9 +226,59 @@ def validate_trajectory(value: dict[str, Any]) -> None:
         array = np.asarray(value[field], dtype=float)
         if array.shape != position.shape or not np.isfinite(array).all():
             raise CuroboError(f"invalid {field} trajectory shape or nonfinite samples")
+    return position
+
+
+def validate_trajectory(value: dict[str, Any]) -> None:
+    position = validate_joint_series(value)
     tool = np.asarray(value["tool_position"], dtype=float)
     if tool.shape != (len(position), 3) or not np.isfinite(tool).all():
         raise CuroboError("tool positions must align with actual FK joint samples")
+
+
+def _validate_dynamics_evidence(row: dict[str, Any]) -> None:
+    evidence = row.get("dynamics_evidence")
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "attached_mass_kg",
+        "trajectory",
+        "torques_nm",
+        "torque_limits_nm",
+    }:
+        raise CuroboError("solved benchmark row lacks complete dynamics evidence")
+    expected_mass = 3.0 if row["mode"] == "dynamics" else 0.0
+    if evidence["attached_mass_kg"] != expected_mass:
+        raise CuroboError(
+            "dynamics evidence payload mass disagrees with benchmark mode"
+        )
+    trajectory = evidence["trajectory"]
+    positions = validate_joint_series(trajectory)
+    velocities = np.asarray(trajectory["velocity"], dtype=float)
+    torques = np.asarray(evidence["torques_nm"], dtype=float)
+    limits = np.asarray(evidence["torque_limits_nm"], dtype=float)
+    expected_limits = np.asarray([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])
+    if (
+        positions.shape[1] != 7
+        or torques.shape != velocities.shape
+        or limits.shape != (positions.shape[1],)
+        or not np.isfinite(torques).all()
+        or not np.isfinite(limits).all()
+        or not np.array_equal(limits, expected_limits)
+    ):
+        raise CuroboError(
+            "inverse-dynamics evidence shape or torque limits are invalid"
+        )
+    energy = float(np.abs(torques * velocities).sum() * trajectory["dt"])
+    max_torque = float(np.abs(torques).max())
+    violation = int(np.any(np.abs(torques).max(axis=0) > limits))
+    metrics = row["metrics"]
+    if (
+        not math.isclose(metrics["energy_proxy_j"], energy, rel_tol=1e-9, abs_tol=1e-9)
+        or not math.isclose(
+            metrics["max_torque_nm"], max_torque, rel_tol=1e-9, abs_tol=1e-9
+        )
+        or metrics["torque_violation"] != violation
+    ):
+        raise CuroboError("reported dynamics metrics do not match retained evidence")
 
 
 def read_journal(path: Path) -> list[dict[str, Any]]:
