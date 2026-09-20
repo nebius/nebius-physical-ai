@@ -9,7 +9,7 @@ The unbuilt neutral recipe selects these public operating-system inputs:
   are recorded in `runtime-lock.json`.
 - Ubuntu Snapshot Service timestamp `20260912T000000Z`, suites `jammy`,
   `jammy-updates`, and `jammy-security`, component `main`, architecture `amd64`.
-  `apt-packages.lock` records 75 exact binary packages, 57 exact source package
+  `apt-packages.lock` records 84 exact binary packages, 63 exact source package
   versions, the signed InRelease hashes, archive hashes/sizes, and each installed
   copyright-file hash.
 - No third-party Python application distribution is selected;

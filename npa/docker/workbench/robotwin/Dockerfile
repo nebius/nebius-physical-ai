@@ -19,7 +19,7 @@ COPY --chmod=0644 docker/workbench/robotwin/apt-packages.lock \
 
 # Install only the exact Ubuntu main packages selected from the signed immutable
 # snapshot. The locked direct set is ca-certificates, openssh-server,
-# python3-minimal, rsync, and sudo. The base keyring, all three InRelease files,
+# python3-minimal, libpython3.10-stdlib, rsync, and sudo. The base keyring, all three InRelease files,
 # every downloaded archive byte, every installed version, and every retained
 # package copyright file are bound to the committed lock.
 # The minimal Ubuntu base has no CA bundle until the locked packages install.
@@ -28,7 +28,7 @@ RUN --mount=type=bind,from=bootstrap-ca,source=/etc/ssl/certs/ca-certificates.cr
     set -eux; \
     printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$'; \
     test "$(sha256sum /usr/share/keyrings/ubuntu-archive-keyring.gpg | cut -d ' ' -f1)" = "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0"; \
-    test "$(sha256sum /opt/npa/robotwin/apt-packages.lock | cut -d ' ' -f1)" = "554ae7df404eb46788608a5b7d16e20c9d8f055e2678294b2f03b82a9caf666d"; \
+    test "$(sha256sum /opt/npa/robotwin/apt-packages.lock | cut -d ' ' -f1)" = "688a3ffddc3cfb1277c333679ba75ff0946406d93238bf74b75977a23af16025"; \
     test "$(sha256sum /opt/npa/robotwin/runtime-requirements.lock | cut -d ' ' -f1)" = "66c77dddea0bbe3f2696f135663378717d1ff824ffeb24301bc643fed81add7b"; \
     rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \
     printf '%s\n' \
@@ -44,18 +44,18 @@ RUN --mount=type=bind,from=bootstrap-ca,source=/etc/ssl/certs/ca-certificates.cr
     awk -F '\t' '$1 == "inrelease" { print $3 "  /var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20260912T000000Z_dists_" $2 "_InRelease" }' \
       /opt/npa/robotwin/apt-packages.lock | sha256sum -c -; \
     packages="$(awk -F '\t' '$1 == "binary" { printf "%s=%s ", $2, $3 }' /opt/npa/robotwin/apt-packages.lock)"; \
-    test "$(awk -F '\t' '$1 == "binary" { count += 1 } END { print count + 0 }' /opt/npa/robotwin/apt-packages.lock)" = 75; \
+    test "$(awk -F '\t' '$1 == "binary" { count += 1 } END { print count + 0 }' /opt/npa/robotwin/apt-packages.lock)" = 84; \
     archive_dir=/tmp/npa-apt-archives; \
     expected_archives=/tmp/npa-apt-expected.tsv; \
     verified_archives=/tmp/npa-apt-verified.tsv; \
     install -d -m 0700 "${archive_dir}"; \
     awk -F '\t' '$1 == "binary" { print $2 "\t" $3 "\t" $4 }' \
       /opt/npa/robotwin/apt-packages.lock | LC_ALL=C sort > "${expected_archives}"; \
-    test "$(wc -l < "${expected_archives}")" = 75; \
-    test "$(uniq "${expected_archives}" | wc -l)" = 75; \
+    test "$(wc -l < "${expected_archives}")" = 84; \
+    test "$(uniq "${expected_archives}" | wc -l)" = 84; \
     cd "${archive_dir}"; \
     apt-get -o Acquire::https::CaInfo=/run/npa-bootstrap-ca.crt download ${packages}; \
-    test "$(find "${archive_dir}" -mindepth 1 -maxdepth 1 -type f -name '*.deb' | wc -l)" = 75; \
+    test "$(find "${archive_dir}" -mindepth 1 -maxdepth 1 -type f -name '*.deb' | wc -l)" = 84; \
     test -z "$(find "${archive_dir}" -mindepth 1 -maxdepth 1 \( ! -type f -o ! -name '*.deb' \) -print -quit)"; \
     : > "${verified_archives}"; \
     for archive in "${archive_dir}"/*.deb; do \

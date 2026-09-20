@@ -24,7 +24,7 @@ ARCHIVE_INSTALL = (
     "apt-get install -y --no-install-recommends --allow-downgrades "
     '--no-download -o "Dir::Cache::archives=${archive_dir}" "${archive_dir}"/*.deb;'
 )
-LOCK_ONLY_SANITY_GUARD = 'test "$(uniq "${expected_archives}" | wc -l)" = 75;'
+LOCK_ONLY_SANITY_GUARD = 'test "$(uniq "${expected_archives}" | wc -l)" = 84;'
 ARCHIVE_PREINSTALL_GUARDS = (
     LOCK_ONLY_SANITY_GUARD,
     "! -type f -o ! -name '*.deb'",
@@ -125,7 +125,7 @@ def _archive_verification_shell() -> str:
 def _inert_archive_set(source: Path) -> list[list[str]]:
     source.mkdir()
     rows = []
-    for index in range(75):
+    for index in range(84):
         name = f"fixture-package-{index:02d}"
         content = f"Package: {name}\nVersion: 1.0\nArchitecture: amd64\n".encode()
         (source / f"{name}.deb").write_bytes(content)
@@ -237,7 +237,7 @@ def test_real_archive_verifier_accepts_complete_locked_fixture_before_install(
     assert "--no-download" in install_arguments
     assert (
         len([argument for argument in install_arguments if argument.endswith(".deb")])
-        == 75
+        == 84
     )
     assert (tmp_path / "verified.tsv").read_bytes() == (
         tmp_path / "expected.tsv"
@@ -268,13 +268,13 @@ def test_real_archive_verifier_rejects_bad_inputs_before_install(
     assert not (tmp_path / "installed").exists()
     assert (tmp_path / "downloaded").exists() is (case != "duplicate-lock")
     if case in {"duplicate-lock", "missing", "extra"}:
-        count = 76 if case == "extra" else 74
-        assert result.stderr.rstrip().endswith(f"test {count} = 75")
+        count = 85 if case == "extra" else 83
+        assert result.stderr.rstrip().endswith(f"test {count} = 84")
     elif case == "unexpected-file":
         assert result.stderr.rstrip().endswith("/archives/unexpected.txt")
     elif case == "duplicate-archive":
         # Every archive passes its own hash/size/identity check; set equality must fail.
-        assert len((tmp_path / "verified.tsv").read_text().splitlines()) == 75
+        assert len((tmp_path / "verified.tsv").read_text().splitlines()) == 84
         assert "cmp " in result.stderr
     elif case in {"hash", "size", "package", "version", "architecture"}:
         expected_boundary = {
@@ -309,8 +309,8 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     assert lock["status"] == "bootstrap-complete-runtime-disabled"
     assert lock["bootstrap"]["status"] == "complete"
     assert lock["bootstrap"]["payload_class"] == "zero-vendor-payload"
-    assert lock["bootstrap"]["apt"]["binary_package_count"] == 75
-    assert lock["bootstrap"]["apt"]["source_package_count"] == 57
+    assert lock["bootstrap"]["apt"]["binary_package_count"] == 84
+    assert lock["bootstrap"]["apt"]["source_package_count"] == 63
     assert lock["bootstrap"]["python_runtime"]["application_artifact_count"] == 0
     assert lock["runtime_delivery"]["status"].startswith("disabled-")
     assert lock["runtime_delivery"]["asset_output_classification_status"] == (
@@ -365,8 +365,8 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     )
     apt_lines = (IMAGE_ROOT / "apt-packages.lock").read_text().splitlines()
     assert "INCOMPLETE" not in "\n".join(apt_lines)
-    assert sum(line.startswith("binary\t") for line in apt_lines) == 75
-    assert sum(line.startswith("source\t") for line in apt_lines) == 57
+    assert sum(line.startswith("binary\t") for line in apt_lines) == 84
+    assert sum(line.startswith("source\t") for line in apt_lines) == 63
     for line in (line.split("\t") for line in apt_lines if line.startswith("binary\t")):
         assert len(line) in {12, 13}
         if len(line) == 13:

@@ -12,8 +12,8 @@ NCore remains quarantined pending its independent RTX acceptance.
 
 RoboTwin's `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` entry is a
 zero-vendor-payload recipe, not an available image. It pins an official Ubuntu
-22.04 linux/amd64 manifest plus a signed immutable Jammy snapshot with 75 exact
-binary packages, 57 corresponding source packages, and a complete-empty public
+22.04 linux/amd64 manifest plus a signed immutable Jammy snapshot with 84 exact
+binary packages, 63 corresponding source packages, and a complete-empty public
 Python application lock. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python
 application runtime, assets, caches, credentials, and outputs stay runtime-side.
 The trusted build path still refuses before Docker because the native-content

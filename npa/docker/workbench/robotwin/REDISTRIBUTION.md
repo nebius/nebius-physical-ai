@@ -6,8 +6,8 @@ files. It does not contain RoboTwin, CuRobo, CUDA, cuDNN, PyTorch CUDA, SAPIEN,
 MPLib, Warp, asset, cache, credential, or output bytes.
 
 The linux/amd64 Ubuntu 22.04 manifest and Ubuntu snapshot package/source closure
-are immutable in `runtime-lock.json` and `apt-packages.lock`. The selected 75
-binary packages all come from Ubuntu `main`; their 75 installed copyright files
+are immutable in `runtime-lock.json` and `apt-packages.lock`. The selected 84
+binary packages all come from Ubuntu `main`; their 84 installed copyright files
 are individually hash-bound and must remain in the image. Ubuntu's policy leaves
 each component's license in force. `npa-robotwin` does not use an Ubuntu mark in
 its software title or imply Canonical endorsement; Ubuntu is referenced only to

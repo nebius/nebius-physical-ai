@@ -7,9 +7,9 @@ metadata	component	main
 metadata	suites	jammy,jammy-updates,jammy-security
 metadata	snapshot-base-url	https://snapshot.ubuntu.com/ubuntu/20260912T000000Z/
 metadata	ubuntu-archive-keyring-sha256	1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0
-metadata	binary-package-count	75
-metadata	source-package-count	57
-metadata	source-artifact-count	177
+metadata	binary-package-count	84
+metadata	source-package-count	63
+metadata	source-artifact-count	195
 inrelease	jammy-security	7abdb59d6171338d553fe1d1d981ae7f317c303bfb0bb9f669ae8e7b6171d4ce
 inrelease	jammy-updates	d48fdef1d064ce78288f792f9d5b697076fc40c44c3cf147c2859962c129a59a
 inrelease	jammy	c14060cd8c6d625874dfcb9523a35a395bf4865c28b6b6a82569ef326fe92dc6
@@ -35,6 +35,7 @@ binary	libcrypt1	1:4.4.27-1	amd64	3fa566e9f861a08736cbc5a97562d9d6e4f0c00450fbea
 binary	libdb5.3	5.3.28+dfsg1-0.8ubuntu3	amd64	ce60e446c9cb0e94bb4b4d0fe4f969e772edec250deb186bacf955e4d196548b	721906	pool/main/d/db5.3/libdb5.3_5.3.28+dfsg1-0.8ubuntu3_amd64.deb	db5.3	5.3.28+dfsg1-0.8ubuntu3	transitive	b3bbc6fbb3f2a0e6a487e953eb8c3cc4bdb6f4150f7f51d20b1e9a3c8ef92d3d	usr/share/doc/libdb5.3/copyright
 binary	libedit2	3.1-20210910-1build1	amd64	fb8783bdf0a59aaabf4e9b29192170f6cc17aa2eb94bc672c15add37ff39525b	96766	pool/main/libe/libedit/libedit2_3.1-20210910-1build1_amd64.deb	libedit	3.1-20210910-1build1	transitive	2b53671050f6319be6fcdcafa434e8ccb8af629359b4afc83185867204f3927d	usr/share/doc/libedit2/copyright
 binary	libexpat1	2.4.7-1ubuntu0.7	amd64	a538ba8ea04ac4011337e99f77a8f3387ddef2909b8a83a58d9662d8715df4cd	92136	pool/main/e/expat/libexpat1_2.4.7-1ubuntu0.7_amd64.deb	expat	2.4.7-1ubuntu0.7	transitive	60919fe1a156395ff14511bb6ff79756c50ade2fff59ac60c9bae1d8a7fe6292	usr/share/doc/libexpat1/copyright
+binary	libffi8	3.4.2-4	amd64	b4f88c91fa6f4c942097be6abfc365fb133c5e147640168cbb7704fd855eac10	22326	pool/main/libf/libffi/libffi8_3.4.2-4_amd64.deb	libffi	3.4.2-4	transitive	7258c8acc378030d8dbe1fcdf394e915769fa31dcbaf3d2991d9a79891f3bcdc	usr/share/doc/libffi8/copyright
 binary	libfido2-1	1.10.0-1	amd64	b4209996a74343859a70ed403c601e098702112877c372c7cc7c6b3c0ebce019	82772	pool/main/libf/libfido2/libfido2-1_1.10.0-1_amd64.deb	libfido2	1.10.0-1	transitive	c05201a77c4ac0cab4b8abd8daded4dbaeb460b393d44fed45da7fd4e5ad8652	usr/share/doc/libfido2-1/copyright
 binary	libgcc-s1	12.3.0-1ubuntu1~22.04.3	amd64	d383e642d83263147f7b4b69fb92cf1036e5246c6be3accf10b77f986684589a	53896	pool/main/g/gcc-12/libgcc-s1_12.3.0-1ubuntu1~22.04.3_amd64.deb	gcc-12	12.3.0-1ubuntu1~22.04.3	transitive	da8191658b3452ce9caf31638ba61dab31a38c619fa39df119812e050f592fd3	usr/share/doc/gcc-12-base/copyright
 binary	libgcrypt20	1.9.4-3ubuntu3.3	amd64	8f16329a0aabf4900271a3687890721bbef307e60983acae5b92eeff12e799b3	521420	pool/main/libg/libgcrypt20/libgcrypt20_1.9.4-3ubuntu3.3_amd64.deb	libgcrypt20	1.9.4-3ubuntu3.3	transitive	8bf0ea526b7b497bf7b31842e799c37caa69090cc53fd080c76403cc8b79f659	usr/share/doc/libgcrypt20/copyright
@@ -48,6 +49,7 @@ binary	libkrb5support0	1.19.2-2ubuntu0.8	amd64	e678de61ab524644aeea7b42499f8143d
 binary	liblz4-1	1.9.3-2build2	amd64	ac9b54d0feb840345060c74fb687675c5e1eb2b195effafae38c5f9991041e98	56930	pool/main/l/lz4/liblz4-1_1.9.3-2build2_amd64.deb	lz4	1.9.3-2build2	transitive	a82c5d50439c6d9f32b874dbc75ae5292ba5a3e50318bed80e82a8f5254689ca	usr/share/doc/liblz4-1/copyright
 binary	liblzma5	5.2.5-2ubuntu1.1	amd64	af77f099e7fa95a31267023535832804382fa66572a6b38002187be6e15116cb	99630	pool/main/x/xz-utils/liblzma5_5.2.5-2ubuntu1.1_amd64.deb	xz-utils	5.2.5-2ubuntu1.1	transitive	a2dc8fac0f496e1c58aff67018cf0c6b88336316afa5642f9335b71642e28aa8	usr/share/doc/liblzma5/copyright
 binary	libmd0	1.0.4-1build1	amd64	bcdad5e400aeb660f0337a1c5c1a77e3effa91d0803e64ce2d000e9006f67cdb	22964	pool/main/libm/libmd/libmd0_1.0.4-1build1_amd64.deb	libmd	1.0.4-1build1	transitive	4365ef6255ad553fce69dd4bc0e093472c5d0e41b8ea493a545cc926ce171aa6	usr/share/doc/libmd0/copyright
+binary	libmpdec3	2.5.1-2build2	amd64	941ca0b2e73d26522f75a801b1bf529afa5ceb2ac9b00cbf324b59f474cae813	86788	pool/main/m/mpdecimal/libmpdec3_2.5.1-2build2_amd64.deb	mpdecimal	2.5.1-2build2	transitive	be6dc763ac497102bbece71c0a83619ff538fd8e0ad43b8990c91bf323046228	usr/share/doc/libmpdec3/copyright
 binary	libncurses6	6.3-2ubuntu0.3	amd64	38f97a45931ab6f296be017344afc45e5ccbf83f24896f79625318691a9bebf8	111258	pool/main/n/ncurses/libncurses6_6.3-2ubuntu0.3_amd64.deb	ncurses	6.3-2ubuntu0.3	transitive	f0974fb41778e23c94111ff90da0546de8971f8270c58877283d372e6bd7f17e	usr/share/doc/libtinfo6/copyright
 binary	libncursesw6	6.3-2ubuntu0.3	amd64	734107c126c2685508e4186f6be65f4edc0d393f1bc1cb4c307a76d1beb09496	147472	pool/main/n/ncurses/libncursesw6_6.3-2ubuntu0.3_amd64.deb	ncurses	6.3-2ubuntu0.3	transitive	f0974fb41778e23c94111ff90da0546de8971f8270c58877283d372e6bd7f17e	usr/share/doc/libtinfo6/copyright
 binary	libnsl2	1.3.0-2build2	amd64	cfeef478f96ace59617f4f93c2497776b98a33c99bf3602af46844ccf9cba9d3	42340	pool/main/libn/libnsl/libnsl2_1.3.0-2build2_amd64.deb	libnsl	1.3.0-2build2	transitive	7d9c79b73fd956319a90cd210441498b225e00960352c4c6d447436481bb0eec	usr/share/doc/libnsl2/copyright
@@ -59,20 +61,26 @@ binary	libpcre2-8-0	10.39-3ubuntu0.1	amd64	01a5a74f3d305cad32fffffdc200c2a92fd8e
 binary	libpopt0	1.18-3build1	amd64	253dfe5a676d48eb1020ca3580e77b3683ccdc3a712747e834aa59edf50d0ced	28160	pool/main/p/popt/libpopt0_1.18-3build1_amd64.deb	popt	1.18-3build1	transitive	0038c1f3db6a3c43eb415ab56c0ceb2b84013b1427b0b60a357181ec63b26a9e	usr/share/doc/libpopt0/copyright
 binary	libprocps8	2:3.3.17-6ubuntu2.1	amd64	a7d32ba1d7d4516b77354d3b2d34d218098b321933f792785029f313b918d163	36160	pool/main/p/procps/libprocps8_3.3.17-6ubuntu2.1_amd64.deb	procps	2:3.3.17-6ubuntu2.1	transitive	93bd3a940d4573f2be35f2a5a58c97d82224d6ad8f67a99fa2a04fb373947602	usr/share/doc/libprocps8/copyright
 binary	libpython3.10-minimal	3.10.12-1~22.04.18	amd64	ccbd08562769e0a38b34005dc8bde200838e6c6530cc04ac34525129ed42d847	816508	pool/main/p/python3.10/libpython3.10-minimal_3.10.12-1~22.04.18_amd64.deb	python3.10	3.10.12-1~22.04.18	transitive	f1cbf908e1daa8789b389fdcf17811ed36b675d736b39a103591399861350382	usr/share/doc/libpython3.10-minimal/copyright
+binary	libpython3.10-stdlib	3.10.12-1~22.04.18	amd64	ee09afbc981a4aaa00053f019eab6b45dcc4dbeb4ca4fcc4277eff539e09f228	1850286	pool/main/p/python3.10/libpython3.10-stdlib_3.10.12-1~22.04.18_amd64.deb	python3.10	3.10.12-1~22.04.18	direct	f1cbf908e1daa8789b389fdcf17811ed36b675d736b39a103591399861350382	usr/share/doc/libpython3.10-stdlib/copyright
+binary	libreadline8	8.1.2-1	amd64	51fd16f608efa710c987e4b071ffba0bec63a9ac8e55eddd5770f5e5252edc09	153210	pool/main/r/readline/libreadline8_8.1.2-1_amd64.deb	readline	8.1.2-1	transitive	3a3174c995a17c797069650c273120b145bc26157eed25ad6bd1be18a25d1096	usr/share/doc/libreadline8/copyright
 binary	libselinux1	3.3-1build2	amd64	b96c6b40ee2388bd51341cb11c0f1d5bcca29b9180b6e3a77a06b881f2913f7e	74578	pool/main/libs/libselinux/libselinux1_3.3-1build2_amd64.deb	libselinux	3.3-1build2	transitive	641806738b0c6a3d03168c2649e6b94205198bb66cd557e6bae3a20b71c9bb0b	usr/share/doc/libselinux1/copyright
 binary	libsemanage-common	3.3-1build2	all	bb60d1049ed3d7838b395785cab09f2210c04878fcae9391ea3499f62d04ec2d	9874	pool/main/libs/libsemanage/libsemanage-common_3.3-1build2_all.deb	libsemanage	3.3-1build2	transitive	e00e6a86c598f9e24ced0180a70a5f2f2e45e133d93adf2b17ce8a06ce4b1b51	usr/share/doc/libsemanage-common/copyright	gitleaks:allow=public-ubuntu-copyright-sha256
 binary	libsemanage2	3.3-1build2	amd64	0ab2748fce09293ca2c4c1214460409f834be1736ec1b1841927302efd8fa9da	92630	pool/main/libs/libsemanage/libsemanage2_3.3-1build2_amd64.deb	libsemanage	3.3-1build2	transitive	e00e6a86c598f9e24ced0180a70a5f2f2e45e133d93adf2b17ce8a06ce4b1b51	usr/share/doc/libsemanage2/copyright	gitleaks:allow=public-ubuntu-copyright-sha256
 binary	libsepol2	3.3-1build1	amd64	d47b019f21865a9692e361d260e96a3234fd934cee37026dad8f41228d9363d8	281694	pool/main/libs/libsepol/libsepol2_3.3-1build1_amd64.deb	libsepol	3.3-1build1	transitive	34414ad829fcea0064729c14f1f900632bfa7d38061b13a9797eec320c372d9e	usr/share/doc/libsepol2/copyright
+binary	libsqlite3-0	3.37.2-2ubuntu0.7	amd64	690a71c074523f9716d02f13ff6faa51aacc070bb98ff198e9ad9d3b95f5378a	643416	pool/main/s/sqlite3/libsqlite3-0_3.37.2-2ubuntu0.7_amd64.deb	sqlite3	3.37.2-2ubuntu0.7	transitive	78e9df8f8153c91c762ec970b82d224ac4d30f05aa7773e7e17e268141e53873	usr/share/doc/libsqlite3-0/copyright
 binary	libssl3	3.0.2-0ubuntu1.29	amd64	c12bbf0074c44019bdf4b035b058c24eb904fc772c94707b1df801a4d130e146	1906444	pool/main/o/openssl/libssl3_3.0.2-0ubuntu1.29_amd64.deb	openssl	3.0.2-0ubuntu1.29	transitive	6a7da622fe0637a334d2a8fc470852d2ffb77d9a2b2f930f854e32a41ad6ef35	usr/share/doc/libssl3/copyright
+binary	libstdc++6	12.3.0-1ubuntu1~22.04.3	amd64	29ef3d289b272704b75141906c8f683db0f2bdb0942061366691333bfb289bdc	698608	pool/main/g/gcc-12/libstdc++6_12.3.0-1ubuntu1~22.04.3_amd64.deb	gcc-12	12.3.0-1ubuntu1~22.04.3	transitive	da8191658b3452ce9caf31638ba61dab31a38c619fa39df119812e050f592fd3	usr/share/doc/libstdc++6/copyright
 binary	libsystemd0	249.11-0ubuntu3.22	amd64	4fae4644bcfd86f891faae12cedbf30aca280cf76a034768aec3a03fe42ddc25	316392	pool/main/s/systemd/libsystemd0_249.11-0ubuntu3.22_amd64.deb	systemd	249.11-0ubuntu3.22	transitive	8541750aba2193c885f0c77df20870ef454c2ae8f905077105922bf3130108ad	usr/share/doc/libsystemd0/copyright
 binary	libtinfo6	6.3-2ubuntu0.3	amd64	3b8dff43a31168f5020928f2ab9a97324c5b47ae708311781f6bd01306c96214	104576	pool/main/n/ncurses/libtinfo6_6.3-2ubuntu0.3_amd64.deb	ncurses	6.3-2ubuntu0.3	transitive	f0974fb41778e23c94111ff90da0546de8971f8270c58877283d372e6bd7f17e	usr/share/doc/libtinfo6/copyright
 binary	libtirpc-common	1.3.2-2ubuntu0.1	all	cd7b220447999402e87d75f7cedcfad159a2e5d4236927a414d77f2932219bee	7766	pool/main/libt/libtirpc/libtirpc-common_1.3.2-2ubuntu0.1_all.deb	libtirpc	1.3.2-2ubuntu0.1	transitive	cffa5bbd80f3e38acf6ef3a0af73679b36c17f2eb3054c72d24b06b35eca1e03	usr/share/doc/libtirpc-common/copyright
 binary	libtirpc3	1.3.2-2ubuntu0.1	amd64	f2f07d1ab8ae8a8a6e893975df0bca8683caec516e7a30e8dadbb87d33aa52c4	82288	pool/main/libt/libtirpc/libtirpc3_1.3.2-2ubuntu0.1_amd64.deb	libtirpc	1.3.2-2ubuntu0.1	transitive	cffa5bbd80f3e38acf6ef3a0af73679b36c17f2eb3054c72d24b06b35eca1e03	usr/share/doc/libtirpc3/copyright
 binary	libudev1	249.11-0ubuntu3.22	amd64	48e47354d8d421b59bc2aac1437bc6b22ba04526963e4a73f9313b0dd518556b	75888	pool/main/s/systemd/libudev1_249.11-0ubuntu3.22_amd64.deb	systemd	249.11-0ubuntu3.22	transitive	8541750aba2193c885f0c77df20870ef454c2ae8f905077105922bf3130108ad	usr/share/doc/libudev1/copyright
+binary	libuuid1	2.37.2-4ubuntu3.6	amd64	97eaa1090c2e7ddaad55d58f9d0d7907d64b70f89228405d68a7ce7d56a89d67	23978	pool/main/u/util-linux/libuuid1_2.37.2-4ubuntu3.6_amd64.deb	util-linux	2.37.2-4ubuntu3.6	transitive	2c447817698777e3b2365a5afe2a58ececb85367dfdf0ea2c0df49add90e93eb	usr/share/doc/libuuid1/copyright
 binary	libwrap0	7.6.q-31build2	amd64	27eb87c90108a2e53f86efe78f00fcb701248a1b8609c26e52a9c431a41fa006	47944	pool/main/t/tcp-wrappers/libwrap0_7.6.q-31build2_amd64.deb	tcp-wrappers	7.6.q-31build2	transitive	b5a4e550c3c398e3138097c04a5cde7ebb61ec237353de233dde3211b31f2321	usr/share/doc/libwrap0/copyright
 binary	libxxhash0	0.8.1-1	amd64	71cf4300213c7ce65deadf37a21dc250d8162cdf1e41d7fda1e279a390051169	27258	pool/main/x/xxhash/libxxhash0_0.8.1-1_amd64.deb	xxhash	0.8.1-1	transitive	a123c93b07e781919ae996276ac02bb1c8b19dfde88176cd1240ab277c14a4ce	usr/share/doc/libxxhash0/copyright
 binary	libzstd1	1.4.8+dfsg-3build1	amd64	ae7db00ce8b093e50c994518b90203544e063b4bc574836a048bb142b950b2c9	324024	pool/main/libz/libzstd/libzstd1_1.4.8+dfsg-3build1_amd64.deb	libzstd	1.4.8+dfsg-3build1	transitive	8cf66791fbe72801cb1d701c832b7e395dad0000bb9699dc42df94b49d699e91	usr/share/doc/libzstd1/copyright
 binary	lsb-base	11.1.0ubuntu4	all	23ac3e99b0c2cd0179a7f40fa5a24248345e16c515f222164dad2a638b4f04cf	12350	pool/main/l/lsb/lsb-base_11.1.0ubuntu4_all.deb	lsb	11.1.0ubuntu4	transitive	5838867827e001081f2a1884f55614df9fbb303bb03de6087220ac0b6f8ea44b	usr/share/doc/lsb-base/copyright
+binary	media-types	7.0.0	all	a993af16a8ccdcefaf75eef360f295f8a3a91a78fd5e5ea1e3fd4f2376df6615	25510	pool/main/m/media-types/media-types_7.0.0_all.deb	media-types	7.0.0	transitive	5ded7c53199b6a1d089b0b7e231d77e5c84081c7156b372b3f11ad9c1c2c5cc7	usr/share/doc/media-types/copyright
 binary	openssh-client	1:8.9p1-3ubuntu0.17	amd64	9ecaed1cff0d1858f5fa2a5c2f3fccedba875cf409bf4346ba919c30fca6718b	904732	pool/main/o/openssh/openssh-client_8.9p1-3ubuntu0.17_amd64.deb	openssh	1:8.9p1-3ubuntu0.17	transitive	b6be93136b065505bf4fa315914a8c31c2a07865e7b5152dc1cbca324d86c860	usr/share/doc/openssh-client/copyright
 binary	openssh-server	1:8.9p1-3ubuntu0.17	amd64	2baa4f236eebc486ec351ade604f1929286ede9ec3e2858a7206ddc412e3cbb6	435760	pool/main/o/openssh/openssh-server_8.9p1-3ubuntu0.17_amd64.deb	openssh	1:8.9p1-3ubuntu0.17	direct	b6be93136b065505bf4fa315914a8c31c2a07865e7b5152dc1cbca324d86c860	usr/share/doc/openssh-client/copyright
 binary	openssh-sftp-server	1:8.9p1-3ubuntu0.17	amd64	2ff8c0a1c7f44de892e3548410d620ed72c8097e95f45949d111b57c7ddb5e3b	38858	pool/main/o/openssh/openssh-sftp-server_8.9p1-3ubuntu0.17_amd64.deb	openssh	1:8.9p1-3ubuntu0.17	transitive	b6be93136b065505bf4fa315914a8c31c2a07865e7b5152dc1cbca324d86c860	usr/share/doc/openssh-client/copyright
@@ -82,6 +90,7 @@ binary	perl-base	5.34.0-3ubuntu1.9	amd64	966bbdd49966b37912496526de94cb5d197c6d1
 binary	procps	2:3.3.17-6ubuntu2.1	amd64	e204381ea55b600a1fb3556d6aec9cfb1eef1c4a2247dee641f00211311b9922	377732	pool/main/p/procps/procps_3.3.17-6ubuntu2.1_amd64.deb	procps	2:3.3.17-6ubuntu2.1	transitive	93bd3a940d4573f2be35f2a5a58c97d82224d6ad8f67a99fa2a04fb373947602	usr/share/doc/procps/copyright
 binary	python3-minimal	3.10.6-1~22.04.1	amd64	c2f9ebfa720344485d192f9b493065bee4a29d5021b093f9300c8101483de9dd	24304	pool/main/p/python3-defaults/python3-minimal_3.10.6-1~22.04.1_amd64.deb	python3-defaults	3.10.6-1~22.04.1	direct	5b274dbb44b28a54b795b9471c07ab045054d6b8a86273cb9feb632b6fd2760d	usr/share/doc/python3-minimal/copyright
 binary	python3.10-minimal	3.10.12-1~22.04.18	amd64	34e4c7383fdf2562d78321acfee5aa1f7b92be371dd79410496ad35cb773f326	2277402	pool/main/p/python3.10/python3.10-minimal_3.10.12-1~22.04.18_amd64.deb	python3.10	3.10.12-1~22.04.18	transitive	f1cbf908e1daa8789b389fdcf17811ed36b675d736b39a103591399861350382	usr/share/doc/python3.10-minimal/copyright
+binary	readline-common	8.1.2-1	all	a78d02935f6107a12d3d349c25ce4f92fcdcbf6b65e37f1f5a13a9054b5b9e94	53544	pool/main/r/readline/readline-common_8.1.2-1_all.deb	readline	8.1.2-1	transitive	3a3174c995a17c797069650c273120b145bc26157eed25ad6bd1be18a25d1096	usr/share/doc/readline-common/copyright
 binary	rsync	3.2.7-0ubuntu0.22.04.7	amd64	0f1f6c57367d67027f735171e69c769fe4c5552e267314a31f5e92064e36c153	444910	pool/main/r/rsync/rsync_3.2.7-0ubuntu0.22.04.7_amd64.deb	rsync	3.2.7-0ubuntu0.22.04.7	direct	240afc05aff098e53dafe0def34030b2ef7848b78b9ebabf2c157713b9f975c5	usr/share/doc/rsync/copyright
 binary	sensible-utils	0.0.17	all	68fa82f5a319ffe48f51ea874117be3d6781c5f6b2ac4f172485fa690ebde4a3	20076	pool/main/s/sensible-utils/sensible-utils_0.0.17_all.deb	sensible-utils	0.0.17	transitive	a3f046d279b767f56f9bfbd7bdc66561be99da2c52a4d78cda108c58f975f1b5	usr/share/doc/sensible-utils/copyright
 binary	sudo	1.9.9-1ubuntu2.6	amd64	a6f151b3cee2dc09afc625330a7156d4c61ebb80aad9d447abb8806d26c428f2	820202	pool/main/s/sudo/sudo_1.9.9-1ubuntu2.6_amd64.deb	sudo	1.9.9-1ubuntu2.6	direct	0e1a906687b97a3a3b40612bb2a776212f6709c680264653b9ba27d9eaae0c87	usr/share/doc/sudo/copyright
@@ -111,6 +120,7 @@ source	libcap-ng	0.7.9-2.2build3	pool/main/libc/libcap-ng	3	457575
 source	libcap2	1:2.44-1ubuntu0.22.04.3	pool/main/libc/libcap2	3	152766
 source	libcbor	0.8.0-2ubuntu1	pool/main/libc/libcbor	3	274712
 source	libedit	3.1-20210910-1build1	pool/main/libe/libedit	3	542262
+source	libffi	3.4.2-4	pool/main/libf/libffi	3	1361467
 source	libfido2	1.10.0-1	pool/main/libf/libfido2	4	647225
 source	libgcrypt20	1.9.4-3ubuntu3.3	pool/main/libg/libgcrypt20	4	3317255
 source	libgpg-error	1.43-3	pool/main/libg/libgpg-error	4	1020778
@@ -124,6 +134,8 @@ source	libxcrypt	1:4.4.27-1	pool/main/libx/libxcrypt	3	401061
 source	libzstd	1.4.8+dfsg-3build1	pool/main/libz/libzstd	3	1346710
 source	lsb	11.1.0ubuntu4	pool/main/l/lsb	2	48374
 source	lz4	1.9.3-2build2	pool/main/l/lz4	3	337137
+source	media-types	7.0.0	pool/main/m/media-types	2	57280
+source	mpdecimal	2.5.1-2build2	pool/main/m/mpdecimal	3	2592907
 source	ncurses	6.3-2ubuntu0.3	pool/main/n/ncurses	4	3645702
 source	openssh	1:8.9p1-3ubuntu0.17	pool/main/o/openssh	4	2036583
 source	openssl	3.0.2-0ubuntu1.29	pool/main/o/openssl	3	15346175
@@ -134,14 +146,17 @@ source	popt	1.18-3build1	pool/main/p/popt	3	596506
 source	procps	2:3.3.17-6ubuntu2.1	pool/main/p/procps	3	1046027
 source	python3-defaults	3.10.6-1~22.04.1	pool/main/p/python3-defaults	2	148913
 source	python3.10	3.10.12-1~22.04.18	pool/main/p/python3.10	3	19957235
+source	readline	8.1.2-1	pool/main/r/readline	3	3024797
 source	rsync	3.2.7-0ubuntu0.22.04.7	pool/main/r/rsync	4	1269496
 source	sensible-utils	0.0.17	pool/main/s/sensible-utils	2	68381
 source	shadow	1:4.8.1-2ubuntu2.2	pool/main/s/shadow	3	1711744
+source	sqlite3	3.37.2-2ubuntu0.7	pool/main/s/sqlite3	4	13356022
 source	sudo	1.9.9-1ubuntu2.6	pool/main/s/sudo	4	4514073
 source	systemd	249.11-0ubuntu3.22	pool/main/s/systemd	3	10904425
 source	tar	1.34+dfsg-1ubuntu0.1.22.04.6	pool/main/t/tar	3	2039985
 source	tcp-wrappers	7.6.q-31build2	pool/main/t/tcp-wrappers	3	137926
 source	ucf	3.0043	pool/main/u/ucf	2	71983
+source	util-linux	2.37.2-4ubuntu3.6	pool/main/u/util-linux	3	5746898
 source	xxhash	0.8.1-1	pool/main/x/xxhash	3	178090
 source	xz-utils	5.2.5-2ubuntu1.1	pool/main/x/xz-utils	4	1188144
 source	zlib	1:1.2.11.dfsg-2ubuntu9.2	pool/main/z/zlib	3	433037

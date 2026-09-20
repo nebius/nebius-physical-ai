@@ -23,7 +23,7 @@ with deferred prerequisites in its
 | Boundary | Phase A treatment |
 | --- | --- |
 | Source | `RoboTwin-Platform/RoboTwin@96c1feab536306b50c26af200044fcdf126e8904` and `NVlabs/curobo@d64c4b005459db10c5dd867d8b30a87d5bda9bdb` (v0.7.8) are identities only. Neither source nor git metadata is baked or currently fetched; a future authorized runtime must fetch the exact revisions directly from their official providers and verify payload bytes before provisioning. |
-| Baked runtime | The recipe pins official Ubuntu 22.04 linux/amd64 manifest `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986` and Ubuntu snapshot `20260912T000000Z`. Its signed `main` closure is 75 exact binary packages and 57 source packages; all 75 installed copyright files are hash-bound. The public Python application lock is complete-empty. CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, and every Python application package remain absent. The trusted build still refuses before Docker because no reviewed native-content policy or built-byte evidence exists. |
+| Baked runtime | The recipe pins official Ubuntu 22.04 linux/amd64 manifest `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986` and Ubuntu snapshot `20260912T000000Z`. Its signed `main` closure is 84 exact binary packages and 63 source packages; all 84 installed copyright files are hash-bound. The public Python application lock is complete-empty. CUDA, cuDNN, PyTorch CUDA, SAPIEN, MPLib, Warp, and every Python application package remain absent. The trusted build still refuses before Docker because no reviewed native-content policy or built-byte evidence exists. |
 | Weights | Empty. This data-collection gate uses no model or checkpoint. |
 | Data/assets | [`TianxingChen/RoboTwin2.0@785feb15aa4a4f532395ad2b1d2be5f28cb561ad`](https://huggingface.co/datasets/TianxingChen/RoboTwin2.0/tree/785feb15aa4a4f532395ad2b1d2be5f28cb561ad) is public and ungated, and its repository card declares MIT for the two exact locked members: `embodiments.zip` (219,859,313 bytes, SHA-256 `6b87d7d55e106d8ff25917e0538eb1e177fc549280e8a742a8cec3cb9f953fc6`) and `objects.zip` (3,737,778,549 bytes, SHA-256 `6aa56b3cf1e1064f7c809308144da36b00815f8b137fef2d7e4de856f8becf27`). No archive or extracted asset is fetched or baked. A future authorized runtime must anonymously probe and fetch the exact revision-bound bytes from the official provider and verify both locked sizes and hashes before provisioning. |
 | Runtime cache | Empty and disabled while runtime delivery is unapproved and has no complete artifact lock. The planned default is single-customer, single-workload node-local ephemeral storage keyed by provider, artifact, immutable revision/digest, and format. Population uses owner-only staging, verification, and receipt-last atomic rename. Durable reuse remains disabled until its rights and tenant isolation are approved. |
@@ -88,7 +88,7 @@ acceptance path. Normal local submit returns a structured
 `needs_customer_acceptance` notice. A future authenticated control-plane
 implementation must pass a typed assertion that binds verified issuer,
 customer scope, run ID, runtime-lock SHA-256
-`dda9bfebe81250247d25259d655589f8f3b95af7d8629d31b49c59a6af3150ee`,
+`81d627e54cab7841d99abde48fea3c01d1c3ecd95dbe31338a73865a28bb9df5`,
 issuance, expiry, exact intended
 activity, exact terms, assertion identity, and replay-resistant nonce. Missing,
 declined, stale, replayed, unauthenticated, malformed, or wrongly bound
