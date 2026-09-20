@@ -66,6 +66,9 @@ The Python SDK exposes `probe`, `restore`, `verify`, and `review`.
   Apex jobs; `build.sh` exposes positive-integer overrides for a differently
   sized trusted builder. Python dependency installation, FlashAttention
   compilation, and Apex compilation are separate cacheable layers.
+  FlashAttention's own `FLASH_ATTN_CUDA_ARCHS` input is pinned to `90`; its
+  upstream default is a multi-architecture `80;90;100;120` build and does not
+  honor `TORCH_CUDA_ARCH_LIST`.
 
 The optional service requires `SEEDVR2_TOKEN` and explicit
 `SEEDVR2_ALLOWED_S3_ROOTS`. It serializes GPU operations and removes storage and

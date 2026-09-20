@@ -150,7 +150,7 @@
       "dockerfile": "seedvr2/Dockerfile",
       "build_script": "seedvr2/build.sh",
       "redistribution": "public",
-      "verdict": "port",
+      "verdict": "unknown",
       "validation": "pending-build",
       "torch": "2.13.0+cu130 candidate",
       "source_compiled_extensions": [
@@ -158,7 +158,7 @@
         "NVIDIA Apex fused normalization"
       ],
       "smoke": "Pinned official SeedVR2-3B restores a real degraded robot-observation clip and emits a fully decoded, hash-bound MP4 with objective temporal and object-preservation evidence.",
-      "port_blocker": "The first candidate is deliberately H100-only: TORCH_CUDA_ARCH_LIST=9.0 compiles FlashAttention and Apex only for sm_90. Datacenter Blackwell needs an explicit sm_100 rebuild followed by the same real restoration and objective gates; wheel arch presence or imports alone are insufficient.",
+      "build_target": "The first candidate explicitly requests sm_90 from both FlashAttention and Apex. Its built extension arch inventory remains unproven until the exact image exists. Datacenter Blackwell would need an explicit sm_100 rebuild followed by the same real restoration and objective gates; wheel arch presence or imports alone are insufficient.",
       "upstream_tracking": "https://github.com/Dao-AILab/flash-attention and https://github.com/NVIDIA/apex",
       "notes": "Route the quarantined first candidate only to one H100. No B200/B300 compatibility is inferred from CUDA 13 or the Torch wheel."
     },

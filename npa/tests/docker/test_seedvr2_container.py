@@ -67,10 +67,13 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
 
     assert "ARG FLASH_ATTN_MAX_JOBS=2" in dockerfile
     assert "ARG FLASH_ATTN_NVCC_THREADS=1" in dockerfile
+    assert "ARG FLASH_ATTN_CUDA_ARCHS=90" in dockerfile
     assert "ARG APEX_MAX_JOBS=2" in dockerfile
+    assert 'FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}"' in dockerfile
     assert 'MAX_JOBS="${FLASH_ATTN_MAX_JOBS}"' in dockerfile
     assert 'NVCC_THREADS="${FLASH_ATTN_NVCC_THREADS}"' in dockerfile
     assert 'MAX_JOBS="${APEX_MAX_JOBS}"' in dockerfile
+    assert 'npa.build.flash-attn.cuda-archs="${FLASH_ATTN_CUDA_ARCHS}"' in dockerfile
     assert 'npa.build.flash-attn.max-jobs="${FLASH_ATTN_MAX_JOBS}"' in dockerfile
     assert (
         'npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}"' in dockerfile
@@ -81,6 +84,7 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
     assert (
         '--build-arg "FLASH_ATTN_NVCC_THREADS=$FLASH_ATTN_NVCC_THREADS"' in build_script
     )
+    assert '--build-arg "FLASH_ATTN_CUDA_ARCHS=$FLASH_ATTN_CUDA_ARCHS"' in build_script
     assert '--build-arg "APEX_MAX_JOBS=$APEX_MAX_JOBS"' in build_script
 
     requirements_end = dockerfile.index(
@@ -113,16 +117,16 @@ def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
     )
 
 
-def test_seedvr2_blackwell_manifest_keeps_the_h100_only_boundary() -> None:
+def test_seedvr2_blackwell_manifest_keeps_pending_build_unproven() -> None:
     manifest = json.loads(
         (ROOT / "npa/docker/workbench/blackwell-dc-images.json").read_text()
     )
     entry = next(row for row in manifest["images"] if row["name"] == "npa-seedvr2")
-    assert entry["verdict"] == "port"
+    assert entry["verdict"] == "unknown"
     assert entry["validation"] == "pending-build"
-    assert "H100-only" in entry["port_blocker"]
-    assert "sm_90" in entry["port_blocker"]
-    assert "sm_100" in entry["port_blocker"]
+    assert "sm_90" in entry["build_target"]
+    assert "sm_100" in entry["build_target"]
+    assert "unproven" in entry["build_target"]
 
 
 def test_seedvr2_golden_eval_runs_real_gpu_capability() -> None:

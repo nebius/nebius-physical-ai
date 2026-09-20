@@ -9,6 +9,7 @@ REGISTRY=""
 PUSH=0
 FLASH_ATTN_MAX_JOBS="${NPA_SEEDVR2_FLASH_ATTN_MAX_JOBS:-2}"
 FLASH_ATTN_NVCC_THREADS="${NPA_SEEDVR2_FLASH_ATTN_NVCC_THREADS:-1}"
+FLASH_ATTN_CUDA_ARCHS="${NPA_SEEDVR2_FLASH_ATTN_CUDA_ARCHS:-90}"
 APEX_MAX_JOBS="${NPA_SEEDVR2_APEX_MAX_JOBS:-2}"
 
 while [[ $# -gt 0 ]]; do
@@ -16,10 +17,11 @@ while [[ $# -gt 0 ]]; do
     --registry) REGISTRY="${2:?}"; shift 2 ;;
     --flash-attn-max-jobs) FLASH_ATTN_MAX_JOBS="${2:?}"; shift 2 ;;
     --flash-attn-nvcc-threads) FLASH_ATTN_NVCC_THREADS="${2:?}"; shift 2 ;;
+    --flash-attn-cuda-archs) FLASH_ATTN_CUDA_ARCHS="${2:?}"; shift 2 ;;
     --apex-max-jobs) APEX_MAX_JOBS="${2:?}"; shift 2 ;;
     --push) PUSH=1; shift ;;
     -h|--help)
-      echo "Usage: $0 [--registry HOST/PATH] [--flash-attn-max-jobs N] [--flash-attn-nvcc-threads N] [--apex-max-jobs N] [--push]"
+      echo "Usage: $0 [--registry HOST/PATH] [--flash-attn-max-jobs N] [--flash-attn-nvcc-threads N] [--flash-attn-cuda-archs LIST] [--apex-max-jobs N] [--push]"
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -36,6 +38,11 @@ for setting in \
     exit 2
   }
 done
+
+[[ "$FLASH_ATTN_CUDA_ARCHS" =~ ^[0-9]+(\;[0-9]+)*$ ]] || {
+  echo "flash-attn-cuda-archs must be a semicolon-separated numeric list" >&2
+  exit 2
+}
 
 SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
@@ -100,6 +107,7 @@ env -u HF_TOKEN -u NGC_API_KEY -u NVIDIA_API_KEY -u NEBIUS_IAM_TOKEN \
     --build-arg "SOURCE_DATE_EPOCH=$SOURCE_EPOCH" \
     --build-arg "FLASH_ATTN_MAX_JOBS=$FLASH_ATTN_MAX_JOBS" \
     --build-arg "FLASH_ATTN_NVCC_THREADS=$FLASH_ATTN_NVCC_THREADS" \
+    --build-arg "FLASH_ATTN_CUDA_ARCHS=$FLASH_ATTN_CUDA_ARCHS" \
     --build-arg "APEX_MAX_JOBS=$APEX_MAX_JOBS" \
     --label "org.opencontainers.image.source=https://github.com/nebius/nebius-physical-ai" \
     --load --provenance=false "$BUILD_CONTEXT"

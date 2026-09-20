@@ -61,16 +61,20 @@ RUN python3.12 -m venv /opt/seedvr2-venv \
     && pip install --no-cache-dir --upgrade 'pip==26.2.1' \
     && pip install --no-cache-dir --require-hashes -r /tmp/seedvr2-requirements.lock
 
+ARG FLASH_ATTN_CUDA_ARCHS=90
 RUN curl --fail --location \
       "https://files.pythonhosted.org/packages/source/f/flash-attn/flash_attn-${FLASH_ATTN_VERSION}.tar.gz" \
       -o /tmp/flash-attn.tar.gz \
     && echo "${FLASH_ATTN_SHA256}  /tmp/flash-attn.tar.gz" | sha256sum -c - \
     && FLASH_ATTENTION_FORCE_BUILD=TRUE \
+      FLASH_ATTN_CUDA_ARCHS="${FLASH_ATTN_CUDA_ARCHS}" \
       MAX_JOBS="${FLASH_ATTN_MAX_JOBS}" \
       NVCC_THREADS="${FLASH_ATTN_NVCC_THREADS}" \
       pip install --no-cache-dir --no-index --no-build-isolation --no-deps \
       /tmp/flash-attn.tar.gz \
     && rm -f /tmp/flash-attn.tar.gz
+
+LABEL npa.build.flash-attn.cuda-archs="${FLASH_ATTN_CUDA_ARCHS}"
 
 RUN curl --fail --location \
       "https://codeload.github.com/NVIDIA/apex/tar.gz/${APEX_SOURCE_REF}" \
