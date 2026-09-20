@@ -1117,6 +1117,8 @@ def test_a_real_scan_sits_at_the_sensitivity_floor_not_on_an_arbitrary_line() ->
     share = eagle["unsupported_area_share_beyond_3_voxels"]
     assert abs(share - 0.1009) < 0.001
     assert abs(share - FABRICATION_AREA_SHARE) / FABRICATION_AREA_SHARE < 0.02
+    # Sitting on the boundary, the artifact must say so rather than assert a verdict.
+    assert eagle["removed_surface_reads_as"] == "undecided"
 
 
 def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() -> None:
@@ -1145,19 +1147,19 @@ def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() ->
     assert reading["unsupported_area_share_beyond_3_voxels"] < 0.001
 
 
-def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> None:
-    """The sensitivity floor, from the review lane's icosphere-scored-against-itself curve.
+def test_the_undecided_band_covers_most_of_the_sensitivity_floor() -> None:
+    """Where the reading speaks, and where it now declines to.
 
-    Caps of increasing size deleted from the observations of a sphere, with the mesh left
-    covering them, so the invented fraction is known exactly from the cap angle. The share
-    is monotone in it, and the floor is near 9 percent: a cap fabricating 3.0 percent of
-    the surface still reads `near-threshold surface`.
+    The review lane's polar-cap curve, with the invented fraction known exactly from the
+    cap angle. Before the undecided band this field gave a confident verdict at every one
+    of these points, including the two sitting on its own sensitivity floor, where its
+    verdict was a coin toss. Now it declines there.
 
-    This is the error direction that matters for a reader. Below the floor the reading is
-    not undecided, it is confidently wrong, so a low value is a lower bound on invented
-    surface rather than a clean bill of health. The test exists so that framing cannot be
-    lost: if a future change made the reading fire on the 3 percent case it would also be
-    over-calling elsewhere, and if it stopped firing on the 9 percent case the floor moved.
+    What remains confidently wrong is narrower and worth naming: a share under 0.05, which
+    on this curve is about 3 percent invented area, still reads `near-threshold surface`.
+    That is why the note for that branch calls itself a lower bound rather than a clean
+    bill of health. The field cannot be made to see fabrication below its floor; it can
+    only be stopped from denying it.
 
     Figures: review lane `program/review/evidence/verify_602_boundary.py`.
     """
@@ -1167,7 +1169,7 @@ def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> No
     class _Mesh:
         vertices = range(100000)
 
-    def reading(unsupported: float, beyond_3: float) -> dict:
+    def reads(unsupported: float, beyond_3: float) -> dict:
         return _crop_justification(
             _support_block(
                 unsupported=unsupported, beyond_1_5=beyond_3 * 2, beyond_3=beyond_3
@@ -1176,21 +1178,31 @@ def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> No
             _Mesh(),
         )
 
-    # Zero-error reconstruction: 0.75126 unsupported, and still correctly near-threshold.
-    # The headline fraction is not measuring fabrication at this threshold at all.
-    perfect = reading(0.75126, 0.00973)
-    assert perfect["removed_surface_reads_as"] == "near-threshold surface"
+    # invented fraction -> (unsupported, past 3v) -> expected reading
+    curve = [
+        (0.000, 0.75126, 0.00973, "near-threshold surface"),
+        (0.030, 0.76106, 0.03149, "near-threshold surface"),
+        (0.067, 0.77010, 0.06375, "undecided"),
+        (0.090, 0.77602, 0.08187, "undecided"),
+        (0.117, 0.78417, 0.11002, "undecided"),
+        (0.250, 0.81944, 0.23530, "extrapolated shell"),
+        (0.500, 0.87790, 0.48395, "extrapolated shell"),
+    ]
+    for invented, unsupported, beyond_3, expected in curve:
+        result = reads(unsupported, beyond_3)
+        assert result["removed_surface_reads_as"] == expected, (
+            f"{invented:.1%} invented area read as "
+            f"{result['removed_surface_reads_as']!r}, expected {expected!r}"
+        )
 
-    # Below the floor: genuinely invented surface that the reading misses.
-    for unsupported, beyond_3 in ((0.76106, 0.03149), (0.77010, 0.06375)):
-        missed = reading(unsupported, beyond_3)
-        assert missed["removed_surface_reads_as"] == "near-threshold surface"
-        assert "lower bound and not a clean bill of health" in missed["note"]
+    # The one remaining confident miss names itself as a lower bound.
+    missed = reads(0.76106, 0.03149)
+    assert "lower bound and not a clean bill of health" in missed["note"]
 
-    # At and above the floor it fires, and keeps firing.
-    for unsupported, beyond_3 in ((0.77602, 0.08187), (0.87790, 0.48395)):
-        caught = reading(unsupported, beyond_3)
-        assert caught["removed_surface_reads_as"] == "extrapolated shell"
+    # The undecided note must send the reader to the bands, not to a verdict.
+    undecided = reads(0.77602, 0.08187)
+    assert "unsupported_area_beyond_3_voxels" in undecided["note"]
+    assert "no reading here worth acting on" in undecided["note"]
 
 
 def test_the_floor_is_setup_dependent_so_no_test_pins_it_to_a_number() -> None:

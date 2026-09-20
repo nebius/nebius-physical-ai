@@ -440,6 +440,32 @@ def _sample_distances(o3d, cloud, vertices):
 #: `program/review/evidence/verify_602_boundary.py`.
 FABRICATION_AREA_SHARE = 0.1
 
+#: Shares in this closed interval emit `undecided` instead of a verdict.
+#:
+#: Without it the artifact contradicted its own documentation. The boundary is where the
+#: reading is least trustworthy, and it was exactly where the output made its most
+#: confident assertion — `extrapolated shell`, with a note calling the surface invented as
+#: settled fact — while the other branch was properly hedged. The confidence was inverted
+#: where it should be lowest. A docstring saying "treat this as a coin toss" does not
+#: travel with the JSON, and the JSON is what a consumer reads.
+#:
+#: Roughly a factor of two either side of the boundary. Both informative poles keep their
+#: verdict: 0.0 on a watertight mesh stays `near-threshold surface`, 0.7297 on the partial
+#: demo scans stays `extrapolated shell`, and the real scan at 0.1012 stops being reported
+#: as a finding.
+#:
+#: This band is also what makes the untested false-negative direction tolerable. An
+#: unmeasured failure mode is dangerous in proportion to how confidently a field speaks,
+#: and a field that declines to speak near its boundary is not resting on it.
+UNDECIDED_BAND = (0.05, 0.2)
+
+#: One known leniency in how the supporting measurements were validated, recorded here so
+#: it is not rediscovered: fabrication was checked as unsigned distance to the whole
+#: reference surface, so a bridge cutting through an object's interior can register as
+#: faithful when it passes near any other part of that surface. The bias is in this tool's
+#: favour, and it is largest on concave geometry. A signed distance or a per-region
+#: correspondence would be stricter; neither was implemented.
+
 
 def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str, Any]:
     """Say whether the crop removed an extrapolated shell or near-threshold surface.
@@ -459,33 +485,47 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
     unsupported = float(before.get("unsupported_area_fraction") or 0.0)
     far = float(before.get("unsupported_area_beyond_3_voxels") or 0.0)
     share = (far / unsupported) if unsupported > 0 else 0.0
-    shell = share >= FABRICATION_AREA_SHARE
+    if share > UNDECIDED_BAND[1]:
+        reads_as = "extrapolated shell"
+        note = (
+            "Most of the unsupported area lay more than three voxels from any sample, "
+            "which sample spacing cannot explain, so the crop removed invented surface."
+        )
+    elif share >= UNDECIDED_BAND[0]:
+        reads_as = "undecided"
+        note = (
+            f"This share, {share:.4f}, is inside the undecided band "
+            f"[{UNDECIDED_BAND[0]}, {UNDECIDED_BAND[1]}] around the reporting boundary of "
+            f"{FABRICATION_AREA_SHARE}, so there is no reading here worth acting on. The "
+            "two cases are only separated by three orders of magnitude at the poles, and "
+            "this is the middle. Read unsupported_area_beyond_1_5_voxels and "
+            "unsupported_area_beyond_3_voxels directly and judge against the sample "
+            "spacing of this capture: area a long way past the voxel is invented, area "
+            "just past it is where a correct surface also falls."
+        )
+    else:
+        reads_as = "near-threshold surface"
+        note = (
+            "The unsupported area was concentrated within three voxels of a sample, "
+            "which is where a correct surface reconstructed from samples of this "
+            "spacing also falls. The crop may have removed correct geometry, and "
+            "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
+            "or 2.0, or pass 0, unless the tighter crop is wanted deliberately. "
+            "This reading is a lower bound and not a clean bill of health: it cannot "
+            "see fabrication below the sensitivity floor, which is setup-dependent, so "
+            "a small invented region reads exactly like none at all."
+        )
     return {
         "unsupported_area_share_beyond_3_voxels": share,
-        "removed_surface_reads_as": "extrapolated shell"
-        if shell
-        else "near-threshold surface",
+        "removed_surface_reads_as": reads_as,
+        "undecided_band": list(UNDECIDED_BAND),
         "vertices_removed": removed,
         "vertex_fraction_removed": (
             removed / (removed + len(mesh.vertices))
             if removed + len(mesh.vertices) > 0
             else 0.0
         ),
-        "note": (
-            "Most of the unsupported area lay more than three voxels from any sample, "
-            "which sample spacing cannot explain, so the crop removed invented surface."
-            if shell
-            else (
-                "The unsupported area was concentrated within three voxels of a sample, "
-                "which is where a correct surface reconstructed from samples of this "
-                "spacing also falls. The crop may have removed correct geometry, and "
-                "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
-                "or 2.0, or pass 0, unless the tighter crop is wanted deliberately. "
-                "This reading is a lower bound and not a clean bill of health: it "
-                "cannot see fabrication below roughly a tenth of the surface area, so "
-                "a small invented region reads exactly like none at all."
-            )
-        ),
+        "note": note,
     }
 
 
