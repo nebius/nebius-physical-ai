@@ -60,10 +60,11 @@ namespace exists and destroy deliberately leaves it in place. For a private
 image, create the named pull secret in that namespace and pass
 `--image-pull-secret`.
 
-The `0.1.1` image remains on its CUDA 12.4 compatibility contract. Use L40S for
-pixel-bearing EGL runs; the hardware matrix marks RTX PRO 6000, B200, and B300
-blocked until a CUDA 13 image is built and measured. Do not select those
-accelerators from generic rendering capability alone.
+The `0.1.1` image uses a CUDA 12.4 base with the pinned PyTorch 2.9.0+cu128
+runtime. Use L40S for pixel-bearing EGL runs. RTX PRO 6000, B200, and B300 are
+unverified for this exact image until its wheel architecture set and real EGL
+path are measured; do not infer support or a blocker from the base-image tag or
+generic rendering capability alone.
 
 ## Run
 
