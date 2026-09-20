@@ -33,7 +33,9 @@ class ArtifactLoadResult:
 def _parse_s3_uri(uri: str) -> tuple[str, str]:
     value = str(uri or "").strip().rstrip("/")
     if not value.startswith("s3://"):
-        raise ArtifactLoadError(f"Expected an s3:// run prefix, got {value or '<empty>'}")
+        raise ArtifactLoadError(
+            f"Expected an s3:// run prefix, got {value or '<empty>'}"
+        )
     bucket_and_key = value.removeprefix("s3://").split("/", 1)
     if len(bucket_and_key) != 2 or not all(bucket_and_key):
         raise ArtifactLoadError(f"Expected s3://<bucket>/<run-prefix>, got {value}")
@@ -49,7 +51,9 @@ def discover_final_rerun_artifact(run_prefix_uri: str, *, client: Any) -> str:
         client.s3.head_object(Bucket=bucket, Key=exact_key)
         return f"s3://{bucket}/{exact_key}"
     except Exception:  # noqa: BLE001 - fall back to final-report discovery
-        logger.debug("Exact PAIDF Rerun object is unavailable; listing reports", exc_info=True)
+        logger.debug(
+            "Exact PAIDF Rerun object is unavailable; listing reports", exc_info=True
+        )
     report_prefix = f"{prefix.rstrip('/')}/reports/"
     try:
         paginator = client.s3.get_paginator("list_objects_v2")
@@ -115,10 +119,16 @@ def load_final_artifact_into_agent(
 
     retry = _retry_command(run_id, project, agent_name)
     try:
-        artifact_uri = discover_final_rerun_artifact(run_prefix_uri, client=storage_client)
+        artifact_uri = discover_final_rerun_artifact(
+            run_prefix_uri, client=storage_client
+        )
     except ArtifactLoadError as exc:
-        result = ArtifactLoadResult(status="partial", detail=str(exc), retry_command=retry)
-        update_submission_state(project or "default", run_id, {"artifact_load": result.to_dict()})
+        result = ArtifactLoadResult(
+            status="partial", detail=str(exc), retry_command=retry
+        )
+        update_submission_state(
+            project or "default", run_id, {"artifact_load": result.to_dict()}
+        )
         return result
 
     agents = resolve_project_agents(project) if project else {}
@@ -139,7 +149,9 @@ def load_final_artifact_into_agent(
             detail="workflow succeeded; no configured agent is available for artifact loading",
             retry_command=retry,
         )
-        update_submission_state(project or "default", run_id, {"artifact_load": result.to_dict()})
+        update_submission_state(
+            project or "default", run_id, {"artifact_load": result.to_dict()}
+        )
         return result
 
     try:
@@ -152,7 +164,9 @@ def load_final_artifact_into_agent(
         else:
             request = http_request
         status_url = f"{base_url}/api/sim-viz/status"
-        status_response = request("GET", status_url, auth=auth, timeout=10.0, verify=verify)
+        status_response = request(
+            "GET", status_url, auth=auth, timeout=10.0, verify=verify
+        )
         if int(getattr(status_response, "status_code", 0)) == 200:
             matches, render = _status_matches(status_response.json(), artifact_uri)
             if matches:
@@ -181,7 +195,9 @@ def load_final_artifact_into_agent(
             raise ArtifactLoadError(
                 f"agent load-artifact returned HTTP {getattr(load_response, 'status_code', 'unknown')}"
             )
-        verify_response = request("GET", status_url, auth=auth, timeout=10.0, verify=verify)
+        verify_response = request(
+            "GET", status_url, auth=auth, timeout=10.0, verify=verify
+        )
         if int(getattr(verify_response, "status_code", 0)) != 200:
             raise ArtifactLoadError(
                 f"agent sim-viz status returned HTTP {getattr(verify_response, 'status_code', 'unknown')}"
@@ -208,5 +224,7 @@ def load_final_artifact_into_agent(
             detail=f"workflow succeeded; artifact load/verification is incomplete: {exc}",
             retry_command=retry,
         )
-    update_submission_state(project or "default", run_id, {"artifact_load": result.to_dict()})
+    update_submission_state(
+        project or "default", run_id, {"artifact_load": result.to_dict()}
+    )
     return result

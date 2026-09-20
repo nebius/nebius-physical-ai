@@ -48,7 +48,11 @@ def _synthesize(path: Path) -> None:
 
 
 def main() -> int:
-    from npa.workbench.cosmos_curate import curate_videos, ingest_output, probe_availability
+    from npa.workbench.cosmos_curate import (
+        curate_videos,
+        ingest_output,
+        probe_availability,
+    )
 
     availability = probe_availability()
     if not availability.can_run_in_process:
@@ -73,7 +77,10 @@ def main() -> int:
 
         clips = ingested["clips"]
         if not clips:
-            print("COSMOS_CURATE_SMOKE_FAIL curator wrote no clip metadata", file=sys.stderr)
+            print(
+                "COSMOS_CURATE_SMOKE_FAIL curator wrote no clip metadata",
+                file=sys.stderr,
+            )
             return 1
         if len(ingested["clip_files"]) != len(clips):
             print(
@@ -84,10 +91,15 @@ def main() -> int:
             return 1
         scored = [clip for clip in clips if clip.motion_score_global_mean is not None]
         if not scored:
-            print("COSMOS_CURATE_SMOKE_FAIL no clip carries a motion score", file=sys.stderr)
+            print(
+                "COSMOS_CURATE_SMOKE_FAIL no clip carries a motion score",
+                file=sys.stderr,
+            )
             return 1
         if run.errors:
-            print(f"COSMOS_CURATE_SMOKE_FAIL stage errors: {run.errors}", file=sys.stderr)
+            print(
+                f"COSMOS_CURATE_SMOKE_FAIL stage errors: {run.errors}", file=sys.stderr
+            )
             return 1
 
         print(

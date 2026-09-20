@@ -25,26 +25,48 @@ def _require_cuda_actor_evidence(report):
     assert sum(actor["inference_calls"] for actor in final) > 0
 
 
-@pytest.mark.skipif(not os.environ.get("NPA_RAY_CLIP_RESULTS"), reason="Select real downloaded CLIP results explicitly")
+@pytest.mark.skipif(
+    not os.environ.get("NPA_RAY_CLIP_RESULTS"),
+    reason="Select real downloaded CLIP results explicitly",
+)
 def test_real_cuda_results_convert_and_decode(tmp_path):
     """Require CUDA actor evidence and independently verify actual RRD bytes."""
     from rerun.recording import load_recording
 
     root = Path(os.environ["NPA_RAY_CLIP_RESULTS"])
-    source = Path(__file__).parents[2] / "workflows/workbench/ray-clip-development/report.py"
+    source = (
+        Path(__file__).parents[2] / "workflows/workbench/ray-clip-development/report.py"
+    )
     report = json.loads((root / "report.json").read_text())
     _require_cuda_actor_evidence(report)
     output = tmp_path / "clip.rrd"
-    converted = subprocess.run([sys.executable, str(source), "--input-path", str(root),
-                                "--output-path", str(output), "--run-id", "clip-live-validation"],
-                               capture_output=True, text=True)
-    assert converted.returncode == 0, "Converter failed; inspect the private result artifacts"
+    converted = subprocess.run(
+        [
+            sys.executable,
+            str(source),
+            "--input-path",
+            str(root),
+            "--output-path",
+            str(output),
+            "--run-id",
+            "clip-live-validation",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert converted.returncode == 0, (
+        "Converter failed; inspect the private result artifacts"
+    )
     receipt = json.loads(converted.stdout)
     assert receipt["records"] == report["records"]
     cli = Path(sys.executable).parent / "rerun"
-    verify = subprocess.run([str(cli), "rrd", "verify", str(output)], capture_output=True)
+    verify = subprocess.run(
+        [str(cli), "rrd", "verify", str(output)], capture_output=True
+    )
     assert verify.returncode == 0, "Rerun CLI rejected the recording"
-    printed = subprocess.run([str(cli), "rrd", "print", "-vv", str(output)], capture_output=True, text=True)
+    printed = subprocess.run(
+        [str(cli), "rrd", "print", "-vv", str(output)], capture_output=True, text=True
+    )
     assert printed.returncode == 0
     assert "npa.ray-clip-development" in printed.stdout
     assert "clip-live-validation" in printed.stdout
@@ -56,7 +78,12 @@ def test_real_cuda_results_convert_and_decode(tmp_path):
             indices.extend(chunk.to_record_batch().column("record_id").to_pylist())
     # Physical RRD chunks can arrive out of timeline order; preserve exact coverage.
     assert sorted(indices) == list(range(report["records"]))
-    assert {"/images/original", "/images/crop", "/vectors/embedding", "/provenance/run"} <= entities
+    assert {
+        "/images/original",
+        "/images/crop",
+        "/vectors/embedding",
+        "/provenance/run",
+    } <= entities
     if "model_initializations" in report:
         assert "/checkpoints/materialized" in entities
         if report["recovery"] is not None:

@@ -58,8 +58,7 @@ def test_stages_and_rerun_selectors_share_load_path() -> None:
     assert "pendingSelection: true," in load_fn
     assert "isCurrent," in load_fn
     assert (
-        "loadWorkflowHistoryRun(chosen, activeArtifactRunRef, { isCurrent })"
-        in load_fn
+        "loadWorkflowHistoryRun(chosen, activeArtifactRunRef, { isCurrent })" in load_fn
     )
 
 

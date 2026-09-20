@@ -29,13 +29,25 @@ class CreateMode(str, Enum):
 def create_table_cmd(
     endpoint: str = typer.Option("", "--endpoint", help="LanceDB wrapper endpoint."),
     table: str = typer.Option(..., "--table", help="Table name."),
-    schema: Path | None = typer.Option(None, "--schema", exists=False, help="Optional JSON schema path."),
-    input_path: str = typer.Option("", "--input-path", help="Local parquet/json/jsonl path or s3:// source path."),
+    schema: Path | None = typer.Option(
+        None, "--schema", exists=False, help="Optional JSON schema path."
+    ),
+    input_path: str = typer.Option(
+        "", "--input-path", help="Local parquet/json/jsonl path or s3:// source path."
+    ),
     mode: CreateMode = typer.Option(CreateMode.create, "--mode", help="Create mode."),
-    vector_column: str = typer.Option("vector", "--vector-column", help="Vector column name."),
+    vector_column: str = typer.Option(
+        "vector", "--vector-column", help="Vector column name."
+    ),
     id_column: str = typer.Option("id", "--id-column", help="Identifier column name."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing wrapper token."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing wrapper token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Create or update a LanceDB table."""
     resolved = resolve_endpoint(endpoint)
@@ -51,7 +63,18 @@ def create_table_cmd(
         "vector_column": vector_column,
         "id_column": id_column,
     }
-    result = request_json("POST", resolved, f"/tables/{table_name}", headers=headers, payload=payload, timeout=120.0)
+    result = request_json(
+        "POST",
+        resolved,
+        f"/tables/{table_name}",
+        headers=headers,
+        payload=payload,
+        timeout=120.0,
+    )
     result.setdefault("table", table_name)
     result.setdefault("rows", len(rows))
-    emit(result, output=output, text=f"table: {table_name}\nstatus: {result.get('status', 'created')}")
+    emit(
+        result,
+        output=output,
+        text=f"table: {table_name}\nstatus: {result.get('status', 'created')}",
+    )

@@ -83,7 +83,9 @@ def test_toolref_closure_comes_from_catalog_metadata() -> None:
     }
 
 
-def test_hf_ready_pending_denied_unavailable_and_public_anonymous(tmp_path: Path) -> None:
+def test_hf_ready_pending_denied_unavailable_and_public_anonymous(
+    tmp_path: Path,
+) -> None:
     gated = GatedAsset(
         "vendor/gated",
         HF,
@@ -188,9 +190,7 @@ def test_metadata_visibility_cannot_make_denied_payload_ready(
 
     assert evidence[0].status == AccessStatus.PENDING
     assert evidence[0].reason == "manual_approval_required_or_pending"
-    assert observed == [
-        ("vendor/gated", "rev-gated", "weights/model.safetensors")
-    ]
+    assert observed == [("vendor/gated", "rev-gated", "weights/model.safetensors")]
 
 
 @pytest.mark.parametrize("credential", ["nvapi-personal", "registry-credential"])
@@ -330,9 +330,7 @@ def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
         ngc_validator=None,
         state_path=state_path,
     )
-    changed_revision = GatedAsset(
-        **{**base.__dict__, "revision": "rev-b"}
-    )
+    changed_revision = GatedAsset(**{**base.__dict__, "revision": "rev-b"})
     probe_requirements(
         [changed_revision],
         hf_token="token-a",
@@ -366,7 +364,9 @@ def test_ready_cache_reuses_only_unchanged_credential_revision_and_terms(
     assert "token-a" not in serialized and "token-b" not in serialized
 
 
-def test_ready_cache_is_invalidated_when_exact_probe_path_changes(tmp_path: Path) -> None:
+def test_ready_cache_is_invalidated_when_exact_probe_path_changes(
+    tmp_path: Path,
+) -> None:
     state_path = tmp_path / "state.json"
     calls: list[tuple[str, str]] = []
 

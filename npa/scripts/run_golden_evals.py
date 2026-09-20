@@ -52,9 +52,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
             tag = supported_tool_version(name) if name in CONTAINER_IMAGE_NAMES else "-"
             checks = GOLDEN_EVAL_CAPABILITIES.get(name, [])
             cap = "; ".join(checks)
-            print(
-                f"{name:<{width}}  {tag:<42} {ge.kind:<16} {ge.status:<18} {cap}"
-            )
+            print(f"{name:<{width}}  {tag:<42} {ge.kind:<16} {ge.status:<18} {cap}")
         return 0
     if args.json:
         payload = {
@@ -72,7 +70,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
     width = max(len(name) for name in specs)
     for name, spec in specs.items():
         ge = spec.golden_eval
-        print(f"{name:<{width}}  {ge.kind:<16} gpu={ge.gpu:<8} {ge.status:<18} {ge.command}")
+        print(
+            f"{name:<{width}}  {ge.kind:<16} gpu={ge.gpu:<8} {ge.status:<18} {ge.command}"
+        )
     return 0
 
 
@@ -96,7 +96,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
             tag=getattr(args, "tag", None),
             on_state_change=lambda job: print(f"  -> {getattr(job, 'status', '?')}"),
         )
-        payload = result.detail if result.detail else {"ok": result.ok, "name": result.name}
+        payload = (
+            result.detail if result.detail else {"ok": result.ok, "name": result.name}
+        )
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if result.ok else 1
 
@@ -126,7 +128,9 @@ def _cmd_run_all(args: argparse.Namespace) -> int:
         names = [name for name in names if name in wanted]
         missing = sorted(wanted - set(names))
         if missing:
-            print(f"unknown or filtered containers: {', '.join(missing)}", file=sys.stderr)
+            print(
+                f"unknown or filtered containers: {', '.join(missing)}", file=sys.stderr
+            )
             return 2
 
     mode = "dry-run"
@@ -134,7 +138,9 @@ def _cmd_run_all(args: argparse.Namespace) -> int:
         mode = "serverless"
     elif args.execute:
         mode = "execute"
-    print(f"golden-eval run-all: mode={mode} parallel={args.parallel} count={len(names)}")
+    print(
+        f"golden-eval run-all: mode={mode} parallel={args.parallel} count={len(names)}"
+    )
 
     def _on_progress(result: object) -> None:
         from npa.smoke.batch import ContainerRunResult
@@ -162,7 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_validate = sub.add_parser("validate", help="Offline manifest validation (CI gate).")
+    p_validate = sub.add_parser(
+        "validate", help="Offline manifest validation (CI gate)."
+    )
     p_validate.set_defaults(func=_cmd_validate)
 
     p_list = sub.add_parser("list", help="List golden evals.")

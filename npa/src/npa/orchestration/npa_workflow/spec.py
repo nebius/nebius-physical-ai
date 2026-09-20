@@ -65,7 +65,9 @@ class TriggerSpec:
     min_objects: int = 1
     # Parse provenance for reapplying config overrides; resolved fields above remain
     # the runtime contract. Exclude this metadata from durable workflow identity.
-    config_expressions: dict[str, str] = field(default_factory=dict, repr=False, compare=False)
+    config_expressions: dict[str, str] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
 
 @dataclass
@@ -231,7 +233,9 @@ def _parse_state(
                     ("maxPolls", "max_polls"),
                     ("minObjects", "min_objects"),
                 )
-                if isinstance(value := trigger_raw.get(key, trigger_raw.get(snake)), str)
+                if isinstance(
+                    value := trigger_raw.get(key, trigger_raw.get(snake)), str
+                )
                 and "{{" in value
             },
         )
@@ -275,7 +279,8 @@ def _parse_state(
     ]
     outputs = [
         ArtifactSpec(
-            uri=str(item.get("uri") or ""), schema=str(item.get("schema") or ""),
+            uri=str(item.get("uri") or ""),
+            schema=str(item.get("schema") or ""),
             kind=str(item.get("kind") or ""),
         )
         for item in (entry.get("outputs") or [])
@@ -444,19 +449,86 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
     _validate_resource_profiles(spec)
     _validate_executable_resource_contracts(spec)
     _validate_optional_sam2_config(spec)
+    _validate_appearance_profiles(spec)
+    _validate_transfer_rgb_weight(spec)
+    _validate_transfer_first_chunk_frames(spec)
+    _validate_transfer_cfg_normalization(spec)
+    if "transfer_edge_threshold" in spec.config:
+        from npa.workbench.cosmos.structural_transfer import edge_thresholds
+
+        try:
+            edge_thresholds(spec.config["transfer_edge_threshold"])
+        except ValueError as exc:
+            raise NpaWorkflowError(str(exc)) from exc
     _assert_acyclic_needs(spec)
     _assert_terminal_exists(spec)
     _assert_bounded_control_flow_cycles(spec)
     _validate_resolvable(spec)
 
 
+def _validate_transfer_cfg_normalization(spec: NpaWorkflowSpec) -> None:
+    key = "transfer_cfg_normalization"
+    if key not in spec.config:
+        return
+    from npa.workbench.cosmos.structural_transfer import cfg_normalization_enabled
+
+    try:
+        enabled = cfg_normalization_enabled(spec.config[key])
+    except ValueError as exc:
+        raise NpaWorkflowError(str(exc)) from exc
+    if enabled and spec.config.get("structural_control") != "edge":
+        raise NpaWorkflowError(f"{key} requires structural_control=edge")
+
+
+def _validate_transfer_first_chunk_frames(spec: NpaWorkflowSpec) -> None:
+    key = "transfer_first_chunk_conditional_frames"
+    if key not in spec.config:
+        return
+    value = spec.config[key]
+    if type(value) not in (int, str) or str(value) not in ("0", "1"):
+        raise NpaWorkflowError(f"{key} must be 0 or 1")
+    if str(value) == "0" and spec.config.get("structural_control") != "edge":
+        raise NpaWorkflowError(f"{key} requires structural_control=edge")
+
+
+def _validate_transfer_rgb_weight(spec: NpaWorkflowSpec) -> None:
+    if "transfer_rgb_weight" not in spec.config:
+        return
+    from npa.workbench.cosmos.structural_transfer import TransferSettings
+
+    value = spec.config["transfer_rgb_weight"]
+    try:
+        if isinstance(value, bool):
+            raise ValueError("transfer_rgb_weight must be numeric, not boolean")
+        weight = float(value)
+        TransferSettings(rgb_weight=weight).validate()
+        if weight and spec.config.get("structural_control") != "edge":
+            raise ValueError("transfer_rgb_weight requires structural_control=edge")
+    except (TypeError, ValueError) as exc:
+        raise NpaWorkflowError(f"invalid transfer_rgb_weight: {exc}") from exc
+
+
+def _validate_appearance_profiles(spec: NpaWorkflowSpec) -> None:
+    if "appearance_profiles_json" not in spec.config:
+        return
+    from npa.workflows.data_factory_appearance import parse_appearance_profiles
+
+    try:
+        parse_appearance_profiles(spec.config["appearance_profiles_json"])
+    except ValueError as exc:
+        raise NpaWorkflowError(str(exc)) from exc
+
+
 def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
     """Fail before provisioning when a workflow opts into the SAM2 contract."""
 
-    if not any(
-        state.tool_ref == "workbench.cosmos2.transfer_execute"
-        for state in spec.states.values()
-    ) or "segmentation_mode" not in spec.config:
+    if (
+        not any(
+            state.tool_ref == "workbench.cosmos2.transfer_execute"
+            for state in spec.states.values()
+        )
+        or "segmentation_mode" not in spec.config
+    ):
         return
     mode = str(spec.config.get("segmentation_mode") or "off").strip().lower()
     if mode == "off":
@@ -472,15 +544,9 @@ def _validate_optional_sam2_config(spec: NpaWorkflowSpec) -> None:
             predicted_iou_threshold=float(
                 spec.config.get("sam2_predicted_iou_threshold") or 0
             ),
-            stability_threshold=float(
-                spec.config.get("sam2_stability_threshold") or 0
-            ),
-            min_area_fraction=float(
-                spec.config.get("sam2_min_area_fraction") or 0
-            ),
-            max_area_fraction=float(
-                spec.config.get("sam2_max_area_fraction") or 0
-            ),
+            stability_threshold=float(spec.config.get("sam2_stability_threshold") or 0),
+            min_area_fraction=float(spec.config.get("sam2_min_area_fraction") or 0),
+            max_area_fraction=float(spec.config.get("sam2_max_area_fraction") or 0),
             max_objects=int(spec.config.get("sam2_max_objects") or 0),
         )
     except (TypeError, ValueError) as exc:
@@ -672,8 +738,12 @@ def _validate_executable_resource_contracts(spec: NpaWorkflowSpec) -> None:
             )
         except TokenError as exc:
             raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
-        if not isinstance(resolved_params, Mapping):  # defensive: params is typed mapping
-            raise NpaWorkflowError(f"state {state.name}: params must resolve to a mapping")
+        if not isinstance(
+            resolved_params, Mapping
+        ):  # defensive: params is typed mapping
+            raise NpaWorkflowError(
+                f"state {state.name}: params must resolve to a mapping"
+            )
         effective_config.update(resolved_params)
         if nodes > 1 and entry.shard_activation_config:
             activation = str(

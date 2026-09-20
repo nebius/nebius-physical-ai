@@ -15,7 +15,7 @@ Python and HTTP access follow each tool's documented contract.
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
-| Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
+| Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Finish | [Teardown](../teardown.md) |
 
 ## Generation and scenes
@@ -25,6 +25,8 @@ Python and HTTP access follow each tool's documented contract.
 | Cosmos 3 batch generation | [Generate](cosmos3-generate.md) · [access preflight](cosmos3-access-preflight.md) |
 | Cosmos 3 persistent serving | [Nano with Ray Serve](cosmos3-ray-serve.md) · [Super serving](cosmos3-super-serving.md) |
 | Video augmentation and dataset production | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) · [Cosmos Transfer data factory](guides/physical-ai-data-factory-deploy.md) · [concepts](guides/physical-ai-data-factory.md) · [campaign reuse](guides/paidf-campaign-reuse.md) |
+| Plan a Cosmos 3 model factory | [Architecture, current gaps, and implementation sequence](../architecture/cosmos3-model-factory.md) · [Live generation and quality feedback](cosmos3-model-factory-live-20260915.md) |
+| Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
@@ -33,14 +35,16 @@ Python and HTTP access follow each tool's documented contract.
 
 | Capability | Guide |
 | --- | --- |
-| Robot policy walkthroughs | [Franka / Genesis](guides/franka-pick-and-place-genesis.md) · [PushT SDK smoke](guides/pusht-sim-to-real.md) · [Reachy 2 / LeRobot](guides/reachy2-lerobot-policy.md) |
+| Robot policy walkthroughs | [Franka / Genesis](guides/franka-pick-and-place-genesis.md) · [PushT SDK smoke](guides/pusht-sim-to-real.md) · [Reachy 2 / LeRobot](guides/reachy2-lerobot-policy.md) · [subtask labeling](guides/lerobot-subtask-labeling.md) |
 | Locomotion | [G1 / SONIC](guides/g1-humanoid-walk-sonic.md) · [quadruped / Isaac Lab](guides/quadruped-isaac-lab.md) |
 | GR00T fine-tuning | [GR00T N1.7](cookbooks/groot-1-7-training.md) |
 | OpenPI policy training | [Pi0.5 / Polaris](openpi-pi05-polaris.md) |
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
 | Motion planning | [cuRobo](curobo.md) |
+| OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
+| Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |
 
 ## Data and evaluation
 
@@ -48,7 +52,8 @@ Python and HTTP access follow each tool's documented contract.
 | --- | --- |
 | Curation, vector search, and detection training | [BDD100K pipeline](cookbooks/bdd100k-pipeline.md) · [LanceDB search](cookbooks/lancedb-vector-search.md) · [LanceDB deployment](cookbooks/lancedb-deploy-runbook.md) |
 | Hosted captioning, generation, and reasoning | [Token Factory](token-factory.md) · [cloud composition](composing-cloud-and-token-factory.md) |
-| Evaluate rollouts with a VLM | [VLM evaluation loop](cookbooks/vlm-eval-loop-runbook.md) |
+| Evaluate rollouts and verify VLM model provenance | [VLM evaluation loop and live endpoint check](cookbooks/vlm-eval-loop-runbook.md) |
+| Find artifacts across selected or accessible buckets | [Artifact discovery guide](cookbooks/find-artifacts.md) |
 | View and share artifacts | [Rerun](rerun-sharing.md) · [Foxglove / MCAP](foxglove-export.md) · [browser workbench](../agent.md) |
 | Autonomous-driving inference | [Alpamayo 2 Super](alpamayo2-super.md) |
 | Native Ray jobs, training, and serving | [Ray](ray.md) |
@@ -62,7 +67,7 @@ Python and HTTP access follow each tool's documented contract.
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
 | Reproduce benchmarks and demos | [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) |
-| Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) |
+| Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
 
 Inspect the selected guide's actual output artifacts after the run reaches a
 terminal state. A plan, successful status response, or historical benchmark

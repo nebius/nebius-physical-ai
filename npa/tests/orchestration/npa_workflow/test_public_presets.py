@@ -13,10 +13,7 @@ from npa.orchestration.npa_workflow.presets import (
 
 
 runner = CliRunner()
-SPEC = (
-    Path(__file__).resolve().parents[4]
-    / "workflows" / "main" / "sim2real.yaml"
-)
+SPEC = Path(__file__).resolve().parents[4] / "workflows" / "main" / "sim2real.yaml"
 
 
 def test_public_preset_validate_and_plan_resolve_the_same_contract() -> None:
@@ -56,9 +53,14 @@ def test_public_preset_validate_and_plan_resolve_the_same_contract() -> None:
     )
     assert plan.exit_code == 0, plan.output
     planned = json.loads(plan.stdout)
-    stage1 = next(step for step in planned["steps"] if step["state"] == "stage-01-trigger")
+    stage1 = next(
+        step for step in planned["steps"] if step["state"] == "stage-01-trigger"
+    )
     assert PUBLIC_FRANKA_LIFT_DATASET_ID in stage1["argv"]
-    assert "s3://example-bucket/sim2real-triggers/preset-plan/public-franka-lift/" in stage1["argv"]
+    assert (
+        "s3://example-bucket/sim2real-triggers/preset-plan/public-franka-lift/"
+        in stage1["argv"]
+    )
 
 
 def test_public_preset_refuses_identity_override_and_custom_mode_is_unchanged() -> None:

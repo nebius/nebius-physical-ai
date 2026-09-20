@@ -182,7 +182,9 @@ Inside that actor, inference calls the real Workbench function:
 images = [row["image_bytes"] for row in shard["rows"]]
 batch = pyarrow.record_batch({"image_bytes": images})
 vectors = self.workbench.udf_clip_embedding(
-    batch, device="cuda:0", precision="float32",
+    batch,
+    device="cuda:0",
+    precision="float32",
 )
 ```
 

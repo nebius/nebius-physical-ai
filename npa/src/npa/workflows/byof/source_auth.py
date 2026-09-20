@@ -69,7 +69,9 @@ def validate_repository_url(repo_url: str, *, private: bool) -> str:
 
 
 def _write_secret(path: Path, value: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    fd = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR
+    )
     try:
         os.write(fd, value.encode("utf-8"))
     finally:
@@ -77,7 +79,9 @@ def _write_secret(path: Path, value: str) -> None:
 
 
 def _token_from_github_cli(path: Path) -> str:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    fd = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR
+    )
     os.close(fd)
     with path.open("wb") as output:
         proc = subprocess.run(
@@ -182,7 +186,7 @@ def _preflight_access(repo_url: str, repo_ref: str, token_path: Path) -> None:
     helper = token_path.parent / "git-askpass"
     helper.write_text(
         "#!/bin/sh\n"
-        "case \"$1\" in\n"
+        'case "$1" in\n'
         "  *Username*) printf '%s\\n' 'x-access-token' ;;\n"
         '  *) cat "$NPA_BYOF_GIT_TOKEN_FILE" ;;\n'
         "esac\n",
@@ -216,10 +220,7 @@ def _preflight_access(repo_url: str, repo_ref: str, token_path: Path) -> None:
     config_path = repository / "config"
     config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
     with config_path.open("a", encoding="utf-8") as config:
-        config.write(
-            "\n[remote \"origin\"]\n"
-            f"\turl = {_git_config_quote(repo_url)}\n"
-        )
+        config.write(f'\n[remote "origin"]\n\turl = {_git_config_quote(repo_url)}\n')
     proc = subprocess.run(
         ["git", "ls-remote", "origin"],
         cwd=repository,

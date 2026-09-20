@@ -106,9 +106,7 @@ def _clip(index: int, *, run_id: str = "run1", attempt_id: str = ATTEMPT) -> dic
 def _attempt_clip(index: int, output_uri: str, attempt_id: str) -> dict:
     clip = _clip(index)
     attempt_uri = tx.attempt_output_uri_for(output_uri, attempt_id)
-    clip["augmented_video_uri"] = (
-        f"{attempt_uri}/aug-run1-{index}/augmented_video.mp4"
-    )
+    clip["augmented_video_uri"] = f"{attempt_uri}/aug-run1-{index}/augmented_video.mp4"
     clip["frames_uri"] = f"{attempt_uri}/aug-run1-{index}/"
     return clip
 
@@ -187,7 +185,9 @@ def test_shard_indices_stride_so_every_node_gets_a_balanced_share() -> None:
     assert cosmos2._shard_indices(5, rank=0, nodes=2) == [0, 2, 4]
     assert cosmos2._shard_indices(5, rank=1, nodes=2) == [1, 3]
     # Every variant is rendered exactly once across the gang.
-    covered = [i for rank in range(3) for i in cosmos2._shard_indices(7, rank=rank, nodes=3)]
+    covered = [
+        i for rank in range(3) for i in cosmos2._shard_indices(7, rank=rank, nodes=3)
+    ]
     assert sorted(covered) == list(range(7))
     # More nodes than variants: the surplus ranks render nothing.
     assert cosmos2._shard_indices(2, rank=3, nodes=4) == []
@@ -570,9 +570,7 @@ def test_rendezvous_retries_a_rank_when_the_first_response_is_not_acknowledged(
     with cosmos2.socket.create_connection(
         (node_ips[0], port), timeout=5.0, source_address=(node_ips[1], 0)
     ) as connection:
-        connection.sendall(
-            json.dumps(request, sort_keys=True).encode("utf-8") + b"\n"
-        )
+        connection.sendall(json.dumps(request, sort_keys=True).encode("utf-8") + b"\n")
         discarded = cosmos2._recv_json_line(connection)
         assert discarded == {
             "protocol": "npa.cosmos.gang-attempt/v1",
@@ -581,24 +579,30 @@ def test_rendezvous_retries_a_rank_when_the_first_response_is_not_acknowledged(
         # Simulate the response being lost above the transport after sendall()
         # succeeded: close without the application acknowledgement.
 
-    assert cosmos2._sky_gang_rendezvous(
-        rank=1,
-        node_count=3,
-        node_ips=node_ips,
-        logical_wave_id="loop-3",
-        membership_digest="members",
-        internal_job_id="44",
-        offered=None,
-    ) == offered
-    assert cosmos2._sky_gang_rendezvous(
-        rank=2,
-        node_count=3,
-        node_ips=node_ips,
-        logical_wave_id="loop-3",
-        membership_digest="members",
-        internal_job_id="44",
-        offered=None,
-    ) == offered
+    assert (
+        cosmos2._sky_gang_rendezvous(
+            rank=1,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-3",
+            membership_digest="members",
+            internal_job_id="44",
+            offered=None,
+        )
+        == offered
+    )
+    assert (
+        cosmos2._sky_gang_rendezvous(
+            rank=2,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-3",
+            membership_digest="members",
+            internal_job_id="44",
+            offered=None,
+        )
+        == offered
+    )
 
 
 def test_hung_ack_does_not_block_a_later_rank(
@@ -647,28 +651,34 @@ def test_hung_ack_does_not_block_a_later_rank(
 
         # Rank 1 deliberately keeps the post-response socket open without an ACK.
         # A per-connection handler must still let rank 2 receive and acknowledge.
-        assert cosmos2._sky_gang_rendezvous(
-            rank=2,
+        assert (
+            cosmos2._sky_gang_rendezvous(
+                rank=2,
+                node_count=3,
+                node_ips=node_ips,
+                logical_wave_id="loop-hung-ack",
+                membership_digest="members",
+                internal_job_id="45",
+                offered=None,
+            )
+            == offered
+        )
+    finally:
+        held.close()
+
+    # The unacknowledged rank remains retryable and lets the server finish cleanly.
+    assert (
+        cosmos2._sky_gang_rendezvous(
+            rank=1,
             node_count=3,
             node_ips=node_ips,
             logical_wave_id="loop-hung-ack",
             membership_digest="members",
             internal_job_id="45",
             offered=None,
-        ) == offered
-    finally:
-        held.close()
-
-    # The unacknowledged rank remains retryable and lets the server finish cleanly.
-    assert cosmos2._sky_gang_rendezvous(
-        rank=1,
-        node_count=3,
-        node_ips=node_ips,
-        logical_wave_id="loop-hung-ack",
-        membership_digest="members",
-        internal_job_id="45",
-        offered=None,
-    ) == offered
+        )
+        == offered
+    )
 
 
 def test_concurrent_duplicate_rank_has_exactly_one_committed_member() -> None:
@@ -771,15 +781,18 @@ def test_concurrent_duplicate_rank_has_exactly_one_committed_member() -> None:
     for connection, _response, _nonce in responses:
         connection.close()
 
-    assert cosmos2._sky_gang_rendezvous(
-        rank=2,
-        node_count=3,
-        node_ips=node_ips,
-        logical_wave_id="loop-duplicate-rank",
-        membership_digest="members",
-        internal_job_id="46",
-        offered=None,
-    ) == offered
+    assert (
+        cosmos2._sky_gang_rendezvous(
+            rank=2,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-duplicate-rank",
+            membership_digest="members",
+            internal_job_id="46",
+            offered=None,
+        )
+        == offered
+    )
 
 
 def test_lost_commit_confirmation_is_idempotent_for_the_same_claimant(
@@ -818,9 +831,7 @@ def test_lost_commit_confirmation_is_idempotent_for_the_same_claimant(
     with cosmos2.socket.create_connection(
         (node_ips[0], port), timeout=5.0, source_address=(node_ips[1], 0)
     ) as connection:
-        connection.sendall(
-            json.dumps(request, sort_keys=True).encode("utf-8") + b"\n"
-        )
+        connection.sendall(json.dumps(request, sort_keys=True).encode("utf-8") + b"\n")
         assert cosmos2._recv_json_line(connection) == {
             "protocol": "npa.cosmos.gang-attempt/v1",
             **offered,
@@ -841,15 +852,18 @@ def test_lost_commit_confirmation_is_idempotent_for_the_same_claimant(
         assert discarded["committed"] is True
         # Discard the commitment confirmation and close without its receipt.
 
-    assert cosmos2._sky_gang_rendezvous(
-        rank=1,
-        node_count=2,
-        node_ips=node_ips,
-        logical_wave_id="loop-lost-commit",
-        membership_digest="members",
-        internal_job_id="47",
-        offered=None,
-    ) == offered
+    assert (
+        cosmos2._sky_gang_rendezvous(
+            rank=1,
+            node_count=2,
+            node_ips=node_ips,
+            logical_wave_id="loop-lost-commit",
+            membership_digest="members",
+            internal_job_id="47",
+            offered=None,
+        )
+        == offered
+    )
 
 
 def test_recovery_rendezvous_rejects_stale_launch_and_duplicate_rank() -> None:
@@ -884,15 +898,18 @@ def test_recovery_rendezvous_rejects_stale_launch_and_duplicate_rank() -> None:
             internal_job_id="old-job-42",
             offered=None,
         )
-    assert cosmos2._sky_gang_rendezvous(
-        rank=1,
-        node_count=3,
-        node_ips=node_ips,
-        logical_wave_id="loop-2",
-        membership_digest="replacement-members",
-        internal_job_id="new-job-43",
-        offered=None,
-    ) == offered
+    assert (
+        cosmos2._sky_gang_rendezvous(
+            rank=1,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-2",
+            membership_digest="replacement-members",
+            internal_job_id="new-job-43",
+            offered=None,
+        )
+        == offered
+    )
     with pytest.raises(cosmos2.typer.BadParameter, match="contradictory"):
         cosmos2._sky_gang_rendezvous(
             rank=1,
@@ -903,15 +920,18 @@ def test_recovery_rendezvous_rejects_stale_launch_and_duplicate_rank() -> None:
             internal_job_id="new-job-43",
             offered=None,
         )
-    assert cosmos2._sky_gang_rendezvous(
-        rank=2,
-        node_count=3,
-        node_ips=node_ips,
-        logical_wave_id="loop-2",
-        membership_digest="replacement-members",
-        internal_job_id="new-job-43",
-        offered=None,
-    ) == offered
+    assert (
+        cosmos2._sky_gang_rendezvous(
+            rank=2,
+            node_count=3,
+            node_ips=node_ips,
+            logical_wave_id="loop-2",
+            membership_digest="replacement-members",
+            internal_job_id="new-job-43",
+            offered=None,
+        )
+        == offered
+    )
 
 
 def test_identity_rendezvous_has_only_an_explicit_opt_in_timeout(
@@ -1100,16 +1120,28 @@ def test_merge_waits_for_a_slow_rank_then_joins() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
     )
     waits: list[float] = []
 
     def late_arrival(seconds: float) -> None:
         waits.append(seconds)
         _write_shard(
-            [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
-            variant_parallelism=1, variant_total=2, storage_client=storage,
+            [_clip(1)],
+            output_uri,
+            run_id="run1",
+            rank=1,
+            node_count=2,
+            variant_parallelism=1,
+            variant_total=2,
+            storage_client=storage,
         )
 
     manifest = _merge_shards(
@@ -1129,19 +1161,37 @@ def test_merge_ignores_a_stale_shard_until_the_current_rank_overwrites_it() -> N
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
     )
     _write_shard(
-        [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(1)],
+        output_uri,
+        run_id="run1",
+        rank=1,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
         attempt_id="prior-loop-same-run",
     )
 
     def current_arrival(_seconds: float) -> None:
         _write_shard(
-            [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
-            variant_parallelism=1, variant_total=2, storage_client=storage,
+            [_clip(1)],
+            output_uri,
+            run_id="run1",
+            rank=1,
+            node_count=2,
+            variant_parallelism=1,
+            variant_total=2,
+            storage_client=storage,
         )
 
     manifest = _merge_shards(
@@ -1161,13 +1211,25 @@ def test_merge_rejects_prior_recovery_attempt_with_identical_stable_fields() -> 
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
         attempt_id="recovered-launch",
     )
     _write_shard(
-        [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(1)],
+        output_uri,
+        run_id="run1",
+        rank=1,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
         attempt_id="failed-launch",
     )
     waits = 0
@@ -1176,14 +1238,24 @@ def test_merge_rejects_prior_recovery_attempt_with_identical_stable_fields() -> 
         nonlocal waits
         waits += 1
         _write_shard(
-            [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
-            variant_parallelism=1, variant_total=2, storage_client=storage,
+            [_clip(1)],
+            output_uri,
+            run_id="run1",
+            rank=1,
+            node_count=2,
+            variant_parallelism=1,
+            variant_total=2,
+            storage_client=storage,
             attempt_id="recovered-launch",
         )
 
     manifest = _merge_shards(
-        output_uri, run_id="run1", node_count=2, storage_client=storage,
-        attempt_id="recovered-launch", sleep=recovered_rank,
+        output_uri,
+        run_id="run1",
+        node_count=2,
+        storage_client=storage,
+        attempt_id="recovered-launch",
+        sleep=recovered_rank,
     )
     assert waits == 1
     assert manifest["attempt_id"] == "recovered-launch"
@@ -1314,7 +1386,9 @@ def test_second_loop_waits_for_delayed_current_rank_not_late_prior_rank() -> Non
     )
     assert waits == 2
     assert manifest["attempt_id"] == second_id
-    assert all(f"/_attempts/{second_id}/" in uri for uri in manifest["augmented_videos"])
+    assert all(
+        f"/_attempts/{second_id}/" in uri for uri in manifest["augmented_videos"]
+    )
 
 
 def test_recovery_generation_fences_late_prior_finalization_and_writes() -> None:
@@ -1365,7 +1439,10 @@ def test_recovery_generation_fences_late_prior_finalization_and_writes() -> None
     current = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
     assert current["attempt_id"] == new_id
 
-    late_old = [_attempt_clip(0, output_uri, old_id), _attempt_clip(1, output_uri, old_id)]
+    late_old = [
+        _attempt_clip(0, output_uri, old_id),
+        _attempt_clip(1, output_uri, old_id),
+    ]
     _write_shard(
         [late_old[1]],
         output_uri,
@@ -1549,8 +1626,7 @@ def test_committed_attempt_manifest_requires_the_complete_publication_identity(
                 "clip": "aug-run1-0",
                 "variant_index": 0,
                 "augmented_video_uri": (
-                    f"{output_uri}_attempts/{ATTEMPT}/"
-                    "aug-run1-0/augmented_video.mp4"
+                    f"{output_uri}_attempts/{ATTEMPT}/aug-run1-0/augmented_video.mp4"
                 ),
             }
         ],
@@ -1621,18 +1697,28 @@ def test_merge_refuses_duplicate_or_missing_global_variant_indices() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
     )
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=1, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=1,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
     )
 
     with pytest.raises(RuntimeError, match="cover every variant exactly once"):
-        _merge_shards(
-            output_uri, run_id="run1", node_count=2, storage_client=storage
-        )
+        _merge_shards(output_uri, run_id="run1", node_count=2, storage_client=storage)
 
     partial = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
     assert partial["status"] == tx.PUBLICATION_CLAIM_STATUS
@@ -1642,8 +1728,14 @@ def test_merge_fails_naming_the_ranks_that_never_reported() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=3,
-        variant_parallelism=1, variant_total=3, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=3,
+        variant_parallelism=1,
+        variant_total=3,
+        storage_client=storage,
     )
 
     with pytest.raises(RuntimeError, match=r"rank\(s\) \[1, 2\]"):
@@ -1673,8 +1765,14 @@ def test_the_join_keeps_waiting_rather_than_timing_out_a_slow_sibling() -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
     )
     waits: list[float] = []
 
@@ -1683,8 +1781,14 @@ def test_the_join_keeps_waiting_rather_than_timing_out_a_slow_sibling() -> None:
         if len(waits) < 40:
             return
         _write_shard(
-            [_clip(1)], output_uri, run_id="run1", rank=1, node_count=2,
-            variant_parallelism=1, variant_total=2, storage_client=storage,
+            [_clip(1)],
+            output_uri,
+            run_id="run1",
+            rank=1,
+            node_count=2,
+            variant_parallelism=1,
+            variant_total=2,
+            storage_client=storage,
         )
 
     manifest = _merge_shards(
@@ -1706,8 +1810,14 @@ def test_an_operator_can_ask_for_a_join_deadline(
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     _write_shard(
-        [_clip(0)], output_uri, run_id="run1", rank=0, node_count=2,
-        variant_parallelism=1, variant_total=2, storage_client=storage,
+        [_clip(0)],
+        output_uri,
+        run_id="run1",
+        rank=0,
+        node_count=2,
+        variant_parallelism=1,
+        variant_total=2,
+        storage_client=storage,
     )
     monkeypatch.setenv("NPA_COSMOS_SHARD_JOIN_TIMEOUT_S", "0")
 
@@ -1786,7 +1896,9 @@ def _multiply_cli(
     )
 
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4"
+    )
     monkeypatch.setattr(cosmos2, "_variant_parallelism", lambda n: max(1, n))
 
     def fake_run(**kwargs):
@@ -1909,9 +2021,7 @@ def test_rank_zero_merges_the_gang_into_one_run_manifest(
         variant_total=4,
         storage_client=storage,
     )
-    claim_etag = _seed_claim(
-        storage, "s3://bkt/run1/cosmos_augmented/", node_count=2
-    )
+    claim_etag = _seed_claim(storage, "s3://bkt/run1/cosmos_augmented/", node_count=2)
     monkeypatch.setattr(
         cosmos2,
         "_gang_identity",
@@ -2175,9 +2285,7 @@ def test_scheduler_single_node_uses_attempt_prefix_and_conditional_manifest(
     assert manifest["attempt_id"] == ATTEMPT
     assert manifest["scheduler_fence_sequence"] == 1
     assert all(
-        uri.startswith(
-            "s3://bkt/run1/cosmos_augmented/_attempts/wave-attempt-1/"
-        )
+        uri.startswith("s3://bkt/run1/cosmos_augmented/_attempts/wave-attempt-1/")
         for uri in manifest["augmented_videos"]
     )
 

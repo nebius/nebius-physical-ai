@@ -41,8 +41,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
     )
     assert container_image_for_tool("detection-training") == (
-        "ghcr.io/nebius/nebius-physical-ai/"
-        "npa-detection-training:runtime-v1-20260905"
+        "ghcr.io/nebius/nebius-physical-ai/npa-detection-training:runtime-v1-20260905"
     )
     assert (
         container_image_for_tool("groot")
@@ -91,9 +90,10 @@ def test_repository_image_defaults_ignore_ambient_private_registry(monkeypatch) 
 
 
 def test_explicit_custom_registry_remains_available() -> None:
-    assert container_image_for_tool(
-        "retargeting", registry="registry.example/custom"
-    ) == "registry.example/custom/npa-retargeting:0.1.1"
+    assert (
+        container_image_for_tool("retargeting", registry="registry.example/custom")
+        == "registry.example/custom/npa-retargeting:0.1.1"
+    )
 
 
 def test_packaged_supported_tool_versions_match_pyproject() -> None:

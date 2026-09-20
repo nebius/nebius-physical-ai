@@ -191,7 +191,9 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
                 SUPPORTED_TOOL_VERSIONS,
             )
 
-            tool = next(tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name)
+            tool = next(
+                tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name
+            )
             assert tag == SUPPORTED_TOOL_VERSIONS[tool]
             assert entry["published_digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
         else:

@@ -22,12 +22,18 @@ UPSTREAM_TRAIN_SCRIPT = Path(
         "/workspace/isaaclab/scripts/reinforcement_learning/rsl_rl/train.py",
     )
 )
-SENTINEL_PATH = Path(os.environ.get("BYOF_SENTINEL_PATH", "/workspace/output/byof_sentinel.json"))
+SENTINEL_PATH = Path(
+    os.environ.get("BYOF_SENTINEL_PATH", "/workspace/output/byof_sentinel.json")
+)
 
 
 def main() -> None:
     args, hydra_args = _parse_args(sys.argv[1:])
-    run_id = os.environ.get("NPA_ISAAC_LAB_RUN_ID") or os.environ.get("BYOF_RUN_ID") or args.run_name
+    run_id = (
+        os.environ.get("NPA_ISAAC_LAB_RUN_ID")
+        or os.environ.get("BYOF_RUN_ID")
+        or args.run_name
+    )
     sentinel = {
         "byof": True,
         "script": "custom_train.py",
@@ -50,7 +56,9 @@ def main() -> None:
         _write_json(Path(output_dir) / "byof_sentinel.json", sentinel)
 
     if not UPSTREAM_TRAIN_SCRIPT.is_file():
-        raise SystemExit(f"upstream Isaac Lab train.py not found: {UPSTREAM_TRAIN_SCRIPT}")
+        raise SystemExit(
+            f"upstream Isaac Lab train.py not found: {UPSTREAM_TRAIN_SCRIPT}"
+        )
 
     sys.argv = [str(UPSTREAM_TRAIN_SCRIPT), *sys.argv[1:]]
     runpy.run_path(str(UPSTREAM_TRAIN_SCRIPT), run_name="__main__")

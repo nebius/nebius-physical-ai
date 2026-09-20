@@ -15,6 +15,7 @@ artifacts. Start with a runbook that matches the result you want.
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Fine-tune XR1 on Antioch robot demonstrations | [Antioch pipeline](partners/antioch/README.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
 | Package your own repository | [BYOF](../docs/workbench/cookbooks/byof-isaac-lab/README.md) |
 
 A catalog entry describes a contract, not a guarantee that every configuration
@@ -75,10 +76,11 @@ explains the full source and image contract.
 | Directory | Contents |
 | --- | --- |
 | `main/` | The three principal pipelines listed below |
-| `testing/` | All other catalog specs, including component tests and fixtures |
+| `testing/` | General reference specs, component tests, and fixtures |
+| `partners/<partner>/` | Partner integration workflows and their runbooks |
 | [`guides/`](guides/README.md) | Setup and operation runbooks |
 
-The CLI, agent, and live-submit matrix discover both YAML directories. Raw
+The CLI, agent, and live-submit matrix discover main, testing, and partner specs. Raw
 SkyPilot tasks are separate tool-specific examples; see the
 [reference-assets index](../npa/workflows/workbench/README.md).
 
@@ -91,6 +93,12 @@ SkyPilot tasks are separate tool-specific examples; see the
 | [`nurec-reconstruct.yaml`](main/nurec-reconstruct.yaml) | Real NCore V4 capture → 3DGUT training on an RT-core GPU → USDZ → rig-offset novel views → Rerun; [guide and measured evidence](../docs/workbench/guides/neural-reconstruction.md#promotion-evidence), [readiness record](main/nurec-reconstruct.readiness.json) |
 | [`paidf-cosmos3.yaml`](main/paidf-cosmos3.yaml) | Generic LeRobot/video input → prepared timeline → guarded Cosmos 3 full-video edge transfer → aligned evaluator gate/refinement → captions for every accepted variant → real Curator + FiftyOne Brain + Rerun ([guide](guides/paidf-cosmos3.md)) |
 | [`sim2real.yaml`](main/sim2real.yaml) | Canonical 14-stage Sim2Real workflow through the standard SkyPilot runtime ([guide](../docs/workbench/guides/sim2real-workflow.md)) |
+
+### Partner workflows
+
+| Spec | Notes |
+| --- | --- |
+| [`xr1-antioch-finetune.yaml`](partners/antioch/xr1-antioch-finetune.yaml) | [Antioch pipeline](partners/antioch/README.md): robot demonstrations → Nebius S3 → native XR1 fine-tuning on eight RTX PRO 6000 GPUs → Antioch held-out evaluation → results and recordings in S3. |
 
 ### Testing and reference workflows
 
@@ -106,6 +114,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos2-transfer.yaml`](testing/cosmos2-transfer.yaml) | Standalone Cosmos Transfer 2.5 GPU augmentation → video and frames |
 | [`cosmos3-checkpoint-eval.yaml`](testing/cosmos3-checkpoint-eval.yaml) | B200-only guarded Cosmos3 still-image checkpoint evaluation |
 | [`cosmos3-generate.yaml`](testing/cosmos3-generate.yaml) | Cosmos3-Nano image generation with default guardrails; gated guardrail assets require HF access |
+| [`cosmos3-policy-model-factory.yaml`](testing/cosmos3-policy-model-factory.yaml) | Experimental native LIBERO policy SFT → simulator evaluation → failure feedback → guarded video candidates; [scope and prerequisites](../docs/workbench/cosmos3-policy-model-factory.md) |
 | [`cosmos3-ray-batch.yaml`](testing/cosmos3-ray-batch.yaml) | Prepared SDG batch through an existing Cosmos3-Nano Ray Serve deployment → media and provenance |
 | [`cosmos3-reason.yaml`](testing/cosmos3-reason.yaml) | Cosmos3 reason |
 | [`cosmos3-super-b200-benchmark.yaml`](testing/cosmos3-super-b200-benchmark.yaml) | Cosmos3-Super serving benchmark on one eight-GPU B200 node |
@@ -121,14 +130,19 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | --- | --- |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
+| [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |
+| [`isaac-arena-evaluation-rtxpro.yaml`](testing/isaac-arena-evaluation-rtxpro.yaml) | Arena replay on RTX PRO 6000; exact-digest qualification completed with upstream task success and simulator-ground-truth-bound viewport motion ([readiness](testing/isaac-arena-evaluation-rtxpro.readiness.json)) |
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
 | [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
+| [`lerobot-subtask-proof.yaml`](testing/lerobot-subtask-proof.yaml) | CPU post-review gate: complete LeRobot v3 `subtask_index` coverage → catalog resolution → row-level proof bound to the source Parquet digest ([guide](../docs/workbench/guides/lerobot-subtask-labeling.md)) |
 | [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | MJLab locomotion eval |
 | [`openpi-pi05-four-mode.yaml`](testing/openpi-pi05-four-mode.yaml) | Connected OpenPI runtime graph: live negative gate, direct inference, private cross-pod ClusterIP serving, real pi0.5 LoRA optimizer/checkpoint smoke, and disjoint held-out evaluation; consumes the immutable digest built by `byof-openpi.yaml` ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`openpi-pi05-full-droid-finetune.yaml`](testing/openpi-pi05-full-droid-finetune.yaml) | Complete upstream pi0.5 full-DROID recipe: checksum-synced RLDS 1.0.1 and preparation RRD, ten-million-frame normalization, fixed 100-update distributed qualification RRD, global batch 256, 100,000 updates on eight one-RTX-PRO-6000 nodes, durable resume, immutable checkpoint lineage, and verified progress RRD snapshots at 1k/10k/25k/50k/75k/100k ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`retargeting.yaml`](testing/retargeting.yaml) | Motion retargeting |
 | [`rl-policy-training-sim-success.yaml`](testing/rl-policy-training-sim-success.yaml) | Isaac Lab RL train (partial) |
 | [`robocasa-data-policy.yaml`](testing/robocasa-data-policy.yaml) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
+| [`lerobot-transfer.yaml`](testing/lerobot-transfer.yaml) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. [Runbook](../docs/workbench/guides/lerobot-transfer.md). |
+| [`franka-rl-transfer.yaml`](testing/franka-rl-transfer.yaml) | PPO with selectable Franka, UR10e/Robotiq, or Kinova JACO2 embodiment, bounded learned targets and exploration, stable-hold rewards, and an outcome-driven curriculum (`learning_recipe=adaptive-bounded-exploration`). Measured-state checks reject invalid simulation before learning; sealed USD parts, paired physics tests, Token Factory evaluation, and actual LeRobot/Rerun rollouts retain the evidence. Latest native UR diagnostic **failed**; physics remains unqualified despite passing CPU checks. One RTX GPU plus a hosted VLM credential. [Runbook](../docs/workbench/guides/franka-rl-transfer.md). |
 | [`robocasa-smoke.yaml`](testing/robocasa-smoke.yaml) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
 | [`sonic-eval.yaml`](testing/sonic-eval.yaml) | SONIC eval |
 | [`sonic-export-eval.yaml`](testing/sonic-export-eval.yaml) | Export → eval |
@@ -165,7 +179,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`byof-openpi.yaml`](testing/byof-openpi.yaml) | OSS registry: OpenPI pi0.5 Polaris direct + WebSocket-served Franka joint-position inference on `B200:1`; runtime-only checkpoint and scoped Gemma gate ([guide](../docs/workbench/openpi-pi05-polaris.md)) |
 | [`byof-robocasa.yaml`](testing/byof-robocasa.yaml) | OSS registry: RoboCasa pinned image + headless kitchen-task smoke |
 | [`byof-wan2.2-multigpu.yaml`](testing/byof-wan2.2-multigpu.yaml) | Wan 2.2 generation across four participating GPU ranks; MP4, topology, and Rerun evidence |
-| [`byof-wan2.2.yaml`](testing/byof-wan2.2.yaml) | Wan 2.2 TI2V-5B on one RTX PRO 6000; decoded MP4 and verified Rerun evidence |
+| [`byof-wan2.2.yaml`](testing/byof-wan2.2.yaml) | Wan 2.2 TI2V-5B on one RTX PRO 6000; decoded MP4 and verified Rerun evidence; [configurable frames, sampling steps, and seed](../docs/workbench/wan2.2.md#generate-a-longer-clip) on both Wan routes |
 | [`byof.yaml`](testing/byof.yaml) | BYOF via `run_byof_repo.py` |
 
 #### Hosted inference and VLM evaluation

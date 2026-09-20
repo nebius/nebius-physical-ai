@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import functools
 import inspect
+import logging
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -22,6 +23,7 @@ from npa.cluster.gpu_health import (
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
+    OperationIdentityError,
     ProvisioningOperation,
     current_operation,
     emit_recovery_summary,
@@ -172,9 +174,7 @@ def _transactional_provision(function):
             cpu_preset=str(bound.arguments.get("cpu_preset") or ""),
             gpu_platform=str(bound.arguments.get("gpu_platform") or ""),
             gpu_preset=str(bound.arguments.get("gpu_preset") or ""),
-            capacity_block_group=str(
-                bound.arguments.get("capacity_block_group") or ""
-            ),
+            capacity_block_group=str(bound.arguments.get("capacity_block_group") or ""),
             preemptible=bound.arguments.get("preemptible"),
         )
         kwargs["_resolved_plan"] = plan
@@ -213,7 +213,7 @@ def _transactional_provision(function):
             if not skip_k8s
             else []
         )
-        operation = ProvisioningOperation.prepare(
+        operation_kwargs = dict(
             command="npa provision-if-absent",
             project_alias=alias,
             project_id=str(getattr(environment, "project_id", "") or ""),
@@ -232,7 +232,34 @@ def _transactional_provision(function):
             resume_argv=resume_argv,
             destroy_argv=destroy_argv,
         )
-        operation.record_preflight_plan(plan.to_dict())
+        operation = ProvisioningOperation.prepare(**operation_kwargs)
+        try:
+            operation.record_preflight_plan(plan.to_dict())
+        except OperationIdentityError:
+            # A retry with a different topology must never overwrite an
+            # incomplete operation's immutable plan. When no cloud resource,
+            # local Terraform state, or config mutation was recorded, however,
+            # the old operation is safely empty: terminalize that evidence and
+            # start a new deterministic generation for the new requested shape.
+            prior = operation.read()
+            if any(
+                prior.get(key)
+                for key in ("resources", "local_state_copies", "config_mutations")
+            ):
+                raise
+            operation.record_rollback(
+                attempted=False,
+                completed=True,
+                removed=[],
+                preserved=[],
+                error="superseded empty operation after requested topology changed",
+            )
+            operation.transition(
+                "rolled-back",
+                error="superseded empty operation after requested topology changed",
+            )
+            operation = ProvisioningOperation.prepare(**operation_kwargs)
+            operation.record_preflight_plan(plan.to_dict())
         with operation_context(operation):
             sys.stderr.write(
                 f"Provisioning operation {operation.operation_id}: preflight complete; beginning mutation\n"
@@ -688,6 +715,7 @@ def provision_if_absent(
         from npa.controller_ownership import ensure_controller_owner
         from npa.cli.cluster.terraform_lifecycle import (
             _check_skypilot_kubernetes,
+            _recover_skypilot_smoke,
             _run_skypilot_smoke,
         )
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
@@ -700,44 +728,53 @@ def provision_if_absent(
                 f"controller:bound {owner.project_alias}/{owner.context}/{owner.cluster_id}"
             )
 
-            _check_skypilot_kubernetes(
-                Path(kubeconfig_path),
-                context,
-                sky_bin=sky_bin,
+            from npa.orchestration.skypilot.cluster_validation import (
+                cluster_validation_session,
             )
-            actions.append("skypilot:kubernetes-enabled")
 
-            def report_gpu_status(message: str) -> None:
-                actions.append(f"gpu:{message}")
-                sys.stderr.write(message.rstrip() + "\n")
-                sys.stderr.flush()
-                operation = current_operation()
-                if operation is not None:
-                    operation.heartbeat(details={"gpu_readiness": message})
-
-            resolutions = wait_for_kubernetes_accelerators(
-                [requested_accelerator] if requested_accelerator else [],
-                context=context,
-                kubeconfig=kubeconfig_path,
-                sky_bin=sky_bin or None,
-                label_known_gpus=True,
-                timeout=gpu_readiness_timeout,
-                poll_interval=gpu_readiness_poll_interval,
-                on_status=report_gpu_status,
-            )
-            if sky_smoke:
-                smoke_accelerator = requested_accelerator
-                if requested_accelerator and requested_accelerator in resolutions:
-                    smoke_accelerator = resolutions[requested_accelerator].resolved
-                _run_skypilot_smoke(
+            with cluster_validation_session(Path(kubeconfig_path), context):
+                _check_skypilot_kubernetes(
                     Path(kubeconfig_path),
                     context,
-                    cluster_name,
-                    smoke_accelerator,
                     sky_bin=sky_bin,
-                    credentials_checked=True,
                 )
-                actions.append("sky-smoke:passed")
+                actions.append("skypilot:kubernetes-enabled")
+                if sky_smoke:
+                    _recover_skypilot_smoke(
+                        Path(kubeconfig_path), context, cluster_name, sky_bin=sky_bin
+                    )
+
+                def report_gpu_status(message: str) -> None:
+                    actions.append(f"gpu:{message}")
+                    sys.stderr.write(message.rstrip() + "\n")
+                    sys.stderr.flush()
+                    operation = current_operation()
+                    if operation is not None:
+                        operation.heartbeat(details={"gpu_readiness": message})
+
+                resolutions = wait_for_kubernetes_accelerators(
+                    [requested_accelerator] if requested_accelerator else [],
+                    context=context,
+                    kubeconfig=kubeconfig_path,
+                    sky_bin=sky_bin or None,
+                    label_known_gpus=True,
+                    timeout=gpu_readiness_timeout,
+                    poll_interval=gpu_readiness_poll_interval,
+                    on_status=report_gpu_status,
+                )
+                if sky_smoke:
+                    smoke_accelerator = requested_accelerator
+                    if requested_accelerator and requested_accelerator in resolutions:
+                        smoke_accelerator = resolutions[requested_accelerator].resolved
+                    _run_skypilot_smoke(
+                        Path(kubeconfig_path),
+                        context,
+                        cluster_name,
+                        smoke_accelerator,
+                        sky_bin=sky_bin,
+                        credentials_checked=True,
+                    )
+                    actions.append("sky-smoke:passed")
         except Exception as exc:  # noqa: BLE001 - return a resumable partial result
             gpu_readiness = (
                 "timeout" if str(exc).startswith("Timed out after ") else "failed"
@@ -882,12 +919,77 @@ def _build_provision_plan(
         cpu_disk_gib=requested.cpu_disk_gib,
         gpu_disk_gib=requested.gpu_disk_gib,
     )
+    quota_reader = None
+    quota_names = tuple(topology.quota_requirements())
+
+    def fixed_quota_reader(observations):
+        def read_quota_snapshot(_tenant, _region, _names):
+            return observations
+
+        return read_quota_snapshot
+
+    try:
+        from npa.provisioning_preflight import read_provider_quotas
+
+        tenant_observations = read_provider_quotas(
+            str(getattr(environment, "tenant_id", "") or ""),
+            str(getattr(environment, "region", "") or ""),
+            quota_names,
+        )
+    except Exception as tenant_exc:  # noqa: BLE001 - a project fallback is narrowly typed
+        from npa.clients.nebius import is_permission_denied
+
+        project_id = str(getattr(environment, "project_id", "") or "")
+        if project_id and is_permission_denied(str(tenant_exc)):
+            try:
+                from npa.provisioning_preflight import (
+                    PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+                    PreflightCheck,
+                    read_project_quota_observations,
+                )
+
+                project_observations = read_project_quota_observations(
+                    project_id,
+                    str(getattr(environment, "region", "") or ""),
+                    quota_names,
+                )
+            except Exception as project_exc:  # noqa: BLE001 - preserve fail-closed quota evidence
+                # Keep the ordinary planner's fail-closed unknown evidence when
+                # the exact-project view is unavailable or malformed too.
+                logging.getLogger(__name__).debug(
+                    "project-scoped quota fallback was unavailable",
+                    exc_info=project_exc,
+                )
+            else:
+                quota_reader = fixed_quota_reader(project_observations)
+                evidence_complete = all(
+                    observation.state in {"known", "unbounded"}
+                    for observation in project_observations.values()
+                )
+                checks.append(
+                    PreflightCheck(
+                        name="quota_evidence_scope",
+                        status="ready" if evidence_complete else "unknown",
+                        reason=(
+                            PROJECT_QUOTA_RBAC_FALLBACK_REASON
+                            if evidence_complete
+                            else (
+                                "tenant-wide quota query unavailable due to RBAC; "
+                                "project-scoped quota response did not verify every "
+                                "requested allowance"
+                            )
+                        ),
+                    )
+                )
+    else:
+        quota_reader = fixed_quota_reader(tenant_observations)
     return build_whole_path_plan(
         project_alias=alias,
         project_id=str(getattr(environment, "project_id", "") or ""),
         tenant_id=str(getattr(environment, "tenant_id", "") or ""),
         region=str(getattr(environment, "region", "") or ""),
         topology=topology,
+        quota_reader=quota_reader,
         checks=checks,
         mutation=not dry_run,
     )

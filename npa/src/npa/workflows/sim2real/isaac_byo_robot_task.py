@@ -1310,11 +1310,19 @@ def _ppo_checkpoint_next_index(index, checkpoint_info):
     elif semantics in {"next_zero_based", "completed_updates"}:
         next_index = index
     else:
-        raise RuntimeError(f"unsupported PPO checkpoint iteration semantics: {semantics!r}")
+        raise RuntimeError(
+            f"unsupported PPO checkpoint iteration semantics: {semantics!r}"
+        )
     if metadata is not None:
         completed = metadata.get("completed_updates")
-        if isinstance(completed, bool) or not isinstance(completed, int) or completed != next_index:
-            raise RuntimeError("PPO checkpoint iteration metadata disagrees with saved iter")
+        if (
+            isinstance(completed, bool)
+            or not isinstance(completed, int)
+            or completed != next_index
+        ):
+            raise RuntimeError(
+                "PPO checkpoint iteration metadata disagrees with saved iter"
+            )
     return next_index
 
 
@@ -1357,7 +1365,9 @@ def _validate_ppo_phase(start_iteration, num_learning_iterations):
         or not isinstance(num_learning_iterations, int)
         or num_learning_iterations < 1
     ):
-        raise ValueError("PPO phase requires a nonnegative start and positive update count")
+        raise ValueError(
+            "PPO phase requires a nonnegative start and positive update count"
+        )
 
 
 def learn_ppo_phase(
@@ -1384,11 +1394,15 @@ def learn_ppo_phase(
     """
     _validate_ppo_phase(start_iteration, num_learning_iterations)
     runner.current_learning_iteration = start_iteration
-    runner.learn(num_learning_iterations=num_learning_iterations,
-                 init_at_random_ep_len=init_at_random_ep_len)
+    runner.learn(
+        num_learning_iterations=num_learning_iterations,
+        init_at_random_ep_len=init_at_random_ep_len,
+    )
     last_index = start_iteration + num_learning_iterations - 1
     if runner.current_learning_iteration != last_index:
-        raise RuntimeError("RSL-RL did not report the requested final learning iteration")
+        raise RuntimeError(
+            "RSL-RL did not report the requested final learning iteration"
+        )
     return {
         "first_iteration_index": start_iteration,
         "last_iteration_index": last_index,

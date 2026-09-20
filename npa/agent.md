@@ -94,6 +94,7 @@ CLI entrypoint: `npa.cli.main:app_entry` (Typer). Three subcommand groups with ~
 
   runner = CliRunner()
 
+
   def test_workbench_lerobot_list(mocker):
       mocker.patch("npa.cli.workbench.lerobot.some_client_call", return_value=[...])
       result = runner.invoke(app, ["workbench", "lerobot", "list"])
@@ -130,10 +131,12 @@ import pytest
 import tempfile
 from pathlib import Path
 
+
 @pytest.fixture
 def tmp_workspace(tmp_path):
     """A clean temp directory simulating a workspace."""
     return tmp_path
+
 
 @pytest.fixture
 def sample_config(tmp_path):
@@ -147,6 +150,7 @@ def sample_config(tmp_path):
     )
     return cfg
 
+
 @pytest.fixture
 def mock_ssh(mocker):
     """Patch paramiko.SSHClient universally."""
@@ -158,6 +162,7 @@ def mock_ssh(mocker):
     )
     mocker.patch("paramiko.SSHClient", return_value=mock_client)
     return mock_client
+
 
 @pytest.fixture
 def mock_s3(mocker):

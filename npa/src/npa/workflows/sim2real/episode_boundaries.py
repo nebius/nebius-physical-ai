@@ -38,9 +38,12 @@ class EpisodeBoundaries:
         Raises:
             ValueError: The step or environment coverage is inconsistent.
         """
-        if (type(sim_step) is not int or sim_step != self._step + 1
-                or len(done) != len(self.generations)
-                or any(type(value) is not bool for value in done)):
+        if (
+            type(sim_step) is not int
+            or sim_step != self._step + 1
+            or len(done) != len(self.generations)
+            or any(type(value) is not bool for value in done)
+        ):
             raise ValueError("episode tracking requires consecutive complete steps")
         self._step = sim_step
         self._current = list(done)
@@ -49,10 +52,13 @@ class EpisodeBoundaries:
                 continue
             generation = self.generations[index]
             self.generations[index] += 1
-            self._pending[index].append({
-                "sim_step": sim_step, "terminated_episode_id": generation,
-                "next_episode_id": generation + 1,
-            })
+            self._pending[index].append(
+                {
+                    "sim_step": sim_step,
+                    "terminated_episode_id": generation,
+                    "next_episode_id": generation + 1,
+                }
+            )
 
     def sample(self, index: int) -> dict[str, Any]:
         """Snapshot boundary evidence without discarding other environments' events.
@@ -110,22 +116,27 @@ def _validate_events(boundary: dict[str, Any], sim_step: int) -> None:
     last_step = -1
     generation = boundary["simulator_episode_id"] - len(events)
     for event in events:
-        if (not isinstance(event, dict) or set(event) != {
-                "sim_step", "terminated_episode_id", "next_episode_id"}
-                or any(not _index(value) for value in event.values())
-                or not last_step < event["sim_step"] <= sim_step
-                or event["terminated_episode_id"] != generation
-                or event["next_episode_id"] != generation + 1):
+        if (
+            not isinstance(event, dict)
+            or set(event) != {"sim_step", "terminated_episode_id", "next_episode_id"}
+            or any(not _index(value) for value in event.values())
+            or not last_step < event["sim_step"] <= sim_step
+            or event["terminated_episode_id"] != generation
+            or event["next_episode_id"] != generation + 1
+        ):
             raise ValueError("episode boundary reset events are not contiguous")
         last_step = event["sim_step"]
         generation += 1
     current = bool(events and events[-1]["sim_step"] == sim_step)
     expected = {
-        "reset_on_current_step": current, "action_outcome_valid": not current,
+        "reset_on_current_step": current,
+        "action_outcome_valid": not current,
         "temporal_credit_valid": not events,
     }
-    if any(type(boundary.get(key)) is not bool or boundary[key] != value
-           for key, value in expected.items()):
+    if any(
+        type(boundary.get(key)) is not bool or boundary[key] != value
+        for key, value in expected.items()
+    ):
         raise ValueError("episode boundary validity contradicts reset events")
     if boundary["action_episode_id"] != boundary["simulator_episode_id"] - int(current):
         raise ValueError("episode boundary action belongs to a different generation")
@@ -144,15 +155,26 @@ def validate_episode_boundary(row: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(row, dict):
         raise ValueError("episode boundary requires an action object")
     boundary = row.get("episode_boundary")
-    if (not isinstance(boundary, dict)
-            or set(boundary) != {
-                "schema", "simulator_episode_id", "action_episode_id", "reset_events",
-                "reset_on_current_step", "action_outcome_valid", "temporal_credit_valid"}
-            or boundary.get("schema") != EPISODE_BOUNDARY_SCHEMA
-            or not _index(row.get("sim_step"))
-            or not _index(boundary.get("simulator_episode_id"))
-            or not _index(boundary.get("action_episode_id"))):
-        raise ValueError("episode boundary requires native step and generation identifiers")
+    if (
+        not isinstance(boundary, dict)
+        or set(boundary)
+        != {
+            "schema",
+            "simulator_episode_id",
+            "action_episode_id",
+            "reset_events",
+            "reset_on_current_step",
+            "action_outcome_valid",
+            "temporal_credit_valid",
+        }
+        or boundary.get("schema") != EPISODE_BOUNDARY_SCHEMA
+        or not _index(row.get("sim_step"))
+        or not _index(boundary.get("simulator_episode_id"))
+        or not _index(boundary.get("action_episode_id"))
+    ):
+        raise ValueError(
+            "episode boundary requires native step and generation identifiers"
+        )
     _validate_events(boundary, row["sim_step"])
     return boundary
 
@@ -173,9 +195,11 @@ def validate_episode_sequence(rows: list[dict[str, Any]]) -> None:
     for row in sorted(rows, key=lambda item: item["sim_step"]):
         boundary = row["episode_boundary"]
         events = boundary["reset_events"]
-        if (row["sim_step"] <= previous_step
-                or boundary["simulator_episode_id"] != generation + len(events)
-                or any(event["sim_step"] <= previous_step for event in events)):
+        if (
+            row["sim_step"] <= previous_step
+            or boundary["simulator_episode_id"] != generation + len(events)
+            or any(event["sim_step"] <= previous_step for event in events)
+        ):
             raise ValueError("episode boundary disagrees with the sampled interval")
         previous_step = row["sim_step"]
         generation = boundary["simulator_episode_id"]

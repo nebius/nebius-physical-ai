@@ -118,25 +118,34 @@ def test_tool_world_open_ingress_requires_acknowledgement(
     ensure.assert_not_called()
 
 
-@pytest.mark.parametrize("workbenches", [
-    {"demo": {"instance_id": "computeinstance-test"}},
-    {"other": {"instance_id": "computeinstance-test"}},
-    {"demo": {"endpoint": "http://203.0.113.10"}},
-])
-@pytest.mark.parametrize("source_args", [
-    [],
-    ["--source", NARROW_SOURCE],
-    ["--source", "0.0.0.0/0"],
-    ["--source", "0.0.0.0/0", "--allow-world-open"],
-])
+@pytest.mark.parametrize(
+    "workbenches",
+    [
+        {"demo": {"instance_id": "computeinstance-test"}},
+        {"other": {"instance_id": "computeinstance-test"}},
+        {"demo": {"endpoint": "http://203.0.113.10"}},
+    ],
+)
+@pytest.mark.parametrize(
+    "source_args",
+    [
+        [],
+        ["--source", NARROW_SOURCE],
+        ["--source", "0.0.0.0/0"],
+        ["--source", "0.0.0.0/0", "--allow-world-open"],
+    ],
+)
 def test_fiftyone_ingress_is_disabled_for_every_alias_and_source(
-    mocker, workbenches, source_args,
+    mocker,
+    workbenches,
+    source_args,
 ) -> None:
     _patch_projects(mocker, workbenches)
     ensure = mocker.patch("npa.cli.ingress.ensure_ingress")
 
     result = runner.invoke(
-        app, ["workbench", "fiftyone", "ensure-ingress", "-n", "demo", *source_args],
+        app,
+        ["workbench", "fiftyone", "ensure-ingress", "-n", "demo", *source_args],
     )
 
     assert result.exit_code == 1

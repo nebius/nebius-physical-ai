@@ -1,0 +1,4 @@
+# Keep the checkpoint runtime identical to the required security gate.
+torch==2.13.0
+# ONNX Runtime 1.24 has no Linux CPython 3.10 wheel despite its package metadata.
+onnxruntime<1.24; python_version < '3.11'

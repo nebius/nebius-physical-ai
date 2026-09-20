@@ -33,6 +33,12 @@ def test_dockerfile_parses_torch_arch_flags_as_tokens() -> None:
     assert "COPY pyproject.toml README.md /opt/npa-src/" in dockerfile
     assert "chown -R ubuntu:ubuntu /opt/alpamayo2" not in dockerfile
     assert "'uvicorn==0.41.0' /opt/npa-src" in dockerfile
+    assert 'npa.version="0.1.0-cu128-r3"' in dockerfile
+    assert '"-m", "npa.workbench.alpamayo2_super.healthcheck"' in dockerfile
+    assert "urllib.request.urlopen" not in dockerfile
+    assert "git linux-libc-dev openssh-server" in dockerfile
+    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
+    assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
 
 
 def _tar(path: Path, members: dict[str, bytes]) -> Path:

@@ -36,6 +36,37 @@ your Python environment; remote workloads use their container dependencies.
 See [installation](../docs/install.md) for supported platforms, virtual
 environments, and the separate SkyPilot environment.
 
+The cluster GPU smoke manages an owned SkyPilot API session through workload
+cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
+The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
+also provides a read-only live audit using the selected run URI, project, and
+saved pre-submission UTC timestamp. Its test settings are scoped to the audit
+shell and do not submit work. For task-specific augmentation, set the optional
+`appearance_profiles_json` workflow config to a JSON array of coherent lighting,
+background, color-grade and surface-finish profiles; its empty default retains
+the starter sampler. Cosmos3's `caption_instruction` supplies `augment_subject`
+as context while requiring uncertainty for unclear features; override it for
+task or camera terminology. Source and generated-video caption frames are sampled
+across the complete decoded clip, including both endpoints, instead of stopping
+after its first eight seconds. Older caption workflows retain their default
+instruction. With edge transfer, `transfer_rgb_weight` optionally adds the
+complete source RGB video as a native conditioning hint, weighted relative to
+edge weight 1. Its default 0 disables the hint; it never blends source pixels
+into generated output. Independently, `transfer_first_chunk_conditional_frames`
+defaults to 1, anchoring the first generation window to the original RGB frame.
+Set it to 0 with edge transfer to allow a new appearance from the first frame;
+complete source edges and generated overlap between later windows remain active.
+This can also reduce object-identity preservation, so review actual paired clips.
+`transfer_cfg_normalization` accepts `disabled` (the compatibility default) or
+`enabled` with edge transfer. It forwards the pinned framework's `normalize_cfg`
+sampling option and records the effective boolean in `transfer.json`. Compare
+matched sources, prompts and seeds before adopting it; this option does not
+establish geometry or contact fidelity.
+The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
+includes the battery dataset, configuration examples and quality review.
+The [LeRobot comparison](../docs/workbench/guides/paidf-lerobot-realism.md)
+extends that review to cup opening, coffee preparation and a simulated cube lift.
+
 Extra tools required by specific commands:
 
 - `ray[default]==2.58.0` in the NPA application environment for
@@ -69,6 +100,18 @@ chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
+
+The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
+retains invalid hosted visual judgments as failed audit evidence. Its
+`npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts
+a verified interrupted audit so saved responses are revalidated and only missing
+episodes make new requests; omit the option for a fresh audit.
+The workflow's `learning_recipe=adaptive-bounded-exploration` selects bounded learned joint targets and exploration,
+hold-aligned rewards, richer observations, and a training-outcome curriculum.
+Use `learning_recipe=joint-baseline` for the historical comparison. The module's
+`prepare --learning-recipe` option seals this choice. Lift/hold thresholds stay fixed;
+new runs additionally enforce measured simulation limits and a task-domain envelope.
+UR10e's new sealed physics profile preserves its USD mimic-joint mechanics.
 
 ## Workbench Runtimes
 
@@ -195,10 +238,20 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
-and 3.14. A focused compatibility check runs before the CPU tensor dependencies
-are installed, so async cancellation and isolated SkyPilot fixture regressions
-surface early. Run it locally with:
+Pull requests receive smoke, affected subsystem tests, and security feedback.
+Agent/browser changes also run Cypress before queue admission; unknown and
+shared changes receive full Python 3.12 validation. The merge queue runs the
+combined latest-main candidate through one dedicated browser job and focused
+Python 3.10/3.14 checks alongside five duration-balanced Python 3.12 coverage
+shards, then enforces the merged floor. Recognized prose-only edits retain smoke,
+documentation, lint, guardrail, and security checks while skipping runtime suites.
+See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
+rules and local inspection command. Scheduled/manual audits run the full suite
+on all three supported versions. Every full Python 3.12 run publishes module
+timings, with merged profiles from successful runs for reviewed rebalancing.
+The focused compatibility check runs before CPU tensor dependencies are
+installed, so async cancellation and isolated SkyPilot fixture regressions
+surface before merge. Run it locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
@@ -208,13 +261,26 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
-The required [security check](../docs/security/merge-security-gate.md) calls the
-image security workflow once on every PR, merge queue candidate, and main push.
-It waits for successful image scans before running the runtime security tests.
+CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
+CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
+--update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
+intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
+also explains the automatic `ci-timing-report` job, whose summary and
+JSON artifact separate runner waiting, setup, and execution for completed runs.
+
+The required [security check](../docs/security/merge-security-gate.md) is the
+single automatic candidate workflow. It runs secrets, confidentiality, source,
+runtime, lint, guardrail, and test gates, and calls an always-reporting image
+security workflow. Image-affecting candidates receive the deep image checks;
+unrelated candidates take a verified fast path. Main and weekly audits always
+scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. This baseline check does not replace the
+on fixable CRITICAL OS findings. All seven bases run inside one job with two
+bounded local workers. One Trivy database download is hard-linked into isolated
+worker caches, rather than using seven queued runners or a lock-contended shared
+cache. This baseline check does not replace the
 complete image scans required before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
@@ -230,3 +296,12 @@ for the remaining environment variables and the exact test command.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
+
+## Workbench Studio
+
+`npa studio init --directory ./my-studio` creates a portable local film editor
+using the installed renderer. Create a project from your own media with
+`npa studio create`, author its storyboard, then draft, narrate and render it.
+Install `npa[studio]` for optional speech generation and FFmpeg separately.
+See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
+configuration, offline narration, artifact search and privacy boundaries.

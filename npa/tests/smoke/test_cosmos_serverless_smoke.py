@@ -40,7 +40,13 @@ class _CosmosHandler(BaseHTTPRequestHandler):
             self._write_json({"status": "ok", "model": "smoke-model", "loaded": True})
             return
         if self.path.startswith("/jobs/"):
-            self._write_json({"job_id": self.path.rsplit("/", 1)[-1], "status": "completed", "result": "ok"})
+            self._write_json(
+                {
+                    "job_id": self.path.rsplit("/", 1)[-1],
+                    "status": "completed",
+                    "result": "ok",
+                }
+            )
             return
         self.send_error(404)
 
@@ -262,17 +268,24 @@ def _deploy_args(*extra: str) -> list[str]:
     ]
 
 
-def test_smoke_cosmos_serverless_deploy_status_teardown(smoke_env: dict[str, str]) -> None:
+def test_smoke_cosmos_serverless_deploy_status_teardown(
+    smoke_env: dict[str, str],
+) -> None:
     deploy = _run_npa(smoke_env, _deploy_args())
     assert deploy.returncode == 0, deploy.stderr + deploy.stdout
     assert "runtime: serverless" in deploy.stdout
 
-    status = _run_npa(smoke_env, ["workbench", "cosmos", "-p", "smoke", "-n", "cosmos", "status"])
+    status = _run_npa(
+        smoke_env, ["workbench", "cosmos", "-p", "smoke", "-n", "cosmos", "status"]
+    )
     assert status.returncode == 0, status.stderr + status.stdout
     assert "server: up" in status.stdout
     assert "serverless_status: running" in status.stdout
 
-    teardown = _run_npa(smoke_env, ["workbench", "cosmos", "-p", "smoke", "-n", "cosmos", "teardown", "--yes"])
+    teardown = _run_npa(
+        smoke_env,
+        ["workbench", "cosmos", "-p", "smoke", "-n", "cosmos", "teardown", "--yes"],
+    )
     assert teardown.returncode == 0, teardown.stderr + teardown.stdout
     assert "status: deleted" in teardown.stdout
 
@@ -280,7 +293,9 @@ def test_smoke_cosmos_serverless_deploy_status_teardown(smoke_env: dict[str, str
 def test_smoke_cosmos_serverless_serve_prewarm(smoke_env: dict[str, str]) -> None:
     assert _run_npa(smoke_env, _deploy_args()).returncode == 0
 
-    serve = _run_npa(smoke_env, ["workbench", "cosmos", "-p", "smoke", "-n", "cosmos", "serve"])
+    serve = _run_npa(
+        smoke_env, ["workbench", "cosmos", "-p", "smoke", "-n", "cosmos", "serve"]
+    )
 
     assert serve.returncode == 0, serve.stderr + serve.stdout
     assert "status: prewarmed" in serve.stdout
@@ -319,11 +334,15 @@ def test_smoke_cosmos_serverless_replace(smoke_env: dict[str, str]) -> None:
     assert replace.returncode == 0, replace.stderr + replace.stdout
     config_path = Path(smoke_env["HOME"]) / ".npa" / "config.yaml"
     config = yaml.safe_load(config_path.read_text())
-    endpoint_id = config["projects"]["smoke"]["workbenches"]["cosmos"]["serverless"]["endpoint_id"]
+    endpoint_id = config["projects"]["smoke"]["workbenches"]["cosmos"]["serverless"][
+        "endpoint_id"
+    ]
     assert endpoint_id == "endpoint-smoke-2"
 
 
-def test_smoke_cosmos_serverless_dry_run_does_not_call_nebius(smoke_env: dict[str, str]) -> None:
+def test_smoke_cosmos_serverless_dry_run_does_not_call_nebius(
+    smoke_env: dict[str, str],
+) -> None:
     dry_run = _run_npa(smoke_env, _deploy_args("--dry-run", "--output", "json"))
 
     assert dry_run.returncode == 0, dry_run.stderr + dry_run.stdout

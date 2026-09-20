@@ -52,6 +52,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/sim2real-operate/SKILL.md`: operate the compositional Sim2Real `npa.workflow` through the standard SkyPilot runtime — validate/plan/submit, durable S3 resume, preflight health checks, storage secret sync, and job monitoring.
 - `skills/workflows/agent-fresh-operate/SKILL.md`: npa-driven agent teardown, fresh-setup, tiered verify gates, and deploy failure recovery on the operator/dev VM.
 - `skills/workflows/author-npa-workflow/SKILL.md`: author and validate declarative `npa.workflow/v0.0.1` specs (`validate-spec`, `plan-spec`, toolRef catalog).
+- `skills/workflows/antioch-workbench/SKILL.md`: Antioch CLI authentication, XR1 demonstration collection and evaluation, signed Nebius S3 transfers, and the Nebius fine-tuning workflow.
 - `skills/workflows/byof-onboard/SKILL.md`: BYOF OSS repo onboarding (Ubuntu/Isaac base, container-verify, agent `onboard_solution`).
 - `skills/workflows/contribute-workbench-image/SKILL.md`: external fork PR through licensing review, trusted image build, registry-byte validation, and incremental GHCR publication.
 - `skills/workflows/onboard-world-model/SKILL.md`: generic playbook for onboarding and containerizing a world model (learned action-conditioned simulator) as a multi-GPU BYOF registry candidate — containerize, stage a real dataset, encode the train→tokenize→dynamics→dream→visualize loop as capability smokes, validate on real GPUs (Open Dreamer is the reference example).

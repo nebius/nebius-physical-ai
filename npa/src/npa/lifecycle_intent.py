@@ -26,7 +26,9 @@ class OperationIntentError(RuntimeError):
     """A primitive was invoked from an incompatible lifecycle operation."""
 
 
-_INTENT: ContextVar[OperationIntent | None] = ContextVar("npa_operation_intent", default=None)
+_INTENT: ContextVar[OperationIntent | None] = ContextVar(
+    "npa_operation_intent", default=None
+)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -120,7 +122,11 @@ def json_stdout_contract(function: F) -> F:
         decoder = json.JSONDecoder()
         cursor = 0
         while cursor < len(raw):
-            candidates = [index for index in (raw.find("{", cursor), raw.find("[", cursor)) if index >= 0]
+            candidates = [
+                index
+                for index in (raw.find("{", cursor), raw.find("[", cursor))
+                if index >= 0
+            ]
             if not candidates:
                 break
             start = min(candidates)
@@ -140,8 +146,13 @@ def json_stdout_contract(function: F) -> F:
             }
             if failure is not None:
                 document["error_type"] = type(failure).__name__
-        if raw and (len(documents) != 1 or raw != json.dumps(documents[0], indent=2, sort_keys=True)):
-            print("command diagnostics were separated from JSON stdout", file=sys.stderr)
+        if raw and (
+            len(documents) != 1
+            or raw != json.dumps(documents[0], indent=2, sort_keys=True)
+        ):
+            print(
+                "command diagnostics were separated from JSON stdout", file=sys.stderr
+            )
         print(json.dumps(document, indent=2, sort_keys=True))
         if failure is not None:
             raise failure

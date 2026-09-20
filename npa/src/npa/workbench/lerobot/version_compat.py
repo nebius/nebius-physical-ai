@@ -20,8 +20,10 @@ class LeRobotVersionError(ValueError):
 def lerobot_version_manifest() -> dict[str, Any]:
     """Return the packaged LeRobot version compatibility manifest."""
 
-    text = resources.files("npa.deploy").joinpath(LEROBOT_VERSION_MANIFEST_RESOURCE).read_text(
-        encoding="utf-8"
+    text = (
+        resources.files("npa.deploy")
+        .joinpath(LEROBOT_VERSION_MANIFEST_RESOURCE)
+        .read_text(encoding="utf-8")
     )
     payload = json.loads(text)
     if payload.get("format") != "npa_lerobot_version_manifest_v1":
@@ -73,7 +75,9 @@ def lerobot_version_entry(version: str | None = None) -> dict[str, Any]:
     try:
         entry = versions[resolved]
     except KeyError as exc:
-        raise LeRobotVersionError(f"Missing LeRobot version entry for {resolved!r}") from exc
+        raise LeRobotVersionError(
+            f"Missing LeRobot version entry for {resolved!r}"
+        ) from exc
     if not isinstance(entry, dict):
         raise LeRobotVersionError(f"Invalid LeRobot version entry for {resolved!r}")
     return {"version": resolved, **entry}

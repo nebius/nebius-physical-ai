@@ -37,6 +37,76 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
+For realistic manipulation augmentation, use
+`docs/workbench/guides/paidf-realistic-augmentation.md`.
+For pinned cup, coffee and cube-lift source selections and matched experiments,
+use `docs/workbench/guides/paidf-lerobot-realism.md`. Preserve the baseline's
+captions and appearance manifest when changing a sampling parameter, and review
+transparent objects, small contacts and generated padding separately.
+`transfer_cfg_normalization` accepts `disabled` (default) or `enabled` with
+edge transfer and forwards native `normalize_cfg` sampling. Compare matched
+sources, captions, profiles and seeds; inspect the receipt's effective boolean
+and the actual generated task details. Do not infer training suitability from
+the option or a more pleasing contrast level. Cosmos3 accepts
+`config.appearance_profiles_json` (empty by default) to replace the starter
+profiles with coherent task/camera-specific edits. Each profile must contain
+exactly `lighting`, `background`, `color_grade` and `surface_finish`; validation
+runs before planning and sampling. The config manifest records custom profiles
+and supplies their values to evaluator questions. Profile cycles repeat when
+variant count exceeds profile count; do not report that as appearance diversity.
+Custom profiles and a quality anchor are mutually exclusive. Cosmos3 source
+captioning uses `caption_instruction` with `augment_subject` as context, while
+requiring uncertainty about unclear features; inspect the real captions before
+tuning this instruction. Other caption workflows retain the existing instruction
+when they omit the optional key. Source and generated-video caption extraction
+samples evenly spaced decoded frame indices, including the first and last frame;
+clips with fewer frames than requested do not repeat samples. Generation uses
+source observations spanning the complete episode and separates observations
+from edit instructions. Keep task identity, small contact features, geometry,
+camera motion and timing explicit. The battery sampling example is unqualified
+until actual GPU outputs pass temporal/contact review; do not promote its
+settings to universal defaults or describe input-only checks as augmentation
+validation. Retain rejected attempts and validate other episodes/cameras before
+claiming generality.
+
+Cosmos3 `transfer_edge_threshold` selects native Canny thresholds independently
+of control guidance; `medium` preserves the existing behavior. Inspect actual
+source controls when dark gripper or small-object detail is missing. The lower
+presets preserve weaker edges but can retain noise. Validate presets before
+planning, retain native loader hashes and preset evidence, and qualify actual
+GPU outputs before recommending a setting. Neither the reviewed high-control
+battery candidate nor the standard-control warm/cool pair preserved acceptable
+gripper detail; keep those rejected trials in the guide's validation record.
+
+With edge transfer, `transfer_rgb_weight` can add native source RGB conditioning
+using the framework's `blur` hint and `none` preset. Zero disables it; positive
+weights are relative to edge weight 1. Validate before model work, retain the
+lossless-control and native-loader hashes, and distinguish this model input
+from output-pixel blending. Check both task preservation and visible appearance
+change: more source conditioning can suppress the requested edit.
+
+`transfer_first_chunk_conditional_frames` independently controls the original RGB
+frame anchoring the first native window. The compatibility default is 1; 0
+releases that appearance anchor while retaining full-source edges and five
+generated overlap frames in later windows. Zero RGB hint weight does not disable
+this first-frame anchor. Compare 0 and 1 on matched inputs and inspect both edit
+strength and foreground identity; retain the actual conditioning counts in the
+native transfer receipt. This setting requires edge transfer when changed to 0.
+
+For tuning and fan-out, follow the guide's “Tune visible changes before fan-out”
+and “Fan out a reviewed recipe” sections. Keep task-specific values in run
+configuration. Distinguish profile diversity, variant count, generation seeds,
+per-job GPU concurrency and episode/camera coverage. More seeds do not add new
+appearance profiles. Verify actual source-to-output changes separately: the
+existing output attribute check does not enforce minimum augmentation strength.
+Keep per-run storage/API/config isolation and report the actual concurrency;
+single-GPU evidence does not qualify multi-GPU fan-out.
+
+For operator setup, verify `command -v nebius` and `nebius version` after selecting
+`PATH` and after any environment activation. Health preflight proves profile
+authentication, while configure also enforces NPA's supported CLI version.
+`NPA_NEBIUS_BIN` alone does not select the executable for those two commands.
+
 `workflows/testing/physical-ai-data-factory.yaml` — one
 `npa.workflow/v0.0.1` spec. Blueprint → NPA stage mapping:
 
@@ -568,6 +638,12 @@ npa workbench cosmos-curate curate-videos --input-dir ./clips --output-dir ./cur
   log — under the `pipeline/*` entities. Rejected runs take `visualize-rejected`
   before `reject-quality`, so the evidence survives while promotion remains
   fail-closed.
+  PAIDF recordings contain selected producer facts, raw source-report SHA-256
+  hashes, and run-relative artifact references. Captions, models, candidate
+  decisions, quality measurements, and timelines remain reviewable; private
+  storage locations and runtime identities are omitted. Original reports stay
+  private and unchanged, and existing recordings are not rewritten. Apply
+  `skills/workflows/emit-reviewable-rrd/SKILL.md` when validating decoded content.
 - **Viewing in the NPA agent:** every stage lands under one S3 run prefix
   (`input/ configs/ labeled_original/ cosmos_augmented/ grade/ labeled_augmented/
   curation/ reports/`). The `visualize` stage writes `reports/sim2real.rrd`,

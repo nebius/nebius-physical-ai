@@ -179,7 +179,14 @@ def _request_json(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.request(method, f"{resolved}{path}", headers=headers, json=payload, params=params, timeout=timeout)
+        response = httpx.request(
+            method,
+            f"{resolved}{path}",
+            headers=headers,
+            json=payload,
+            params=params,
+            timeout=timeout,
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
@@ -187,13 +194,19 @@ def _request_json(
             f"Scenario-gen service request failed ({exc.response.status_code}): {detail}"
         ) from exc
     except httpx.HTTPError as exc:
-        raise ScenarioGenServiceError(f"Cannot reach scenario-gen service {resolved}: {exc}") from exc
+        raise ScenarioGenServiceError(
+            f"Cannot reach scenario-gen service {resolved}: {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise ScenarioGenServiceError("Scenario-gen service returned non-JSON response") from exc
+        raise ScenarioGenServiceError(
+            "Scenario-gen service returned non-JSON response"
+        ) from exc
     if not isinstance(data, dict):
-        raise ScenarioGenServiceError("Scenario-gen service returned an unexpected response")
+        raise ScenarioGenServiceError(
+            "Scenario-gen service returned an unexpected response"
+        )
     return data
 
 
