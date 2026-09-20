@@ -172,7 +172,7 @@ failures, and current merge blockers without live infrastructure identifiers.
 | `evo_rpe` | live-qualified candidate | Native relative pose error at a declared frame or distance delta, with the complete finite error distribution retained |
 | `evo_traj` | live-qualified candidate | Native matched trajectory plots for the pinned KITTI ground truth, ORB, and S-PTAM examples |
 | `trajectory_acceptance_controls` | live-qualified candidate | The digest-pinned Kubernetes run accepted both 120-pose low-error controls and rejected nonlinear drift plus malformed input with zero false positives/negatives |
-| `decoded_plot_validation` | live-qualified auxiliary check | Six review-facing native/review plots are decoded, dimension/content-checked, and hash-retained; five auxiliary `evo_traj` plots and eight `evo_ape` raw/control plots are outside this check, including the 651x491 synthetic speed plot below its 800x600 floor |
+| `decoded_plot_validation` | live-qualified auxiliary check | Six review-facing plots and eight additional `evo_ape` raw/control plots are decoded, dimension/content-checked, and hash-retained; only the six review-facing plots enter the capture/review set. Five auxiliary `evo_traj` plots are outside this check, including the 651x491 synthetic speed plot below its 800x600 floor |
 
 The integration gate is about reliable evaluation, not improving the upstream
 ORB or S-PTAM estimates. Representative KITTI metrics are reported as observed
