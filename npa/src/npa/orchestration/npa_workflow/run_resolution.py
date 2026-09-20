@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from npa.orchestration.npa_workflow.run_state import (
     PAIDF_WORKFLOW_NAME,
+    RUN_SCHEMA_VERSION,
     paidf_artifact_prefix,
     paidf_workflow_prefix,
 )
@@ -727,18 +728,26 @@ def list_resolved_artifacts(
     )
     # Declarative outputs may use any path below the exact run root. The
     # historical ``artifacts/`` convention applies only to raw schema-v1 runs.
+    state_prefix = state.prefix.rstrip("/")
+    declarative_run_root = state_prefix.removesuffix("/npa-workflow")
+    has_declarative_control_prefix = (
+        manifest_schema == RUN_SCHEMA_VERSION
+        and state_prefix.endswith("/npa-workflow")
+        and str((resolution.manifest or {}).get("run_prefix_uri") or "").rstrip("/")
+        == f"s3://{state.bucket}/{declarative_run_root}"
+    )
     uses_run_root_layout = (
         resolution.workflow_name == PAIDF_WORKFLOW_NAME
         or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
         or resolution.manifest_pending
-        or manifest_schema == "npa.workflow.run.v1"
+        or has_declarative_control_prefix
     )
     if not uses_run_root_layout:
         from npa.orchestration.skypilot.workflow_state import list_artifacts
 
         return list_artifacts(state, stage or None)
 
-    run_prefix = state.prefix.rstrip("/").removesuffix("/npa-workflow") + "/"
+    run_prefix = declarative_run_root + "/"
     objects: list[str] = []
     try:
         paginator = state.client().get_paginator("list_objects_v2")

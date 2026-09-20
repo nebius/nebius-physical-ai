@@ -642,6 +642,28 @@ def test_legacy_manifest_keeps_historical_artifact_layout(
     assert resolver_env.queries[-1][1] == f"checkpoints/{run_id}/artifacts/train/"
 
 
+@pytest.mark.parametrize("run_id", ["bare-v1-artifacts", "npa-workflow"])
+def test_v1_shaped_manifest_at_bare_root_keeps_historical_layout(
+    resolver_env: ExactS3, run_id: str
+) -> None:
+    root = f"checkpoints/{run_id}"
+    manifest = _manifest(run_id, workflow="ordinary")
+    manifest["run_prefix_uri"] = f"s3://alias-bucket/{root}"
+    resolver_env.put_json("alias-bucket", f"{root}/manifest.json", manifest)
+    legacy = f"{root}/artifacts/train/model.bin"
+    resolver_env.objects[("alias-bucket", legacy)] = b"model"
+    resolver_env.objects[("alias-bucket", f"{root}/logs/train/run.log")] = b"log"
+    resolver_env.objects[
+        ("alias-bucket", "checkpoints/unrelated-run/train/secret.bin")
+    ] = b"other-run"
+
+    resolved = resolve_run(run_id, project="paidf")
+    artifacts = list_resolved_artifacts(resolved, stage="train")
+
+    assert artifacts == [f"s3://alias-bucket/{legacy}"]
+    assert resolver_env.queries[-1][1] == f"{root}/artifacts/train/"
+
+
 def test_explicit_nested_uri_must_contain_supplied_run_id(
     resolver_env: ExactS3,
 ) -> None:
