@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from PIL import Image
 from typer.testing import CliRunner
@@ -463,34 +464,29 @@ def test_workbench_vlm_eval_workflow_path() -> None:
     assert payload["workflow"] == "workflows/testing/vlm-eval-single.yaml"
 
 
-def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
-    output_path = tmp_path / "benchmark-report.json"
+def _benchmark_cli_args(output_path: Path) -> list[str]:
+    return [
+        "workbench",
+        "vlm-eval",
+        "benchmark",
+        "--dataset",
+        str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+        "--output",
+        str(output_path),
+        "--backend",
+        "stub",
+        "--thresholds",
+        "0.5,0.8,0.9",
+        "--rubrics",
+        "default,strict",
+        "--models",
+        DEFAULT_MODEL,
+        "--format",
+        "json",
+    ]
 
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "vlm-eval",
-            "benchmark",
-            "--dataset",
-            str(DEFAULT_SAMPLE_BENCHMARK_PATH),
-            "--output",
-            str(output_path),
-            "--backend",
-            "stub",
-            "--thresholds",
-            "0.5,0.8,0.9",
-            "--rubrics",
-            "default,strict",
-            "--models",
-            DEFAULT_MODEL,
-            "--format",
-            "json",
-        ],
-    )
 
-    assert result.exit_code == 0
-    payload = json.loads(result.output)
+def _assert_benchmark_summary(payload: dict, output_path: Path) -> None:
     assert payload["best_config"]["config"]["success_threshold"] == 0.8
     assert payload["best_config"]["metrics"]["accuracy"] == 1.0
     assert payload["best_config"]["metrics"]["true_positives"] == 2
@@ -509,7 +505,27 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     assert payload["best_config"]["metrics"]["false_positive_item_ids"] == []
     assert payload["best_config"]["metrics"]["false_negative_item_ids"] == []
     assert payload["written_uri"] == str(output_path)
-    written = json.loads(output_path.read_text(encoding="utf-8"))
+
+
+def _assert_ranked_matrix_metrics(metrics: dict) -> None:
+    matrix = metrics["confusion_matrix"]
+    assert matrix["actual_positive"]["predicted_positive"] == metrics["true_positives"]
+    assert matrix["actual_positive"]["predicted_negative"] == metrics["false_negatives"]
+    assert matrix["actual_negative"]["predicted_positive"] == metrics["false_positives"]
+    assert matrix["actual_negative"]["predicted_negative"] == metrics["true_negatives"]
+    negative_count = metrics["false_positives"] + metrics["true_negatives"]
+    positive_count = metrics["false_negatives"] + metrics["true_positives"]
+    assert metrics["false_positive_rate"] == round(
+        metrics["false_positives"] / negative_count, 4
+    )
+    assert metrics["false_negative_rate"] == round(
+        metrics["false_negatives"] / positive_count, 4
+    )
+    assert len(metrics["false_positive_item_ids"]) == metrics["false_positives"]
+    assert len(metrics["false_negative_item_ids"]) == metrics["false_negatives"]
+
+
+def _assert_written_benchmark(written: dict, payload: dict) -> None:
     assert written["item_count"] == 5
     assert written["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
     assert (
@@ -517,32 +533,18 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
         == payload["best_config"]["metrics"]["confusion_matrix"]
     )
     for ranked in written["ranked_configs"]:
-        metrics = ranked["metrics"]
-        matrix = metrics["confusion_matrix"]
-        assert (
-            matrix["actual_positive"]["predicted_positive"] == metrics["true_positives"]
-        )
-        assert (
-            matrix["actual_positive"]["predicted_negative"]
-            == metrics["false_negatives"]
-        )
-        assert (
-            matrix["actual_negative"]["predicted_positive"]
-            == metrics["false_positives"]
-        )
-        assert (
-            matrix["actual_negative"]["predicted_negative"] == metrics["true_negatives"]
-        )
-        negative_count = metrics["false_positives"] + metrics["true_negatives"]
-        positive_count = metrics["false_negatives"] + metrics["true_positives"]
-        assert metrics["false_positive_rate"] == round(
-            metrics["false_positives"] / negative_count, 4
-        )
-        assert metrics["false_negative_rate"] == round(
-            metrics["false_negatives"] / positive_count, 4
-        )
-        assert len(metrics["false_positive_item_ids"]) == metrics["false_positives"]
-        assert len(metrics["false_negative_item_ids"]) == metrics["false_negatives"]
+        _assert_ranked_matrix_metrics(ranked["metrics"])
+
+
+def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
+    output_path = tmp_path / "benchmark-report.json"
+    result = runner.invoke(app, _benchmark_cli_args(output_path))
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    _assert_benchmark_summary(payload, output_path)
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    _assert_written_benchmark(written, payload)
 
 
 def test_vlm_eval_sdk_benchmark_returns_report() -> None:
