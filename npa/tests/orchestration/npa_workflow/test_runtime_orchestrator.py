@@ -163,6 +163,29 @@ states:
     terminal: true
 """
 
+COMPLETED_REPLAY_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: completed-replay-identity
+config:
+  bucket: example-bucket
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 1
+initial: export
+states:
+  export:
+    run:
+      shell: "echo export"
+    resources: cpu
+    outputs:
+      - uri: "s3://example-bucket/completed-replay/result.json"
+        schema: npa.example.result.v1
+    terminal: true
+"""
+
 FANOUT_SPEC = """
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
@@ -1339,6 +1362,114 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     # Successful waves replay, while a terminal workload failure remains terminal.
     assert second_submitter.calls == []
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
+
+
+def _completed_replay_case(tmp_path: Path) -> tuple[Any, MemoryStore]:
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    store = MemoryStore()
+    first = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=FakeSubmitter(),
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        output_checker=lambda _uri: True,
+        store=store,
+    )
+    first_report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=first,
+        options=first.options,
+    )
+    assert first_report.status == "succeeded"
+    return spec, store
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "identity_function"),
+    [
+        ("workflow_sha256", "_workflow_identity"),
+        ("source_sha256", "_source_identity"),
+        ("image_digest", "_image_identity"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("recorded_identity", "expected_identity_missing"),
+    [("changed", False), ("", False), ("", True)],
+)
+def test_completed_replay_requires_current_immutable_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity_field: str,
+    identity_function: str,
+    recorded_identity: str,
+    expected_identity_missing: bool,
+) -> None:
+    from npa.orchestration.npa_workflow import runtime as runtime_module
+
+    spec, store = _completed_replay_case(tmp_path)
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    persisted.waves[-1]["immutable_identity"][identity_field] = (
+        "d" * 64 if recorded_identity else ""
+    )
+    store.write_runtime_state(persisted)
+    if expected_identity_missing:
+        monkeypatch.setattr(runtime_module, identity_function, lambda *_args: "")
+
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        options=options,
+        output_checker=lambda _uri: True,
+        store=store,
+    )
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+def test_completed_replay_checks_missing_outputs_before_identity(
+    tmp_path: Path,
+) -> None:
+    spec, store = _completed_replay_case(tmp_path)
+    persisted = store.read_runtime_state()
+    assert persisted is not None
+    persisted.waves[-1]["immutable_identity"]["image_digest"] = "d" * 64
+    store.write_runtime_state(persisted)
+    submitter = FakeSubmitter()
+    options = RuntimeOptions(poll_seconds=0, resume=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        status_fn=FakeStatus(["SUCCEEDED"]),
+        options=options,
+        output_checker=lambda _uri: False,
+        store=store,
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=options,
+    )
+
+    assert report.status == "failed"
+    assert "completed without declared durable output" in report.error
+    assert "IMMUTABLE_IDENTITY_MISMATCH" not in report.error
+    assert len(submitter.calls) == 1
 
 
 @pytest.mark.parametrize(

@@ -631,6 +631,13 @@ class SkyPilotWaveExecutor:
                     "missing; resubmitting"
                 )
                 replayed = None
+        if replayed is not None and not self._completed_replay_identity_matches(
+            replayed
+        ):
+            raise NpaWorkflowError(
+                f"wave {key}: completed ledger replay blocked: "
+                "IMMUTABLE_IDENTITY_MISMATCH"
+            )
         if replayed is not None:
             attempt = WaveAttempt(
                 key=key,
@@ -1608,6 +1615,20 @@ class SkyPilotWaveExecutor:
             if not uri or not self._output_checker(uri):
                 return False
         return True
+
+    def _completed_replay_identity_matches(self, record: Mapping[str, Any]) -> bool:
+        identity = record.get("immutable_identity")
+        if not isinstance(identity, Mapping):
+            return False
+        expected = {
+            "workflow_sha256": _workflow_identity(self.spec),
+            "source_sha256": _source_identity(),
+            "image_digest": _image_identity(self.render_options),
+        }
+        return all(
+            bool(value) and identity.get(name) == value
+            for name, value in expected.items()
+        )
 
     def _declared_outputs_absent(self, outputs: Sequence[Any]) -> tuple[bool, str]:
         """Prove every declared output absent for explicit in-flight recovery.
