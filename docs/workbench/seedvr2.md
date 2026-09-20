@@ -11,6 +11,15 @@ publication-quarantined until built-image scans, a real H100 workflow run,
 objective preservation measurements, calibrated VLM review, and independent
 review pass for the same commit and image digest.
 
+| Evidence gate | Current result |
+| --- | --- |
+| Exact image construction | A local H100 candidate built successfully; final-head rebuild and publication remain quarantined |
+| Saved-image payload closure | Complete compressed-blob, uncompressed-layer, config, manifest, nested-archive, and exact Python path-file checks pass with no baked weights or media |
+| CUDA applicability | Torch carries `sm_90`, while built FlashAttention and Apex carry native `sm_90` SASS only and no PTX; this candidate is H100-only |
+| Other GPU families | H200 is outside the enforced runtime policy; L40S, RTX PRO 6000, B200, and B300 are not supported by the built extensions |
+| Real restoration and objective evidence | Pending on one digest-bound H100; no capability claim is made from imports or architecture inventory |
+| VLM evidence | Four hosted judges failed frozen calibration; candidate calls will be retained as non-gating unless a judge qualifies before candidate bytes exist |
+
 ## Run the workflow
 
 Upload one MP4 to your own S3 bucket, then submit the four-stage workflow:

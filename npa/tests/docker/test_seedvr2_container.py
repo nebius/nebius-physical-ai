@@ -212,16 +212,22 @@ def test_seedvr2_service_environment_is_hash_locked() -> None:
     assert "'uvicorn==" not in dockerfile
 
 
-def test_seedvr2_blackwell_manifest_keeps_pending_build_unproven() -> None:
+def test_seedvr2_blackwell_manifest_records_built_h100_arches() -> None:
     manifest = json.loads(
         (ROOT / "npa/docker/workbench/blackwell-dc-images.json").read_text()
     )
     entry = next(row for row in manifest["images"] if row["name"] == "npa-seedvr2")
-    assert entry["verdict"] == "unknown"
-    assert entry["validation"] == "pending-build"
+    assert entry["verdict"] == "ready"
+    assert entry["validation"] == "pending-gpu"
+    assert entry["measured_torch"] == "2.13.0+cu130"
+    assert "sm_100" in entry["measured_arch_list"]
+    assert entry["measured_extension_sass"] == {
+        "flash-attn": ["sm_90"],
+        "apex": ["sm_90"],
+    }
     assert "sm_90" in entry["build_target"]
     assert "sm_100" in entry["build_target"]
-    assert "unproven" in entry["build_target"]
+    assert "no PTX" in entry["build_target"]
 
 
 def test_seedvr2_golden_eval_runs_real_gpu_capability() -> None:

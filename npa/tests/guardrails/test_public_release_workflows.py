@@ -130,6 +130,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
         "scan_image_alpamayo2_payload.py",
+        "scan_image_seedvr2_payload.py",
         "scan_image_cosmos3_ray_serve_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
@@ -254,9 +255,9 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     post_push = text[text.index("Verify pushed bytes") :]
 
     assert 'docker pull "$exact"' in post_push
-    # Two calls bind the pulled digest to the local image; the third binds the
-    # independent cuRobo archive verifier to that same inspected remote image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
+    # Two calls bind the pulled digest to the local image; the others bind the
+    # independent cuRobo and SeedVR2 archive verifiers to that remote image.
+    assert post_push.count("docker image inspect --format '{{.Id}}'") == 4
     assert (
         'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
         '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
@@ -271,6 +272,16 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
+    seedvr2_scans = [
+        index
+        for index in range(len(text))
+        if text.startswith("scan_image_seedvr2_payload.py", index)
+    ]
+    assert len(seedvr2_scans) == 2
+    assert seedvr2_scans[0] < text.index(
+        "Push only after every pre-publication gate passes"
+    )
+    assert text.index("Verify pushed bytes") < seedvr2_scans[1]
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:

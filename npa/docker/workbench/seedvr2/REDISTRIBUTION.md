@@ -55,4 +55,9 @@ An operator-controlled private validation image proves only the operator's run.
 It does not authorize official publication or establish release acceptance.
 Scan every immutable layer, including bytes hidden by whiteouts, with
 `npa/scripts/scan_image_seedvr2_payload.py <image-ref>` and retain its JSON
-report alongside the broader security/SBOM scans.
+report alongside the broader security/SBOM scans. The report separately binds
+each compressed blob digest and uncompressed rootfs diff ID, the config and OCI
+manifest graph, the complete saved archive, and the scanner implementation.
+Python `.pth` files fail closed except for the exact path and bytes of the
+inventoried setuptools and Rerun bootstrap files. The publication workflow
+runs this gate before push and again against bytes pulled by immutable digest.

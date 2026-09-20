@@ -150,17 +150,34 @@
       "dockerfile": "seedvr2/Dockerfile",
       "build_script": "seedvr2/build.sh",
       "redistribution": "public",
-      "verdict": "unknown",
-      "validation": "pending-build",
-      "torch": "2.13.0+cu130 candidate",
+      "verdict": "ready",
+      "validation": "pending-gpu",
+      "torch": "2.13.0+cu130",
+      "measured_torch": "2.13.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
       "source_compiled_extensions": [
         "flash-attn 2.8.3.post1",
         "NVIDIA Apex fused normalization"
       ],
+      "measured_extension_sass": {
+        "flash-attn": [
+          "sm_90"
+        ],
+        "apex": [
+          "sm_90"
+        ]
+      },
       "smoke": "Pending acceptance target: pinned official SeedVR2-3B must restore a real degraded robot-observation clip and emit a fully decoded, hash-bound MP4; objective temporal and object-preservation evidence is a separate post-workflow gate, not a current smoke result.",
-      "build_target": "The first candidate explicitly requests sm_90 from both FlashAttention and Apex. Its built extension arch inventory remains unproven until the exact image exists. Datacenter Blackwell would need an explicit sm_100 rebuild followed by the same real restoration and objective gates; wheel arch presence or imports alone are insufficient.",
+      "build_target": "The built H100 candidate carries native sm_90 SASS and no PTX in both FlashAttention and Apex. Its Torch wheel also carries sm_100, but the extensions make the image inapplicable to datacenter Blackwell. A separate sm_100 extension rebuild followed by the same real restoration and objective gates is required; wheel arch presence or imports alone are insufficient.",
       "upstream_tracking": "https://github.com/Dao-AILab/flash-attention and https://github.com/NVIDIA/apex",
-      "notes": "Route the quarantined first candidate only to one H100. No B200/B300 compatibility is inferred from CUDA 13 or the Torch wheel."
+      "notes": "The quarantined first candidate was built, its complete saved-image payload scan passed, and its extension SASS inventories were read from the image. Route it only to one H100 until real restoration acceptance completes. No B200/B300 compatibility is inferred from CUDA 13 or the Torch wheel."
     },
     {
       "name": "npa-lerobot",
