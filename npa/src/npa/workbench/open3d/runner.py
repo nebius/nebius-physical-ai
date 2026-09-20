@@ -404,34 +404,39 @@ def _sample_distances(o3d, cloud, vertices):
 #: within 0.06 absolute.
 #:
 #: **It does under-call small fabrications, and below the floor it is confidently wrong
-#: rather than undecided.** On an icosphere scored against samples drawn from itself, with
-#: observations deleted from a polar cap of increasing size, the share is monotone in the
-#: invented fraction across two orders of magnitude, and the floor sits near 9 percent
-#: invented area: a cap fabricating 3.0 percent of the surface reports 0.041 and reads
-#: `near-threshold surface`. So a *low* reading does not mean the surface is clean. It means
-#: any fabrication is under roughly a tenth of the area. Read it as a lower bound on
-#: invented surface, never as a clean bill of health.
+#: rather than undecided.** Measured by scoring a mesh against samples drawn from itself
+#: and deleting the observations inside a polar cap, so the invented fraction is known by
+#: area: the share is monotone in that fraction in every case tried, but there is a floor
+#: below which genuine fabrication reads as `near-threshold surface`.
 #:
-#: The one-sidedness is the useful property: the reading errs only towards saying less was
-#: invented than truly was.
+#: So a *low* reading does not mean the surface is clean. Read it as a lower bound on
+#: invented surface, never as a clean bill of health. The one-sidedness is the useful
+#: property: the reading errs only towards saying less was invented than truly was.
 #:
-#: Two consequences for the numbers reported beside it. `unsupported_area_fraction` is not
-#: measuring fabrication at this threshold at all — a reconstruction with *zero* error,
-#: scored against the samples it was drawn from, measured 0.75126 unsupported. And its
-#: magnitude depends on how the scene was sampled, not only on the reconstruction: uniform
-#: random sampling leaves gaps well above the median nearest-neighbour spacing, so the
-#: per-triangle maximum lands further out. The 0.2055 figure recorded elsewhere in this
-#: module is specific to its sampling scheme and does not transfer to a differently
-#: sampled capture. The distance bands are what carry information.
+#: **Do not quote the floor as a number.** It moves with geometry, sampling and resolution
+#: — 0.011 to 0.037 invented area across two geometries and two sampling schemes here,
+#: against 0.09 in the review lane's independent setup at a different resolution ratio.
+#: That is nearly an order of magnitude. What held in every case, and is what to rely on,
+#: is monotonicity in the invented fraction and no false shell reading on a perfect
+#: reconstruction.
 #:
-#: The floor of 9 percent is one synthetic geometry, one sampling scheme, one resolution
-#: ratio, and must not be quoted as universal. The monotonicity and the one-sidedness are
-#: the robust parts. The real scan measured at 0.1012 is therefore not an anomaly sitting
-#: awkwardly on a boundary: it is a scan of a solid object with modest real holes sitting
-#: where the sensitivity floor is, which is where it should sit.
+#: **`unsupported_area_fraction` fails for a reason that is fixable at capture time.** On a
+#: reconstruction with *zero* error, scored against the samples it was drawn from, it
+#: measured 0.1393 to 0.7513 depending only on how those samples were drawn — and exactly
+#: 0.0 under Poisson-disk sampling, in both geometries. Its failure is not inherent: it is
+#: what uneven sampling does to a nearest-sample distance, because uniform random sampling
+#: leaves gaps well above the median nearest-neighbour spacing and the per-triangle maximum
+#: lands in them. Evenly sampled, the headline fraction is meaningful again. Unevenly
+#: sampled, only the distance bands carry information, and the 0.2055 figure recorded
+#: elsewhere in this module is specific to its sampling and does not transfer.
 #:
-#: Nothing gates on this reading, and it stays that way while the floor is this high.
-#: Measurements: `evidence/open3d/band-validity-sweep.json` and the review lane's
+#: The real scan measured at 0.1012 is therefore not an anomaly sitting awkwardly on a
+#: boundary: it is a scan of a solid object with modest real holes sitting near where the
+#: floor falls, which is where it should sit.
+#:
+#: Nothing gates on this reading, and it stays that way while the floor is this
+#: setup-dependent. Measurements: `evidence/open3d/band-validity-sweep.json`,
+#: `evidence/open3d/floor-across-geometry-and-sampling.json`, and the review lane's
 #: `program/review/evidence/verify_602_boundary.py`.
 FABRICATION_AREA_SHARE = 0.1
 

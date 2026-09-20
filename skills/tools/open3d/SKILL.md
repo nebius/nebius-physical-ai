@@ -134,19 +134,29 @@ be able to open the thing being asserted.
   reported **0.5659** unsupported where only **0.0027** of area was actually
   fabricated, overstating by roughly 200-fold. Measurements:
   `evidence/open3d/band-validity-sweep.json`.
-- **A low reading is a lower bound, not a clean bill of health.** The reading has
-  a sensitivity floor near **9% invented area**, and below it the reading is
-  *confidently wrong* rather than undecided: a cap fabricating 3.0% of a surface
-  reports 0.041 and reads `near-threshold surface`. The error is one-sided — the
-  reading only ever under-calls fabrication, never over-calls it — which is the
-  good direction for an advisory field, but it means a low value tells you any
-  fabrication is under roughly a tenth of the area and nothing more. The share is
-  monotone in the invented fraction across two orders of magnitude, so this is a
-  detector with a floor and not a coin toss, and the 0.1012 real scan sits *at*
-  that floor rather than awkwardly on a line. The 9% figure is one synthetic
-  geometry, one sampling scheme, one resolution ratio; the monotonicity and the
-  one-sidedness are the robust parts. Nothing gates on the reading while the floor
-  is this high.
+- **A low reading is a lower bound, not a clean bill of health.** The reading is a
+  detector with a sensitivity floor, and below that floor it is *confidently wrong*
+  rather than undecided — genuine fabrication reads as `near-threshold surface`.
+  The error is one-sided: the reading only ever under-calls fabrication, never
+  over-calls it, which is the good direction for an advisory field but means a low
+  value tells you fabrication is *below the floor* and nothing more.
+  **Don't quote the floor as a number.** It moves with geometry, sampling and
+  resolution: 0.011 to 0.037 invented area across two geometries × two sampling
+  schemes, against 0.09 in an independent setup at a different resolution ratio —
+  nearly an order of magnitude. What held in every case, and what to rely on, is
+  monotonicity in the invented fraction and no false shell reading on a perfect
+  reconstruction. The 0.1012 real scan sits near where the floor falls rather than
+  awkwardly on a line. Nothing gates on the reading while the floor is this
+  setup-dependent. Measurements:
+  `evidence/open3d/floor-across-geometry-and-sampling.json`.
+- **Sample evenly and the headline fraction becomes usable again.** Its failure is
+  not inherent to the metric, it is what uneven sampling does to a nearest-sample
+  distance. A reconstruction with *zero* error measured between 0.1393 and 0.7513
+  unsupported depending only on how its samples were drawn — and **exactly 0.0**
+  under Poisson-disk sampling, in both geometries tested. Uniform random sampling
+  leaves gaps well above the median nearest-neighbour spacing and the per-triangle
+  maximum lands in them. If you control the capture, sample evenly; if you don't,
+  read the bands and treat the headline fraction as uninformative.
 - **Measuring that floor needs a sphere scored against itself, not an occluded
   capture.** Occluding a watertight mesh does not work, and it is worth knowing
   why before trying: Poisson closure over a hole in a *closed* object tracks the

@@ -1191,3 +1191,43 @@ def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> No
     for unsupported, beyond_3 in ((0.77602, 0.08187), (0.87790, 0.48395)):
         caught = reading(unsupported, beyond_3)
         assert caught["removed_surface_reads_as"] == "extrapolated shell"
+
+
+def test_the_floor_is_setup_dependent_so_no_test_pins_it_to_a_number() -> None:
+    """What survived varying geometry and sampling, and what did not.
+
+    Across two geometries and two sampling schemes the floor ranged from 0.011 to 0.037
+    invented area, against 0.09 in an independent setup at a different resolution ratio.
+    Nearly an order of magnitude, so a test asserting a floor value would be asserting a
+    property of one setup.
+
+    What held in every case is what this pins instead: a perfect reconstruction never reads
+    as a shell, whatever its headline fraction. That number ranged from exactly 0.0 under
+    Poisson-disk sampling to 0.7513 under uniform random, and the reading was correct at
+    both ends — which is the whole argument for reading the bands rather than the fraction.
+
+    Figures: evidence/open3d/floor-across-geometry-and-sampling.json.
+    """
+
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(10000)
+
+    for unsupported, beyond_3 in (
+        (0.0, 0.0),  # icosphere and armadillo, Poisson-disk
+        (0.1393, 0.0),  # armadillo, uniform random
+        (0.16362554224511913, 0.0),  # icosphere, uniform random
+        (0.75126, 0.00973),  # review lane's icosphere at its own resolution
+    ):
+        perfect = _crop_justification(
+            _support_block(
+                unsupported=unsupported, beyond_1_5=beyond_3, beyond_3=beyond_3
+            ),
+            0,
+            _Mesh(),
+        )
+        assert perfect["removed_surface_reads_as"] == "near-threshold surface", (
+            f"a zero-error reconstruction reporting {unsupported} unsupported must not "
+            "read as an extrapolated shell"
+        )
