@@ -20,10 +20,13 @@ access-controlled evidence. No source image or video is published here.
 | Independent review | Two implementation rounds, the B108 regression, and the SDK export repair are `review-ready` with no findings |
 | Remaining gate | Draft PR and remote exact-current-head CI |
 
-The exact code head also passed 445 focused tests with 1 live-GPU test skipped,
-3,871 repository guardrails, 119 skill checks, repository lint/format checks,
-CLI documentation drift checks, and validation of all seven changed workflow
-specs.
+The current implementation passed 24,136 hermetic Python 3.12 tests with 154
+skipped and 1 xpassed after installing the same CPU runtime extras and exporting
+the same virtualenv path used by CI. It also passed 3,875 repository guardrails,
+114 onboarding smoke tests, all 95 data-factory stage tests, the 37 focused
+SDK/VLM/gate tests with 1 live-GPU test skipped, repository lint/format checks,
+119 skill checks, CLI documentation drift checks, and validation of all seven
+changed workflow specs.
 
 ## Objective and failure controls
 
