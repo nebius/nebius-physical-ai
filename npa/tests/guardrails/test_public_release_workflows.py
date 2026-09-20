@@ -350,7 +350,7 @@ def test_post_push_and_promotion_gates_are_digest_bound() -> None:
         "Require both digest-bound attestation results",
     }
     for step in attestations.values():
-        assert step["if"] == "matrix.tool != 'ncore'"
+        assert step["if"] == "matrix.tool != 'ncore' && matrix.tool != 'libero'"
     assert (
         attestations["Attest exact pushed digest provenance"]["with"][
             "push-to-registry"

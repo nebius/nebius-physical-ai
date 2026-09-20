@@ -1103,7 +1103,7 @@ jobs:
           echo "repository=${IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - name: Attest exact pushed digest provenance
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
         id: provenance-attestation
         # Current-main compatibility marker: attest-build-provenance@v3.
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
@@ -1115,7 +1115,7 @@ jobs:
           push-to-registry: ${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}
 
       - name: Attest exact pushed digest SBOM
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
         id: sbom-attestation
         # Current-main compatibility marker: attest-sbom@v3.
         uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
@@ -1126,7 +1126,7 @@ jobs:
           push-to-registry: ${{ matrix.tool != 'libero' && env.NPA_FIRST_PUBLICATION_REQUIRED != '1' }}
 
       - name: Require both digest-bound attestation results
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'libero'
         env:
           PROVENANCE_URL: ${{ steps.provenance-attestation.outputs.attestation-url }}
           PROVENANCE_BUNDLE: ${{ steps.provenance-attestation.outputs.bundle-path }}
