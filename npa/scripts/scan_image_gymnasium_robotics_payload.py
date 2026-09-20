@@ -238,9 +238,9 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "apt-runtime.lock.json": "6e1df9be2187010e9d4ee12dc2a4d95e4f0aa799ff321c70d86ec2d8772b855e",
     "corresponding-source.lock.json": "10ea8843b7b68c70b38a137a1683f46fcb6de8517d1863684f5419b21145967a",
     "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
-    "runtime-bootstrap.py": "ec1b843ff18606f64a3238ce86d4eef00ac4f0c14f93ba2801c17cbc003ae0e2",
+    "runtime-bootstrap.py": "d4b8b2e04d054d8e055b0310f70117e88bf4ed9a9299e23b35acdebb9e0a7687",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
-    "verify_image.py": "8529bab9b0cc15072a86f4c3cb84c864410ecbefe2302d27596cd3f1ad0108f6",  # gitleaks:allow; public file-content SHA-256
+    "verify_image.py": "30f5a54c896fb97611f45ec5c5853f2c5f342bc318b6170c9262bab41110399e",  # gitleaks:allow; public file-content SHA-256
     "runtime-fetch-manifest.json": "08a628dd444d52dcaa7e60b41f1b416a42a4a7b85cde6dce0ab0887f1ea78f17",
 }
 EXPECTED_SOURCE_FIELDS = {
@@ -1572,9 +1572,9 @@ EXPECTED_CANONICAL_LAYER_SHA256 = (
     '1f9be8fd8a7021eb3aa1f1bfc67f93918adba351dde96f9cbf0f610ac9807325',
     '89eb8f2ff39a515d4e8886126d4bad1cf39b76ab0eae9a696fc87445a543204d',
     '3b6f97d60680fb30327f10fd2ae39c3aa3005e2913fca3ade3f2a549253493cc',
-    '9a30e527d765b38364c3d5373b5ab70a2d86bc4ca2fd13161c8549d68056a6d9',
+    '6f072dae59751ec91e18808d9f9d510d3c058c1ae67fd73d237f55ee80548877',
     '6a1402467a860af7d89392ef3a268f4694601f009816e4ad104484b0568858eb',
-    '195b0ef104b25550a277a3ed8cf01468d7c57896e5b635343b93d31063fcce28',
+    '0098bd21d97d3267a10c740fe59bdaa3887d65e6c7ffd58b9417630d688ddbbb',
     '44d00cd636ee5afae681bfc3aa9831345b248196c963a5fbd29454e2afd4e9f4',
     'be1bbe789b60202a6e8666435ffd8ac6ef607d595e9a51999e201e306aca1731',
     '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',

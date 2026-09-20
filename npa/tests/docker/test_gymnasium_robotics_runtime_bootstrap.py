@@ -1590,6 +1590,93 @@ def test_only_standard_venv_compatibility_link_is_removed(tmp_path: Path) -> Non
         BOOTSTRAP._remove_venv_compatibility_link(runtime)
 
 
+def test_installer_cwd_binding_survives_nested_close_fds_and_cwd_change(tmp_path: Path) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    BOOTSTRAP.venv.EnvBuilder(with_pip=False, symlinks=False).create(stage / "runtime")
+    descriptor = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    probe = """
+import json,os,socket,subprocess,sys
+from pathlib import Path
+assert sys.executable.startswith(f'/proc/{os.getpid()}/cwd/')
+assert 'SYNTHETIC_INSTALL_SECRET' not in os.environ
+try: Path(f'/proc/{os.getppid()}/environ').read_bytes()
+except PermissionError: pass
+else: raise AssertionError('supervisor environment exposed')
+try: socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+except PermissionError: pass
+else: raise AssertionError('network authority exposed')
+assert 'NoNewPrivs:\\t1' in Path('/proc/self/status').read_text()
+result = subprocess.run([sys.executable, '-I', '-c', 'import sys; assert sys.executable.startswith("/proc/")'], cwd='/', close_fds=True)
+assert result.returncode == 0
+"""
+    try:
+        assert not os.get_inheritable(descriptor)
+        with mock.patch.dict(os.environ, {"SYNTHETIC_INSTALL_SECRET": "not-a-real-secret"}):
+            assert BOOTSTRAP._execute_isolated_command(
+                [f"/proc/self/fd/{descriptor}/runtime/bin/python", "-I", "-c", probe],
+                installation_directory_fd=descriptor,
+            ) == 0
+        assert not os.get_inheritable(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize("replace_stage", [False, True])
+def test_installer_retains_stage_identity_and_external_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replace_stage: bool,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    requirements = tmp_path / "immutable-requirements.lock"
+    requirements.write_text("synthetic locked requirements")
+    requirements.chmod(0o400)
+    calls = []
+    builder = mock.Mock()
+    monkeypatch.setattr(BOOTSTRAP.venv, "EnvBuilder", builder)
+
+    def install(command, *, installation_directory_fd):
+        assert not os.get_inheritable(installation_directory_fd)
+        calls.append((command, installation_directory_fd))
+        if replace_stage:
+            stage.rename(tmp_path / "original-stage")
+            stage.mkdir()
+        return 0
+
+    monkeypatch.setattr(BOOTSTRAP, "_execute_isolated_command", install)
+    if replace_stage:
+        with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="installation stage identity changed"):
+            BOOTSTRAP._install_runtime(stage, requirements)
+        assert len(calls) == 1
+    else:
+        BOOTSTRAP._install_runtime(stage, requirements)
+        assert [command[3] for command, _fd in calls] == ["ensurepip", "pip", "pip"]
+        assert str(requirements) in calls[1][0]
+    builder.assert_called_once_with(with_pip=False, clear=False, symlinks=False)
+    with pytest.raises(OSError):
+        os.fstat(calls[0][1])
+
+
+@pytest.mark.parametrize("unsafe", ["symlink", "writable", "owner"])
+def test_installer_refuses_unsafe_stage_before_venv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str,
+) -> None:
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    if unsafe == "symlink":
+        stage = tmp_path / "stage-link"
+        stage.symlink_to(tmp_path / "stage")
+    elif unsafe == "writable":
+        stage.chmod(0o777)
+    else:
+        monkeypatch.setattr(BOOTSTRAP.os, "geteuid", lambda: stage.stat().st_uid + 1)
+    builder = mock.Mock()
+    monkeypatch.setattr(BOOTSTRAP.venv, "EnvBuilder", builder)
+    with pytest.raises(BOOTSTRAP.BootstrapRefusal):
+        BOOTSTRAP._install_runtime(stage, tmp_path / "requirements.lock")
+    builder.assert_not_called()
+
+
 def test_unowned_or_unsafe_cache_root_refuses(tmp_path: Path) -> None:
     manifest, requirements, content = _write_inputs(tmp_path)
     cache = tmp_path / "cache"

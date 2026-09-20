@@ -989,54 +989,39 @@ def _remove_venv_compatibility_link(runtime: Path) -> None:
 
 
 def _install_runtime(stage: Path, requirements: Path) -> None:
-    runtime = stage / "runtime"
-    wheelhouse = stage / "wheelhouse"
-    source = stage / "source"
+    stage_fd: int | None = None
     try:
-        venv.EnvBuilder(with_pip=True, clear=False, symlinks=False).create(runtime)
+        stage_fd = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        _require_directory_identity(stage, stage_fd, label="runtime installation stage")
+        bound_stage = Path(f"/proc/self/fd/{stage_fd}")
+        runtime = bound_stage / "runtime"
+        if requirements.parent == stage:
+            requirements = bound_stage / requirements.name
+        # EnvBuilder's implicit ensurepip subprocess closes the descriptor in
+        # this path. Bootstrap pip through the same isolated handoff as installs.
+        venv.EnvBuilder(with_pip=False, clear=False, symlinks=False).create(runtime)
         _remove_venv_compatibility_link(runtime)
-        python = runtime / "bin/python"
-        if (
-            _execute_isolated_command(
-                [
-                    str(python),
-                    "-I",
-                    "-m",
-                    "pip",
-                    "install",
-                    "--disable-pip-version-check",
-                    "--no-index",
-                    "--no-deps",
-                    "--require-hashes",
-                    "--find-links",
-                    str(wheelhouse),
-                    "--requirement",
-                    str(requirements),
-                ]
+        pip_install = ["pip", "install", "--disable-pip-version-check", "--no-index", "--no-deps"]
+        commands = (
+            ("pip bootstrap", ["ensurepip", "--upgrade", "--default-pip"]),
+            ("wheel installation", [*pip_install, "--require-hashes", "--find-links",
+                                    str(bound_stage / "wheelhouse"), "--requirement", str(requirements)]),
+            ("source installation", [*pip_install, "--no-build-isolation", str(bound_stage / "source")]),
+        )
+        for label, arguments in commands:
+            _require_directory_identity(stage, stage_fd, label="runtime installation stage")
+            status = _execute_isolated_command(
+                [str(runtime / "bin/python"), "-I", "-m", *arguments],
+                installation_directory_fd=stage_fd,
             )
-            != 0
-        ):
-            _refuse("offline wheel installation failed")
-        if (
-            _execute_isolated_command(
-                [
-                    str(python),
-                    "-I",
-                    "-m",
-                    "pip",
-                    "install",
-                    "--disable-pip-version-check",
-                    "--no-index",
-                    "--no-deps",
-                    "--no-build-isolation",
-                    str(source),
-                ]
-            )
-            != 0
-        ):
-            _refuse("offline source installation failed")
+            _require_directory_identity(stage, stage_fd, label="runtime installation stage")
+            if status != 0:
+                _refuse(f"offline {label} failed")
     except OSError as error:
         _refuse(f"offline runtime installation failed: {error}")
+    finally:
+        if stage_fd is not None:
+            os.close(stage_fd)
 
 
 @contextlib.contextmanager
@@ -1813,7 +1798,9 @@ def _remove_runtime_descendants(baseline: set[int]) -> None:
     _refuse("runtime command left a surviving descendant")
 
 
-def _execute_isolated_command(command: list[str]) -> int:
+def _execute_isolated_command(
+    command: list[str], *, installation_directory_fd: int | None = None
+) -> int:
     """Run fetched installation code without authority or surviving children."""
 
     previous_dumpable = _prctl(PR_GET_DUMPABLE)
@@ -1827,6 +1814,18 @@ def _execute_isolated_command(command: list[str]) -> int:
         if process_id == 0:
             try:
                 os.setsid()
+                if installation_directory_fd is not None:
+                    # cwd holds only the stage inode after the descriptor closes.
+                    # Its PID-qualified proc path also survives nested installers'
+                    # close_fds and cwd changes without exposing the cache parent.
+                    os.fchdir(installation_directory_fd)
+                    os.close(installation_directory_fd)
+                    prefix = f"/proc/self/fd/{installation_directory_fd}/"
+                    bound = f"/proc/{os.getpid()}/cwd/"
+                    command = [
+                        bound + argument[len(prefix):] if argument.startswith(prefix) else argument
+                        for argument in command
+                    ]
                 _install_runtime_network_filter()
                 os.execve(command[0], command, _runtime_environment())
             except (BootstrapRefusal, OSError) as error:
