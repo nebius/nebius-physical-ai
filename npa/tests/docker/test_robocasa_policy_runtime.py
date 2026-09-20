@@ -53,12 +53,28 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert PINNED_CUDA_BASE in build_script
     assert "ARG NPA_SOURCE_SHA" in dockerfile
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert 'org.opencontainers.image.base.name="${BASE_IMAGE}"' in dockerfile
+    assert (
+        'org.opencontainers.image.base.digest="'
+        "sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4"
+        '"' in dockerfile
+    )
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
-    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in dockerfile
+    assert "ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1" in dockerfile
+    assert "grep -Eq '^[0-9a-f]{40}$'" in dockerfile
     assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in dockerfile
     assert (
         "COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py" in dockerfile
     )
     assert "from npa.workbench.robocasa.service import app" in dockerfile
     assert 'rev-parse HEAD)" != "${NPA_SOURCE_SHA}"' in build_script
-    assert "status --porcelain --untracked-files=no -- ." in build_script
+    assert "status --porcelain=v1 --untracked-files=all -- ." in build_script
+
+
+def test_robocasa_candidate_version_is_consistent() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    build_script = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    assert "ARG ROBOCASA_VERSION=0.1.1" in dockerfile
+    assert 'ROBOCASA_VERSION="${ROBOCASA_VERSION:-0.1.1}"' in build_script
+    assert "npa.cuda_architectures" not in dockerfile

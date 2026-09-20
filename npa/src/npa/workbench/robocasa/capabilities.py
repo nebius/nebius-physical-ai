@@ -18,8 +18,10 @@ import json
 import logging
 import os
 import platform
+import re
 import sys
 import tempfile
+from dataclasses import dataclass, field
 
 import numpy as np
 from pathlib import Path
@@ -53,10 +55,40 @@ ROBOCASA_STATE_KEYS = (
     "state.end_effector_rotation_relative",
     "state.gripper_qpos",
 )
+_SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 class RoboCasaError(RuntimeError):
     """Raised when a RoboCasa capability operation fails."""
+
+
+@dataclass(frozen=True)
+class _PreparedAction:
+    """Keep the raw policy action distinct from the action applied to the env."""
+
+    value: Any
+    raw_flat: np.ndarray
+    applied_flat: np.ndarray
+    max_bound_violation: float
+
+
+@dataclass
+class _ActionTrace:
+    """Hash raw/applied actions and count action-bound corrections."""
+
+    raw_digest: Any = field(default_factory=hashlib.sha256)
+    applied_digest: Any = field(default_factory=hashlib.sha256)
+    out_of_bounds_steps: int = 0
+    max_bound_violation: float = 0.0
+
+    def update(self, prepared: _PreparedAction) -> None:
+        self.raw_digest.update(prepared.raw_flat.tobytes())
+        self.applied_digest.update(prepared.applied_flat.tobytes())
+        if prepared.max_bound_violation > 0:
+            self.out_of_bounds_steps += 1
+        self.max_bound_violation = max(
+            self.max_bound_violation, prepared.max_bound_violation
+        )
 
 
 def make_run_id(capability: str, manifest: str) -> str:
@@ -123,8 +155,23 @@ def _package_version(name: str) -> str:
         return ""
 
 
+def _runtime_source_identity() -> tuple[str, str]:
+    """Return the immutable NPA source identity carried by the runtime image."""
+    source_sha = os.environ.get("NPA_IMAGE_SOURCE_SHA", "").strip().lower()
+    required = os.environ.get("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", "").strip().lower()
+    if required not in {"", "0", "false", "1", "true"}:
+        raise RoboCasaError("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA must be boolean")
+    if source_sha and not _SOURCE_SHA_PATTERN.fullmatch(source_sha):
+        raise RoboCasaError("NPA_IMAGE_SOURCE_SHA must be a 40-character git SHA")
+    if required in {"1", "true"} and not source_sha:
+        raise RoboCasaError("RoboCasa image is missing required NPA_IMAGE_SOURCE_SHA")
+    identity = "container_image" if source_sha else "local_unbound"
+    return identity, source_sha
+
+
 def system_info() -> RoboCasaSystemInfo:
     """Collect system and RoboCasa stack information."""
+    source_identity, image_source_sha = _runtime_source_identity()
     info = RoboCasaSystemInfo(
         status="ok",
         python=platform.python_version(),
@@ -133,6 +180,8 @@ def system_info() -> RoboCasaSystemInfo:
         robosuite_version=_package_version("robosuite"),
         mujoco_version=_package_version("mujoco"),
         gymnasium_version=_package_version("gymnasium"),
+        source_identity=source_identity,
+        image_source_sha=image_source_sha,
     )
     try:
         import torch
@@ -955,6 +1004,39 @@ def _validated_action(action: Any, space: Any | None = None) -> np.ndarray:
     return flat
 
 
+def _action_bounds(space: Any) -> tuple[np.ndarray, np.ndarray] | None:
+    children = getattr(space, "spaces", None)
+    if children is not None:
+        child_bounds = [_action_bounds(children[key]) for key in sorted(children)]
+        if any(bounds is None for bounds in child_bounds):
+            return None
+        lows = [bounds[0] for bounds in child_bounds if bounds is not None]
+        highs = [bounds[1] for bounds in child_bounds if bounds is not None]
+        return np.concatenate(lows), np.concatenate(highs)
+    low = getattr(space, "low", None)
+    high = getattr(space, "high", None)
+    if low is None or high is None:
+        return None
+    return np.asarray(low).reshape(-1), np.asarray(high).reshape(-1)
+
+
+def _prepare_eval_action(action: Any, space: Any) -> _PreparedAction:
+    raw_flat = _validated_action(action)
+    contains = getattr(space, "contains", None)
+    if not callable(contains) or bool(contains(action)):
+        return _PreparedAction(action, raw_flat, raw_flat, 0.0)
+    bounds = _action_bounds(space)
+    if bounds is None or any(len(bound) != len(raw_flat) for bound in bounds):
+        _validated_action(action, space)
+        raise AssertionError("unreachable")
+    applied_flat = np.clip(raw_flat, bounds[0], bounds[1]).astype(np.float32)
+    violation = float(np.max(np.abs(raw_flat - applied_flat)))
+    prepared = _unflatten_action(space, applied_flat)
+    if not bool(contains(prepared)):
+        raise RoboCasaError("policy action is outside the RoboCasa action space")
+    return _PreparedAction(prepared, raw_flat, applied_flat, violation)
+
+
 def _native_task_success(env: Any, info: Any, reward: float) -> tuple[bool, list[str]]:
     signals: dict[str, bool] = {}
     if isinstance(info, dict):
@@ -1029,13 +1111,12 @@ def _rollout_eval_episode(
     initial_state = _validated_finite("robot state", _obs_state(observation))
     terminal_state = initial_state
     outcome = _empty_episode_outcome()
-    action_digest = hashlib.sha256()
+    action_trace = _ActionTrace()
     steps = 0
     for _ in range(iterations):
-        action = selector(env, observation)
-        flat = _validated_action(action, env.action_space)
-        action_digest.update(flat.tobytes())
-        observation, reward, terminated, truncated, info = env.step(action)
+        prepared = _prepare_eval_action(selector(env, observation), env.action_space)
+        action_trace.update(prepared)
+        observation, reward, terminated, truncated, info = env.step(prepared.value)
         frames.append(_obs_image(observation, "video.robot0_agentview_left"))
         terminal_state = _validated_finite("robot state", _obs_state(observation))
         _update_episode_outcome(outcome, env, reward, terminated, truncated, info)
@@ -1046,7 +1127,7 @@ def _rollout_eval_episode(
         frames,
         outcome,
         steps,
-        action_digest,
+        action_trace,
         initial_state=initial_state,
         terminal_state=terminal_state,
     )
@@ -1056,7 +1137,7 @@ def _eval_episode_record(
     frames: list[np.ndarray],
     outcome: dict[str, Any],
     steps: int,
-    action_digest: Any,
+    action_trace: _ActionTrace,
     *,
     initial_state: np.ndarray,
     terminal_state: np.ndarray,
@@ -1075,8 +1156,12 @@ def _eval_episode_record(
         "terminal_state_sha256": _sha256_array(terminal_state),
         "initial_workspace_sha256": _sha256_array(frames[0]),
         "terminal_workspace_sha256": _sha256_array(frames[-1]),
-        "action_sha256": action_digest.hexdigest(),
+        "action_sha256": action_trace.applied_digest.hexdigest(),
+        "raw_action_sha256": action_trace.raw_digest.hexdigest(),
         "action_count": steps,
+        "action_clipping_applied": action_trace.out_of_bounds_steps > 0,
+        "action_out_of_bounds_steps": action_trace.out_of_bounds_steps,
+        "max_action_bound_violation": action_trace.max_bound_violation,
     }
 
 
@@ -1481,6 +1566,26 @@ def run_capability_with_output(
     return result
 
 
+def _provenance_environment_ids(
+    request: RoboCasaRunRequest, result: dict[str, Any]
+) -> list[str]:
+    env_ids = result.get("env_ids")
+    if not isinstance(env_ids, list):
+        heldout = result.get("split_proof", {}).get("heldout_env_ids", [])
+        env_ids = heldout if isinstance(heldout, list) and heldout else [request.env_id]
+    return [str(item) for item in env_ids]
+
+
+def _provenance_mp4_artifacts(output_dir: Path) -> list[dict[str, str]]:
+    return [
+        {
+            "path": path.relative_to(output_dir).as_posix(),
+            "sha256": _sha256_file(path),
+        }
+        for path in sorted(output_dir.rglob("*.mp4"))
+    ]
+
+
 def _execution_provenance(
     request: RoboCasaRunRequest,
     output_dir: Path,
@@ -1492,17 +1597,16 @@ def _execution_provenance(
         "kitchen_trajectory_export",
         "kitchen_policy_eval",
     }
-    mp4_files = sorted(output_dir.rglob("*.mp4"))
-    env_ids = result.get("env_ids")
-    if not isinstance(env_ids, list):
-        heldout = result.get("split_proof", {}).get("heldout_env_ids", [])
-        env_ids = heldout if isinstance(heldout, list) and heldout else [request.env_id]
+    source_identity, image_source_sha = _runtime_source_identity()
+    mp4_artifacts = _provenance_mp4_artifacts(output_dir)
     return {
-        "schema": "npa.robocasa.execution_provenance.v1",
+        "schema": "npa.robocasa.execution_provenance.v2",
         "generator": "robocasa",
         "simulator": "mujoco",
+        "source_identity": source_identity,
+        "image_source_sha": image_source_sha,
         "capability": request.capability,
-        "environment_ids": [str(item) for item in env_ids],
+        "environment_ids": _provenance_environment_ids(request, result),
         "execution_path": (
             "gymnasium.make(robocasa/*)->RoboCasa->MuJoCo->step/render"
             if request.capability in rollout_capabilities
@@ -1518,17 +1622,11 @@ def _execution_provenance(
             json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
         "recording_formats": {
-            "mp4": bool(mp4_files),
+            "mp4": bool(mp4_artifacts),
             "rrd": False,
             "mcap": False,
         },
-        "mp4_artifacts": [
-            {
-                "path": path.relative_to(output_dir).as_posix(),
-                "sha256": _sha256_file(path),
-            }
-            for path in mp4_files
-        ],
+        "mp4_artifacts": mp4_artifacts,
         "validation_scope": "runtime artifact provenance; no GPU validation claim",
     }
 

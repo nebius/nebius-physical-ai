@@ -8,8 +8,9 @@ metadata:
     held-out evaluation -> insights lineage. Real catalog toolRefs and real
     components throughout: the RoboCasa service exports real trajectories, the
     npa adapter materializes them into LeRobotDataset v3, LeRobot trains a real
-    ACT policy on reserved GPU capacity, the produced checkpoint is evaluated
-    with quantitative metrics and video evidence, and insights records lineage.
+    ACT policy on reserved GPU capacity, the produced checkpoint is compared
+    with a matched-seed random-action baseline using quantitative metrics and
+    video evidence, and insights records lineage.
 
 config:
   bucket: example-bucket

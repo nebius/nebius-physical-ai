@@ -19,20 +19,23 @@
 ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4
 FROM --platform=linux/amd64 ${BASE_IMAGE}
 
+ARG BASE_IMAGE
 ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
 ARG ROBOCASA_REPO_REF=v1.0
 ARG ROBOSUITE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4
-ARG ROBOCASA_VERSION=0.1.0
+ARG ROBOCASA_VERSION=0.1.1
 ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.base_image="${BASE_IMAGE}" \
       npa.runtime_user="ubuntu" \
-      npa.cuda_architectures="sm80,sm90,sm100,sm103,sm120" \
-      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.base.name="${BASE_IMAGE}" \
+      org.opencontainers.image.base.digest="sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
@@ -92,7 +95,7 @@ RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
     && python -m pip install --no-cache-dir --no-deps -e /opt/robocasa/source
 
 # Fail the image build if the exact held-out evaluator import path is incomplete.
-RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
     && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
 # Copy the shared workbench implementation into the image.

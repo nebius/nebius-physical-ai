@@ -69,10 +69,47 @@ def test_make_run_id_is_deterministic() -> None:
     assert a.startswith("robocasa-kitchen_random_rollout-")
 
 
-def test_system_info_returns_payload() -> None:
+def test_system_info_returns_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NPA_IMAGE_SOURCE_SHA", raising=False)
+    monkeypatch.delenv("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", raising=False)
     info = system_info()
     assert info.status == "ok"
     assert info.python
+    assert info.source_identity == "local_unbound"
+    assert info.image_source_sha == ""
+
+
+def test_system_info_reports_exact_image_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_sha = "a" * 40
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", source_sha)
+    monkeypatch.setenv("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", "1")
+
+    info = system_info()
+
+    assert info.source_identity == "container_image"
+    assert info.image_source_sha == source_sha
+
+
+def test_system_info_rejects_missing_required_image_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NPA_IMAGE_SOURCE_SHA", raising=False)
+    monkeypatch.setenv("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", "1")
+
+    with pytest.raises(RoboCasaError, match="missing required NPA_IMAGE_SOURCE_SHA"):
+        system_info()
+
+
+def test_system_info_rejects_malformed_image_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "short")
+    monkeypatch.delenv("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", raising=False)
+
+    with pytest.raises(RoboCasaError, match="40-character git SHA"):
+        system_info()
 
 
 def test_kitchen_task_registration(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -314,6 +351,19 @@ class _FakeActionSpace:
         return np.asarray(action).shape == self.shape
 
 
+class _BoundedActionSpace(_FakeActionSpace):
+    low = np.full(7, -1.0, dtype=np.float32)
+    high = np.full(7, 1.0, dtype=np.float32)
+
+    def contains(self, action) -> bool:
+        values = np.asarray(action)
+        return (
+            values.shape == self.shape
+            and bool(np.all(values >= self.low))
+            and bool(np.all(values <= self.high))
+        )
+
+
 class _FakeEnv:
     action_space = _FakeActionSpace()
 
@@ -537,6 +587,33 @@ def test_policy_action_rejects_action_space_mismatch() -> None:
         _validated_action(np.zeros(6, dtype=np.float32), _FakeActionSpace())
 
 
+def test_eval_clips_policy_action_and_records_raw_delta() -> None:
+    from npa.workbench.robocasa.capabilities import _rollout_eval_episode
+
+    env = _FakeEnv()
+    env.action_space = _BoundedActionSpace()
+    applied_actions: list[np.ndarray] = []
+
+    def step(action):
+        applied_actions.append(np.asarray(action))
+        return env._obs(), 0.0, False, False, {}
+
+    env.step = step
+    raw_action = np.array([1.5, -2.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    _, result = _rollout_eval_episode(
+        env,
+        iterations=1,
+        selector=lambda _env, _observation: raw_action,
+        observation=env._obs(),
+    )
+
+    np.testing.assert_array_equal(applied_actions[0][:2], np.array([1.0, -1.0]))
+    assert result["action_clipping_applied"] is True
+    assert result["action_out_of_bounds_steps"] == 1
+    assert result["max_action_bound_violation"] == pytest.approx(1.0)
+    assert result["raw_action_sha256"] != result["action_sha256"]
+
+
 def test_episode_outcome_rejects_non_finite_reward() -> None:
     from npa.workbench.robocasa.capabilities import (
         _empty_episode_outcome,
@@ -724,6 +801,9 @@ def test_rollout_output_has_machine_readable_execution_provenance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _install_fake_env(monkeypatch)
+    source_sha = "b" * 40
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", source_sha)
+    monkeypatch.setenv("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", "1")
 
     def fake_write_video(frames, path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -748,8 +828,11 @@ def test_rollout_output_has_machine_readable_execution_provenance(
     )
     provenance = json.loads((tmp_path / "provenance.json").read_text())
     assert result["execution_provenance"] == provenance
+    assert provenance["schema"] == "npa.robocasa.execution_provenance.v2"
     assert provenance["generator"] == "robocasa"
     assert provenance["simulator"] == "mujoco"
+    assert provenance["source_identity"] == "container_image"
+    assert provenance["image_source_sha"] == source_sha
     assert provenance["stock_or_copied_fixture"] is False
     assert provenance["recording_formats"] == {
         "mp4": True,
@@ -912,6 +995,12 @@ def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
     assert all(
         pair["policy"]["action_sha256"] != pair["random_baseline"]["action_sha256"]
         for pair in result["paired_episodes"]
+    )
+    assert all(
+        not episode["action_clipping_applied"]
+        and episode["raw_action_sha256"] == episode["action_sha256"]
+        for pair in result["paired_episodes"]
+        for episode in (pair["policy"], pair["random_baseline"])
     )
     assert result["split_proof"]["configured_task_sets_disjoint"] is True
     assert result["split_proof"]["checkpoint_training_tasks_verified"] is False

@@ -1,6 +1,6 @@
 ---
 name: robocasa
-description: Use to run RoboCasa kitchen-task simulation as a first-class NPA workbench tool — Gymnasium task registration, kitchen asset availability, headless EGL environment reset, and random rollouts with video artifacts, through the npa-robocasa service.
+description: Use to run RoboCasa kitchen-task simulation and held-out policy evaluation as a first-class NPA workbench tool through the npa-robocasa service.
 ---
 
 # RoboCasa (kitchen-task simulation)
@@ -25,6 +25,8 @@ operator's own network access.
 | `kitchen_asset_availability` | The kitchen assets root exists and is populated |
 | `kitchen_egl_env_reset` | A headless `MUJOCO_GL=egl` env creates and resets |
 | `kitchen_random_rollout` | A real random rollout runs and writes a video artifact |
+| `kitchen_trajectory_export` | Causal observation/action rows and terminal review frames are exported |
+| `kitchen_policy_eval` | Matched-seed ACT and random-baseline episodes retain native outcomes and videos |
 
 ## Two execution modes
 
@@ -81,7 +83,10 @@ npa workbench robocasa list --service --endpoint <url>
 ```
 
 `system-info` reports the RoboCasa, robosuite, MuJoCo, and Gymnasium versions,
-CUDA availability, and the registered env count.
+CUDA availability, registered env count, and exact NPA image source revision.
+The official image sets `NPA_IMAGE_SOURCE_SHA` and
+`ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1`; do not override them. A direct local run
+without an image-bound revision reports `source_identity: local_unbound`.
 
 ## In workflows
 
@@ -98,16 +103,18 @@ Policy evaluation runs one unambiguous exact ACT checkpoint and a random-action
 arm on the same held-out task IDs and reset seeds. It fails when paired initial
 workspace frames or robot-state hashes do not match, when native success
 signals disagree, when actions or states are non-finite, or when either arm does
-not produce its MP4. The split record proves the configured task sets are
-disjoint but explicitly does not claim the checkpoint's training tasks were
-independently recovered. Use
+not produce its MP4. Finite policy outputs outside the simulator bounds are
+clipped at the environment boundary; each episode records the raw and applied
+action hashes, clipped-step count, and maximum bound violation. The split
+record proves the configured task sets are disjoint but explicitly does not
+claim the checkpoint's training tasks were independently recovered. Use
 `success_rate_delta` and the paired win/loss/tie counts for comparison; do not
 turn a zero or negative delta into a policy-improvement claim.
 
 Every run uploads `result.json` and `provenance.json`. Rollout provenance names
-the RoboCasa → MuJoCo execution path and hashes each generated MP4, with
-machine-readable `rrd: false` and `mcap: false` fields; this tool does not emit
-RRD or MCAP recordings.
+the RoboCasa → MuJoCo execution path, exact image source revision, and hashes
+each generated MP4, with machine-readable `rrd: false` and `mcap: false` fields;
+this tool does not emit RRD or MCAP recordings.
 
 ## Gotchas
 
