@@ -1068,6 +1068,7 @@ OCI_LAYER_MEDIA_TYPES = frozenset(
         "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
         "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd",
         "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        "application/vnd.docker.image.rootfs.diff.tar",
     }
 )
 OCI_DESCRIPTOR_MEDIA_TYPES = {
@@ -1216,6 +1217,36 @@ def _oci_descriptor_content_findings(
         runtime_payload_hashes=runtime_payload_hashes,
         description="an OCI descriptor target",
     )
+    if (
+        role == "layer"
+        and media_type
+        in {
+            "application/vnd.oci.image.layer.v1.tar",
+            "application/vnd.docker.image.rootfs.diff.tar",
+        }
+        and member_name in legacy_layers
+        and any(item.kind == "credential_content" for item in findings)
+    ):
+        # Apply the same existing path+hash audits without exempting tar headers,
+        # padding, or other files from the raw descriptor credential scan.
+        audited_ranges: list[tuple[int, int]] = []
+        with tarfile.open(fileobj=io.BytesIO(blob), mode="r:") as layer:
+            for member in layer:
+                expected = AUDITED_SECRET_LITERAL_FILE_SHA256.get(member.name)
+                if expected and member.isfile():
+                    start = member.offset_data
+                    end = start + member.size
+                    if hashlib.sha256(blob[start:end]).hexdigest() == expected:
+                        audited_ranges.append((start, end))
+        if all(
+            any(
+                start <= match.start() and match.end() <= end
+                for start, end in audited_ranges
+            )
+            for pattern in SECRET_CONTENT
+            for match in pattern.finditer(blob)
+        ):
+            findings = [item for item in findings if item.kind != "credential_content"]
     if role == "config" or media_type == "application/vnd.in-toto+json":
         document = json.loads(blob)
         if not isinstance(document, dict):
@@ -1291,10 +1322,13 @@ def _build_oci_attestation_findings(
     expected_config_digest = str(
         build_metadata.get("containerimage.config.digest") or ""
     )
-    if re.fullmatch(r"sha256:[0-9a-f]{64}", expected_config_digest) is None:
+    derive_config = "containerimage.config.digest" not in build_metadata
+    if (
+        not derive_config
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", expected_config_digest) is None
+    ):
         raise RuntimeError("build metadata has no immutable config digest")
-    findings.extend(_metadata_findings(build_metadata, expected_config_digest))
-    canonical_metadata = canonical_build_metadata_bytes(build_metadata)
+    build_metadata = dict(build_metadata)
     allowed = {"index.json", "oci-layout"}
     seen_outer: set[str] = set()
     with tarfile.open(path, "r:*") as archive:
@@ -1316,6 +1350,20 @@ def _build_oci_attestation_findings(
             or not isinstance(index.get("manifests"), list)
         ):
             raise RuntimeError("build OCI archive index is malformed")
+
+        if derive_config:
+            # Attested BuildKit exports report an index digest, not a config
+            # digest. Bind the complete descriptor walk to that immutable root
+            # before deriving the one runtime config for downstream byte gates.
+            root_digest = str(build_metadata.get("containerimage.digest") or "")
+            roots = index["manifests"]
+            if (
+                re.fullmatch(r"sha256:[0-9a-f]{64}", root_digest) is None
+                or len(roots) != 1
+                or not isinstance(roots[0], dict)
+                or roots[0].get("digest") != root_digest
+            ):
+                raise RuntimeError("build OCI root does not match Buildx metadata")
 
         pending = list(index["manifests"])
         expanded: set[str] = set()
@@ -1389,6 +1437,11 @@ def _build_oci_attestation_findings(
             findings.extend(config_findings)
             if config_blob is not None:
                 allowed.add(config_name)
+                if derive_config:
+                    expected_config_digest = str(runtime_config["digest"])
+                    build_metadata["containerimage.config.digest"] = (
+                        expected_config_digest
+                    )
             if (
                 str((runtime_config or {}).get("digest") or "")
                 != expected_config_digest
@@ -1516,6 +1569,8 @@ def _build_oci_attestation_findings(
                     "build OCI archive member is not bound by its index",
                 )
             )
+    findings.extend(_metadata_findings(build_metadata, expected_config_digest))
+    canonical_metadata = canonical_build_metadata_bytes(build_metadata)
     return findings, {
         "archive_sha256": identity.sha256,
         "archive_size_bytes": identity.size_bytes,
@@ -1720,6 +1775,13 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 - unreadable evidence fails closed
             print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))
             return 2
+        if not findings and "containerimage.config.digest" not in metadata:
+            # Persist only after the entire hash-rooted graph and attestations
+            # pass; never replace a supplied config identity.
+            metadata["containerimage.config.digest"] = evidence["config_digest"]
+            args.build_metadata.write_text(
+                json.dumps(metadata, sort_keys=True) + "\n", encoding="utf-8"
+            )
         result = {
             "format": "npa_libero_build_oci_attestation_scan_v1",
             "status": "pass" if not findings else "fail",

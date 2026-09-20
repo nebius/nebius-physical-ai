@@ -24,7 +24,7 @@ mkdir -p "$(dirname "$metadata")"
 mkdir -p "$(dirname "$oci_archive")"
 command -v skopeo >/dev/null
 BUILDX_METADATA_PROVENANCE=max docker buildx build \
-  --output "type=oci,dest=$oci_archive,tar=true,rewrite-timestamp=true" \
+  --output "type=oci,dest=$oci_archive,tar=true,rewrite-timestamp=true,oci-artifact=true" \
   --provenance=mode=max \
   --sbom=true \
   --metadata-file "$metadata" \
@@ -40,10 +40,15 @@ npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
   --verify-build-oci "$oci_archive" \
   --build-metadata "$metadata"
 skopeo copy --override-os linux --override-arch amd64 \
-  "oci-archive:$oci_archive" "docker-daemon:$image" >/dev/null
+  "oci-archive:$oci_archive" "docker-archive:$oci_archive.docker.tar:$image" >/dev/null
+docker load --input "$oci_archive.docker.tar" >/dev/null
 expected_config_digest="$(npa/.venv/bin/python -c \
   'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.config.digest"])' \
   "$metadata")"
-test "$(docker image inspect --format '{{.Id}}' "$image")" = "$expected_config_digest"
+docker save --output "$oci_archive.imported.docker.tar" "$image"
+observed_config_digest="$(PYTHONPATH=npa/scripts npa/.venv/bin/python -c \
+  'from pathlib import Path; import sys; from scan_image_libero_payload import _docker_save_config_digest; print(_docker_save_config_digest(Path(sys.argv[1])))' \
+  "$oci_archive.imported.docker.tar")"
+test "$observed_config_digest" = "$expected_config_digest"
 
 printf '%s\n' 'LIBERO neutral candidate built locally; publication and validation remain quarantined.'

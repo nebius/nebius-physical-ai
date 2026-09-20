@@ -468,7 +468,12 @@ def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
     assert "--load" not in text
     assert "type=oci,dest=$oci_archive,tar=true,rewrite-timestamp=true" in text
     assert '--verify-build-oci "$oci_archive"' in text
-    assert '"oci-archive:$oci_archive" "docker-daemon:$image"' in text
+    assert (
+        '"oci-archive:$oci_archive" "docker-archive:$oci_archive.docker.tar:$image"'
+        in text
+    )
+    assert 'docker load --input "$oci_archive.docker.tar"' in text
+    assert "_docker_save_config_digest(Path(sys.argv[1]))" in text
     assert "containerimage.config.digest" in text
     assert '--build-arg "SOURCE_DATE_EPOCH=$source_epoch"' in text
     assert "OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY" not in text

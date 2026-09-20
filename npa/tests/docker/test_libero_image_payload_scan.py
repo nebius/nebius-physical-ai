@@ -149,6 +149,7 @@ def _scan(
     metadata,
     *,
     base_provenance=None,
+    docker_save=None,
     expected_canonical_build_metadata_sha256=None,
     expected_base_provenance_sha256=None,
 ):
@@ -178,6 +179,7 @@ def _scan(
         metadata,
         provenance_bytes,
         provenance,
+        docker_save=docker_save,
         observed_config_digest="sha256:" + "2" * 64,
         expected_image_inventory_sha256=inventory.sha256,
         expected_config_digest="sha256:" + "2" * 64,
@@ -270,9 +272,14 @@ def _build_oci_archive(path: Path, *, mutation: str = "") -> tuple[Path, str]:
         },
         sort_keys=True,
     ).encode()
+    index_descriptor = _descriptor(index, "application/vnd.oci.image.index.v1+json")
+    outer_index = json.dumps(
+        {"schemaVersion": 2, "manifests": [index_descriptor]}
+    ).encode()
     members = {
         "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
-        "index.json": index,
+        "index.json": outer_index,
+        f"blobs/sha256/{str(index_descriptor['digest'])[7:]}": index,
         f"blobs/sha256/{str(config_descriptor['digest'])[7:]}": config,
         f"blobs/sha256/{str(runtime_layer_descriptor['digest'])[7:]}": runtime_layer,
         f"blobs/sha256/{runtime_digest[7:]}": runtime_manifest,
@@ -302,6 +309,79 @@ def test_build_oci_archive_binds_required_attestations_to_runtime(
         "https://slsa.dev/provenance/v1",
         "https://spdx.dev/Document",
     ]
+
+
+def test_build_oci_derives_config_only_from_verified_buildx_root(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    archive, config_digest = _build_oci_archive(tmp_path / "build.oci.tar")
+    metadata = _metadata(module)
+    del metadata["containerimage.config.digest"]
+    with tarfile.open(archive) as stream:
+        index = json.load(stream.extractfile("index.json"))
+    metadata["containerimage.digest"] = index["manifests"][0]["digest"]
+    metadata_path = tmp_path / "metadata.json"
+    metadata_path.write_text(json.dumps(metadata))
+
+    assert (
+        module.main(
+            ["--verify-build-oci", str(archive), "--build-metadata", str(metadata_path)]
+        )
+        == 0
+    )
+    saved = json.loads(metadata_path.read_text())
+    assert saved == {**metadata, "containerimage.config.digest": config_digest}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "wrong-root",
+        "missing-root",
+        "malformed-root",
+        "null-config",
+        "wrong-config",
+        "subject",
+        "missing-sbom",
+        "corrupt-config",
+    ],
+)
+def test_build_oci_refuses_unbound_metadata_without_rewriting_it(
+    tmp_path: Path, mutation: str
+) -> None:
+    module = _load_module()
+    archive, _ = _build_oci_archive(tmp_path / "build.oci.tar", mutation=mutation)
+    metadata = _metadata(module)
+    del metadata["containerimage.config.digest"]
+    with tarfile.open(archive) as stream:
+        index = json.load(stream.extractfile("index.json"))
+        members = {member.name: stream.extractfile(member).read() for member in stream}
+    metadata["containerimage.digest"] = index["manifests"][0]["digest"]
+    if mutation == "wrong-root":
+        metadata["containerimage.digest"] = "sha256:" + "0" * 64
+    elif mutation == "missing-root":
+        del metadata["containerimage.digest"]
+    elif mutation == "malformed-root":
+        metadata["containerimage.digest"] = "malformed"
+    elif mutation == "null-config":
+        metadata["containerimage.config.digest"] = None
+    elif mutation == "wrong-config":
+        metadata["containerimage.config.digest"] = "sha256:" + "0" * 64
+    elif mutation == "corrupt-config":
+        members["blobs/sha256/" + hashlib.sha256(b"{}").hexdigest()] = b"[]"
+        _outer_archive(archive, members)
+    metadata_path = tmp_path / "metadata.json"
+    original = json.dumps(metadata)
+    metadata_path.write_text(original)
+
+    assert (
+        module.main(
+            ["--verify-build-oci", str(archive), "--build-metadata", str(metadata_path)]
+        )
+        != 0
+    )
+    assert metadata_path.read_text() == original
 
 
 @pytest.mark.parametrize("mutation", ["missing-sbom", "subject", "config"])
@@ -433,6 +513,67 @@ def test_scanner_allows_only_exact_audited_secret_literal_bytes(tmp_path) -> Non
 
     assert any(item.kind == "audited_literal_byte_drift" for item in findings)
     assert any(item.kind == "credential_content" for item in findings)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["", "changed", "renamed", "unaudited-secret", "metadata-secret"]
+)
+def test_bound_raw_layer_uses_exact_file_audits_and_rejects_secrets(
+    tmp_path, mutation: str
+) -> None:
+    module = _load_module()
+    path = "usr/lib/libneutral.so.1"
+    content = b"AKIA0000000000000000"
+    module.AUDITED_SECRET_LITERAL_FILE_SHA256 = {
+        path: hashlib.sha256(content).hexdigest()
+    }
+    files = {
+        "usr/lib/renamed.so" if mutation == "renamed" else path: content
+        + (b"changed" if mutation == "changed" else b"")
+    }
+    if mutation == "unaudited-secret":
+        files["opt/secret.txt"] = content
+    layer = _layer(tmp_path / "layer.tar", files, neutral_link=True)
+    if mutation == "metadata-secret":
+        with tarfile.open(layer, "a", format=tarfile.PAX_FORMAT) as stream:
+            member = tarfile.TarInfo("opt/metadata")
+            member.pax_headers = {"comment": content.decode()}
+            stream.addfile(member, io.BytesIO())
+    layer_bytes = layer.read_bytes()
+    layer_descriptor = _descriptor(
+        layer_bytes, "application/vnd.docker.image.rootfs.diff.tar"
+    )
+    config = b"{}"
+    config_descriptor = _descriptor(config, "application/vnd.oci.image.config.v1+json")
+    manifest = json.dumps(
+        {"schemaVersion": 2, "config": config_descriptor, "layers": [layer_descriptor]}
+    ).encode()
+    manifest_descriptor = _descriptor(
+        manifest, "application/vnd.oci.image.manifest.v1+json"
+    )
+    layer_path = "blobs/sha256/" + layer_descriptor["digest"][7:]
+    config_path = "blobs/sha256/" + config_descriptor["digest"][7:]
+    archive = _outer_archive(
+        tmp_path / "image.tar",
+        {
+            "manifest.json": json.dumps(
+                [{"Config": config_path, "Layers": [layer_path]}]
+            ).encode(),
+            "index.json": json.dumps(
+                {"schemaVersion": 2, "manifests": [manifest_descriptor]}
+            ).encode(),
+            "blobs/sha256/" + manifest_descriptor["digest"][7:]: manifest,
+            layer_path: layer_bytes,
+            config_path: config,
+        },
+    )
+    findings = _scan(
+        module, [layer], _config(module), _metadata(module), docker_save=archive
+    )
+    if mutation:
+        assert any(item.kind == "credential_content" for item in findings)
+    else:
+        assert findings == []
 
 
 def test_scanner_accepts_only_the_reviewed_smoke_driver_at_its_exact_path(
@@ -835,7 +976,14 @@ def test_scanner_refuses_duplicate_outer_archive_member(tmp_path) -> None:
     assert any(item.kind == "duplicate_outer_archive_member" for item in findings)
 
 
-def test_scanner_accepts_digest_bound_oci_index_descendants(tmp_path) -> None:
+@pytest.mark.parametrize("layer_type", [
+    "application/vnd.oci.image.layer.v1.tar+gzip",
+    "application/vnd.docker.image.rootfs.diff.tar",
+])
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_scanner_accepts_only_digest_bound_oci_index_descendants(
+    tmp_path, layer_type: str, corrupt: bool
+) -> None:
     module = _load_module()
 
     def descriptor(content: bytes, media_type: str) -> dict[str, object]:
@@ -848,7 +996,7 @@ def test_scanner_accepts_digest_bound_oci_index_descendants(tmp_path) -> None:
     config = b"{}"
     layer = b"neutral layer bytes"
     config_descriptor = descriptor(config, "application/vnd.oci.image.config.v1+json")
-    layer_descriptor = descriptor(layer, "application/vnd.oci.image.layer.v1.tar+gzip")
+    layer_descriptor = descriptor(layer, layer_type)
     image_manifest = json.dumps(
         {
             "schemaVersion": 2,
@@ -879,12 +1027,16 @@ def test_scanner_accepts_digest_bound_oci_index_descendants(tmp_path) -> None:
             "index.json": index,
             "oci-layout": b'{"imageLayoutVersion":"1.0.0"}',
             config_path: config,
-            layer_path: layer,
+            layer_path: b"tampered" if corrupt else layer,
             manifest_path: image_manifest,
         },
     )
 
-    assert module._docker_save_outer_findings(archive) == []
+    findings = module._docker_save_outer_findings(archive)
+    if corrupt:
+        assert any(item.kind == "oci_descriptor_identity_mismatch" for item in findings)
+    else:
+        assert findings == []
 
 
 def test_scanner_refuses_oci_document_media_type_drift(tmp_path) -> None:

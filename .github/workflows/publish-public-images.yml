@@ -392,6 +392,12 @@ jobs:
             --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT" \
             --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg"
 
+      - name: Install the LIBERO OCI archive importer
+        if: matrix.tool == 'libero'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
       # Build locally first. Every gate below inspects these exact bytes; no registry write
       # occurs until the final explicit docker push.
       - name: Build immutable development image locally
@@ -420,8 +426,7 @@ jobs:
               --sbom=true
             )
             export_args=(
-              --output "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar,tar=true,rewrite-timestamp=true"
-              --output "type=docker,dest=$RUNNER_TEMP/libero-build.docker.tar"
+              --output "type=oci,dest=$RUNNER_TEMP/libero-build.oci.tar,tar=true,rewrite-timestamp=true,oci-artifact=true"
             )
             export BUILDX_METADATA_PROVENANCE=max
           fi
@@ -437,12 +442,20 @@ jobs:
           if [[ "$TOOL" == libero ]]; then
             test -s "$RUNNER_TEMP/libero-build-metadata.json"
             test -s "$RUNNER_TEMP/libero-build.oci.tar"
-            test -s "$RUNNER_TEMP/libero-build.docker.tar"
             npa/.venv/bin/python npa/scripts/scan_image_libero_payload.py \
               --verify-build-oci "$RUNNER_TEMP/libero-build.oci.tar" \
               --build-metadata "$RUNNER_TEMP/libero-build-metadata.json" \
               --output "$RUNNER_TEMP/libero-build-attestations.json"
+            skopeo copy --override-os linux --override-arch amd64 \
+              "oci-archive:$RUNNER_TEMP/libero-build.oci.tar" \
+              "docker-archive:$RUNNER_TEMP/libero-build.docker.tar:$IMAGE"
             docker load --input "$RUNNER_TEMP/libero-build.docker.tar"
+            expected_config_digest="$(jq -er '."containerimage.config.digest"' "$RUNNER_TEMP/libero-build-metadata.json")"
+            docker save --output "$RUNNER_TEMP/libero-imported.docker.tar" "$IMAGE"
+            observed_config_digest="$(PYTHONPATH=npa/scripts npa/.venv/bin/python -c \
+              'from pathlib import Path; import sys; from scan_image_libero_payload import _docker_save_config_digest; print(_docker_save_config_digest(Path(sys.argv[1])))' \
+              "$RUNNER_TEMP/libero-imported.docker.tar")"
+            test "$observed_config_digest" = "$expected_config_digest"
             test "$(docker image inspect --format '{{.RepoTags}}' "$IMAGE")" != "[]"
           fi
 
