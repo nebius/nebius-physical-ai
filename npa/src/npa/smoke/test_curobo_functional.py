@@ -124,7 +124,10 @@ def _run_workload(
     malformed_rejected = False
     try:
         PlanManifest.model_validate(
-            {"robot": "/tmp/unreviewed.yml", "problems": [manifest["problems"][0]]}
+            {
+                "robot": "/unreviewed-absolute-robot.yml",
+                "problems": [manifest["problems"][0]],
+            }
         )
     except ValidationError as exc:
         if not any(error["loc"] == ("robot",) for error in exc.errors()):
@@ -258,7 +261,13 @@ def main():
     output_uri = os.environ.get("NPA_OUTPUT_PATH", "")
     if not re.fullmatch(r"s3://[^/\s]+/.+", output_uri):
         raise RuntimeError("NPA_OUTPUT_PATH must be a non-root S3 prefix")
-    root = Path(os.environ.get("NPA_SMOKE_OUTPUT_DIR", "/tmp/npa-golden")) / run_id
+    output_dir = os.environ.get("NPA_SMOKE_OUTPUT_DIR", "")
+    if not output_dir:
+        raise RuntimeError("NPA_SMOKE_OUTPUT_DIR is required")
+    output_root = Path(output_dir)
+    if not output_root.is_absolute():
+        raise RuntimeError("NPA_SMOKE_OUTPUT_DIR must be absolute")
+    root = output_root / run_id
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     root.chmod(0o700)
     try:

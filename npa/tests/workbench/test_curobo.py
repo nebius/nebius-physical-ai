@@ -805,6 +805,7 @@ def test_functional_smoke_retains_partial_upload_failure_receipt(
         ("NPA_IMAGE_DIGEST", "NPA_IMAGE_DIGEST"),
         ("NPA_EXPECTED_IMAGE_DIGEST", "NPA_EXPECTED_IMAGE_DIGEST"),
         ("NPA_OUTPUT_PATH", "NPA_OUTPUT_PATH"),
+        ("NPA_SMOKE_OUTPUT_DIR", "NPA_SMOKE_OUTPUT_DIR"),
     ],
 )
 def test_functional_smoke_requires_immutable_durable_identity(
@@ -817,15 +818,31 @@ def test_functional_smoke_requires_immutable_durable_identity(
         "NPA_IMAGE_DIGEST": "sha256:" + "b" * 64,
         "NPA_EXPECTED_IMAGE_DIGEST": "sha256:" + "b" * 64,
         "NPA_OUTPUT_PATH": "s3://example-bucket/golden/",
+        "NPA_SMOKE_OUTPUT_DIR": str(tmp_path),
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv(missing)
-    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
     monkeypatch.setattr(
         smoke, "execute", lambda *_a, **_k: pytest.fail("planner called")
     )
     with pytest.raises(RuntimeError, match=error):
+        smoke.main()
+    assert not list(tmp_path.iterdir())
+
+
+def test_functional_smoke_requires_absolute_output_directory(tmp_path, monkeypatch):
+    from npa.smoke import test_curobo_functional as smoke
+
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
+    monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", "relative-output")
+    monkeypatch.setattr(
+        smoke, "execute", lambda *_a, **_k: pytest.fail("planner called")
+    )
+    with pytest.raises(RuntimeError, match="must be absolute"):
         smoke.main()
     assert not list(tmp_path.iterdir())
 

@@ -150,7 +150,7 @@ def test_curobo_serverless_passes_digest_and_durable_smoke_environment(monkeypat
     assert captured["image"] == result["image"]
     assert captured["env"]["NPA_IMAGE_DIGEST"] == digest
     assert captured["env"]["NPA_EXPECTED_IMAGE_DIGEST"] == digest
-    assert captured["env"]["NPA_SMOKE_OUTPUT_DIR"] == "/tmp/npa-golden"
+    assert captured["env"]["NPA_SMOKE_OUTPUT_DIR"] == "/workspace/npa-golden"
     assert captured["env"]["NPA_SMOKE_RUN_ID"] == captured["name"]
     assert captured["env"]["NPA_OUTPUT_PATH"].startswith(
         "s3://example-bucket/golden-evals/"

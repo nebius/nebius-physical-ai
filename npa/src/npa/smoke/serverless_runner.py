@@ -177,7 +177,7 @@ def submit_golden_eval(
             {
                 "NPA_IMAGE_DIGEST": image.rsplit("@", 1)[1],
                 "NPA_EXPECTED_IMAGE_DIGEST": expected_image_digest,
-                "NPA_SMOKE_OUTPUT_DIR": "/tmp/npa-golden",
+                "NPA_SMOKE_OUTPUT_DIR": "/workspace/npa-golden",
                 "NPA_SMOKE_RUN_ID": run_id,
             }
         )
