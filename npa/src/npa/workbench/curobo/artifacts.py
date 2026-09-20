@@ -498,6 +498,50 @@ def _scan_decoded_chunks(
     return digest.hexdigest(), size, sorted(mismatches)
 
 
+def _semantic_compare_rrd(
+    path: Path, *, rows: list[dict[str, Any]], run_id: str, rerun: str
+) -> str:
+    """Regenerate journal-derived facts and compare every decoded value/timeline."""
+    with tempfile.TemporaryDirectory(prefix="npa-curobo-rrd-compare-") as directory:
+        root = Path(directory)
+        journal = root / "expected.jsonl"
+        journal.write_bytes(b"".join(canonical(row) + b"\n" for row in rows))
+        expected = root / "expected.rrd"
+        build_rrd(journal, expected, run_id=run_id)
+        normalized = []
+        for name, source in (("observed", path), ("expected", expected)):
+            output = root / f"{name}-normalized.rrd"
+            filtered = subprocess.run(
+                [
+                    rerun,
+                    "rrd",
+                    "filter",
+                    "--drop-timeline",
+                    "log_tick",
+                    "--drop-timeline",
+                    "log_time",
+                    "--output",
+                    str(output),
+                    str(source),
+                ],
+                capture_output=True,
+                check=False,
+            )
+            if filtered.returncode:
+                raise CuroboError("Rerun could not normalize factual recording")
+            normalized.append(output)
+        compared = subprocess.run(
+            [rerun, "rrd", "compare", "--unordered", *(str(p) for p in normalized)],
+            capture_output=True,
+            check=False,
+        )
+        if compared.returncode:
+            raise CuroboError(
+                "decoded RRD values or factual timelines differ from journal"
+            )
+        return hashlib.sha256(expected.read_bytes()).hexdigest()
+
+
 def _decode_rrd_to(
     path: Path,
     decoded_output: Path,
@@ -529,9 +573,14 @@ def _decode_rrd_to(
     )
     if mismatches:
         raise CuroboError("decoded RRD omits required factual coverage")
+    reference_sha256 = _semantic_compare_rrd(
+        path, rows=rows, run_id=run_id, rerun=rerun
+    )
     return {
         "verify": "passed",
         "print": "passed",
+        "semantic_compare": "passed",
+        "semantic_reference_sha256": reference_sha256,
         "print_sha256": digest,
         "print_bytes": size,
         "required_chunk_count": len(expected),

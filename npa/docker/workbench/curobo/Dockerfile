@@ -27,6 +27,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
+COPY docker/workbench/curobo/pip-bootstrap.lock /opt/pip-bootstrap.lock
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
     && [[ "$UBUNTU_SNAPSHOT" == "20260920T000000Z" ]]
@@ -50,7 +51,8 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
     && python3.12 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/python -m pip install --no-cache-dir --upgrade 'pip==26.2.1'
+    && /opt/npa-venv/bin/python -m pip install --no-cache-dir --upgrade \
+       --require-hashes -r /opt/pip-bootstrap.lock
 
 COPY docker/workbench/curobo/requirements.lock /opt/curobo-requirements.lock
 COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py

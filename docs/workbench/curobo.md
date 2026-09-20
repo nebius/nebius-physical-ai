@@ -71,7 +71,10 @@ separately declared valid-but-goal-blocked pose to fail; malformed manifest
 rejection is retained as a second negative control. RRD manifests bind the run,
 journal and result hashes and verify decoded status/goal entities plus actual
 FK-position, FK-quaternion and per-joint sample chunk counts for every successful
-trajectory instead of trusting producer-authored coverage labels.
+trajectory instead of trusting producer-authored coverage labels. A separately
+regenerated recording from the durable journal is normalized only for
+nondeterministic log clock timelines and compared semantically, including all
+joint/FK values, factual timelines, goals, statuses and metrics.
 
 After the private build, freeze its reviewed digest separately from the selected
 image and pass both values. Admission compares them before credentials or provider

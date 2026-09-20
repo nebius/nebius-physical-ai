@@ -79,7 +79,10 @@ run, journal, result and RRD hashes plus logged sample/status/goal counts and a
 streamed full-decode receipt. The receipt checks decoded row counts for every
 status, goal, FK position, FK quaternion and joint position/velocity/
 acceleration/jerk entity; a producer-authored coverage label is not evidence.
-It contains no invented robot meshes.
+The validator also regenerates a journal-derived reference RRD, drops only
+nondeterministic `log_tick`/`log_time`, and requires unordered semantic equality
+of every remaining value and factual timeline. It contains no invented robot
+meshes.
 
 The golden command writes a non-overwriting run directory beneath
 `NPA_SMOKE_OUTPUT_DIR`. Retain its input, journal, result, independent

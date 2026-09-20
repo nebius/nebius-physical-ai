@@ -508,6 +508,84 @@ def test_factual_rrd_round_trip(tmp_path):
         assert entity in printed
 
 
+@pytest.mark.parametrize(
+    "mutation", ["joint", "tool", "quaternion", "timeline", "metric"]
+)
+def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation):
+    import rerun as rr
+    from npa.workbench.curobo.artifacts import log_trajectory_columns
+
+    original = row()
+    journal_bytes = canonical(original) + b"\n"
+    target = tmp_path / "adversarial.rrd"
+    recording = rr.RecordingStream("npa.curobo", recording_id="semantic-run")
+    recording.save(str(target))
+    recording.log(
+        "provenance",
+        rr.TextDocument(
+            json.dumps(
+                {
+                    "producer": "npa.workbench.curobo",
+                    "source_revision": SOURCE_REVISION,
+                    "dataset_revision": None,
+                    "run_id": "semantic-run",
+                    "journal_sha256": hashlib.sha256(journal_bytes).hexdigest(),
+                    "limitations": "FK tool paths and joint traces; no rendered robot meshes or independent collision certification.",
+                }
+            )
+        ),
+        static=True,
+    )
+    recording.set_time("problem_index", sequence=0)
+    recording.log(
+        "problems/000000/status",
+        rr.TextDocument(
+            json.dumps(
+                {
+                    key: original[key]
+                    for key in ("problem_id", "mode", "dataset", "status")
+                }
+            )
+        ),
+    )
+    recording.log(
+        "problems/000000/goal",
+        rr.Points3D(
+            [original["query"]["goal_pose"]["position_xyz"]],
+            radii=0.015,
+            colors=[0, 255, 0],
+        ),
+    )
+    changed = copy.deepcopy(original["trajectory"])
+    metrics = copy.deepcopy(original["metrics"])
+    if mutation == "joint":
+        changed["position"][1][0] += 0.25
+    elif mutation == "tool":
+        changed["tool_position"][1][0] += 0.25
+    elif mutation == "quaternion":
+        changed["tool_quaternion"][1] = [0.0, 1.0, 0.0, 0.0]
+    elif mutation == "timeline":
+        changed["dt"] = 0.2
+    elif mutation == "metric":
+        metrics["wall_plan_seconds"] += 0.25
+    for name, value in metrics.items():
+        recording.log(f"metrics/{name}", rr.Scalars(value))
+    recording.log(
+        "problems/000000/joint_names",
+        rr.TextDocument(json.dumps(original["trajectory"]["joint_names"])),
+    )
+    recording.log(
+        "problems/000000/tool_path",
+        rr.LineStrips3D([changed["tool_position"]]),
+    )
+    log_trajectory_columns(recording, "problems/000000", changed, problem_index=0)
+    recording.flush()
+    del recording
+
+    with pytest.raises(CuroboError, match="values or factual timelines"):
+        decode_rrd(target, rows=[original], run_id="semantic-run")
+
+
 def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_chunk(tmp_path):
     solved = plan_row()
     failed = {

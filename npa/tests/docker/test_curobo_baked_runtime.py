@@ -9,6 +9,7 @@ import pytest
 DOCKERFILE = (
     Path(__file__).resolve().parents[3] / "npa/docker/workbench/curobo/Dockerfile"
 )
+PIP_BOOTSTRAP = DOCKERFILE.with_name("pip-bootstrap.lock")
 
 
 def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
@@ -25,6 +26,21 @@ def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
     assert text.index('RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]') < text.index(
         "RUN pip install"
     )
+
+
+def test_pip_bootstrap_distribution_is_content_pinned():
+    text = DOCKERFILE.read_text()
+    assert (
+        PIP_BOOTSTRAP.read_text()
+        == "# PyPI wheel: https://files.pythonhosted.org/packages/f3/6e/"
+        "1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/"
+        "pip-26.2.1-py3-none-any.whl\n"
+        "pip==26.2.1 \\\n"
+        "    --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e\n"
+    )
+    assert "COPY docker/workbench/curobo/pip-bootstrap.lock" in text
+    assert "--require-hashes -r /opt/pip-bootstrap.lock" in text
+    assert "pip install --no-cache-dir --upgrade 'pip==" not in text
 
 
 @pytest.mark.parametrize("sha", ["", "a" * 39, "a" * 41, "g" * 40, "a" * 40])
