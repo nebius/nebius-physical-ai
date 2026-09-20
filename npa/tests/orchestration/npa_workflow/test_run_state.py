@@ -373,11 +373,81 @@ def test_run_state_store_prefix_output_rejects_stalled_pagination(
         state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"Contents": []},
+        {"Contents": [], "NextContinuationToken": "page-2"},
+        {
+            "Contents": [],
+            "IsTruncated": False,
+            "NextContinuationToken": "page-2",
+        },
+        {"Contents": [], "IsTruncated": "false"},
+        {"Contents": [], "IsTruncated": True, "NextContinuationToken": 2},
+    ],
+)
+def test_run_state_store_prefix_output_rejects_malformed_pagination(
+    monkeypatch,
+    response: dict[str, object],
+) -> None:
+    calls = 0
+
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls > 2:
+                raise AssertionError("malformed pagination was followed")
+            return response
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="pagination|continuation token"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+    assert calls == 1
+
+
+@pytest.mark.parametrize("response", [None, [], "malformed"])
+def test_run_state_store_prefix_output_rejects_malformed_response(
+    monkeypatch,
+    response: object,
+) -> None:
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs: object) -> object:
+            return response
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
+    state_store = RunStateStore(bucket="project-bucket", prefix="runs/demo")
+
+    with pytest.raises(RuntimeError, match="malformed response"):
+        state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+
+
 def test_run_state_store_prefix_output_rejects_repeated_pagination_token(
     monkeypatch,
 ) -> None:
+    calls = 0
+
     class FakeS3:
         def list_objects_v2(self, **_kwargs: object) -> dict[str, object]:
+            nonlocal calls
+            calls += 1
+            if calls > 2:
+                raise AssertionError("pagination cycle was not rejected")
             return {
                 "Contents": [{"Key": "runs/demo/output/", "Size": 0}],
                 "IsTruncated": True,
@@ -395,6 +465,7 @@ def test_run_state_store_prefix_output_rejects_repeated_pagination_token(
 
     with pytest.raises(RuntimeError, match="continuation token"):
         state_store.artifact_exists("s3://project-bucket/runs/demo/output/")
+    assert calls == 2
 
 
 @pytest.mark.parametrize(

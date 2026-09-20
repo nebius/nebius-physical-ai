@@ -590,19 +590,28 @@ def s3_prefix_has_nonempty_object(
                 )
             if size > 0:
                 return True
-        truncated = response.get("IsTruncated", False)
+        if "IsTruncated" not in response:
+            raise RuntimeError("S3 prefix listing returned malformed pagination")
+        truncated = response["IsTruncated"]
         if not isinstance(truncated, bool):
             raise RuntimeError("S3 prefix listing returned malformed pagination")
+        raw_next_token = response.get("NextContinuationToken")
         if not truncated:
+            if raw_next_token is not None and raw_next_token != "":
+                raise RuntimeError("S3 prefix listing returned malformed pagination")
             return False
-        next_token = str(response.get("NextContinuationToken") or "")
-        if not next_token or next_token in seen_tokens:
+        if not isinstance(raw_next_token, str) or not raw_next_token:
             raise RuntimeError(
                 "S3 prefix listing returned a truncated page without a new "
                 "continuation token"
             )
-        seen_tokens.add(next_token)
-        continuation_token = next_token
+        if raw_next_token in seen_tokens:
+            raise RuntimeError(
+                "S3 prefix listing returned a truncated page without a new "
+                "continuation token"
+            )
+        seen_tokens.add(raw_next_token)
+        continuation_token = raw_next_token
 
 
 class RunStateStore:

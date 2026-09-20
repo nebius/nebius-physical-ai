@@ -672,6 +672,48 @@ def test_prefix_marker_does_not_authorize_absent_output_recovery(
     assert executor._declared_outputs_absent([output]) == (False, "present")
 
 
+def test_malformed_prefix_pagination_is_indeterminate_for_recovery(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class MissingTruncationFlagS3:
+        def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
+            calls.append(dict(kwargs))
+            if kwargs.get("ContinuationToken") == "page-2":
+                return {
+                    "Contents": [
+                        {"Key": "gate-loop/run/output/result.json", "Size": 17}
+                    ],
+                    "IsTruncated": False,
+                }
+            return {
+                "Contents": [{"Key": "gate-loop/run/output/", "Size": 0}],
+                "NextContinuationToken": "page-2",
+            }
+
+    client = MissingTruncationFlagS3()
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        lambda **_kwargs: SimpleNamespace(s3=client),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    executor = _executor(spec, output_checker=s3_artifact_exists)
+    output = "s3://example-bucket/gate-loop/run/output/"
+
+    assert executor._declared_outputs_absent([output]) == (False, "indeterminate")
+    assert calls == [
+        {
+            "Bucket": "example-bucket",
+            "Prefix": "gate-loop/run/output/",
+            "MaxKeys": 1000,
+        }
+    ]
+    with pytest.raises(RuntimeError, match="malformed pagination"):
+        s3_artifact_exists(output)
+
+
 # ------------------------------------------------------------------- early exit
 
 
