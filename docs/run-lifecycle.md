@@ -143,6 +143,10 @@ When every declared durable output is valid, recovery marks the wave complete
 even at the allowance boundary. If the exact provider attempt is still live,
 its cancellation must reach a verified terminal state before that reuse is
 accepted.
+Valid outputs from a provider-succeeded attempt are reused only when the
+recorded workflow, source, and image identities still match the requested run.
+Missing or changed immutable identity evidence blocks reuse and requires the
+recorded identity to be restored or a new run ID to be started.
 
 ## Reading status
 

@@ -319,6 +319,17 @@ def decide_recovery(
             code,
             "Inspect the exact attempt logs and fix the payload; infrastructure retry is disabled.",
         )
+    identity_must_match = (
+        failure_class is FailureClass.TRANSIENT_INFRASTRUCTURE
+        and observation.state is not BackendState.SUCCEEDED
+    ) or (observation.state is BackendState.SUCCEEDED and context.outputs.all_valid)
+    if identity_must_match and not _immutable_identity_matches(identity, context):
+        return RecoveryDecision(
+            RecoveryAction.BLOCK_RELAUNCH,
+            FailureClass.UNKNOWN,
+            "IMMUTABLE_IDENTITY_MISMATCH",
+            "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
+        )
     if observation.state is BackendState.SUCCEEDED:
         if context.outputs.all_valid:
             return RecoveryDecision(
@@ -356,13 +367,6 @@ def decide_recovery(
             FailureClass.UNKNOWN,
             code,
             "The failure is not proven transient; inspect exact backend evidence before recovery.",
-        )
-    if not _immutable_identity_matches(identity, context):
-        return RecoveryDecision(
-            RecoveryAction.BLOCK_RELAUNCH,
-            FailureClass.UNKNOWN,
-            "IMMUTABLE_IDENTITY_MISMATCH",
-            "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
         )
     if (
         context.outputs.all_valid
