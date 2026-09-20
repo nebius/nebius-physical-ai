@@ -4018,10 +4018,15 @@ def test_runtime_persistent_transient_exhausts_finite_policy(
     assert executor.attempts[-1].recovery_decision == "cancel_and_terminalize"
 
 
+@pytest.mark.parametrize(
+    "terminal_provider_status",
+    ["CANCELLED", "FAILED", "FAILED_SETUP", "SUCCEEDED", "COMPLETED"],
+)
 def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
     tmp_path: Path,
     mocker,
     runtime_sdk_submission,
+    terminal_provider_status: str,
 ) -> None:
     from npa.orchestration.skypilot.job_blockers import JobBlockerReport
 
@@ -4040,7 +4045,8 @@ def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
         ),
     )
     cancels: list[dict[str, Any]] = []
-    status = FakeStatus(["PENDING", "CANCELLED", "PENDING", "CANCELLED"])
+    status = FakeStatus(["PENDING", "CANCELLED", "PENDING", terminal_provider_status])
+    store = MemoryStore()
     executor = _executor(
         spec,
         run_id="rt-valid-output-limit",
@@ -4054,7 +4060,7 @@ def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
         ),
         cancels=cancels,
         output_checker=lambda _uri: runtime_sdk_submission.job.call_count >= 2,
-        store=MemoryStore(),
+        store=store,
     )
     executor._submitter = None
 
@@ -4063,7 +4069,7 @@ def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
 
     assert result["status"] == "ok"
     assert attempt.status == "succeeded"
-    assert attempt.sky_status == "SUCCEEDED"
+    assert attempt.sky_status == terminal_provider_status
     assert attempt.recovery_decision == "reuse_completed_wave"
     assert attempt.infrastructure_recovery_count == 1
     assert attempt.cancellation_state == "verified"
@@ -4072,6 +4078,16 @@ def test_runtime_reuses_valid_outputs_at_infrastructure_recovery_limit(
     assert len(cancels) == 2
     assert len(executor.attempts) == 2
     assert len(status.calls) == 4
+    reuse_event = next(
+        event
+        for event in reversed(SupervisorLedger(store).events())
+        if event["phase"] == "cancellation"
+        and event["recovery"]["action"] == "reuse_completed_wave"
+    )
+    assert (
+        reuse_event["cancellation"]["provider_terminal_status"]
+        == terminal_provider_status
+    )
 
 
 def test_runtime_preserves_unverified_output_reuse_cancellation(

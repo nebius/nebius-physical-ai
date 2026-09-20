@@ -143,6 +143,10 @@ When every declared durable output is valid, recovery marks the wave complete
 even at the allowance boundary. If the exact provider attempt is still live,
 its cancellation must reach a verified terminal state before that reuse is
 accepted.
+The workflow attempt then completes as `succeeded`, while `sky_status` retains
+the exact terminal provider state observed during cancellation verification
+(for example `CANCELLED`, `FAILED`, or a terminal `SUCCEEDED` race). Workflow
+completion never rewrites that provider evidence.
 Valid outputs from a provider-succeeded attempt are reused only when the
 recorded workflow, source, and image identities still match the requested run.
 Missing or changed immutable identity evidence blocks reuse and requires the
