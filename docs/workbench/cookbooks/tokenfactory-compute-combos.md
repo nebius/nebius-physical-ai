@@ -61,12 +61,11 @@ use `--image-override TOOL_REF=IMAGE` for a deliberate per-tool override.
 
 Outputs are under
 `s3://<your-bucket>/tokenfactory-rollout-judge/<run-id>/`: inspect videos in
-`rollouts/` and the report in `scores/vlm_eval_stub.json`. The filename is
-historical; check that the report records the `api` backend, actual rollout
-inputs, requested `model`, actual `served_model`, score, rationale, and pass/fail
-outcome. Hosted judges reject incomplete responses, malformed JSON, and invalid
-scores without repair. A successful command alone does not establish that the
-policy completed the task.
+`rollouts/` and the report in `scores/vlm_eval.json`. Check that the report
+records the `api` backend, actual rollout inputs, requested `model`, actual
+`served_model`, score, rationale, and pass/fail outcome. Hosted judges reject
+incomplete responses, malformed JSON, and invalid scores without repair. A
+successful command alone does not establish that the policy completed the task.
 
 The shipped judge uses `vlm-eval run`, which produces one score across the
 selected frames in its input prefix. Its default two rollout episodes are not
@@ -109,7 +108,7 @@ npa workbench workflow submit "$spec" \
 Upload scene images before submission. The plan is `plan/scene_reasoning.json`;
 the judge consumes its `analysis`
 through `--task-from`. Inspect that plan, generated videos in `rollouts/`, and
-`vlm-judge/vlm_eval_stub.json` under
+`vlm-judge/vlm_eval.json` under
 `s3://<your-bucket>/tokenfactory-scene-to-rollout-judge/<run-id>/`.
 
 ## Train, then triage

@@ -3435,13 +3435,18 @@ def build_fiftyone_dataset(
 
     # Resolve the grade report by the vlm_eval tool's own RESULT_FILENAME so this
     # stays in sync if the tool renames it, instead of hardcoding a magic string
-    # (mirrors data_factory_stages.grade_gate). Fall back to the non-stub name.
+    # (mirrors data_factory_stages.grade_gate). Retain the pre-neutral-name
+    # artifact only as a read fallback for historical bundles.
     try:
-        from npa.workbench.vlm_eval import RESULT_FILENAME as _VLM_RESULT_FILENAME
+        from npa.workbench.vlm_eval import (
+            LEGACY_RESULT_FILENAME as _LEGACY_VLM_RESULT_FILENAME,
+            RESULT_FILENAME as _VLM_RESULT_FILENAME,
+        )
     except Exception:  # noqa: BLE001
-        _VLM_RESULT_FILENAME = "vlm_eval_stub.json"
+        _VLM_RESULT_FILENAME = "vlm_eval.json"
+        _LEGACY_VLM_RESULT_FILENAME = "vlm_eval_stub.json"
     grade: dict[str, Any] = {}
-    for _grade_name in (_VLM_RESULT_FILENAME, "vlm_eval.json"):
+    for _grade_name in (_VLM_RESULT_FILENAME, _LEGACY_VLM_RESULT_FILENAME):
         grade = read_json(json_rel.get(f"grade/{_grade_name}", "")) or {}
         if grade:
             break

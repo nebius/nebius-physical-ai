@@ -45,7 +45,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
-| `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval_stub.json` | no |
+| `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval.json` | no |
 | `workbench.vlm_eval.loop` | `npa workbench vlm-eval loop` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` | no |
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri`, optional `config.caption_instruction` (empty keeps the tool default) | `config.captions_uri` | no |

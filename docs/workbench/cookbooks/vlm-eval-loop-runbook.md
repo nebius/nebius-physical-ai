@@ -141,10 +141,15 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 
 `scores_uri` receives:
 
-- `rollouts/<rollout-id>/vlm_eval_stub.json`: one structured result per rollout.
+- `rollouts/<rollout-id>/vlm_eval.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout `{success, score, rationale}` records.
+
+`vlm_eval.json` is backend-neutral; inspect the payload's `backend` and
+`evidence.provider` fields to distinguish real inference from a fixture.
+Readers retain `vlm_eval_stub.json` only for historical bundles. Do not declare
+that legacy name in new workflows.
 
 Read the report:
 

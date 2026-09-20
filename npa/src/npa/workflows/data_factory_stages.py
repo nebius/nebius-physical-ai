@@ -857,11 +857,11 @@ def grade_gate(
     The blueprint's evaluate stage runs the real NVIDIA Cosmos Evaluator, which
     writes ``cosmos_evaluator.json``. Runs produced before that stage existed (and
     any spec still pointing the loop at ``workbench.vlm_eval.run``) wrote the
-    vlm_eval tool's RESULT_FILENAME instead, so both locations are inspected,
-    newest contract first. Promotion still requires the complete modern
-    status/passed/score contract. Both filenames come from the producing tool's
-    own constant rather than a literal here, so the gate cannot drift from its
-    producer.
+    vlm_eval tool's result instead, so both producer contracts are inspected,
+    newest first. The pre-neutral-name VLM filename remains a final read-only
+    fallback for historical runs. Promotion still requires the complete modern
+    status/passed/score contract. The filenames come from the producing tools'
+    constants rather than literals here, so the gate cannot drift from them.
 
     ``threshold`` accepts a str (the blueprint interpolates a quoted config value)
     or float; a non-numeric value falls back to 0.5.
@@ -873,14 +873,21 @@ def grade_gate(
     from npa.workbench.cosmos_evaluator import (
         RESULT_FILENAME as COSMOS_EVALUATOR_RESULT,
     )
-    from npa.workbench.vlm_eval import RESULT_FILENAME as VLM_EVAL_RESULT
+    from npa.workbench.vlm_eval import (
+        LEGACY_RESULT_FILENAME as LEGACY_VLM_EVAL_RESULT,
+        RESULT_FILENAME as VLM_EVAL_RESULT,
+    )
 
     threshold = _quality_threshold(threshold)
     if scores_uri.endswith(".json"):
         candidates = [scores_uri]
     else:
         base = scores_uri.rstrip("/")
-        candidates = [f"{base}/{COSMOS_EVALUATOR_RESULT}", f"{base}/{VLM_EVAL_RESULT}"]
+        candidates = [
+            f"{base}/{COSMOS_EVALUATOR_RESULT}",
+            f"{base}/{VLM_EVAL_RESULT}",
+            f"{base}/{LEGACY_VLM_EVAL_RESULT}",
+        ]
     contract = {
         "decision": "loop_back",
         "score": 0.0,

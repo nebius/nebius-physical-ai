@@ -168,6 +168,17 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
     assert real.rubric == "Retain this override rubric."
 
 
+def test_result_uri_uses_neutral_default_and_preserves_explicit_json() -> None:
+    assert vlm_eval.result_uri_for("s3://bucket/scores/") == (
+        "s3://bucket/scores/vlm_eval.json"
+    )
+    assert vlm_eval.result_uri_for("/tmp/custom-result.json") == (
+        "/tmp/custom-result.json"
+    )
+    assert vlm_eval.RESULT_FILENAME == "vlm_eval.json"
+    assert vlm_eval.LEGACY_RESULT_FILENAME == "vlm_eval_stub.json"
+
+
 def test_exported_dataclasses_keep_legacy_positional_constructors() -> None:
     result = VlmEvalResult(
         "passed",

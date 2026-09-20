@@ -310,11 +310,13 @@ evaluate` runs two of upstream's checks per augmented variant and writes
   different scenes, so it remains informational and the score is the attribute
   pass rate.
 
-`grade_gate` thresholds on that report's `score`. It also still accepts the older
-`vlm_eval` report (`vlm_eval_stub.json`, a LEGACY filename of the vlm_eval tool's
-`RESULT_FILENAME`, never a stubbed stage), so runs started before the `evaluate`
-stage existed keep grading. Both filenames come from the producing tool's own
-constant, so the gate cannot drift from its producer.
+`grade_gate` thresholds on that report's `score`. It also still accepts older
+`vlm_eval` reports named `vlm_eval_stub.json` through the tool's explicit
+`LEGACY_RESULT_FILENAME`, so runs started before the `evaluate` stage existed
+keep grading. New VLM results use the backend-neutral `vlm_eval.json`; the
+payload's `backend` and provider evidence distinguish real inference from a
+fixture. All filenames come from the producing tools' constants, so the gate
+cannot drift from its producers.
 
 **Cosmos Curator curation (`cosmos-curate` stage).** `npa workbench cosmos-curate
 curate-augmented` drives upstream's real stage classes in-process — no Ray

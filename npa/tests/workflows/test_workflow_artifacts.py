@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from npa.workbench.vlm_eval import LEGACY_RESULT_FILENAME, RESULT_FILENAME
 from npa.workflows.artifacts import (
     AmbiguousRunError,
     Artifact,
@@ -123,7 +124,14 @@ def test_complete_canonical_run_wins_over_same_id_one_file_overlay() -> None:
     assert prefer_complete_run_resolution([canonical, divergent]) is None
 
 
-def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
+@pytest.mark.parametrize(
+    "result_filename",
+    (RESULT_FILENAME, LEGACY_RESULT_FILENAME),
+    ids=("canonical-vlm-result", "legacy-vlm-result"),
+)
+def test_build_fiftyone_dataset_groups_variants_and_summarizes(
+    result_filename: str,
+) -> None:
     run = "paidf-demo"
     base = f"checkpoints/physical-ai-data-factory/{run}"
     keys = [
@@ -137,7 +145,7 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
         f"{base}/cosmos_augmented/aug-{run}-1/frame-00000.png",
         f"{base}/cosmos_augmented/aug-{run}-1/metadata.json",
         f"{base}/labeled_augmented/captions.json",
-        f"{base}/grade/vlm_eval_stub.json",
+        f"{base}/grade/{result_filename}",
         f"{base}/grade/decision.json",
         f"{base}/curation/report.json",
     ]
@@ -168,7 +176,7 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
                 },
             ]
         },
-        f"{base}/grade/vlm_eval_stub.json": {
+        f"{base}/grade/{result_filename}": {
             "score": 0.0,
             "model": "Qwen/Qwen2.5-VL-72B-Instruct",
         },
@@ -213,6 +221,20 @@ def test_build_fiftyone_dataset_groups_variants_and_summarizes() -> None:
     assert summary["curation_engine"] == ""
     assert first["uniqueness"] is None
     assert first["curated"] is None
+
+
+def test_build_fiftyone_dataset_prefers_canonical_vlm_result() -> None:
+    run = "paidf-canonical-grade"
+    base = f"checkpoints/physical-ai-data-factory/{run}"
+    canonical = f"{base}/grade/{RESULT_FILENAME}"
+    legacy = f"{base}/grade/{LEGACY_RESULT_FILENAME}"
+    payloads = {canonical: {"score": 0.25}, legacy: {"score": 0.9}}
+
+    dataset = build_fiftyone_dataset(
+        [legacy, canonical], run_id=run, read_json=lambda key: payloads.get(key)
+    )
+
+    assert dataset["summary"]["grade_score"] == 0.25
 
 
 def test_build_fiftyone_dataset_surfaces_real_fiftyone_curation() -> None:

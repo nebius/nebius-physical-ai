@@ -105,7 +105,7 @@ _STAGE_DESCRIPTIONS = {
     ),
     "grade": (
         "Evaluate & Validate — the VLM attribute-verification / hallucination check "
-        "(vlm_eval_stub.json: score / threshold / model) plus the quality-gate "
+        "(vlm_eval.json: score / threshold / model / backend) plus the quality-gate "
         "decision.json (promote_checkpoint vs loop_back). This IS the eval, not a "
         "caption."
     ),

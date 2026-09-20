@@ -4,8 +4,9 @@ Three separate live runs were needed to learn this lesson three times:
 
 * `sonic eval` was handed ``--output json`` (a format word to a path option), so the
   result landed in a relative ``json/`` directory inside the pod (EVIDENCE §R5);
-* `vlm-eval run` writes ``<prefix>/vlm_eval_stub.json`` while four specs declared
-  ``<prefix>/report.json`` (run ``npa-wf-cpu-vlm-eval-token-factory-736df0b1``);
+* `vlm-eval run` historically wrote ``<prefix>/vlm_eval_stub.json`` while four
+  specs declared ``<prefix>/report.json`` (run
+  ``npa-wf-cpu-vlm-eval-token-factory-736df0b1``);
 * `mjlab eval` writes ``<prefix>/mjlab_eval.json`` while two specs declared
   ``<prefix>/report.json``.
 * Cosmos Transfer live job 339 reported SUCCEEDED for historical stages,

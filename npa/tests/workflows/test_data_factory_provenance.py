@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from npa.workbench.vlm_eval import RESULT_FILENAME
 from npa.workflows.data_factory_provenance import build_run_origin, build_run_provenance
 
 RUN = "paidf-1"
@@ -11,7 +12,7 @@ KEYS = [
     f"{PFX}/labeled_original/captions.json",
     f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
     f"{PFX}/cosmos_augmented/manifest.json",
-    f"{PFX}/grade/vlm_eval_stub.json",
+    f"{PFX}/grade/{RESULT_FILENAME}",
     f"{PFX}/grade/decision.json",
     f"{PFX}/labeled_augmented/captions.json",
     f"{PFX}/curation/report.json",
@@ -24,7 +25,7 @@ def _read_gpu(key: str):
         return {"mode": "cosmos_transfer2.5_gpu"}
     if key.endswith("captions.json"):
         return {"model": "Qwen/Qwen2.5-VL-72B-Instruct"}
-    if key.endswith("vlm_eval_stub.json"):
+    if key.endswith(RESULT_FILENAME):
         return {"model": "Qwen/Qwen2.5-VL-72B-Instruct", "backend": "api"}
     return {}
 

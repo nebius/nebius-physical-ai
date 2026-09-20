@@ -18,6 +18,7 @@ from PIL import Image
 
 from npa.workbench.vlm_eval import (
     LOOP_REPORT_FILENAME,
+    RESULT_FILENAME,
     VlmEvalError,
     VlmLoopRollout,
     aggregate_loop_report,
@@ -77,7 +78,7 @@ def _rollout(rollout_id: str, score: float, success: bool) -> VlmLoopRollout:
         rationale="because",
         status="passed" if success else "needs_iteration",
         frame_count=2,
-        result_uri=f"s3://b/{rollout_id}/vlm_eval_stub.json",
+        result_uri=f"s3://b/{rollout_id}/{RESULT_FILENAME}",
     )
 
 

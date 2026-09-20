@@ -7,6 +7,15 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM result artifacts use a backend-neutral filename
+
+- New `vlm-eval run` directory and object-prefix outputs are named
+  `vlm_eval.json`; the payload's `backend` and provider evidence distinguish
+  hosted/self-hosted inference from fixture scoring. Shipped workflow
+  declarations use the same canonical name. Data-factory and artifact-summary
+  readers still accept historical `vlm_eval_stub.json` bundles as a read-only
+  fallback.
+
 ### GPU routing selects on workload, not just on the GPU
 
 - SONIC image resolution now intersects the GPU target with the workload. Each
