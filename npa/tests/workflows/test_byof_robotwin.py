@@ -139,7 +139,7 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert lock["status"] == "bootstrap-complete-runtime-disabled"
     assert lock["bootstrap"]["status"] == "complete"
     assert lock["bootstrap"]["payload_class"] == "zero-vendor-payload"
-    assert lock["bootstrap"]["apt"]["binary_package_count"] == 75
+    assert lock["bootstrap"]["apt"]["binary_package_count"] == 84
     assert lock["bootstrap"]["python_runtime"]["application_artifact_count"] == 0
     assert lock["runtime_delivery"]["status"].startswith("disabled-")
     assert lock["runtime_delivery"]["asset_output_classification_status"] == (

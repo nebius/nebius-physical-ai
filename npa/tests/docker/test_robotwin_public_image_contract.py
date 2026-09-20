@@ -277,8 +277,10 @@ def test_real_archive_verifier_rejects_bad_inputs_before_install(
         assert len((tmp_path / "verified.tsv").read_text().splitlines()) == 84
         assert "cmp " in result.stderr
     elif case in {"hash", "size", "package", "version", "architecture"}:
+        first_archive = min((tmp_path / "source").glob("*.deb"))
+        observed_sha = hashlib.sha256(first_archive.read_bytes()).hexdigest()
         expected_boundary = {
-            "hash": "sha256sum ",
+            "hash": f"test {observed_sha} = {'0' * 64}",
             "size": "stat -c ",
             "package": "locked_identity_count=0",
             "version": "locked_identity_count=0",

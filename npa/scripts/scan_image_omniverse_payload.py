@@ -369,7 +369,71 @@ def _saved_descriptor_path(descriptor, sizes):
     return name
 
 
-def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
+def _check_saved_attestation(name, descriptor, document, documents, scanned_layers, sizes, ancestors):
+    """Validate non-filesystem BuildKit metadata without treating JSON as a tar."""
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    annotations = descriptor.get("annotations", {})
+    target = annotations.get("vnd.docker.reference.digest", "")
+    if (
+        descriptor.get("mediaType") != manifest_type
+        or document.get("mediaType") != manifest_type
+        or descriptor.get("platform") != {"os": "unknown", "architecture": "unknown"}
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", target) is None
+        or not document["layers"]
+    ):
+        raise RuntimeError("Invalid OCI image archive: attestation manifest identity")
+    config_descriptor = document["config"]
+    config = documents[_saved_descriptor_path(config_descriptor, sizes)]
+    artifact_type = document.get("artifactType")
+    if artifact_type is not None:
+        subject = document.get("subject", {})
+        if (
+            artifact_type != "application/vnd.docker.attestation.manifest.v1+json"
+            or config_descriptor.get("mediaType") != "application/vnd.oci.empty.v1+json"
+            or config != {}
+            or subject.get("mediaType") != manifest_type
+            or subject.get("digest") != target
+        ):
+            raise RuntimeError("Invalid OCI image archive: attestation artifact binding")
+        target_name = _saved_descriptor_path(subject, sizes)
+    else:
+        if (
+            "subject" in document
+            or config_descriptor.get("mediaType") != "application/vnd.oci.image.config.v1+json"
+            or config.get("architecture") != "unknown"
+            or config.get("os") != "unknown"
+            or config.get("rootfs") != {
+                "type": "layers", "diff_ids": [layer.get("digest") for layer in document["layers"]]
+            }
+        ):
+            raise RuntimeError("Invalid OCI image archive: attestation config binding")
+        target_name = "blobs/sha256/" + target[7:]
+    # The subject must itself have readable filesystem layers. Its JSON cannot
+    # recursively opt into metadata handling through an attestation annotation.
+    _check_oci_manifest(target_name, documents, scanned_layers, sizes, (*ancestors, name))
+    for layer in document["layers"]:
+        layer_name = _saved_descriptor_path(layer, sizes)
+        statement = documents.get(layer_name)
+        if (
+            layer.get("mediaType") != "application/vnd.in-toto+json"
+            or not isinstance(statement, dict)
+            or statement.get("_type") not in {
+                "https://in-toto.io/Statement/v0.1", "https://in-toto.io/Statement/v1"
+            }
+            or not isinstance(statement.get("predicate"), dict)
+            or not isinstance(statement.get("predicateType"), str)
+            or not statement["predicateType"]
+            or statement["predicateType"] != layer.get("annotations", {}).get("in-toto.io/predicate-type")
+            or not isinstance(statement.get("subject"), list)
+            or not statement["subject"]
+            or not all(isinstance(subject, dict) and isinstance(subject.get("name"), str)
+                       and subject.get("digest") == {"sha256": target[7:]}
+                       for subject in statement["subject"])
+        ):
+            raise RuntimeError("Invalid OCI image archive: attestation statement binding")
+
+
+def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=(), *, descriptor=None):
     if name in ancestors:
         raise RuntimeError("Invalid OCI image archive: cyclic index reference")
     document = documents.get(name)
@@ -381,13 +445,17 @@ def _check_oci_manifest(name, documents, scanned_layers, sizes, ancestors=()):
             raise RuntimeError(f"Invalid OCI image archive: empty index {name}")
         for descriptor in children:
             child = _saved_descriptor_path(descriptor, sizes)
-            _check_oci_manifest(child, documents, scanned_layers, sizes, (*ancestors, name))
+            _check_oci_manifest(child, documents, scanned_layers, sizes, (*ancestors, name),
+                                descriptor=descriptor)
         return
     config = _saved_descriptor_path(document.get("config"), sizes)
     _require_saved_config(config, documents)
     layers = document.get("layers")
     if not isinstance(layers, list):
         raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
+    if descriptor and descriptor.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest":
+        _check_saved_attestation(name, descriptor, document, documents, scanned_layers, sizes, ancestors)
+        return
     for descriptor in layers:
         layer = _saved_descriptor_path(descriptor, sizes)
         _require_saved_layer(layer, scanned_layers)

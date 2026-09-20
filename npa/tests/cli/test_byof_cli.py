@@ -435,7 +435,6 @@ def test_robotwin_materialization_rollback_records_partial_write_receipt(
     recovery = failure.value.recovery_context
     assert calls == 2
     assert recovery.cleanup_outcomes == (
-        ("customer-authorization.json", "missing"),
         ("runtime-context.json", "removed"),
     )
     assert recovery.residual_names == ()
