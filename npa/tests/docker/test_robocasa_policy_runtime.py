@@ -73,6 +73,7 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert "ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1" in dockerfile
     assert "FROM --platform=" not in dockerfile
     assert "docker build \\\n  --platform linux/amd64 \\" in build_script
+    assert "\n  --provenance=false \\" in build_script
     assert "grep -Eq '^[0-9a-f]{40}$'" in dockerfile
     assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in dockerfile
     assert (
