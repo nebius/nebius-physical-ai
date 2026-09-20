@@ -1062,6 +1062,8 @@ def _bound_live_fixture(tmp_path: Path):
         receipt["run_id"],
         plan_sha256,
     )
+    # This mock pod has uid/gid 1000 independently of the pytest runner's user.
+    proof["execution_binding"].update(runtime_uid=1000, runtime_gid=1000)
     proof_path = outputs / "habitat-sim-smoke.json"
     proof_path.write_text(
         json.dumps(proof, allow_nan=False, indent=2, sort_keys=True) + "\n",
