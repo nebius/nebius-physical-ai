@@ -1229,6 +1229,7 @@ def _download_nurec_proof(client: Any, bucket: str, root: str, local: Path) -> N
             "ncore/sequence/conversion.json",
             "ncore/sequence/npa-rig.json",
             "evidence/ncore-conversion-audit.json",
+            "evidence/nre-runtime.json",
         )
     ]
     for page in client.get_paginator("list_objects_v2").paginate(
@@ -1306,13 +1307,18 @@ def _assert_nurec_native_receipts(local: Path) -> None:
     def digest(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
+    from npa.workbench.nurec.evidence import validate_runtime_attestation
+
+    runtime = json.loads((local / "evidence/nre-runtime.json").read_text())
+    validate_runtime_attestation(runtime, expected_image=expected_image)
+
     reconstruction = json.loads(
         (local / "reconstruction/reconstruction.json").read_text()
     )
     assert reconstruction["format"] == "npa_nurec_reconstruction_receipt_v1"
     assert reconstruction["status"] == "pass"
     assert reconstruction["nre_image"] == expected_image
-    assert reconstruction["observed_nre_digest"] == expected_image.split("@", 1)[1]
+    assert reconstruction["requested_nre_digest"] == expected_image.split("@", 1)[1]
     assert reconstruction["gpu"] == {
         "count": 1,
         "names": ["NVIDIA RTX PRO 6000 Blackwell Server Edition"],

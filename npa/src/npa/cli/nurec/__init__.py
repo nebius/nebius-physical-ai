@@ -403,6 +403,36 @@ def audit_colmap_cmd(
     _finish_nurec_result(result, output)
 
 
+@app.command("probe-storage")
+@json_stdout_contract
+def probe_storage_cmd(
+    prefix: str = typer.Option(
+        ...,
+        "--prefix",
+        help="Fresh run-owned S3 prefix to probe before image staging or workload.",
+    ),
+    receipt_path: Path = typer.Option(
+        ...,
+        "--receipt-path",
+        help="Fresh private local path for the sanitized capability receipt.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format: text or json."
+    ),
+) -> None:
+    """Prove conditional write, exact read, enumeration, and deletion on S3."""
+    from npa.workbench.nurec.s3_probe import (
+        NcoreS3ProbeError,
+        probe_s3_handoff,
+    )
+
+    try:
+        result = probe_s3_handoff(prefix, receipt_path)
+    except (NcoreS3ProbeError, OSError) as exc:
+        result = {"status": "failed", "error": str(exc)}
+    _finish_nurec_result(result, output)
+
+
 @app.command("fetch")
 def fetch_cmd(
     dataset: str = typer.Option(

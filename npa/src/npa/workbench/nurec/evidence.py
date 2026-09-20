@@ -20,6 +20,42 @@ class NurecEvidenceError(NpaError):
     """A run completed but its objective receipt could not be produced."""
 
 
+def validate_runtime_attestation(
+    payload: Any, *, expected_image: str
+) -> dict[str, Any]:
+    """Validate a sanitized control-plane image-ID and GPU observation."""
+    expected_digest = _requested_digest(expected_image)
+    if not expected_digest:
+        raise NurecEvidenceError("expected NRE image must use an exact digest")
+    if not isinstance(payload, dict) or set(payload) != {
+        "format",
+        "status",
+        "source",
+        "requested_image",
+        "observed_image_digest",
+        "gpu_names",
+        "gpu_count",
+        "resource_identity_sha256",
+    }:
+        raise NurecEvidenceError("runtime attestation has an invalid schema")
+    names = payload.get("gpu_names")
+    identity = payload.get("resource_identity_sha256")
+    if (
+        payload.get("format") != "npa_nurec_runtime_attestation_v1"
+        or payload.get("status") != "pass"
+        or payload.get("source") != "kubernetes_pod_status"
+        or payload.get("requested_image") != expected_image
+        or payload.get("observed_image_digest") != expected_digest
+        or not isinstance(names, list)
+        or names != ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]
+        or payload.get("gpu_count") != 1
+        or not isinstance(identity, str)
+        or re.fullmatch(r"[0-9a-f]{64}", identity) is None
+    ):
+        raise NurecEvidenceError("runtime image or GPU attestation differs")
+    return payload
+
+
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -112,7 +148,7 @@ def _positive_int(value: Any) -> int | None:
     return value if type(value) is int and value > 0 else None
 
 
-def _observed_digest(image: str) -> str:
+def _requested_digest(image: str) -> str:
     match = re.search(r"@(sha256:[0-9a-f]{64})$", image)
     return match.group(1) if match else ""
 
@@ -201,17 +237,24 @@ def write_reconstruction_receipt(
         for record in (parsed_record, metrics_record, usdz_record)
     )
     metrics_complete = all(value is not None for value in required_metrics.values())
+    requested_digest = _requested_digest(nre_image)
+    gpu = _gpu_record(gpu_names)
     receipt = {
         "format": RECONSTRUCTION_RECEIPT_FORMAT,
         "status": (
             "pass"
-            if train_exit_code == 0 and output_complete and metrics_complete
+            if train_exit_code == 0
+            and output_complete
+            and metrics_complete
+            and bool(requested_digest)
+            and gpu["count"] == 1
+            and gpu["all_rt_core_models"]
             else "failed"
         ),
         "engine": "nvidia-nre-3dgut",
         "nre_image": nre_image,
-        "observed_nre_digest": _observed_digest(nre_image),
-        "gpu": _gpu_record(gpu_names),
+        "requested_nre_digest": requested_digest,
+        "gpu": gpu,
         "invocation": {
             "train_exit_code": train_exit_code,
             "command": list(command),
@@ -313,15 +356,24 @@ def write_render_receipt(
     complete = bool(frames) and all(
         item["finite_pixels"] and item["nonuniform"] for item in frames
     )
+    requested_digest = _requested_digest(nre_image)
+    gpu = _gpu_record(gpu_names)
     receipt = {
         "format": RENDER_RECEIPT_FORMAT,
         "status": (
-            "pass" if render_exit_code == 0 and novel_view and complete else "failed"
+            "pass"
+            if render_exit_code == 0
+            and novel_view
+            and complete
+            and bool(requested_digest)
+            and gpu["count"] == 1
+            and gpu["all_rt_core_models"]
+            else "failed"
         ),
         "engine": "nvidia-nre-render",
         "nre_image": nre_image,
-        "observed_nre_digest": _observed_digest(nre_image),
-        "gpu": _gpu_record(gpu_names),
+        "requested_nre_digest": requested_digest,
+        "gpu": gpu,
         "invocation": {
             "render_exit_code": render_exit_code,
             "command": list(command),

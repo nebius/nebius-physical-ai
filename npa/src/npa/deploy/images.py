@@ -506,6 +506,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     )
     for field in (
         "report_sha256",
+        "audit_sha256",
         "source_archive_sha256",
         "source_inventory_sha256",
         "converted_inventory_sha256",
@@ -546,9 +547,11 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     proof = record(payload, "rtx_proof")
     equal(proof, "status", "pass")
     equal(proof, "conversion_report_sha256", conversion["report_sha256"])
+    equal(proof, "conversion_audit_sha256", conversion["audit_sha256"])
     equal(proof, "converted_inventory_sha256", conversion["converted_inventory_sha256"])
     equal(proof, "nre_image", NCORE_ACCEPTED_NRE_IMAGE)
     equal(proof, "observed_nre_digest", proof["nre_image"].split("@", 1)[1])
+    match(proof, "runtime_image_attestation_sha256", r"[0-9a-f]{64}")
     equal(proof, "gpu_model", "NVIDIA RTX PRO 6000 Blackwell Server Edition")
     equal(proof, "gpu_count", 1)
     # Zero means NRE's full native recipe, not a zero-epoch training workload.

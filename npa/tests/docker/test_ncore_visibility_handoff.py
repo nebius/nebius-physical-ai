@@ -67,7 +67,12 @@ def publication(private, publication_umask):
             "status": "pass",
             "source_sha": SHA,
             "image_digest": digest,
+            "platform_digest": graph["image_manifest_digest"],
+            "config_digest": graph["image_config_digest"],
             "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": process.file_sha(
+                args.output_dir / "evidence-manifest.json"
+            ),
             "release_acceptance": False,
         },
     )

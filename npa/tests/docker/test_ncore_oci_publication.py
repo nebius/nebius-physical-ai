@@ -473,9 +473,12 @@ def test_publication_cannot_transfer_quarantined_bytes_without_acceptance(
     )
     with pytest.raises(RuntimeError, match="unaccepted"):
         cli._check_or_publish(args)
-    assert json.loads((args.output_dir / "prepublication.json").read_text())[
-        "image_digest"
-    ] == build["image_digest"]
+    assert (
+        json.loads((args.output_dir / "prepublication.json").read_text())[
+            "image_digest"
+        ]
+        == build["image_digest"]
+    )
 
 
 def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
@@ -484,25 +487,38 @@ def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
         "image_config_digest": "sha256:" + "d" * 64,
     }
     build = {"image_digest": "sha256:" + "b" * 64, "archive_sha256": "e" * 64}
+    evidence_manifest_sha256 = "f" * 64
     accepted = {
         "development_sha": SHA,
         "oci_digest": build["image_digest"],
         "amd64_manifest": graph["image_manifest_digest"],
         "config_digest": graph["image_config_digest"],
-        "prepublication": {"archive_sha256": build["archive_sha256"]},
+        "prepublication": {
+            "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": evidence_manifest_sha256,
+        },
     }
     monkeypatch.setattr(
         cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
     )
-    assert cli._require_accepted_publication(SHA, build, graph)["oci_digest"] == build[
-        "image_digest"
-    ]
+    assert (
+        cli._require_accepted_publication(SHA, build, graph, evidence_manifest_sha256)[
+            "oci_digest"
+        ]
+        == build["image_digest"]
+    )
     accepted["development_sha"] = "f" * 40
     monkeypatch.setattr(
         cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
     )
     with pytest.raises(ValueError, match="does_not_match"):
-        cli._require_accepted_publication(SHA, build, graph)
+        cli._require_accepted_publication(SHA, build, graph, evidence_manifest_sha256)
+    accepted["development_sha"] = SHA
+    monkeypatch.setattr(
+        cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
+    )
+    with pytest.raises(ValueError, match="does_not_match"):
+        cli._require_accepted_publication(SHA, build, graph, "0" * 64)
 
 
 def test_gate_evidence_manifest_binds_every_existing_gate_artifact(private):

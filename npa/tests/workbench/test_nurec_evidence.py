@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 from npa.workbench.nurec import evidence
 
@@ -12,6 +13,31 @@ NRE_IMAGE = (
     "nvcr.io/nvidia/nre/nre-ga@"
     "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
 )
+
+
+def _runtime_attestation() -> dict:
+    return {
+        "format": "npa_nurec_runtime_attestation_v1",
+        "status": "pass",
+        "source": "kubernetes_pod_status",
+        "requested_image": NRE_IMAGE,
+        "observed_image_digest": NRE_IMAGE.split("@", 1)[1],
+        "gpu_names": ["NVIDIA RTX PRO 6000 Blackwell Server Edition"],
+        "gpu_count": 1,
+        "resource_identity_sha256": "a" * 64,
+    }
+
+
+def test_runtime_attestation_requires_control_plane_digest_and_exact_gpu() -> None:
+    payload = _runtime_attestation()
+    assert (
+        evidence.validate_runtime_attestation(payload, expected_image=NRE_IMAGE)
+        == payload
+    )
+
+    payload["observed_image_digest"] = "sha256:" + "0" * 64
+    with pytest.raises(evidence.NurecEvidenceError):
+        evidence.validate_runtime_attestation(payload, expected_image=NRE_IMAGE)
 
 
 def _sequence(tmp_path: Path) -> Path:
@@ -62,7 +88,7 @@ def test_reconstruction_receipt_binds_real_input_recipe_and_outputs(
     )
 
     assert receipt["status"] == "pass"
-    assert receipt["observed_nre_digest"] == NRE_IMAGE.split("@", 1)[1]
+    assert receipt["requested_nre_digest"] == NRE_IMAGE.split("@", 1)[1]
     assert receipt["gpu"] == {
         "count": 1,
         "names": ["NVIDIA RTX PRO 6000 Blackwell Server Edition"],
@@ -99,6 +125,39 @@ def test_reconstruction_receipt_does_not_promote_missing_metrics(
 
     assert receipt["status"] == "failed"
     assert receipt["observed_metrics"]["test/psnr"] is None
+
+
+def test_reconstruction_receipt_rejects_unobserved_gpu_or_mutable_image(
+    tmp_path: Path,
+) -> None:
+    meta = _sequence(tmp_path)
+    parsed = tmp_path / "parsed.yaml"
+    parsed.write_text(
+        "trainer:\n  max_epochs: 1\ndataset:\n  samples_per_epoch: 30000\n"
+    )
+    metrics = tmp_path / "metrics.yaml"
+    metrics.write_text("test: {psnr: 24.5, ssim: 0.8, lpips: 0.2}\n")
+    usdz = tmp_path / "last.usdz"
+    usdz.write_bytes(b"usdz")
+
+    receipt = evidence.write_reconstruction_receipt(
+        receipt_path=tmp_path / "identity-failed.json",
+        ncore_json=meta,
+        nre_image="nvcr.io/nvidia/nre/nre-ga:26.04",
+        config_name="configs/experimental/3dgut/3dgut_colmap.yaml",
+        mode="trainval",
+        max_epochs_argument=0,
+        command=["/app/run"],
+        train_exit_code=0,
+        parsed_config_path=parsed,
+        metrics_path=metrics,
+        usdz_path=usdz,
+        metrics={"test/psnr": 24.5, "test/ssim": 0.8, "test/lpips": 0.2},
+    )
+
+    assert receipt["status"] == "failed"
+    assert receipt["requested_nre_digest"] == ""
+    assert receipt["gpu"]["count"] == 0
 
 
 def _rgb(path: Path, *, uniform: bool = False) -> None:

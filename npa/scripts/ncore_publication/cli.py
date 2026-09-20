@@ -416,6 +416,7 @@ def _check_or_publish(args):
             args.source_sha,
             build,
             graph,
+            file_sha(evidence_manifest),
         )
         transfer = args.output_dir / "transfer"
         transfer.mkdir(mode=0o700)
@@ -462,7 +463,7 @@ def _gate_evidence_manifest(directory, source_sha, build, graph):
     return output
 
 
-def _require_accepted_publication(source_sha, build, graph):
+def _require_accepted_publication(source_sha, build, graph, evidence_manifest_sha256):
     """Refuse every registry write until exact workload acceptance is committed."""
     accepted = images.ncore_accepted_image_manifest()
     expected = {
@@ -473,7 +474,9 @@ def _require_accepted_publication(source_sha, build, graph):
     }
     W.require(
         all(accepted.get(name) == value for name, value in expected.items())
-        and accepted["prepublication"]["archive_sha256"] == build["archive_sha256"],
+        and accepted["prepublication"]["archive_sha256"] == build["archive_sha256"]
+        and accepted["prepublication"]["evidence_manifest_sha256"]
+        == evidence_manifest_sha256,
         "accepted_ncore_evidence_does_not_match_candidate",
     )
     return accepted

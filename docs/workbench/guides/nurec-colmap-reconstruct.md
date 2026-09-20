@@ -134,7 +134,9 @@ decoded component counts, and exported PLY hash. An image digest in the runtime
 configuration binds this evidence to that image; a version tag alone does not.
 The stage also publishes `reconstruction/reconstruction.json`, which hashes the
 exact NCore member inventory, parsed config, native metrics and USDZ and records
-the observed GPU and NRE digest. Rendering publishes
+the `nvidia-smi` GPU observation and requested exact NRE digest. The acceptance
+tuple separately requires a control-plane runtime image-ID attestation; a digest
+parsed from the request is not mislabeled as observed execution identity. Rendering publishes
 `novel_views/nre-render.json`, which binds the same USDZ, the nonzero offset and
 every independently decoded frame hash. These are workload receipts, not a
 substitute for reopening the USDZ, render tree and RRD after S3 read-back.
@@ -168,6 +170,19 @@ Stage the original archive at a configurable S3 object, retaining its dataset
 source, revision, CC-BY-4.0 attribution and any transformation description
 beside the run. Alternatively, the live matrix below performs pinned source
 staging and writes `source/attribution.json` automatically.
+
+Before staging an image or source, prove that the fresh run prefix supports the
+operations the workflow needs. The probe conditionally creates one random
+object, reads and hashes it, verifies a second create cannot overwrite it,
+enumerates the exact object, deletes it, and proves absence. Its private receipt
+contains only hashes, counts, and dispositions:
+
+```bash
+npa workbench nurec probe-storage \
+  --prefix 's3://<bucket>/<fresh-run-prefix>/' \
+  --receipt-path '<private-evidence>/s3-handoff-probe.json' \
+  --output json
+```
 
 The converter image fetches its immutable, hash-locked Python dependencies on
 first use. Downloads require no artificial credential gate. A writable cache

@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.workbench.nurec import colmap, ncore_audit
+from npa.workbench.nurec import colmap, ncore_audit, s3_probe
 
 
 @pytest.mark.parametrize("has_unrelated_file", [False, True])
@@ -86,6 +86,38 @@ def test_colmap_audit_help_and_json_contract(monkeypatch):
         "--scratch-dir",
     ):
         assert flag in help_result.output
+
+
+def test_storage_probe_cli_uses_fresh_prefix_and_private_receipt(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(
+        s3_probe,
+        "probe_s3_handoff",
+        lambda prefix, receipt: (
+            seen.append((prefix, receipt))
+            or {"status": "ok", "conditional_nonoverwrite_rejected": True}
+        ),
+    )
+    receipt = tmp_path / "probe.json"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            "probe-storage",
+            "--prefix",
+            "s3://example-bucket/run-owned/future/",
+            "--receipt-path",
+            str(receipt),
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["status"] == "ok"
+    assert seen == [("s3://example-bucket/run-owned/future/", receipt)]
 
 
 def test_cli_json_contract_and_shared_request(monkeypatch):

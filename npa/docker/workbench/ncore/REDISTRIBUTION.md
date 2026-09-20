@@ -235,11 +235,12 @@ image/calibration/pose/point decoding from an enumerated immutable S3 handoff,
 and the existing NRE RTX consumer. Quarantine, immutable image override and
 anonymous digest pullability requirements remain unchanged.
 
-The acceptance record also binds source camera/frame inventories to native NRE
-loaded-frame counts, eligible training/validation splits, the resolved config,
-and the exact native recipe. These inventories describe available and eligible
-inputs; they do not invent a trace of randomly sampled training frames. The
-selected recipe's complete execution must be observed independently. Its RRD
-evidence must bind decoded frames and lineage to this conversion and the actual
-render artifacts. Missing cameras, unexplained frame loss, reduced recipe
-settings, and substituted or undecodable recordings cannot establish acceptance.
+The acceptance record binds the complete source camera/frame inventory to the
+exact NCore sequence passed to NRE, the resolved config, and the native recipe.
+NRE does not expose train/validation member identities or a random-sampler
+trace, so acceptance explicitly records `sampling_claim=not_asserted` and makes
+no per-frame training-participation claim. The selected recipe's complete
+execution must be observed independently. Its RRD evidence must bind decoded
+frames and lineage to this conversion and the actual render artifacts. Missing
+cameras, unexplained input loss, reduced recipe settings, and substituted or
+undecodable recordings cannot establish acceptance.

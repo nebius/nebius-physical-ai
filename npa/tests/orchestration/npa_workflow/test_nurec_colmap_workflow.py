@@ -485,6 +485,20 @@ def _write_native_receipts(root):
         "sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
     )
     gpu = ["NVIDIA RTX PRO 6000 Blackwell Server Edition"]
+    _write_proof_document(
+        root,
+        "evidence/nre-runtime.json",
+        {
+            "format": "npa_nurec_runtime_attestation_v1",
+            "status": "pass",
+            "source": "kubernetes_pod_status",
+            "requested_image": image,
+            "observed_image_digest": image.split("@", 1)[1],
+            "gpu_names": gpu,
+            "gpu_count": 1,
+            "resource_identity_sha256": "a" * 64,
+        },
+    )
     metrics = root / "reconstruction/metrics.yaml"
     usdz = root / "reconstruction/last.usdz"
     write_reconstruction_receipt(
@@ -775,6 +789,7 @@ def test_live_entrypoint_reads_published_bodies_through_real_decoders(
         "reconstruction/metrics.yaml",
         "reconstruction/reconstruction.json",
         "novel_views/nre-render.json",
+        "evidence/nre-runtime.json",
         "reports/sim2real.rrd",
         "novel_views/camera1/000001.png",
         "novel_views/camera2/000001.png",
@@ -790,6 +805,7 @@ def test_live_entrypoint_reads_published_bodies_through_real_decoders(
         "reconstruction/parsed.yaml",
         "reconstruction/reconstruction.json",
         "novel_views/nre-render.json",
+        "evidence/nre-runtime.json",
         "reports/sim2real.rrd",
     ],
 )

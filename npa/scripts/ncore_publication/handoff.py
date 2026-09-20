@@ -14,6 +14,7 @@ _ACTION = (
 )
 _GATE_FILES = (
     "prepublication.json",
+    "evidence-manifest.json",
     "graph.json",
     "source-guards.json",
     "source-guards-snapshot.json",
@@ -146,7 +147,7 @@ def graph_blobs(graph, digest):
     return rows
 
 
-def _evidence(args, directory, build, verification):
+def _evidence(args, directory, build, graph, verification):
     files = {name: directory.parent / name for name in _GATE_FILES}
     files.update(
         {
@@ -175,7 +176,10 @@ def _evidence(args, directory, build, verification):
             "status": "pass",
             "source_sha": build["source_sha"],
             "image_digest": build["image_digest"],
+            "platform_digest": graph["image_manifest_digest"],
+            "config_digest": graph["image_config_digest"],
             "archive_sha256": build["archive_sha256"],
+            "evidence_manifest_sha256": bindings["evidence-manifest.json"]["sha256"],
             "release_acceptance": False,
         },
         "ncore_handoff_prepublication_required",
@@ -234,7 +238,7 @@ def require_administrator(args, directory, build, graph, verification, inventory
 
     source, digest = _build_identity(args, build, graph, verification)
     blobs = graph_blobs(graph, digest)
-    evidence = _evidence(args, directory, build, verification)
+    evidence = _evidence(args, directory, build, graph, verification)
     artifact.assert_unchanged(args.analysis_root / "build/image.oci.tar", verification)
     receipt = {
         "schema": "npa.ncore.visibility-admin-handoff.v1",

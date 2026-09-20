@@ -107,6 +107,7 @@ Every stage is a real command; nothing here is a manifest stub.
 
 ```bash
 npa workbench nurec check       # NGC pullability + HF download rights + RT-core GPU
+npa workbench nurec probe-storage # S3 conditional write/read/list/delete preflight
 npa workbench nurec convert-colmap # CPU: official Apache-2.0 COLMAP -> NCore V4
 npa workbench nurec audit-colmap # CPU: independent post-S3 object/V4 read-back
 npa workbench nurec fetch       # real NCore V4 shards + derived rig pose edge
@@ -273,8 +274,10 @@ selected cameras, count, and recipe/image identity. Native `parsed.yaml` records
 effective configuration, while USDZ `data_info.json` is input sequence metadata.
 Retain `reconstruction/reconstruction.json` and
 `novel_views/nre-render.json`; they bind the exact input member inventory,
-digest-pinned NRE invocation, observed RT-core GPU, resolved recipe, metrics,
+requested digest-pinned NRE invocation, observed RT-core GPU, resolved recipe, metrics,
 USDZ and independently decoded render bytes.
+Acceptance also needs a separate control-plane image-ID attestation matching
+that digest; the requested image string is not an observation of runtime bytes.
 Available frames and exported ground truth do not establish split membership or
 actual sampled training frames. Require separate native split/sampler evidence
 before claiming that every source image participated in training. The COLMAP
