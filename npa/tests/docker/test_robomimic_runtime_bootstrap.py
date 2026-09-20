@@ -1812,6 +1812,46 @@ def test_fetched_record_tree_rejects_duplicate_members(tmp_path: Path) -> None:
         verifier._verify_fetched_record_tree(stage, {"demo": {"version": "1.0"}})
 
 
+def test_fetched_record_tree_accepts_pip_console_script_relocation(
+    tmp_path: Path,
+) -> None:
+    stage = tmp_path / "site-packages"
+    dist = stage / "demo-1.0.dist-info"
+    dist.mkdir(parents=True)
+    script = stage / "bin/demo"
+    script.parent.mkdir()
+    script.write_text("#!/usr/bin/python\n", encoding="utf-8")
+    metadata_path = dist / "METADATA"
+    metadata_path.write_text("Name: demo\nVersion: 1.0\n", encoding="utf-8")
+    rows = []
+    for relative, path in (
+        ("../../bin/demo", script),
+        ("demo-1.0.dist-info/METADATA", metadata_path),
+    ):
+        digest = base64.urlsafe_b64encode(hashlib.sha256(path.read_bytes()).digest())
+        rows.append(
+            f"{relative},sha256={digest.decode().rstrip('=')},{path.stat().st_size}"
+        )
+    rows.append("demo-1.0.dist-info/RECORD,,")
+    (dist / "RECORD").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    assert (
+        verifier._verify_fetched_record_tree(stage, {"demo": {"version": "1.0"}}) == 1
+    )
+
+
+@pytest.mark.parametrize(
+    "relative", ["../../../bin/demo", "../../other/demo", "../../bin/../demo"]
+)
+def test_fetched_record_tree_rejects_unmodeled_script_relocation(
+    tmp_path: Path, relative: str
+) -> None:
+    stage = tmp_path / "site-packages"
+    record = stage / "demo-1.0.dist-info/RECORD"
+    record.parent.mkdir(parents=True)
+    with pytest.raises(verifier.VerificationError, match="unsafe|escapes"):
+        verifier._record_member_path(stage, record, relative)
+
+
 def test_fetched_record_tree_rejects_unrecorded_member(tmp_path: Path) -> None:
     stage = tmp_path / "site-packages"
     dist = stage / "demo-1.0.dist-info"

@@ -1388,6 +1388,23 @@ def _installed_member_path(value: str) -> str:
     return value
 
 
+def _record_member_path(stage: Path, record_path: Path, value: str) -> tuple[str, Path]:
+    """Resolve a RECORD member while allowing only pip's script relocation."""
+    parts = PurePosixPath(value).parts
+    if len(parts) >= 4 and parts[:3] == ("..", "..", "bin"):
+        if any(part in {"", ".", ".."} for part in parts[3:]):
+            raise VerificationError("unsafe installed RECORD member")
+        canonical = PurePosixPath("bin", *parts[3:]).as_posix()
+    else:
+        canonical = _installed_member_path(value)
+    target = stage / canonical
+    try:
+        target.relative_to(stage)
+    except ValueError as exc:
+        raise VerificationError("installed RECORD member escapes stage") from exc
+    return canonical, target
+
+
 def _file_identity(raw: bytes, executable: bool = False) -> dict[str, Any]:
     return {
         "type": "file",
@@ -2498,13 +2515,14 @@ def _verify_fetched_record_rows(stage: Path, record_path: Path) -> set[str]:
         relative, digest_value, size_value = row
         if relative in seen:
             raise VerificationError("fetched distribution RECORD has duplicate members")
-        seen.add(relative)
-        _installed_member_path(relative)
-        member = stage / relative
+        canonical, member = _record_member_path(stage, record_path, relative)
+        if canonical in seen:
+            raise VerificationError("fetched distribution RECORD has duplicate members")
+        seen.add(canonical)
         if not member.is_file() or member.is_symlink():
             raise VerificationError("fetched RECORD member is not regular")
         raw = member.read_bytes()
-        if relative == record_name:
+        if canonical == record_name:
             if digest_value or size_value:
                 raise VerificationError("fetched RECORD self-row is hashed")
         elif _fetched_record_digest(digest_value) != hashlib.sha256(
