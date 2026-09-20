@@ -1002,7 +1002,7 @@ def _benchmark_case(
 
 def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() -> None:
     results = [
-        _benchmark_case("tp", expected_label=True, predicted_label=True),
+        _benchmark_case("tp-a", expected_label=True, predicted_label=True),
         _benchmark_case(
             "mismatched-run-negative",
             expected_label=False,
@@ -1011,29 +1011,33 @@ def test_benchmark_metrics_expose_ordered_false_positive_and_negative_cases() ->
         _benchmark_case(
             "missing-outcome-a", expected_label=True, predicted_label=False
         ),
-        _benchmark_case("tn", expected_label=False, predicted_label=False),
-        _benchmark_case("other-fp", expected_label=False, predicted_label=True),
+        _benchmark_case("tn-a", expected_label=False, predicted_label=False),
+        _benchmark_case("tp-b", expected_label=True, predicted_label=True),
+        _benchmark_case("tn-b", expected_label=False, predicted_label=False),
         _benchmark_case(
             "missing-outcome-b", expected_label=True, predicted_label=False
         ),
+        _benchmark_case("tn-c", expected_label=False, predicted_label=False),
     ]
 
     metrics = vlm_eval._benchmark_metrics(results)
 
-    assert metrics.false_positive_item_ids == (
-        "mismatched-run-negative",
-        "other-fp",
-    )
+    assert metrics.false_positive_item_ids == ("mismatched-run-negative",)
     assert metrics.false_negative_item_ids == (
         "missing-outcome-a",
         "missing-outcome-b",
     )
     assert asdict(metrics.confusion_matrix) == {
-        "actual_positive": {"predicted_positive": 1, "predicted_negative": 2},
-        "actual_negative": {"predicted_positive": 2, "predicted_negative": 1},
+        "actual_positive": {"predicted_positive": 2, "predicted_negative": 2},
+        "actual_negative": {"predicted_positive": 1, "predicted_negative": 3},
     }
-    assert metrics.false_positive_rate == pytest.approx(2 / 3, abs=0.0001)
-    assert metrics.false_negative_rate == pytest.approx(2 / 3, abs=0.0001)
+    matrix = metrics.confusion_matrix
+    assert matrix.actual_positive.predicted_positive == metrics.true_positives == 2
+    assert matrix.actual_positive.predicted_negative == metrics.false_negatives == 2
+    assert matrix.actual_negative.predicted_positive == metrics.false_positives == 1
+    assert matrix.actual_negative.predicted_negative == metrics.true_negatives == 3
+    assert metrics.false_positive_rate == 0.25
+    assert metrics.false_negative_rate == 0.5
     assert (
         sum(asdict(metrics.confusion_matrix)["actual_positive"].values())
         + sum(asdict(metrics.confusion_matrix)["actual_negative"].values())
@@ -1082,7 +1086,7 @@ def test_legacy_benchmark_metrics_constructor_keeps_additive_defaults() -> None:
     assert metrics.false_negative_item_ids == ()
 
 
-def test_legacy_benchmark_report_constructor_gets_current_schema_default() -> None:
+def test_legacy_benchmark_report_constructor_keeps_legacy_schema_default() -> None:
     config = vlm_eval.VlmBenchmarkConfig(
         backend="stub",
         model="fixture-model",
@@ -1111,7 +1115,7 @@ def test_legacy_benchmark_report_constructor_gets_current_schema_default() -> No
         ranked_configs=[result],
     )
 
-    assert report.schema_version == "npa_vlm_eval_benchmark_report_v2"
+    assert report.schema_version == "npa_vlm_eval_benchmark_report_v1"
 
 
 def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:

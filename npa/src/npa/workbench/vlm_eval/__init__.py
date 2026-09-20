@@ -61,6 +61,7 @@ LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
 JUDGE_COMPARISON_RESULT_FILENAME = "vlm_judge_disagreement.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
+LEGACY_BENCHMARK_REPORT_SCHEMA_VERSION = "npa_vlm_eval_benchmark_report_v1"
 BENCHMARK_REPORT_SCHEMA_VERSION = "npa_vlm_eval_benchmark_report_v2"
 EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v2"
 JUDGE_COMPARISON_SCHEMA_VERSION = "npa_vlm_judge_comparison_v1"
@@ -460,12 +461,26 @@ class VlmBenchmarkConfig:
 
 @dataclass(frozen=True)
 class VlmBenchmarkConfusionRow:
+    """Store predicted-label counts for one actual-label class.
+
+    Args:
+        predicted_positive: Cases predicted as passing.
+        predicted_negative: Cases predicted as failing.
+    """
+
     predicted_positive: int
     predicted_negative: int
 
 
 @dataclass(frozen=True)
 class VlmBenchmarkConfusionMatrix:
+    """Store the complete actual-by-predicted 2x2 benchmark matrix.
+
+    Args:
+        actual_positive: Prediction counts for positive labeled examples.
+        actual_negative: Prediction counts for negative labeled examples.
+    """
+
     actual_positive: VlmBenchmarkConfusionRow
     actual_negative: VlmBenchmarkConfusionRow
 
@@ -526,7 +541,7 @@ class VlmBenchmarkReport:
     sweep: dict[str, Any]
     best_config: VlmBenchmarkConfigResult
     ranked_configs: list[VlmBenchmarkConfigResult]
-    schema_version: str = BENCHMARK_REPORT_SCHEMA_VERSION
+    schema_version: str = LEGACY_BENCHMARK_REPORT_SCHEMA_VERSION
 
 
 __all__ = [
