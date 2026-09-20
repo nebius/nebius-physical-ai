@@ -427,9 +427,7 @@ def test_cluster_fails_when_only_cordoned_nodes_have_gpus() -> None:
                 {
                     "spec": {"unschedulable": True},
                     "status": {"allocatable": {"nvidia.com/gpu": "8"}},
-                    "metadata": {
-                        "labels": {"nvidia.com/gpu.product": "TEST-GPU-A"}
-                    },
+                    "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-A"}},
                 }
             ]
         }
