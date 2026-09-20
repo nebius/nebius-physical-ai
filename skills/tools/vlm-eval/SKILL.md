@@ -62,12 +62,15 @@ URIs. Keep the whole result private because the existing task and provider
 rationale can still describe operator data.
 
 `evidence: null` means no provider call occurred, as with `stub` or `--score`.
-It cannot support a visual claim. Provider refusal, truncation, filtering,
-malformed JSON, or canonical model mismatch is an error rather than a score.
-One complete JSON object wrapped only in a Markdown JSON fence is transport
-de-framed; its retained parser version ends in `+markdown-fence-v1`. Do not
-accept surrounding prose, trailing output, duplicate keys, invalid types, or a
-partial fence.
+It cannot support a visual claim. On the hosted API path, provider refusal,
+truncation, filtering, malformed JSON, or canonical model mismatch is an error
+rather than a score. That strict parser de-frames one complete JSON object
+wrapped only in a Markdown JSON fence and records `+markdown-fence-v1`; it
+rejects surrounding prose, trailing output, duplicate keys, invalid types, and
+partial fences. The self-hosted path retains its older compatibility parser,
+which can extract an object from surrounding text, uses the last duplicate key,
+and coerces compatible score and `success` values. Use the retained parser
+version to distinguish those contracts.
 This evidence proves judge traceability, not physical correctness or safety.
 
 `passed` and `status` come only from `score >= success_threshold`. The model's

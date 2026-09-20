@@ -31,12 +31,15 @@ response and existing task fields can describe operator data.
 `stub` results and `--score` overrides do not contain provider evidence. They are
 wiring checks, never visual proof. Real `benchmark` reports retain the evidence
 for every case so calibration failures and model disagreement remain inspectable.
-If a model wraps one complete JSON object in a single Markdown JSON fence, the
-parser removes only that transport wrapper and appends `+markdown-fence-v1` to
-the retained parser version. Prefixes, suffixes, duplicate keys, non-finite
-numbers, invalid types, and partial output still fail rather than being repaired.
-None of these fields turns a visual judgment into objective task, geometry,
-collision, or safety evidence.
+The hosted API parser removes a single Markdown JSON fence around one complete
+object and appends `+markdown-fence-v1` to the retained parser version.
+Prefixes, suffixes, duplicate keys, non-finite numbers, invalid types, and
+partial output fail on that strict path. The self-hosted parser deliberately
+keeps its older compatibility behavior: it can extract an object from
+surrounding text, uses the last duplicate key, and coerces compatible score and
+`success` values. Retained parser versions distinguish these paths. None of
+these fields turns a visual judgment into objective task, geometry, collision,
+or safety evidence.
 
 The serialized result retains the effective `rubric`, so the exact prompt can
 be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
