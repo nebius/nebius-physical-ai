@@ -172,9 +172,7 @@ def test_result_uri_uses_neutral_default_and_preserves_explicit_json() -> None:
     assert vlm_eval.result_uri_for("s3://bucket/scores/") == (
         "s3://bucket/scores/vlm_eval.json"
     )
-    assert vlm_eval.result_uri_for("/tmp/custom-result.json") == (
-        "/tmp/custom-result.json"
-    )
+    assert vlm_eval.result_uri_for("custom-result.json") == "custom-result.json"
     assert vlm_eval.RESULT_FILENAME == "vlm_eval.json"
     assert vlm_eval.LEGACY_RESULT_FILENAME == "vlm_eval_stub.json"
 
