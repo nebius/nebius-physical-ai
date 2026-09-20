@@ -614,8 +614,20 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
                 "for some accelerators is zero by default."
             ),
         )
-    requested_product = config.k8s_gpu_product
-    if requested_product:
+    # The workflow itself falls back through k8s_gpu_candidates when the
+    # primary k8s_gpu_product is unavailable (see gpu_fallback.py), so the
+    # preflight must accept any of them instead of false-failing valid
+    # multi-product configs.
+    requested_products = [
+        product
+        for product in (
+            config.k8s_gpu_product,
+            *getattr(config, "k8s_gpu_candidates", ()),
+        )
+        if product
+    ]
+    if requested_products:
+        wanted = ", ".join(repr(product) for product in requested_products)
         if not gpu_products:
             return CheckResult(
                 name="cluster",
@@ -623,7 +635,7 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
                 summary=(
                     f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
                     "but no nvidia.com/gpu.product labels were detected, so the "
-                    f"requested product {requested_product!r} could not be verified."
+                    f"requested product(s) {wanted} could not be verified."
                 ),
                 remedy=(
                     "Ensure the NVIDIA k8s-device-plugin labels GPU nodes with "
@@ -631,19 +643,20 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
                     "sim2real config to skip product matching."
                 ),
             )
-        if requested_product not in gpu_products:
+        matched = [product for product in requested_products if product in gpu_products]
+        if not matched:
             available = ", ".join(sorted(gpu_products))
             return CheckResult(
                 name="cluster",
                 status=FAIL,
                 summary=(
                     f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
-                    f"but none match the requested product {requested_product!r}."
+                    f"but none match the requested product(s) {wanted}."
                 ),
                 remedy=(
-                    f"Available GPU products: {available}. Update k8s_gpu_product in "
-                    "the sim2real config to match, or provision nodes with the "
-                    "requested accelerator."
+                    f"Available GPU products: {available}. Update k8s_gpu_product "
+                    "or k8s_gpu_candidates in the sim2real config to match, or "
+                    "provision nodes with a requested accelerator."
                 ),
             )
     return CheckResult(
@@ -668,7 +681,13 @@ def _count_schedulable_gpus(
     items = payload.get("items") or []
     total = 0
     products: set[str] = set()
+    cordoned = 0
     for node in items:
+        # Cordoned nodes accept no new pods: their GPUs are not schedulable
+        # capacity and must not satisfy the preflight.
+        if (node.get("spec") or {}).get("unschedulable"):
+            cordoned += 1
+            continue
         allocatable = (node.get("status") or {}).get("allocatable") or {}
         raw = allocatable.get(gpu_resource)
         if raw is None:
@@ -681,7 +700,7 @@ def _count_schedulable_gpus(
         product = labels.get("nvidia.com/gpu.product")
         if product:
             products.add(product)
-    return (len(items), total, products)
+    return (len(items) - cordoned, total, products)
 
 
 # Orchestration -------------------------------------------------------------

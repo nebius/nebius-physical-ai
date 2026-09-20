@@ -372,6 +372,76 @@ def test_count_schedulable_gpus_extracts_product_labels() -> None:
     assert products == {"TEST-GPU-A", "TEST-GPU-B"}
 
 
+def test_cluster_passes_when_candidate_product_matches() -> None:
+    # The workflow falls back through k8s_gpu_candidates (gpu_fallback.py);
+    # the preflight must not false-fail when the primary product is absent
+    # but a candidate is present.
+    nodes = _kube_nodes_mixed([(8, "TEST-GPU-B")])
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A", k8s_gpu_candidates=("TEST-GPU-B",)),
+        probes=DoctorProbes(kube_runner=_cluster_runner(nodes)),
+    )
+    assert result.status == health.PASS
+
+
+def test_cluster_fails_when_no_requested_product_matches() -> None:
+    nodes = _kube_nodes_mixed([(8, "TEST-GPU-C")])
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A", k8s_gpu_candidates=("TEST-GPU-B",)),
+        probes=DoctorProbes(kube_runner=_cluster_runner(nodes)),
+    )
+    assert result.status == health.FAIL
+    assert "TEST-GPU-A" in result.summary
+    assert "TEST-GPU-B" in result.summary
+    assert "TEST-GPU-C" in result.remedy
+
+
+def test_count_schedulable_gpus_skips_cordoned_nodes() -> None:
+    payload = {
+        "items": [
+            {
+                "spec": {"unschedulable": True},
+                "status": {"allocatable": {"nvidia.com/gpu": "8"}},
+                "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-A"}},
+            },
+            {
+                "status": {"allocatable": {"nvidia.com/gpu": "4"}},
+                "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-B"}},
+            },
+            {"status": {"allocatable": {"nvidia.com/gpu": "0"}}},
+        ]
+    }
+    node_count, total, products = health._count_schedulable_gpus(
+        json.dumps(payload), "nvidia.com/gpu"
+    )
+    # The cordoned 8-GPU node contributes nothing: not to the total, not to
+    # the product set, and not to the node count.
+    assert (node_count, total) == (2, 4)
+    assert products == {"TEST-GPU-B"}
+
+
+def test_cluster_fails_when_only_cordoned_nodes_have_gpus() -> None:
+    payload = json.dumps(
+        {
+            "items": [
+                {
+                    "spec": {"unschedulable": True},
+                    "status": {"allocatable": {"nvidia.com/gpu": "8"}},
+                    "metadata": {
+                        "labels": {"nvidia.com/gpu.product": "TEST-GPU-A"}
+                    },
+                }
+            ]
+        }
+    )
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(kube_runner=_cluster_runner(payload)),
+    )
+    assert result.status == health.FAIL
+    assert "0 schedulable" in result.summary
+
+
 def test_cluster_fails_on_unpinned_context() -> None:
     def runner(args):
         if args[:2] == ["config", "current-context"]:
