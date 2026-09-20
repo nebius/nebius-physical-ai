@@ -30,6 +30,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
+    from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 
 app = typer.Typer(
@@ -3121,6 +3122,37 @@ def _resolve_submit_registry(registry: str, project: str) -> str:
     return explicit
 
 
+def _plan_preflight_image_requirements(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+    assume_decision: str,
+) -> tuple[list[str], dict[str, tuple[str, ...]]]:
+    """Plan image and pull-secret requirements across every reachable decision."""
+
+    from npa.orchestration.npa_workflow import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        plan_image_pull_secrets,
+        plan_images,
+    )
+
+    decisions = [str(assume_decision or "").strip()]
+    decisions.extend(
+        str(transition.when or "").strip()
+        for state in spec.states.values()
+        for transition in state.transitions
+    )
+    steps = []
+    for decision in dict.fromkeys(decisions):
+        plan = build_plan(spec, run_id=run_id, assume_decision=decision)
+        steps.extend(plan.steps)
+    return (
+        plan_images(spec, steps, run_id=run_id, options=options),
+        plan_image_pull_secrets(spec, steps, run_id=run_id, options=options),
+    )
+
+
 def _preflight_submit_images(
     yaml_path: Path,
     *,
@@ -3142,12 +3174,7 @@ def _preflight_submit_images(
     if not enabled:
         return {}
 
-    from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.skypilot_render import (
-        plan_image_pull_secrets,
-        plan_images,
-    )
     from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
     from npa.orchestration.skypilot.registry_preflight import (
         check_image_pulls_with_credentials,
@@ -3156,21 +3183,13 @@ def _preflight_submit_images(
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-preflight"
-        decisions = [assume_decision] if assume_decision.strip() else []
-        decisions.extend(
-            transition.when
-            for state in resolved_spec.states.values()
-            for transition in state.transitions
+        images, pull_secrets_by_image = _plan_preflight_image_requirements(
+            resolved_spec,
+            run_id=run_id,
+            options=options,
+            assume_decision=assume_decision,
         )
-        steps = []
-        for decision in dict.fromkeys(decisions):
-            plan = build_plan(resolved_spec, run_id=run_id, assume_decision=decision)
-            steps.extend(plan.steps)
-        images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
-        pull_secrets_by_image = plan_image_pull_secrets(
-            resolved_spec, steps, run_id=run_id, options=options
-        )
-    except NpaWorkflowError:
+    except (NpaWorkflowError, ValueError):
         # Planning problems are reported by the submit path itself with better context.
         return {}
     if not images:
@@ -3199,14 +3218,16 @@ def _preflight_submit_images(
         context=context_from_infra(infra),
         pull_secrets_by_image=pull_secrets_by_image,
         observation_timeout_seconds=image_bootstrap_timeout_seconds,
+        bind_requested_images=True,
     )
     typer.echo(
         f"image-preflight: {len(checks)} image(s) pullable and bootstrap-compatible",
         err=True,
     )
     return {
-        image: str(item.get("image") or "")
-        for image, item in zip(dict.fromkeys(images), contract_checks, strict=True)
+        str(item["_requested_image"]): str(item.get("image") or "")
+        for item in contract_checks
+        if str(item.get("_requested_image") or "").strip()
     }
 
 
@@ -3217,6 +3238,7 @@ def _preflight_image_bootstrap_contracts(
     context: str,
     pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
     observation_timeout_seconds: int = 1800,
+    bind_requested_images: bool = False,
 ) -> list[dict[str, object]]:
     """Verify each selected digest, never a mutable tag, against one contract."""
 
@@ -3354,7 +3376,10 @@ def _preflight_image_bootstrap_contracts(
                 ),
                 err=True,
             )
-        results.append(evidence.to_dict())
+        result = evidence.to_dict()
+        if bind_requested_images:
+            result["_requested_image"] = image
+        results.append(result)
     return results
 
 
@@ -7621,13 +7646,9 @@ def preflight_images_cmd(
     the actual manifest fetch a worker performs.
     """
 
-    from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
-    from npa.orchestration.npa_workflow.skypilot_render import (
-        SkypilotRenderOptions,
-        plan_image_pull_secrets,
-        plan_images,
-    )
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
     from npa.orchestration.skypilot.registry_preflight import (
         check_image_pulls_with_credentials,
     )
@@ -7654,10 +7675,11 @@ def preflight_images_cmd(
     if resolved_registry:
         typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
-    plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
-    images = plan_images(spec, plan.steps, run_id=run_id, options=options)
-    pull_secrets_by_image = plan_image_pull_secrets(
-        spec, plan.steps, run_id=run_id, options=options
+    images, pull_secrets_by_image = _plan_preflight_image_requirements(
+        spec,
+        run_id=run_id,
+        options=options,
+        assume_decision=assume_decision,
     )
     if image_pull_secret:
         explicit = tuple(
@@ -7673,20 +7695,20 @@ def preflight_images_cmd(
         typer.echo("images: none pinned by this spec")
         return
 
+    context = context_from_infra(infra)
     checks = check_image_pulls_with_credentials(
         images,
         mint=True,
         pull_secrets_by_image=pull_secrets_by_image,
+        context=context,
     )
     failed = [check for check in checks if not check.ok]
     contract_checks: list[dict[str, object]] = []
     if not failed:
-        from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
-
         contract_checks = _preflight_image_bootstrap_contracts(
             images=images,
             pull_checks=checks,
-            context=context_from_infra(infra),
+            context=context,
             pull_secrets_by_image=pull_secrets_by_image,
             observation_timeout_seconds=image_bootstrap_timeout_seconds,
         )
