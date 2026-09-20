@@ -156,10 +156,21 @@ def verify_execution_scope(
     target: ExecutionTarget, *, verify_cluster: bool = True
 ) -> dict[str, str]:
     """Read-only ownership checks. A denied/unknown owner never permits S3 writes."""
-    from npa.clients.nebius import get_bucket_by_name, get_project_identity
+    from npa.clients.nebius import (
+        NebiusCliCompatibilityError,
+        get_bucket_by_name,
+        get_project_identity,
+    )
 
     try:
         remote = get_project_identity(target.project_id, tenant_id=target.tenant_id)
+    except NebiusCliCompatibilityError as exc:
+        # A local CLI version mismatch is not an identity fact; its diagnostic is
+        # generated without provider output, so surface it verbatim instead of
+        # masking a fixable tooling problem as an identity/ownership failure.
+        raise ExecutionPreflightError(
+            "nebius_cli", str(exc), status="unknown"
+        ) from exc
     except Exception as exc:
         raise ExecutionPreflightError(
             "scope",
@@ -195,6 +206,10 @@ def verify_execution_scope(
     for bucket in dict.fromkeys(_destination(uri)[0] for uri in target.output_uris):
         try:
             bucket_record = get_bucket_by_name(target.project_id, bucket)
+        except NebiusCliCompatibilityError as exc:
+            raise ExecutionPreflightError(
+                "nebius_cli", str(exc), status="unknown"
+            ) from exc
         except Exception as exc:
             raise ExecutionPreflightError(
                 "storage_owner",

@@ -172,6 +172,28 @@ def test_unknown_or_denied_provider_evidence_fails_closed(provider, monkeypatch,
     assert not provider.s3.calls
 
 
+def test_cli_compatibility_error_is_surfaced_not_masked_as_identity(
+    provider, monkeypatch
+):
+    from npa.clients.nebius import NebiusCliCompatibilityError
+
+    diagnostic = "Unsupported Nebius CLI 0.12.211; NPA has tested 0.12.227, 0.12.254."
+
+    def incompatible(*args, **kwargs):
+        raise NebiusCliCompatibilityError(diagnostic)
+
+    monkeypatch.setattr("npa.clients.nebius.get_project_identity", incompatible)
+    with pytest.raises(ExecutionPreflightError) as caught:
+        verify_execution_target(target())
+    assert caught.value.check == "nebius_cli"
+    assert caught.value.status == "unknown"
+    # The compatibility diagnostic is provider-output-free and actionable, so it
+    # must be surfaced verbatim rather than reported as an identity mismatch.
+    assert diagnostic in str(caught.value)
+    assert "provider project identity" not in str(caught.value)
+    assert not provider.s3.calls
+
+
 @pytest.mark.parametrize(
     "identity",
     [
