@@ -27,13 +27,19 @@ jobs:
           cache-dependency-path: npa/pyproject.toml
 
       - name: Install ruff
-        run: pip install "ruff>=0.4.0"
+        # Pinned: a floating ruff can change format/check behavior with no
+        # repo change and turn CI red repo-wide. Bump deliberately.
+        run: pip install "ruff==0.16.8"
 
       - name: Ruff check (blocking)
         # Same scope as `make lint`. A narrower CI scope let unused imports sit
         # in npa/scripts, npa/examples and npa/docker while the documented
         # contributor command was red.
         run: cd npa && ruff check .
+      - name: Ruff format check (blocking)
+        # Same scope as `make format`. The tree was bulk-formatted once; keep it
+        # that way so formatting drift is caught on PRs.
+        run: cd npa && ruff format --check .
 
   docs-drift:
     # Fail when docs/cli/ is out of date relative to `npa --help`.

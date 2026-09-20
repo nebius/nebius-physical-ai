@@ -568,6 +568,7 @@
       }
       .access-action-run-copy { min-width: 0; overflow-wrap: anywhere; }
       .access-errors { margin-top: 8px; color: var(--danger-text); font-size: 12px; }
+      .access-errors.is-notice { color: var(--muted); }
       @media (max-width: 760px) {
         .access-picker-grid { grid-template-columns: 1fr; }
         .access-capabilities { grid-template-columns: 1fr; }
@@ -1379,6 +1380,21 @@
         cursor: pointer;
       }
       .msg-copy-btn:hover { background: #f5f7ff; }
+      .infra-confirmation-card {
+        width: 100%; box-sizing: border-box;
+        border: 1px solid #b8dba1; border-radius: 10px;
+        background: #f5fbef; color: #244315;
+        padding: 10px 12px;
+      }
+      .infra-confirmation-card strong { display: block; font-size: 13px; }
+      .infra-confirmation-card p { margin: 4px 0 9px; font-size: 12px; line-height: 1.4; }
+      .infra-confirmation-button {
+        border: 1px solid #3d6d1f; border-radius: 7px;
+        background: #4d861f; color: #fff; cursor: pointer;
+        font-size: 12px; font-weight: 800; padding: 7px 10px;
+      }
+      .infra-confirmation-button:hover { background: #3f7119; }
+      .infra-confirmation-button:disabled { cursor: wait; opacity: .7; }
       .msg-row.thinking .bubble {
         min-width: 72px;
         background: var(--thinking-bg);
@@ -2367,9 +2383,11 @@
             <button id="workflowUpload" class="btn" type="button">Upload YAML</button>
             <button id="workflowValidate" class="btn" type="button">Validate</button>
             <button id="workflowPlan" class="btn" type="button">Plan</button>
-            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Submit plan</button>
+            <button id="workflowSubmitYaml" class="btn btn-primary" type="button">Prepare run</button>
           </div>
-          <p class="hint" id="workflowSubmitHint" style="margin-top:8px;">Submit plan = scheduler plan-only. Execute tool steps with operator CLI <code>run-spec --execute</code>.</p>
+          <p class="hint" id="workflowSubmitHint" style="margin-top:8px;">Prepare run validates and plans without launching work. A second, single-use confirmation starts the durable Kubernetes workflow.</p>
+          <div id="workflowExecutionConfirm" class="infra-confirmation-card" style="margin-top:8px;" hidden></div>
+          <div id="workflowExecutionStatus" class="infra-confirmation-card" style="margin-top:8px;" aria-live="polite" hidden></div>
           <div id="workflowPlanHost" class="plan-host" hidden></div>
           <pre id="workflowPlanOutput" class="hint" style="margin-top:8px; white-space:pre-wrap;"></pre>
         </section>
@@ -2745,6 +2763,15 @@
       let chatSessionSelectionGeneration = 0;
       let chatSessionMutationGeneration = 0;
       let chatSessionMutationQueue = Promise.resolve();
+      let chatSessionBootstrapResolver = null;
+      const chatSessionBootstrap = new Promise((resolve) => {
+        chatSessionBootstrapResolver = resolve;
+      });
+      function resolveChatSessionBootstrap() {
+        const resolve = chatSessionBootstrapResolver;
+        chatSessionBootstrapResolver = null;
+        if (resolve) resolve();
+      }
       const chatSessionSnapshotGenerations = new WeakMap();
       let chatSendInFlight = false;
       const chatQueue = [];
@@ -7375,9 +7402,18 @@
         }
         const errors = Array.isArray(report && report.errors) ? report.errors : [];
         if (errorsHost) {
-          errorsHost.textContent = errors.length
-            ? errors.map((item) => String((item && item.message) || "Access probe unavailable.")).join(" ")
-            : "";
+          const tenantListingOnly = errors.length > 0 && errors.every((item) =>
+            String((item && item.scope) || "") === "list tenant projects" &&
+            String((item && item.code) || "") === "permission_denied"
+          );
+          const limitedDiscovery = tenantListingOnly && String((report && report.status) || "") === "partial" &&
+            projects.length > 0 && resourceCount > 0;
+          errorsHost.classList.toggle("is-notice", limitedDiscovery);
+          errorsHost.textContent = limitedDiscovery
+            ? "Tenant-wide project listing is restricted. The available project resources above remain usable."
+            : errors.length
+              ? errors.map((item) => String((item && item.message) || "Access probe unavailable.")).join(" ")
+              : "";
         }
       }
       async function refreshAccess(force) {
@@ -7668,7 +7704,7 @@
         bindClick("workflowUpload", uploadWorkflowYaml, "Upload workflow YAML");
         bindClick("workflowValidate", validateWorkflowYaml, "Validate workflow YAML");
         bindClick("workflowPlan", planWorkflowYaml, "Plan workflow YAML");
-        bindClick("workflowSubmitYaml", submitWorkflowYaml, "Submit workflow YAML");
+        bindClick("workflowSubmitYaml", submitWorkflowYaml, "Prepare workflow run");
         bindClick("agentAccessRefresh", () => refreshAccess(true), "Refresh agent access");
         const accessProjectSelect = document.getElementById("agentAccessProjectSelect");
         if (accessProjectSelect) {
@@ -8192,6 +8228,31 @@
         }
         thinkingNode = null;
       }
+      function renderInfraConfirmation(row, data, context) {
+        const deployment = data && data.infra_deployment;
+        const token = String((data && data.confirm_token) || "");
+        if (!row || !deployment || !data.needs_confirmation || !token) return;
+        const card = row.querySelector(".msg-card");
+        if (!card) return;
+        const panel = document.createElement("div");
+        panel.className = "infra-confirmation-card";
+        panel.innerHTML = "<strong>Ready for your confirmation</strong><p>No cloud resources have been created. This one-time confirmation starts the configured Kubernetes deployment and validation.</p>";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "infra-confirmation-button";
+        button.textContent = "Confirm deployment";
+        button.addEventListener("click", () => {
+          button.disabled = true;
+          queueChatText(context.requestText, {
+            session_id: context.sessionId,
+            displayText: "Confirm infrastructure deployment",
+            confirm_token: token,
+            restoreInput: false,
+          }).catch(() => { button.disabled = false; });
+        });
+        panel.appendChild(button);
+        card.appendChild(panel);
+      }
       function setChatBusy(isBusy) {
         const btn = document.getElementById("chatSend");
         const input = document.getElementById("chatInput");
@@ -8455,13 +8516,18 @@
       async function submitWorkflowYaml() {
         const yaml = currentWorkflowYaml();
         if (!yaml) throw new Error("Paste or generate workflow YAML first");
+        clearWorkflowExecutionConfirmation();
         const data = await apiJson("/api/workflows/submit", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ yaml }),
+          body: JSON.stringify({ yaml, prepare_execution: true, allow_provision: true }),
         });
         updateWorkflowMeta((data.validation) || {});
         if (data.plan) renderWorkflowPlan(data.plan);
+        if (data.needs_confirmation && data.confirm_token && data.proposed_action) {
+          showWorkflowExecutionConfirmation({ yaml, response: data });
+          return true;
+        }
         if (data && data.ok === false) {
           const detail = String(
             data.message || data.reason || data.error || data.submit_mode || "submit blocked"
@@ -8471,13 +8537,197 @@
         }
         appendChat(
           "assistant",
-          "Submitted npa.workflow **scheduler plan** — **run_id**: `" + String(data.run_id || "") +
-            "`, **mode**: `" + String(data.submit_mode || "plan-only") +
-            "`. This does **not** execute tool steps on K8s. Use operator CLI `run-spec --execute` for real workloads."
+          "Prepared npa.workflow run `" + String(data.run_id || "") +
+            "`. Review the validation and scheduler plan before confirming execution."
         );
         return true;
       }
-      function queueChatText(text, options) {
+      let workflowExecutionPending = null;
+      function clearWorkflowExecutionConfirmation() {
+        workflowExecutionPending = null;
+        const host = document.getElementById("workflowExecutionConfirm");
+        if (!host) return;
+        host.replaceChildren();
+        host.hidden = true;
+      }
+      function workflowExecutionIsActive(execution) {
+        const state = String((execution && execution.state) || "").trim().toLowerCase();
+        const status = String((execution && execution.status) || "").trim().toLowerCase();
+        return state === "running" || state === "accepted" || ["running", "accepted", "queued", "submitted"].includes(status);
+      }
+      function workflowExecutionSucceeded(execution) {
+        const state = String((execution && execution.state) || "").trim().toLowerCase();
+        const status = String((execution && execution.status) || "").trim().toLowerCase();
+        return state === "succeeded" || ["succeeded", "success", "completed"].includes(status);
+      }
+      async function waitForWorkflowExecution(runId) {
+        let latest = {};
+        // The durable runtime, not a browser deadline, owns a real workflow's
+        // lifetime. Keep polling until it reaches a terminal state so a long
+        // GPU run cannot be misreported as a client-side failure at 15 minutes.
+        while (true) {
+          const data = await apiJson("/api/workflows/executions/" + encodeURIComponent(runId));
+          latest = data && data.execution && typeof data.execution === "object" ? data.execution : {};
+          if (!workflowExecutionIsActive(latest)) return latest;
+          await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        }
+      }
+      function renderWorkflowExecutionStatus(execution) {
+        const host = document.getElementById("workflowExecutionStatus");
+        if (!host) return;
+        const record = execution && typeof execution === "object" ? execution : {};
+        const status = String(record.status || record.state || "preparing");
+        const phase = String(record.submission_state || "").trim();
+        const heading = document.createElement("strong");
+        heading.textContent = "Durable workflow status";
+        const detail = document.createElement("p");
+        detail.textContent = phase ? status + " · " + phase : status;
+        host.replaceChildren(heading, detail);
+        host.hidden = false;
+      }
+      function loadCompletedWorkflowTimeline(runId) {
+        const input = document.getElementById("stagesRunInput");
+        if (!input || !runId) return;
+        input.value = runId;
+        const load = document.getElementById("stagesLoadRun");
+        if (load) load.click();
+      }
+      function finishWorkflowExecution(execution, runId) {
+        renderWorkflowExecutionStatus(execution);
+        if (!workflowExecutionSucceeded(execution)) {
+          const failure = String(execution.error || "Workflow execution did not complete successfully.");
+          const category = String(execution.failure_category || "").trim();
+          const recovery = String(execution.recovery_decision || "").trim();
+          const evidence = category
+            ? " [safe runtime category: " + category + (recovery ? "; " + recovery : "") + "]"
+            : "";
+          appendChat("error", "Workflow execution failed: " + failure + evidence);
+          return false;
+        }
+        appendChat(
+          "assistant",
+          "Completed workflow run `" + runId + "` with status `" +
+            String(execution.status || "unknown") + "`. Loading its artifact-backed stage timeline."
+        );
+        loadCompletedWorkflowTimeline(runId);
+        return true;
+      }
+      let monitoredWorkflowExecutionId = "";
+      async function monitorWorkflowExecution(runId) {
+        monitoredWorkflowExecutionId = runId;
+        try {
+          return finishWorkflowExecution(await waitForWorkflowExecution(runId), runId);
+        } catch (error) {
+          renderWorkflowExecutionStatus({ status: "status unavailable" });
+          appendChat("error", "Workflow status could not be refreshed. The durable run continues independently.");
+          return false;
+        } finally {
+          if (monitoredWorkflowExecutionId === runId) monitoredWorkflowExecutionId = "";
+        }
+      }
+      function restoreWorkflowExecutionStatus(executions) {
+        const latest = Array.isArray(executions) ? executions[0] : null;
+        if (!latest || typeof latest !== "object") return;
+        renderWorkflowExecutionStatus(latest);
+        const runId = String(latest.run_id || "").trim();
+        if (workflowExecutionIsActive(latest) && runId && monitoredWorkflowExecutionId !== runId) {
+          void monitorWorkflowExecution(runId);
+        }
+      }
+      function showWorkflowExecutionConfirmation(pending) {
+        const response = pending && pending.response ? pending.response : {};
+        const action = response.proposed_action || {};
+        const token = String(response.confirm_token || "");
+        const yaml = String(pending && pending.yaml || "");
+        const runId = String(response.run_id || "");
+        if (!token || !yaml || !runId) throw new Error("Workflow confirmation is incomplete");
+        workflowExecutionPending = { yaml, runId, token, action };
+        const host = document.getElementById("workflowExecutionConfirm");
+        if (!host) return;
+        const actionName = String(action.action || "");
+        const infrastructureAction = ["provision_infra", "adopt_infra"].includes(actionName);
+        const adopting = actionName === "adopt_infra";
+        const title = adopting
+          ? "Confirm infrastructure adoption"
+          : (infrastructureAction ? "Confirm infrastructure deployment" : "Confirm workflow execution");
+        const note = adopting
+          ? "NPA will fetch a credential-scoped kubeconfig for the discovered Kubernetes backend. It will then ask once more before submitting workload tasks."
+          : (infrastructureAction
+          ? "NPA will create or validate the configured Kubernetes backend. It will then ask once more before submitting workload tasks."
+          : "NPA will submit this validated workflow through the durable Kubernetes runtime and wait for its terminal result.");
+        host.replaceChildren();
+        const heading = document.createElement("strong");
+        heading.textContent = title;
+        const text = document.createElement("p");
+        text.textContent = note;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn-primary";
+        button.textContent = adopting ? "Confirm adoption" : (infrastructureAction ? "Confirm deployment" : "Confirm run");
+        button.addEventListener("click", () => {
+          confirmWorkflowExecution(button).catch((err) => {
+            showToast(String((err && err.message) || err), "error");
+            button.disabled = false;
+          });
+        });
+        host.append(heading, text, button);
+        host.hidden = false;
+        appendChat(
+          "assistant",
+          title + " is ready for run `" + runId + "`. No workload tasks have started yet."
+        );
+      }
+      async function confirmWorkflowExecution(button) {
+        const pending = workflowExecutionPending;
+        if (!pending) throw new Error("No workflow execution is awaiting confirmation");
+        if (button) button.disabled = true;
+        const infrastructureAction = ["provision_infra", "adopt_infra"].includes(
+          String((pending.action || {}).action || ""),
+        );
+        const body = infrastructureAction
+          ? {
+            yaml: pending.yaml,
+            run_id: pending.runId,
+            allow_provision: true,
+            prepare_execution: true,
+            confirm_token: pending.token,
+          }
+          : {
+            yaml: pending.yaml,
+            run_id: pending.runId,
+            execute: true,
+            confirm_token: pending.token,
+          };
+        const data = await apiJson("/api/workflows/submit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        updateWorkflowMeta((data.validation) || {});
+        if (data.plan) renderWorkflowPlan(data.plan);
+        if (data.needs_confirmation && data.confirm_token && data.proposed_action) {
+          showWorkflowExecutionConfirmation({ yaml: pending.yaml, response: data });
+          return true;
+        }
+        if (data && data.ok === false) {
+          throw new Error(String(data.message || data.reason || data.error || "workflow execution failed"));
+        }
+        clearWorkflowExecutionConfirmation();
+        const execution = data.execution || {};
+        const executionRunId = String((execution && execution.run_id) || data.run_id || "");
+        renderWorkflowExecutionStatus(execution);
+        if (workflowExecutionIsActive(execution)) {
+          appendChat(
+            "assistant",
+            "Accepted workflow run `" + executionRunId +
+              "`. Preparing the durable runtime; its status remains visible while the browser stays usable."
+          );
+          void monitorWorkflowExecution(executionRunId);
+          return true;
+        }
+        return finishWorkflowExecution(execution, executionRunId);
+      }
+      async function queueChatText(text, options) {
         const opts = options || {};
         const input = document.getElementById("chatInput");
         if (document.body.classList.contains("mobile-agent") && !hasMobileChatAuth()) {
@@ -8490,9 +8740,13 @@
           showToast("Enter a message first", "info");
           return Promise.resolve(false);
         }
+        // The initial session snapshot may replace the optimistic "default" id.
+        // Wait before binding a request so a first-turn reply cannot be discarded
+        // merely because that read finishes while its response is in flight.
+        await chatSessionBootstrap;
         if (input && !opts.keepInput) input.value = "";
         if (activeMainTab === "rerun" || document.body.classList.contains("viewer-focus")) openChatDrawer();
-        // Capture session at enqueue so a mid-queue session switch cannot retarget the POST.
+        // Bind the hydrated session before enqueue so a later switch cannot retarget the POST.
         const jobSessionId = String(opts.session_id || activeChatSessionId || "default");
         const jobMessages = opts.messages || null;
         return enqueueChatJob(async () => {
@@ -8516,6 +8770,7 @@
               session_id: jobSessionId,
             };
             if (opts.visual_context) body.visual_context = opts.visual_context;
+            if (opts.confirm_token) body.confirm_token = String(opts.confirm_token);
             const data = await apiJson("/api/chat", {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -8555,7 +8810,11 @@
             }
             const reply = normalizeAssistantReply(data.reply || "");
             if (reply) {
-              appendChat("assistant", reply);
+              const assistantRow = appendChat("assistant", reply);
+              renderInfraConfirmation(assistantRow, data, {
+                requestText: payloadText,
+                sessionId: jobSessionId,
+              });
               chatHistory.push({ role: "assistant", content: reply });
               trimClientChatHistory();
               refreshChatSessions(activeChatSessionId).catch(() => { /* best-effort */ });
@@ -8568,6 +8827,9 @@
             const draft = data.workflow_draft;
             if (!data.workflow_yaml && draft && draft.yaml) {
               setWorkflowYaml(draft.yaml, draft.validation || draft);
+            }
+            if (data && data.live_evidence && data.live_evidence.artifact_loaded) {
+              await applyLiveEvidence(data.live_evidence);
             }
             if (opts.onDone) opts.onDone(data);
           } catch (err) {
@@ -8594,6 +8856,34 @@
         }
         const text = String(input.value || "").trim();
         return queueChatText(text, { restoreInput: true });
+      }
+      async function applyLiveEvidence(evidence) {
+        const render = String((evidence && evidence.artifact_render) || "");
+        if (!evidence || !evidence.artifact_loaded || !["rerun", "video"].includes(render)) return;
+        // The backend selects only from its server-discovered, exact-source
+        // inventory. Refresh from that active state rather than reconstructing
+        // a bucket/key in the browser, where it could leak into the transcript.
+        await refresh();
+        if (render === "rerun") {
+          const simViz = await loadJson("/api/sim-viz/status");
+          const runId = String((simViz && simViz.run_id) || activeRunId || "").trim();
+          if (runId) setActiveRunId(runId);
+          activeArtifactRender = "rerun";
+          hideArtifactPreview();
+          await activateMainTab("rerun", { skipEnsure: true });
+          // A boot-warmed iframe can still be displaying the empty Rerun
+          // welcome recording. Mount against the just-loaded run so the View
+          // tab proves the actual artifact rather than only reporting status.
+          await waitForRerunSuccess(String((simViz && simViz.camera) || "workspace"), {
+            deadlineMs: 90000,
+            mountAttemptsPerLoop: 4,
+            runId,
+          });
+        } else {
+          await activateMainTab("rerun");
+        }
+        openChatDrawer();
+        showToast("Live cloud evidence loaded in View.", "success");
       }
       function setChatInput(text) {
         const input = document.getElementById("chatInput");
@@ -12866,6 +13156,14 @@
         const status = document.getElementById("artifactDiscoverStatus");
         if (status) {
           const trunc = data.pagination_complete === false ? " (discovery incomplete)" : "";
+          const pending = Array.isArray(data.source_errors) && data.source_errors.some((item) => {
+            const code = String((item && item.code) || "");
+            return code === "artifact_access_pending" || code === "artifact_discovery_pending";
+          });
+          const accessPending = Array.isArray(data.source_errors) && data.source_errors.some((item) =>
+            String((item && item.code) || "") === "artifact_access_pending"
+          );
+          const pendingHint = pending ? " · checking storage in background; refresh shortly" : "";
           const totalIsExact = data.total_runs != null;
           const discoveredCount = totalIsExact
             ? Number(data.total_runs || 0)
@@ -12879,7 +13177,18 @@
           status.textContent =
             "Runs (latest first): " + String(merged.length) +
             " consolidated ·" + discoveredLabel + String(discoveredCount) + trunc +
-            (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped;
+            (data.access && data.access.status ? " · access " + String(data.access.status) : "") + scoped + pendingHint;
+          const retryAfterMs = Math.max(0, Number(data.retry_after_seconds || 0) * 1000);
+          if (accessPending && retryAfterMs > 0) {
+            window.setTimeout(() => {
+              if (requestId !== runSearchRequestId) return;
+              void _refreshArtifactRuns(q, {
+                background: true,
+                resourceBucket: scope.resourceBucket,
+                projectId: scope.projectId,
+              }).catch(() => {});
+            }, retryAfterMs);
+          }
         }
         return { data, runs, merged };
       }
@@ -14722,6 +15031,7 @@
               setWorkflowYaml(draftYaml, session.workflow_draft.validation || {});
             }
           }
+          if (session) restoreWorkflowExecutionStatus(session.workflow_executions);
           // An explicit browser selection also drives non-RRD capabilities such
           // as LeIsaac. A sim-viz response can retain the last RRD-capable
           // active_run_id; it must not silently replace the run we requested.
@@ -15780,6 +16090,7 @@
             setChatModels(session.llm.models, currentModel);
           }
           if (restoreChat) renderChatHistory(session.chat_history || []);
+          if (session) restoreWorkflowExecutionStatus(session.workflow_executions);
           const draft = session.workflow_draft;
           if (draft && draft.yaml) {
             setWorkflowYaml(draft.yaml, draft.validation || draft);
@@ -15788,6 +16099,8 @@
         } catch (_err) {
           // Session restore is best-effort on first load.
           return null;
+        } finally {
+          resolveChatSessionBootstrap();
         }
       }
       async function ensureFrankaRerunLoaded(simViz) {

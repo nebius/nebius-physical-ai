@@ -66,7 +66,9 @@ def durable_create_job(
 
     root = CONFIG_PATH.parent / "runtime" / "serverless-submissions"
     identity = hashlib.sha256(f"{project_id}\0{name}".encode()).hexdigest()
-    fingerprint = hashlib.sha256(json.dumps(_redact_cli_args(args)).encode()).hexdigest()
+    fingerprint = hashlib.sha256(
+        json.dumps(_redact_cli_args(args)).encode()
+    ).hexdigest()
     with launch_identity_lock(identity, root=root):
         path = root / f"{identity}.json"
         if path.is_symlink():
@@ -76,27 +78,47 @@ def durable_create_job(
         except FileNotFoundError:
             record = None
         except (ValueError, UnicodeError) as exc:
-            raise JobIdentityError("Unreadable submission journal; restore exact launch evidence") from exc
+            raise JobIdentityError(
+                "Unreadable submission journal; restore exact launch evidence"
+            ) from exc
         if record is not None:
-            if not isinstance(record, dict) or any(record.get(key) != value for key, value in {
-                "schema_version": "npa.serverless.submission.v1",
-                "project_id": project_id, "job_name": name, "request_sha256": fingerprint,
-            }.items()):
-                raise JobIdentityError("The saved job name belongs to a different launch contract")
+            if not isinstance(record, dict) or any(
+                record.get(key) != value
+                for key, value in {
+                    "schema_version": "npa.serverless.submission.v1",
+                    "project_id": project_id,
+                    "job_name": name,
+                    "request_sha256": fingerprint,
+                }.items()
+            ):
+                raise JobIdentityError(
+                    "The saved job name belongs to a different launch contract"
+                )
             if record.get("state") in {"creating", "confirmed"}:
                 try:
-                    job = client.get_job(record.get("provider_job_id") or name, project_id)
+                    job = client.get_job(
+                        record.get("provider_job_id") or name, project_id
+                    )
                 except EndpointNotFoundError as exc:
                     raise JobSubmissionIndeterminateError(
                         "The recorded submission is not yet observable; reconnect with the same "
                         "job name and configuration. No new job was created.",
-                        project_id=project_id, job_name=name,
+                        project_id=project_id,
+                        job_name=name,
                         provider_job_id=record.get("provider_job_id", ""),
                     ) from exc
-                if not job.id or job.name != name or job.project_id != project_id or (
-                    record.get("provider_job_id") and job.id != record["provider_job_id"]
+                if (
+                    not job.id
+                    or job.name != name
+                    or job.project_id != project_id
+                    or (
+                        record.get("provider_job_id")
+                        and job.id != record["provider_job_id"]
+                    )
                 ):
-                    raise JobIdentityError("The recorded submission resolved to a different job")
+                    raise JobIdentityError(
+                        "The recorded submission resolved to a different job"
+                    )
                 record.update(state="confirmed", provider_job_id=job.id)
                 _write(path, record)
                 return job
@@ -118,7 +140,9 @@ def durable_create_job(
         _write(path, record)
         job = create()
         if not job.id or job.name != name or job.project_id != project_id:
-            raise JobIdentityError("The created job has incomplete or mismatched identity")
+            raise JobIdentityError(
+                "The created job has incomplete or mismatched identity"
+            )
         record.update(state="confirmed", provider_job_id=job.id)
         _write(path, record)
         return job

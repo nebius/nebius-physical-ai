@@ -125,9 +125,7 @@ def test_parse_handles_a_docker_prefix_and_a_digest() -> None:
 
 
 def test_parse_strips_tag_from_tag_and_digest_reference() -> None:
-    reference = parse_image_reference(
-        f"{REGISTRY}/{REPOSITORY}:{TAG}@sha256:abc123"
-    )
+    reference = parse_image_reference(f"{REGISTRY}/{REPOSITORY}:{TAG}@sha256:abc123")
 
     assert reference.repository == REPOSITORY
     assert reference.reference == "sha256:abc123"
@@ -383,9 +381,7 @@ def test_official_public_image_ignores_matching_stale_ghcr_credentials(
     monkeypatch.setenv("NPA_REGISTRY_USERNAME", "stale-user")
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "stale-token")
     registry = AnonymousRegistry()
-    public_image = (
-        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"
-    )
+    public_image = "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"
 
     checks = check_image_pulls_with_credentials([public_image], fetcher=registry)
 

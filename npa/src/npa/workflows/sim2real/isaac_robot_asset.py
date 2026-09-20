@@ -166,7 +166,9 @@ def _validated_asset_entries(manifest: dict) -> list[dict]:
     seen: set[str] = set()
     for raw in raw_entries:
         if not isinstance(raw, dict):
-            raise IsaacRobotAssetError("resolved robot manifest has an invalid asset entry")
+            raise IsaacRobotAssetError(
+                "resolved robot manifest has an invalid asset entry"
+            )
         relative = _safe_relative_path(raw.get("path"))
         sha256 = str(raw.get("sha256") or "")
         size = raw.get("size_bytes")
@@ -270,9 +272,7 @@ def prepare_with_running_app() -> dict:
                     fix_base=True,
                     merge_fixed_joints=False,
                     joint_drive=UrdfConverterCfg.JointDriveCfg(
-                        gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
-                            stiffness=None
-                        )
+                        gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=None)
                     ),
                 )
             )
@@ -326,7 +326,9 @@ def prepare_with_running_app() -> dict:
         _upload(resolved, str(spec["resolved_usd_uri"]))
         # Publish the manifest last: its presence attests that the full tree is durable.
         _upload(manifest_path, str(spec["resolved_manifest_uri"]))
-        print("ROBOT_ASSET_RESOLVED " + json.dumps(manifest, sort_keys=True), flush=True)
+        print(
+            "ROBOT_ASSET_RESOLVED " + json.dumps(manifest, sort_keys=True), flush=True
+        )
         return manifest
     except IsaacRobotAssetError:
         raise
@@ -386,15 +388,10 @@ def fetch() -> dict:
         relative = str(entry["path"])
         destination = work / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
-        _download(
-            _asset_tree_uri(str(spec["resolved_usd_uri"]), relative), destination
-        )
+        _download(_asset_tree_uri(str(spec["resolved_usd_uri"]), relative), destination)
         actual_sha256 = _sha256(destination)
         actual_size = destination.stat().st_size
-        if (
-            actual_sha256 != entry["sha256"]
-            or actual_size != entry["size_bytes"]
-        ):
+        if actual_sha256 != entry["sha256"] or actual_size != entry["size_bytes"]:
             raise IsaacRobotAssetError(
                 "resolved robot asset mismatch for "
                 f"{relative}: expected_sha256={entry['sha256']} "
@@ -409,10 +406,9 @@ def fetch() -> dict:
             "resolved robot asset tree digest or inventory mismatch"
         )
     usd_entry = next(entry for entry in entries if entry["path"] == "robot.usd")
-    if (
-        usd_entry["sha256"] != manifest.get("usd_sha256")
-        or usd_entry["size_bytes"] != manifest.get("usd_size_bytes")
-    ):
+    if usd_entry["sha256"] != manifest.get("usd_sha256") or usd_entry[
+        "size_bytes"
+    ] != manifest.get("usd_size_bytes"):
         raise IsaacRobotAssetError(
             "resolved robot entrypoint does not match the manifest USD evidence"
         )

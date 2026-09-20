@@ -99,7 +99,9 @@ def check_model_weights(state: SmokeState) -> CheckResult:
     model_dir = Path(os.environ.get("COSMOS_MODEL_DIR", str(DEFAULT_MODEL_DIR)))
     model_path = model_dir / _model_slug(model)
     if not model_path.is_dir():
-        return CheckResult("check mounted model weights", False, f"missing {model_path}")
+        return CheckResult(
+            "check mounted model weights", False, f"missing {model_path}"
+        )
     return CheckResult("check mounted model weights", True, str(model_path))
 
 
@@ -115,7 +117,9 @@ def check_start_server(state: SmokeState) -> CheckResult:
         "COSMOS_OUTPUT_DIR": str(state.output_dir),
         "COSMOS_DISABLE_SAFETY": os.environ.get("COSMOS_DISABLE_SAFETY", "0"),
         "HF_HOME": os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"),
-        "HUGGINGFACE_HUB_CACHE": os.environ.get("HUGGINGFACE_HUB_CACHE", "/opt/cosmos-data/hf_cache"),
+        "HUGGINGFACE_HUB_CACHE": os.environ.get(
+            "HUGGINGFACE_HUB_CACHE", "/opt/cosmos-data/hf_cache"
+        ),
     }
     state.output_dir.mkdir(parents=True, exist_ok=True)
     log_handle = state.server_log.open("w")
@@ -138,12 +142,20 @@ def check_start_server(state: SmokeState) -> CheckResult:
                 f"server exited with {state.process.returncode}; log:\n{_tail(state.server_log)}",
             )
         try:
-            health = _request_json("GET", f"http://127.0.0.1:{state.port}/health", timeout=5)
-            return CheckResult("start Cosmos server", True, json.dumps(health, sort_keys=True))
+            health = _request_json(
+                "GET", f"http://127.0.0.1:{state.port}/health", timeout=5
+            )
+            return CheckResult(
+                "start Cosmos server", True, json.dumps(health, sort_keys=True)
+            )
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = _format_exception(exc)
             time.sleep(2)
-    return CheckResult("start Cosmos server", False, f"timed out waiting for /health; last error: {last_error}")
+    return CheckResult(
+        "start Cosmos server",
+        False,
+        f"timed out waiting for /health; last error: {last_error}",
+    )
 
 
 def check_submit_inference(state: SmokeState) -> CheckResult:
@@ -160,14 +172,22 @@ def check_submit_inference(state: SmokeState) -> CheckResult:
 
     job_id = str(response.get("job_id") or "")
     if not job_id:
-        return CheckResult("submit async inference job", False, f"missing job_id: {response}")
+        return CheckResult(
+            "submit async inference job", False, f"missing job_id: {response}"
+        )
     state.job_id = job_id
-    return CheckResult("submit async inference job", True, f"job_id: {job_id}; model: {response.get('model')}")
+    return CheckResult(
+        "submit async inference job",
+        True,
+        f"job_id: {job_id}; model: {response.get('model')}",
+    )
 
 
 def check_poll_inference(state: SmokeState) -> CheckResult:
     if not state.job_id:
-        return CheckResult("poll async inference job", False, "skipped because submit failed")
+        return CheckResult(
+            "poll async inference job", False, "skipped because submit failed"
+        )
 
     timeout = int(os.environ.get("COSMOS_SMOKE_TIMEOUT_SECONDS", "1200"))
     interval = float(os.environ.get("COSMOS_SMOKE_POLL_INTERVAL_SECONDS", "10"))
@@ -182,13 +202,17 @@ def check_poll_inference(state: SmokeState) -> CheckResult:
                 timeout=30,
             )
         except Exception as exc:
-            return CheckResult("poll async inference job", False, _format_exception(exc))
+            return CheckResult(
+                "poll async inference job", False, _format_exception(exc)
+            )
 
         status = last_status.get("status")
         if status == "completed":
             output_path = Path(str(last_status.get("output_path", "")))
             state.output_path = output_path
-            return CheckResult("poll async inference job", True, f"output_path: {output_path}")
+            return CheckResult(
+                "poll async inference job", True, f"output_path: {output_path}"
+            )
         if status == "failed":
             return CheckResult(
                 "poll async inference job",
@@ -206,14 +230,20 @@ def check_poll_inference(state: SmokeState) -> CheckResult:
 
 def check_mp4_output(state: SmokeState) -> CheckResult:
     if state.output_path is None:
-        return CheckResult("verify MP4 output", False, "skipped because inference did not complete")
+        return CheckResult(
+            "verify MP4 output", False, "skipped because inference did not complete"
+        )
     if not state.output_path.exists():
         return CheckResult("verify MP4 output", False, f"missing {state.output_path}")
     if state.output_path.suffix.lower() != ".mp4":
-        return CheckResult("verify MP4 output", False, f"expected .mp4 output, got {state.output_path}")
+        return CheckResult(
+            "verify MP4 output", False, f"expected .mp4 output, got {state.output_path}"
+        )
     size = state.output_path.stat().st_size
     if size <= 0:
-        return CheckResult("verify MP4 output", False, f"zero-size output: {state.output_path}")
+        return CheckResult(
+            "verify MP4 output", False, f"zero-size output: {state.output_path}"
+        )
     return CheckResult("verify MP4 output", True, f"{state.output_path} ({size} bytes)")
 
 

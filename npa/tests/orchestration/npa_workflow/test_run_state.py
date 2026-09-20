@@ -135,10 +135,14 @@ def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
     runtime_state = RuntimeRunState(
         workflow="demo", run_id="demo-1", api_version="npa.workflow/v0.0.1"
     )
-    runtime_state.record_wave({"key": "001|serial|:a:-", "status": "running", "job_id": "7"})
+    runtime_state.record_wave(
+        {"key": "001|serial|:a:-", "status": "running", "job_id": "7"}
+    )
     state_store.write_runtime_state(runtime_state)
     # Same key updated in place, not appended twice.
-    runtime_state.record_wave({"key": "001|serial|:a:-", "status": "succeeded", "job_id": "7"})
+    runtime_state.record_wave(
+        {"key": "001|serial|:a:-", "status": "succeeded", "job_id": "7"}
+    )
     runtime_state.decisions.append({"decision": "promote_checkpoint"})
     runtime_state.watermarks["ingest"] = {"objects": 2}
     state_store.write_runtime_state(runtime_state)
@@ -303,7 +307,9 @@ def test_read_runtime_state_propagates_unexpected_storage_errors() -> None:
     def angry_reader(bucket: str, key: str) -> str:
         raise PermissionError(f"denied s3://{bucket}/{key}")
 
-    store = Store(bucket="bucket", prefix="runs/demo", reader=angry_reader, writer=lambda *_: None)
+    store = Store(
+        bucket="bucket", prefix="runs/demo", reader=angry_reader, writer=lambda *_: None
+    )
     with pytest.raises(PermissionError):
         store.read_runtime_state()
 
@@ -328,11 +334,19 @@ class _FakeStep:
 
 
 def test_plan_step_records_carry_the_resource_profile() -> None:
-    from npa.orchestration.npa_workflow.run_state import SUBMITTED_STATUS, plan_step_records
+    from npa.orchestration.npa_workflow.run_state import (
+        SUBMITTED_STATUS,
+        plan_step_records,
+    )
 
     records = plan_step_records(
         [
-            _FakeStep("train", "trainer-gpu", {"accelerators": "RTXPRO6000:4", "cpus": 16}, "workbench.rl.policy_train"),
+            _FakeStep(
+                "train",
+                "trainer-gpu",
+                {"accelerators": "RTXPRO6000:4", "cpus": 16},
+                "workbench.rl.policy_train",
+            ),
             _FakeStep("aggregate", "control-cpu", {"cpus": 4}),
         ]
     )
@@ -493,8 +507,14 @@ def test_dispatch_step_records_carry_resources_for_any_executor() -> None:
 @pytest.mark.parametrize("status", ["planned", "submitted", "running"])
 def test_runtime_lifecycle_retains_existing_nonterminal_states(status):
     from npa.orchestration.npa_workflow.run_state import runtime_workflow_lifecycle
-    manifest = RunManifest("demo", "run-test", "npa.workflow/v0.0.1", status=status,
-                           updated_at="2001-01-01T00:00:00Z")
+
+    manifest = RunManifest(
+        "demo",
+        "run-test",
+        "npa.workflow/v0.0.1",
+        status=status,
+        updated_at="2001-01-01T00:00:00Z",
+    )
     runtime = {"status": status, "updated_at": "2001-01-02T00:00:00Z"}
     observed, evidence = runtime_workflow_lifecycle(manifest, runtime)
     assert observed == status.upper()
@@ -507,8 +527,14 @@ def test_runtime_lifecycle_retains_existing_nonterminal_states(status):
 
 def test_manifest_completion_can_precede_runtime_finalization():
     from npa.orchestration.npa_workflow.run_state import runtime_workflow_lifecycle
-    manifest = RunManifest("demo", "run-test", "npa.workflow/v0.0.1", status="succeeded",
-                           updated_at="2026-01-02T03:04:05Z")
+
+    manifest = RunManifest(
+        "demo",
+        "run-test",
+        "npa.workflow/v0.0.1",
+        status="succeeded",
+        updated_at="2026-01-02T03:04:05Z",
+    )
     observed, evidence = runtime_workflow_lifecycle(manifest, {"status": "running"})
     assert observed == "SUCCEEDED"
     assert evidence["completion_recorded"] is True
@@ -522,17 +548,30 @@ def test_manifest_completion_can_precede_runtime_finalization():
 def test_manifest_completion_alias_retains_raw_provenance(raw_status, runtime_status):
     from npa.orchestration.npa_workflow.run_state import runtime_workflow_lifecycle
 
-    manifest = RunManifest("demo", "run-test", "npa.workflow/v0.0.1", status=raw_status,
-                           updated_at="2026-01-02T03:04:05Z")
+    manifest = RunManifest(
+        "demo",
+        "run-test",
+        "npa.workflow/v0.0.1",
+        status=raw_status,
+        updated_at="2026-01-02T03:04:05Z",
+    )
     runtime = {"status": runtime_status, "updated_at": "2026-01-02T03:04:06Z"}
     observed, evidence = runtime_workflow_lifecycle(manifest, runtime)
     assert observed == "SUCCEEDED"
     assert evidence["manifest_status"] == "SUCCEEDED"
     assert evidence["manifest_evidence"] == {
-        "status": raw_status, "updated_at": "2026-01-02T03:04:05Z", "source": "authoritative_manifest",
+        "status": raw_status,
+        "updated_at": "2026-01-02T03:04:05Z",
+        "source": "authoritative_manifest",
     }
-    assert evidence["source"] == ("authoritative_manifest" if runtime_status == "running" else "durable_runtime_ledger")
-    assert evidence["updated_at"] == (manifest.updated_at if runtime_status == "running" else runtime["updated_at"])
+    assert evidence["source"] == (
+        "authoritative_manifest"
+        if runtime_status == "running"
+        else "durable_runtime_ledger"
+    )
+    assert evidence["updated_at"] == (
+        manifest.updated_at if runtime_status == "running" else runtime["updated_at"]
+    )
     assert manifest.status == raw_status and runtime["status"] == runtime_status
 
 
@@ -540,6 +579,8 @@ def test_manifest_completion_alias_retains_raw_provenance(raw_status, runtime_st
 def test_manifest_completion_alias_is_not_a_runtime_ledger_state(runtime_status):
     from npa.orchestration.npa_workflow.run_state import runtime_workflow_lifecycle
 
-    manifest = RunManifest("demo", "run-test", "npa.workflow/v0.0.1", status="completed")
+    manifest = RunManifest(
+        "demo", "run-test", "npa.workflow/v0.0.1", status="completed"
+    )
     with pytest.raises(ValueError, match="lifecycle status is missing or unsupported"):
         runtime_workflow_lifecycle(manifest, {"status": runtime_status})

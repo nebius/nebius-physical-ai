@@ -46,13 +46,26 @@ def result(modules, tmp_path):
         row["vector"] = [float(component == index) for component in range(512)]
     report = embed.save_results(root, rows, 6)
     sources = {name: "a" * 64 for name in embed.SOURCE_FILES}
-    actor = {"source_sha256": sources, "model_revision": "b" * 40,
-             "weight_sha256": "c" * 64, "model_config_sha256": "d" * 64,
-             "model_load_seconds": 0.2, "node_id": "private-node-do-not-export",
-             "imported_paths": {"private": "/private/source"}}
-    report.update({"source_sha256": sources, "actors": [actor], "crop_policy": "left",
-                   "preprocessors": [{"source_sha256": sources["worker.py"], "pid": "private-process"}],
-                   "timings_seconds": {name: 0.5 for name in converter._BASIC_TIMINGS}})
+    actor = {
+        "source_sha256": sources,
+        "model_revision": "b" * 40,
+        "weight_sha256": "c" * 64,
+        "model_config_sha256": "d" * 64,
+        "model_load_seconds": 0.2,
+        "node_id": "private-node-do-not-export",
+        "imported_paths": {"private": "/private/source"},
+    }
+    report.update(
+        {
+            "source_sha256": sources,
+            "actors": [actor],
+            "crop_policy": "left",
+            "preprocessors": [
+                {"source_sha256": sources["worker.py"], "pid": "private-process"}
+            ],
+            "timings_seconds": {name: 0.5 for name in converter._BASIC_TIMINGS},
+        }
+    )
     _dump(root / "report.json", report)
     embed.write_hashes(root)
     return root
@@ -60,14 +73,31 @@ def result(modules, tmp_path):
 
 def _advanced_actor(converter, application, validation):
     actor = {field: "a" * 64 for field in converter._ADVANCED_SOURCES.values()}
-    actor.update({"instance_id": "private-initial-instance", "execution_fingerprint": "e" * 64,
-                  "model_revision": "b" * 40, "model_config_sha256": "d" * 64,
-                  "model_load_seconds": 0.2, "model_files": [{"path": "weights.bin", "sha256": "c" * 64},
-                                                            {"path": "config.json", "sha256": "d" * 64}],
-                  "precision": "float32", "python": "3.12.3", "ray": "2.58.0", "torch": "2.12.1",
-                  "cuda": "13.0", "transformers": "5.10.2", "pyarrow": "23.0.1", "lancedb": "0.30.2",
-                  "gpu_capability": [12, 0]})
-    fingerprint = validation.canonical_hash({field: actor[field] for field in application.FINGERPRINT_FIELDS})
+    actor.update(
+        {
+            "instance_id": "private-initial-instance",
+            "execution_fingerprint": "e" * 64,
+            "model_revision": "b" * 40,
+            "model_config_sha256": "d" * 64,
+            "model_load_seconds": 0.2,
+            "model_files": [
+                {"path": "weights.bin", "sha256": "c" * 64},
+                {"path": "config.json", "sha256": "d" * 64},
+            ],
+            "precision": "float32",
+            "python": "3.12.3",
+            "ray": "2.58.0",
+            "torch": "2.12.1",
+            "cuda": "13.0",
+            "transformers": "5.10.2",
+            "pyarrow": "23.0.1",
+            "lancedb": "0.30.2",
+            "gpu_capability": [12, 0],
+        }
+    )
+    fingerprint = validation.canonical_hash(
+        {field: actor[field] for field in application.FINGERPRINT_FIELDS}
+    )
     actor["execution_fingerprint"] = fingerprint
     return actor
 
@@ -80,14 +110,35 @@ def _advanced_checkpoints(root, table, actor, replacement, embed, validation):
         path.mkdir(parents=True)
         shard = table.slice(index * 2, 2)
         pq.write_table(shard, path / "embeddings.parquet")
-        commit = {"identity": {"record_ids": shard["record_id"].to_pylist(),
-                    "input_hash": validation.canonical_hash(shard["input_sha256"].to_pylist()),
-                    "processed_hash": validation.canonical_hash(shard["processed_sha256"].to_pylist()),
-                    "source_sha256": "a" * 64, "model_revision": "b" * 40, "execution_fingerprint": fingerprint},
-                  "rows": 2, "parquet_sha256": embed.sha256(path / "embeddings.parquet"),
-                  "preprocessor": {"source_sha256": "a" * 64, "source_path": "/private/worker.py"},
-                  "preprocess_seconds": 0.1, "inference": {"instance_id": actor["instance_id"] if index == 0 else replacement["instance_id"],
-                    "start_monotonic_ns": 1000000000, "end_monotonic_ns": 1200000000, "inference_seconds": 0.2}}
+        commit = {
+            "identity": {
+                "record_ids": shard["record_id"].to_pylist(),
+                "input_hash": validation.canonical_hash(
+                    shard["input_sha256"].to_pylist()
+                ),
+                "processed_hash": validation.canonical_hash(
+                    shard["processed_sha256"].to_pylist()
+                ),
+                "source_sha256": "a" * 64,
+                "model_revision": "b" * 40,
+                "execution_fingerprint": fingerprint,
+            },
+            "rows": 2,
+            "parquet_sha256": embed.sha256(path / "embeddings.parquet"),
+            "preprocessor": {
+                "source_sha256": "a" * 64,
+                "source_path": "/private/worker.py",
+            },
+            "preprocess_seconds": 0.1,
+            "inference": {
+                "instance_id": actor["instance_id"]
+                if index == 0
+                else replacement["instance_id"],
+                "start_monotonic_ns": 1000000000,
+                "end_monotonic_ns": 1200000000,
+                "inference_seconds": 0.2,
+            },
+        }
         _dump(path / "commit.json", commit)
         commits.append(commit)
     return commits
@@ -103,28 +154,71 @@ def advanced(modules, result):
     fingerprint = actor["execution_fingerprint"]
     replacement = {**actor, "instance_id": "private-replacement-instance"}
     commits = _advanced_checkpoints(root, table, actor, replacement, embed, validation)
-    recovery = {"old_instance": actor["instance_id"], "new_instance": replacement["instance_id"],
-                "checkpoint_reused": True, "model_reloaded": True, "replay_inference_calls": 0,
-                "parquet_sha256": commits[0]["parquet_sha256"]}
+    recovery = {
+        "old_instance": actor["instance_id"],
+        "new_instance": replacement["instance_id"],
+        "checkpoint_reused": True,
+        "model_reloaded": True,
+        "replay_inference_calls": 0,
+        "parquet_sha256": commits[0]["parquet_sha256"],
+    }
     queries = []
     for index in sorted({0, 1, 3, 4, 5}):
-        queries.append({"query_id": index, "top_ids": [index] + [candidate for candidate in range(6) if candidate != index][:4]})
-    report = {key: value for key, value in basic.items() if key in ("records", "lance_rows", "vector_bytes_sha256", "crop_policy")}
+        queries.append(
+            {
+                "query_id": index,
+                "top_ids": [index]
+                + [candidate for candidate in range(6) if candidate != index][:4],
+            }
+        )
+    report = {
+        key: value
+        for key, value in basic.items()
+        if key in ("records", "lance_rows", "vector_bytes_sha256", "crop_policy")
+    }
     report.update({field: "a" * 64 for field in converter._ADVANCED_SOURCES.values()})
-    report.update({"schema_version": "npa.ray-clip-development.v1", "execution_fingerprint": fingerprint,
-                   "input_hash": validation.canonical_hash(table["input_sha256"].to_pylist()),
-                   "processed_hash": validation.canonical_hash(table["processed_sha256"].to_pylist()),
-                   "mean_embedding": np.asarray(table["vector"].to_pylist(), dtype=np.float32).mean(axis=0, dtype=np.float64).tolist(),
-                   "model_revision": "b" * 40, "model_initializations": [actor, replacement],
-                   "final_actors": [{**replacement, "inference_calls": 2}],
-                   "gpu_actors": 1, "shards": 3, "batch_size": 2, "embedding_sha256": basic["parquet_sha256"],
-                   "retrieval_queries": len(queries), "recovery": recovery,
-                   "concurrency_observation": {"participants": 1, "overlap": False, "events": [
-                       {"instance_id": replacement["instance_id"], "event": "start", "monotonic_ns": 9000000000},
-                       {"instance_id": replacement["instance_id"], "event": "finish", "monotonic_ns": 9300000000}]},
-                   "concurrent_actor_inference_observed": False,
-                   **{key: 0.5 for key in converter._ADVANCED_TIMINGS},
-                   "preprocessing_task_seconds_sum": 0.3, "inference_actor_seconds_sum": 0.6})
+    report.update(
+        {
+            "schema_version": "npa.ray-clip-development.v1",
+            "execution_fingerprint": fingerprint,
+            "input_hash": validation.canonical_hash(table["input_sha256"].to_pylist()),
+            "processed_hash": validation.canonical_hash(
+                table["processed_sha256"].to_pylist()
+            ),
+            "mean_embedding": np.asarray(table["vector"].to_pylist(), dtype=np.float32)
+            .mean(axis=0, dtype=np.float64)
+            .tolist(),
+            "model_revision": "b" * 40,
+            "model_initializations": [actor, replacement],
+            "final_actors": [{**replacement, "inference_calls": 2}],
+            "gpu_actors": 1,
+            "shards": 3,
+            "batch_size": 2,
+            "embedding_sha256": basic["parquet_sha256"],
+            "retrieval_queries": len(queries),
+            "recovery": recovery,
+            "concurrency_observation": {
+                "participants": 1,
+                "overlap": False,
+                "events": [
+                    {
+                        "instance_id": replacement["instance_id"],
+                        "event": "start",
+                        "monotonic_ns": 9000000000,
+                    },
+                    {
+                        "instance_id": replacement["instance_id"],
+                        "event": "finish",
+                        "monotonic_ns": 9300000000,
+                    },
+                ],
+            },
+            "concurrent_actor_inference_observed": False,
+            **{key: 0.5 for key in converter._ADVANCED_TIMINGS},
+            "preprocessing_task_seconds_sum": 0.3,
+            "inference_actor_seconds_sum": 0.6,
+        }
+    )
     _write_advanced_result(root, report, queries, application)
     return root
 
@@ -132,7 +226,10 @@ def advanced(modules, result):
 def _write_advanced_result(root, report, queries, application):
     _dump(root / "retrieval.json", queries)
     _dump(root / "report.json", report)
-    _dump(root / "execution.json", {"execution_fingerprint": report["execution_fingerprint"]})
+    _dump(
+        root / "execution.json",
+        {"execution_fingerprint": report["execution_fingerprint"]},
+    )
     _dump(root / "recovery.json", report["recovery"])
     _dump(root / "actor-cleanup.json", {"errors": [], "attempted": 1})
     application._write_cleanup_artifacts(root, [], 1)
@@ -143,11 +240,18 @@ def _write_advanced_result(root, report, queries, application):
 
 def _chunks(path, entity):
     from rerun.recording import load_recording
-    return [chunk.to_record_batch() for chunk in load_recording(path).chunks() if str(chunk.entity_path) == entity]
+
+    return [
+        chunk.to_record_batch()
+        for chunk in load_recording(path).chunks()
+        if str(chunk.entity_path) == entity
+    ]
 
 
 @pytest.mark.parametrize("fixture_name", ["result", "advanced"])
-def test_recording_decodes_source_indices_vectors_images_and_provenance(modules, request, fixture_name, tmp_path):
+def test_recording_decodes_source_indices_vectors_images_and_provenance(
+    modules, request, fixture_name, tmp_path
+):
     converter = modules[0]
     root = request.getfixturevalue(fixture_name)
     path = tmp_path / "report.rrd"
@@ -155,36 +259,52 @@ def test_recording_decodes_source_indices_vectors_images_and_provenance(modules,
     assert receipt["records"] == 6
     assert receipt["entity_rows"]["/vectors/embedding"] == 6
     assert receipt["rrd_sha256"] == converter._sha(path)
-    norms = pa.concat_tables([pa.Table.from_batches([batch]) for batch in _chunks(path, "/vectors/norm")])
+    norms = pa.concat_tables(
+        [pa.Table.from_batches([batch]) for batch in _chunks(path, "/vectors/norm")]
+    )
     assert norms["record_id"].to_pylist() == list(range(6))
     assert norms["Scalars:scalars"].to_pylist() == [[1.0]] * 6
     vectors = _chunks(path, "/vectors/embedding")
     assert sum(len(batch) for batch in vectors) == 6
     images = _chunks(path, "/images/crop")
-    assert [index for batch in images for index in batch.column("record_id").to_pylist()] == list(range(6))
+    assert [
+        index for batch in images for index in batch.column("record_id").to_pylist()
+    ] == list(range(6))
     text = _chunks(path, "/provenance/run")[0].column("TextDocument:text")[0].as_py()[0]
     assert json.loads(text)["report_sha256"] == converter._sha(root / "report.json")
     assert b"private-node-do-not-export" not in path.read_bytes()
     assert "private" not in json.dumps(receipt)
 
 
-def test_advanced_uses_coordinator_clock_and_static_recovery(modules, advanced, tmp_path):
+def test_advanced_uses_coordinator_clock_and_static_recovery(
+    modules, advanced, tmp_path
+):
     path = tmp_path / "advanced.rrd"
     modules[0].convert(advanced, path, run_id="synthetic-test")
     events = _chunks(path, "/concurrency/actors/1/active")
-    ticks = [value.value for batch in events for value in batch.column("coordinator_elapsed")]
+    ticks = [
+        value.value for batch in events for value in batch.column("coordinator_elapsed")
+    ]
     assert ticks == [0, 300000000]
-    active = [value[0] for batch in events for value in batch.column("Scalars:scalars").to_pylist()]
+    active = [
+        value[0]
+        for batch in events
+        for value in batch.column("Scalars:scalars").to_pylist()
+    ]
     assert active == [1.0, 0.0]
     shards = _chunks(path, "/checkpoints/materialized")
-    assert [index for batch in shards for index in batch.column("shard_index").to_pylist()] == [0, 1, 2]
+    assert [
+        index for batch in shards for index in batch.column("shard_index").to_pylist()
+    ] == [0, 1, 2]
     recovery = _chunks(path, "/recovery/checkpoint_replay")[0]
     assert "coordinator_elapsed" not in recovery.schema.names
     assert "shard_index" not in recovery.schema.names
 
 
 @pytest.mark.parametrize("artifact", ["report.json", "images"])
-def test_symlink_escape_is_rejected_before_reading_artifacts(modules, result, tmp_path, monkeypatch, artifact):
+def test_symlink_escape_is_rejected_before_reading_artifacts(
+    modules, result, tmp_path, monkeypatch, artifact
+):
     converter = modules[0]
     external = tmp_path / "outside"
     (result / artifact).rename(external)
@@ -211,7 +331,10 @@ def test_output_alias_into_input_tree_is_rejected(modules, result, tmp_path):
     assert modules[0]._manifest(result) == before
 
 
-@pytest.mark.parametrize("damage", ["missing", "checksum", "duplicate", "traversal", "symlink", "extra", "partial"])
+@pytest.mark.parametrize(
+    "damage",
+    ["missing", "checksum", "duplicate", "traversal", "symlink", "extra", "partial"],
+)
 def test_manifest_failures_publish_nothing(modules, result, tmp_path, damage):
     path = result / "SHA256SUMS"
     if damage == "missing":
@@ -234,8 +357,13 @@ def test_manifest_failures_publish_nothing(modules, result, tmp_path, damage):
     assert not (tmp_path / "invalid.rrd").exists()
 
 
-@pytest.mark.parametrize("damage", ["ids", "nan", "dimension", "norm", "image", "retrieval", "source", "timing"])
-def test_semantic_corruption_rejected_even_after_rehash(modules, result, tmp_path, damage):
+@pytest.mark.parametrize(
+    "damage",
+    ["ids", "nan", "dimension", "norm", "image", "retrieval", "source", "timing"],
+)
+def test_semantic_corruption_rejected_even_after_rehash(
+    modules, result, tmp_path, damage
+):
     converter, embed, *_ = modules
     report = json.loads((result / "report.json").read_text())
     table = pq.read_table(result / "embeddings.parquet")
@@ -244,11 +372,22 @@ def test_semantic_corruption_rejected_even_after_rehash(modules, result, tmp_pat
         if damage == "ids":
             rows[-1]["record_id"] = 0
         else:
-            rows[0]["vector"] = {"nan": [float("nan")] * 512, "dimension": [1.0], "norm": [0.0] * 512}[damage]
-        pq.write_table(pa.Table.from_pylist(rows, schema=None if damage == "dimension" else table.schema), result / "embeddings.parquet")
+            rows[0]["vector"] = {
+                "nan": [float("nan")] * 512,
+                "dimension": [1.0],
+                "norm": [0.0] * 512,
+            }[damage]
+        pq.write_table(
+            pa.Table.from_pylist(
+                rows, schema=None if damage == "dimension" else table.schema
+            ),
+            result / "embeddings.parquet",
+        )
         report["parquet_sha256"] = converter._sha(result / "embeddings.parquet")
     elif damage == "image":
-        (result / "images/000000-crop.png").write_bytes((result / "images/000001-crop.png").read_bytes())
+        (result / "images/000000-crop.png").write_bytes(
+            (result / "images/000001-crop.png").read_bytes()
+        )
     elif damage == "retrieval":
         queries = json.loads((result / "retrieval.json").read_text())
         queries[0]["top_ids"][0] = 600
@@ -265,7 +404,9 @@ def test_semantic_corruption_rejected_even_after_rehash(modules, result, tmp_pat
     assert not (tmp_path / "invalid.rrd").exists()
 
 
-@pytest.mark.parametrize("damage", ["commit", "identity", "shard", "event", "recovery", "cleanup"])
+@pytest.mark.parametrize(
+    "damage", ["commit", "identity", "shard", "event", "recovery", "cleanup"]
+)
 def test_advanced_corruption_rejected_after_rehash(modules, advanced, tmp_path, damage):
     converter, _, application, *_ = modules
     root = advanced
@@ -277,7 +418,9 @@ def test_advanced_corruption_rejected_after_rehash(modules, advanced, tmp_path, 
         value["identity"]["execution_fingerprint"] = "f" * 64
         _dump(path, value)
     elif damage == "shard":
-        (root / "shards/000001/embeddings.parquet").write_bytes((root / "shards/000000/embeddings.parquet").read_bytes())
+        (root / "shards/000001/embeddings.parquet").write_bytes(
+            (root / "shards/000000/embeddings.parquet").read_bytes()
+        )
     elif damage == "cleanup":
         _dump(root / "actor-cleanup.json", {"attempted": 1, "errors": ["failure"]})
     else:
@@ -290,14 +433,20 @@ def test_advanced_corruption_rejected_after_rehash(modules, advanced, tmp_path, 
             _dump(root / "recovery.json", value["recovery"])
         _dump(path, value)
     # Refresh only the manifest, preserving intentionally damaged cleanup evidence.
-    lines = [f"{converter._sha(path)}  {path.relative_to(root)}\n" for path in sorted(root.rglob("*")) if path.is_file() and path.name != "SHA256SUMS"]
+    lines = [
+        f"{converter._sha(path)}  {path.relative_to(root)}\n"
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and path.name != "SHA256SUMS"
+    ]
     (root / "SHA256SUMS").write_text("".join(lines))
     with pytest.raises(ValueError):
         converter.convert(root, tmp_path / "invalid.rrd", run_id="test")
     assert not (tmp_path / "invalid.rrd").exists()
 
 
-def test_writer_failure_and_output_conflict_preserve_input(modules, result, tmp_path, monkeypatch):
+def test_writer_failure_and_output_conflict_preserve_input(
+    modules, result, tmp_path, monkeypatch
+):
     converter = modules[0]
     before = converter._manifest(result)
     output = tmp_path / "report.rrd"
@@ -307,8 +456,10 @@ def test_writer_failure_and_output_conflict_preserve_input(modules, result, tmp_
     assert output.read_bytes() == b"existing"
     with pytest.raises(ValueError, match="outside"):
         converter.convert(result, result / "new.rrd", run_id="test")
+
     def fail(*args):
         raise RuntimeError("sink failed")
+
     monkeypatch.setattr(converter, "_inspect", fail)
     with pytest.raises(RuntimeError, match="sink failed"):
         converter.convert(result, tmp_path / "new.rrd", run_id="test")
@@ -328,8 +479,11 @@ def test_retrieval_extra_fields_cannot_leak_into_recording(modules, result, tmp_
     embed.write_hashes(result)
     path = tmp_path / "report.rrd"
     converter.convert(result, path, run_id="test")
-    decoded = [json.loads(row[0]) for batch in _chunks(path, "/retrieval/top_ids")
-               for row in batch.column("TextDocument:text").to_pylist()]
+    decoded = [
+        json.loads(row[0])
+        for batch in _chunks(path, "/retrieval/top_ids")
+        for row in batch.column("TextDocument:text").to_pylist()
+    ]
     assert all(set(query) == {"query_id", "top_ids"} for query in decoded)
 
 
@@ -337,7 +491,10 @@ def test_reversed_recovery_lineage_is_rejected(modules, advanced, tmp_path):
     converter, _, application, *_ = modules
     report = json.loads((advanced / "report.json").read_text())
     recovery = report["recovery"]
-    recovery["old_instance"], recovery["new_instance"] = recovery["new_instance"], recovery["old_instance"]
+    recovery["old_instance"], recovery["new_instance"] = (
+        recovery["new_instance"],
+        recovery["old_instance"],
+    )
     _dump(advanced / "report.json", report)
     _dump(advanced / "recovery.json", recovery)
     application._write_cleanup_artifacts(advanced, [], 1)
@@ -351,7 +508,11 @@ def test_model_identity_cannot_be_invented(modules, advanced, tmp_path, damage):
     report = json.loads((advanced / "report.json").read_text())
     for actor in report["model_initializations"]:
         if damage == "weights":
-            actor["model_files"] = [entry for entry in actor["model_files"] if entry["path"] == "config.json"]
+            actor["model_files"] = [
+                entry
+                for entry in actor["model_files"]
+                if entry["path"] == "config.json"
+            ]
         elif damage == "fingerprint":
             actor["torch"] = "changed-runtime"
         else:
@@ -364,7 +525,9 @@ def test_model_identity_cannot_be_invented(modules, advanced, tmp_path, damage):
 
 @pytest.mark.parametrize("producer", ["result", "advanced"])
 @pytest.mark.parametrize("damage", [None, "duplicate", "missing"])
-def test_decoded_physical_chunks_preserve_timeline_coverage(modules, request, tmp_path, monkeypatch, producer, damage):
+def test_decoded_physical_chunks_preserve_timeline_coverage(
+    modules, request, tmp_path, monkeypatch, producer, damage
+):
     """Physical chunks need not arrive in timeline order, including within one entity."""
     import rerun.recording
 
@@ -379,18 +542,33 @@ def test_decoded_physical_chunks_preserve_timeline_coverage(modules, request, tm
 
     def shuffled(path):
         recording = original(path)
-        rows = [(chunk.entity_path, chunk.to_record_batch().slice(index, 1))
-                for chunk in recording.chunks() for index in range(chunk.num_rows)]
-        index = next(index for index, (entity, _) in enumerate(rows) if str(entity) == "/vectors/embedding")
+        rows = [
+            (chunk.entity_path, chunk.to_record_batch().slice(index, 1))
+            for chunk in recording.chunks()
+            for index in range(chunk.num_rows)
+        ]
+        index = next(
+            index
+            for index, (entity, _) in enumerate(rows)
+            if str(entity) == "/vectors/embedding"
+        )
         if damage == "duplicate":
             rows.append(rows[index])
         elif damage == "missing":
             rows.pop(index)
-        chunks = [SimpleNamespace(entity_path=entity, num_rows=batch.num_rows,
-                                  to_record_batch=lambda batch=batch: batch)
-                  for entity, batch in reversed(rows)]
-        return SimpleNamespace(application_id=recording.application_id, recording_id=recording.recording_id,
-                               chunks=lambda: iter(chunks))
+        chunks = [
+            SimpleNamespace(
+                entity_path=entity,
+                num_rows=batch.num_rows,
+                to_record_batch=lambda batch=batch: batch,
+            )
+            for entity, batch in reversed(rows)
+        ]
+        return SimpleNamespace(
+            application_id=recording.application_id,
+            recording_id=recording.recording_id,
+            chunks=lambda: iter(chunks),
+        )
 
     monkeypatch.setattr(rerun.recording, "load_recording", shuffled)
     output = tmp_path / "shuffled.rrd"
@@ -403,9 +581,12 @@ def test_decoded_physical_chunks_preserve_timeline_coverage(modules, request, tm
 
 
 @pytest.mark.parametrize("damage", ["vector", "image", "event", "recovery", "identity"])
-def test_decoded_verification_rejects_writer_content_drift(modules, advanced, tmp_path, monkeypatch, damage):
+def test_decoded_verification_rejects_writer_content_drift(
+    modules, advanced, tmp_path, monkeypatch, damage
+):
     converter = modules[0]
     original = converter._write
+
     def corrupt(path, data, run_id):
         changed = copy.deepcopy(data)
         if damage == "vector":
@@ -419,21 +600,30 @@ def test_decoded_verification_rejects_writer_content_drift(modules, advanced, tm
         else:
             run_id = "incorrect-recording"
         original(path, changed, run_id)
+
     monkeypatch.setattr(converter, "_write", corrupt)
     with pytest.raises(ValueError, match="Decoded RRD"):
         converter.convert(advanced, tmp_path / "invalid.rrd", run_id="test")
     assert not (tmp_path / "invalid.rrd").exists()
 
 
-@pytest.mark.parametrize("damage", ["string_vector", "report_list", "invalid_numeric_metric"])
-def test_cli_rejects_malformed_values_without_echo_or_traceback(modules, result, tmp_path, damage):
+@pytest.mark.parametrize(
+    "damage", ["string_vector", "report_list", "invalid_numeric_metric"]
+)
+def test_cli_rejects_malformed_values_without_echo_or_traceback(
+    modules, result, tmp_path, damage
+):
     converter, embed, *_ = modules
     sentinel = "synthetic-private-value-must-stay-private"
     report = json.loads((result / "report.json").read_text())
     if damage == "string_vector":
         table = pq.read_table(result / "embeddings.parquet")
-        vectors = pa.array([[sentinel] * 512] * len(table), type=pa.list_(pa.string(), 512))
-        table = table.set_column(table.schema.get_field_index("vector"), "vector", vectors)
+        vectors = pa.array(
+            [[sentinel] * 512] * len(table), type=pa.list_(pa.string(), 512)
+        )
+        table = table.set_column(
+            table.schema.get_field_index("vector"), "vector", vectors
+        )
         pq.write_table(table, result / "embeddings.parquet")
         report["parquet_sha256"] = converter._sha(result / "embeddings.parquet")
     elif damage == "report_list":
@@ -443,8 +633,20 @@ def test_cli_rejects_malformed_values_without_echo_or_traceback(modules, result,
     _dump(result / "report.json", report)
     embed.write_hashes(result)
     output = tmp_path / "invalid.rrd"
-    run = subprocess.run([sys.executable, converter.__file__, "--input-path", str(result),
-                          "--output-path", str(output), "--run-id", "test"], capture_output=True, text=True)
+    run = subprocess.run(
+        [
+            sys.executable,
+            converter.__file__,
+            "--input-path",
+            str(result),
+            "--output-path",
+            str(output),
+            "--run-id",
+            "test",
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode == 1
     assert sentinel not in run.stdout + run.stderr
     assert "Traceback" not in run.stderr
@@ -454,7 +656,9 @@ def test_cli_rejects_malformed_values_without_echo_or_traceback(modules, result,
 
 @pytest.mark.parametrize("fixture_name", ["result", "advanced"])
 @pytest.mark.parametrize("damage", ["missing_table", "missing_data", "empty_manifest"])
-def test_lance_payload_is_required_even_after_manifest_refresh(modules, request, fixture_name, damage, tmp_path):
+def test_lance_payload_is_required_even_after_manifest_refresh(
+    modules, request, fixture_name, damage, tmp_path
+):
     converter, embed, application, *_ = modules
     root = request.getfixturevalue(fixture_name)
     lance = root / "lance/embeddings.lance"
@@ -475,7 +679,9 @@ def test_lance_payload_is_required_even_after_manifest_refresh(modules, request,
 
 
 @pytest.mark.parametrize("damage", ["killed_actor", "inference_calls"])
-def test_recovery_cannot_attribute_later_work_to_killed_actor(modules, advanced, tmp_path, damage):
+def test_recovery_cannot_attribute_later_work_to_killed_actor(
+    modules, advanced, tmp_path, damage
+):
     converter, _, application, *_ = modules
     report = json.loads((advanced / "report.json").read_text())
     if damage == "killed_actor":
@@ -492,7 +698,9 @@ def test_recovery_cannot_attribute_later_work_to_killed_actor(modules, advanced,
 
 
 @pytest.mark.parametrize("damage", ["oversized_png", "duration_overflow"])
-def test_cli_normalizes_malformed_image_and_duration(modules, advanced, tmp_path, damage):
+def test_cli_normalizes_malformed_image_and_duration(
+    modules, advanced, tmp_path, damage
+):
     converter, _, application, *_ = modules
     if damage == "oversized_png":
         path = advanced / "preview.png"
@@ -507,8 +715,20 @@ def test_cli_normalizes_malformed_image_and_duration(modules, advanced, tmp_path
         _dump(advanced / "report.json", report)
     application._write_cleanup_artifacts(advanced, [], 1)
     output = tmp_path / "invalid.rrd"
-    run = subprocess.run([sys.executable, converter.__file__, "--input-path", str(advanced),
-                          "--output-path", str(output), "--run-id", "test"], capture_output=True, text=True)
+    run = subprocess.run(
+        [
+            sys.executable,
+            converter.__file__,
+            "--input-path",
+            str(advanced),
+            "--output-path",
+            str(output),
+            "--run-id",
+            "test",
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode == 1
     assert not run.stdout
     assert "CLIP report conversion failed" in run.stderr
@@ -520,10 +740,14 @@ def test_cli_normalizes_malformed_image_and_duration(modules, advanced, tmp_path
 
 @pytest.mark.parametrize("fixture_name", ["result", "advanced"])
 @pytest.mark.parametrize("damage", ["missing", "contradictory"])
-def test_preprocessor_identity_must_match_inference_source(modules, request, fixture_name, damage, tmp_path):
+def test_preprocessor_identity_must_match_inference_source(
+    modules, request, fixture_name, damage, tmp_path
+):
     converter, embed, application, *_ = modules
     root = request.getfixturevalue(fixture_name)
-    path = root / ("report.json" if fixture_name == "result" else "shards/000001/commit.json")
+    path = root / (
+        "report.json" if fixture_name == "result" else "shards/000001/commit.json"
+    )
     value = json.loads(path.read_text())
     field = "preprocessors" if fixture_name == "result" else "preprocessor"
     if damage == "missing":

@@ -43,6 +43,11 @@ def test_chat_queue_contract_in_ui() -> None:
     assert "describeInFlight" in ui
     # Session captured at enqueue; mid-queue switch must not retarget POST/paint.
     assert "jobSessionId" in ui
+    # The first message waits for initial session hydration so an optimistic
+    # default id cannot be replaced while the response is in flight.
+    assert "chatSessionBootstrap" in ui
+    assert "await chatSessionBootstrap" in ui
+    assert "resolveChatSessionBootstrap()" in ui
     assert "lastAppliedDraftYaml" in ui
 
 

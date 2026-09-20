@@ -14,14 +14,24 @@ from npa.clients.credentials import (
 )
 
 STORAGE_ENDPOINT_ENV_NAMES = (
-    "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT", "NPA_STORAGE_ENDPOINT",
+    "AWS_ENDPOINT_URL_S3",
+    "AWS_ENDPOINT_URL",
+    "NEBIUS_S3_ENDPOINT",
+    "NPA_STORAGE_ENDPOINT",
     "S3_ENDPOINT_URL",
 )
 
 
 def storage_endpoint_from_environment(environ: Mapping[str, str]) -> str:
     """Honor the service-specific boto endpoint before generic aliases."""
-    return next((str(environ[key]).strip() for key in STORAGE_ENDPOINT_ENV_NAMES if environ.get(key)), "")
+    return next(
+        (
+            str(environ[key]).strip()
+            for key in STORAGE_ENDPOINT_ENV_NAMES
+            if environ.get(key)
+        ),
+        "",
+    )
 
 
 @dataclass(frozen=True)
@@ -75,9 +85,21 @@ def resolve_submit_credentials(
     # different saved principal's secret can pass unrelated presence checks but
     # can never authenticate the execution target.
     sources = (
-        ("environment", process_env.get("AWS_ACCESS_KEY_ID", ""), process_env.get("AWS_SECRET_ACCESS_KEY", "")),
-        ("workflow.env", (workflow_env or {}).get("AWS_ACCESS_KEY_ID", ""), (workflow_env or {}).get("AWS_SECRET_ACCESS_KEY", "")),
-        ("project.storage", project_storage.aws_access_key_id, project_storage.aws_secret_access_key),
+        (
+            "environment",
+            process_env.get("AWS_ACCESS_KEY_ID", ""),
+            process_env.get("AWS_SECRET_ACCESS_KEY", ""),
+        ),
+        (
+            "workflow.env",
+            (workflow_env or {}).get("AWS_ACCESS_KEY_ID", ""),
+            (workflow_env or {}).get("AWS_SECRET_ACCESS_KEY", ""),
+        ),
+        (
+            "project.storage",
+            project_storage.aws_access_key_id,
+            project_storage.aws_secret_access_key,
+        ),
         ("credentials", configured.s3_access_key_id, configured.s3_secret_access_key),
     )
     access_key = secret_key = ""
@@ -85,7 +107,9 @@ def resolve_submit_credentials(
     for source, access, secret in sources:
         if access or secret:
             if not access or not secret:
-                raise ValueError(f"Incomplete S3 credential pair in {source}; set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in that source")
+                raise ValueError(
+                    f"Incomplete S3 credential pair in {source}; set both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in that source"
+                )
             access_key, secret_key, credential_source = str(access), str(secret), source
             break
     available["AWS_ACCESS_KEY_ID"] = access_key
@@ -103,7 +127,11 @@ def resolve_submit_credentials(
         name = str(raw_name or "").strip()
         if not name or name in resolved or name in missing:
             continue
-        value = str(available.get(name) if name in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} else env.get(name) or available.get(name) or "")
+        value = str(
+            available.get(name)
+            if name in {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+            else env.get(name) or available.get(name) or ""
+        )
         if value:
             resolved[name] = value
         else:
@@ -117,7 +145,10 @@ def resolve_submit_credentials(
     )
     bucket = (
         str(
-            env.get("NPA_S3_BUCKET") or env.get("NPA_CHECKPOINT_BUCKET") or env.get("NEBIUS_S3_BUCKET") or ""
+            env.get("NPA_S3_BUCKET")
+            or env.get("NPA_CHECKPOINT_BUCKET")
+            or env.get("NEBIUS_S3_BUCKET")
+            or ""
         ).strip()
         or str(project_storage.checkpoint_bucket or configured.s3_bucket or "").strip()
     )
@@ -136,14 +167,39 @@ def resolve_submit_credentials(
         missing=tuple(missing),
         provenance={
             "credentials": credential_source,
-            "endpoint": "cli" if explicit_endpoint else (
-                "environment" if storage_endpoint_from_environment(process_env) else
-                "workflow.env" if storage_endpoint_from_environment(workflow_env or {}) else
-                "project.storage" if project_storage.endpoint_url else "credentials"
+            "endpoint": "cli"
+            if explicit_endpoint
+            else (
+                "environment"
+                if storage_endpoint_from_environment(process_env)
+                else "workflow.env"
+                if storage_endpoint_from_environment(workflow_env or {})
+                else "project.storage"
+                if project_storage.endpoint_url
+                else "credentials"
             ),
-            "bucket": "environment" if any(process_env.get(key) for key in ("NPA_S3_BUCKET", "NPA_CHECKPOINT_BUCKET", "NEBIUS_S3_BUCKET")) else (
-                "workflow.env" if any(env.get(key) for key in ("NPA_S3_BUCKET", "NPA_CHECKPOINT_BUCKET", "NEBIUS_S3_BUCKET")) else
-                "project.storage" if project_storage.checkpoint_bucket else "credentials"
+            "bucket": "environment"
+            if any(
+                process_env.get(key)
+                for key in (
+                    "NPA_S3_BUCKET",
+                    "NPA_CHECKPOINT_BUCKET",
+                    "NEBIUS_S3_BUCKET",
+                )
+            )
+            else (
+                "workflow.env"
+                if any(
+                    env.get(key)
+                    for key in (
+                        "NPA_S3_BUCKET",
+                        "NPA_CHECKPOINT_BUCKET",
+                        "NEBIUS_S3_BUCKET",
+                    )
+                )
+                else "project.storage"
+                if project_storage.checkpoint_bucket
+                else "credentials"
             ),
         },
     )

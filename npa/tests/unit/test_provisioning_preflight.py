@@ -24,10 +24,12 @@ def _reader(values):
             name: QuotaObservation(
                 name=name,
                 used=values.get(
-                    name, (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20)
+                    name,
+                    (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20),
                 )[0],
                 limit=values.get(
-                    name, (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20)
+                    name,
+                    (0, 20 * 1024 * GIB if name == NETWORK_SSD_BYTES_QUOTA else 20),
                 )[1],
                 state="known",
             )
@@ -274,8 +276,7 @@ def test_preemptible_does_not_change_disk_byte_requirement() -> None:
     on_demand = resolve_topology(cpu_nodes=2, gpu_nodes=3, preemptible=False)
     preemptible = resolve_topology(cpu_nodes=2, gpu_nodes=3, preemptible=True)
     assert (
-        preemptible.required_network_ssd_bytes
-        == on_demand.required_network_ssd_bytes
+        preemptible.required_network_ssd_bytes == on_demand.required_network_ssd_bytes
     )
 
 

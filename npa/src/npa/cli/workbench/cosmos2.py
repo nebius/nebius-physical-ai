@@ -152,13 +152,9 @@ def _load_refinement(refinement_uri: str) -> dict[str, Any]:
             "refinement artifact settings must contain numeric control_weight and guidance"
         ) from exc
     if not 0.0 <= control_weight <= 1.0:
-        raise typer.BadParameter(
-            "refinement control_weight must be between 0 and 1"
-        )
+        raise typer.BadParameter("refinement control_weight must be between 0 and 1")
     if guidance_number < 0.0 or not guidance_number.is_integer():
-        raise typer.BadParameter(
-            "refinement guidance must be a non-negative integer"
-        )
+        raise typer.BadParameter("refinement guidance must be a non-negative integer")
     guidance = int(guidance_number)
     if attempt < 0:
         raise typer.BadParameter("refinement artifact settings cannot be negative")
@@ -370,7 +366,9 @@ def _gang_contract_required() -> bool:
         for line in str(os.environ.get("SKYPILOT_NODE_IPS", "")).splitlines()
         if line.strip()
     ]
-    sky_evidence = any((sky_nodes, sky_rank, node_ips, sky_internal_job, sky_managed_job))
+    sky_evidence = any(
+        (sky_nodes, sky_rank, node_ips, sky_internal_job, sky_managed_job)
+    )
     if not sky_evidence:
         return False
     return not (sky_nodes == "1" and sky_rank == "0" and len(node_ips) == 1)
@@ -619,13 +617,10 @@ def _sky_gang_rendezvous(
                         try:
                             request = _recv_json_line(connection)
                             member_rank = int(request.get("rank", -1))
-                            claimant_nonce = str(
-                                request.get("claimant_nonce") or ""
-                            )
+                            claimant_nonce = str(request.get("claimant_nonce") or "")
                             identity_matches = bool(
                                 request.get("protocol") == protocol
-                                and request.get("logical_wave_id")
-                                == logical_wave_id
+                                and request.get("logical_wave_id") == logical_wave_id
                                 and request.get("membership_digest")
                                 == membership_digest
                                 and request.get("internal_job_id") == internal_job_id
@@ -641,7 +636,10 @@ def _sky_gang_rendezvous(
                             with received_lock:
                                 committed_nonce = committed_nonces.get(member_rank)
                                 in_flight_nonce = in_flight.get(member_rank)
-                                if identity_matches and committed_nonce == claimant_nonce:
+                                if (
+                                    identity_matches
+                                    and committed_nonce == claimant_nonce
+                                ):
                                     valid = True
                                     replay_committed = True
                                 elif (
@@ -710,15 +708,13 @@ def _sky_gang_rendezvous(
                             acknowledgement.get("protocol") == protocol
                             and acknowledgement.get("acknowledged") is True
                             and int(acknowledgement.get("rank", -1)) == member_rank
-                            and acknowledgement.get("claimant_nonce")
-                            == claimant_nonce
+                            and acknowledgement.get("claimant_nonce") == claimant_nonce
                         ):
                             return
                         with received_lock:
                             if replay_committed:
                                 committed = (
-                                    committed_nonces.get(member_rank)
-                                    == claimant_nonce
+                                    committed_nonces.get(member_rank) == claimant_nonce
                                 )
                             else:
                                 committed = bool(
@@ -759,10 +755,7 @@ def _sky_gang_rendezvous(
                             and receipt.get("claimant_nonce") == claimant_nonce
                         ):
                             with received_lock:
-                                if (
-                                    committed_nonces.get(member_rank)
-                                    == claimant_nonce
-                                ):
+                                if committed_nonces.get(member_rank) == claimant_nonce:
                                     delivered.add(member_rank)
                     finally:
                         if reserved_rank is not None:
@@ -1012,9 +1005,7 @@ def _apply_validation_fault(
 
     def selected(prefix: str) -> bool:
         raw_rank = str(os.environ.get(f"{prefix}_RANK", "")).strip()
-        raw_generation = str(
-            os.environ.get(f"{prefix}_GENERATION", "")
-        ).strip()
+        raw_generation = str(os.environ.get(f"{prefix}_GENERATION", "")).strip()
         try:
             return bool(
                 (not raw_rank or int(raw_rank) == rank)
@@ -1048,9 +1039,7 @@ def _apply_validation_fault(
         )
         time.sleep(delay)
 
-    fail_phase = str(
-        os.environ.get("NPA_COSMOS_VALIDATION_FAIL_PHASE", "")
-    ).strip()
+    fail_phase = str(os.environ.get("NPA_COSMOS_VALIDATION_FAIL_PHASE", "")).strip()
     if fail_phase == phase and selected("NPA_COSMOS_VALIDATION_FAIL"):
         raise RuntimeError(
             "task-scoped Cosmos validation fault: "
@@ -1098,11 +1087,11 @@ def _inference_seed(combo: dict[str, Any]) -> int | None:
     try:
         seed = int(raw)
     except (TypeError, ValueError) as exc:
-        raise typer.BadParameter(
-            "candidate inference_seed must be an integer"
-        ) from exc
+        raise typer.BadParameter("candidate inference_seed must be an integer") from exc
     if not 0 <= seed < 2**31:
-        raise typer.BadParameter("candidate inference_seed must be within 0..2147483647")
+        raise typer.BadParameter(
+            "candidate inference_seed must be within 0..2147483647"
+        )
     return seed
 
 
@@ -1133,12 +1122,15 @@ def _materialize_input_clip(src: str, *, allow_frame_sequence: bool = False) -> 
     try:
         source_path = urlsplit(s).path
         if source_path.lower().endswith(_VIDEO_EXTS):
-            downloaded = client.download_path(s, str(Path(tmp) / Path(source_path).name))
+            downloaded = client.download_path(
+                s, str(Path(tmp) / Path(source_path).name)
+            )
             keep_tmp = True
             return downloaded
         client.download_directory(s, tmp)
         vids = sorted(
-            f for f in _glob.glob(str(Path(tmp) / "**" / "*"), recursive=True)
+            f
+            for f in _glob.glob(str(Path(tmp) / "**" / "*"), recursive=True)
             if f.lower().endswith(_VIDEO_EXTS) and Path(f).is_file()
         )
         if vids:
@@ -1176,9 +1168,7 @@ def _materialize_control_asset(src: str, *, label: str) -> str:
     if not value:
         return ""
     if not value.lower().endswith(_VIDEO_EXTS):
-        raise typer.BadParameter(
-            f"{label} must be an mp4/video file, got: {value!r}"
-        )
+        raise typer.BadParameter(f"{label} must be an mp4/video file, got: {value!r}")
     if not value.startswith("s3://"):
         if not Path(value).is_file():
             raise typer.BadParameter(f"{label} does not exist: {value!r}")
@@ -1201,7 +1191,9 @@ def _materialize_control_asset(src: str, *, label: str) -> str:
     atexit.register(cleanup)
     name = Path(urlsplit(value).path).name or "control.mp4"
     try:
-        return StorageClient.from_environment().download_path(value, str(Path(tmp) / name))
+        return StorageClient.from_environment().download_path(
+            value, str(Path(tmp) / name)
+        )
     except Exception as exc:  # noqa: BLE001 - sanitize storage failures
         cleanup()
         atexit.unregister(cleanup)
@@ -1303,13 +1295,25 @@ def _safe_paidf_cli_result(payload: dict[str, Any]) -> dict[str, Any]:
 
 @app.command("transfer")
 def transfer_cmd(
-    input_uri: str = typer.Option(..., "--input-uri", help="Input frames, assets, or rollout URI."),
-    output_uri: str = typer.Option(..., "--output-uri", help="Output prefix for transferred frames."),
-    assets_uri: str = typer.Option("", "--assets-uri", help="Optional sim asset source path."),
-    scene_spec_uri: str = typer.Option("", "--scene-spec-uri", help="Optional SceneSpec path."),
+    input_uri: str = typer.Option(
+        ..., "--input-uri", help="Input frames, assets, or rollout URI."
+    ),
+    output_uri: str = typer.Option(
+        ..., "--output-uri", help="Output prefix for transferred frames."
+    ),
+    assets_uri: str = typer.Option(
+        "", "--assets-uri", help="Optional sim asset source path."
+    ),
+    scene_spec_uri: str = typer.Option(
+        "", "--scene-spec-uri", help="Optional SceneSpec path."
+    ),
     image: str = typer.Option("", "--image", help="BYO Cosmos2 transfer image."),
-    run_id: str = typer.Option("", "--run-id", help="Run id carried into the manifest."),
-    output_json: Optional[Path] = typer.Option(None, "--output-json", help="Write manifest JSON locally."),
+    run_id: str = typer.Option(
+        "", "--run-id", help="Run id carried into the manifest."
+    ),
+    output_json: Optional[Path] = typer.Option(
+        None, "--output-json", help="Write manifest JSON locally."
+    ),
     execute: bool = typer.Option(
         False,
         "--execute",
@@ -1321,7 +1325,9 @@ def transfer_cmd(
         ),
     ),
     spec: str = typer.Option(
-        "", "--spec", help="controlnet_spec path (relative to the transfer repo) for --execute."
+        "",
+        "--spec",
+        help="controlnet_spec path (relative to the transfer repo) for --execute.",
     ),
     configs_uri: str = typer.Option(
         "",
@@ -1349,7 +1355,9 @@ def transfer_cmd(
         "Edge/vis/seg can be derived from the input; depth requires an "
         "operator-owned precomputed control and never invokes Video Depth Anything.",
     ),
-    control_weight: float = typer.Option(1.0, "--control-weight", help="Control weight for input-conditioning."),
+    control_weight: float = typer.Option(
+        1.0, "--control-weight", help="Control weight for input-conditioning."
+    ),
     control_asset: str = typer.Option(
         "",
         "--control-asset",
@@ -1384,7 +1392,9 @@ def transfer_cmd(
         "conditioned each variant, as <prefix>/<clip>/control_<modality>.mp4 plus "
         "extracted frames. Sibling of --output-uri, never nested inside it.",
     ),
-    guidance: float = typer.Option(3.0, "--guidance", help="Classifier-free guidance for input-conditioning."),
+    guidance: float = typer.Option(
+        3.0, "--guidance", help="Classifier-free guidance for input-conditioning."
+    ),
     refinement_uri: str = typer.Option(
         "",
         "--refinement-uri",
@@ -1579,7 +1589,9 @@ def transfer_cmd(
         # Otherwise (generic `transfer` for sim2real / cosmos-gate / fanout), publish
         # the generated video, flat extracted frames, and durable manifest together.
         condition_requested = bool(
-            input_video or condition_on_input or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT")
+            input_video
+            or condition_on_input
+            or _env_truthy("NPA_COSMOS_CONDITION_ON_INPUT")
         )
         data_factory_mode = bool(configs_uri)
         local_input = ""
@@ -1601,7 +1613,9 @@ def transfer_cmd(
                     f"input conditioning was requested, but no {expected} "
                     f"({', '.join(_VIDEO_EXTS)}) was found at the configured input"
                 )
-        control_asset = _materialize_control_asset(control_asset, label="--control-asset")
+        control_asset = _materialize_control_asset(
+            control_asset, label="--control-asset"
+        )
         mask_asset = _materialize_control_asset(mask_asset, label="--mask-asset")
         refinement = _load_refinement(refinement_uri)
         if refinement:
@@ -1771,7 +1785,10 @@ def transfer_cmd(
                 generation=publication_generation,
                 phase="before-render",
             )
-            shard = [(i, combos[i]) for i in _shard_indices(len(combos), rank=rank, nodes=node_count)]
+            shard = [
+                (i, combos[i])
+                for i in _shard_indices(len(combos), rank=rank, nodes=node_count)
+            ]
             fenced_publication = bool(attempt_id)
             publish_output_uri = (
                 attempt_output_uri_for(output_uri, attempt_id)
@@ -2004,7 +2021,9 @@ def transfer_cmd(
             payload["clips"] = manifest["clips"]
             local_variables = [combo for _index, combo in shard]
             payload["augmentation_variables"] = local_variables
-            local_prompts = [str(combo.get("prompt") or "") for combo in local_variables]
+            local_prompts = [
+                str(combo.get("prompt") or "") for combo in local_variables
+            ]
             payload["prompts"] = local_prompts
             # Retain the legacy singular field as the first prompt this worker
             # actually executed; an empty stride reports no prompt.

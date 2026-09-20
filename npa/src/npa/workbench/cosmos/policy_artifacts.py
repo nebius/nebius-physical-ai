@@ -44,11 +44,20 @@ def policy_workspace(output_path: str, phase: str) -> Iterator[Path]:
                 shutil.copyfile(source, target)
             (diagnostics / "traceback.log").write_text(traceback.format_exc())
             try:
-                publish_bundle(diagnostics, uri_join(output_path, "failure"),
-                               {"status": "failed", "phase": phase, "error_type": type(exc).__name__}, "failure.json")
+                publish_bundle(
+                    diagnostics,
+                    uri_join(output_path, "failure"),
+                    {
+                        "status": "failed",
+                        "phase": phase,
+                        "error_type": type(exc).__name__,
+                    },
+                    "failure.json",
+                )
             except Exception as publication_error:
                 logging.getLogger(__name__).warning(
-                    "Diagnostic publication also failed (%s)", type(publication_error).__name__
+                    "Diagnostic publication also failed (%s)",
+                    type(publication_error).__name__,
                 )
             raise
 
@@ -70,7 +79,9 @@ def file_digest(path: Path) -> str:
         return digest.hexdigest()
 
 
-def publish_bundle(root: Path, output_path: str, report: dict[str, Any], name: str) -> dict[str, Any]:
+def publish_bundle(
+    root: Path, output_path: str, report: dict[str, Any], name: str
+) -> dict[str, Any]:
     """Publish artifact bytes before writing the completion manifest.
 
     Args:
@@ -87,10 +98,18 @@ def publish_bundle(root: Path, output_path: str, report: dict[str, Any], name: s
     if any(path.is_symlink() for path in root.rglob("*")):
         raise ValueError("checkpoint publication does not follow symlinks")
     files = [path for path in sorted(root.rglob("*")) if path.is_file()]
-    report = dict(report, artifacts=[{
-        "path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size,
-        "sha256": file_digest(path), "uri": uri_join(output_path, path.relative_to(root).as_posix()),
-    } for path in files])
+    report = dict(
+        report,
+        artifacts=[
+            {
+                "path": path.relative_to(root).as_posix(),
+                "bytes": path.stat().st_size,
+                "sha256": file_digest(path),
+                "uri": uri_join(output_path, path.relative_to(root).as_posix()),
+            }
+            for path in files
+        ],
+    )
     if output_path.startswith("s3://"):
         StorageClient.from_environment().upload_directory(str(root), output_path)
     else:
@@ -128,7 +147,10 @@ def materialize_bundle(input_path: str, target: Path, schema: str) -> dict[str, 
             StorageClient.from_environment().download_file(uri, str(path))
         else:
             shutil.copyfile(uri, path)
-        if path.stat().st_size != entry["bytes"] or file_digest(path) != entry["sha256"]:
+        if (
+            path.stat().st_size != entry["bytes"]
+            or file_digest(path) != entry["sha256"]
+        ):
             raise ValueError("policy artifact content verification failed")
     return report
 

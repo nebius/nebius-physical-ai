@@ -72,7 +72,11 @@ def evaluate_locomotion(
     if not 0.0 <= success_threshold <= 1.0:
         raise MjlabEvalError("--success-threshold must be between 0 and 1")
 
-    effective_score = _deterministic_score(input_path, checkpoint, suite, embodiment) if score is None else score
+    effective_score = (
+        _deterministic_score(input_path, checkpoint, suite, embodiment)
+        if score is None
+        else score
+    )
     if not 0.0 <= effective_score <= 1.0:
         raise MjlabEvalError("--score must be between 0 and 1")
 

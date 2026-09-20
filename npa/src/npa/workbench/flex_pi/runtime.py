@@ -62,8 +62,13 @@ def _validate(request: FlexPiRequest) -> None:
         request.checkpoint_id == DEFAULT_CHECKPOINT_ID
         and request.checkpoint_revision != DEFAULT_CHECKPOINT_REVISION
     ):
-        raise FlexPiError("the default checkpoint must use the repository-pinned revision")
-    for label, value in (("input_path", request.input_path), ("output_path", request.output_path)):
+        raise FlexPiError(
+            "the default checkpoint must use the repository-pinned revision"
+        )
+    for label, value in (
+        ("input_path", request.input_path),
+        ("output_path", request.output_path),
+    ):
         parsed = urlparse(value)
         if parsed.scheme and parsed.scheme != "s3":
             raise FlexPiError(f"{label} must be a local path or s3:// URI")
@@ -71,7 +76,9 @@ def _validate(request: FlexPiRequest) -> None:
             raise FlexPiError(f"{label} requires an S3 bucket and object/prefix")
 
 
-def build_inference_argv(request: FlexPiRequest, *, input_path: Path, output_path: Path) -> list[str]:
+def build_inference_argv(
+    request: FlexPiRequest, *, input_path: Path, output_path: Path
+) -> list[str]:
     """Build the pinned upstream adapter invocation.
 
     Args:
@@ -84,12 +91,18 @@ def build_inference_argv(request: FlexPiRequest, *, input_path: Path, output_pat
     argv = [
         os.environ.get("FLEX_PI_PYTHON", "/opt/conda/bin/python"),
         "/opt/flex-pi/npa/inference.py",
-        "--input-manifest", str(input_path),
-        "--output-json", str(output_path),
-        "--checkpoint-id", request.checkpoint_id,
-        "--checkpoint-revision", request.checkpoint_revision,
-        "--num-inference-steps", str(request.num_inference_steps),
-        "--seed", str(request.seed),
+        "--input-manifest",
+        str(input_path),
+        "--output-json",
+        str(output_path),
+        "--checkpoint-id",
+        request.checkpoint_id,
+        "--checkpoint-revision",
+        request.checkpoint_revision,
+        "--num-inference-steps",
+        str(request.num_inference_steps),
+        "--seed",
+        str(request.seed),
     ]
     if request.torch_compile:
         argv.append("--torch-compile")
@@ -128,31 +141,42 @@ def _validate_manifest(contents: bytes) -> dict[str, Any]:
 
 def _runtime_env(request: FlexPiRequest) -> dict[str, str]:
     env = dict(os.environ)
-    env.update({
-        "HF_HOME": env.get("HF_HOME", "/workspace/.cache/huggingface"),
-        "DIFFSYNTH_MODEL_BASE_PATH": env.get(
-            "DIFFSYNTH_MODEL_BASE_PATH", "/workspace/.cache/flex-pi/diffsynth"
-        ),
-        "MODELSCOPE_CACHE": env.get("MODELSCOPE_CACHE", "/workspace/.cache/modelscope"),
-        # ModelScope otherwise fetches one range at a time. Its supported
-        # maximum keeps the roughly 11 GB converted UMT5 shard practical on a
-        # cold worker while preserving an explicit operator override.
-        "MODELSCOPE_DOWNLOAD_PARALLELS": env.get(
-            "MODELSCOPE_DOWNLOAD_PARALLELS", "16"
-        ),
-        "PYTORCH_CUDA_ALLOC_CONF": env.get(
-            "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
-        ),
-        "FLEX_PI_SOURCE_REVISION": DEFAULT_SOURCE_REVISION,
-    })
+    env.update(
+        {
+            "HF_HOME": env.get("HF_HOME", "/workspace/.cache/huggingface"),
+            "DIFFSYNTH_MODEL_BASE_PATH": env.get(
+                "DIFFSYNTH_MODEL_BASE_PATH", "/workspace/.cache/flex-pi/diffsynth"
+            ),
+            "MODELSCOPE_CACHE": env.get(
+                "MODELSCOPE_CACHE", "/workspace/.cache/modelscope"
+            ),
+            # ModelScope otherwise fetches one range at a time. Its supported
+            # maximum keeps the roughly 11 GB converted UMT5 shard practical on a
+            # cold worker while preserving an explicit operator override.
+            "MODELSCOPE_DOWNLOAD_PARALLELS": env.get(
+                "MODELSCOPE_DOWNLOAD_PARALLELS", "16"
+            ),
+            "PYTORCH_CUDA_ALLOC_CONF": env.get(
+                "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+            ),
+            "FLEX_PI_SOURCE_REVISION": DEFAULT_SOURCE_REVISION,
+        }
+    )
     env.pop("NPA_FLEX_PI_TOKEN", None)
     return env
 
 
-def _execute(argv: list[str], request: FlexPiRequest, runner: Callable[..., Any]) -> None:
+def _execute(
+    argv: list[str], request: FlexPiRequest, runner: Callable[..., Any]
+) -> None:
     completed = runner(
-        argv, cwd="/opt/flex-pi", env=_runtime_env(request), text=True,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        argv,
+        cwd="/opt/flex-pi",
+        env=_runtime_env(request),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
     )
     if completed.returncode != 0:
         # Preserve a bounded, secret-safe diagnostic tail instead of reducing
@@ -161,7 +185,11 @@ def _execute(argv: list[str], request: FlexPiRequest, runner: Callable[..., Any]
         # message reaches job logs.
         tail = str(completed.stdout or "")[-8_192:]
         tail = re.sub(r"(?i)Bearer\s+\S+", "Bearer <redacted>", tail)
-        tail = re.sub(r"\b(?:hf_|gh[pousr]_|github_pat_|sk-)[A-Za-z0-9_-]{12,}\b", "<redacted>", tail)
+        tail = re.sub(
+            r"\b(?:hf_|gh[pousr]_|github_pat_|sk-)[A-Za-z0-9_-]{12,}\b",
+            "<redacted>",
+            tail,
+        )
         tail = re.sub(r"(?:s3|https?)://\S+", "<uri-ref>", tail)
         detail = tail.strip() or "no diagnostic output"
         raise FlexPiError(
@@ -184,7 +212,10 @@ def _validate_action_artifact(path: Path, request: FlexPiRequest) -> dict[str, A
         if payload["runtime"].get("cuda") is not True:
             raise ValueError("real inference requires CUDA")
         gpu_name = str(payload["runtime"].get("gpu_name", ""))
-        if request.expected_gpu and request.expected_gpu.lower() not in gpu_name.lower().replace(" ", ""):
+        if (
+            request.expected_gpu
+            and request.expected_gpu.lower() not in gpu_name.lower().replace(" ", "")
+        ):
             raise ValueError("runtime GPU does not match expected_gpu")
         if payload.get("regime") != "action-only":
             raise ValueError("unexpected inference regime")
@@ -199,7 +230,8 @@ def _publish(local_dir: Path, output_path: str) -> dict[str, str]:
         client = StorageClient.from_environment()
         return {
             path.name: client.upload_file(str(path), base + path.name)
-            for path in sorted(local_dir.iterdir()) if path.is_file()
+            for path in sorted(local_dir.iterdir())
+            if path.is_file()
         }
     target = Path(output_path).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
@@ -212,19 +244,30 @@ def _publish(local_dir: Path, output_path: str) -> dict[str, str]:
     return published
 
 
-def _provenance(request: FlexPiRequest, manifest: dict[str, Any], argv: list[str]) -> dict[str, Any]:
+def _provenance(
+    request: FlexPiRequest, manifest: dict[str, Any], argv: list[str]
+) -> dict[str, Any]:
     return {
         "schema": ARTIFACT_SCHEMA,
-        "source": {"repository": "https://github.com/geyan21/flex-pi", "revision": DEFAULT_SOURCE_REVISION},
-        "checkpoint": {"id": request.checkpoint_id, "revision": request.checkpoint_revision},
+        "source": {
+            "repository": "https://github.com/geyan21/flex-pi",
+            "revision": DEFAULT_SOURCE_REVISION,
+        },
+        "checkpoint": {
+            "id": request.checkpoint_id,
+            "revision": request.checkpoint_revision,
+        },
         "dataset": {
-            "id": manifest["dataset"]["id"], "revision": manifest["dataset"]["revision"],
-            "sample": manifest["observation"]["episode"], "runtime_fetch": True,
+            "id": manifest["dataset"]["id"],
+            "revision": manifest["dataset"]["revision"],
+            "sample": manifest["observation"]["episode"],
+            "runtime_fetch": True,
         },
         "request": asdict(request),
         "runtime": {
             "image": request.runtime_image or os.environ.get("NPA_TASK_IMAGE", ""),
-            "weights_baked": False, "dataset_baked": False,
+            "weights_baked": False,
+            "dataset_baked": False,
             "cache_tier": "run-owned-runtime-cache",
         },
         "argv": argv,
@@ -252,13 +295,20 @@ def run_inference(
         root = Path(scratch)
         contents = _materialize_input(request.input_path, root / "input.json")
         manifest = _validate_manifest(contents)
-        argv = build_inference_argv(request, input_path=root / "input.json", output_path=root / "actions.json")
+        argv = build_inference_argv(
+            request, input_path=root / "input.json", output_path=root / "actions.json"
+        )
         base = _provenance(request, manifest, argv)
         if request.dry_run:
             return {**base, "status": "dry_run", "artifacts": {}}
         _execute(argv, request, runner)
         action_payload = _validate_action_artifact(root / "actions.json", request)
-        result = {**base, "status": "ok", "metrics": action_payload["metrics"], "model_runtime": action_payload["runtime"]}
+        result = {
+            **base,
+            "status": "ok",
+            "metrics": action_payload["metrics"],
+            "model_runtime": action_payload["runtime"],
+        }
         (root / "result.json").write_text(
             json.dumps(result, indent=2, sort_keys=True, allow_nan=False) + "\n",
             encoding="utf-8",

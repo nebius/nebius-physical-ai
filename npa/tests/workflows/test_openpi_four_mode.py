@@ -16,10 +16,7 @@ from npa.workflows.byof import openpi_service as service
 from npa.workflows.byof import openpi_service_rbac as service_rbac
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = (
-    ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
-)
+SPEC = ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 DIGEST_IMAGE = "registry.example.invalid/openpi@sha256:" + "a" * 64
 
 
@@ -1196,7 +1193,11 @@ def test_policy_checkpoint_lands_on_the_durable_cache_when_configured(
 def test_policy_checkpoint_keeps_its_ephemeral_volume_without_a_cache(
     monkeypatch,
 ) -> None:
-    for name in ("NPA_MODEL_CACHE_PVC", "NPA_MODEL_CACHE_HOST_PATH", "NPA_MODEL_CACHE_DIR"):
+    for name in (
+        "NPA_MODEL_CACHE_PVC",
+        "NPA_MODEL_CACHE_HOST_PATH",
+        "NPA_MODEL_CACHE_DIR",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     pod = _service_manifests()["deployment"]["spec"]["template"]["spec"]

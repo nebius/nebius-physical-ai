@@ -70,10 +70,22 @@ def test_groot_e2e_config_shape() -> None:
     assert GROOT_IMAGE == "ghcr.io/nebius/nebius-physical-ai/npa-groot:0.1.0"
     assert GROOT_MODEL_VARIANT == "nvidia/GR00T-N1.7-3B"
     assert WORKBENCH_NAME == "h200"
-    assert INPUT_PATH == "s3://your-bucket-name/w7all-staging/20260514T161525Z/checkpoint/"
-    assert DATASET_PATH == "s3://your-bucket-name/w7all-staging/20260514T161525Z/dataset/"
+    assert (
+        INPUT_PATH == "s3://your-bucket-name/w7all-staging/20260514T161525Z/checkpoint/"
+    )
+    assert (
+        DATASET_PATH == "s3://your-bucket-name/w7all-staging/20260514T161525Z/dataset/"
+    )
     assert "--subnet-id" not in command
-    assert command[:7] == ["workbench", "groot", "-p", PROJECT_ALIAS, "-n", WORKBENCH_NAME, "infer"]
+    assert command[:7] == [
+        "workbench",
+        "groot",
+        "-p",
+        PROJECT_ALIAS,
+        "-n",
+        WORKBENCH_NAME,
+        "infer",
+    ]
     for flag in (
         "--runtime",
         "--project-id",
@@ -136,9 +148,15 @@ def test_groot_serverless_infer(tmp_path: Path) -> None:
     )
 
     try:
-        submitted = _run_npa(command, timeout=int(os.environ.get("NPA_E2E_GROOT_SUBMIT_TIMEOUT", "600")))
-        (artifacts_dir / "submit-stdout.txt").write_text(submitted.stdout, encoding="utf-8")
-        (artifacts_dir / "submit-stderr.txt").write_text(submitted.stderr, encoding="utf-8")
+        submitted = _run_npa(
+            command, timeout=int(os.environ.get("NPA_E2E_GROOT_SUBMIT_TIMEOUT", "600"))
+        )
+        (artifacts_dir / "submit-stdout.txt").write_text(
+            submitted.stdout, encoding="utf-8"
+        )
+        (artifacts_dir / "submit-stderr.txt").write_text(
+            submitted.stderr, encoding="utf-8"
+        )
         assert submitted.returncode == 0, _format_result(submitted)
         payload = json.loads(submitted.stdout)
         assert payload["status"] == "submitted"
@@ -160,11 +178,19 @@ def test_groot_serverless_infer(tmp_path: Path) -> None:
         _write_job_capture(project_id, final, artifacts_dir, label="final")
 
         local_dir = artifacts_dir / "s3"
-        _download_s3_prefix(output_path, local_dir, access_key, secret_key, endpoint_url)
-        assert {path.name for path in local_dir.iterdir() if path.is_file()} >= _expected_artifact_names()
+        _download_s3_prefix(
+            output_path, local_dir, access_key, secret_key, endpoint_url
+        )
+        assert {
+            path.name for path in local_dir.iterdir() if path.is_file()
+        } >= _expected_artifact_names()
 
-        manifest = json.loads((local_dir / "npa_groot_infer_results.json").read_text(encoding="utf-8"))
-        predicted = json.loads((local_dir / "predicted_actions.json").read_text(encoding="utf-8"))
+        manifest = json.loads(
+            (local_dir / "npa_groot_infer_results.json").read_text(encoding="utf-8")
+        )
+        predicted = json.loads(
+            (local_dir / "predicted_actions.json").read_text(encoding="utf-8")
+        )
         _assert_manifest(manifest, job_name=job_name)
         assert set(predicted) == {"actions", "manifest"}
         assert predicted["actions"] == []
@@ -302,7 +328,9 @@ def _poll_job(
         if current.status in {"succeeded", "failed", "cancelled"}:
             return current
         if started is not None and time.monotonic() - started > STARTING_WAIT:
-            pytest.fail(f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}")
+            pytest.fail(
+                f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}"
+            )
         time.sleep(POLL_INTERVAL)
     pytest.fail(f"Job {job_id} did not finish within {MAX_WAIT}s; last={last}")
 
@@ -364,7 +392,9 @@ def _cleanup_job(project_id: str, ref: str, artifacts_dir: Path) -> None:
         timeout=60,
         check=False,
     )
-    (artifacts_dir / "cleanup-orphan-check.log").write_text(orphan.stdout, encoding="utf-8")
+    (artifacts_dir / "cleanup-orphan-check.log").write_text(
+        orphan.stdout, encoding="utf-8"
+    )
 
 
 def _download_s3_prefix(

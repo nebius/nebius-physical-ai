@@ -45,8 +45,12 @@ NUREC_COLMAP_REVISION = "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
 NUREC_COLMAP_MEMBER = "colmap/struktur28_colmap.zip"
 NUREC_COLMAP_SHA256 = "cf7ab7f100da66b2bf05b178ebcfa3a950e1bf2b1d7ff64a6c7a1e1f682afa8d"
 ISAAC_ARENA_REPLAY_REVISION = "ed0fd12be862078be316c73eb7cf423ba9b1c5cd"
-ISAAC_ARENA_REPLAY_SHA256 = "154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50"
-ISAAC_ARENA_REPLAY_MEMBER = "isaaclab_arena/tests/test_data/test_demo_gr1_open_microwave.hdf5"
+ISAAC_ARENA_REPLAY_SHA256 = (
+    "154ebea7839ec53e6ac441e18f1404b3fe140c3f004ad7e309519ba37274fa50"
+)
+ISAAC_ARENA_REPLAY_MEMBER = (
+    "isaaclab_arena/tests/test_data/test_demo_gr1_open_microwave.hdf5"
+)
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SPECS_DIR = REPO_ROOT / "workflows"
 # A tiny, valid 64x64 H.264/MP4 clip generated from ffmpeg's deterministic
@@ -260,8 +264,18 @@ def seed_live_workflow_inputs(
 
     from npa.clients.project_credentials import s3_client_for_project
 
+    if spec_name == "xr1-antioch-finetune.yaml":
+        pytest.skip(
+            "XR1 requires an operator-collected, sealed Antioch dataset, pinned model assets, "
+            "and a verified SM120 runtime. Follow docs/workbench/cookbooks/xr1-antioch.md."
+        )
+
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "lerobot-subtask-proof.yaml":
+        _seed_lerobot_subtask_dataset(client, bucket=bucket, marker=marker)
+        return
 
     if spec_name == "isaac-arena-evaluation-rtxpro.yaml":
         _seed_isaac_arena_replay(client, bucket=bucket, prefix=marker)
@@ -577,6 +591,133 @@ def _seed_images(client, *, bucket: str, prefix: str, count: int = 2) -> None:
             Body=buf.getvalue(),
             ContentType="image/png",
         )
+
+
+def _parquet_bytes(table: Any) -> bytes:
+    """Serialize one deterministic Arrow table for a live S3 fixture."""
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    sink = pa.BufferOutputStream()
+    pq.write_table(table, sink, compression="snappy")
+    return sink.getvalue().to_pybytes()
+
+
+def _lerobot_subtask_fixture_objects() -> dict[str, bytes]:
+    """Build synthetic LeRobot v3 Parquet data with known subtask rows."""
+
+    import pyarrow as pa
+
+    rows = pa.table(
+        {
+            "episode_index": [0, 0, 0, 0],
+            "frame_index": [0, 1, 2, 3],
+            "timestamp": [0.0, 0.1, 0.2, 0.3],
+            "subtask_index": [0, 0, 1, 1],
+            "action": [[0.0], [0.1], [0.2], [0.3]],
+            "task_index": [0, 0, 0, 0],
+        }
+    )
+    catalog = pa.table({"subtask": ["approach", "grasp"], "subtask_index": [0, 1]})
+    tasks = pa.table({"task_index": [0], "task": ["Pick up the object"]})
+    episodes = pa.table(
+        {"episode_index": [0], "length": [4], "tasks": [["Pick up the object"]]}
+    )
+    info = {
+        "codebase_version": "v3.0",
+        "fps": 10,
+        "total_episodes": 1,
+        "total_frames": 4,
+        "features": {"subtask_index": {"dtype": "int64", "shape": [1], "names": None}},
+    }
+    return {
+        "data/chunk-000/file-000.parquet": _parquet_bytes(rows),
+        "meta/subtasks.parquet": _parquet_bytes(catalog),
+        "meta/tasks.parquet": _parquet_bytes(tasks),
+        "meta/episodes/chunk-000/file-000.parquet": _parquet_bytes(episodes),
+        "meta/info.json": json.dumps(info, sort_keys=True).encode(),
+    }
+
+
+def _seed_lerobot_subtask_dataset(client, *, bucket: str, marker: str) -> None:
+    """Upload the reviewed LeRobot subtask fixture under one run prefix."""
+
+    prefix = f"{marker}/reviewed-dataset/"
+    objects = _lerobot_subtask_fixture_objects()
+    for relative, body in objects.items():
+        client.put_object(Bucket=bucket, Key=f"{prefix}{relative}", Body=body)
+
+
+def _assert_lerobot_subtask_proof(client: Any, bucket: str, marker: str) -> None:
+    import hashlib
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    with client.get_object(Bucket=bucket, Key=f"{marker}/proof/subtask-proof.json")[
+        "Body"
+    ] as body:
+        payload = json.loads(body.read())
+    proof = payload["proof"]
+    assert payload["status"] == "verified"
+    assert payload["summary"] == {
+        "episode_count": 1,
+        "frame_count": 4,
+        "labeled_frame_count": 4,
+        "unlabeled_frame_count": 0,
+        "subtask_count": 2,
+        "segment_count": 2,
+    }
+    prefix = f"{marker}/reviewed-dataset/"
+    with client.get_object(
+        Bucket=bucket, Key=f"{prefix}data/chunk-000/file-000.parquet"
+    )["Body"] as body:
+        data = body.read()
+    with client.get_object(Bucket=bucket, Key=f"{prefix}meta/subtasks.parquet")[
+        "Body"
+    ] as body:
+        catalog = body.read()
+    assert proof["source_parquet_sha256"] == hashlib.sha256(data).hexdigest()
+    assert payload["source_catalog_sha256"] == hashlib.sha256(catalog).hexdigest()
+    row = pq.read_table(pa.BufferReader(data)).to_pylist()[2]
+    labels = {
+        item["subtask_index"]: item["subtask"]
+        for item in pq.read_table(pa.BufferReader(catalog)).to_pylist()
+    }
+    for field in ("episode_index", "frame_index", "timestamp", "subtask_index"):
+        assert proof[field] == row[field]
+    assert proof["subtask"] == labels[row["subtask_index"]] == "grasp"
+    recorded_hash = proof.pop("row_sha256")
+    assert (
+        recorded_hash
+        == hashlib.sha256(
+            json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+
+
+def assert_lerobot_subtask_live_outputs(
+    *, bucket: str, run_id: str, e2e_project: str | None = None
+) -> None:
+    """Read the published proof and independently resolve its source Parquet row.
+
+    Args:
+        bucket: Selected test bucket.
+        run_id: Workflow run identifier used to resolve the seeded prefix.
+        e2e_project: Optional selected project for S3 credentials.
+
+    Returns:
+        None.
+
+    Raises:
+        AssertionError: The proof disagrees with the actual dataset objects.
+    """
+    from npa.clients.project_credentials import s3_client_for_project
+
+    marker = f"{_live_s3_root(run_id)}/lerobot-subtask-proof"
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    _assert_lerobot_subtask_proof(client, bucket, marker)
 
 
 def _seed_input_video(client, *, bucket: str, prefix: str) -> None:
@@ -982,7 +1123,9 @@ def _seed_isaac_arena_replay(client: Any, *, bucket: str, prefix: str) -> None:
         with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
             stored_sha256 = hashlib.sha256(body.read()).hexdigest()
         if stored_sha256 != ISAAC_ARENA_REPLAY_SHA256:
-            pytest.fail("Arena replay readback differs from the pinned upstream fixture")
+            pytest.fail(
+                "Arena replay readback differs from the pinned upstream fixture"
+            )
 
 
 def _download_nurec_colmap_archive(destination: Path) -> None:
@@ -1242,7 +1385,9 @@ def _nurec_rrd_review_settings(chunks: list) -> dict:
     return settings
 
 
-def _nurec_selected_frame_identities(local: Path, settings: dict) -> set[tuple[str, int]]:
+def _nurec_selected_frame_identities(
+    local: Path, settings: dict
+) -> set[tuple[str, int]]:
     """Derive the intended review identities from ordered source render paths."""
     from npa.workflows.data_factory_viz import _frame_index, _grouped_images, _subsample
 
@@ -1488,8 +1633,8 @@ def materialize_live_spec(
         text = re.sub(
             r'(input_uri:\s*")[^"]*(")',
             lambda match: (
-                f'{match.group(1)}s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/'
-                f'input/gr1-open-microwave.hdf5{match.group(2)}'
+                f"{match.group(1)}s3://{{{{config.bucket}}}}/{{{{config.prefix}}}}/"
+                f"input/gr1-open-microwave.hdf5{match.group(2)}"
             ),
             text,
             count=1,

@@ -15,7 +15,9 @@ from npa.cli.fiftyone import (
 )
 
 
-@pytest.mark.parametrize("name", ["dataset\nAWS_ACCESS_KEY_ID=other", "dataset\rname", "dataset\0name"])
+@pytest.mark.parametrize(
+    "name", ["dataset\nAWS_ACCESS_KEY_ID=other", "dataset\rname", "dataset\0name"]
+)
 def test_dataset_name_cannot_inject_service_environment(name):
     with pytest.raises(ValueError, match="newline or NUL"):
         _service_setup_script(5151, dataset_name=name)
@@ -49,7 +51,7 @@ def test_service_env_is_private_before_credentials_and_published_atomically(
         "curl": "#!/bin/sh\nexit 0\n",
         "mv": "#!/bin/sh\n"
         "replace=false\n"
-        'if [ "$1" = "-T" ]; then replace=true; shift; fi\n'
+        'if [ "$1" = "-T" ] || [ "$1" = "-fT" ]; then replace=true; shift; fi\n'
         'if [ "$1" = "--" ]; then shift; fi\n'
         'if [ "$replace" = "true" ]; then rm -f "$2"; fi\n'
         'exec /bin/mv "$@"\n',

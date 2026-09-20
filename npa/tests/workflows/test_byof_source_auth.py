@@ -20,7 +20,9 @@ from npa.workflows.byof import source_auth
 def test_repository_url_hardening_applies_to_public_and_private_sources(
     repo_url: str,
 ) -> None:
-    with pytest.raises(source_auth.RepositoryAuthenticationError, match="must not contain"):
+    with pytest.raises(
+        source_auth.RepositoryAuthenticationError, match="must not contain"
+    ):
         source_auth.validate_repository_url(repo_url, private=False)
 
 
@@ -84,7 +86,9 @@ def test_private_access_preflight_checks_requested_ref_without_private_argv(
         if cmd[:3] == ["git", "init", "--bare"]:
             repository = Path(cmd[-1])
             repository.mkdir()
-            (repository / "config").write_text("[core]\n\tbare = true\n", encoding="utf-8")
+            (repository / "config").write_text(
+                "[core]\n\tbare = true\n", encoding="utf-8"
+            )
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         assert cmd == ["git", "ls-remote", "origin"]
         return subprocess.CompletedProcess(
@@ -120,7 +124,9 @@ def test_private_access_preflight_rejects_missing_requested_ref(monkeypatch) -> 
         if cmd[:3] == ["git", "init", "--bare"]:
             repository = Path(cmd[-1])
             repository.mkdir()
-            (repository / "config").write_text("[core]\n\tbare = true\n", encoding="utf-8")
+            (repository / "config").write_text(
+                "[core]\n\tbare = true\n", encoding="utf-8"
+            )
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(
             cmd,
@@ -157,7 +163,9 @@ def test_existing_git_credential_fallback_supports_older_gh(monkeypatch) -> None
             return subprocess.CompletedProcess(cmd, 1, stdout=b"", stderr=b"old gh")
         assert cmd == ["git", "credential", "fill"]
         assert kwargs["input"] == b"protocol=https\nhost=github.com\n\n"
-        kwargs["stdout"].write(f"protocol=https\nhost=github.com\npassword={token}\n".encode())
+        kwargs["stdout"].write(
+            f"protocol=https\nhost=github.com\npassword={token}\n".encode()
+        )
         return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(source_auth.subprocess, "run", fake_run)

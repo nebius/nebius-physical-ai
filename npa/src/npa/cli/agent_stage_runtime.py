@@ -107,8 +107,13 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
             continue
         for item in source:
             if isinstance(item, dict):
-                raw_id = str(item.get("state") or item.get("id") or item.get("name") or "").strip()
-                label = str(item.get("label") or item.get("description") or raw_id).strip() or raw_id
+                raw_id = str(
+                    item.get("state") or item.get("id") or item.get("name") or ""
+                ).strip()
+                label = (
+                    str(item.get("label") or item.get("description") or raw_id).strip()
+                    or raw_id
+                )
             else:
                 raw_id = str(item or "").strip()
                 label = raw_id
@@ -180,9 +185,7 @@ _SENSITIVE_INLINE_ASSIGNMENT = re.compile(
     r"(?P<secret>(?:bearer\s+)?[^\s]+)"
 )
 _BEARER_SECRET = re.compile(r"(?i)\bbearer\s+[^\s]+")
-_BARE_SENSITIVE_ARG = re.compile(
-    rf"(?i)^{_SENSITIVE_PUBLIC_NAME_TOKEN}$"
-)
+_BARE_SENSITIVE_ARG = re.compile(rf"(?i)^{_SENSITIVE_PUBLIC_NAME_TOKEN}$")
 _EMPTY_SENSITIVE_SEPARATOR = re.compile(
     rf"(?i)^(?P<name>{_SENSITIVE_PUBLIC_NAME_TOKEN})(?P<separator>\s*(?:=|:)\s*)$"
 )
@@ -191,7 +194,11 @@ _EMPTY_SENSITIVE_SEPARATOR = re.compile(
 def _redact_inline_workflow_secret(value: str) -> str:
     def replace_assignment(match: re.Match) -> str:
         secret = str(match.group("secret") or "")
-        replacement = "Bearer <redacted>" if secret.lower().startswith("bearer ") else "<redacted>"
+        replacement = (
+            "Bearer <redacted>"
+            if secret.lower().startswith("bearer ")
+            else "<redacted>"
+        )
         return str(match.group("name")) + str(match.group("separator")) + replacement
 
     redacted = _SENSITIVE_INLINE_ASSIGNMENT.sub(replace_assignment, value)
@@ -238,7 +245,9 @@ def _public_workflow_command(argv) -> str:
         if _BARE_SENSITIVE_ARG.fullmatch(value):
             public.append(value)
             pending = (
-                "authorization" if value.lower().lstrip("-") == "authorization" else "secret"
+                "authorization"
+                if value.lower().lstrip("-") == "authorization"
+                else "secret"
             )
             continue
         if value.lower() == "bearer":
@@ -364,10 +373,14 @@ def _artifact_backed_run_details(
         return None
     keys = [str(item.key or "") for item in artifacts]
     marker = "/" + str(run_id) + "/"
-    effective_prefix = exact_prefix if resource_bucket else (
-        keys[0].split(marker, 1)[0]
-        if marker in keys[0]
-        else settings.get("prefix", "")
+    effective_prefix = (
+        exact_prefix
+        if resource_bucket
+        else (
+            keys[0].split(marker, 1)[0]
+            if marker in keys[0]
+            else settings.get("prefix", "")
+        )
     )
     evidence_documents = _stage_evidence_documents(s3, run_bucket, artifacts)
     parsed_evidence = parse_stage_evidence_documents(evidence_documents)
@@ -384,7 +397,11 @@ def _artifact_backed_run_details(
     preferred = select_preferred_artifact(artifacts)
     report_note = ""
     report_artifact = next(
-        (item for item in artifacts if item.key.endswith("/reports/sim2real-report.json")),
+        (
+            item
+            for item in artifacts
+            if item.key.endswith("/reports/sim2real-report.json")
+        ),
         None,
     )
     if report_artifact:
@@ -407,7 +424,11 @@ def _artifact_backed_run_details(
                 report_note = (
                     "Report summary: visualization source="
                     + (source or "unknown")
-                    + (f", success_rate={success_rate}" if success_rate is not None else "")
+                    + (
+                        f", success_rate={success_rate}"
+                        if success_rate is not None
+                        else ""
+                    )
                     + "."
                 )
     stage_summary = summarize_stage_evidence(stages)
@@ -422,12 +443,16 @@ def _artifact_backed_run_details(
         "workflow_name": str(parsed_evidence.get("workflow_name") or ""),
         "workflow_graph_source": str(parsed_evidence.get("graph_source") or ""),
         "status": authoritative_run_status or "status_unavailable",
-        "status_label": str(parsed_evidence.get("run_status_label") or "Status unavailable"),
+        "status_label": str(
+            parsed_evidence.get("run_status_label") or "Status unavailable"
+        ),
         "status_source": str(parsed_evidence.get("run_status_source") or ""),
         "result": "artifacts_available",
         "submitted_at": "",
         "updated_at": str(parsed_evidence.get("updated_at") or "")
-        or max((str(item.last_modified or "") for item in artifacts), default=_now_iso()),
+        or max(
+            (str(item.last_modified or "") for item in artifacts), default=_now_iso()
+        ),
         "selection": {},
         "stages": stages,
         "stage_summary": stage_summary,
@@ -475,7 +500,8 @@ def _artifact_backed_run_details(
             {
                 "timestamp": _now_iso(),
                 "level": "info",
-                "message": report_note or "No structured run report summary was available.",
+                "message": report_note
+                or "No structured run report summary was available.",
             },
         ],
         "artifacts": [item.to_dict() for item in artifacts[:25]],
@@ -505,8 +531,14 @@ def _sim2real_run_details(
         or state.get("active_run_id")
         or ""
     ).strip()
-    history = state.get("sim_viz_runs") if isinstance(state.get("sim_viz_runs"), dict) else {}
-    recorded = history.get(resolved_run_id) if isinstance(history.get(resolved_run_id), dict) else {}
+    history = (
+        state.get("sim_viz_runs") if isinstance(state.get("sim_viz_runs"), dict) else {}
+    )
+    recorded = (
+        history.get(resolved_run_id)
+        if isinstance(history.get(resolved_run_id), dict)
+        else {}
+    )
     run_viz = dict(recorded)
     if not run_viz and str(sim_viz.get("run_id") or "").strip() == resolved_run_id:
         run_viz = dict(sim_viz)
@@ -529,9 +561,7 @@ def _sim2real_run_details(
     # selection still asks for artifact evidence, and artifact-only run IDs (no
     # local graph) continue through bounded discovery below.
     has_session_graph = bool(
-        details
-        and isinstance(details.get("stages"), list)
-        and details.get("stages")
+        details and isinstance(details.get("stages"), list) and details.get("stages")
     )
     explicit_artifact_source = bool(
         prefix or resource_bucket or project_id or resolved_prefix or source_selected
@@ -560,7 +590,9 @@ def _sim2real_run_details(
             == "authoritative"
         ]
         artifact_stages = [
-            item for item in artifact_details.get("stages", []) if isinstance(item, dict)
+            item
+            for item in artifact_details.get("stages", [])
+            if isinstance(item, dict)
         ]
         if authoritative_existing:
             artifact_details["stages"] = merge_stage_evidence(
@@ -570,7 +602,9 @@ def _sim2real_run_details(
                 artifact_details["stages"]
             )
             if str(artifact_details.get("status") or "") == "status_unavailable":
-                artifact_details["status"] = str(details.get("status") or "status_unavailable")
+                artifact_details["status"] = str(
+                    details.get("status") or "status_unavailable"
+                )
                 artifact_details["status_label"] = str(
                     details.get("status_label")
                     or artifact_details.get("status_label")
@@ -605,7 +639,11 @@ def _sim2real_run_details(
         }
     details["run_id"] = resolved_run_id
     if run_viz.get("rrd_uri"):
-        if str(details.get("result") or "") in {"", "unavailable", "recorded_not_launched"}:
+        if str(details.get("result") or "") in {
+            "",
+            "unavailable",
+            "recorded_not_launched",
+        }:
             details["result"] = "recording_observed"
         for item in details.get("stages", []):
             if isinstance(item, dict) and item.get("id") == "stage_14_rerun_viz":

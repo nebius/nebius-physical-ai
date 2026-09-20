@@ -80,9 +80,9 @@ def scan(blob: bytes) -> tuple[Counter, Counter]:
             return sass, ptx
         if offset + FATBIN_HEADER_SIZE > len(blob):
             return sass, ptx
-        version, = struct.unpack_from("<H", blob, offset + 4)
-        header_size, = struct.unpack_from("<H", blob, offset + 6)
-        fat_size, = struct.unpack_from("<Q", blob, offset + 8)
+        (version,) = struct.unpack_from("<H", blob, offset + 4)
+        (header_size,) = struct.unpack_from("<H", blob, offset + 6)
+        (fat_size,) = struct.unpack_from("<Q", blob, offset + 8)
         if version != 1 or header_size != FATBIN_HEADER_SIZE or fat_size <= 0:
             offset += 4
             continue
@@ -94,10 +94,10 @@ def scan(blob: bytes) -> tuple[Counter, Counter]:
         container_sass: Counter = Counter()
         container_ptx: Counter = Counter()
         while cursor + MIN_ENTRY_HEADER <= end:
-            kind, = struct.unpack_from("<H", blob, cursor)
-            entry_header, = struct.unpack_from("<I", blob, cursor + 4)
-            payload, = struct.unpack_from("<Q", blob, cursor + 8)
-            arch, = struct.unpack_from("<I", blob, cursor + 28)
+            (kind,) = struct.unpack_from("<H", blob, cursor)
+            (entry_header,) = struct.unpack_from("<I", blob, cursor + 4)
+            (payload,) = struct.unpack_from("<Q", blob, cursor + 8)
+            (arch,) = struct.unpack_from("<I", blob, cursor + 28)
             if (
                 kind not in (ENTRY_KIND_PTX, ENTRY_KIND_SASS)
                 or not MIN_ENTRY_HEADER <= entry_header <= MAX_ENTRY_HEADER
@@ -166,7 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     min_size = int(args.min_size_mb * 1_000_000)
-    required = {name if name.startswith("sm_") else f"sm_{name}" for name in args.require}
+    required = {
+        name if name.startswith("sm_") else f"sm_{name}" for name in args.require
+    }
     report: dict[str, dict] = {}
     failures: list[str] = []
 

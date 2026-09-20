@@ -100,9 +100,7 @@ def test_groot_workflow_is_short_honest_operational_pipeline() -> None:
         for index, value in enumerate(trainer.argv[:-1])
         if value == "--override"
     ]
-    assert {"tune-projector=true", "tune-diffusion-model=true"} <= set(
-        override_values
-    )
+    assert {"tune-projector=true", "tune-diffusion-model=true"} <= set(override_values)
     assert all("denoising" not in value for step in plan.steps for value in step.argv)
 
 
@@ -129,9 +127,7 @@ def test_groot_workflow_reaches_plan_scheduler_and_vendor_render(
 ) -> None:
     registry = "cr.ci.invalid/workbench"
     monkeypatch.setenv("NPA_REGISTRY", registry)
-    monkeypatch.setenv(
-        "NPA_PUBLIC_REGISTRY", "ghcr.io/nebius/nebius-physical-ai"
-    )
+    monkeypatch.setenv("NPA_PUBLIC_REGISTRY", "ghcr.io/nebius/nebius-physical-ai")
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/npa")
     prepared = prepare_npa_workflow_for_submit(
         SPEC_PATH,
@@ -205,6 +201,4 @@ def test_groot_workflow_gpu_count_matrix(gpu_count: int) -> None:
     assert _option_value(trainer.argv, "--num-gpus") == str(gpu_count)
     assert _option_value(trainer.argv, "--global-batch-size") == str(gpu_count)
     assert _option_value(trainer.argv, "--gradient-accumulation-steps") == "1"
-    assert scheduler["tasks"][3]["resources"]["accelerators"] == (
-        f"B200:{gpu_count}"
-    )
+    assert scheduler["tasks"][3]["resources"]["accelerators"] == (f"B200:{gpu_count}")

@@ -191,7 +191,9 @@ def test_published_tags_are_additive_and_arch_labelled(entries: list[dict]) -> N
                 SUPPORTED_TOOL_VERSIONS,
             )
 
-            tool = next(tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name)
+            tool = next(
+                tool for tool, image in CONTAINER_IMAGE_NAMES.items() if image == name
+            )
             assert tag == SUPPORTED_TOOL_VERSIONS[tool]
             assert entry["published_digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
         else:
@@ -376,11 +378,20 @@ def test_flex_pi_validation_binds_both_blackwell_targets_to_release_bytes(
         assert target["peak_memory_bytes"] > 0
         assert target["readback_verified_objects"] == 3
         assert target["baked_module_hashes_verified"] > 0
-        assert set(target["artifact_sha256"]) == {"actions.json", "input.json", "result.json"}
-        assert all(re.fullmatch(r"[0-9a-f]{64}", value) for value in target["artifact_sha256"].values())
+        assert set(target["artifact_sha256"]) == {
+            "actions.json",
+            "input.json",
+            "result.json",
+        }
+        assert all(
+            re.fullmatch(r"[0-9a-f]{64}", value)
+            for value in target["artifact_sha256"].values()
+        )
 
 
-def test_flex_pi_historical_benchmarks_keep_their_original_image_identity(manifest: dict) -> None:
+def test_flex_pi_historical_benchmarks_keep_their_original_image_identity(
+    manifest: dict,
+) -> None:
     current = manifest["validation_evidence"]["npa-flex-pi"]
     historical = current["historical_releases"]["0.1.0-cu128"]
     assert historical["validated_tag"] == "0.1.0-cu128"
@@ -399,10 +410,15 @@ def test_flex_pi_historical_benchmarks_keep_their_original_image_identity(manife
     )
     assert 0 < b200["wall_scaling_efficiency"] <= 1
     for target in historical["validated_gpus"].values():
-        assert isinstance(target["paired_repeats"], int) and target["paired_repeats"] > 0
+        assert (
+            isinstance(target["paired_repeats"], int) and target["paired_repeats"] > 0
+        )
         for mode in ("eager", "compiled"):
             assert target[f"warm_{mode}_median_seconds"] > 0
-            assert target[f"warm_{mode}_p95_seconds"] >= target[f"warm_{mode}_median_seconds"]
+            assert (
+                target[f"warm_{mode}_p95_seconds"]
+                >= target[f"warm_{mode}_median_seconds"]
+            )
             assert target[f"warm_{mode}_throughput_samples_per_second"] > 0
         assert target["warm_compiled_speedup"] == pytest.approx(
             target["warm_eager_median_seconds"] / target["warm_compiled_median_seconds"]

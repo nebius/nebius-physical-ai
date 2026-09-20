@@ -83,8 +83,16 @@ def evaluate_cmd(
     threshold: float = typer.Option(
         0.682, "--threshold", help="Pass threshold for the run score."
     ),
-    attribute_threshold: float = typer.Option(1.0, "--attribute-threshold", help="Required fraction of correct appearance checks; endpoint errors always fail."),
-    alignment_mode: str = typer.Option("off", "--alignment-mode", help="required verifies complete prepared-source timing and hashes before scoring; off preserves legacy evaluation."),
+    attribute_threshold: float = typer.Option(
+        1.0,
+        "--attribute-threshold",
+        help="Required fraction of correct appearance checks; endpoint errors always fail.",
+    ),
+    alignment_mode: str = typer.Option(
+        "off",
+        "--alignment-mode",
+        help="required verifies complete prepared-source timing and hashes before scoring; off preserves legacy evaluation.",
+    ),
     hallucination_weight: float = typer.Option(
         0.5,
         "--hallucination-weight",
@@ -234,12 +242,24 @@ def evaluate_cmd(
 
 @app.command("hallucination")
 def hallucination_cmd(
-    original_video: str = typer.Option(..., "--original-video", help="Path to the original clip."),
-    augmented_video: str = typer.Option(..., "--augmented-video", help="Path to the augmented clip."),
-    clip_id: str = typer.Option("clip", "--clip-id", help="Clip id recorded in the result."),
-    threshold: float = typer.Option(0.682, "--threshold", help="Pass threshold for the hallucination score."),
-    max_frames: int = typer.Option(0, "--max-frames", help="Stop after this many frame pairs (0 = all)."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    original_video: str = typer.Option(
+        ..., "--original-video", help="Path to the original clip."
+    ),
+    augmented_video: str = typer.Option(
+        ..., "--augmented-video", help="Path to the augmented clip."
+    ),
+    clip_id: str = typer.Option(
+        "clip", "--clip-id", help="Clip id recorded in the result."
+    ),
+    threshold: float = typer.Option(
+        0.682, "--threshold", help="Pass threshold for the hallucination score."
+    ),
+    max_frames: int = typer.Option(
+        0, "--max-frames", help="Stop after this many frame pairs (0 = all)."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Score hallucinated motion in one augmented clip."""
 
@@ -267,17 +287,29 @@ def hallucination_cmd(
 @app.command("attribute-verify")
 def attribute_verify_cmd(
     video: str = typer.Option("", "--video", help="Augmented clip to verify."),
-    frame: str = typer.Option("", "--frame", help="Still frame to verify instead of a clip."),
+    frame: str = typer.Option(
+        "", "--frame", help="Still frame to verify instead of a clip."
+    ),
     variables: str = typer.Option(
-        ..., "--variables", help='JSON object of attribute -> requested value, e.g. \'{"lighting": "dim evening light"}\'.'
+        ...,
+        "--variables",
+        help='JSON object of attribute -> requested value, e.g. \'{"lighting": "dim evening light"}\'.',
     ),
     options: str = typer.Option(
         "", "--options", help="JSON object of attribute -> list of all possible values."
     ),
-    clip_id: str = typer.Option("clip", "--clip-id", help="Clip id recorded in the result."),
-    question_model: str = typer.Option("", "--question-model", help="Token Factory LLM for question generation."),
-    vlm_model: str = typer.Option("", "--vlm-model", help="Token Factory VLM that answers the questions."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    clip_id: str = typer.Option(
+        "clip", "--clip-id", help="Clip id recorded in the result."
+    ),
+    question_model: str = typer.Option(
+        "", "--question-model", help="Token Factory LLM for question generation."
+    ),
+    vlm_model: str = typer.Option(
+        "", "--vlm-model", help="Token Factory VLM that answers the questions."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Verify one clip's augmented attributes with an LLM + VLM question pass."""
 
@@ -298,7 +330,9 @@ def attribute_verify_cmd(
             clip_id=clip_id,
             video=video or None,
             frame=frame or None,
-            selected_variables={str(key): str(value) for key, value in selected.items()},
+            selected_variables={
+                str(key): str(value) for key, value in selected.items()
+            },
             variable_options=option_table,
             question_model=question_model,
             vlm_model=vlm_model,
@@ -319,11 +353,17 @@ def attribute_verify_cmd(
 
 @app.command("engine")
 def engine_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Report which evaluator engine this environment resolves to."""
 
     from npa.workbench.cosmos_evaluator.evaluate import evaluator_engine_summary
 
     payload = evaluator_engine_summary()
-    _emit(payload, output=output, text=f"engine={payload['engine']} source={payload['upstream_source'] or '(none)'}")
+    _emit(
+        payload,
+        output=output,
+        text=f"engine={payload['engine']} source={payload['upstream_source'] or '(none)'}",
+    )

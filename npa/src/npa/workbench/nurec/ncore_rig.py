@@ -260,8 +260,13 @@ def derive_rig_poses(
         # duplicate a relation.
         copied_dynamic: list[str] = []
         copied_static: list[str] = []
-        for source_reader in reader.open_component_readers(PosesComponent.Reader).values():
-            for (edge_from, edge_to), (edge_poses, edge_ts) in source_reader.get_dynamic_poses():
+        for source_reader in reader.open_component_readers(
+            PosesComponent.Reader
+        ).values():
+            for (edge_from, edge_to), (
+                edge_poses,
+                edge_ts,
+            ) in source_reader.get_dynamic_poses():
                 if {edge_from, edge_to} == {RIG_FRAME, WORLD_FRAME}:
                     continue
                 poses_writer.store_dynamic_pose(
@@ -288,15 +293,21 @@ def derive_rig_poses(
         )
         derived_paths = [Path(str(path)) for path in writer.finalize()]
 
-        combined = [Path(str(path)) for path in reader.component_store_paths] + derived_paths
-        merged_reader = SequenceComponentGroupsReader([_upath(path) for path in combined])
+        combined = [
+            Path(str(path)) for path in reader.component_store_paths
+        ] + derived_paths
+        merged_reader = SequenceComponentGroupsReader(
+            [_upath(path) for path in combined]
+        )
         meta = merged_reader.get_sequence_meta().to_dict()
         # get_sequence_meta records each store by BASENAME and the meta-file resolves
         # them relative to its own directory. Assert it rather than trust it: a
         # library change to absolute paths would silently produce a meta-file that
         # only resolves on the machine that wrote it, which would then fail in a
         # different pod after the S3 handoff.
-        recorded = [str(store.get("path", "")) for store in meta.get("component_stores", [])]
+        recorded = [
+            str(store.get("path", "")) for store in meta.get("component_stores", [])
+        ]
         unexpected = [name for name in recorded if "/" in name or not name]
         if unexpected:
             raise NurecError(

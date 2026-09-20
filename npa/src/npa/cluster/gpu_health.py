@@ -78,24 +78,34 @@ class GpuHealthConfig:
             raise ValueError("expected GPU nodes cannot exceed expected total nodes")
         if self.expected_gpu_counts and (
             len(self.expected_gpu_counts) != self.expected_gpu_nodes
-            or any(type(count) is not int or count <= 0 for count in self.expected_gpu_counts)
+            or any(
+                type(count) is not int or count <= 0
+                for count in self.expected_gpu_counts
+            )
         ):
             raise ValueError(
                 "expected_gpu_counts must declare one positive integer per GPU node"
             )
-        if self.expected_gpu_counts and is_nvswitch_topology(
-            platform=self.gpu_platform,
-            preset=f"{max(self.expected_gpu_counts)}gpu-declared",
-        ) and not self.nvswitch:
+        if (
+            self.expected_gpu_counts
+            and is_nvswitch_topology(
+                platform=self.gpu_platform,
+                preset=f"{max(self.expected_gpu_counts)}gpu-declared",
+            )
+            and not self.nvswitch
+        ):
             raise ValueError("declared multi-GPU SXM/NVL nodes require NVSwitch checks")
         if self.nvswitch_gpu_counts is not None:
             if not self.expected_gpu_counts or any(
                 type(count) is not int or count not in self.expected_gpu_counts
                 for count in self.nvswitch_gpu_counts
             ):
-                raise ValueError("nvswitch_gpu_counts must be a declared GPU-count subset")
+                raise ValueError(
+                    "nvswitch_gpu_counts must be a declared GPU-count subset"
+                )
             required_counts = {
-                count for count in self.expected_gpu_counts
+                count
+                for count in self.expected_gpu_counts
                 if is_nvswitch_topology(
                     platform=self.gpu_platform, preset=f"{count}gpu-declared"
                 )
@@ -382,7 +392,8 @@ def probe_gpu_health(
         "gpu_nodes": sorted(_node_name(node) for node in gpu_nodes),
         "gpu_counts": gpu_counts,
         "nvswitch_nodes": sorted(
-            name for name, count in gpu_counts.items()
+            name
+            for name, count in gpu_counts.items()
             if config.requires_nvswitch(count)
         ),
         "expected_gpus": config.expected_gpus,
@@ -574,8 +585,11 @@ def _cuda_smoke_on_node(
             "vectoradd": "passed",
             "tested_gpus": gpu_count,
             "fabric": (
-                "not-required" if require_device_evidence and not nvswitch
-                else "success" if nvswitch and "Fabric" in output else "not-exposed"
+                "not-required"
+                if require_device_evidence and not nvswitch
+                else "success"
+                if nvswitch and "Fabric" in output
+                else "not-exposed"
             ),
         }
     finally:

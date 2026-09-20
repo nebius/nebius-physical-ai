@@ -87,7 +87,12 @@ def test_workbench_public_surface() -> None:
         "lancedb": ["import_bdd100k"],
         "lerobot": ["deploy", "train", "eval", "serve", "infer"],
         "mjlab": ["evaluate_locomotion", "write_result", "result_uri_for"],
-        "retargeting": ["run_retargeting", "validate_motion_lib", "metadata_uri_for", "result_uri_for"],
+        "retargeting": [
+            "run_retargeting",
+            "validate_motion_lib",
+            "metadata_uri_for",
+            "result_uri_for",
+        ],
         "sonic": [
             "export_onnx",
             "evaluate_onnx_policy",
@@ -219,9 +224,7 @@ def test_network_ensure_ingress_parses_cli_style_ports(mocker) -> None:
     mock_ensure = mocker.patch("npa.network._ensure_ingress", return_value="ok")
 
     assert (
-        network.ensure_ingress(
-            vm="vm-id", ports="5151,8080", source="203.0.113.50/32"
-        )
+        network.ensure_ingress(vm="vm-id", ports="5151,8080", source="203.0.113.50/32")
         == "ok"
     )
     mock_ensure.assert_called_once()

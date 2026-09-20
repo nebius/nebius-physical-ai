@@ -1,4 +1,5 @@
 """Incremental cadence errors, native tick alignment, and real RRD decoding."""
+
 from __future__ import annotations
 
 import json
@@ -23,9 +24,16 @@ def _export(tmp_path, *, episodes=2, steps=10):
     checkpoint.write_bytes(b"synthetic policy fixture")
     raw = tmp_path / "raw"
     script = _build_train_trajectory_export_script(
-        "Isaac-Cartpole-v0", episodes, steps, str(checkpoint), str(raw), capture_rgb=False
+        "Isaac-Cartpole-v0",
+        episodes,
+        steps,
+        str(checkpoint),
+        str(raw),
+        capture_rgb=False,
     )
-    exec(compile(script, "<generated-trained-export>", "exec"), {"__name__": "__main__"})
+    exec(
+        compile(script, "<generated-trained-export>", "exec"), {"__name__": "__main__"}
+    )
     return raw
 
 
@@ -85,14 +93,23 @@ def _assert_converted_timeline(raw, output, times_by_episode):
         for kind, filename in (("state", "state.npy"), ("actions", "actions.npy")):
             values = np.load(raw / f"episode_{episode:06d}" / filename)
             for dimension in range(values.shape[1]):
-                table, order = decoded_entity(f"{root}/{kind}/dim_{dimension:02d}", times)
-                decoded_values = np.asarray(table["Scalars:scalars"].to_pylist()).reshape(-1)
+                table, order = decoded_entity(
+                    f"{root}/{kind}/dim_{dimension:02d}", times
+                )
+                decoded_values = np.asarray(
+                    table["Scalars:scalars"].to_pylist()
+                ).reshape(-1)
                 np.testing.assert_allclose(decoded_values[order], values[:, dimension])
         if meta["rgb_enabled"]:
-            table, order = decoded_entity(f"{root}/camera/observation_images_workspace", times)
-            video_times = np.asarray(
-                table["VideoFrameReference:timestamp"].to_pylist()
-            ).reshape(-1) / 1e9
+            table, order = decoded_entity(
+                f"{root}/camera/observation_images_workspace", times
+            )
+            video_times = (
+                np.asarray(table["VideoFrameReference:timestamp"].to_pylist()).reshape(
+                    -1
+                )
+                / 1e9
+            )
             np.testing.assert_allclose(video_times[order], times, rtol=0, atol=1e-8)
             video_entity = f"videos/episode_{episode:06d}/observation_images_workspace"
             assert table["VideoFrameReference:video_reference"].to_pylist() == [
@@ -104,10 +121,14 @@ def _assert_converted_timeline(raw, output, times_by_episode):
                 if str(chunk.entity_path) == f"/{video_entity}" and chunk.is_static
             ]
             assert assets, video_entity
-            assert any(batch.column("AssetVideo:blob").to_pylist()[0] for batch in assets)
+            assert any(
+                batch.column("AssetVideo:blob").to_pylist()[0] for batch in assets
+            )
 
 
-def test_fractional_cadence_preserves_physics_ticks_across_episodes(monkeypatch, tmp_path):
+def test_fractional_cadence_preserves_physics_ticks_across_episodes(
+    monkeypatch, tmp_path
+):
     # Source physics ticks form the oracle, independently of exported metadata.
     physics_dt, decimation = 1.0 / 239.76, 4
     env, app = _install_runtime_stubs(monkeypatch, physics_dt * decimation)
@@ -142,14 +163,18 @@ def test_fractional_cadence_preserves_physics_ticks_across_episodes(monkeypatch,
     assert env.closed and app.closed
     assert ticks_by_episode == [list(range(0, 28, 4))] * 2
     meta = json.loads((raw / "meta.json").read_text())
-    assert meta["episode_lengths"] == [7, 7]  # Early termination before the ten-step cap.
+    assert meta["episode_lengths"] == [
+        7,
+        7,
+    ]  # Early termination before the ten-step cap.
     assert meta["rgb_enabled"] is False and meta["genuine_simulator_pixels"] is False
     for episode, ticks in enumerate(ticks_by_episode):
         states = np.load(raw / f"episode_{episode:06d}/state.npy")
         np.testing.assert_array_equal(states[:, 0], ticks)
         np.testing.assert_array_equal(states[:, 1], [episode] * len(ticks))
         np.testing.assert_array_equal(
-            np.load(raw / f"episode_{episode:06d}/actions.npy"), actions_by_episode[episode]
+            np.load(raw / f"episode_{episode:06d}/actions.npy"),
+            actions_by_episode[episode],
         )
     times = [np.asarray(ticks) * physics_dt for ticks in ticks_by_episode]
     _assert_converted_timeline(raw, tmp_path, times)
@@ -159,18 +184,29 @@ def test_fractional_cadence_preserves_physics_ticks_across_episodes(monkeypatch,
 
 @pytest.mark.parametrize(
     ("step_dt", "cause"),
-    [(None, TypeError), ("bad", ValueError), (10**400, OverflowError), ("missing", AttributeError)],
+    [
+        (None, TypeError),
+        ("bad", ValueError),
+        (10**400, OverflowError),
+        ("missing", AttributeError),
+    ],
     ids=["none", "nonnumeric", "float-overflow", "missing"],
 )
-def test_unavailable_cadence_closes_runtime_before_rollout(monkeypatch, tmp_path, step_dt, cause):
+def test_unavailable_cadence_closes_runtime_before_rollout(
+    monkeypatch, tmp_path, step_dt, cause
+):
     env, app = _install_runtime_stubs(monkeypatch, step_dt)
     if step_dt == "missing":
         del env.step_dt
     loads = []
     monkeypatch.setattr(
-        sys.modules["rsl_rl.runners"].OnPolicyRunner, "load", lambda *args: loads.append(args)
+        sys.modules["rsl_rl.runners"].OnPolicyRunner,
+        "load",
+        lambda *args: loads.append(args),
     )
-    with pytest.raises(RuntimeError, match="control timestep must be finite and positive") as error:
+    with pytest.raises(
+        RuntimeError, match="control timestep must be finite and positive"
+    ) as error:
         _export(tmp_path, episodes=1, steps=1)
     assert isinstance(error.value.__cause__, cause)
     assert env.closed and app.closed
@@ -179,13 +215,19 @@ def test_unavailable_cadence_closes_runtime_before_rollout(monkeypatch, tmp_path
     assert not list((tmp_path / "raw").glob("episode_*"))
 
 
-def test_unrepresentable_frame_rate_closes_runtime_before_rollout(monkeypatch, tmp_path):
+def test_unrepresentable_frame_rate_closes_runtime_before_rollout(
+    monkeypatch, tmp_path
+):
     env, app = _install_runtime_stubs(monkeypatch, 5e-324)
     loads = []
     monkeypatch.setattr(
-        sys.modules["rsl_rl.runners"].OnPolicyRunner, "load", lambda *args: loads.append(args)
+        sys.modules["rsl_rl.runners"].OnPolicyRunner,
+        "load",
+        lambda *args: loads.append(args),
     )
-    with pytest.raises(RuntimeError, match="control timestep must yield a finite frame rate"):
+    with pytest.raises(
+        RuntimeError, match="control timestep must yield a finite frame rate"
+    ):
         _export(tmp_path, episodes=1, steps=1)
     assert env.closed and app.closed
     assert env.index == 0 and not loads

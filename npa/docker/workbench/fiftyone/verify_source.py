@@ -33,9 +33,13 @@ def _sha256(path: Path) -> str:
 
 def _verify_archive(path: Path, source: dict) -> int:
     if path.stat().st_size != source["archive_bytes"]:
-        raise ValueError("MongoDB source archive size differs from the reviewed archive")
+        raise ValueError(
+            "MongoDB source archive size differs from the reviewed archive"
+        )
     if _sha256(path) != source["archive_sha256"]:
-        raise ValueError("MongoDB source archive checksum differs from the reviewed archive")
+        raise ValueError(
+            "MongoDB source archive checksum differs from the reviewed archive"
+        )
     prefix = f"mongo-{source['git_revision']}/"
     with tarfile.open(path, "r:gz") as archive:
         members = archive.getmembers()
@@ -45,13 +49,18 @@ def _verify_archive(path: Path, source: dict) -> int:
         for relative in _REQUIRED_SOURCE_FILES:
             member = names.get(prefix + relative)
             if member is None or not member.isfile():
-                raise ValueError(f"MongoDB source archive lacks required file: {relative}")
+                raise ValueError(
+                    f"MongoDB source archive lacks required file: {relative}"
+                )
     return len(members)
 
 
 def _verify_binary(mongod: Path, manifest: dict) -> dict:
     binary = manifest["binary"]
-    if mongod.stat().st_size != binary["file_bytes"] or _sha256(mongod) != binary["file_sha256"]:
+    if (
+        mongod.stat().st_size != binary["file_bytes"]
+        or _sha256(mongod) != binary["file_sha256"]
+    ):
         raise ValueError("MongoDB executable checksum differs from the reviewed binary")
     output = subprocess.check_output([str(mongod), "--version"], text=True)
     marker = "Build Info: "
@@ -63,9 +72,14 @@ def _verify_binary(mongod: Path, manifest: dict) -> dict:
     if build["gitVersion"] != binary["git_revision"]:
         raise ValueError("MongoDB executable revision differs from its source manifest")
     if manifest["source"]["git_origin_revision"] != build["gitVersion"]:
-        raise ValueError("MongoDB public source origin differs from the executable revision")
+        raise ValueError(
+            "MongoDB public source origin differs from the executable revision"
+        )
     environment = build["environment"]
-    if environment["distmod"] != binary["platform"] or environment["distarch"] != binary["architecture"]:
+    if (
+        environment["distmod"] != binary["platform"]
+        or environment["distarch"] != binary["architecture"]
+    ):
         raise ValueError("MongoDB executable platform differs from its source manifest")
     if build["modules"]:
         raise ValueError("MongoDB executable contains undeclared modules")
@@ -76,10 +90,15 @@ def _verify_delivery(notices: Path, mongod: Path, manifest: dict) -> None:
     for name in _NOTICES:
         if not (notices / name).read_bytes():
             raise ValueError(f"MongoDB source delivery is missing its notice: {name}")
-    if (mongod.parent / "MONGODB_SOURCE.md").read_bytes() != (notices / "SOURCE.md").read_bytes():
+    if (mongod.parent / "MONGODB_SOURCE.md").read_bytes() != (
+        notices / "SOURCE.md"
+    ).read_bytes():
         raise ValueError("MongoDB source directions are missing beside the executable")
     version = json.loads((notices / "version.json").read_text())
-    if version != {"version": manifest["version"], "githash": manifest["source"]["git_revision"]}:
+    if version != {
+        "version": manifest["version"],
+        "githash": manifest["source"]["git_revision"],
+    }:
         raise ValueError("MongoDB source-build version metadata is inconsistent")
 
 
@@ -103,9 +122,19 @@ def main() -> int:
     args = parser.parse_args()
     manifest = json.loads((args.notices_dir / "source.json").read_text())
     build = _verify_binary(args.mongod, manifest)
-    members = _verify_archive(args.notices_dir / "mongodb-source.tar.gz", manifest["source"])
+    members = _verify_archive(
+        args.notices_dir / "mongodb-source.tar.gz", manifest["source"]
+    )
     _verify_delivery(args.notices_dir, args.mongod, manifest)
-    print(json.dumps({"version": build["version"], "source_members": members, "source_delivery": "verified"}))
+    print(
+        json.dumps(
+            {
+                "version": build["version"],
+                "source_members": members,
+                "source_delivery": "verified",
+            }
+        )
+    )
     return 0
 
 

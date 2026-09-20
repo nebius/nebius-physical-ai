@@ -177,12 +177,20 @@ def test_receipt_is_atomic_private_and_written_only_after_success(
     sudo = tmp_path / "sudo"
     sudo.write_text('#!/bin/sh\nexec "$@"\n')
     sudo.chmod(0o700)
+    # The deployed receipt runs on GNU/Linux. Translate GNU mv's regular-file
+    # target contract for this macOS filesystem harness.
+    mv = tmp_path / "mv"
+    mv.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-fT" ]; then shift; [ "$1" = "--" ] && shift; '
+        'rm -f -- "$2"; exec /bin/mv -f -- "$@"; fi\n'
+        'exec /bin/mv "$@"\n'
+    )
+    mv.chmod(0o700)
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
-    receipt_script = (
-        subject._receipt_script("test-digest")
-        .replace("/opt/npa-agent", str(tmp_path))
-        .replace("mv -fT", "mv -f")
-    )  # BSD mv has no -T; target is a regular file.
+    receipt_script = subject._receipt_script("test-digest").replace(
+        "/opt/npa-agent", str(tmp_path)
+    )
     result = subprocess.run(
         ["bash", "-c", f"set -eu\n(exit {exit_code})\n" + receipt_script],
         check=False,

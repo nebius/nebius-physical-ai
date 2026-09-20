@@ -43,14 +43,22 @@ from npa.clients.config import (
     workbench_is_byovm,
     write_config,
 )
-from npa.clients.credentials import apply_shared_credential_env, load_credentials, shared_credential_env
+from npa.clients.credentials import (
+    apply_shared_credential_env,
+    load_credentials,
+    shared_credential_env,
+)
 from npa.clients.project_credentials import storage_client_for_project
 from npa.clients.scoped_credentials import (
     bucket_from_s3_uri,
     run_with_host_credential_fallback,
 )
 from npa.clients.ssh import SSHClient, SSHError
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    ServerlessClient,
+    ServerlessClientError,
+)
 from npa.errors import ScopedCredentialError
 from npa.deploy import provisioner
 from npa.deploy.byovm import (
@@ -237,7 +245,8 @@ def _serverless_job_env(
     storage = resolve_project_storage(project)
     shared_env = shared_credential_env(load_credentials(environ={}))
     s3_credentials = {
-        "aws_access_key_id": storage.aws_access_key_id or shared_env.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_access_key_id": storage.aws_access_key_id
+        or shared_env.get("AWS_ACCESS_KEY_ID", ""),
         "aws_secret_access_key": storage.aws_secret_access_key
         or shared_env.get("AWS_SECRET_ACCESS_KEY", ""),
         "endpoint_url": storage.endpoint_url or shared_env.get("AWS_ENDPOINT_URL", ""),
@@ -250,7 +259,9 @@ def _serverless_job_env(
     explicit_env["ACCEPT_EULA"] = acceptance
     env = build_serverless_job_env(
         output_path=output_path,
-        hf_token=shared_env.get("HF_TOKEN") or shared_env.get("HUGGING_FACE_HUB_TOKEN") or None,
+        hf_token=shared_env.get("HF_TOKEN")
+        or shared_env.get("HUGGING_FACE_HUB_TOKEN")
+        or None,
         s3_credentials=s3_credentials,
         extra_env=explicit_env,
     )
@@ -332,7 +343,9 @@ def _isaac_lab_serverless_train(
     env_cfg = resolve_environment(proj_alias)
     resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
     if not resolved_project_id:
-        _fail("Isaac Lab train --runtime serverless requires --project-id or a configured project.")
+        _fail(
+            "Isaac Lab train --runtime serverless requires --project-id or a configured project."
+        )
     name = job_name or _serverless_job_name(proj_alias, wb_name, "isaac-lab")
     out = output_path.rstrip("/") + "/"
     try:
@@ -361,7 +374,17 @@ def _isaac_lab_serverless_train(
         existing = None
     try:
         if existing is not None:
-            info = existing if submit_only or existing.status in {"succeeded", "failed", "cancelled"} else client.poll_job(existing.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = (
+                existing
+                if submit_only
+                or existing.status in {"succeeded", "failed", "cancelled"}
+                else client.poll_job(
+                    existing.id,
+                    resolved_project_id,
+                    interval_s=poll_interval,
+                    ceiling_s=timeout,
+                )
+            )
             _output(
                 {
                     "status": "existing",
@@ -393,14 +416,27 @@ def _isaac_lab_serverless_train(
             extra_env=extra_env,
         )
         if not submit_only:
-            info = client.poll_job(info.id, resolved_project_id, interval_s=poll_interval, ceiling_s=timeout)
+            info = client.poll_job(
+                info.id,
+                resolved_project_id,
+                interval_s=poll_interval,
+                ceiling_s=timeout,
+            )
     except ValueError as exc:
         _fail(str(exc))
     except ServerlessClientError as exc:
         _fail(f"Serverless Job failed: {exc}")
     except TimeoutError as exc:
         _fail(str(exc))
-    _output({"status": "submitted" if submit_only else info.status, "job_id": info.id, "job_name": info.name, "output_path": out}, output_format)
+    _output(
+        {
+            "status": "submitted" if submit_only else info.status,
+            "job_id": info.id,
+            "job_name": info.name,
+            "output_path": out,
+        },
+        output_format,
+    )
 
 
 def _is_container_runtime(cfg: Any) -> bool:
@@ -453,7 +489,8 @@ def _storage_client(
     return StorageClient.from_environment(
         endpoint_url=cfg.storage.endpoint_url or credentials.s3_endpoint,
         aws_access_key_id=cfg.storage.aws_access_key_id or credentials.s3_access_key_id,
-        aws_secret_access_key=cfg.storage.aws_secret_access_key or credentials.s3_secret_access_key,
+        aws_secret_access_key=cfg.storage.aws_secret_access_key
+        or credentials.s3_secret_access_key,
     )
 
 
@@ -2929,9 +2966,7 @@ def train_cmd(
                     diagnostic_parts.append("stdout:\n" + traj_stdout.strip())
                 if traj_stderr and traj_stderr.strip():
                     diagnostic_parts.append("stderr:\n" + traj_stderr.strip())
-                result["trajectory_export_error"] = "\n".join(diagnostic_parts)[
-                    -4000:
-                ]
+                result["trajectory_export_error"] = "\n".join(diagnostic_parts)[-4000:]
         if output_is_s3:
             try:
                 try:

@@ -87,9 +87,7 @@ def test_configure_persists_the_staged_source_prefix(
         encoding="utf-8",
     )
 
-    result = runner.invoke(
-        app, ["configure", "--src-s3-uri", "s3://bucket/prefix/npa"]
-    )
+    result = runner.invoke(app, ["configure", "--src-s3-uri", "s3://bucket/prefix/npa"])
 
     assert result.exit_code == 0, result.output
     stored = yaml.safe_load(config_path.read_text(encoding="utf-8"))

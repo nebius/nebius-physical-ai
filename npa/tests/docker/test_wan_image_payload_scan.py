@@ -51,13 +51,13 @@ def _tar_bytes(members: dict[str, bytes], *, mode: str = "w") -> bytes:
     return _gzip(raw) if mode == "w:gz" else raw
 
 
-def _docker_save(
-    path: Path, *, layers: list[dict[str, bytes]], config: dict
-) -> Path:
+def _docker_save(path: Path, *, layers: list[dict[str, bytes]], config: dict) -> Path:
     layer_archives: list[tuple[str, bytes]] = []
     for index, members in enumerate(layers):
         layer_archives.append((f"layer-{index}/layer.tar", _tar_bytes(members)))
-    manifest = [{"Config": "config.json", "Layers": [name for name, _ in layer_archives]}]
+    manifest = [
+        {"Config": "config.json", "Layers": [name for name, _ in layer_archives]}
+    ]
     return _tar(
         path,
         {

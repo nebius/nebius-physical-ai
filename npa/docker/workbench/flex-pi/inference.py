@@ -24,8 +24,7 @@ MODELSCOPE_REPOSITORY = "DiffSynth-Studio/Wan-Series-Converted-Safetensors"
 MODELSCOPE_BRANCH = "master"
 MODELSCOPE_GIT_COMMIT = "150f75d811d51f6c7760154aa7fec371dccda529"
 MODELSCOPE_GIT_URL = (
-    "https://www.modelscope.cn/DiffSynth-Studio/"
-    "Wan-Series-Converted-Safetensors.git"
+    "https://www.modelscope.cn/DiffSynth-Studio/Wan-Series-Converted-Safetensors.git"
 )
 MODELSCOPE_FILES = {
     "models_t5_umt5-xxl-enc-bf16.safetensors": (
@@ -51,10 +50,14 @@ def _sha256(path: Path) -> str:
 
 
 def _download(entry: dict, dataset: dict) -> Path:
-    path = Path(hf_hub_download(
-        repo_id=dataset["id"], repo_type="dataset",
-        revision=dataset["revision"], filename=entry["path"],
-    ))
+    path = Path(
+        hf_hub_download(
+            repo_id=dataset["id"],
+            repo_type="dataset",
+            revision=dataset["revision"],
+            filename=entry["path"],
+        )
+    )
     if _sha256(path) != entry["sha256"]:
         raise RuntimeError("public observation asset hash mismatch")
     return path
@@ -84,22 +87,28 @@ def _state(path: Path, frame_index: int) -> np.ndarray:
 
 def _intrinsics(path: Path, camera: str) -> np.ndarray:
     values = json.loads(path.read_text(encoding="utf-8"))[camera]
-    return np.asarray([
-        [values["fx"], 0.0, values["cx"]],
-        [0.0, values["fy"], values["cy"]],
-        [0.0, 0.0, 1.0],
-    ], dtype=np.float32)
+    return np.asarray(
+        [
+            [values["fx"], 0.0, values["cx"]],
+            [0.0, values["fy"], values["cy"]],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
 
 
 def _observation(manifest: dict) -> tuple[dict, dict[str, str]]:
     dataset = manifest["dataset"]
     observation = manifest["observation"]
-    paths = {name: _download(entry, dataset) for name, entry in observation["rgb"].items()}
+    paths = {
+        name: _download(entry, dataset) for name, entry in observation["rgb"].items()
+    }
     paths["state"] = _download(observation["state"], dataset)
     paths["intrinsics"] = _download(observation["intrinsics"], dataset)
     cameras = {}
     for model_name, obs_name in {
-        "cam_high": "head_camera", "cam_left_wrist": "left_camera",
+        "cam_high": "head_camera",
+        "cam_left_wrist": "left_camera",
         "cam_right_wrist": "right_camera",
     }.items():
         cameras[obs_name] = {
@@ -125,10 +134,17 @@ def _deploy_module():
 
 
 def _checkpoint(args: argparse.Namespace) -> tuple[Path, Path]:
-    root = Path(snapshot_download(
-        repo_id=args.checkpoint_id, revision=args.checkpoint_revision,
-        allow_patterns=["checkpoints/weights/*.pt", "config.yaml", "dataset_stats.json"],
-    ))
+    root = Path(
+        snapshot_download(
+            repo_id=args.checkpoint_id,
+            revision=args.checkpoint_revision,
+            allow_patterns=[
+                "checkpoints/weights/*.pt",
+                "config.yaml",
+                "dataset_stats.json",
+            ],
+        )
+    )
     checkpoints = list((root / "checkpoints" / "weights").glob("*.pt"))
     if len(checkpoints) != 1 or not (root / "dataset_stats.json").is_file():
         raise RuntimeError("checkpoint snapshot is incomplete or ambiguous")
@@ -155,12 +171,14 @@ def _prepare_runtime_models() -> dict[str, str]:
         raise RuntimeError("immutable ModelScope branch head verification failed")
 
     base = Path(os.environ["DIFFSYNTH_MODEL_BASE_PATH"])
-    converted = Path(modelscope_snapshot_download(
-        MODELSCOPE_REPOSITORY,
-        revision=MODELSCOPE_BRANCH,
-        local_dir=str(base / MODELSCOPE_REPOSITORY),
-        allow_file_pattern=list(MODELSCOPE_FILES),
-    ))
+    converted = Path(
+        modelscope_snapshot_download(
+            MODELSCOPE_REPOSITORY,
+            revision=MODELSCOPE_BRANCH,
+            local_dir=str(base / MODELSCOPE_REPOSITORY),
+            allow_file_pattern=list(MODELSCOPE_FILES),
+        )
+    )
     hashes = {}
     for filename, expected in MODELSCOPE_FILES.items():
         path = converted / filename
@@ -169,12 +187,14 @@ def _prepare_runtime_models() -> dict[str, str]:
             raise RuntimeError(f"immutable ancillary model hash mismatch: {filename}")
         hashes[filename] = actual
 
-    tokenizer = Path(snapshot_download(
-        repo_id=UMT5_REPOSITORY,
-        revision=UMT5_REVISION,
-        local_dir=str(base / UMT5_REPOSITORY),
-        allow_patterns=["google/umt5-xxl/*"],
-    ))
+    tokenizer = Path(
+        snapshot_download(
+            repo_id=UMT5_REPOSITORY,
+            revision=UMT5_REVISION,
+            local_dir=str(base / UMT5_REPOSITORY),
+            allow_patterns=["google/umt5-xxl/*"],
+        )
+    )
     tokenizer_files = sorted((tokenizer / "google" / "umt5-xxl").iterdir())
     if not tokenizer_files:
         raise RuntimeError("immutable tokenizer snapshot is empty")
@@ -182,9 +202,13 @@ def _prepare_runtime_models() -> dict[str, str]:
         "".join(f"{path.name}:{_sha256(path)}\n" for path in tokenizer_files).encode()
     ).hexdigest()
 
-    dino = Path(hf_hub_download(
-        repo_id=DINO_REPOSITORY, revision=DINO_REVISION, filename="model.safetensors",
-    ))
+    dino = Path(
+        hf_hub_download(
+            repo_id=DINO_REPOSITORY,
+            revision=DINO_REVISION,
+            filename="model.safetensors",
+        )
+    )
     if _sha256(dino) != DINO_SHA256:
         raise RuntimeError("immutable DINOv3 model hash mismatch")
     os.environ["FLEX_PI_DINO_CHECKPOINT"] = str(dino)
@@ -196,16 +220,27 @@ def _policy(args: argparse.Namespace):
     checkpoint, stats = _checkpoint(args)
     ancillary_hashes = _prepare_runtime_models()
     deploy = _deploy_module()
-    policy = deploy.get_model({
-        "ckpt_setting": str(checkpoint), "dataset_stats_path": str(stats),
-        "device": "cuda", "mixed_precision": "bf16",
-        "num_inference_steps": args.num_inference_steps, "seed": args.seed,
-        "action_horizon": 32, "replan_steps": 32, "timing_enabled": True,
-        "torch_compile": args.torch_compile, "use_per_cam": True,
-        "infer_joint_video": False, "infer_joint_dino": False,
-        "infer_joint_pointmap": False, "infer_present_video": True,
-        "infer_present_dino": True, "infer_present_pointmap": False,
-    })
+    policy = deploy.get_model(
+        {
+            "ckpt_setting": str(checkpoint),
+            "dataset_stats_path": str(stats),
+            "device": "cuda",
+            "mixed_precision": "bf16",
+            "num_inference_steps": args.num_inference_steps,
+            "seed": args.seed,
+            "action_horizon": 32,
+            "replan_steps": 32,
+            "timing_enabled": True,
+            "torch_compile": args.torch_compile,
+            "use_per_cam": True,
+            "infer_joint_video": False,
+            "infer_joint_dino": False,
+            "infer_joint_pointmap": False,
+            "infer_present_video": True,
+            "infer_present_dino": True,
+            "infer_present_pointmap": False,
+        }
+    )
     return policy, checkpoint, stats, ancillary_hashes
 
 
@@ -218,29 +253,44 @@ def _run(args: argparse.Namespace) -> dict:
     torch.cuda.reset_peak_memory_stats()
     torch.cuda.synchronize()
     started = time.perf_counter()
-    actions = policy._infer_action_chunk(observation, manifest["observation"]["instruction"])
+    actions = policy._infer_action_chunk(
+        observation, manifest["observation"]["instruction"]
+    )
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - started
     actions = np.asarray(actions, dtype=np.float32)
     if actions.shape != (32, 14) or not np.isfinite(actions).all():
-        raise RuntimeError("upstream policy did not produce a finite 32x14 action chunk")
+        raise RuntimeError(
+            "upstream policy did not produce a finite 32x14 action chunk"
+        )
     return {
-        "schema": "npa.flex_pi.actions.v1", "regime": "action-only",
+        "schema": "npa.flex_pi.actions.v1",
+        "regime": "action-only",
         "actions": actions.tolist(),
         "metrics": {
-            "inference_seconds": elapsed, "action_l2_mean": float(np.linalg.norm(actions, axis=1).mean()),
+            "inference_seconds": elapsed,
+            "action_l2_mean": float(np.linalg.norm(actions, axis=1).mean()),
             "peak_gpu_memory_bytes": int(torch.cuda.max_memory_allocated()),
         },
         "runtime": {
-            "cuda": True, "gpu_name": torch.cuda.get_device_name(0),
-            "compute_capability": ".".join(str(v) for v in torch.cuda.get_device_capability(0)),
-            "torch": torch.__version__, "source_revision": __import__("os").environ.get("FLEX_PI_SOURCE_REVISION", ""),
+            "cuda": True,
+            "gpu_name": torch.cuda.get_device_name(0),
+            "compute_capability": ".".join(
+                str(v) for v in torch.cuda.get_device_capability(0)
+            ),
+            "torch": torch.__version__,
+            "source_revision": __import__("os").environ.get(
+                "FLEX_PI_SOURCE_REVISION", ""
+            ),
         },
         "provenance": {
-            "checkpoint_sha256": _sha256(checkpoint), "dataset_stats_sha256": _sha256(stats),
+            "checkpoint_sha256": _sha256(checkpoint),
+            "dataset_stats_sha256": _sha256(stats),
             "ancillary_sha256": ancillary_hashes,
-            "input_sha256": input_hashes, "dataset_revision": manifest["dataset"]["revision"],
-            "seed": args.seed, "num_inference_steps": args.num_inference_steps,
+            "input_sha256": input_hashes,
+            "dataset_revision": manifest["dataset"]["revision"],
+            "seed": args.seed,
+            "num_inference_steps": args.num_inference_steps,
         },
     }
 

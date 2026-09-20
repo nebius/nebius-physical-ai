@@ -25,6 +25,7 @@ def test_sim2real_status_command(monkeypatch: pytest.MonkeyPatch) -> None:
         "run_prefix_uri": "s3://demo-bucket/sim2real-b/sim2real-staged-run-1/",
         "stages": {"stage_01_trigger": {"state": "SUCCEEDED", "tier": ""}},
     }
+
     def fake_watch(run_id: str, **kwargs: object) -> dict:
         del run_id, kwargs
         print(json.dumps(payload))
@@ -71,7 +72,9 @@ def test_sim2real_rerun_serve_dry_run_prints_manifest(mocker) -> None:
             {"kind": "Service"},
         ],
     }
-    mocker.patch("npa.cli.workbench.sim2real.build_rerun_serve_manifest", return_value=manifest)
+    mocker.patch(
+        "npa.cli.workbench.sim2real.build_rerun_serve_manifest", return_value=manifest
+    )
     mocker.patch(
         "npa.cli.workbench.sim2real.redact_rerun_serve_manifest",
         return_value=manifest,
@@ -95,7 +98,11 @@ def test_sim2real_rerun_serve_dry_run_prints_manifest(mocker) -> None:
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert payload["kind"] == "List"
-    assert [item["kind"] for item in payload["items"]] == ["Secret", "Deployment", "Service"]
+    assert [item["kind"] for item in payload["items"]] == [
+        "Secret",
+        "Deployment",
+        "Service",
+    ]
 
 
 def test_sim2real_rerun_serve_deploy_emits_public_url(mocker) -> None:
@@ -104,7 +111,9 @@ def test_sim2real_rerun_serve_deploy_emits_public_url(mocker) -> None:
         return_value=("ak", "sk"),
     )
     config = mocker.Mock()
-    mocker.patch("npa.cli.workbench.sim2real.build_rerun_serve_config", return_value=config)
+    mocker.patch(
+        "npa.cli.workbench.sim2real.build_rerun_serve_config", return_value=config
+    )
     mocker.patch(
         "npa.cli.workbench.sim2real.require_kubeconfig",
         return_value="/tmp/kubeconfig",
@@ -135,13 +144,17 @@ def test_sim2real_rerun_serve_deploy_emits_public_url(mocker) -> None:
     assert "port_forward:" in result.output
 
 
-def test_sim2real_rerun_serve_deploy_emits_local_url_when_public_pending(mocker) -> None:
+def test_sim2real_rerun_serve_deploy_emits_local_url_when_public_pending(
+    mocker,
+) -> None:
     mocker.patch(
         "npa.cli.workbench.sim2real._rerun_serve_credentials",
         return_value=("ak", "sk"),
     )
     config = mocker.Mock()
-    mocker.patch("npa.cli.workbench.sim2real.build_rerun_serve_config", return_value=config)
+    mocker.patch(
+        "npa.cli.workbench.sim2real.build_rerun_serve_config", return_value=config
+    )
     mocker.patch(
         "npa.cli.workbench.sim2real.require_kubeconfig",
         return_value="/tmp/kubeconfig",

@@ -258,3 +258,45 @@ jobs:
             test "$GITLEAKS_RESULT" = success
             test "$CONFIDENTIALITY_RESULT" = success
           fi
+
+  ci-timing-report:
+    name: ci-timing-report
+    needs: security-regression
+    # Failed validation is useful evidence; superseded runs release their runners.
+    if: ${{ !cancelled() }}
+    permissions:
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out reporting code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Read validation metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="${RUNNER_TEMP}/ci-timing-metadata"
+          mkdir -p "$metadata"
+          endpoint="repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+          gh api "$endpoint" > "$metadata/run.json"
+          gh api --paginate --slurp "${endpoint}/jobs?per_page=100" > "$metadata/jobs.json"
+      - name: Publish timing summary
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python npa/scripts/ci_timing_report.py \
+            --run "${RUNNER_TEMP}/ci-timing-metadata/run.json" \
+            --jobs "${RUNNER_TEMP}/ci-timing-metadata/jobs.json" \
+            --output-directory "${RUNNER_TEMP}/ci-timing-report"
+          cat "${RUNNER_TEMP}/ci-timing-report/timing.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload timing report
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ci-timing-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-timing-report/

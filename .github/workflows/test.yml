@@ -34,6 +34,10 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
+      - name: Check CI dependency pins
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python npa/scripts/ci_requirements.py --check
       - name: Select tests using the trusted base policy
         id: scope
         env:
@@ -69,6 +73,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up cached uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+          cache-suffix: browser
+          cache-dependency-glob: |
+            npa/pyproject.toml
+            npa/ci/requirements.txt
+            npa/ci/constraints.in
       - name: Set up Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -81,12 +97,10 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: npa/pyproject.toml
       - name: Install the production UI renderer
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e npa
+          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e npa
       - name: Run mocked agent Cypress coverage
         run: npm run --prefix npa/tests/browser cy:mock
 
@@ -95,14 +109,12 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.10"
-          cache: pip
-          cache-dependency-path: npa/pyproject.toml
 
       - name: Install Python 3.10 compatibility environment
         if: github.event_name != 'pull_request'
         run: |
           python -m venv npa/.venv-3.10
-          npa/.venv-3.10/bin/python -m pip install -e "npa[dev,adapter]"
+          uv pip install --python npa/.venv-3.10/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
 
       - name: Run Python 3.10 compatibility regressions
         if: github.event_name != 'pull_request'
@@ -119,14 +131,12 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
-          cache: pip
-          cache-dependency-path: npa/pyproject.toml
 
       - name: Install Python 3.14 compatibility environment
         if: github.event_name != 'pull_request'
         run: |
           python -m venv npa/.venv-3.14
-          npa/.venv-3.14/bin/python -m pip install -e "npa[dev,adapter]"
+          uv pip install --python npa/.venv-3.14/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
 
       - name: Run Python 3.14 compatibility regressions
         if: github.event_name != 'pull_request'
@@ -149,18 +159,28 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up cached uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+          cache-suffix: python-3.12
+          cache-dependency-glob: |
+            npa/pyproject.toml
+            npa/ci/requirements.txt
+            npa/ci/constraints.in
 
       - name: Set up Python 3.12
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: npa/pyproject.toml
 
       - name: Install the fast validation environment
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
+          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
           echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run smoke and CI contract regressions
@@ -168,6 +188,8 @@ jobs:
           npa/.venv/bin/python -m pytest \
             npa/tests/smoke \
             npa/tests/test_ci_sharding.py \
+            npa/tests/test_ci_requirements.py \
+            npa/tests/test_ci_timing_report.py \
             npa/tests/test_ci_test_scope.py \
             npa/tests/guardrails/test_ci_workflows.py \
             npa/tests/docker/test_base_image_scan.py \
@@ -216,6 +238,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up cached uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+          cache-suffix: python-${{ matrix.python-version }}
+          cache-dependency-glob: |
+            npa/pyproject.toml
+            npa/ci/requirements.txt
+            npa/ci/constraints.in
 
       - name: Install ffmpeg
         # Runner vendor repositories (such as Chrome) can publish inconsistent
@@ -235,13 +269,11 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: npa/pyproject.toml
 
       - name: Install npa
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
+          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
           echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Run Python compatibility and image scan regressions
@@ -262,8 +294,8 @@ jobs:
         # Lance dataloaders. Installing torch also activates SONIC ONNX export
         # tests, so install their supported extra after selecting CPU wheels.
         run: |
-          npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
-          npa/.venv/bin/python -m pip install -e "npa[sonic]"
+          uv pip install --python npa/.venv/bin/python --torch-backend cpu \
+            -c npa/ci/requirements.txt -e "npa[sonic]"
           npa/.venv/bin/python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
 
       - name: Verify checked-out CLI flags
@@ -317,8 +349,8 @@ jobs:
           path: npa/.coverage.${{ matrix.python-version }}.${{ matrix.shard }}
           include-hidden-files: true
 
-      - name: Upload scheduled timing shard
-        if: github.event_name == 'schedule' && matrix.python-version == '3.12'
+      - name: Upload Python 3.12 timing shard
+        if: always() && matrix.python-version == '3.12' && hashFiles('npa/ci-timings-*.json') != ''
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ci-timings-${{ matrix.shard }}
@@ -353,12 +385,22 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up cached uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+          cache-suffix: python-3.12
+          cache-dependency-glob: |
+            npa/pyproject.toml
+            npa/ci/requirements.txt
+            npa/ci/constraints.in
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: npa/pyproject.toml
       - name: Install affected test dependencies
         run: |
           test -s /etc/apt/sources.list.d/ubuntu.sources
@@ -369,9 +411,9 @@ jobs:
           sudo apt-get "${apt_options[@]}" update
           sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
-          npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
-          npa/.venv/bin/python -m pip install -e "npa[sonic]"
+          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
+          uv pip install --python npa/.venv/bin/python --torch-backend cpu \
+            -c npa/ci/requirements.txt -e "npa[sonic]"
           npa/.venv/bin/python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
           echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
       - name: Run affected subsystem tests
@@ -406,6 +448,8 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -434,23 +478,20 @@ jobs:
           .venv/bin/python -m coverage combine coverage-data
           .venv/bin/python -m coverage report --show-missing --fail-under=60
 
-      - name: Download scheduled timing shards
-        if: github.event_name == 'schedule'
+      - name: Download Python 3.12 timing shards
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           pattern: ci-timings-*
           path: npa/ci-timing-data
           merge-multiple: true
 
-      - name: Merge scheduled duration profile
-        if: github.event_name == 'schedule'
+      - name: Merge Python 3.12 duration profile
         run: |
           npa/.venv/bin/python npa/scripts/merge_ci_test_timings.py \
             --input-directory npa/ci-timing-data \
             --output npa/ci-test-durations.json
 
-      - name: Upload scheduled duration profile
-        if: github.event_name == 'schedule'
+      - name: Upload Python 3.12 duration profile
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ci-test-durations-${{ github.sha }}

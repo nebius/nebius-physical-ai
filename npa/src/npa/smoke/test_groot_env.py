@@ -53,7 +53,9 @@ def check_import_gr00t() -> CheckResult:
 def check_embodiment_tags() -> CheckResult:
     try:
         tags = importlib.import_module("gr00t.data.embodiment_tags")
-        embodiment_tag = tags.EmbodimentTag.resolve("OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT")
+        embodiment_tag = tags.EmbodimentTag.resolve(
+            "OXE_DROID_RELATIVE_EEF_RELATIVE_JOINT"
+        )
         custom_tag = tags.EmbodimentTag.resolve("NEW_EMBODIMENT")
         return CheckResult(
             "resolve embodiment tags",
@@ -79,7 +81,9 @@ def check_model_weights_dir() -> CheckResult:
     model_dir = Path(os.environ.get("GROOT_MODEL_DIR", str(DEFAULT_MODEL_DIR)))
     try:
         if not model_dir.is_dir():
-            return CheckResult("model weights directory exists", False, f"missing {model_dir}")
+            return CheckResult(
+                "model weights directory exists", False, f"missing {model_dir}"
+            )
         candidate = model_dir / _model_slug(model)
         detail = f"directory: {model_dir}"
         if candidate.exists():
@@ -88,17 +92,25 @@ def check_model_weights_dir() -> CheckResult:
             detail += f"; model cache not found for {model}"
         return CheckResult("model weights directory exists", True, detail)
     except Exception as exc:
-        return CheckResult("model weights directory exists", False, _format_exception(exc))
+        return CheckResult(
+            "model weights directory exists", False, _format_exception(exc)
+        )
 
 
 def check_ngc_credentials() -> CheckResult:
-    require_ngc = os.environ.get("GROOT_REQUIRE_NGC", "").strip().lower() in {"1", "true", "yes"}
+    require_ngc = os.environ.get("GROOT_REQUIRE_NGC", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     cfg = Path.home() / ".ngc" / "config"
     configured = bool(os.environ.get("NGC_API_KEY")) or (
         cfg.exists() and "apikey" in cfg.read_text(errors="ignore")
     )
     if require_ngc and not configured:
-        return CheckResult("ngc credentials configured", False, "NGC_API_KEY or ~/.ngc/config missing")
+        return CheckResult(
+            "ngc credentials configured", False, "NGC_API_KEY or ~/.ngc/config missing"
+        )
     return CheckResult("ngc credentials configured", True, f"configured: {configured}")
 
 

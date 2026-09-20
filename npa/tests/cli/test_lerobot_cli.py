@@ -16,13 +16,19 @@ import pytest
 
 from npa.cli.workbench import lerobot
 from npa.clients.config import ServerlessJobConfig, StorageConfig
-from npa.clients.serverless import EndpointNotFoundError, JobInfo, NotEnoughResourcesError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    JobInfo,
+    NotEnoughResourcesError,
+)
 
 from .test_workbench_cli import _cfg, app, runner
 from .test_workbench_cli import *  # noqa: F401,F403
 
 
-def _mock_serverless_train(mocker, *, existing: JobInfo | None = None, poll_status: str = "succeeded"):
+def _mock_serverless_train(
+    mocker, *, existing: JobInfo | None = None, poll_status: str = "succeeded"
+):
     client = mocker.Mock()
     if existing is None:
         client.get_job.side_effect = EndpointNotFoundError("missing")
@@ -41,7 +47,10 @@ def _mock_serverless_train(mocker, *, existing: JobInfo | None = None, poll_stat
         status=poll_status,
     )
     mocker.patch("npa.cli.workbench.lerobot.ServerlessClient", return_value=client)
-    mocker.patch("npa.cli.workbench.lerobot.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1"),
+    )
     mocker.patch(
         "npa.cli.workbench.lerobot.resolve_project_storage",
         return_value=StorageConfig(
@@ -68,7 +77,9 @@ def _mock_serverless_train(mocker, *, existing: JobInfo | None = None, poll_stat
     return client, update
 
 
-def _mock_serverless_profile(mocker, *, existing: JobInfo | None = None, poll_status: str = "succeeded"):
+def _mock_serverless_profile(
+    mocker, *, existing: JobInfo | None = None, poll_status: str = "succeeded"
+):
     client = mocker.Mock()
     if existing is None:
         client.get_job.side_effect = EndpointNotFoundError("missing")
@@ -87,7 +98,10 @@ def _mock_serverless_profile(mocker, *, existing: JobInfo | None = None, poll_st
         status=poll_status,
     )
     mocker.patch("npa.cli.workbench.lerobot.ServerlessClient", return_value=client)
-    mocker.patch("npa.cli.workbench.lerobot.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.workbench.lerobot.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1"),
+    )
     mocker.patch(
         "npa.cli.workbench.lerobot.resolve_project_storage",
         return_value=StorageConfig(
@@ -197,7 +211,9 @@ def test_lerobot_serverless_runtime_helper_accepts_enum_and_string() -> None:
 
 
 def test_lerobot_serverless_output_path_adds_s3_scheme() -> None:
-    result = lerobot._lerobot_serverless_train_output_path("bucket/checkpoints", "wb", "job")
+    result = lerobot._lerobot_serverless_train_output_path(
+        "bucket/checkpoints", "wb", "job"
+    )
     parsed = urlparse(result)
 
     assert result == "s3://bucket/checkpoints/lerobot/wb/job/"
@@ -213,7 +229,10 @@ def test_lerobot_serverless_output_path_preserves_s3_prefix() -> None:
 
 
 def test_lerobot_serverless_job_name_sanitizes_and_uses_suffix() -> None:
-    assert lerobot._lerobot_serverless_job_name("Le Robot!*", "abc") == "npa-lerobot-le-robot-abc"
+    assert (
+        lerobot._lerobot_serverless_job_name("Le Robot!*", "abc")
+        == "npa-lerobot-le-robot-abc"
+    )
 
 
 def test_lerobot_serverless_job_env_includes_expected_keys() -> None:
@@ -256,7 +275,9 @@ def test_lerobot_serverless_storage_env_prefers_credentials_for_cross_bucket() -
     )
 
 
-def test_lerobot_serverless_storage_env_prefers_credentials_for_matching_bucket_endpoint() -> None:
+def test_lerobot_serverless_storage_env_prefers_credentials_for_matching_bucket_endpoint() -> (
+    None
+):
     storage = StorageConfig(
         checkpoint_bucket="s3://example-bucket/checkpoints/",
         endpoint_url="https://storage.eu-north1.nebius.cloud",
@@ -282,7 +303,9 @@ def test_lerobot_serverless_storage_env_prefers_credentials_for_matching_bucket_
 
 
 def test_lerobot_serverless_env_split_keeps_secrets_extra() -> None:
-    safe, extra = lerobot._split_serverless_env({"HF_TOKEN": "hf", "NPA_JOB_NAME": "job"})
+    safe, extra = lerobot._split_serverless_env(
+        {"HF_TOKEN": "hf", "NPA_JOB_NAME": "job"}
+    )
 
     assert safe == {"NPA_JOB_NAME": "job"}
     assert extra == {"HF_TOKEN": "hf"}
@@ -355,8 +378,12 @@ def test_lerobot_gpu_platform_aliases() -> None:
     assert lerobot._lerobot_gpu_platform("b300") == "gpu-b300-sxm"
     assert lerobot._lerobot_gpu_platform("gpu-rtx-pro-6000") == "gpu-rtx6000"
     assert lerobot._lerobot_gpu_platform("gpu-h100-sxm") == "gpu-h100-sxm"
-    assert lerobot._lerobot_serverless_gpu_preset("gpu-b300-sxm", 1) == "1gpu-24vcpu-346gb"
-    assert lerobot._lerobot_serverless_gpu_preset("gpu-rtx6000", 1) == "1gpu-24vcpu-218gb"
+    assert (
+        lerobot._lerobot_serverless_gpu_preset("gpu-b300-sxm", 1) == "1gpu-24vcpu-346gb"
+    )
+    assert (
+        lerobot._lerobot_serverless_gpu_preset("gpu-rtx6000", 1) == "1gpu-24vcpu-218gb"
+    )
 
 
 def test_lerobot_resolves_datacenter_blackwell() -> None:
@@ -365,14 +392,22 @@ def test_lerobot_resolves_datacenter_blackwell() -> None:
     assert lerobot._lerobot_gpu_platform("b200") == "gpu-b200-sxm"
     assert lerobot._lerobot_gpu_platform("gpu-b200-sxm-a") == "gpu-b200-sxm-a"
     # Presets confirmed against the live Nebius compute platform listing.
-    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 1) == "1gpu-20vcpu-224gb"
-    assert lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 8) == "8gpu-160vcpu-1792gb"
+    assert (
+        lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 1) == "1gpu-20vcpu-224gb"
+    )
+    assert (
+        lerobot._lerobot_serverless_gpu_preset("gpu-b200-sxm", 8)
+        == "8gpu-160vcpu-1792gb"
+    )
 
 
 def test_lerobot_gpu_table_does_not_drift_from_serverless() -> None:
     """One alias table: LeRobot must not keep a second copy that falls behind."""
 
-    from npa.serverless_common.platform import GPU_PLATFORM_ALIASES, GPU_PLATFORM_PRESETS
+    from npa.serverless_common.platform import (
+        GPU_PLATFORM_ALIASES,
+        GPU_PLATFORM_PRESETS,
+    )
 
     for alias, platform in GPU_PLATFORM_ALIASES.items():
         assert lerobot._lerobot_gpu_platform(alias) == platform
@@ -465,7 +500,9 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     assert kwargs["output_path"] == "s3://bucket/out/"
     assert kwargs["env"]["NPA_JOB_NAME"] == "train-1"
     assert kwargs["extra_env"]["HF_TOKEN"] == "PLACEHOLDER_HF_TOKEN"
-    client.subnet_resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
+    client.subnet_resolver.assert_called_once_with(
+        project_id="project-1", explicit_subnet_id=""
+    )
     client.poll_job.assert_not_called()
     update.assert_called_once()
 
@@ -481,14 +518,15 @@ def test_lerobot_train_serverless_lerobot_version_060_selects_image(mocker) -> N
     assert result.exit_code == 0, result.output
     kwargs = client.create_job.call_args.kwargs
     assert kwargs["image"] == (
-        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:"
-        "0.6.0-d6-extras-20260912"
+        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.6.0-d6-extras-20260912"
     )
     assert "--env_eval_freq=1000000" in kwargs["command"]
     assert "--eval_freq=" not in kwargs["command"]
 
 
-def test_lerobot_train_serverless_prefers_credentials_endpoint_for_matching_bucket(mocker) -> None:
+def test_lerobot_train_serverless_prefers_credentials_endpoint_for_matching_bucket(
+    mocker,
+) -> None:
     client, _update = _mock_serverless_train(mocker)
     mocker.patch(
         "npa.cli.workbench.lerobot.resolve_project_storage",
@@ -514,8 +552,13 @@ def test_lerobot_train_serverless_prefers_credentials_endpoint_for_matching_buck
 
     assert result.exit_code == 0, result.output
     kwargs = client.create_job.call_args.kwargs
-    assert kwargs["env"]["AWS_ENDPOINT_URL"] == "https://storage.us-central1.nebius.cloud"
-    assert kwargs["env"]["NEBIUS_S3_ENDPOINT"] == "https://storage.us-central1.nebius.cloud"
+    assert (
+        kwargs["env"]["AWS_ENDPOINT_URL"] == "https://storage.us-central1.nebius.cloud"
+    )
+    assert (
+        kwargs["env"]["NEBIUS_S3_ENDPOINT"]
+        == "https://storage.us-central1.nebius.cloud"
+    )
     assert kwargs["extra_env"]["AWS_ACCESS_KEY_ID"] == "shared-key"
     assert kwargs["extra_env"]["AWS_SECRET_ACCESS_KEY"] == "shared-secret"
 
@@ -527,7 +570,9 @@ def test_lerobot_train_serverless_sync_polls(mocker) -> None:
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["status"] == "succeeded"
-    client.poll_job.assert_called_once_with("job-1", "project-1", interval_s=30.0, ceiling_s=3600)
+    client.poll_job.assert_called_once_with(
+        "job-1", "project-1", interval_s=30.0, ceiling_s=3600
+    )
 
 
 def test_lerobot_train_serverless_ner_error_formatted_for_user(mocker) -> None:
@@ -600,7 +645,9 @@ def test_lerobot_train_serverless_fails_fast_without_s3_credentials(mocker) -> N
 
 
 def test_lerobot_train_serverless_existing_submit_is_idempotent(mocker) -> None:
-    existing = JobInfo(id="job-1", name="train-1", project_id="project-1", status="succeeded")
+    existing = JobInfo(
+        id="job-1", name="train-1", project_id="project-1", status="succeeded"
+    )
     client, _update = _mock_serverless_train(mocker, existing=existing)
 
     result = runner.invoke(app, _serverless_train_args("--submit-only"))
@@ -612,15 +659,21 @@ def test_lerobot_train_serverless_existing_submit_is_idempotent(mocker) -> None:
 
 
 def test_lerobot_train_serverless_existing_running_polls(mocker) -> None:
-    existing = JobInfo(id="job-1", name="train-1", project_id="project-1", status="running")
-    client, _update = _mock_serverless_train(mocker, existing=existing, poll_status="succeeded")
+    existing = JobInfo(
+        id="job-1", name="train-1", project_id="project-1", status="running"
+    )
+    client, _update = _mock_serverless_train(
+        mocker, existing=existing, poll_status="succeeded"
+    )
 
     result = runner.invoke(app, _serverless_train_args())
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["job_status"] == "succeeded"
     client.create_job.assert_not_called()
-    client.poll_job.assert_called_once_with("job-1", "project-1", interval_s=30.0, ceiling_s=3600)
+    client.poll_job.assert_called_once_with(
+        "job-1", "project-1", interval_s=30.0, ceiling_s=3600
+    )
 
 
 def test_lerobot_train_serverless_b300_diffusion_warning(mocker) -> None:
@@ -677,7 +730,7 @@ def test_profile_train_serverless_requires_output_path(tmp_path: Path, mocker) -
     script.write_text("print('profile')\n")
     _mock_serverless_profile(mocker)
     args = _serverless_profile_args(script)
-    del args[args.index("--output-path"): args.index("--output-path") + 2]
+    del args[args.index("--output-path") : args.index("--output-path") + 2]
 
     result = runner.invoke(app, args)
 
@@ -689,9 +742,12 @@ def test_profile_train_serverless_default_script_path(tmp_path: Path, mocker) ->
     script = tmp_path / "profile_train.py"
     script.write_text("print('profile')\n")
     client, _update = _mock_serverless_profile(mocker)
-    mocker.patch("npa.cli.workbench.lerobot._default_lerobot_profile_script_path", return_value=script)
+    mocker.patch(
+        "npa.cli.workbench.lerobot._default_lerobot_profile_script_path",
+        return_value=script,
+    )
     args = _serverless_profile_args(script, "--submit-only")
-    del args[args.index("--script"): args.index("--script") + 2]
+    del args[args.index("--script") : args.index("--script") + 2]
 
     result = runner.invoke(app, args)
 
@@ -726,7 +782,9 @@ def test_profile_train_serverless_inline_embeds_script(tmp_path: Path) -> None:
     assert "NPA_PROFILE_COMPLETE" in command
 
 
-def test_profile_train_serverless_num_workers_zero_resolves_to_nproc(tmp_path: Path) -> None:
+def test_profile_train_serverless_num_workers_zero_resolves_to_nproc(
+    tmp_path: Path,
+) -> None:
     script = tmp_path / "profile_train.py"
     script.write_text("print('profile')\n")
 

@@ -31,7 +31,12 @@ from npa.clients.config import (
     resolve_environment,
 )
 from npa.clients.credentials import apply_shared_credential_env
-from npa.clients.serverless import EndpointNotFoundError, JobIdentityError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    JobIdentityError,
+    ServerlessClient,
+    ServerlessClientError,
+)
 from npa.deploy.byovm import (
     RUNTIME_HELP,
     apply_project_storage_vars,
@@ -90,15 +95,27 @@ _DEFAULT_CONDA_ENV = "genesis"
 
 # Known subcommands — used to locate the subcommand boundary in sys.argv
 # when reconstructing the remote command.
-_SUBCOMMANDS = frozenset({
-    "train-teacher", "generate-demos", "simulate", "eval-teacher",
-    "eval-student", "diagnose", "tune",
-})
+_SUBCOMMANDS = frozenset(
+    {
+        "train-teacher",
+        "generate-demos",
+        "simulate",
+        "eval-teacher",
+        "eval-student",
+        "diagnose",
+        "tune",
+    }
+)
 
 # Infrastructure subcommands run locally (they manage the VM itself).
-_INFRA_SUBCOMMANDS = frozenset({
-    "list", "deploy", "status", "system-info",
-})
+_INFRA_SUBCOMMANDS = frozenset(
+    {
+        "list",
+        "deploy",
+        "status",
+        "system-info",
+    }
+)
 
 
 class OutputFormat(str, Enum):
@@ -202,10 +219,14 @@ def _serverless_job_env(
     output_path: str,
     extra_env: dict[str, str] | None = None,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    from npa.orchestration.npa_workflow.submit_credentials import resolve_submit_credentials
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        resolve_submit_credentials,
+    )
 
     try:
-        selected = resolve_submit_credentials(project=project, requested=("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
+        selected = resolve_submit_credentials(
+            project=project, requested=("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+        )
         s3_credentials = {
             "aws_access_key_id": selected.access_key_id,
             "aws_secret_access_key": selected.secret_access_key,
@@ -216,7 +237,9 @@ def _serverless_job_env(
         _fail(str(exc))
     env = build_serverless_job_env(
         output_path=output_path,
-        hf_token=selected.secret_values.get("HF_TOKEN") or selected.secret_values.get("HUGGING_FACE_HUB_TOKEN") or None,
+        hf_token=selected.secret_values.get("HF_TOKEN")
+        or selected.secret_values.get("HUGGING_FACE_HUB_TOKEN")
+        or None,
         s3_credentials=s3_credentials,
         extra_env=extra_env,
     )
@@ -299,8 +322,8 @@ print("NPA_GENESIS_SERVERLESS_TRAIN_TEACHER_DONE", os.environ.get("NPA_OUTPUT_PA
     body = (
         'NPA_PYTHON_BIN="${NPA_PYTHON_BIN:-python3}"\n'
         'if ! command -v "$NPA_PYTHON_BIN" >/dev/null 2>&1; then NPA_PYTHON_BIN=python; fi\n'
-        f'{training_env}\n'
-        f'"$NPA_PYTHON_BIN" <<\'PY\'\n{script}\nPY\n{upload}'
+        f"{training_env}\n"
+        f"\"$NPA_PYTHON_BIN\" <<'PY'\n{script}\nPY\n{upload}"
     )
     return _remote_bash(body)
 
@@ -328,7 +351,10 @@ def _genesis_serverless_train_teacher(
     action_space: str,
     output_format: OutputFormat,
 ) -> None:
-    from npa.execution_preflight import ExecutionPreflightError, verify_serverless_execution
+    from npa.execution_preflight import (
+        ExecutionPreflightError,
+        verify_serverless_execution,
+    )
 
     if not output_path:
         _fail("Genesis train-teacher --runtime serverless requires --output-path.")
@@ -345,7 +371,9 @@ def _genesis_serverless_train_teacher(
     env_cfg = resolve_environment(proj_alias)
     resolved_project_id = project_id or (env_cfg.project_id if env_cfg else "")
     if not resolved_project_id:
-        _fail("Genesis train-teacher --runtime serverless requires --project-id or a configured project.")
+        _fail(
+            "Genesis train-teacher --runtime serverless requires --project-id or a configured project."
+        )
     name = job_name or _serverless_job_name(proj_alias, wb_name, "genesis")
     out = output_path.rstrip("/") + "/"
     try:
@@ -406,7 +434,9 @@ def _genesis_serverless_train_teacher(
             # the saved request and immutable provider ID before supervision.
             info = client.create_job(**launch_request, adopt_only=True)
             if info.id != existing.id:
-                raise JobIdentityError("The job name now resolves to a different provider identity")
+                raise JobIdentityError(
+                    "The job name now resolves to a different provider identity"
+                )
             if not submit_only:
                 info = _supervise_genesis_serverless_job(
                     client=client,
@@ -425,7 +455,16 @@ def _genesis_serverless_train_teacher(
                     timeout=timeout,
                     max_infrastructure_recoveries=max_infrastructure_recoveries,
                 )
-            _output({"status": "existing", "job_id": info.id, "job_name": info.name, "job_status": info.status, "output_path": out}, output_format)
+            _output(
+                {
+                    "status": "existing",
+                    "job_id": info.id,
+                    "job_name": info.name,
+                    "job_status": info.status,
+                    "output_path": out,
+                },
+                output_format,
+            )
             return
         verify_serverless_execution(
             project=proj_alias,
@@ -521,9 +560,13 @@ def _supervise_genesis_serverless_job(
     pinned_image = f"{reference.registry}/{reference.repository}@{digest}"
     parsed_output = urlparse(output_path)
     if parsed_output.scheme != "s3" or not parsed_output.netloc:
-        raise ValueError("supervised Serverless Jobs require an explicit S3 output path")
+        raise ValueError(
+            "supervised Serverless Jobs require an explicit S3 output path"
+        )
     prefix = parsed_output.path.strip("/")
-    endpoint = str(env.get("AWS_ENDPOINT_URL") or extra_env.get("AWS_ENDPOINT_URL") or "")
+    endpoint = str(
+        env.get("AWS_ENDPOINT_URL") or extra_env.get("AWS_ENDPOINT_URL") or ""
+    )
     access_key = str(extra_env.get("AWS_ACCESS_KEY_ID") or "")
     secret_key = str(extra_env.get("AWS_SECRET_ACCESS_KEY") or "")
     scope = hashlib.sha256(str(info.name).encode("utf-8")).hexdigest()[:16]
@@ -601,9 +644,13 @@ def _supervise_genesis_serverless_job(
         ),
         client=client,
         launch_preflight=lambda: verify_serverless_execution(
-            project=_project_alias or default_project_name(), project_id=project_id,
-            gpu_type=platform, gpu_count=gpu_count, preset=preset,
-            output_uri=output_path, extra_env={**env, **extra_env},
+            project=_project_alias or default_project_name(),
+            project_id=project_id,
+            gpu_type=platform,
+            gpu_count=gpu_count,
+            preset=preset,
+            output_uri=output_path,
+            extra_env={**env, **extra_env},
         ),
     )
     _identity, final = supervise_serverless_job(
@@ -714,21 +761,25 @@ def _generate_demos_shard(queue: Any, shard: _GenesisGenerateShard) -> None:
             action_space=shard.action_space,
         )
     except Exception as exc:
-        queue.put({
-            "rank": shard.rank,
-            "gpu_id": shard.gpu_id,
-            "ok": False,
-            "error": f"{type(exc).__name__}: {exc}",
-        })
+        queue.put(
+            {
+                "rank": shard.rank,
+                "gpu_id": shard.gpu_id,
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
         raise
 
-    queue.put({
-        "rank": shard.rank,
-        "gpu_id": shard.gpu_id,
-        "ok": True,
-        "output_dir": shard.output_dir,
-        "result": result,
-    })
+    queue.put(
+        {
+            "rank": shard.rank,
+            "gpu_id": shard.gpu_id,
+            "ok": True,
+            "output_dir": shard.output_dir,
+            "result": result,
+        }
+    )
 
 
 def _drain_shard_queue(result_queue: Any) -> list[dict[str, Any]]:
@@ -831,16 +882,22 @@ def _run_multi_gpu_generate_demos(
                 successful.append(message)
                 continue
 
-            failed.append({
-                "rank": shard.rank,
-                "gpu_id": shard.gpu_id,
-                "exit_code": process.exitcode,
-                "error": message.get("error") if message else "process exited before reporting status",
-            })
+            failed.append(
+                {
+                    "rank": shard.rank,
+                    "gpu_id": shard.gpu_id,
+                    "exit_code": process.exitcode,
+                    "error": message.get("error")
+                    if message
+                    else "process exited before reporting status",
+                }
+            )
 
         if not successful:
-            if set_egl_device and failed and all(
-                "EGL" in str(item.get("error", "")) for item in failed
+            if (
+                set_egl_device
+                and failed
+                and all("EGL" in str(item.get("error", "")) for item in failed)
             ):
                 result = _run_multi_gpu_generate_demos(
                     checkpoint_path=checkpoint_path,
@@ -871,9 +928,15 @@ def _run_multi_gpu_generate_demos(
             )
 
         shard_results = [message["result"] for message in successful]
-        total_attempted = sum(int(result.get("total_attempted", 0)) for result in shard_results)
-        total_successes = sum(int(result.get("total_successes", 0)) for result in shard_results)
-        total_episodes = sum(int(result.get("total_episodes", 0)) for result in shard_results)
+        total_attempted = sum(
+            int(result.get("total_attempted", 0)) for result in shard_results
+        )
+        total_successes = sum(
+            int(result.get("total_successes", 0)) for result in shard_results
+        )
+        total_episodes = sum(
+            int(result.get("total_episodes", 0)) for result in shard_results
+        )
         fps_values = [
             float(result["fps"])
             for result in shard_results
@@ -990,8 +1053,8 @@ def main(
         "--project",
         "-p",
         help="Project alias from ~/.npa/config.yaml. "
-             "When set, the command runs on the workbench VM via SSH "
-             "instead of locally.",
+        "When set, the command runs on the workbench VM via SSH "
+        "instead of locally.",
     ),
     name: str = typer.Option(
         "",
@@ -1017,7 +1080,10 @@ def main(
         return
     if "--runtime" in sys.argv:
         runtime_idx = sys.argv.index("--runtime")
-        if len(sys.argv) > runtime_idx + 1 and sys.argv[runtime_idx + 1] == WorkbenchRuntime.serverless.value:
+        if (
+            len(sys.argv) > runtime_idx + 1
+            and sys.argv[runtime_idx + 1] == WorkbenchRuntime.serverless.value
+        ):
             return
 
     _forward_remote(project, name)
@@ -1167,37 +1233,87 @@ def _ppo_config_from_overrides(overrides: dict[str, Any]):
 
 @app.command("train-teacher")
 def train_teacher_cmd(
-    n_envs: int = typer.Option(4096, "--n-envs", help="Number of parallel environments."),
-    max_iterations: int = typer.Option(500, "--max-iterations", help="PPO training iterations."),
+    n_envs: int = typer.Option(
+        4096, "--n-envs", help="Number of parallel environments."
+    ),
+    max_iterations: int = typer.Option(
+        500, "--max-iterations", help="PPO training iterations."
+    ),
     output: str = typer.Option(
         "./checkpoints/teacher/", "--output", "-o", help="Checkpoint output directory."
     ),
-    output_path: str = typer.Option("", "--output-path", help="S3 URI where serverless training artifacts are written."),
-    data_path: str = typer.Option("", "--data-path", help="Optional custom training data path recorded with the run."),
+    output_path: str = typer.Option(
+        "",
+        "--output-path",
+        help="S3 URI where serverless training artifacts are written.",
+    ),
+    data_path: str = typer.Option(
+        "",
+        "--data-path",
+        help="Optional custom training data path recorded with the run.",
+    ),
     override: list[str] = typer.Option(
         [],
         "--override",
         help="Generic training override as KEY=VALUE. Repeat for PPO, EnvConfig, or runner keys.",
     ),
-    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging metadata for the training run."),
+    wandb_enabled: bool = typer.Option(
+        False,
+        "--wandb/--no-wandb",
+        help="Enable W&B logging metadata for the training run.",
+    ),
     wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
     wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
-    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
-    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
-    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
-    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
-    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime. serverless creates a Nebius AI Job."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless Jobs."),
-    image: str = typer.Option("", "--image", help="Container image for the serverless Job."),
-    gpu_type: str = typer.Option("l40s", "--gpu-type", help="GPU type for serverless Jobs."),
-    gpu_count: int = typer.Option(1, "--gpu-count", help="GPU count for serverless Jobs."),
-    gpu_preset: str = typer.Option("", "--gpu-preset", help="Nebius GPU preset override."),
-    subnet_id: str = typer.Option("", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."),
-    job_name: str = typer.Option("", "--job-name", help="Explicit serverless Job name."),
-    submit_only: bool = typer.Option(False, "--submit-only", help="Submit serverless Job and return before polling."),
-    poll_interval: float = typer.Option(30.0, "--poll-interval", help="Seconds between serverless status checks."),
-    timeout: float = typer.Option(3600.0, "--timeout", help="Seconds to wait for serverless completion."),
+    wandb_mode: str = typer.Option(
+        "offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."
+    ),
+    checkpoint_s3_uri: str = typer.Option(
+        "", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."
+    ),
+    checkpoint_s3_endpoint_url: str = typer.Option(
+        "", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."
+    ),
+    checkpoint_s3_access_key_id: str = typer.Option(
+        "", "--checkpoint-s3-access-key-id", help="S3 access key ID."
+    ),
+    checkpoint_s3_secret_access_key: str = typer.Option(
+        "", "--checkpoint-s3-secret-access-key", help="S3 secret access key."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm,
+        "--runtime",
+        help="Runtime. serverless creates a Nebius AI Job.",
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless Jobs."
+    ),
+    image: str = typer.Option(
+        "", "--image", help="Container image for the serverless Job."
+    ),
+    gpu_type: str = typer.Option(
+        "l40s", "--gpu-type", help="GPU type for serverless Jobs."
+    ),
+    gpu_count: int = typer.Option(
+        1, "--gpu-count", help="GPU count for serverless Jobs."
+    ),
+    gpu_preset: str = typer.Option(
+        "", "--gpu-preset", help="Nebius GPU preset override."
+    ),
+    subnet_id: str = typer.Option(
+        "", "--subnet-id", help="Nebius VPC subnet ID for serverless Jobs."
+    ),
+    job_name: str = typer.Option(
+        "", "--job-name", help="Explicit serverless Job name."
+    ),
+    submit_only: bool = typer.Option(
+        False, "--submit-only", help="Submit serverless Job and return before polling."
+    ),
+    poll_interval: float = typer.Option(
+        30.0, "--poll-interval", help="Seconds between serverless status checks."
+    ),
+    timeout: float = typer.Option(
+        3600.0, "--timeout", help="Seconds to wait for serverless completion."
+    ),
     max_infrastructure_recoveries: int = typer.Option(
         1,
         "--max-infrastructure-recoveries",
@@ -1208,17 +1324,21 @@ def train_teacher_cmd(
         ),
     ),
     device: str = typer.Option("cuda", "--device", help="Torch device."),
-    log_dir: str = typer.Option("./logs/teacher/", "--log-dir", help="Tensorboard log directory."),
+    log_dir: str = typer.Option(
+        "./logs/teacher/", "--log-dir", help="Tensorboard log directory."
+    ),
     seed: int = typer.Option(42, "--seed", help="Random seed."),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space: 'cartesian' (4D: delta xyz + gripper, uses IK) "
-             "or 'joint' (8D: delta joint positions + gripper).",
+        "or 'joint' (8D: delta joint positions + gripper).",
     ),
     env_override: list[str] = typer.Option(
-        [], "--env-override",
+        [],
+        "--env-override",
         help="EnvConfig override as KEY=VALUE (repeatable). "
-             "e.g. --env-override approach_scale=0 --env-override domain_randomize=true",
+        "e.g. --env-override approach_scale=0 --env-override domain_randomize=true",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -1238,8 +1358,8 @@ def train_teacher_cmd(
             checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
             checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
         )
-        runner_overrides, ppo_overrides, shared_env_overrides = _split_genesis_training_overrides(
-            training_config.overrides
+        runner_overrides, ppo_overrides, shared_env_overrides = (
+            _split_genesis_training_overrides(training_config.overrides)
         )
     except TrainingConfigError as exc:
         _fail(str(exc))
@@ -1257,7 +1377,9 @@ def train_teacher_cmd(
     env_overrides = _expand_env_overrides(_parse_env_overrides(env_override))
     env_overrides.update(shared_env_overrides)
     checkpoint_output_path = resolve_checkpoint_s3_uri(training_config, output_path)
-    train_overrides = {k: v for k, v in env_overrides.items() if k not in _GENESIS_THRESHOLD_KEYS}
+    train_overrides = {
+        k: v for k, v in env_overrides.items() if k not in _GENESIS_THRESHOLD_KEYS
+    }
     if _is_serverless_runtime(runtime):
         _genesis_serverless_train_teacher(
             n_envs=n_envs,
@@ -1335,8 +1457,12 @@ def generate_demos_cmd(
     checkpoint: str = typer.Option(
         ..., "--checkpoint", help="Path to trained teacher checkpoint."
     ),
-    n_envs: int = typer.Option(4096, "--n-envs", help="Number of parallel environments."),
-    n_episodes: int = typer.Option(0, "--n-episodes", help="Episodes to collect (0 = one batch)."),
+    n_envs: int = typer.Option(
+        4096, "--n-envs", help="Number of parallel environments."
+    ),
+    n_episodes: int = typer.Option(
+        0, "--n-episodes", help="Episodes to collect (0 = one batch)."
+    ),
     gpu_count: int = typer.Option(
         0,
         "--gpu-count",
@@ -1351,19 +1477,22 @@ def generate_demos_cmd(
     # Deprecated path alias: keep --output working for existing scripts.
     output: str = typer.Option("", "--output", hidden=True),
     domain_randomize: bool = typer.Option(
-        True, "--domain-randomize/--no-domain-randomize",
+        True,
+        "--domain-randomize/--no-domain-randomize",
         help="Enable domain randomization during recording.",
     ),
     fps: int = typer.Option(20, "--fps", help="Camera frame rate for recording."),
     seed: int = typer.Option(42, "--seed", help="Random seed."),
     allow_failure_demos: bool = typer.Option(
-        False, "--allow-failure-demos/--no-failure-demos",
+        False,
+        "--allow-failure-demos/--no-failure-demos",
         help="Save all episodes even when 0 teacher successes (for development).",
     ),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space: 'cartesian' (4D) or 'joint' (8D). "
-             "Must match the action space used during teacher training.",
+        "Must match the action space used during teacher training.",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -1472,12 +1601,17 @@ def eval_teacher_cmd(
     checkpoint: str = typer.Option(
         ..., "--checkpoint", help="Path to trained teacher checkpoint (model.pt)."
     ),
-    n_envs: int = typer.Option(1024, "--n-envs", help="Number of parallel environments."),
-    seed: int = typer.Option(7777, "--seed", help="Random seed (held-out from demo generation)."),
+    n_envs: int = typer.Option(
+        1024, "--n-envs", help="Number of parallel environments."
+    ),
+    seed: int = typer.Option(
+        7777, "--seed", help="Random seed (held-out from demo generation)."
+    ),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space: 'cartesian' (4D) or 'joint' (8D). "
-             "Must match the action space used during teacher training.",
+        "Must match the action space used during teacher training.",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -1527,25 +1661,34 @@ def eval_student_cmd(
         "--input-path",
         help="S3 URI or local path to trained student policy checkpoint. Overrides --checkpoint.",
     ),
-    n_envs: int = typer.Option(1024, "--n-envs", help="Number of parallel environments."),
-    n_episodes: int = typer.Option(1024, "--n-episodes", help="Total evaluation episodes."),
+    n_envs: int = typer.Option(
+        1024, "--n-envs", help="Number of parallel environments."
+    ),
+    n_episodes: int = typer.Option(
+        1024, "--n-episodes", help="Total evaluation episodes."
+    ),
     output: str = typer.Option(
         "./eval/", "--output", "-o", help="Output directory for eval metrics."
     ),
     domain_randomize: bool = typer.Option(
-        True, "--domain-randomize/--no-domain-randomize",
+        True,
+        "--domain-randomize/--no-domain-randomize",
         help="Enable domain randomization during eval.",
     ),
-    seed: int = typer.Option(42, "--seed", help="Random seed (held-out from training)."),
+    seed: int = typer.Option(
+        42, "--seed", help="Random seed (held-out from training)."
+    ),
     teacher_success_rate: float = typer.Option(
-        -1.0, "--teacher-success-rate",
+        -1.0,
+        "--teacher-success-rate",
         help="User-provided teacher success rate used as baseline for computing "
-             "the distillation gap. -1 means unknown (gap calculation is skipped).",
+        "the distillation gap. -1 means unknown (gap calculation is skipped).",
     ),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space: 'cartesian' (4D) or 'joint' (8D). "
-             "Must match the action space used for demo generation / student training.",
+        "Must match the action space used for demo generation / student training.",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -1563,7 +1706,9 @@ def eval_student_cmd(
 
         temp_dir = tempfile.TemporaryDirectory(prefix="npa-genesis-student-checkpoint-")
         ckpt = Path(
-            StorageClient.from_environment().download_directory(checkpoint_ref, temp_dir.name)
+            StorageClient.from_environment().download_directory(
+                checkpoint_ref, temp_dir.name
+            )
         )
     else:
         ckpt = Path(checkpoint_ref)
@@ -1621,27 +1766,33 @@ def diagnose_cmd(
     checkpoint: str = typer.Option(
         ..., "--checkpoint", help="Path to trained teacher checkpoint (model.pt)."
     ),
-    n_envs: int = typer.Option(1024, "--n-envs", help="Number of parallel environments."),
+    n_envs: int = typer.Option(
+        1024, "--n-envs", help="Number of parallel environments."
+    ),
     n_episodes: int = typer.Option(
         0, "--n-episodes", help="Total episodes to evaluate (0 = one batch)."
     ),
     seed: int = typer.Option(42, "--seed", help="Random seed."),
     output: str = typer.Option(
-        "", "--output", "-o",
+        "",
+        "--output",
+        "-o",
         help="Path to save diagnosis JSON (empty = don't save).",
     ),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space: 'cartesian' (4D) or 'joint' (8D). "
-             "Must match the action space used during teacher training. "
-             "When approach is the bottleneck and action_space is joint, "
-             "diagnose will suggest switching to cartesian.",
+        "Must match the action space used during teacher training. "
+        "When approach is the bottleneck and action_space is joint, "
+        "diagnose will suggest switching to cartesian.",
     ),
     env_override: list[str] = typer.Option(
-        [], "--env-override",
+        [],
+        "--env-override",
         help="Override as KEY=VALUE (repeatable). EnvConfig fields go to the "
-             "simulation; threshold keys (approach_threshold, lift_threshold, "
-             "place_threshold) override diagnosis classification thresholds.",
+        "simulation; threshold keys (approach_threshold, lift_threshold, "
+        "place_threshold) override diagnosis classification thresholds.",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -1705,7 +1856,9 @@ def _print_diagnosis(result: dict) -> None:
 
     bottleneck = result["bottleneck"]
     if bottleneck == "none":
-        console.print("\n  [green]No failure bottleneck — policy has some success.[/green]")
+        console.print(
+            "\n  [green]No failure bottleneck — policy has some success.[/green]"
+        )
         return
 
     console.print(f"\n  [bold red]Bottleneck: {bottleneck}[/bold red]")
@@ -1729,7 +1882,8 @@ def tune_cmd(
         5, "--max-rounds", help="Maximum diagnose→retrain iterations."
     ),
     retrain_iterations: int = typer.Option(
-        100, "--retrain-iterations",
+        100,
+        "--retrain-iterations",
         help="PPO iterations per retrain round (short run).",
     ),
     n_envs: int = typer.Option(
@@ -1740,45 +1894,70 @@ def tune_cmd(
     ),
     seed: int = typer.Option(42, "--seed", help="Base random seed."),
     output: str = typer.Option(
-        "./checkpoints/tune/", "--output", "-o",
+        "./checkpoints/tune/",
+        "--output",
+        "-o",
         help="Output directory for per-round checkpoints.",
     ),
-    data_path: str = typer.Option("", "--data-path", help="Optional custom training data path recorded with the run."),
+    data_path: str = typer.Option(
+        "",
+        "--data-path",
+        help="Optional custom training data path recorded with the run.",
+    ),
     override: list[str] = typer.Option(
         [],
         "--override",
         help="Generic training override as KEY=VALUE. Repeat for PPO, EnvConfig, or tune runner keys.",
     ),
-    wandb_enabled: bool = typer.Option(False, "--wandb/--no-wandb", help="Enable W&B logging metadata for the training run."),
+    wandb_enabled: bool = typer.Option(
+        False,
+        "--wandb/--no-wandb",
+        help="Enable W&B logging metadata for the training run.",
+    ),
     wandb_project: str = typer.Option("", "--wandb-project", help="W&B project name."),
     wandb_run_name: str = typer.Option("", "--wandb-run-name", help="W&B run name."),
-    wandb_mode: str = typer.Option("offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."),
-    checkpoint_s3_uri: str = typer.Option("", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."),
-    checkpoint_s3_endpoint_url: str = typer.Option("", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."),
-    checkpoint_s3_access_key_id: str = typer.Option("", "--checkpoint-s3-access-key-id", help="S3 access key ID."),
-    checkpoint_s3_secret_access_key: str = typer.Option("", "--checkpoint-s3-secret-access-key", help="S3 secret access key."),
+    wandb_mode: str = typer.Option(
+        "offline", "--wandb-mode", help="W&B mode such as online, offline, or disabled."
+    ),
+    checkpoint_s3_uri: str = typer.Option(
+        "", "--checkpoint-s3-uri", help="S3 URI for checkpoint upload."
+    ),
+    checkpoint_s3_endpoint_url: str = typer.Option(
+        "", "--checkpoint-s3-endpoint-url", help="S3-compatible endpoint URL."
+    ),
+    checkpoint_s3_access_key_id: str = typer.Option(
+        "", "--checkpoint-s3-access-key-id", help="S3 access key ID."
+    ),
+    checkpoint_s3_secret_access_key: str = typer.Option(
+        "", "--checkpoint-s3-secret-access-key", help="S3 secret access key."
+    ),
     log_dir: str = typer.Option(
-        "./logs/tune/", "--log-dir", help="Tensorboard log directory.",
+        "./logs/tune/",
+        "--log-dir",
+        help="Tensorboard log directory.",
     ),
     device: str = typer.Option("cuda", "--device", help="Torch device."),
     action_space: ActionSpace = typer.Option(
-        ActionSpace.cartesian, "--action-space",
+        ActionSpace.cartesian,
+        "--action-space",
         help="Action space: 'cartesian' (4D) or 'joint' (8D). "
-             "If diagnose suggests switching to cartesian, subsequent "
-             "rounds will use the new action space automatically.",
+        "If diagnose suggests switching to cartesian, subsequent "
+        "rounds will use the new action space automatically.",
     ),
     env_override: list[str] = typer.Option(
-        [], "--env-override",
+        [],
+        "--env-override",
         help="Override as KEY=VALUE (repeatable). EnvConfig fields are "
-             "applied to both retrain and diagnose envs; threshold keys "
-             "(approach_threshold, lift_threshold, place_threshold) override "
-             "diagnosis classification thresholds.",
+        "applied to both retrain and diagnose envs; threshold keys "
+        "(approach_threshold, lift_threshold, place_threshold) override "
+        "diagnosis classification thresholds.",
     ),
     min_success_rate: float = typer.Option(
-        0.0, "--min-success-rate",
+        0.0,
+        "--min-success-rate",
         help="Stop tuning when success rate exceeds this value. "
-             "0.0 (default) stops as soon as any episode succeeds. "
-             "e.g. 0.20 requires 20%% success before stopping.",
+        "0.0 (default) stops as soon as any episode succeeds. "
+        "e.g. 0.20 requires 20%% success before stopping.",
     ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
@@ -1813,8 +1992,8 @@ def tune_cmd(
             checkpoint_s3_access_key_id=checkpoint_s3_access_key_id,
             checkpoint_s3_secret_access_key=checkpoint_s3_secret_access_key,
         )
-        runner_overrides, ppo_overrides, shared_env_overrides = _split_genesis_training_overrides(
-            training_config.overrides
+        runner_overrides, ppo_overrides, shared_env_overrides = (
+            _split_genesis_training_overrides(training_config.overrides)
         )
     except TrainingConfigError as exc:
         _fail(str(exc))
@@ -1842,9 +2021,7 @@ def tune_cmd(
         console.print(f"  overrides: {env_overrides}")
     console.print(f"  output: {output}")
 
-    TuneError, tune_teacher = _genesis_local_import(
-        "tune", "TuneError", "tune_teacher"
-    )
+    TuneError, tune_teacher = _genesis_local_import("tune", "TuneError", "tune_teacher")
 
     try:
         result = tune_teacher(
@@ -1946,7 +2123,9 @@ def _is_genesis_workbench(name: str, wb_cfg: dict) -> bool:
 
 @app.command("list")
 def list_cmd(
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """List configured Genesis workbenches (excludes LeRobot VMs)."""
     from npa.clients import config as client_config
@@ -1958,25 +2137,38 @@ def list_cmd(
     if output_format == OutputFormat.json:
         filtered = {}
         for pname, pcfg in projects.items():
-            wbs = {k: v for k, v in pcfg.get("workbenches", {}).items()
-                   if _is_genesis_workbench(k, v)}
+            wbs = {
+                k: v
+                for k, v in pcfg.get("workbenches", {}).items()
+                if _is_genesis_workbench(k, v)
+            }
             if wbs:
                 filtered[pname] = {**pcfg, "workbenches": wbs}
-        typer.echo(json.dumps({
-            "projects": filtered,
-            "default_project": def_proj,
-            "default_workbench": def_wb,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "projects": filtered,
+                    "default_project": def_proj,
+                    "default_workbench": def_wb,
+                },
+                indent=2,
+            )
+        )
         return
 
     if not projects:
-        typer.echo("No projects configured. Run 'npa workbench genesis deploy' to create one.")
+        typer.echo(
+            "No projects configured. Run 'npa workbench genesis deploy' to create one."
+        )
         return
 
     any_shown = False
     for proj_name, proj_cfg in projects.items():
-        workbenches = {k: v for k, v in proj_cfg.get("workbenches", {}).items()
-                       if _is_genesis_workbench(k, v)}
+        workbenches = {
+            k: v
+            for k, v in proj_cfg.get("workbenches", {}).items()
+            if _is_genesis_workbench(k, v)
+        }
         if not workbenches:
             continue
         any_shown = True
@@ -1988,40 +2180,84 @@ def list_cmd(
             gpu = wb_cfg.get("gpu_platform", "?")
             host = wb_cfg.get("ssh", {}).get("host", "?")
             app_status = wb_cfg.get("app_status", "unknown")
-            typer.echo(f"    {wb_name}{wb_marker}  gpu={gpu}  ssh={host}  app_status={app_status}")
+            typer.echo(
+                f"    {wb_name}{wb_marker}  gpu={gpu}  ssh={host}  app_status={app_status}"
+            )
 
     if not any_shown:
-        typer.echo("No Genesis workbenches configured. Run 'npa workbench genesis deploy' to create one.")
+        typer.echo(
+            "No Genesis workbenches configured. Run 'npa workbench genesis deploy' to create one."
+        )
 
 
 @app.command("deploy")
 def deploy_cmd(
-    gpu_type: str = typer.Option("gpu-l40s-a", "--gpu-type", help="Nebius GPU platform."),
-    gpu_preset: str = typer.Option("1gpu-40vcpu-160gb", "--gpu-preset", help="GPU preset."),
+    gpu_type: str = typer.Option(
+        "gpu-l40s-a", "--gpu-type", help="Nebius GPU platform."
+    ),
+    gpu_preset: str = typer.Option(
+        "1gpu-40vcpu-160gb", "--gpu-preset", help="GPU preset."
+    ),
     region: str = typer.Option("", "--region", help="Nebius region."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
-    tf_dir: str = typer.Option("", "--tf-dir", help="Path to Terraform directory (default: bundled)."),
-    tf_var: list[str] = typer.Option([], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."),
-    skip_infra: bool = typer.Option(False, "--skip-infra", help="Skip Terraform, only verify connectivity."),
-    destroy: bool = typer.Option(False, "--destroy", help="Destroy infrastructure and clean up config."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would happen without doing it."),
+    tf_dir: str = typer.Option(
+        "", "--tf-dir", help="Path to Terraform directory (default: bundled)."
+    ),
+    tf_var: list[str] = typer.Option(
+        [], "--tf-var", "-v", help="Extra TF variable (key=value), repeatable."
+    ),
+    skip_infra: bool = typer.Option(
+        False, "--skip-infra", help="Skip Terraform, only verify connectivity."
+    ),
+    destroy: bool = typer.Option(
+        False, "--destroy", help="Destroy infrastructure and clean up config."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would happen without doing it."
+    ),
     yes: bool = typer.Option(
         False,
         "--yes",
         "-y",
         help="Skip confirmation prompts (use with deploy --destroy for automation).",
     ),
-    no_shared_creds: bool = typer.Option(False, "--no-shared-creds", help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env."),
-    preemptible: bool = typer.Option(True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."),
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP),
-    host: str = typer.Option("", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."),
-    ssh_key: str = typer.Option("", "--ssh-key", help="BYOVM SSH private key path. Used only with --runtime byovm."),
-    ssh_user: str = typer.Option("", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."),
-    gpu_count: int = typer.Option(0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."),
-    disk_size: int | None = typer.Option(None, "--disk-size", help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default."),
-    default: bool = typer.Option(False, "--default", help="Set this workbench as the default."),
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    no_shared_creds: bool = typer.Option(
+        False,
+        "--no-shared-creds",
+        help="Do not inject ~/.npa/credentials.yaml shared credentials into the service env.",
+    ),
+    preemptible: bool = typer.Option(
+        True, "--preemptible/--no-preemptible", help="Preemptible (spot) instance."
+    ),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help=RUNTIME_HELP
+    ),
+    host: str = typer.Option(
+        "", "--host", help="BYOVM SSH host/IP. Used only with --runtime byovm."
+    ),
+    ssh_key: str = typer.Option(
+        "",
+        "--ssh-key",
+        help="BYOVM SSH private key path. Used only with --runtime byovm.",
+    ),
+    ssh_user: str = typer.Option(
+        "", "--ssh-user", help="BYOVM SSH username. Defaults to ubuntu."
+    ),
+    gpu_count: int = typer.Option(
+        0, "--gpu-count", help="Limit visible GPUs on BYOVM (0 = all detected)."
+    ),
+    disk_size: int | None = typer.Option(
+        None,
+        "--disk-size",
+        help="Boot disk size in GiB. Defaults to 250 for container runtime; VM runtime keeps the Terraform default.",
+    ),
+    default: bool = typer.Option(
+        False, "--default", help="Set this workbench as the default."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Deploy or destroy a Genesis simulation VM.
 
@@ -2038,7 +2274,9 @@ def deploy_cmd(
     wb_name = _workbench_name or "genesis"
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
-        _fail("Genesis deploy does not use --runtime serverless; use `npa workbench genesis train-teacher --runtime serverless`.")
+        _fail(
+            "Genesis deploy does not use --runtime serverless; use `npa workbench genesis train-teacher --runtime serverless`."
+        )
     use_remote_state = not tf_dir and not byovm
     if byovm:
         skip_infra = True
@@ -2103,23 +2341,30 @@ def deploy_cmd(
             console.print("  Environment ready")
 
             from npa.clients.config import write_config as _early_write
-            _early_write({
-                "projects": {
-                    proj_alias: {
-                        "project_id": env_project,
-                        "tenant_id": env_tenant,
-                        "region": env_region,
+
+            _early_write(
+                {
+                    "projects": {
+                        proj_alias: {
+                            "project_id": env_project,
+                            "tenant_id": env_tenant,
+                            "region": env_region,
+                        },
                     },
-                },
-            })
+                }
+            )
 
     # Merge bootstrapped credentials into TF vars.
     merged_vars: dict[str, str] = {**extra_vars}
     for key in (
-        "iam_token", "service_account_id",
-        "nebius_api_key", "nebius_secret_key",
-        "s3_bucket", "s3_endpoint",
-        "nebius_project_id", "nebius_region",
+        "iam_token",
+        "service_account_id",
+        "nebius_api_key",
+        "nebius_secret_key",
+        "s3_bucket",
+        "s3_endpoint",
+        "nebius_project_id",
+        "nebius_region",
     ):
         if key in nebius_creds:
             merged_vars[key] = nebius_creds[key]
@@ -2171,9 +2416,7 @@ def deploy_cmd(
 
     instance_name = f"genesis-{proj_alias}-{wb_name}"
     cloud_init_workbench_type = (
-        "lerobot-container"
-        if runtime_uses_container(runtime)
-        else "genesis"
+        "lerobot-container" if runtime_uses_container(runtime) else "genesis"
     )
 
     # ── Destroy flow ─────────────────────────────────────────────────
@@ -2186,12 +2429,16 @@ def deploy_cmd(
             yes=yes,
         )
         if byovm:
-            console.print(f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}...")
+            console.print(
+                f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."
+            )
             if not dry_run:
                 from npa.clients.config import remove_workbench_config
 
                 remove_workbench_config(proj_alias, wb_name)
-            console.print(f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified.")
+            console.print(
+                f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified."
+            )
             return
 
         console.print(f"  [1/2] Destroying {proj_alias}/{wb_name}...")
@@ -2203,16 +2450,26 @@ def deploy_cmd(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias, wb_name,
-                bucket=s3_bucket, region=env_region, endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
             try:
-                provisioner.init(tf_dir=resolved_tf_dir, backend_config={
-                    "access_key": merged_vars.get("nebius_api_key", ""),
-                    "secret_key": merged_vars.get("nebius_secret_key", ""),
-                })
+                provisioner.init(
+                    tf_dir=resolved_tf_dir,
+                    backend_config={
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    },
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
@@ -2221,6 +2478,7 @@ def deploy_cmd(
 
         # Read the stored tf_instance_name if available.
         from npa.clients.config import ConfigError, resolve_ssh_config
+
         try:
             wb_cfg = resolve_ssh_config(project=proj_alias, name=wb_name)
             if wb_cfg.tf_instance_name:
@@ -2231,10 +2489,13 @@ def deploy_cmd(
         try:
             provisioner.destroy(
                 tf_dir=resolved_tf_dir or None,
-                tf_vars={"gpu_platform": gpu_type, "gpu_preset": gpu_preset,
-                         "instance_name": instance_name,
-                         "enable_preemptible": "true" if preemptible else "false",
-                         **merged_vars},
+                tf_vars={
+                    "gpu_platform": gpu_type,
+                    "gpu_preset": gpu_preset,
+                    "instance_name": instance_name,
+                    "enable_preemptible": "true" if preemptible else "false",
+                    **merged_vars,
+                },
             )
         except ProvisionerError as exc:
             _fail(f"Terraform destroy failed: {exc}")
@@ -2242,6 +2503,7 @@ def deploy_cmd(
 
         console.print("  [2/2] Cleaning up config...")
         from npa.clients.config import remove_workbench_config
+
         remove_workbench_config(proj_alias, wb_name)
         if use_remote_state:
             provisioner.cleanup_working_dir(proj_alias, wb_name)
@@ -2259,11 +2521,18 @@ def deploy_cmd(
 
         if use_remote_state:
             s3_bucket = merged_vars.get("s3_bucket", "")
-            s3_endpoint = merged_vars.get("s3_endpoint", f"https://storage.{env_region}.nebius.cloud")
-            resolved_tf_dir = str(provisioner.prepare_working_dir(
-                proj_alias, wb_name,
-                bucket=s3_bucket, region=env_region, endpoint=s3_endpoint,
-            ))
+            s3_endpoint = merged_vars.get(
+                "s3_endpoint", f"https://storage.{env_region}.nebius.cloud"
+            )
+            resolved_tf_dir = str(
+                provisioner.prepare_working_dir(
+                    proj_alias,
+                    wb_name,
+                    bucket=s3_bucket,
+                    region=env_region,
+                    endpoint=s3_endpoint,
+                )
+            )
         else:
             resolved_tf_dir = tf_dir
 
@@ -2271,35 +2540,50 @@ def deploy_cmd(
         if not dry_run:
             try:
                 backend_cfg = (
-                    {"access_key": merged_vars.get("nebius_api_key", ""),
-                     "secret_key": merged_vars.get("nebius_secret_key", "")}
-                    if use_remote_state else None
+                    {
+                        "access_key": merged_vars.get("nebius_api_key", ""),
+                        "secret_key": merged_vars.get("nebius_secret_key", ""),
+                    }
+                    if use_remote_state
+                    else None
                 )
-                provisioner.init(tf_dir=resolved_tf_dir or None, backend_config=backend_cfg)
+                provisioner.init(
+                    tf_dir=resolved_tf_dir or None, backend_config=backend_cfg
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform init failed: {exc}")
                 return
 
         all_vars = {
-            "gpu_platform": gpu_type, "gpu_preset": gpu_preset,
+            "gpu_platform": gpu_type,
+            "gpu_preset": gpu_preset,
             "instance_name": instance_name,
             "workbench_type": cloud_init_workbench_type,
             "enable_preemptible": "true" if preemptible else "false",
             **merged_vars,
         }
-        console.print(f"  [2/3] Applying Terraform (gpu={gpu_type}, region={env_region})...")
+        console.print(
+            f"  [2/3] Applying Terraform (gpu={gpu_type}, region={env_region})..."
+        )
         if dry_run:
-            tf_outputs = {"vm_ip": "<pending>", "ssh_user": "ubuntu",
-                          "ssh_key_path": "~/.ssh/id_ed25519"}
+            tf_outputs = {
+                "vm_ip": "<pending>",
+                "ssh_user": "ubuntu",
+                "ssh_key_path": "~/.ssh/id_ed25519",
+            }
         else:
             try:
-                tf_outputs = provisioner.apply(tf_dir=resolved_tf_dir or None, tf_vars=all_vars)
+                tf_outputs = provisioner.apply(
+                    tf_dir=resolved_tf_dir or None, tf_vars=all_vars
+                )
             except ProvisionerError as exc:
                 _fail(f"Terraform apply failed: {exc}")
                 return
         console.print(f"    VM IP: {tf_outputs.get('vm_ip', 'unknown')}")
     else:
-        console.print(f"  [1/2] {'Using BYOVM target' if byovm else 'Skipping infra, reading existing config'}...")
+        console.print(
+            f"  [1/2] {'Using BYOVM target' if byovm else 'Skipping infra, reading existing config'}..."
+        )
         resolved_tf_dir = tf_dir
 
         if byovm:
@@ -2307,17 +2591,31 @@ def deploy_cmd(
                 from npa.clients.config import resolve_credentials
                 from npa.clients.ssh import SSHClient, SSHError
 
-                target = resolve_byovm_target(host=host, ssh_key=ssh_key, ssh_user=ssh_user)
-                bucket = merged_vars.get("s3_bucket", "") or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
-                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get("AWS_ENDPOINT_URL", "")
-                tf_outputs = workbench_storage_outputs(target=target, bucket=bucket, endpoint=storage_ep)
+                target = resolve_byovm_target(
+                    host=host, ssh_key=ssh_key, ssh_user=ssh_user
+                )
+                bucket = merged_vars.get("s3_bucket", "") or os.environ.get(
+                    "NPA_CHECKPOINT_BUCKET", ""
+                )
+                storage_ep = merged_vars.get("s3_endpoint", "") or os.environ.get(
+                    "AWS_ENDPOINT_URL", ""
+                )
+                tf_outputs = workbench_storage_outputs(
+                    target=target, bucket=bucket, endpoint=storage_ep
+                )
                 if not dry_run:
-                    ssh = SSHClient(ssh_config_for_target(target, tokens=resolve_credentials().tokens))
+                    ssh = SSHClient(
+                        ssh_config_for_target(
+                            target, tokens=resolve_credentials().tokens
+                        )
+                    )
                     ssh.run_or_raise("echo connected")
                     byovm_gpu_info = detect_gpu_info(ssh)
-                    byovm_effective_gpu_count, byovm_visible_devices = select_visible_devices(
-                        byovm_gpu_info.count,
-                        gpu_count or None,
+                    byovm_effective_gpu_count, byovm_visible_devices = (
+                        select_visible_devices(
+                            byovm_gpu_info.count,
+                            gpu_count or None,
+                        )
                     )
                     console.print(
                         f"    Detected {byovm_gpu_info.count} GPU(s): "
@@ -2328,7 +2626,13 @@ def deploy_cmd(
                 _fail(str(exc))
                 return
         elif not tf_outputs:
-            from npa.clients.config import _load_yaml, _deep_get, _resolve_project_section, _resolve_workbench_in_project
+            from npa.clients.config import (
+                _load_yaml,
+                _deep_get,
+                _resolve_project_section,
+                _resolve_workbench_in_project,
+            )
+
             yml = _load_yaml()
             try:
                 proj = _resolve_project_section(yml, proj_alias)
@@ -2338,11 +2642,15 @@ def deploy_cmd(
             tf_outputs = {
                 "vm_ip": _deep_get(wb, "ssh", "host", default=""),
                 "ssh_user": _deep_get(wb, "ssh", "user", default="ubuntu"),
-                "ssh_key_path": _deep_get(wb, "ssh", "key_path", default="~/.ssh/id_ed25519"),
+                "ssh_key_path": _deep_get(
+                    wb, "ssh", "key_path", default="~/.ssh/id_ed25519"
+                ),
             }
 
         if not tf_outputs.get("vm_ip"):
-            _fail("No VM IP found. Run without --skip-infra first, or set config manually.")
+            _fail(
+                "No VM IP found. Run without --skip-infra first, or set config manually."
+            )
             return
 
     # ── Verify SSH connectivity ──────────────────────────────────────
@@ -2354,7 +2662,11 @@ def deploy_cmd(
     console.print(f"  {step_label} Writing config ({proj_alias}/{wb_name})...")
 
     bucket = tf_outputs.get("storage_bucket", merged_vars.get("s3_bucket", ""))
-    bucket_display = bucket if str(bucket).startswith("s3://") else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    bucket_display = (
+        bucket
+        if str(bucket).startswith("s3://")
+        else (f"s3://{bucket}/checkpoints/" if bucket else "")
+    )
     storage_ep = tf_outputs.get("storage_endpoint", merged_vars.get("s3_endpoint", ""))
     byovm_fields = gpu_config_fields(
         byovm_gpu_info,
@@ -2378,7 +2690,10 @@ def deploy_cmd(
                         "app_status": "provisioned",
                         **byovm_fields,
                         "ssh": {"host": vm_ip, "user": ssh_user, "key_path": ssh_key},
-                        "storage": {"checkpoint_bucket": bucket_display, "endpoint_url": storage_ep},
+                        "storage": {
+                            "checkpoint_bucket": bucket_display,
+                            "endpoint_url": storage_ep,
+                        },
                     },
                 },
             },
@@ -2393,6 +2708,7 @@ def deploy_cmd(
 
     if not dry_run:
         from npa.clients.config import update_workbench_app_status, write_config
+
         write_config(config_data)
         if runtime == WorkbenchRuntime.vm:
             update_workbench_app_status(proj_alias, wb_name, "healthy")
@@ -2402,7 +2718,11 @@ def deploy_cmd(
         step_label = "[container]"
         console.print(f"  {step_label} Starting Genesis container...")
         if not dry_run:
-            from npa.clients.config import SSHConfig, resolve_credentials, update_workbench_app_status
+            from npa.clients.config import (
+                SSHConfig,
+                resolve_credentials,
+                update_workbench_app_status,
+            )
             from npa.clients.ssh import SSHClient, SSHError
             from npa.deploy.configurator import (
                 deploy_workbench_container,
@@ -2412,7 +2732,9 @@ def deploy_cmd(
             from npa.deploy.images import container_image_for_tool
 
             credentials = resolve_credentials()
-            ssh_cfg = SSHConfig(host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens)
+            ssh_cfg = SSHConfig(
+                host=vm_ip, user=ssh_user, key_path=ssh_key, tokens=credentials.tokens
+            )
             ssh = SSHClient(ssh_cfg)
             try:
                 code, _, _ = ssh.run("echo connected")
@@ -2438,7 +2760,9 @@ def deploy_cmd(
                         visible_devices=byovm_visible_devices,
                     ),
                 }
-                apply_shared_credential_env(service_env, credentials, include=not no_shared_creds)
+                apply_shared_credential_env(
+                    service_env, credentials, include=not no_shared_creds
+                )
                 write_remote_docker_env_file(
                     ssh,
                     "/opt/lerobot/.env",
@@ -2459,7 +2783,12 @@ def deploy_cmd(
                     ],
                     work_dirs=["/opt/genesis/outputs"],
                 )
-                write_manifest(ssh, tool="genesis", version=image_ref.rsplit(":", 1)[-1], deployed_by=f"npa deploy --runtime {runtime.value}")
+                write_manifest(
+                    ssh,
+                    tool="genesis",
+                    version=image_ref.rsplit(":", 1)[-1],
+                    deployed_by=f"npa deploy --runtime {runtime.value}",
+                )
                 update_workbench_app_status(proj_alias, wb_name, "healthy")
             except SSHError as exc:
                 update_workbench_app_status(proj_alias, wb_name, "install_failed")
@@ -2473,19 +2802,28 @@ def deploy_cmd(
     console.print(f"  Try: npa workbench genesis -p {proj_alias} -n {wb_name} status")
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps({
-            "project": proj_alias, "name": wb_name,
-            "vm_ip": vm_ip, "ssh_user": ssh_user,
-            "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
-            "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
-            "gpu_count": byovm_fields.get("gpu_count"),
-            "runtime": runtime.value,
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "project": proj_alias,
+                    "name": wb_name,
+                    "vm_ip": vm_ip,
+                    "ssh_user": ssh_user,
+                    "gpu_platform": byovm_fields.get("gpu_platform", gpu_type),
+                    "gpu_preset": byovm_fields.get("gpu_preset", gpu_preset),
+                    "gpu_count": byovm_fields.get("gpu_count"),
+                    "runtime": runtime.value,
+                },
+                indent=2,
+            )
+        )
 
 
 @app.command("status")
 def status_cmd(
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Check Genesis VM status via SSH (processes, GPU, conda env)."""
     cfg = _get_ssh_config()
@@ -2515,25 +2853,35 @@ def status_cmd(
         code, out, err = ssh.run_or_raise(status_cmd_str)
     except SSHError as exc:
         if output_format == OutputFormat.json:
-            typer.echo(json.dumps({
-                "host": cfg.ssh.host,
-                "app_status": cfg.app_status or "unknown",
-                "status": "unreachable",
-                "error": str(exc),
-            }, indent=2))
+            typer.echo(
+                json.dumps(
+                    {
+                        "host": cfg.ssh.host,
+                        "app_status": cfg.app_status or "unknown",
+                        "status": "unreachable",
+                        "error": str(exc),
+                    },
+                    indent=2,
+                )
+            )
         else:
             typer.echo(f"app_status: {cfg.app_status or 'unknown'}")
         _fail(f"SSH error: {exc}")
         return
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps({
-            "host": cfg.ssh.host,
-            "app_status": cfg.app_status or "unknown",
-            "runtime": getattr(cfg, "runtime", "vm"),
-            "status": "reachable" if code == 0 else "error",
-            "output": out.strip() if out else "",
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "host": cfg.ssh.host,
+                    "app_status": cfg.app_status or "unknown",
+                    "runtime": getattr(cfg, "runtime", "vm"),
+                    "status": "reachable" if code == 0 else "error",
+                    "output": out.strip() if out else "",
+                },
+                indent=2,
+            )
+        )
     else:
         console.print(f"[bold]Genesis VM: {cfg.ssh.host}[/bold]")
         typer.echo(f"app_status: {cfg.app_status or 'unknown'}")
@@ -2546,7 +2894,9 @@ def status_cmd(
 
 @app.command("system-info")
 def system_info_cmd(
-    output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format", help="Output format."),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", help="Output format."
+    ),
 ) -> None:
     """Collect and display system hardware information from the Genesis VM."""
     cfg = _get_ssh_config()
@@ -2573,11 +2923,16 @@ def system_info_cmd(
         return
 
     if output_format == OutputFormat.json:
-        typer.echo(json.dumps({
-            "host": cfg.ssh.host,
-            "runtime": getattr(cfg, "runtime", "vm"),
-            "system_info": out.strip(),
-        }, indent=2))
+        typer.echo(
+            json.dumps(
+                {
+                    "host": cfg.ssh.host,
+                    "runtime": getattr(cfg, "runtime", "vm"),
+                    "system_info": out.strip(),
+                },
+                indent=2,
+            )
+        )
     else:
         if out:
             typer.echo(out.strip())

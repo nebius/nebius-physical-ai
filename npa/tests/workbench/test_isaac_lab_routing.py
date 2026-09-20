@@ -108,8 +108,11 @@ def test_unknown_workload_fails_loud() -> None:
 
 
 def test_datacenter_blackwell_is_not_read_as_rt_core_from_the_family_name() -> None:
-    """"Blackwell" spans both classes; a datacenter model number must win."""
+    """ "Blackwell" spans both classes; a datacenter model number must win."""
 
     with pytest.raises(IsaacLabRoutingError):
         validate_gpu_routing(workload=RENDER, gpu_target="blackwell-b300")
-    assert validate_gpu_routing(workload=RENDER, gpu_target="rtx-pro-6000-blackwell") == "rt-core"
+    assert (
+        validate_gpu_routing(workload=RENDER, gpu_target="rtx-pro-6000-blackwell")
+        == "rt-core"
+    )

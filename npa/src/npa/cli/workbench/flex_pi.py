@@ -18,7 +18,8 @@ from npa.workbench.flex_pi.runtime import (
 )
 
 app = typer.Typer(
-    name="flex-pi", help="Flex-pi multi-stream world-action policy inference.",
+    name="flex-pi",
+    help="Flex-pi multi-stream world-action policy inference.",
     no_args_is_help=True,
 )
 
@@ -29,7 +30,9 @@ def infer_cmd(
     input_path: str = typer.Option(DEFAULT_INPUT_MANIFEST, "--input-path"),
     output_path: str = typer.Option(..., "--output-path"),
     checkpoint_id: str = typer.Option(DEFAULT_CHECKPOINT_ID, "--checkpoint-id"),
-    checkpoint_revision: str = typer.Option(DEFAULT_CHECKPOINT_REVISION, "--checkpoint-revision"),
+    checkpoint_revision: str = typer.Option(
+        DEFAULT_CHECKPOINT_REVISION, "--checkpoint-revision"
+    ),
     num_inference_steps: int = typer.Option(4, "--num-inference-steps", min=1),
     seed: int = typer.Option(42, "--seed"),
     torch_compile: bool = typer.Option(False, "--torch-compile/--no-torch-compile"),
@@ -37,7 +40,9 @@ def infer_cmd(
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),
     dry_run: bool = typer.Option(False, "--dry-run"),
-    output_format: str = typer.Option("json", "--output-format", help="Result format; must be json."),
+    output_format: str = typer.Option(
+        "json", "--output-format", help="Result format; must be json."
+    ),
 ) -> None:
     """Run genuine action-only inference and publish verified artifacts.
 
@@ -66,11 +71,17 @@ def infer_cmd(
             validate_read_path(input_path, tool="flex-pi")
         validate_write_path(output_path, tool="flex-pi")
         request = FlexPiRequest(
-            input_path=input_path, output_path=output_path,
-            checkpoint_id=checkpoint_id, checkpoint_revision=checkpoint_revision,
-            num_inference_steps=num_inference_steps, seed=seed,
-            torch_compile=torch_compile, expected_gpu=expected_gpu,
-            run_id=run_id, runtime_image=runtime_image, dry_run=dry_run,
+            input_path=input_path,
+            output_path=output_path,
+            checkpoint_id=checkpoint_id,
+            checkpoint_revision=checkpoint_revision,
+            num_inference_steps=num_inference_steps,
+            seed=seed,
+            torch_compile=torch_compile,
+            expected_gpu=expected_gpu,
+            run_id=run_id,
+            runtime_image=runtime_image,
+            dry_run=dry_run,
         )
         result = run_inference(request)
     except (FlexPiError, ValueError) as exc:
@@ -82,10 +93,24 @@ def infer_cmd(
 @app.command("terms")
 def terms_cmd() -> None:
     """Print separately applicable source, model, and public-input terms."""
-    typer.echo(json.dumps({
-        "source": {"license": "MIT", "baked": True},
-        "checkpoint": {"license": "MIT", "runtime_fetch": True},
-        "wan_runtime_assets": {"license": "Apache-2.0", "runtime_fetch": True},
-        "dinov3_runtime_assets": {"license": "upstream-specific", "runtime_fetch": True},
-        "public_input": {"dataset": "flex-pi/robotwin_3d", "license": "not-declared", "runtime_fetch": True, "redistribution": False},
-    }, indent=2, sort_keys=True))
+    typer.echo(
+        json.dumps(
+            {
+                "source": {"license": "MIT", "baked": True},
+                "checkpoint": {"license": "MIT", "runtime_fetch": True},
+                "wan_runtime_assets": {"license": "Apache-2.0", "runtime_fetch": True},
+                "dinov3_runtime_assets": {
+                    "license": "upstream-specific",
+                    "runtime_fetch": True,
+                },
+                "public_input": {
+                    "dataset": "flex-pi/robotwin_3d",
+                    "license": "not-declared",
+                    "runtime_fetch": True,
+                    "redistribution": False,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )

@@ -74,48 +74,80 @@ def _is_safe_k8s_config_key(key: str) -> bool:
     return key in _SAFE_K8S_REFERENCE_KEYS or not _SECRET_KEY_RE.search(key)
 
 
-def configured_k8s_backends(project_block: dict[str, Any], alias: str) -> list[dict[str, Any]]:
+def configured_k8s_backends(
+    project_block: dict[str, Any], alias: str
+) -> list[dict[str, Any]]:
     """Normalize nested and legacy project Kubernetes placement configuration."""
     kube = project_block.get("kubernetes")
     if isinstance(kube, dict) and kube:
-        raw = {key: value for key, value in kube.items() if _is_safe_k8s_config_key(key)}
-        return [{
-            "source": "project_config",
-            "project": alias,
-            "cluster_name": str(kube.get("cluster_name") or kube.get("name") or ""),
-            "context": str(kube.get("context") or kube.get("context_name") or ""),
-            "kubeconfig": str(kube.get("kubeconfig") or kube.get("kubeconfig_path") or ""),
-            "gpu_profile": str(kube.get("gpu_profile") or ""),
-            "raw": raw,
-        }]
+        raw = {
+            key: value for key, value in kube.items() if _is_safe_k8s_config_key(key)
+        }
+        return [
+            {
+                "source": "project_config",
+                "project": alias,
+                "cluster_name": str(kube.get("cluster_name") or kube.get("name") or ""),
+                "context": str(kube.get("context") or kube.get("context_name") or ""),
+                "kubeconfig": str(
+                    kube.get("kubeconfig") or kube.get("kubeconfig_path") or ""
+                ),
+                "gpu_profile": str(kube.get("gpu_profile") or ""),
+                "raw": raw,
+            }
+        ]
     context = str(project_block.get("k8s_context") or "").strip()
     cluster = str(project_block.get("cluster_name") or "").strip()
     if not (context or cluster):
         return []
     placement_keys = (
-        "namespace", "service_account", "image_pull_secrets", "env_secret_names",
-        "gpu_profile", "gpu_product", "augment_image", "envgen_image", "policy_image",
-        "trainer_image", "vlm_image", "eval_image", "isaac_image", "container_registry",
+        "namespace",
+        "service_account",
+        "image_pull_secrets",
+        "env_secret_names",
+        "gpu_profile",
+        "gpu_product",
+        "augment_image",
+        "envgen_image",
+        "policy_image",
+        "trainer_image",
+        "vlm_image",
+        "eval_image",
+        "isaac_image",
+        "container_registry",
     )
-    raw = {key: project_block[key] for key in placement_keys if project_block.get(key) not in (None, "", [])}
-    return [{
-        "source": "project_config_legacy",
-        "project": alias,
-        "cluster_name": cluster or context,
-        "context": context or cluster,
-        "kubeconfig": str(project_block.get("kubeconfig") or ""),
-        "gpu_profile": str(project_block.get("gpu_profile") or ""),
-        "raw": raw,
-    }]
+    raw = {
+        key: project_block[key]
+        for key in placement_keys
+        if project_block.get(key) not in (None, "", [])
+    }
+    return [
+        {
+            "source": "project_config_legacy",
+            "project": alias,
+            "cluster_name": cluster or context,
+            "context": context or cluster,
+            "kubeconfig": str(project_block.get("kubeconfig") or ""),
+            "gpu_profile": str(project_block.get("gpu_profile") or ""),
+            "raw": raw,
+        }
+    ]
 
 
 def assemble_k8s_backend_inventory(
-    *, config: dict[str, Any], alias: str, clusters_root: Path,
-    cloud_clusters: list[dict[str, Any]], npa_ready: bool, npa_error: str,
+    *,
+    config: dict[str, Any],
+    alias: str,
+    clusters_root: Path,
+    cloud_clusters: list[dict[str, Any]],
+    npa_ready: bool,
+    npa_error: str,
     terraform_dir: Path,
 ) -> dict[str, Any]:
     """Combine configured, operator-local, and live cloud Kubernetes backends."""
-    projects = config.get("projects") if isinstance(config.get("projects"), dict) else {}
+    projects = (
+        config.get("projects") if isinstance(config.get("projects"), dict) else {}
+    )
     project_block = projects.get(alias) if isinstance(projects.get(alias), dict) else {}
     configured = configured_k8s_backends(project_block, alias)
     local_clusters: list[dict[str, Any]] = []
@@ -123,16 +155,29 @@ def assemble_k8s_backend_inventory(
         for item in sorted(clusters_root.iterdir()):
             if item.is_dir():
                 kubeconfig, state_path = item / "kubeconfig", item / "state.json"
-                local_clusters.append({
-                    "source": "local_state", "cluster_name": item.name, "context": item.name,
-                    "kubeconfig": str(kubeconfig), "kubeconfig_exists": kubeconfig.is_file(),
-                    "state_exists": state_path.is_file(),
-                })
+                local_clusters.append(
+                    {
+                        "source": "local_state",
+                        "cluster_name": item.name,
+                        "context": item.name,
+                        "kubeconfig": str(kubeconfig),
+                        "kubeconfig_exists": kubeconfig.is_file(),
+                        "state_exists": state_path.is_file(),
+                    }
+                )
     return {
-        "ok": True, "project": alias, "configured": configured,
-        "local_clusters": local_clusters, "cloud_clusters": cloud_clusters,
-        "has_infra": bool(configured or any(x.get("kubeconfig_exists") for x in local_clusters) or cloud_clusters),
-        "agent_npa_ready": npa_ready, "agent_npa_error": npa_error,
+        "ok": True,
+        "project": alias,
+        "configured": configured,
+        "local_clusters": local_clusters,
+        "cloud_clusters": cloud_clusters,
+        "has_infra": bool(
+            configured
+            or any(x.get("kubeconfig_exists") for x in local_clusters)
+            or cloud_clusters
+        ),
+        "agent_npa_ready": npa_ready,
+        "agent_npa_error": npa_error,
         "terraform_dir": str(terraform_dir),
         "options": [
             "POST /api/infra/provision to let the agent create the minimal Kubernetes backend.",
@@ -149,10 +194,22 @@ def validate_resource_inventory(payload: Any) -> dict[str, Any]:
     categories = payload.get("categories")
     if not isinstance(categories, list) or not categories:
         raise ValueError("tenant resource inventory endpoint returned no categories")
-    if not any(isinstance(x, dict) and (int(x.get("discovered_count") or 0) > 0 or int(x.get("configured_count") or 0) > 0) for x in categories):
-        raise ValueError("tenant resource inventory has no configured or discovered resources")
+    if not any(
+        isinstance(x, dict)
+        and (
+            int(x.get("discovered_count") or 0) > 0
+            or int(x.get("configured_count") or 0) > 0
+        )
+        for x in categories
+    ):
+        raise ValueError(
+            "tenant resource inventory has no configured or discovered resources"
+        )
     states = {"discovered", "configured", "empty", "error"}
-    if any(not isinstance(x, dict) or str(x.get("status") or "") not in states for x in categories):
+    if any(
+        not isinstance(x, dict) or str(x.get("status") or "") not in states
+        for x in categories
+    ):
         raise ValueError("tenant resource inventory returned an invalid category state")
     return payload
 
@@ -163,8 +220,21 @@ def discover_mk8s_accelerators(
     """Return accelerator families grounded in a cluster's live node groups."""
     try:
         proc = subprocess.run(
-            [*command, "mk8s", "node-group", "list", "--parent-id", cluster_id, "--format", "json"],
-            env=command_env, text=True, capture_output=True, timeout=30, check=False,
+            [
+                *command,
+                "mk8s",
+                "node-group",
+                "list",
+                "--parent-id",
+                cluster_id,
+                "--format",
+                "json",
+            ],
+            env=command_env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
         )
         payload = json.loads(proc.stdout or "{}") if proc.returncode == 0 else {}
     except Exception:
@@ -196,16 +266,34 @@ def discover_mk8s_accelerators(
 def classify_discovery_error(message: str) -> tuple[str, str]:
     """Return a stable error kind and public message without echoing CLI output."""
     lowered = str(message or "").lower()
-    if "permissiondenied" in lowered or "permission denied" in lowered or "forbidden" in lowered:
+    if (
+        "permissiondenied" in lowered
+        or "permission denied" in lowered
+        or "forbidden" in lowered
+    ):
         return (
             "permission_denied",
             "Credentials are authenticated but cannot enumerate this resource category.",
         )
-    if "unauthenticated" in lowered or "authentication" in lowered or "access token" in lowered:
-        return "authentication_error", "Nebius authentication failed for this resource category."
+    if (
+        "unauthenticated" in lowered
+        or "authentication" in lowered
+        or "access token" in lowered
+    ):
+        return (
+            "authentication_error",
+            "Nebius authentication failed for this resource category.",
+        )
     if "timed out" in lowered or "timeout" in lowered:
-        return "timeout", "Resource discovery timed out; configured references are still shown."
-    if "unknown command" in lowered or "not found" in lowered or "unsupported" in lowered:
+        return (
+            "timeout",
+            "Resource discovery timed out; configured references are still shown.",
+        )
+    if (
+        "unknown command" in lowered
+        or "not found" in lowered
+        or "unsupported" in lowered
+    ):
         return "unsupported", "This Nebius CLI cannot discover this resource category."
     return "discovery_error", "Nebius resource discovery failed for this category."
 
@@ -238,9 +326,15 @@ def _safe_item(item: dict[str, Any], *, kind: str, source: str) -> dict[str, Any
         "source": source,
         "id": str(metadata.get("id") or item.get("id") or "").strip(),
         "name": str(metadata.get("name") or item.get("name") or "").strip(),
-        "status": str(status.get("state") or status.get("status") or item.get("state") or "").strip(),
+        "status": str(
+            status.get("state") or status.get("status") or item.get("state") or ""
+        ).strip(),
     }
-    return {key: value for key, value in result.items() if value != "" and not _SECRET_KEY_RE.search(key)}
+    return {
+        key: value
+        for key, value in result.items()
+        if value != "" and not _SECRET_KEY_RE.search(key)
+    }
 
 
 def category_payload(
@@ -291,10 +385,24 @@ def discover_nebius_categories(
     """Discover a fixed read-only Nebius inventory using an injected runner."""
     project = str(project_id or "").strip()
     tenant = str(tenant_id or "").strip()
-    safe_profile = re.sub(r"[^A-Za-z0-9_.-]", "", str(profile or "").strip()) or "cursor-sa"
+    safe_profile = (
+        re.sub(r"[^A-Za-z0-9_.-]", "", str(profile or "").strip()) or "cursor-sa"
+    )
     specs = [
-        ("project", "Project", "project", ["iam", "project", "get", "--id", project], bool(project)),
-        ("tenant", "Tenant", "tenant", ["iam", "tenant", "get", "--id", tenant], bool(tenant)),
+        (
+            "project",
+            "Project",
+            "project",
+            ["iam", "project", "get", "--id", project],
+            bool(project),
+        ),
+        (
+            "tenant",
+            "Tenant",
+            "tenant",
+            ["iam", "tenant", "get", "--id", tenant],
+            bool(tenant),
+        ),
         (
             "compute",
             "Compute",
@@ -385,7 +493,8 @@ def discover_nebius_categories(
             )
             continue
         discovered = [
-            _safe_item(item, kind=kind, source="nebius_cli") for item in _payload_items(payload)
+            _safe_item(item, kind=kind, source="nebius_cli")
+            for item in _payload_items(payload)
         ]
         categories.append(category_payload(category_id, label, discovered=discovered))
     return categories
@@ -424,11 +533,22 @@ def run_resource_discovery_command(
 def _configured_references(
     project_block: dict[str, Any], env: dict[str, str], project_alias: str
 ) -> dict[str, list[dict[str, Any]]]:
-    project_id = str(env.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or "").strip()
-    tenant_id = str(env.get("NEBIUS_TENANT_ID") or project_block.get("tenant_id") or "").strip()
+    project_id = str(
+        env.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or ""
+    ).strip()
+    tenant_id = str(
+        env.get("NEBIUS_TENANT_ID") or project_block.get("tenant_id") or ""
+    ).strip()
     references: dict[str, list[dict[str, Any]]] = {
         "project": (
-            [{"kind": "project", "source": "staged_config", "name": project_alias, "id": project_id}]
+            [
+                {
+                    "kind": "project",
+                    "source": "staged_config",
+                    "name": project_alias,
+                    "id": project_id,
+                }
+            ]
             if project_id
             else []
         ),
@@ -449,9 +569,16 @@ def _configured_references(
         "storage": [],
         "network": [],
     }
-    kube = project_block.get("kubernetes") if isinstance(project_block.get("kubernetes"), dict) else {}
+    kube = (
+        project_block.get("kubernetes")
+        if isinstance(project_block.get("kubernetes"), dict)
+        else {}
+    )
     context = str(
-        kube.get("context") or kube.get("context_name") or project_block.get("k8s_context") or ""
+        kube.get("context")
+        or kube.get("context_name")
+        or project_block.get("k8s_context")
+        or ""
     ).strip()
     cluster_name = str(kube.get("cluster_name") or kube.get("name") or "").strip()
     if context or cluster_name:
@@ -464,15 +591,15 @@ def _configured_references(
             }
         )
     registry = str(
-        env.get("NPA_REGISTRY")
-        or project_block.get("container_registry")
-        or ""
+        env.get("NPA_REGISTRY") or project_block.get("container_registry") or ""
     ).strip()
     if registry:
         references["registry"].append(
             {"kind": "registry", "source": "staged_config", "name": registry}
         )
-    bucket = str(env.get("NPA_AGENT_S3_BUCKET") or env.get("NEBIUS_S3_BUCKET") or "").strip()
+    bucket = str(
+        env.get("NPA_AGENT_S3_BUCKET") or env.get("NEBIUS_S3_BUCKET") or ""
+    ).strip()
     if bucket:
         references["storage"].append(
             {"kind": "bucket", "source": "staged_credentials", "name": bucket}
@@ -480,7 +607,9 @@ def _configured_references(
     return references
 
 
-def _local_categories(state: dict[str, Any], tool_refs: Iterable[str]) -> list[dict[str, Any]]:
+def _local_categories(
+    state: dict[str, Any], tool_refs: Iterable[str]
+) -> list[dict[str, Any]]:
     families: dict[str, int] = {}
     for tool_ref in tool_refs:
         parts = str(tool_ref).split(".")
@@ -492,7 +621,11 @@ def _local_categories(state: dict[str, Any], tool_refs: Iterable[str]) -> list[d
     ]
     run_items: list[dict[str, Any]] = []
     seen: set[str] = set()
-    run_map = state.get("sim2real_runs") if isinstance(state.get("sim2real_runs"), dict) else {}
+    run_map = (
+        state.get("sim2real_runs")
+        if isinstance(state.get("sim2real_runs"), dict)
+        else {}
+    )
     for run_id, details in run_map.items():
         token = str(run_id or "").strip()
         if not token or token in seen:
@@ -504,7 +637,9 @@ def _local_categories(state: dict[str, Any], tool_refs: Iterable[str]) -> list[d
                 "kind": "run",
                 "source": "agent_state",
                 "name": token,
-                "status": str(detail.get("result") or detail.get("stage") or "").strip(),
+                "status": str(
+                    detail.get("result") or detail.get("stage") or ""
+                ).strip(),
             }
         )
     for key in ("latest_submit", "workflow_submit"):
@@ -547,14 +682,30 @@ def build_resource_inventory(
             and now < float(_INVENTORY_CACHE.get("expires_at") or 0)
         ):
             return cached
-        alias = str(config.get("default_project") or env.get("NPA_AGENT_PROJECT_ALIAS") or "default")
-        projects = config.get("projects") if isinstance(config.get("projects"), dict) else {}
-        project_block = projects.get(alias) if isinstance(projects.get(alias), dict) else {}
-        project_id = str(env.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or "").strip()
-        tenant_id = str(env.get("NEBIUS_TENANT_ID") or project_block.get("tenant_id") or "").strip()
-        region = str(env.get("NEBIUS_REGION") or project_block.get("region") or "").strip()
-        requested_profile = "cursor-sa" if metadata_token_available else str(
-            env.get("NEBIUS_PROFILE") or "cursor-sa"
+        alias = str(
+            config.get("default_project")
+            or env.get("NPA_AGENT_PROJECT_ALIAS")
+            or "default"
+        )
+        projects = (
+            config.get("projects") if isinstance(config.get("projects"), dict) else {}
+        )
+        project_block = (
+            projects.get(alias) if isinstance(projects.get(alias), dict) else {}
+        )
+        project_id = str(
+            env.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or ""
+        ).strip()
+        tenant_id = str(
+            env.get("NEBIUS_TENANT_ID") or project_block.get("tenant_id") or ""
+        ).strip()
+        region = str(
+            env.get("NEBIUS_REGION") or project_block.get("region") or ""
+        ).strip()
+        requested_profile = (
+            "cursor-sa"
+            if metadata_token_available
+            else str(env.get("NEBIUS_PROFILE") or "cursor-sa")
         )
         profile = re.sub(r"[^A-Za-z0-9_.-]", "", requested_profile) or "cursor-sa"
         categories = discover_nebius_categories(
@@ -611,7 +762,9 @@ def merge_configured_references(
     for category in categories:
         item = dict(category)
         configured = [
-            dict(ref) for ref in references.get(str(item.get("id") or ""), []) if isinstance(ref, dict)
+            dict(ref)
+            for ref in references.get(str(item.get("id") or ""), [])
+            if isinstance(ref, dict)
         ]
         item["configured"] = configured
         item["configured_count"] = len(configured)
@@ -625,18 +778,28 @@ def inventory_summary(categories: Iterable[dict[str, Any]]) -> dict[str, int]:
     rows = [item for item in categories if isinstance(item, dict)]
     return {
         "categories": len(rows),
-        "discovered_categories": sum(item.get("status") == "discovered" for item in rows),
-        "configured_only_categories": sum(item.get("status") == "configured" for item in rows),
+        "discovered_categories": sum(
+            item.get("status") == "discovered" for item in rows
+        ),
+        "configured_only_categories": sum(
+            item.get("status") == "configured" for item in rows
+        ),
         "empty_categories": sum(item.get("status") == "empty" for item in rows),
         "error_categories": sum(item.get("status") == "error" for item in rows),
-        "configured_resources": sum(int(item.get("configured_count") or 0) for item in rows),
-        "discovered_resources": sum(int(item.get("discovered_count") or 0) for item in rows),
+        "configured_resources": sum(
+            int(item.get("configured_count") or 0) for item in rows
+        ),
+        "discovered_resources": sum(
+            int(item.get("discovered_count") or 0) for item in rows
+        ),
     }
 
 
 def format_resource_inventory(inventory: dict[str, Any]) -> str:
     """Format a concise zero-token grounded reply from an inventory response."""
-    context = inventory.get("context") if isinstance(inventory.get("context"), dict) else {}
+    context = (
+        inventory.get("context") if isinstance(inventory.get("context"), dict) else {}
+    )
     summary = inventory_summary(inventory.get("categories") or [])
     lines = [
         "**Tenant resources** (grounded, read-only discovery):",
@@ -660,5 +823,7 @@ def format_resource_inventory(inventory: dict[str, Any]) -> str:
             lines.append(
                 f"  - discovery_error=`{error.get('kind')}` — {error.get('message')}"
             )
-    lines.append("- Open the **Tenant resources** panel or refresh `GET /api/resources` for details.")
+    lines.append(
+        "- Open the **Tenant resources** panel or refresh `GET /api/resources` for details."
+    )
     return "\n".join(lines)
