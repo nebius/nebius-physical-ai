@@ -492,3 +492,60 @@ def test_workflow_state_redactor_is_idempotent_and_preserves_lines() -> None:
         secret not in sanitized
         for secret in ("SYNTHETIC-BEARER", "synthetic-key", opaque)
     )
+
+
+def test_workflow_state_redactor_preserves_same_line_recovery_context() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = 'ERROR auth failed: token="synthetic-secret" (http 401) retry in 30s'
+
+    assert redact_text(message) == (
+        'ERROR auth failed: token="<redacted>" (http 401) retry in 30s'
+    )
+
+
+def test_workflow_state_redactor_preserves_token_counters() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = "prompt_tokens=812 completion_tokens=133 total_tokens=945"
+
+    assert redact_text(message) == message
+
+
+def test_workflow_state_redactor_covers_unencoded_at_in_url_userinfo() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    sanitized = redact_text(
+        "https://synthetic-user:p@ssword-synthetic@provider.invalid/path"
+    )
+
+    assert "synthetic-user" not in sanitized
+    assert "ssword-synthetic" not in sanitized
+    assert sanitized == "https://<redacted>@provider.invalid/path"
+
+
+def test_private_key_redactor_fails_closed_linearly_for_truncated_blocks(
+    monkeypatch,
+) -> None:
+    import npa.diagnostic_redaction as redaction
+
+    original = redaction._PRIVATE_KEY_END
+
+    class CountingPattern:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def search(self, text: str, start: int = 0):
+            self.calls += 1
+            return original.search(text, start)
+
+    end_pattern = CountingPattern()
+    monkeypatch.setattr(redaction, "_PRIVATE_KEY_END", end_pattern)
+    message = ("-----BEGIN PRIVATE KEY-----\nsynthetic-key\n" * 5_000).rstrip()
+
+    sanitized = redaction.redact_diagnostic_text(message)
+
+    assert end_pattern.calls == 1
+    assert "synthetic-key" not in sanitized
+    assert "BEGIN PRIVATE KEY" not in sanitized
+    assert sanitized.count("\n") == message.count("\n")

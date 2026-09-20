@@ -40,10 +40,8 @@ _BEARER_TOKEN = re.compile(
     r"(?![a-z][a-z0-9+.-]*://)"
     r"[A-Za-z0-9._~+/=-]+"
 )
-_PRIVATE_KEY_BLOCK = re.compile(
-    r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
-    re.DOTALL,
-)
+_PRIVATE_KEY_BEGIN = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY-----")
+_PRIVATE_KEY_END = re.compile(r"-----END [^-\r\n]*PRIVATE KEY-----")
 _KNOWN_TOKEN_PATTERNS = tuple(
     re.compile(pattern)
     for pattern in (
@@ -60,6 +58,7 @@ def _quoted_secret_end(text: str, start: int) -> tuple[int, bool]:
     line_end = text.find("\n", start + 1)
     if line_end < 0:
         line_end = len(text)
+    fallback_end = -1
     index = start + 1
     while index < line_end:
         if text[index] == "\\":
@@ -71,9 +70,13 @@ def _quoted_secret_end(text: str, start: int) -> tuple[int, bool]:
         tail = index + 1
         while tail < line_end and text[tail] in " \t":
             tail += 1
-        if tail == line_end or text[tail] in ",;}]":
+        if tail == line_end or text[tail] in ",;)}]":
             return index + 1, True
+        if tail > index + 1:
+            fallback_end = index + 1
         index += 1
+    if fallback_end >= 0:
+        return fallback_end, True
     return line_end, False
 
 
@@ -102,6 +105,17 @@ def _is_public_workflow_token(text: str, match: re.Match[str], value: str) -> bo
     )
 
 
+def _has_secret_key_marker(key: str) -> bool:
+    for marker in _SECRET_KEY_MARKERS:
+        search_from = 0
+        while (start := key.find(marker, search_from)) >= 0:
+            end = start + len(marker)
+            if end == len(key) or not (key[end].isascii() and key[end].isalnum()):
+                return True
+            search_from = start + 1
+    return False
+
+
 def _redact_secret_assignments(text: str) -> str:
     pieces: list[str] = []
     cursor = 0
@@ -110,7 +124,7 @@ def _redact_secret_assignments(text: str) -> str:
             continue
         key = match.group("key")
         normalized_key = key.strip("\"'").lower()
-        if not any(marker in normalized_key for marker in _SECRET_KEY_MARKERS):
+        if not _has_secret_key_marker(normalized_key):
             continue
         value_start = match.end()
         if value_start >= len(text) or text[value_start] == "\n":
@@ -185,7 +199,7 @@ def _url_credential_ranges(text: str) -> list[tuple[int, int]]:
                 (value for value in boundaries if value >= 0),
                 default=url_end,
             )
-            userinfo_end = text.find("@", authority_start, authority_end)
+            userinfo_end = text.rfind("@", authority_start, authority_end)
             if userinfo_end >= 0:
                 replacements.append((authority_start, userinfo_end))
             query_start = text.find("?", authority_start, url_end)
@@ -213,8 +227,28 @@ def _redact_url_credentials(text: str) -> str:
     return _replace_ranges(text, _url_credential_ranges(text))
 
 
-def _redact_private_key_block(match: re.Match[str]) -> str:
-    return "<redacted>" + ("\n" * match.group().count("\n"))
+def _line_breaks(text: str) -> str:
+    return "".join(character for character in text if character in "\r\n")
+
+
+def _redact_private_key_blocks(text: str) -> str:
+    pieces: list[str] = []
+    cursor = 0
+    while begin := _PRIVATE_KEY_BEGIN.search(text, cursor):
+        end_match = _PRIVATE_KEY_END.search(text, begin.end())
+        end = end_match.end() if end_match else len(text)
+        pieces.extend(
+            (
+                text[cursor : begin.start()],
+                "<redacted>",
+                _line_breaks(text[begin.start() : end]),
+            )
+        )
+        cursor = end
+        if end_match is None:
+            break
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def redact_diagnostic_text(
@@ -238,7 +272,7 @@ def redact_diagnostic_text(
         (str(value) for value in secrets if value), key=len, reverse=True
     ):
         text = text.replace(secret, "<redacted>")
-    text = _PRIVATE_KEY_BLOCK.sub(_redact_private_key_block, text)
+    text = _redact_private_key_blocks(text)
     text = _redact_secret_assignments(text)
     text = _BEARER_TOKEN.sub("Bearer <redacted>", text)
     for pattern in _KNOWN_TOKEN_PATTERNS:
