@@ -32,6 +32,12 @@ SCHEMA = "npa.image-byte-adjudication.v1"
 MANIFEST_SCHEMA = "npa.image-byte-disposition-manifest.v1"
 REVIEW_SCHEMA = "npa.image-byte-independent-review.v1"
 PROOF_SCHEMA = "npa.image-byte-occurrence-provenance.v1"
+_DOCKER_SAVE_VERIFICATION_SCHEMAS = frozenset(
+    {
+        "npa.curobo.image-verification.v1",
+        "npa.docker-save.image-verification.v1",
+    }
+)
 # Roles describe independently reviewed bytes; labels alone never prove safety.
 # Static prose excludes runtime values. Protocol identifiers require declared or
 # consumed fields. Debug/unwind numbers and instructions require typed decoding.
@@ -131,6 +137,15 @@ def bound_bytes(spec):
 
 def pinned_json(path, expected):
     return decode(bound_bytes({"path": str(path), "sha256": digest(expected)}))
+
+
+def _verified_docker_save_report(verification):
+    W.require(
+        verification.get("valid") is True
+        and verification.get("schema_version") in _DOCKER_SAVE_VERIFICATION_SCHEMAS,
+        "adjudication_verification_failed",
+    )
+    return verification
 
 
 def record_context(row):
@@ -781,11 +796,8 @@ def verify(args):
         "adjudication_tools_authorization",
     )
     snapshots = W.input_snapshots(authorization)
-    verification = W.bound_json(authorization["verification_report"])
-    W.require(
-        verification.get("valid") is True
-        and verification.get("schema_version") == "npa.curobo.image-verification.v1",
-        "adjudication_verification_failed",
+    verification = _verified_docker_save_report(
+        W.bound_json(authorization["verification_report"])
     )
     W.bound_file(authorization["archive"], secret=True)
     report = pinned_json(args.report, expected.get("report_sha256"))
