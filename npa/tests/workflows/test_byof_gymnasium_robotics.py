@@ -58,6 +58,8 @@ def _coordinator_helpers(tmp_path: Path) -> dict[str, object]:
         "_verify_bound_log",
         "_write_bound_summary",
         "_output_uploads",
+        "_require_conditional_put",
+        "_require_uploaded_hash",
     }
     body = [
         node
@@ -90,6 +92,77 @@ def _close_output_root(
     helpers: dict[str, object], descriptors: tuple[int, ...]
 ) -> None:
     helpers["_close_bound_output_chain"](descriptors)
+
+
+def test_conditional_upload_hook_is_signed_and_preserves_collision_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import boto3
+    from botocore.awsrequest import AWSResponse
+    from botocore.config import Config
+    from botocore.exceptions import ClientError
+
+    client = boto3.client(
+        "s3", endpoint_url="http://storage.invalid", region_name="us-east-1",
+        aws_access_key_id="synthetic-access", aws_secret_access_key="synthetic-secret",
+        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+    )
+    client.meta.events.register(
+        "before-call.s3.PutObject", _coordinator_helpers(tmp_path)["_require_conditional_put"]
+    )
+    stored: list[bytes] = []
+
+    def send(request):
+        assert request.headers["If-None-Match"] == b"*"
+        signed_headers = request.headers["Authorization"].split(b"SignedHeaders=", 1)[1].split(b",", 1)[0]
+        assert b"if-none-match" in signed_headers.split(b";")
+        status = 412 if stored else 200
+        if not stored:
+            stored.append(request.body.read())
+        payload = b"<Error><Code>PreconditionFailed</Code></Error>" if status == 412 else b""
+        raw = SimpleNamespace(stream=lambda **_kwargs: iter([payload]))
+        return AWSResponse(request.url, status, {"content-type": "application/xml"}, raw)
+
+    monkeypatch.setattr(client._endpoint.http_session, "send", send)
+    client.put_object(Bucket="qualification", Key="artifact.json", Body=b"original")
+    with pytest.raises(ClientError, match="PreconditionFailed"):
+        client.put_object(Bucket="qualification", Key="artifact.json", Body=b"replacement")
+    assert stored == [b"original"]
+
+
+@pytest.mark.parametrize(("metadata", "accepted"), [
+    ({"sha256": "expected"}, True),
+    ({"Sha256": "expected"}, True),
+    ({"SHA256": "expected", "Other": "unrelated"}, True),
+    ({}, False),
+    ({"Sha256": "wrong"}, False),
+    ({"Sha256": "EXPECTED"}, False),
+    ({"sha256": "expected", "Sha256": "expected"}, False),
+    ({"sha256": "expected", "Sha256": "wrong"}, False),
+])
+@pytest.mark.parametrize("boundary", ["upload", "live-evidence"])
+def test_qualification_hash_metadata_requires_one_exact_value(
+    tmp_path: Path, metadata: dict, accepted: bool, boundary: str
+) -> None:
+    if boundary == "upload":
+        verify = _coordinator_helpers(tmp_path)["_require_uploaded_hash"]
+        refusal = SystemExit
+    else:
+        source = (ROOT / "npa/tests/e2e/test_byof_onboarding_live_e2e.py").read_text()
+        helper = next(
+            node for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_require_gymnasium_hash_metadata"
+        )
+        namespace = {}
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), "live_hash", "exec"), namespace)
+        verify = namespace[helper.name]
+        refusal = AssertionError
+    if accepted:
+        verify({"Metadata": metadata}, "expected")
+    else:
+        with pytest.raises(refusal, match="hash metadata"):
+            verify({"Metadata": metadata}, "expected")
 
 
 def test_neutral_bootstrap_uses_only_the_unbuilt_prebuilt_candidate() -> None:
@@ -135,10 +208,10 @@ def test_runtime_and_neutral_baked_closures_are_exact_but_publicly_quarantined()
     assert source["source_commit"] == SOURCE_COMMIT
     assert source["mujoco_version"] == "3.12.0"
     assert source["components"]["shadow_sr_common"]["preferred_form_complete"] is False
-    assert len(apt["resolved_binary_packages"]) == 142
-    assert len(apt["resolved_source_packages"]) == 102
+    assert len(apt["resolved_binary_packages"]) == 173
+    assert len(apt["resolved_source_packages"]) == 117
     assert (
-        sum(len(item["artifacts"]) for item in apt["resolved_source_packages"]) == 318
+        sum(len(item["artifacts"]) for item in apt["resolved_source_packages"]) == 370
     )
     assert "python3-boto3" in {
         item["package"] for item in apt["requested_runtime_packages"]
@@ -235,7 +308,9 @@ def test_workflow_and_profile_never_route_to_b200() -> None:
     assert "-u AWS_SECRET_ACCESS_KEY" not in profile
     assert "env=runtime_environment" in profile
     assert "npa_pod_image_receipt.json" in profile
-    assert 'IfNoneMatch="*"' in profile
+    assert 'params["headers"]["If-None-Match"] = "*"' in profile
+    assert 's3.meta.events.register("before-call.s3.PutObject", _require_conditional_put)' in profile
+    assert 'IfNoneMatch="*"' not in profile
     assert (
         "root_fd, root_descriptors, root_bindings = _open_bound_output_root(root)"
         in profile

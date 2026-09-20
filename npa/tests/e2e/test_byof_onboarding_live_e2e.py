@@ -1429,6 +1429,14 @@ def _gymnasium_expected_digest(summary: dict[str, object]) -> str:
     return _immutable_image_digest(image)
 
 
+def _require_gymnasium_hash_metadata(response: dict, digest: str) -> None:
+    hashes = [
+        value for name, value in response.get("Metadata", {}).items()
+        if name.lower() == "sha256"
+    ]
+    assert hashes == [digest], "qualification object hash metadata mismatch"
+
+
 def _gymnasium_remote_evidence(
     e2e_project: str | None, *, root_uri: str
 ) -> tuple[bytes, dict[str, object]]:
@@ -1457,9 +1465,7 @@ def _gymnasium_remote_evidence(
         payload = response["Body"].read()
         assert response.get("ContentLength") == len(payload)
         assert response.get("ContentType") == "application/json"
-        assert response.get("Metadata", {}).get("sha256") == hashlib.sha256(
-            payload
-        ).hexdigest()
+        _require_gymnasium_hash_metadata(response, hashlib.sha256(payload).hexdigest())
         json.loads(payload)
         return payload
 

@@ -511,6 +511,22 @@ run: |
       )
 
 
+  def _require_conditional_put(params, **_kwargs):
+      # Ubuntu's pinned botocore predates the IfNoneMatch API argument. Its
+      # supported before-call hook adds this header before SigV4 signing.
+      params["headers"]["If-None-Match"] = "*"
+
+
+  def _require_uploaded_hash(response, digest):
+      # S3-compatible endpoints may preserve HTTP metadata header casing.
+      hashes = [
+          value for name, value in response.get("Metadata", {}).items()
+          if name.lower() == "sha256"
+      ]
+      if hashes != [digest]:
+          raise SystemExit("qualification object hash metadata changed after upload")
+
+
   libc = ctypes.CDLL(None, use_errno=True)
   if libc.prctl(4, 0, 0, 0, 0) != 0:
       raise SystemExit("cannot protect the credential-bearing coordinator")
@@ -662,6 +678,7 @@ run: |
           if session_token:
               client_kwargs["aws_session_token"] = session_token
       s3 = boto3.client("s3", **client_kwargs)
+      s3.meta.events.register("before-call.s3.PutObject", _require_conditional_put)
       prefix = parsed.path.lstrip("/")
       upload_payloads = _output_uploads(
           artifact_name, artifact_payload, summary_payload
@@ -677,15 +694,13 @@ run: |
               Body=payload,
               ContentType="application/json",
               Metadata={"sha256": digest},
-              IfNoneMatch="*",
           )
           head = s3.head_object(Bucket=parsed.netloc, Key=key)
           if head.get("ContentLength") != len(payload):
               raise SystemExit("qualification object size changed after upload")
           if head.get("ContentType") != "application/json":
               raise SystemExit("qualification object media type changed after upload")
-          if head.get("Metadata", {}).get("sha256") != digest:
-              raise SystemExit("qualification object hash metadata changed after upload")
+          _require_uploaded_hash(head, digest)
       pages = s3.get_paginator("list_objects_v2").paginate(
           Bucket=parsed.netloc, Prefix=prefix
       )
