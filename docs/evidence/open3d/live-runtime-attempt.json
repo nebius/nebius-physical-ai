@@ -1,0 +1,35 @@
+{
+  "recorded_at": "2026-09-20T07:23:05Z",
+  "goal": "LANE.md's remaining item: finish live NPA/SkyPilot container execution. The operator directed investigating the supported private immutable image route so the complete runtime is exercised without bypassing publication quarantine.",
+  "what_was_previously_recorded_as_the_blocker": "'The npa.workflow runtime path needs one Kubernetes context that is both in kubeconfig and carries an NPA cluster identity under that context name.' That was recorded without having reproduced it. It is now reproduced exactly, and most of the path around it turned out to be open.",
+  "cleared_in_this_attempt": [
+    {
+      "gate": "private registry write",
+      "result": "The configured project registry refuses this VM's service account with 403 on both manifest HEAD and blob push. But the service account's own project contains two registries, and push to the development one succeeds in us-central1. The registry URL path takes the bare id, without the 'registry-' prefix the API returns; that mismatch produced a misleading 'Entity Registry not found' until it was stripped."
+    },
+    {
+      "gate": "image published immutably, no quarantine bypass",
+      "result": "4.1 GB Open3D image pushed to the private development registry and referenced by digest, not tag. Nothing was published to a public registry."
+    },
+    {
+      "gate": "cluster can pull the private image",
+      "result": "Initially 401: the cluster's existing us-central1 pull secret is scoped to a different registry, and Nebius IAM tokens are short-lived so a stored dockerconfigjson expires. Minting a fresh single-purpose pull secret resolved it."
+    },
+    {
+      "gate": "real capability on a real cluster node",
+      "result": "The golden eval ran to completion in-cluster on the CPU-only node: ICP fitness 1.0000+, 3-node pose graph optimized, 7561 triangles reconstructed, 0.4937 -> 0.0000 of area cropped with 0.4865 beyond three voxels reading as an extrapolated shell, and a decode-verified RRD written. Open3D is CPU-only by construction, so no accelerator was requested and none was used."
+    },
+    {
+      "gate": "workflow plan renders with the private image",
+      "result": "npa workbench workflow submit --plan-only returned status PLANNED with steps 6 and source.status image-override. So the toolRef argv contract renders for all six states against the digest-pinned private image."
+    }
+  ],
+  "the_gate_that_remains": {
+    "first_error": "execution preflight cluster_owner: raw/runtime submit requires one explicit Kubernetes context; ambient context is not execution evidence",
+    "second_error_with_the_context_supplied": "No NPA cluster identity exists for context 'npa-rtxpro-mk8s'; refusing controller adoption.",
+    "why_it_is_a_real_wall": "The two requirements are satisfied by disjoint sets here. The reachable context is in kubeconfig and is referenced by a project's k8s_context, but the config's clusters map is empty, so no NPA cluster identity exists under that name. The context that does carry an identity, as the recorded SkyPilot controller owner, is absent from kubeconfig. Neither can be made to satisfy both from this lane: registering a cluster identity to satisfy the guard would be defeating a controller-adoption safety check rather than passing it, and that is not a thing to do to make a run start.",
+    "what_would_clear_it": "Either the controller-owner context added to this machine's kubeconfig, or an NPA cluster identity registered for the reachable context through the supported provisioning or adoption path. Both are operator actions."
+  },
+  "cleanup": "The single-purpose pull secret and the probe pod were deleted. The Open3D image is left in the private registry because it is the artifact a completed run needs, and it is digest-addressed. The scratch write-probe image was removed.",
+  "honest_scope": "This proves the image, the private delivery route, real in-cluster capability, and a rendering six-state plan. It does not prove the npa.workflow runtime, which is the thing LANE.md asks for, and a pod is not a substitute for it."
+}

@@ -34,6 +34,14 @@ says so rather than publishing a precise-looking number. `floor-vs-resolution.js
 case. Re-running will move those values; the directions and orders of magnitude are what the claims
 rest on.
 
+## The live workflow-runtime gate
+
+`live-runtime-attempt.json` records how far a real run gets and where it stops. It is the honest
+counterpart to the container results above: the image, the private digest-pinned delivery route, real
+Open3D capability executing on a cluster node, and a six-state plan that renders are all proven; the
+`npa.workflow` runtime itself is not. A pod is not a substitute for the runtime, and the file says so
+rather than letting four cleared gates imply a fifth.
+
 ## Results that are retained but do not support anything
 
 `band-false-negative-sweep.json` is marked inconclusive and is kept for that reason. Occluding a
