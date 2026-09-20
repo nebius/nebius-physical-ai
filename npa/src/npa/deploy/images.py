@@ -155,17 +155,15 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore", "robomimic"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robomimic"})
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
 # Neutral candidates have not yet established exact built-byte redistribution
 # eligibility. They are neither known-restricted nor eligible for public delivery.
 # Display-only sentinels for inventory commands. These are deliberately outside
 # SUPPORTED_TOOL_VERSIONS: resolution still refuses every neutral candidate
 # before consulting a tag, so an unbuilt label cannot become an image default.
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
-    "robomimic": "0.1.0-neutral-unbuilt",
-}
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
 # Compatibility view used by publication callers and public imports. Derive it
 # from the canonical validation-state inventories; never maintain it
 # independently.
@@ -288,6 +286,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "retargeting": "0.1.1",
     "envgen": "0.1.2-sim2real-coherent-20260904",
     "robocasa": "0.1.0",
+    "robomimic": "0.1.0-neutral-unbuilt",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -830,17 +829,12 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
-    if (
-        tool == "robomimic"
-        and tool in PUBLICATION_QUARANTINE_TOOLS
-        and is_public_registry(resolved_registry)
-    ):
+    if (tool == "robomimic" and tool in PUBLICATION_QUARANTINE_TOOLS
+            and is_public_registry(resolved_registry)
+            and not re.fullmatch(r"dev-[0-9a-f]{40}", tag or "")):
         raise ValueError(
-            "robomimic has no accepted release image, remains publication-quarantined, "
-            "and cannot resolve from a public registry, including an explicit "
-            "development tag. Stage a "
-            "full-source-SHA tag only in an operator-private registry, then resolve "
-            "its accepted digest through --image-override after authorization."
+            "robomimic remains publication-quarantined for releases; "
+            "select an explicit dev-<full-source-sha> for validation"
         )
     if (
         tool in {"ncore", "robomimic"}

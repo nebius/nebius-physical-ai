@@ -1224,21 +1224,14 @@ def test_robomimic_gate_rejects_known_public_registry_hosts(
     assert checked_registries == [public_registry]
 
 
-def test_robomimic_publication_quarantine_covers_explicit_dev_tags() -> None:
+def test_robomimic_allows_immutable_development_but_quarantines_releases() -> None:
     source_sha = "a" * 40
-    with pytest.raises(ValueError, match="publication-quarantined"):
-        images.development_image_for_tool("robomimic", git_sha=source_sha)
-    with pytest.raises(ValueError, match="publication-quarantined"):
-        images.development_image_for_tool(
-            "robomimic",
-            git_sha=source_sha,
-            registry="ghcr.io/example/public",
-        )
-    with pytest.raises(ValueError, match="publication-quarantined"):
-        images.container_image_for_tool(
-            "robomimic",
-            tag=f"dev-{source_sha}",
-        )
+    assert images.development_image_for_tool("robomimic", git_sha=source_sha) == (
+        f"ghcr.io/nebius/nebius-physical-ai/npa-robomimic:dev-{source_sha}"
+    )
+    for tag in (None, "0.1.0", "dev-abcd"):
+        with pytest.raises(ValueError, match="publication-quarantined"):
+            images.container_image_for_tool("robomimic", tag=tag)
     assert (
         images.container_image_for_tool(
             "robomimic",
@@ -2501,6 +2494,22 @@ def test_robomimic_strict_claim_refuses_caller_assertions_without_side_effects(
     assert not output.exists()
 
 
+def test_robomimic_training_mode_keeps_runtime_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _smoke_module(monkeypatch)
+    monkeypatch.setattr(module.sys, "argv", ["smoke.py", "--train-smoke"])
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path / "output"))
+
+    def refuse_context(_output: Path) -> None:
+        raise RuntimeError("runtime context refused")
+
+    monkeypatch.setattr(module, "_load_smoke_context", refuse_context)
+    monkeypatch.setattr(module, "_download_dataset", lambda *_a: pytest.fail("fetch"))
+    with pytest.raises(RuntimeError, match="runtime context refused"):
+        module.main()
+
+
 def test_robomimic_inert_local_b200_shape_does_not_claim_strict_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3438,7 +3447,7 @@ def test_robomimic_delivery_boundaries_do_not_invent_runtime_consent() -> None:
         assert boundary in doc
 
     assert "changes delivery, not permission" in normalized_doc
-    assert "No image has been built" in doc
+    assert "These records do not assert a completed image build" in doc
     assert "pretrained weights" in doc
     assert "every layer and image history entry" in doc
     combined = "\n".join((doc, workflow, profile))

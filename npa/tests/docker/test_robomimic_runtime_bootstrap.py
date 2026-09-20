@@ -92,6 +92,25 @@ def test_baked_smoke_refuses_before_external_dispatch(
     assert sorted(tmp_path.rglob("*")) == before
 
 
+def test_train_smoke_dispatches_through_verified_runtime(tmp_path: Path) -> None:
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    runtime = commands / "robomimic-runtime"
+    runtime.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\nexit 37\n')
+    runtime.chmod(0o755)
+    result = subprocess.run(
+        ["/bin/bash", str(IMAGE_ROOT / "entrypoint.sh"), "train-smoke"],
+        env={"PATH": str(commands)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 37
+    assert result.stdout.splitlines() == [
+        "exec", "/opt/npa/robomimic/smoke.py", "--train-smoke"
+    ]
+
+
 def _runtime(tmp_path: Path) -> tuple[Path, Path, str]:
     runtime_root = tmp_path / "runtime"
     interpreter = runtime_root / "payload" / "bin" / "python"
@@ -1515,10 +1534,27 @@ def test_runtime_install_invokes_only_bound_wheel_installer(
     assert kwargs["umask"] == 0o022
 
 
+def _fetch_runtime(tmp_path: Path) -> tuple[Path, Path, str]:
+    runtime_root, lock_path, _ = _runtime(tmp_path)
+    inventory_path = runtime_root / "inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["fetch"] = {
+        "credential_env": "HF_TOKEN",
+        "site_packages": "payload/lib/python3.11/site-packages",
+        "installer": _runtime_installer(),
+    }
+    inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    marker_path = runtime_root / ".ready.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["inventory_sha256"] = _sha(inventory_path)
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    return runtime_root, lock_path, _sha(inventory_path)
+
+
 def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    runtime_root, lock_path, inventory_sha256 = _fetch_runtime(tmp_path)
     stage = tmp_path / "stage"
     stage.mkdir()
     installed: list[Path] = []
@@ -1549,12 +1585,35 @@ def test_runtime_fetch_authenticates_staged_interpreter_before_probe(
     )
 
     assert installed == [stage / "verified-runtime" / "payload" / "bin" / "python"]
+    with pytest.raises(verifier.VerificationError, match="site-packages is absent"):
+        verifier.verify_external_runtime(
+            runtime_root=stage / "verified-runtime",
+            runtime_lock_path=lock_path,
+            expected_inventory_sha256=inventory_sha256,
+            require_read_only_mount=False,
+        )
+
+
+@pytest.mark.parametrize("existing_output", ["site", "proof"])
+def test_runtime_install_base_refuses_existing_fetched_output(
+    tmp_path: Path, existing_output: str
+) -> None:
+    runtime_root, lock_path, inventory_sha256 = _fetch_runtime(tmp_path)
+    if existing_output == "site":
+        (runtime_root / "payload/lib/python3.11/site-packages").mkdir(parents=True)
+    else:
+        (runtime_root / verifier.RUNTIME_FETCH_PROOF_NAME).write_text("{}")
+
+    with pytest.raises(verifier.VerificationError, match="already exists"):
+        verifier._prepare_verified_runtime(
+            runtime_root, lock_path, inventory_sha256, tmp_path / "stage"
+        )
 
 
 def test_runtime_fetch_refuses_changed_interpreter_before_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    runtime_root, lock_path, inventory_sha256 = _fetch_runtime(tmp_path)
     interpreter = runtime_root / "payload" / "bin" / "python"
     interpreter.write_text("#!/bin/sh\nexit 9\n", encoding="utf-8")
 
@@ -1576,7 +1635,7 @@ def test_runtime_fetch_refuses_changed_interpreter_before_probe(
 def test_runtime_fetch_rechecks_entitlement_before_interpreter_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    runtime_root, lock_path, inventory_sha256 = _fetch_runtime(tmp_path)
     stage = tmp_path / "stage"
     stage.mkdir()
     calls: list[int] = []
@@ -1604,7 +1663,7 @@ def test_runtime_fetch_rechecks_entitlement_before_interpreter_probe(
 def test_runtime_fetch_rechecks_entitlement_before_installer_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    runtime_root, lock_path, inventory_sha256 = _runtime(tmp_path)
+    runtime_root, lock_path, inventory_sha256 = _fetch_runtime(tmp_path)
     stage = tmp_path / "stage"
     stage.mkdir()
     calls: list[int] = []

@@ -22,8 +22,12 @@ Debian copyright metadata, a license reference URL, and the installed
 path. Recommends are excluded. The Dockerfile consumes only the preverified
 artifacts through a read-only build-context mount, invokes no APT repository,
 and verifies all 78 installed versions and notices. Applicable copyleft source
-delivery remains a separate public-publication gate; the lock does not claim
-that an upstream URL alone discharges NPA's source-conveyance obligations.
+delivery is enforced by `source_delivery.py` against every image layer.
+`corresponding-source.lock.json` includes inherited and replaced parent package
+versions. All matching source archives, Debian patches/build rules and the exact
+CPython source archive are shipped at
+`/usr/share/npa/robomimic/corresponding-source`, alongside the source lock; an
+upstream URL alone is not used as delivery evidence.
 
 `baked-requirements.lock` remains byte-identical historical source evidence; it
 is not copied into the image and its 40 distributions are not installed in the

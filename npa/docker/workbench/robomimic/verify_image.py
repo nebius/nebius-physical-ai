@@ -3137,24 +3137,41 @@ def _prepare_verified_runtime(
 ) -> Path:
     """Copy and re-prove the runtime tree before invoking its interpreter."""
 
-    verify_external_runtime(
+    files, links = _verify_runtime_install_base(
+        runtime_root, runtime_lock_path, expected_inventory_sha256
+    )
+    verified_runtime = stage / "verified-runtime"
+    verified_runtime.mkdir(mode=0o700)
+    _copy_runtime_metadata(
+        runtime_root, verified_runtime, expected_inventory_sha256
+    )
+    _copy_declared_runtime_objects(runtime_root, verified_runtime, files, links)
+    _verify_runtime_install_base(
+        verified_runtime, runtime_lock_path, expected_inventory_sha256
+    )
+    return verified_runtime / "payload" / "bin" / "python"
+
+
+def _verify_runtime_install_base(
+    runtime_root: Path, runtime_lock_path: Path, expected_inventory_sha256: str
+) -> tuple[dict, dict]:
+    """Authenticate the base payload while fetched output must still be absent."""
+
+    lock, _lock_hash, inventory, _inventory_hash, _read_only = _runtime_metadata(
         runtime_root=runtime_root,
         runtime_lock_path=runtime_lock_path,
         expected_inventory_sha256=expected_inventory_sha256,
         require_read_only_mount=False,
     )
-    verified_runtime = stage / "verified-runtime"
-    verified_runtime.mkdir(mode=0o700)
-    _copy_runtime_inventory(
-        runtime_root, verified_runtime, expected_inventory_sha256, runtime_lock_path
-    )
-    verify_external_runtime(
-        runtime_root=verified_runtime,
-        runtime_lock_path=runtime_lock_path,
-        expected_inventory_sha256=expected_inventory_sha256,
-        require_read_only_mount=False,
-    )
-    return verified_runtime / "payload" / "bin" / "python"
+    artifacts, _artifact_bytes = _runtime_artifact_closure(lock, inventory)
+    _runtime_fetch_contract_state(runtime_root, inventory, artifacts)
+    proof_path = runtime_root / RUNTIME_FETCH_PROOF_NAME
+    if proof_path.exists() or proof_path.is_symlink():
+        raise VerificationError("runtime fetch proof already exists")
+    files, links, _payload_bytes = _checked_payload_entries(inventory)
+    _verify_runtime_object_types(runtime_root, files, links, None)
+    _verify_runtime_member_content(runtime_root, files, links)
+    return files, links
 
 
 def _stage_runtime_install(

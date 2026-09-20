@@ -902,6 +902,8 @@ python3 "${context_anchor}/verify_image.py" prepare-build-inputs \
   --output-root "${context_anchor}/build-inputs" \
   --debian-lock "${context_anchor}/debian-packages.lock" \
   --source-manifest "${context_anchor}/source-manifest.json"
+python3 "${context_anchor}/source_delivery.py" fetch \
+  --output-root "${context_anchor}/corresponding-source"
 
 require_transaction_bindings
 iid_file="${context_anchor}/image.iid"

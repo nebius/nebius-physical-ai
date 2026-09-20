@@ -358,6 +358,18 @@ jobs:
         if: matrix.tool != 'ncore'
         run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 
+      - name: Prepare robomimic pinned build inputs and corresponding source
+        if: matrix.tool == 'robomimic'
+        run: |
+          set -euo pipefail
+          image_root=npa/docker/workbench/robomimic
+          npa/.venv/bin/python "$image_root/verify_image.py" prepare-build-inputs \
+            --output-root "$image_root/build-inputs" \
+            --debian-lock "$image_root/debian-packages.lock" \
+            --source-manifest "$image_root/source-manifest.json"
+          npa/.venv/bin/python "$image_root/source_delivery.py" fetch \
+            --output-root "$image_root/corresponding-source"
+
       - name: Build NCore committed attested OCI archive
         if: matrix.tool == 'ncore'
         env:
@@ -388,6 +400,10 @@ jobs:
             [[ "$curobo_source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$curobo_source_epoch")
           fi
+          build_context=npa
+          if [[ "$TOOL" == robomimic ]]; then
+            build_context=npa/docker/workbench/robomimic
+          fi
           docker buildx build \
             --load \
             --file "$DOCKERFILE" \
@@ -395,7 +411,7 @@ jobs:
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
-            npa
+            "$build_context"
 
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
         if: matrix.tool != 'ncore'
@@ -437,6 +453,14 @@ jobs:
           # the mandatory layer-by-layer payload scan.
           docker buildx prune --all --force
           docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          if [[ "$TOOL" == robomimic ]]; then
+            npa/.venv/bin/python npa/docker/workbench/robomimic/source_delivery.py verify \
+              --image-archive "$RUNNER_TEMP/${TOOL}.tar" \
+              > "$RUNNER_TEMP/robomimic-source-delivery.json"
+            npa/.venv/bin/python npa/scripts/scan_image_robomimic_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/robomimic-payload.json"
+          fi
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
@@ -687,6 +711,14 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [[ "$TOOL" == robomimic ]]; then
+            npa/.venv/bin/python npa/docker/workbench/robomimic/source_delivery.py verify \
+              --image-archive "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              > "$RUNNER_TEMP/robomimic-pushed-source-delivery.json"
+            npa/.venv/bin/python npa/scripts/scan_image_robomimic_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/robomimic-pushed-payload.json"
+          fi
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \

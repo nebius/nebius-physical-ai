@@ -264,6 +264,9 @@ os.fsync = _recorded_fsync
     python_wrapper.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == */source_delivery.py && "${2:-}" == "fetch" ]]; then
+  exit 0
+fi
 if [[ "${1:-}" == */verify_image.py && "${2:-}" == "prepare-build-inputs" ]]; then
   context_path="$(readlink -f -- "${1%/verify_image.py}")"
   if [[ "${FAKE_PREBUILD_REPLACEMENT:-}" == "scratch-parent" ]]; then

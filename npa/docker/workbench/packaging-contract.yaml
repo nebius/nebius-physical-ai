@@ -239,9 +239,9 @@ images:
     passwordless_root_exemption: >-
       SkyPilot Kubernetes bootstrap only; the final runtime user is non-root,
       no sshd service is enabled by default, and no credentials are baked.
-    redistribution: unvalidated
+    redistribution: public
     notes: >-
-      Phase A neutral candidate only: pinned MIT robomimic source and the
+      Public neutral development candidate: pinned MIT robomimic source and the
       redistributable Debian/bootstrap closure on a pinned Python base. The
       historical 40-entry hash lock is verifier evidence only; the selected
       62-entry public/CUDA/PyTorch/vendor runtime map is fetched into the
@@ -251,9 +251,11 @@ images:
       cache, credential, or output; inherited parent distributions and ancestor
       bytes remain subject to exact parent inspection. Any prepared CUDA runtime is an external,
       exact-inventory read-only mount owned by the customer and is not part of
-      this image. Publication stays quarantined until
+      this image. Exact Debian and CPython corresponding source is delivered
+      inside the image and checked against every distributed package version.
+      Release publication stays quarantined until
       built-image scanning, license/security/SBOM/provenance, exact-digest
-      private B200 qualification, and anonymous pull proofs pass.
+      B200 qualification, and anonymous pull proofs pass.
   wan2-2:
     dockerfile: wan2-2/Dockerfile
     tier: job

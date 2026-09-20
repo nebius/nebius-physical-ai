@@ -46,8 +46,8 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **43 packaging entries** (40
-redistribution-eligible, two restricted, and one unvalidated neutral candidate)
+The current source inventory has **43 packaging entries** (41
+redistribution-eligible and two restricted)
 and **44 mapped tools**: 37 public-release members, two restricted tools, and five
 quarantined tools (`curobo`, `ncore`, `openpi`, `robocasa`, and `robomimic`). These
 counts come from `packaging-contract.yaml` and `npa.deploy.images`; they do not

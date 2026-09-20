@@ -494,9 +494,11 @@ torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
 credential, or output. `scan_image_robomimic_payload.py` must inspect every
 layer and OCI history after a future authorized build.
 
-Its packaging class remains `unvalidated`: pinned source and lock metadata do
-not establish redistribution rights for the exact base and selected package
-bytes. A future exact built-byte licence review must establish the final class.
+Its packaging class is `public` for the neutral bootstrap. The image delivers
+locked Debian and CPython source archives with the retained package notices.
+The trusted public development workflow verifies the archives against all
+distributed Debian package versions, including earlier versions in parent
+layers, and runs the robomimic payload scan before and after pushing.
 
 The CUDA-capable Python environment is a customer-owned runtime boundary. The
 bootstrap may fetch the exact inventory from its declared official endpoints
@@ -506,9 +508,9 @@ it never accepts terms or logs the credential. Public PyPI/PyTorch requests are
 anonymous, while credentials are bound to their approved vendor origin. This
 packaging split does not supply distribution, use, or service rights. Until an
 unexpired customer-created run/manifest entitlement, transaction
-authorization, built-byte/security/SBOM/provenance gates, private exact-digest
+authorization, built-byte/security/SBOM/provenance gates, exact-digest
 B200 qualification, and anonymous pull proof all pass, the
-tool remains in `NEUTRAL_UNBUILT_CANDIDATE_TOOLS`, is included in
+tool remains in `UNVALIDATED_PUBLICATION_TOOLS`, is included in
 `PUBLICATION_QUARANTINE_TOOLS`, and has no public catalog row.
 
 ## Operator checklist (new or changed image)

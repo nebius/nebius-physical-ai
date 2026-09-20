@@ -15,15 +15,19 @@ Debian input outside the image, verifies them before use, and exposes those
 payloads to the Dockerfile only through read-only build mounts. The Dockerfile
 does not contact APT or Git and does not execute a Python wheel installer.
 
-The source and Debian lock metadata are reproducibility inputs, not built-byte
-or license acceptance. Debian package copyright notices must remain installed,
-and all applicable source-conveyance duties must close before public
-publication. The image is quarantined and must not be published merely because
-its source is open source. Before any publication, an authorized transaction
-must re-resolve the base manifest, build from the reviewed commit, inspect every
-resulting layer, complete license/security/SBOM/provenance checks, validate the
-private digest, and prove anonymous pull of that identical digest. None of
-those claims is established by the checked-in candidate.
+The neutral bootstrap is eligible for public development publication. Debian
+copyright notices remain installed. `corresponding-source.lock.json` binds all
+131 distributed Debian binary identities, including superseded parent-layer
+versions, to 91 source packages from official snapshot indexes. Matching source
+archives and the parent's exact CPython source are delivered inside the image
+at `/usr/share/npa/robomimic/corresponding-source`. Gather each `.dsc` and its
+listed archives into one directory and run `dpkg-source -x` for the preferred
+source and Debian build rules. `source_delivery.py verify` reads the saved image
+without executing it, proves parent-layer identity and complete package/source
+correspondence, and hashes each delivered archive. The trusted workflow repeats
+this gate and the robomimic payload scan on the exact pushed digest. Required
+security, license, SBOM, provenance and anonymous-pull gates still apply.
+Release promotion remains quarantined until real GPU validation passes.
 
 The CUDA-capable training runtime is a separate boundary. Before an
 operator-supplied, pre-populated, read-only runtime volume is accessed, the

@@ -4,7 +4,7 @@ FROM --platform=linux/amd64 python:3.11.16-slim-bookworm@sha256:528257d48c1da0dc
 LABEL org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.title="NPA neutral robomimic bootstrap candidate" \
       org.opencontainers.image.description="Pinned MIT robomimic source without CUDA, PyTorch, weights, data, cache, or outputs" \
-      org.nebius.npa.redistribution="candidate-unvalidated" \
+      org.nebius.npa.redistribution="public" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -44,6 +44,7 @@ RUN --mount=type=bind,source=build-inputs,target=/mnt/robomimic-build-inputs,rea
 # Python distributions, including CUDA/PyTorch/vendor wheels, are deliberately
 # absent from this public bootstrap.  The customer-owned runtime inventory is
 # fetched and RECORD-verified by runtime_bootstrap.sh after entitlement checks.
+COPY corresponding-source /usr/share/npa/robomimic/corresponding-source/
 COPY runtime-requirements.lock runtime_bootstrap.sh entrypoint.sh smoke.py \
      REDISTRIBUTION.md THIRD_PARTY_NOTICES.md /opt/npa/robomimic/
 RUN chmod 0555 /opt/npa/robomimic/runtime_bootstrap.sh \

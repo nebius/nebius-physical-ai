@@ -1,14 +1,22 @@
 # robomimic neutral BYOF candidate
 
-This is a quarantined Phase A packaging candidate, not a published image or a
-live acceptance record. The intended image bakes immutable robomimic source and
-non-CUDA low-dimensional dependencies on a neutral Python base. CUDA/PyTorch is
+This neutral development image remains quarantined for release promotion until
+its exact digest passes the image and real-GPU gates. The image bakes immutable
+MIT robomimic source, a pinned Debian closure and matching source archives on a
+neutral Python base. CUDA/PyTorch is
 a separate, externally prepared runtime boundary. The planned workflow is
 [`workflows/testing/byof-robomimic.yaml`](../../workflows/testing/byof-robomimic.yaml).
 
-No image has been built. No source, dataset, CUDA runtime, or cache payload was
-fetched while implementing this candidate. There is no accepted image digest,
-anonymous pull proof, runtime-use approval, or B200 result.
+Use `publish-public-images.yml` with `build_development_tools=robomimic`,
+`tool=robomimic`, `dry_run=true` and the reviewed full `development_sha` to build
+an immutable public development tag. The workflow verifies all distributed
+Debian versions against `corresponding-source.lock.json` and checks delivery of
+their matching source archives, plus CPython source, inside the image at
+`/usr/share/npa/robomimic/corresponding-source`. Extract the `.dsc` and its adjacent
+archives from their hash-named directories and use `dpkg-source -x` to recover
+each package's source and Debian build recipe. The lock records every filename,
+source URL, size and SHA-256. These records do not assert a completed image build,
+anonymous pull, customer runtime acceptance, or GPU result.
 
 ## Six independent boundaries
 
@@ -248,6 +256,13 @@ private exact-digest stage must:
    broaden the workload service account or treat synthetic interface tests as
    real capacity qualification. Pod image-digest/service-account checks and
    local one-B200/`sm_100` observations remain necessary but insufficient.
+   For functional training validation with capacity independently verified by
+   the operator's provisioning workflow, invoke `robomimic-entrypoint train-smoke`.
+   This runs the same BC, held-out validation and checkpoint reload routine
+   through the verified runtime. It retains the Pod image digest, workload
+   identity, read-only runtime and actual one-B200/`sm_100` checks. Its result
+   explicitly defers application-level STRICT qualification; retain the
+   provider's authenticated capacity receipt with the run evidence.
 6. Fetch and hash the official HDF5, produce nonempty disjoint train/held-out
    masks, run upstream `robomimic/scripts/train.py` for exactly four serialized
    Adam optimizer steps and two validation forward steps, and require finite
@@ -269,10 +284,11 @@ private exact-digest stage must:
 9. Run a distinct read-only verifier against the exact private digest and
    evidence, then clean run-owned RBAC/resources with ownership preconditions.
 
-Only after private acceptance may a separate authorized publication transaction
-copy digest-identical neutral bytes, repeat all scans, and prove a clean
-anonymous pull from an empty Docker configuration. Add a public catalog row
-only after that proof; the current candidate remains quarantined.
+The private dedicated gate above is retained for existing operator workflows.
+The public development route builds and scans the neutral image first, then
+validates its immutable digest with `train-smoke`; provider capacity proof stays
+in the run evidence. Release promotion and a public release catalog row still
+require all image, anonymous-pull and functional-GPU evidence.
 
 Image-policy sweeps, simulator rollouts, rendering, and the full algorithm
 matrix remain deferred.

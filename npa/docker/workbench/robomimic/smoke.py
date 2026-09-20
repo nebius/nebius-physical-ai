@@ -973,6 +973,7 @@ def _build_result(
         **context["pod"],
         "exit_status": 0,
         "deferred": [
+            "application_strict_capacity_qualification",
             "public_image_acceptance",
             "image_policy_sweeps",
             "simulator_rollouts",
@@ -981,8 +982,7 @@ def _build_result(
     }
 
 
-def main() -> None:
-    _require_strict_capacity_observation()
+def _run_training_smoke() -> None:
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     output_dir.mkdir(parents=True, exist_ok=True)
     context = _load_smoke_context(output_dir)
@@ -1010,6 +1010,12 @@ def main() -> None:
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+
+
+def main() -> None:
+    if sys.argv[1:] != ["--train-smoke"]:
+        _require_strict_capacity_observation()
+    _run_training_smoke()
 
 
 if __name__ == "__main__":

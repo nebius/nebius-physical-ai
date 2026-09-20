@@ -115,7 +115,8 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
 
 
 def test_neutral_unbuilt_candidate_has_no_ordinary_supported_tag() -> None:
-    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset({"robomimic"})
+    assert "robomimic" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "robomimic" not in NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     assert set(NEUTRAL_UNBUILT_DISPLAY_TAGS) == set(
         NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     )

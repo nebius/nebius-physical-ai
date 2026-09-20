@@ -12,6 +12,9 @@ case "$1" in
   verify-runtime)
     exec robomimic-runtime verify
     ;;
+  train-smoke)
+    exec robomimic-runtime exec /opt/npa/robomimic/smoke.py --train-smoke
+    ;;
   smoke)
     # No authenticated run/Pod/node/provider allocation observer is wired yet.
     # Refuse with builtins before snapshot/cache mutation or runtime execution.
