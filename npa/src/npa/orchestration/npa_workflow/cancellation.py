@@ -98,6 +98,7 @@ class CancellationAssessment:
     terminal_jobs: list[WorkflowJobRecord] = field(default_factory=list)
     absent_jobs: list[WorkflowJobRecord] = field(default_factory=list)
     absence_conflict_jobs: list[WorkflowJobRecord] = field(default_factory=list)
+    absence_conflict_errors: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -108,8 +109,9 @@ class CancellationAssessment:
     def only_verified_absence_conflicts(self) -> bool:
         """Return whether exact absence contradicts durable state exclusively."""
 
-        return bool(self.absence_conflict_jobs) and len(self.errors) == len(
-            self.absence_conflict_jobs
+        return (
+            bool(self.absence_conflict_jobs)
+            and self.errors == self.absence_conflict_errors
         )
 
 
@@ -341,6 +343,7 @@ def assess_run_cancellation(
     terminal: list[WorkflowJobRecord] = []
     absent: list[WorkflowJobRecord] = []
     absence_conflicts: list[WorkflowJobRecord] = []
+    absence_conflict_errors: list[str] = []
     for record in records.values():
         # A recovered controller may reuse a small numeric managed-job ID after
         # its local database is recreated.  When run resolution already proved
@@ -391,12 +394,14 @@ def assess_run_cancellation(
                 )
             elif durable_active := _durable_unresolved_states(record):
                 absence_conflicts.append(record)
-                errors.append(
+                conflict_error = (
                     f"managed job {record.job_id} is absent from the verified queue "
                     "while durable state remains non-terminal or unrecognized "
                     f"({', '.join(durable_active)}); reconcile the original "
                     "controller before declaring cancellation complete"
                 )
+                absence_conflict_errors.append(conflict_error)
+                errors.append(conflict_error)
         elif evidence.outcome == "unavailable":
             errors.append(
                 f"managed job {record.job_id} ({record.job_name or resolution.run_id}) "
@@ -449,6 +454,7 @@ def assess_run_cancellation(
         absence_conflict_jobs=sorted(
             absence_conflicts, key=lambda item: _job_sort_key(item.job_id)
         ),
+        absence_conflict_errors=absence_conflict_errors,
         errors=errors,
     )
 

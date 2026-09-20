@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from npa.orchestration.npa_workflow.cancellation import (
+    CancellationAssessment,
+    WorkflowJobRecord,
     assess_run_cancellation,
     reverify_active_cancellation,
 )
@@ -123,7 +125,20 @@ def test_durable_nonterminal_job_absence_requires_reconciliation(status: str) ->
     assert len(result.errors) == 1
     assert "durable state remains non-terminal" in result.errors[0]
     assert [record.job_id for record in result.absence_conflict_jobs] == ["701"]
+    assert result.absence_conflict_errors == result.errors
     assert result.only_verified_absence_conflicts
+
+
+def test_absence_conflict_classification_matches_exact_errors_not_counts() -> None:
+    conflicts = [WorkflowJobRecord("701"), WorkflowJobRecord("702")]
+    result = CancellationAssessment(
+        detected_state="VERIFICATION_UNAVAILABLE",
+        absence_conflict_jobs=conflicts,
+        absence_conflict_errors=["conflict 701", "conflict 702"],
+        errors=["provider unavailable", "malformed runtime"],
+    )
+
+    assert not result.only_verified_absence_conflicts
 
 
 def test_winding_down_wave_without_job_id_is_unverified() -> None:

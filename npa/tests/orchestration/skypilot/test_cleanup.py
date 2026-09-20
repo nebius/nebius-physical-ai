@@ -200,6 +200,26 @@ def test_cleanup_statuses_cover_pinned_skypilot_nonterminal_contract() -> None:
     assert pinned_terminal.isdisjoint(cleanup_module.NONTERMINAL_JOB_STATUSES)
 
 
+@pytest.mark.parametrize(
+    ("status", "terminal"),
+    [
+        ("SUCCEEDED", True),
+        ("CANCELLED", True),
+        ("FAILED", True),
+        ("FAILED_FUTURE_REASON", True),
+        ("WINDING_DOWN", False),
+        ("SUBMITTED", False),
+        ("PAUSING", False),
+        ("UNKNOWN", False),
+        ("", False),
+    ],
+)
+def test_terminal_managed_job_status_is_closed_world(
+    status: str, terminal: bool
+) -> None:
+    assert cleanup_module._is_terminal_managed_job_status(status) is terminal
+
+
 @pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])
 def test_cleanup_all_for_run_cancels_all_pinned_nonterminal_statuses(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str
@@ -331,6 +351,75 @@ def test_cleanup_launched_workflow_preserves_cluster_until_drain_is_verified(
     )
 
     assert any("still non-terminal" in error for error in result.errors)
+
+
+@pytest.mark.parametrize("status", ["WINDING_DOWN", "PAUSING"])
+def test_cleanup_launched_workflow_never_tears_down_for_unconverged_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        cleanup_module,
+        "_cancel_job",
+        lambda job_id, **_kwargs: CleanupResult(resources_removed=[f"job:{job_id}"]),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_all_jobs",
+        lambda **_kwargs: cleanup_module.JobQueueSnapshot(
+            "verified_jobs", jobs=({"job_id": "73", "status": status},)
+        ),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("cluster state must remain until the exact job is terminal")
+        ),
+    )
+
+    result = cleanup_launched_workflow(
+        "73",
+        "ordinary-run",
+        cluster="ordinary-cluster",
+        sky_bin=sky_bin,
+        job_drain_timeout=0,
+    )
+
+    assert any("still non-terminal" in error for error in result.errors)
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("WINDING_DOWN", "WINDING_DOWN"),
+        ("PAUSING", "PAUSING"),
+        ("SUCCEEDED", "terminal"),
+        ("FAILED_SETUP", "terminal"),
+    ],
+)
+def test_exact_job_convergence_uses_closed_terminal_contract(
+    monkeypatch: pytest.MonkeyPatch, status: str, expected: str
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.lookup_managed_job",
+        lambda *_args, **_kwargs: ManagedJobEvidence(
+            "found", job_id="73", status=status
+        ),
+    )
+
+    assert (
+        cleanup_module._verify_managed_job_convergence(
+            "73",
+            "ordinary-run",
+            isolated_config_dir=None,
+            config_path=None,
+            sky_bin=None,
+        )
+        == expected
+    )
 
 
 def test_cleanup_launched_workflows_preserves_shared_cluster_on_unverified_job(
@@ -1086,8 +1175,8 @@ def test_a_readable_queue_that_is_already_terminal_does_not_wait(
     assert slept == []
 
 
-@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])
-def test_wait_for_jobs_terminal_keeps_all_pinned_nonterminal_statuses(
+@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN", "PAUSING"])
+def test_wait_for_jobs_terminal_keeps_nonterminal_and_unrecognized_statuses(
     monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
     monkeypatch.setattr(
@@ -1106,7 +1195,7 @@ def test_wait_for_jobs_terminal_keeps_all_pinned_nonterminal_statuses(
     assert still_running == ["7"]
 
 
-@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN"])
+@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN", "PAUSING"])
 def test_job_group_stays_nonterminal_until_every_row_is_terminal(status: str) -> None:
     statuses = cleanup_module._job_statuses(
         [

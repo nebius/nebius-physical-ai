@@ -803,7 +803,22 @@ def test_project_destroy_consumes_only_structured_workflow_teardown_allowance(
                                 "job_id": "701",
                                 "live_outcome": "absent",
                                 "persisted_states": ["RUNNING"],
-                            }
+                            },
+                            *(
+                                [
+                                    {
+                                        "job_id": "802",
+                                        "live_outcome": "found",
+                                        "live_status": "RUNNING",
+                                        "persisted_states": ["RUNNING"],
+                                    }
+                                ]
+                                if cancel_outcome == "partial_cancellation"
+                                else []
+                            ),
+                        ],
+                        "durable_absence_conflict_errors": [
+                            "durable state contradicts exact verified absence"
                         ],
                         "errors": ["durable state contradicts exact verified absence"],
                     }
@@ -844,6 +859,7 @@ def test_project_destroy_consumes_only_structured_workflow_teardown_allowance(
         ("detected_state", "ACTIVE"),
         ("durable_absence_conflict_job_ids", []),
         ("errors", ["conflict", "provider unavailable"]),
+        ("durable_absence_conflict_errors", ["different error"]),
         (
             "jobs",
             [
@@ -854,6 +870,48 @@ def test_project_destroy_consumes_only_structured_workflow_teardown_allowance(
                 }
             ],
         ),
+        (
+            "jobs",
+            [
+                {
+                    "job_id": "701",
+                    "live_outcome": "absent",
+                    "persisted_states": ["RUNNING"],
+                },
+                {
+                    "job_id": "802",
+                    "live_outcome": "found",
+                    "live_status": "RUNNING",
+                    "persisted_states": ["RUNNING"],
+                },
+            ],
+        ),
+        (
+            "jobs",
+            [
+                {
+                    "job_id": "701",
+                    "live_outcome": "absent",
+                    "persisted_states": ["SUCCEEDED"],
+                }
+            ],
+        ),
+        (
+            "jobs",
+            [
+                {
+                    "job_id": "701",
+                    "live_outcome": "absent",
+                    "persisted_states": ["RUNNING"],
+                },
+                {
+                    "job_id": "802",
+                    "live_outcome": "durable_terminal",
+                    "persisted_states": ["RUNNING"],
+                },
+            ],
+        ),
+        ("cancelled_job_ids", ["802"]),
     ],
 )
 def test_project_destroy_rejects_broadened_workflow_teardown_allowance(
@@ -867,7 +925,17 @@ def test_project_destroy_rejects_broadened_workflow_teardown_allowance(
         "detected_state": "VERIFICATION_UNAVAILABLE",
         "owned_teardown_allowed": True,
         "durable_absence_conflict_job_ids": ["701"],
-        "jobs": [{"job_id": "701", "live_outcome": "absent"}],
+        "cancelled_job_ids": [],
+        "jobs": [
+            {
+                "job_id": "701",
+                "live_outcome": "absent",
+                "persisted_states": ["RUNNING"],
+            }
+        ],
+        "durable_absence_conflict_errors": [
+            "durable state contradicts exact verified absence"
+        ],
         "errors": ["durable state contradicts exact verified absence"],
     }
     payload[field] = value

@@ -248,6 +248,9 @@ That narrow result proves every actually live exact job cancelled cleanly and
 all remaining errors are verified-absence contradictions. It does not apply to
 provider failures, malformed ledgers, missing job IDs, or cancellation errors;
 those remain hard dependency blockers before controller or cluster teardown.
+Managed-job drain uses a closed terminal contract: `SUBMITTED`,
+`WINDING_DOWN`, and unrecognized future states remain non-terminal until the
+exact queue reports a terminal state or verified absence.
 
 ## Audit receipts
 

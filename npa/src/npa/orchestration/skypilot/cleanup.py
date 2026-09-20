@@ -75,6 +75,15 @@ NONTERMINAL_JOB_STATUSES = {
     "RECOVERING",
     "CANCELLING",
 }
+
+
+def _is_terminal_managed_job_status(value: object) -> bool:
+    """Return true only for terminal states in the pinned SkyPilot contract."""
+
+    status = str(value or "").strip().upper()
+    return status in {"SUCCEEDED", "CANCELLED"} or status.startswith("FAILED")
+
+
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
 RUN_ID_MIN_LENGTH = 12
 _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -898,7 +907,7 @@ def _verify_managed_job_convergence(
     if evidence.outcome == "unavailable":
         return f"unavailable:{evidence.error or 'provider unavailable'}"
     status = str(evidence.status or "").strip().upper()
-    if status and status not in NONTERMINAL_JOB_STATUSES and status != "UNKNOWN":
+    if _is_terminal_managed_job_status(status):
         return "terminal"
     return status or "UNKNOWN"
 
@@ -936,7 +945,7 @@ def cleanup_all_for_run(
         )
         return cleanup
     for job in matching_jobs:
-        if str(job.get("status", "")).upper() in NONTERMINAL_JOB_STATUSES:
+        if not _is_terminal_managed_job_status(job.get("status")):
             job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
                 _cancel_job(
@@ -1110,7 +1119,7 @@ def wait_for_jobs_terminal(
         still_running = [
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if job_id in wanted and status in NONTERMINAL_JOB_STATUSES
+            if job_id in wanted and not _is_terminal_managed_job_status(status)
         ]
         if not still_running:
             return True, []
@@ -1130,7 +1139,7 @@ def _job_statuses(jobs: Sequence[dict[str, Any]]) -> dict[str, str]:
         status = str(job.get("status") or "").upper()
         # A job group reports one row per task; the job is only terminal once
         # every one of its rows is.
-        if job_id in statuses and statuses[job_id] in NONTERMINAL_JOB_STATUSES:
+        if job_id in statuses and not _is_terminal_managed_job_status(statuses[job_id]):
             continue
         statuses[job_id] = status
     return statuses
@@ -1150,7 +1159,7 @@ def _nonterminal_job_ids(
     return sorted(
         job_id
         for job_id, status in _job_statuses(snapshot.jobs).items()
-        if status in NONTERMINAL_JOB_STATUSES
+        if not _is_terminal_managed_job_status(status)
     )
 
 

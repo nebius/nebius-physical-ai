@@ -2065,7 +2065,22 @@ def test_cancel_absence_conflict_exposes_only_explicit_destroy_allowance(
     assert payload["outcome"] == "verification_failed"
     assert payload["owned_teardown_allowed"] is True
     assert payload["durable_absence_conflict_job_ids"] == ["701"]
+    assert payload["durable_absence_conflict_errors"] == payload["errors"]
     assert payload["cloud_calls"] is False
+    assert payload["cancelled_job_ids"] == []
+
+    from npa.project_destroy import _owned_workflow_teardown_allowance
+
+    allowance = _owned_workflow_teardown_allowance(
+        subprocess.CompletedProcess(
+            ["npa", "workbench", "workflow", "cancel"],
+            result.exit_code,
+            stdout=result.output,
+            stderr="",
+        )
+    )
+    assert allowance is not None
+    assert allowance["verified_absent_job_ids"] == ["701"]
 
 
 @pytest.mark.parametrize(
@@ -2126,7 +2141,20 @@ def test_cancel_mixed_live_and_absence_conflict_requires_clean_live_cancellation
     assert payload["outcome"] == "partial_cancellation", json.dumps(payload, indent=2)
     assert payload["cancelled_job_ids"] == ["802"]
     assert payload["durable_absence_conflict_job_ids"] == ["701"]
+    assert payload["durable_absence_conflict_errors"] == [payload["errors"][0]]
     assert payload["owned_teardown_allowed"] is teardown_allowed
+
+    from npa.project_destroy import _owned_workflow_teardown_allowance
+
+    allowance = _owned_workflow_teardown_allowance(
+        subprocess.CompletedProcess(
+            ["npa", "workbench", "workflow", "cancel"],
+            result.exit_code,
+            stdout=result.output,
+            stderr="",
+        )
+    )
+    assert (allowance is not None) is teardown_allowed
 
 
 def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(

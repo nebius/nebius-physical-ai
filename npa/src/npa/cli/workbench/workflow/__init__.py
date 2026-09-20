@@ -6826,6 +6826,9 @@ def cancel_cmd(
                     "cloud_calls": False,
                     "jobs": jobs_payload,
                     "durable_absence_conflict_job_ids": absence_conflict_ids,
+                    "durable_absence_conflict_errors": (
+                        assessment.absence_conflict_errors
+                    ),
                     "owned_teardown_allowed": (
                         assessment.only_verified_absence_conflicts
                     ),
@@ -6858,6 +6861,9 @@ def cancel_cmd(
                         "cloud_calls": False,
                         "jobs": jobs_payload,
                         "durable_absence_conflict_job_ids": absence_conflict_ids,
+                        "durable_absence_conflict_errors": (
+                            assessment.absence_conflict_errors
+                        ),
                         "owned_teardown_allowed": False,
                         "errors": reverify_errors,
                         "message": (
@@ -6893,6 +6899,9 @@ def cancel_cmd(
                         "cloud_calls": True,
                         "jobs": jobs_payload,
                         "durable_absence_conflict_job_ids": absence_conflict_ids,
+                        "durable_absence_conflict_errors": (
+                            assessment.absence_conflict_errors
+                        ),
                         "owned_teardown_allowed": owned_teardown_allowed,
                         "resources_removed": cleanup.resources_removed,
                         "commands": cleanup.commands,
@@ -6964,6 +6973,8 @@ def cancel_cmd(
             )
         result["owned_teardown_allowed"] = False
     result.setdefault("durable_absence_conflict_job_ids", [])
+    result.setdefault("durable_absence_conflict_errors", [])
+    result.setdefault("cancelled_job_ids", [])
     result.setdefault("owned_teardown_allowed", False)
     result["identity_source"] = (
         identity.source if identity is not None else "unavailable"
