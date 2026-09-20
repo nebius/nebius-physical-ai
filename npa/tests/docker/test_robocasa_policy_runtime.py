@@ -68,7 +68,9 @@ def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     assert "NOPASSWD" not in text
     assert "openssh-server" not in text
     assert "rsync sudo" not in text
-    assert "chown -R ubuntu:ubuntu /app /opt/robocasa/source" in text
+    assert "chown -R ubuntu:ubuntu /opt/robocasa/source/robocasa/models/assets" in text
+    assert "chown -R ubuntu:ubuntu /app " not in text
+    assert "chown -R ubuntu:ubuntu /opt/robocasa/source\n" not in text
     assert "chown -R ubuntu:ubuntu /app /opt/robocasa\n" not in text
 
 
