@@ -14,6 +14,10 @@ concurrency:
 
 jobs:
   guardrails:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ github.event_name == 'pull_request' && 'docs' || 'checks' }}
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000

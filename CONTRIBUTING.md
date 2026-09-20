@@ -582,6 +582,44 @@ Reporting reads only run metadata with read-only permissions and is excluded
 from its own measurements. It is outside the required merge checks; cancellation
 of the parent workflow can interrupt reporting.
 
+### Validation concurrency
+
+Runner jobs share repository-wide concurrency slots across the validation
+workflows. Adding PRs therefore adds waiting work without multiplying active
+jobs. The pools are independent:
+
+| Pool | Maximum active runner jobs | Shared slots |
+|---|---:|---|
+| PR checks | 7 | metadata, docs/guardrails, policy, runtime, two test slots, completion |
+| Merge candidates | 9 | metadata/docs/guardrails, policy, runtime, five test slots, completion |
+| Main, scheduled, and manual audits | 3 | metadata, security, tests |
+
+These are shared totals for each pool, not per-PR or per-candidate allowances.
+PR shards 1/3/5 share one test slot; shards 2/4 and browser checks share the
+other. Merge shards keep five slots, with browser checks sharing shard 5's slot.
+Each candidate pool has a completion slot for coverage and the final required
+check, so they cannot wait behind another candidate's long tests or docs checks.
+This also lets a superseded PR report its unsuccessful final check promptly
+and release its workflow lock for the replacement commit.
+Optional timing reports use the audit metadata slot even for candidate runs.
+
+Each job uses `queue: max` and `cancel-in-progress: false`. GitHub retains up to
+100 waiting jobs per slot; additional jobs are cancelled when that platform
+queue is full. Do not omit `queue: max`: the default replaces an already waiting
+job when another arrives. The parent workflow still cancels superseded commits
+of the same PR. Reusable workflow callers must not hold runner slots while their
+children wait for those slots. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
+The 19-job ceiling applies to these validation workflows once they use this
+configuration. Older branches/runs and publication workflows are outside it;
+refresh an old branch when its PR checks need the new scheduling policy.
+Merge candidates receive the policy from the combined commit after it lands on
+`main`. Separate groups limit this repository's demand; they do not reserve
+physical runners against other repositories in the organization. Busy PRs can
+wait longer to leave capacity for merges. Use the timing report to check the
+tradeoff against actual runner capacity before increasing the pools. Required
+checks and the merge queue timeout remain unchanged.
+
 ### Merge readiness and queue rejections
 
 The queue tests a new commit combining the PR with the current base and preceding
