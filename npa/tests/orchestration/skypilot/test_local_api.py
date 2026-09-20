@@ -518,6 +518,32 @@ def test_status_environment_recovers_same_persistent_endpoint_without_submit(
     assert current["state"] == "ready"
 
 
+def test_submission_environment_defers_stopped_api_recovery_for_new_config(
+    local_runtime,
+):
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    api.stop_isolated_api(local_runtime["isolated_dir"])
+    config = Path(local_runtime["environment"]["SKYPILOT_GLOBAL_CONFIG"])
+    config.write_text("allowed_clouds: [kubernetes, nebius]\n")
+
+    environment = api.isolated_api_environment(
+        local_runtime["isolated_dir"],
+        local_runtime["environment"],
+        recover=False,
+    )
+
+    stopped = _record(local_runtime)
+    assert api._process(stopped) is None
+    assert stopped["state"] == "stopped"
+    restarted = api.ensure_isolated_api(**{**local_runtime, "environment": environment})
+    current = _record(local_runtime)
+    assert restarted["outcome"] == "owned_isolated_api"
+    assert current["pid"] != original["pid"]
+    assert current["marker"] == original["marker"]
+    assert current["config_sha256"] == hashlib.sha256(config.read_bytes()).hexdigest()
+
+
 def test_same_path_mutated_kubeconfig_is_not_same_identity(local_runtime):
     config = local_runtime["isolated_dir"] / "kubeconfig"
     config.write_text("fixture-cluster-identity")

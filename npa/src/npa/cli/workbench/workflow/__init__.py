@@ -4258,7 +4258,10 @@ def _raw_execution_preflight(
         controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(
+        runtime.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     env.update(kwargs.pop("extra_env", None) or {})
     return preflight_skypilot_submission(
         documents,

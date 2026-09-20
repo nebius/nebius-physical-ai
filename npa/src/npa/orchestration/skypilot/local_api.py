@@ -1107,7 +1107,10 @@ def _listener_owned(
 
 
 def isolated_api_environment(
-    isolated_dir: Path, environment: Mapping[str, str]
+    isolated_dir: Path,
+    environment: Mapping[str, str],
+    *,
+    recover: bool = True,
 ) -> dict[str, str]:
     """Persist endpoint intent before any client could connect to a shared API."""
     root = _isolated_api_root(isolated_dir)
@@ -1142,8 +1145,8 @@ def isolated_api_environment(
             value = record.get("runtime_settings", {}).get(setting)
             if value and not selected.get(name):
                 selected[name] = value
-        recover = bool(record.get("interpreter") and not process)
-    if recover:
+        should_recover = bool(recover and record.get("interpreter") and not process)
+    if should_recover:
         # A fresh status/reconcile/cancel client must reconnect to the same
         # persistent API database, never SkyPilot's shared fallback endpoint.
         recovery_env = dict(selected)
