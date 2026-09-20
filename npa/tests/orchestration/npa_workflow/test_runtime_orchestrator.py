@@ -301,6 +301,7 @@ class MemoryStore(RunStateStore):
 
     def __init__(self, objects: dict[str, bytes] | None = None) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
+        self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
             prefix="unit-prefix",
@@ -315,6 +316,7 @@ class MemoryStore(RunStateStore):
         return self.objects[key].decode("utf-8")
 
     def _write_obj(self, bucket: str, key: str, body: bytes) -> None:
+        self.write_calls.append(key)
         self.objects[key] = body
 
     def _list_obj(self, _bucket: str, prefix: str) -> list[str]:
@@ -1269,25 +1271,102 @@ def test_resume_replays_completed_waves_instead_of_resubmitting(tmp_path: Path) 
     assert [wave["replayed"] for wave in second_report.waves] == [True, True, True]
 
 
-def test_resume_rejects_corrupt_ledger_before_executor_creation(tmp_path: Path) -> None:
+SEMANTIC_RESUME_CORRUPTION_CASES = (
+    "truncated_json",
+    "empty_object",
+    "missing_run_id",
+    "missing_workflow",
+    "mismatched_run_id",
+    "mismatched_workflow",
+    "missing_schema_version",
+    "unsupported_schema_version",
+    "waves_string",
+    "waves_non_object_entry",
+    "stages_string",
+    "decisions_object",
+    "plan_migrations_string",
+    "watermarks_array",
+    "api_version_array",
+)
+
+
+def _semantic_resume_payload(
+    case: str,
+    *,
+    workflow: str,
+    run_id: str,
+) -> dict[str, object]:
+    payload = RuntimeRunState(workflow=workflow, run_id=run_id).to_dict()
+    if case == "empty_object":
+        return {}
+    if case.startswith("missing_"):
+        payload.pop(case.removeprefix("missing_"))
+    elif case == "mismatched_run_id":
+        payload["run_id"] = "other-run"
+    elif case == "mismatched_workflow":
+        payload["workflow"] = "other-workflow"
+    elif case == "unsupported_schema_version":
+        payload["schema_version"] = "npa.workflow.runtime.v999"
+    elif case == "waves_string":
+        payload["waves"] = "corrupt-but-valid-json"
+    elif case == "waves_non_object_entry":
+        payload["waves"] = [
+            {"key": "done", "status": "succeeded"},
+            "corrupt-entry",
+        ]
+    elif case == "stages_string":
+        payload["stages"] = "corrupt-but-valid-json"
+    elif case == "decisions_object":
+        payload["decisions"] = {"decision": "promote"}
+    elif case == "plan_migrations_string":
+        payload["plan_migrations"] = "corrupt-but-valid-json"
+    elif case == "watermarks_array":
+        payload["watermarks"] = []
+    elif case == "api_version_array":
+        payload["api_version"] = ["wrong-type"]
+    return payload
+
+
+@pytest.mark.parametrize("case", SEMANTIC_RESUME_CORRUPTION_CASES)
+def test_resume_rejects_corrupt_ledger_before_executor_creation(
+    tmp_path: Path,
+    case: str,
+) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
-    corrupt_bytes = b'{"schema_version":'
+    run_id = "rt-corrupt-ledger"
+    corrupt_bytes = (
+        b'{"schema_version":'
+        if case == "truncated_json"
+        else (
+            json.dumps(
+                _semantic_resume_payload(case, workflow=spec.name, run_id=run_id),
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode()
+    )
     key = runtime_key("unit-prefix")
     store = MemoryStore({key: corrupt_bytes})
     submitter = FakeSubmitter()
     options = RuntimeOptions(resume=True)
 
-    with pytest.raises(NpaWorkflowError, match="durable runtime state is corrupt"):
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"durable runtime state is corrupt.*runtime\.json",
+    ) as error:
         _executor(
             spec,
-            run_id="rt-corrupt-ledger",
+            run_id=run_id,
             submitter=submitter,
             options=options,
             store=store,
         )
 
     assert submitter.calls == []
+    assert store.write_calls == []
     assert store.objects[key] == corrupt_bytes
+    assert key in str(error.value)
+    assert "s3://unit-bucket" not in str(error.value)
 
 
 @pytest.mark.parametrize(
