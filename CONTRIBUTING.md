@@ -504,12 +504,16 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-Pull requests run smoke feedback and the affected subsystem's Python tests
-alongside security, lint, documentation drift, and repository guardrails. Agent
+Pull requests with a selected test scope run smoke feedback and the affected
+subsystem's Python tests alongside security, lint, documentation drift, and
+repository guardrails. Agent
 and browser changes also run the dedicated Cypress job before queue admission.
 CI, dependency, shared configuration, deleted files, and unknown paths trigger
 the full Python 3.12 suite on the PR. Selection is conservative: a source change
 runs its subsystem's tests, not just tests named after the modified module.
+Full-suite PRs collect the smoke tests in the coverage shards and run the CLI
+install check there, avoiding a duplicate smoke job. Repository guardrails use
+xdist workers within their existing runner.
 
 The merge queue validates the combined candidate against its current base with
 five Python 3.12 coverage shards, the dedicated browser job, and focused Python
@@ -577,6 +581,27 @@ creation. Parallel job durations must not be added to estimate merge latency.
 Reporting reads only run metadata with read-only permissions and is excluded
 from its own measurements. It is outside the required merge checks; cancellation
 of the parent workflow can interrupt reporting.
+
+### Merge readiness and queue rejections
+
+The queue tests a new commit combining the PR with the current base and preceding
+queued changes. A green PR check applies to its tested commit; a queue rejection
+can expose a newer dependency policy, an interaction, or a flaky test. Open the
+failed **Security regression** run whose event is **merge_group**, then inspect
+the first failed component job. Cancelled sibling shards usually follow a failed
+shard through matrix fail-fast; their cancellation is not the original failure.
+
+If **Check CI dependency pins** fails, bring the current base into your isolated
+branch and run the dependency refresh and check commands above. Commit the
+reviewed pins with the dependency changes before retrying the queue. Requeueing
+the same stale inputs will fail again.
+
+Use the timing report to distinguish runner waiting from test execution. Coverage
+aggregation now starts only after successful full-suite shards and stops when
+the workflow is cancelled. Failed or superseded builds therefore do not request
+a coverage runner just to reject missing data. The required aggregate check still
+rejects failed, skipped, cancelled, or missing component results, and successful
+full suites still enforce the 60% merged coverage floor.
 
 ## Testing Requirements
 

@@ -267,6 +267,10 @@ CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
 intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
 also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
+For queue rejections, follow the
+[merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
+Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
+parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,

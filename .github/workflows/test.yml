@@ -151,7 +151,8 @@ jobs:
   pr-smoke:
     name: pr-smoke
     needs: scope
-    if: github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'
+    # Full shards already collect these tests and run the CLI install check.
+    if: needs.scope.outputs.full_suite == 'false' && (github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true')
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
@@ -438,7 +439,9 @@ jobs:
   coverage:
     name: coverage
     needs: [scope, test]
-    if: ${{ always() && needs.scope.outputs.full_suite != 'false' }}
+    # Failed shards already fail test-gate. Do not reserve another runner after
+    # failure or keep a superseded reusable workflow alive during cancellation.
+    if: ${{ !cancelled() && needs.scope.outputs.full_suite != 'false' && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Require successful pytest shards
