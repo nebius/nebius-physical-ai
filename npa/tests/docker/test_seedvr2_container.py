@@ -218,7 +218,7 @@ def test_seedvr2_blackwell_manifest_records_built_h100_arches() -> None:
     )
     entry = next(row for row in manifest["images"] if row["name"] == "npa-seedvr2")
     assert entry["verdict"] == "ready"
-    assert entry["validation"] == "pending-gpu"
+    assert entry["validation"] == "pending-hardware"
     assert entry["measured_torch"] == "2.13.0+cu130"
     assert "sm_100" in entry["measured_arch_list"]
     assert entry["measured_extension_sass"] == {

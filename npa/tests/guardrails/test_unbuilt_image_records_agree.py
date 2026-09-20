@@ -1,7 +1,7 @@
-"""Four separate files claim whether an image has been built. They must agree.
+"""Four records claim whether a publishable image has been accepted.
 
-"This image has not been built yet" is recorded in four places, each of which a
-different guard reads:
+No accepted public image is recorded in four places, each of which a different
+guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
 * ``SUPPORTED_TOOL_VERSIONS`` — a tag ending ``-unbuilt``, so a tag that has
@@ -9,10 +9,11 @@ different guard reads:
 * ``blackwell-dc-images.json`` — ``validation: pending-build``;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
-Build day removes one of them. The other three then go stale silently, and every
-one of them is a claim about what has been *proven* — the exact class of claim
-this repository is careful about everywhere else. So the equivalence is asserted
-rather than left to whoever does the build remembering all four.
+A quarantined local candidate may advance from ``pending-build`` through
+``pending-gpu`` to ``pending-hardware`` while its supported public tag correctly
+remains ``-unbuilt``. Publication acceptance removes the quarantine and unbuilt
+tag. These are claims about what has been *proven*, so their allowed
+relationships are asserted rather than left implicit.
 """
 
 from __future__ import annotations
@@ -38,7 +39,9 @@ PENDING_BUILD = "pending-build"
 #: Built, bytes checked, but never run on a GPU. Still unvalidated for
 #: publication - the byte evidence is only half of what publication claims.
 PENDING_GPU = "pending-gpu"
-UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
+PENDING_HARDWARE = "pending-hardware"
+PUBLICATION_UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU, PENDING_HARDWARE})
+NO_CONFIDENT_VERDICT_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
 
 
 def _blackwell_images() -> dict[str, dict[str, object]]:
@@ -57,7 +60,7 @@ def _image_name(tool: str) -> str:
     return str(CONTAINER_IMAGE_NAMES.get(tool, f"npa-{tool}"))
 
 
-def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
+def test_every_publication_unvalidated_tool_says_so_in_all_four_records() -> None:
     blackwell = _blackwell_images()
     containers = _golden_eval_containers()
 
@@ -76,7 +79,7 @@ def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
             assert entry.get("validation") == "not-required", tool
             assert containers[tool]["golden_eval"]["gpu"] == "none", tool
         elif entry is not None:
-            assert entry.get("validation") in UNPROVEN_STATES, (
+            assert entry.get("validation") in PUBLICATION_UNPROVEN_STATES, (
                 f"{tool} is unvalidated for publication but "
                 f"blackwell-dc-images.json records "
                 f"validation={entry.get('validation')!r}; publication needs both "
@@ -135,14 +138,33 @@ def test_pending_build_never_carries_a_confident_verdict() -> None:
     offenders = sorted(
         str(image["name"])
         for image in payload["images"]
-        if image.get("validation") in UNPROVEN_STATES
+        if image.get("validation") in NO_CONFIDENT_VERDICT_STATES
         and str(image.get("verdict")) in confident
     )
 
     assert offenders == [], (
-        f"{offenders} record validation={PENDING_BUILD!r} beside a confident "
-        "verdict. Nothing has been built, so the verdict can only have come from "
-        "reading the Dockerfile."
+        f"{offenders} record an artifact-less validation state beside a confident "
+        "verdict. Without measured architecture evidence, that verdict can only "
+        "have come from reading the Dockerfile."
+    )
+
+
+def test_pending_hardware_confident_verdict_has_measured_arches() -> None:
+    payload = json.loads(BLACKWELL.read_text(encoding="utf-8"))
+    offenders = sorted(
+        str(image["name"])
+        for image in payload["images"]
+        if image.get("validation") == PENDING_HARDWARE
+        and str(image.get("verdict")) in {"ready", "port"}
+        and (
+            not isinstance(image.get("measured_arch_list"), list)
+            or not image["measured_arch_list"]
+        )
+    )
+
+    assert offenders == [], (
+        f"{offenders} claim a confident pending-hardware verdict without a "
+        "non-empty measured_arch_list"
     )
 
 

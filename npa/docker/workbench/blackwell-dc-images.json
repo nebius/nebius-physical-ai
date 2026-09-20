@@ -151,7 +151,7 @@
       "build_script": "seedvr2/build.sh",
       "redistribution": "public",
       "verdict": "ready",
-      "validation": "pending-gpu",
+      "validation": "pending-hardware",
       "torch": "2.13.0+cu130",
       "measured_torch": "2.13.0+cu130",
       "measured_arch_list": [
