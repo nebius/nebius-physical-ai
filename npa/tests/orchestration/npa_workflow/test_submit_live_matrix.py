@@ -212,6 +212,7 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         "adversarial-scenario-hardening.yaml",
         "av-night-scene-hardening.yaml",
         "byof-droid-policy-learning.yaml",
+        "byof-evo.yaml",
         "byof-maniskill.yaml",
         "byof-mujoco-playground.yaml",
         "byof-open-dreamer.yaml",

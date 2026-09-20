@@ -365,6 +365,10 @@ def test_evo_smoke_has_frozen_metric_and_failure_controls() -> None:
     assert "recomputed_rmse" in smoke
     assert "capture-manifest.json" in smoke
     assert "width < 800 or height < 600" in smoke
+    assert "KITTI_00_ORB estimate vs KITTI_00_gt reference" in smoke
+    assert "KITTI_00_SPTAM estimate vs KITTI_00_gt reference" in smoke
+    assert '"kitti_orb_ape_native"' in smoke
+    assert '"kitti_sptam_ape_native"' in smoke
 
 
 def test_oss_catalog_lists_solution_specific_capabilities() -> None:

@@ -32,8 +32,9 @@ config:
     from pathlib import Path
 
     import evo
+    import matplotlib
     import numpy as np
-    from PIL import Image, ImageStat
+    from PIL import Image, ImageDraw, ImageFont, ImageStat
 
     output_dir = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
     repo_root = Path.cwd()
@@ -132,6 +133,36 @@ config:
             "height": height,
             "rgb_extrema": extrema,
             "rgb_standard_deviation": standard_deviation,
+        }
+
+    def annotate_plot(source: Path, destination: Path, heading: str) -> dict:
+        with Image.open(source) as image:
+            source_rgb = image.convert("RGB")
+            canvas = Image.new(
+                "RGB",
+                (source_rgb.width, source_rgb.height + 64),
+                color="white",
+            )
+            canvas.paste(source_rgb, (0, 64))
+            font_path = (
+                Path(matplotlib.get_data_path())
+                / "fonts"
+                / "ttf"
+                / "DejaVuSans-Bold.ttf"
+            )
+            font = ImageFont.truetype(str(font_path), size=30)
+            ImageDraw.Draw(canvas).text(
+                (24, 14),
+                heading,
+                fill="black",
+                font=font,
+            )
+            canvas.save(destination)
+        return {
+            "source_path": str(source),
+            "source_sha256": sha256(source),
+            "heading": heading,
+            **inspect_plot(destination),
         }
 
     def run_tum_metrics(label: str, reference: Path, estimate: Path) -> dict:
@@ -314,6 +345,16 @@ config:
     kitti_sptam = Path("test/data/KITTI_00_SPTAM.txt")
     orb_metrics = run_kitti_metrics("kitti_orb", kitti_orb)
     sptam_metrics = run_kitti_metrics("kitti_sptam", kitti_sptam)
+    orb_review_plot = annotate_plot(
+        plots_dir / "kitti_orb_ape_map.png",
+        plots_dir / "kitti_orb_ape_review.png",
+        "KITTI_00_ORB estimate vs KITTI_00_gt reference",
+    )
+    sptam_review_plot = annotate_plot(
+        plots_dir / "kitti_sptam_ape_map.png",
+        plots_dir / "kitti_sptam_ape_review.png",
+        "KITTI_00_SPTAM estimate vs KITTI_00_gt reference",
+    )
     run_command(
         "kitti_matched_plot",
         [
@@ -377,8 +418,10 @@ config:
                 "path": str(matched_plot_path),
                 **matched_plot,
             },
-            "kitti_orb_ape": orb_metrics["map_plot"],
-            "kitti_sptam_ape": sptam_metrics["map_plot"],
+            "kitti_orb_ape": orb_review_plot,
+            "kitti_sptam_ape": sptam_review_plot,
+            "kitti_orb_ape_native": orb_metrics["map_plot"],
+            "kitti_sptam_ape_native": sptam_metrics["map_plot"],
         },
     }
     capture_path = output_dir / "capture-manifest.json"
@@ -422,8 +465,14 @@ config:
             "malformed_returncode": malformed_run.returncode,
         },
         "representative_metrics": {
-            "kitti_orb": orb_metrics,
-            "kitti_sptam": sptam_metrics,
+            "kitti_orb": {
+                **orb_metrics,
+                "review_plot": orb_review_plot,
+            },
+            "kitti_sptam": {
+                **sptam_metrics,
+                "review_plot": sptam_review_plot,
+            },
         },
         "input_hashes": input_hashes,
         "capture_manifest_sha256": sha256(capture_path),
