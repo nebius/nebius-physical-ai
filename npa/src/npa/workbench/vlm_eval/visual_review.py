@@ -2043,6 +2043,7 @@ def _run_attempt(
         request=attempt.request,
         timeout_s=context.request.timeout_s,
         response_sink=sink,
+        request_body=_core._canonical_json(attempt.request).encode("utf-8"),
     )
     outcome = _attempt_outcome(context, attempt, evidence, response, error)
     _write_journal(journal, f"outcome-{ordinal:02d}.json", asdict(outcome))

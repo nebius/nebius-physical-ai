@@ -1389,6 +1389,7 @@ def _post_comparison_request(
     request: dict[str, Any],
     timeout_s: float,
     response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    request_body: bytes | None = None,
 ) -> tuple[_VlmBackendResponse | None, VlmEvalError | None]:
     started_at = time.monotonic()
     captured: list[_VlmBackendResponse] = []
@@ -1404,6 +1405,7 @@ def _post_comparison_request(
             timeout_s=timeout_s,
             response_sink=retain,
             error_response_sink=captured.append,
+            request_body=request_body,
         )
         response = _coerce_backend_response(
             raw_response,
@@ -4065,6 +4067,7 @@ def _post_with_readiness_retry(
     timeout_s: float,
     response_sink: Callable[[_VlmBackendResponse], None] | None = None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    request_body: bytes | None = None,
 ) -> _VlmBackendResponse:
     """POST while tolerating bounded self-hosted model warmup."""
     is_self_hosted = backend == "self-hosted"
@@ -4082,6 +4085,7 @@ def _post_with_readiness_retry(
                 started_at=started_at,
                 response_sink=response_sink,
                 error_response_sink=error_response_sink,
+                request_body=request_body,
             )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             if is_self_hosted and time.monotonic() < deadline:
@@ -4102,9 +4106,13 @@ def _post_backend_once(
     started_at: float,
     response_sink: Callable[[_VlmBackendResponse], None] | None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+    request_body: bytes | None,
 ) -> _VlmBackendResponse:
     with httpx.Client(timeout=timeout_s) as client:
-        response = client.post(url, headers=headers, json=request)
+        kwargs = (
+            {"content": request_body} if request_body is not None else {"json": request}
+        )
+        response = client.post(url, headers=headers, **kwargs)
         observed = _backend_response_from_http(response, data={}, started_at=started_at)
         _retain_response(observed, response_sink)
         _raise_for_backend_status(response, started_at, error_response_sink)

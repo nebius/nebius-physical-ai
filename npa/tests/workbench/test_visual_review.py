@@ -161,6 +161,7 @@ def _install_transport(monkeypatch, completions, calls=None) -> list[dict]:
     responses = iter(completions)
 
     def post(*, request, response_sink, **_kwargs):
+        assert _kwargs["request_body"] == vlm_eval._canonical_json(request).encode()
         recorded.append(request)
         response = _response(next(responses))
         response_sink(response)
@@ -173,6 +174,48 @@ def _install_transport(monkeypatch, completions, calls=None) -> list[dict]:
         lambda *_args, **_kwargs: "auth-secret",
     )
     return recorded
+
+
+def test_backend_posts_frozen_canonical_body(monkeypatch) -> None:
+    import httpx
+
+    body = b'{"messages":[],"model":"hosted/vision","temperature":0}'
+    completion = _completion(_single_payload(), model="hosted/vision")
+    response = httpx.Response(
+        200,
+        json=completion,
+        request=httpx.Request("POST", "https://provider.invalid/v1/chat/completions"),
+    )
+    captured = {}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, **kwargs):
+            captured.update(url=url, **kwargs)
+            return response
+
+    monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
+    vlm_eval._post_backend_once(
+        url="https://provider.invalid/v1/chat/completions",
+        headers={"Content-Type": "application/json"},
+        request={"ignored": "dict-serialization"},
+        request_body=body,
+        timeout_s=10,
+        started_at=0,
+        response_sink=None,
+        error_response_sink=None,
+    )
+
+    assert captured["content"] == body
+    assert "json" not in captured
 
 
 def _write_frames(root: Path, count: int = 1, color: str = "green") -> Path:
