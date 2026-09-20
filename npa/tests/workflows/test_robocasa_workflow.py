@@ -119,7 +119,9 @@ def test_data_policy_trajectory_export_toolref_renders() -> None:
 
 def test_robocasa_workflows_forward_the_service_token() -> None:
     for workflow in (WORKFLOW, DATA_POLICY):
-        plan = build_plan(load_spec(workflow), run_id="test")
+        spec = load_spec(workflow)
+        assert spec.config["source_overlay"] is True
+        plan = build_plan(spec, run_id="test")
         assert secret_env_hints_for_plan(plan.steps) == ("ROBOCASA_TOKEN",)
 
 
@@ -132,18 +134,26 @@ def test_workflow_endpoint_matches_default_service_deployment() -> None:
         assert load_spec(workflow).config["robocasa_endpoint"] == expected
 
 
-def test_workflow_accelerator_matches_compatible_service_default() -> None:
+def test_service_accelerator_and_policy_training_use_compatible_l40s() -> None:
     assert DEFAULT_GPU_TYPE == "l40s"
     assert GPU_NODE_SELECTORS[DEFAULT_GPU_TYPE] == "gpu-l40s-d"
+    spec = load_spec(DATA_POLICY)
+    assert spec.resources["train-gpu"]["accelerators"] == "L40S:1"
+    assert {
+        name
+        for name, resource in spec.resources.items()
+        if resource.get("accelerators")
+    } == {"train-gpu"}
+
+
+def test_service_client_states_do_not_compete_for_the_service_gpu() -> None:
     for workflow in (WORKFLOW, DATA_POLICY):
         spec = load_spec(workflow)
-        gpu_resources = [
-            resource
-            for resource in spec.resources.values()
-            if resource.get("accelerators")
-        ]
-        assert gpu_resources
-        assert all(resource["accelerators"] == "L40S:1" for resource in gpu_resources)
+        for state_name, state in spec.states.items():
+            if not (state.tool_ref or "").startswith("workbench.robocasa."):
+                continue
+            resource = spec.resources[state.resources]
+            assert not resource.get("accelerators"), state_name
 
 
 def test_robocasa_service_token_hint_uses_the_resolved_token_env() -> None:

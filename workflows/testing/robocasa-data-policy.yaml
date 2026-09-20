@@ -10,7 +10,9 @@ metadata:
     npa adapter materializes them into LeRobotDataset v3, LeRobot trains a real
     ACT policy on reserved GPU capacity, the produced checkpoint is compared
     with a matched-seed random-action baseline using quantitative metrics and
-    video evidence, and insights records lineage.
+    video evidence, and insights records lineage. RoboCasa toolRef states are CPU
+    clients of the separately deployed L40S service; ACT training uses a second
+    L40S while that service remains available for held-out evaluation.
 
 config:
   bucket: example-bucket
@@ -54,11 +56,10 @@ config:
   insights_uri: "s3://{{config.bucket}}/{{config.prefix}}/insights/"
 
 resources:
-  sim-gpu:
+  sim-client-cpu:
     cloud: kubernetes
-    accelerators: L40S:1
-    cpus: 8
-    memory: 32Gi
+    cpus: 4
+    memory: 8Gi
   convert-cpu:
     cloud: kubernetes
     cpus: 4
@@ -81,7 +82,7 @@ states:
   trajectory-export:
     description: Run seeded random-action RoboCasa baselines with causally aligned trajectories.
     toolRef: workbench.robocasa.trajectory_export
-    resources: sim-gpu
+    resources: sim-client-cpu
     outputs:
       - uri: "{{config.output_uri}}"
         schema: npa.robocasa.trajectory_export.v1
@@ -128,7 +129,7 @@ states:
   policy-eval:
     description: Compare the exact checkpoint with random actions on matched held-out tasks and seeds.
     toolRef: workbench.robocasa.policy_eval
-    resources: sim-gpu
+    resources: sim-client-cpu
     needs: [policy-train]
     inputs:
       - uri: "{{config.artifacts_uri}}"

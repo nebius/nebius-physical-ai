@@ -108,6 +108,13 @@ Trajectory rows use the observation-before-action convention required by
 behavior cloning. The checked-in workflow deliberately labels its source as a
 seeded random-action baseline rather than expert demonstrations.
 
+These toolRefs are HTTP clients and run on CPU resources; assigning them a GPU
+would compete with the separately deployed service for its exclusive device.
+The smoke path needs one L40S for the service plus a CPU worker. The data-policy
+path needs two L40S devices/nodes plus a CPU worker: one L40S remains held by the
+service while the second runs ACT training before held-out evaluation returns to
+the service.
+
 Policy evaluation runs one unambiguous exact ACT checkpoint and a random-action
 arm on the same held-out task IDs and reset seeds. It fails when paired initial
 workspace frames or robot-state hashes do not match, when native success
