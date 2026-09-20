@@ -355,6 +355,9 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
 
 
 def test_apriltag_smoke_has_real_labeled_images_and_failure_controls() -> None:
+    from npa.orchestration.npa_workflow import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+
     path = WORKFLOW_DIR / "byof-apriltag.yaml"
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     config = payload["config"]
@@ -366,6 +369,19 @@ def test_apriltag_smoke_has_real_labeled_images_and_failure_controls() -> None:
     assert config["base_image"] == "ubuntu:22.04"
     assert config["resource_profile_yaml"] == "byof-container-smoke-rtxpro"
     assert config["capability_name"] == "apriltag_real_image_fiducial_detection"
+    assert config["output_root"] == "s3://{{config.bucket}}/oss-solutions/apriltag"
+    assert config["summary_uri"] == (
+        "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+    )
+    assert config["artifact_uri"] == (
+        "{{config.output_root}}/{{run.id}}/apriltag_fiducial_evaluation.json"
+    )
+    assert config["observations_uri"] == (
+        "{{config.output_root}}/{{run.id}}/fiducial_observations.json"
+    )
+    assert config["capture_uri"] == (
+        "{{config.output_root}}/{{run.id}}/capture-manifest.json"
+    )
     assert "BUILD_TESTING=ON" in build
     assert "ctest --test-dir build --output-on-failure" in build
     assert "pjpeg_to_u8_baseline" in build
@@ -392,9 +408,42 @@ def test_apriltag_smoke_has_real_labeled_images_and_failure_controls() -> None:
     assert "fiducial_observations.json" in smoke
     assert "capture-manifest.json" in smoke
     assert "source_sha256" in smoke
+    assert '"schema": "npa.workbench.apriltag.fiducial-evaluation.v1"' in smoke
+    assert '"run_id": os.environ["NPA_BYOF_RUN_ID"]' in smoke
+    assert '"image_reference": image_reference' in smoke
+    assert '"path": stable_path(destination)' in smoke
     assert "cyan = expected corners | magenta = detected corners" in smoke
     assert "542dae723ce69d9d61201a3e7e2753220eb8e1aeee600e5906772997fc92ccfd" in smoke
     assert "accelerators" not in payload["resources"]["cpu"]
+
+    plan = build_plan(load_spec(path), run_id="apriltag-contract")
+    assert plan.steps[0].outputs == [
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "apriltag_fiducial_evaluation.json"
+            ),
+            "schema": "npa.workbench.apriltag.fiducial-evaluation.v1",
+        },
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "fiducial_observations.json"
+            ),
+            "schema": "npa.apriltag.fiducial-observations.v1",
+        },
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "capture-manifest.json"
+            ),
+            "schema": "npa.apriltag.capture-manifest.v1",
+        },
+    ]
+    output_root_index = plan.steps[0].argv.index("--output-root")
+    assert plan.steps[0].argv[output_root_index + 1] == (
+        "s3://example-bucket/oss-solutions/apriltag"
+    )
 
 
 def test_ltx2_spec_fetches_nothing_before_the_refusal_is_proved() -> None:

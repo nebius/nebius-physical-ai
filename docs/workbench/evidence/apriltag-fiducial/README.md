@@ -20,7 +20,7 @@ final VLM acceptance is claimed and the pull request remains a draft.
 | Actual full workload | Required | PASS | Complete pinned upstream labeled real-image set: 3 images, 47/47 detections, 47 consumer records |
 | Objective acceptance | Required | PASS | Precision/recall 1.0 per image; 0 FP/FN; aggregate corner RMSE `0.0000273889 px` |
 | Failure controls | Required | PASS | Blank: 0 detections; fixed-seed noise: 0 detections |
-| Complete-byte scan | Required | PASS | 18,926 entries, zero payload/history hits, clean verdict |
+| Restricted-payload scan | Required | PASS | Complete filesystem/layer-history traversal: 18,926 entries, zero payload/history hits |
 | Hosted visual review | Applicable to overlay presentation only | FAIL (retained) | Every image-capable judge failed at least one disclosed control; final VLM call was gated off |
 | Independent review | Required | PASS with two low notes | Read-only reviewer checked metrics, hashes, media, licensing, and sanitization; the fresh-pod rerun limitation is disclosed below |
 | Current-head CI | Required | PENDING | Run after the sanitized proof commit is pushed |
@@ -78,6 +78,8 @@ supported direct BYOF runner with operator-owned aliases:
 ```bash
 export NPA_E2E_PROJECT='<configured project alias>'
 export NPA_RUN_ID='apriltag-review'
+export NPA_BYOF_IMAGE='<operator-built image>@sha256:05c43f838da6bd96dcb41e0ca48816a56b3d0859a4ab39b3941f799f5e8ced58'
+export NPA_OUTPUT_ROOT='s3://<configured artifact bucket>/oss-solutions/apriltag'
 export SPEC='workflows/testing/byof-apriltag.yaml'
 
 BUILD_COMMAND="$(
@@ -96,6 +98,7 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --repo-ref 94be783968e5091bcc9972c72c84fd63efce2935 \
   --base-profile ubuntu \
   --base-image ubuntu:22.04 \
+  --image "$NPA_BYOF_IMAGE" \
   --build-command "$BUILD_COMMAND" \
   --workload solution-smoke \
   --smoke-command "$SMOKE_COMMAND" \
@@ -104,11 +107,15 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --smoke-artifact-name apriltag_fiducial_evaluation.json \
   --project "$NPA_E2E_PROJECT" \
   --run-id "$NPA_RUN_ID" \
+  --output-root "$NPA_OUTPUT_ROOT" \
+  --skip-build \
+  --skip-push \
   --cleanup
 ```
 
-This command intentionally contains no project, tenant, bucket, registry, or
-credential value.
+This digest-reuse command intentionally contains no concrete project, tenant,
+bucket, registry, or credential value. The operator supplies the pullable
+full image reference and configured artifact root.
 
 ## Limitations
 

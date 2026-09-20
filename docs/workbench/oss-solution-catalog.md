@@ -176,10 +176,10 @@ The detector produces image-space fiducial observations, not a camera-pose or
 navigation-success claim. Pose accuracy additionally requires calibrated
 intrinsics and known tag size/layout. The three real photographs do not prove
 generalization to arbitrary cameras, lighting, motion blur, occlusion, or tag
-families. The digest-pinned CPU workload and complete-byte payload scan passed.
-Registry admission remains pending because hosted visual-judge calibration did
-not discriminate its controls and independent/current-head review is not yet
-complete.
+families. The digest-pinned CPU workload and complete filesystem/layer-history
+restricted-payload scan passed. Registry admission remains pending because
+hosted visual-judge calibration did not discriminate its controls and
+independent/current-head review is not yet complete.
 
 ### Open Dreamer (world model, 2-GPU minimum)
 

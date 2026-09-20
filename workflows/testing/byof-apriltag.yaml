@@ -3,10 +3,10 @@ kind: Workflow
 metadata:
   name: byof-apriltag
   description: >
-    Operator-built AprilTag 3 CPU candidate. Runs the pinned native detector on
-    the complete upstream real-image regression set, measures labeled corner
-    accuracy, rejects blank/noise controls, and emits camera-consumer records
-    plus source-linked annotated PNGs.
+    Plan-only operator-built AprilTag 3 CPU candidate; execute it through the
+    direct BYOF runner. Runs the pinned native detector on the complete upstream
+    real-image regression set, measures labeled corner accuracy, rejects
+    blank/noise controls, and emits consumer records plus annotated PNGs.
 config:
   bucket: example-bucket
   repo_url: "https://github.com/AprilRobotics/apriltag.git"
@@ -102,6 +102,11 @@ config:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    def stable_path(path: Path) -> str:
+        if path.is_absolute() and path.is_relative_to(output_dir):
+            return path.relative_to(output_dir).as_posix()
+        return path.as_posix()
 
     def parse_labels(path: Path) -> list[dict]:
         pattern = re.compile(
@@ -263,11 +268,11 @@ config:
         if max(deviation) < 5.0:
             raise RuntimeError(f"{destination}: annotation is uniform")
         return {
-            "path": str(destination),
+            "path": stable_path(destination),
             "sha256": sha256(destination),
             "width": dimensions[0],
             "height": dimensions[1],
-            "source_path": str(source),
+            "source_path": stable_path(source),
             "source_sha256": source_sha256,
             "legend": {
                 "expected": "cyan",
@@ -443,11 +448,22 @@ config:
     if not all(item["passed"] for item in controls.values()):
         raise RuntimeError(f"false-positive controls failed: {controls}")
 
+    image_reference = os.environ["BYOF_IMAGE"]
+    execution_identity = {
+        "run_id": os.environ["NPA_BYOF_RUN_ID"],
+        "image_reference": image_reference,
+        "image_digest": (
+            image_reference.split("@", 1)[1]
+            if "@sha256:" in image_reference
+            else None
+        ),
+    }
     observations_path = output_dir / "fiducial_observations.json"
     observations_path.write_text(
         json.dumps(
             {
                 "schema": "npa.apriltag.fiducial-observations.v1",
+                "execution": execution_identity,
                 "coordinate_system": "image pixels, origin top-left",
                 "corner_order": "left-bottom, right-bottom, right-top, left-top",
                 "observations": observations,
@@ -465,6 +481,7 @@ config:
         json.dumps(
             {
                 "schema": "npa.apriltag.capture-manifest.v1",
+                "execution": execution_identity,
                 "captures": capture_rows,
                 "controls": controls,
             },
@@ -476,8 +493,10 @@ config:
         np.sqrt(np.mean(np.square(all_errors)))
     )
     result = {
+        "schema": "npa.workbench.apriltag.fiducial-evaluation.v1",
         "solution": "apriltag",
         "capability": "apriltag_real_image_fiducial_detection",
+        "execution": execution_identity,
         "capabilities_exercised": [
             "native_apriltag_ctest",
             "real_image_fiducial_detection",
@@ -527,7 +546,7 @@ config:
         },
         "controls": controls,
         "consumer_artifact": {
-            "path": str(observations_path),
+            "path": stable_path(observations_path),
             "sha256": sha256(observations_path),
             "observation_count": len(observations),
         },
@@ -555,10 +574,12 @@ config:
   num_demos: 3
   wait_timeout: 21600
   poll_interval: 60
-  output_root: s3://{{config.bucket}}/oss-solutions/apriltag/{{run.id}}
-  summary_uri: "{{config.output_root}}/npa_byof_summary.json"
-  artifact_uri: "{{config.output_root}}/apriltag_fiducial_evaluation.json"
-  observations_uri: "{{config.output_root}}/fiducial_observations.json"
+  # Both direct and workflow-worker BYOF runtimes append the run id.
+  output_root: s3://{{config.bucket}}/oss-solutions/apriltag
+  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+  artifact_uri: "{{config.output_root}}/{{run.id}}/apriltag_fiducial_evaluation.json"
+  observations_uri: "{{config.output_root}}/{{run.id}}/fiducial_observations.json"
+  capture_uri: "{{config.output_root}}/{{run.id}}/capture-manifest.json"
 resources:
   cpu:
     cloud: kubernetes
@@ -574,10 +595,10 @@ states:
     toolRef: workbench.byof.repo
     resources: cpu
     outputs:
-      - uri: "{{config.summary_uri}}"
-        schema: npa.workbench.byof.summary.v1
       - uri: "{{config.artifact_uri}}"
         schema: npa.workbench.apriltag.fiducial-evaluation.v1
       - uri: "{{config.observations_uri}}"
         schema: npa.apriltag.fiducial-observations.v1
+      - uri: "{{config.capture_uri}}"
+        schema: npa.apriltag.capture-manifest.v1
     terminal: true

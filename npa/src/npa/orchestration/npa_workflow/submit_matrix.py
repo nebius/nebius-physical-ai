@@ -1121,7 +1121,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         notes=(
             "The direct BYOF runner owns real build/push/pull execution. This "
-            "operator-built CPU candidate remains qualification-pending."
+            "operator-built candidate passed retained digest-pinned CPU "
+            "qualification; visual acceptance remains explicitly unclaimed."
         ),
     ),
     SubmitLiveCase(

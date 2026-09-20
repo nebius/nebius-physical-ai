@@ -80,7 +80,9 @@
     }
   },
   "image_scan": {
-    "complete_byte_scan": true,
+    "scanner_format": "npa_restricted_payload_scan_v2",
+    "complete_filesystem_and_layer_history_scan": true,
+    "complete_archive_byte_accounting_claimed": false,
     "entries_scanned": 18926,
     "payload_hits": 0,
     "history_hits": 0,
