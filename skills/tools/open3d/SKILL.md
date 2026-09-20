@@ -129,6 +129,18 @@ be able to open the thing being asserted.
   informative poles keep their verdict; the real solid-object scan at 0.1012 now
   returns `undecided` and points you at the two bands. Nothing gates on any of the
   three. Measurements: `evidence/open3d/band-profile-across-scenes.json`.
+- **Choose `--voxel-size` at or above twice your median sample spacing.** This one
+  ratio sets both of the caveats above, and it is the only input the caller controls.
+  Sweeping it on a fixed scene: at a voxel equal to the median nearest-neighbour
+  spacing, a *zero-error* reconstruction reports `unsupported_area_fraction` 0.8780
+  and the smallest detectable fabrication is 4.7% of surface area; at three times the
+  spacing, the same reconstruction reports 0.0055 and the floor falls to 0.75%. A
+  tight voxel costs both ways at once — it inflates the headline fraction on correct
+  geometry *and* blinds the reading to smaller invented regions. Mesh resolution does
+  not matter by comparison: the floor showed no trend above sampling noise across a
+  32-fold range of triangle-edge-to-voxel ratio. Measurements:
+  `evidence/open3d/floor-vs-voxel-multiple.json`,
+  `evidence/open3d/floor-vs-resolution.json`.
 - **The bands hold from 0.5 to 5.4 voxels of sample spacing, and the fraction does
   not.** Swept against a fixed voxel on a watertight mesh, so fabrication could be
   measured against ground truth rather than inferred, there was **no case where a

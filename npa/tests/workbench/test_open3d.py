@@ -1205,6 +1205,60 @@ def test_the_undecided_band_covers_most_of_the_sensitivity_floor() -> None:
     assert "no reading here worth acting on" in undecided["note"]
 
 
+def test_a_tight_voxel_costs_both_ways_at_once() -> None:
+    """The one knob the caller controls, and it moves both caveats together.
+
+    The gap between my measured sensitivity floor near 0.017 invented area and the review
+    lane's 0.09 was unexplained for three heads. It is not geometry, sampling, or mesh
+    resolution -- resolution showed no trend above noise across a 32-fold range of
+    edge/voxel. It is the voxel chosen relative to the sample spacing, which is the only
+    input the caller supplies, and the review lane's own zero-error unsupported fraction of
+    0.75126 places their construction near 1.2x spacing where this curve sits at 0.0467.
+
+    What the operator needs from that is a direction, not a number, so this pins the
+    direction: loosening the voxel lowers the headline fraction on a correct reconstruction
+    and lowers the floor at the same time. Both improve together, so there is no tradeoff to
+    balance -- a tight voxel is simply worse on both counts.
+
+    Figures: `evidence/open3d/floor-vs-voxel-multiple.json`.
+    """
+
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(100000)
+
+    # voxel as a multiple of median sample spacing -> (zero-error unsupported, floor)
+    measured = [
+        (1.00, 0.8780, 0.0467),
+        (1.25, 0.7135, 0.0467),
+        (1.50, 0.5069, 0.0301),
+        (2.00, 0.1707, 0.0168),
+        (3.00, 0.0055, 0.0075),
+    ]
+    for (_, loose_unsup, loose_floor), (_, tight_unsup, tight_floor) in zip(
+        measured[1:], measured
+    ):
+        assert loose_unsup <= tight_unsup, (
+            "a looser voxel must not report more unsupported area on a correct "
+            "reconstruction than a tighter one"
+        )
+        assert loose_floor <= tight_floor, (
+            "a looser voxel must not detect fabrication less sensitively than a tighter one"
+        )
+
+    # The tool's documented recommendation is >= 2x spacing. At that setting a zero-error
+    # reconstruction must not read as an invented shell, which is what makes it safe to
+    # recommend.
+    for _, unsupported, _ in measured[3:]:
+        reading = _crop_justification(
+            _support_block(unsupported=unsupported, beyond_1_5=0.0, beyond_3=0.0),
+            0,
+            _Mesh(),
+        )
+        assert reading["removed_surface_reads_as"] == "near-threshold surface"
+
+
 def test_the_floor_is_setup_dependent_so_no_test_pins_it_to_a_number() -> None:
     """What survived varying geometry and sampling, and what did not.
 

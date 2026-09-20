@@ -434,9 +434,22 @@ def _sample_distances(o3d, cloud, vertices):
 #: boundary: it is a scan of a solid object with modest real holes sitting near where the
 #: floor falls, which is where it should sit.
 #:
-#: Nothing gates on this reading, and it stays that way while the floor is this
-#: setup-dependent. Measurements: `evidence/open3d/band-validity-sweep.json`,
-#: `evidence/open3d/floor-across-geometry-and-sampling.json`, and the review lane's
+#: Nothing gates on this reading, and it stays that way while the floor moves this much.
+#:
+#: What moves it is now measured, and it is the one thing the caller chooses: the voxel
+#: relative to the sample spacing. Sweeping that ratio on a fixed scene moved the floor from
+#: 0.0467 invented area at a voxel equal to the median nearest-neighbour spacing down to
+#: 0.0075 at three times it, and moved the zero-error `unsupported_area_fraction` from 0.8780
+#: to 0.0055 with it. A tight voxel costs both ways at once: it inflates the headline fraction
+#: on a correct reconstruction *and* blinds the reading to smaller fabrications. Prefer a
+#: voxel at or above twice the median sample spacing. Mesh resolution, by contrast, does not
+#: matter here: the floor showed no trend above sampling noise across a 32-fold range of
+#: triangle-edge-to-voxel ratio.
+#:
+#: Measurements: `evidence/open3d/band-validity-sweep.json`,
+#: `evidence/open3d/floor-across-geometry-and-sampling.json`,
+#: `evidence/open3d/floor-vs-voxel-multiple.json`,
+#: `evidence/open3d/floor-vs-resolution.json`, and the review lane's
 #: `program/review/evidence/verify_602_boundary.py`.
 FABRICATION_AREA_SHARE = 0.1
 
