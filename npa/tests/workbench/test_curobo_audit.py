@@ -45,6 +45,10 @@ def plan_row():
             "acceleration": [[0.0], [0.0]],
             "jerk": [[0.0], [0.0]],
             "tool_position": [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]],
+            "tool_quaternion": [
+                [1.0, 0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ],
         },
     }
 
@@ -74,6 +78,7 @@ def test_audit_recomputes_plan_metrics_and_terminal_consumer():
     assert result["successful_trajectory_count"] == 1
     assert result["dynamics_recomputation_count"] == 0
     assert result["terminal_goal_distance_m"] == {"max": 0.0, "mean": 0.0}
+    assert result["terminal_goal_orientation_rad"] == {"max": 0.0, "mean": 0.0}
     assert result["result_sha256"] == hashlib.sha256(result_bytes).hexdigest()
     assert result["journal_sha256"] == hashlib.sha256(journal).hexdigest()
 
@@ -143,3 +148,63 @@ def test_independent_audit_does_not_import_producer_validation_helpers():
     source = inspect.getsource(audit)
     assert ".artifacts import" not in source
     assert ".runner import" not in source
+
+
+def acceptance_cells():
+    return {
+        "kinematic/motion_benchmaker": {
+            "input_count": 800,
+            "invalid": 1,
+            "success": 792,
+            "failed": 7,
+            "torque_violation_successes": 0,
+        },
+        "kinematic/mpinets": {
+            "input_count": 1800,
+            "invalid": 9,
+            "success": 1774,
+            "failed": 17,
+            "torque_violation_successes": 0,
+        },
+        "dynamics/motion_benchmaker": {
+            "input_count": 800,
+            "invalid": 1,
+            "success": 779,
+            "failed": 20,
+            "torque_violation_successes": 19,
+        },
+        "dynamics/mpinets": {
+            "input_count": 1800,
+            "invalid": 9,
+            "success": 1752,
+            "failed": 39,
+            "torque_violation_successes": 50,
+        },
+    }
+
+
+def test_benchmark_acceptance_uses_combined_failure_and_torque_gate():
+    result = audit.benchmark_acceptance(acceptance_cells())
+    assert result["passed"] is True
+    assert result["cells"]["dynamics/motion_benchmaker"]["unusable_eligible"] == 39
+    assert result["cells"]["dynamics/mpinets"]["unusable_eligible"] == 89
+
+
+@pytest.mark.parametrize(
+    "cell,field",
+    [
+        ("kinematic/motion_benchmaker", "failed"),
+        ("kinematic/mpinets", "failed"),
+        ("dynamics/motion_benchmaker", "failed"),
+        ("dynamics/motion_benchmaker", "torque_violation_successes"),
+        ("dynamics/mpinets", "failed"),
+        ("dynamics/mpinets", "torque_violation_successes"),
+    ],
+)
+def test_benchmark_acceptance_rejects_one_row_beyond_each_gate(cell, field):
+    cells = acceptance_cells()
+    cells[cell][field] += 1
+    if field == "failed":
+        cells[cell]["success"] -= 1
+    with pytest.raises(audit.AuditError, match="unusable-row gate"):
+        audit.benchmark_acceptance(cells)

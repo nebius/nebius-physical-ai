@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -236,8 +237,17 @@ def validate_joint_series(value: dict[str, Any]) -> np.ndarray:
 def validate_trajectory(value: dict[str, Any]) -> None:
     position = validate_joint_series(value)
     tool = np.asarray(value["tool_position"], dtype=float)
-    if tool.shape != (len(position), 3) or not np.isfinite(tool).all():
-        raise CuroboError("tool positions must align with actual FK joint samples")
+    quaternion = np.asarray(value["tool_quaternion"], dtype=float)
+    if (
+        tool.shape != (len(position), 3)
+        or quaternion.shape != (len(position), 4)
+        or not np.isfinite(tool).all()
+        or not np.isfinite(quaternion).all()
+        or not np.allclose(np.linalg.norm(quaternion, axis=1), 1.0, atol=1e-5)
+    ):
+        raise CuroboError(
+            "tool poses must align with actual normalized FK joint samples"
+        )
 
 
 def _validate_dynamics_evidence(row: dict[str, Any]) -> None:
@@ -384,6 +394,14 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
                 rr.TextDocument(json.dumps(trajectory["joint_names"])),
             )
             recording.log(
+                (
+                    root
+                    + f"/trajectory_coverage/samples-{len(trajectory['position']):08d}"
+                    + f"/joints-{len(trajectory['joint_names']):03d}"
+                ),
+                rr.TextDocument("complete retained trajectory columns"),
+            )
+            recording.log(
                 root + "/tool_path", rr.LineStrips3D([trajectory["tool_position"]])
             )
             log_trajectory_columns(recording, root, trajectory, problem_index=index)
@@ -423,23 +441,53 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
 
 def _hash_and_find(path: Path, markers: list[bytes]) -> tuple[str, int, list[str]]:
     digest = hashlib.sha256()
-    found = [False] * len(markers)
-    overlap = max((len(marker) for marker in markers), default=1) - 1
-    previous = b""
+    remaining = set(markers)
+    simple = {marker for marker in remaining if not marker.startswith(b"problems/")}
+    entity = re.compile(
+        rb"problems/[0-9]{6}/(?:status|goal|tool_path|"
+        rb"trajectory_coverage/samples-[0-9]{8}/joints-[0-9]{3})"
+    )
     size = 0
     with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
-            digest.update(chunk)
-            size += len(chunk)
-            window = previous + chunk
-            for index, marker in enumerate(markers):
-                if not found[index] and marker in window:
-                    found[index] = True
-            previous = window[-overlap:] if overlap else b""
-    missing = [
-        marker.decode("utf-8") for marker, seen in zip(markers, found) if not seen
-    ]
+        for line in stream:
+            digest.update(line)
+            size += len(line)
+            for marker in tuple(simple):
+                if marker in line:
+                    simple.remove(marker)
+                    remaining.discard(marker)
+            for marker in entity.findall(line):
+                remaining.discard(marker)
+    missing = sorted(marker.decode("utf-8") for marker in remaining)
     return digest.hexdigest(), size, missing
+
+
+def _rrd_markers(rows: list[dict[str, Any]], run_id: str) -> list[bytes]:
+    markers = [
+        b"npa.curobo",
+        run_id.encode(),
+        b"provenance",
+        b"trajectory_time",
+        b"problem_index",
+    ]
+    for index, row in enumerate(rows):
+        root = f"problems/{index:06d}"
+        markers.append(f"{root}/status".encode())
+        if row["status"] != "invalid":
+            markers.append(f"{root}/goal".encode())
+        if row["status"] == "success":
+            trajectory = row["trajectory"]
+            markers.extend(
+                [
+                    f"{root}/tool_path".encode(),
+                    (
+                        f"{root}/trajectory_coverage/"
+                        f"samples-{len(trajectory['position']):08d}/"
+                        f"joints-{len(trajectory['joint_names']):03d}"
+                    ).encode(),
+                ]
+            )
+    return markers
 
 
 def _decode_rrd_to(
@@ -467,29 +515,7 @@ def _decode_rrd_to(
         )
     if printed.returncode:
         raise CuroboError("Rerun could not decode the generated recording")
-    markers = [
-        b"npa.curobo",
-        run_id.encode(),
-        b"provenance",
-        b"problems/000000/status",
-        f"problems/{len(rows) - 1:06d}/status".encode(),
-    ]
-    executed = next(
-        (index for index, row in enumerate(rows) if row["status"] != "invalid"), None
-    )
-    solved = next(
-        (index for index, row in enumerate(rows) if row["status"] == "success"), None
-    )
-    if executed is not None:
-        markers.append(f"problems/{executed:06d}/goal".encode())
-    if solved is not None:
-        markers.extend(
-            [
-                f"problems/{solved:06d}/tool_path".encode(),
-                b"trajectory_time",
-                b"problem_index",
-            ]
-        )
+    markers = _rrd_markers(rows, run_id)
     digest, size, missing = _hash_and_find(decoded_output, markers)
     if missing:
         raise CuroboError("decoded RRD omits required factual coverage")
@@ -499,6 +525,14 @@ def _decode_rrd_to(
         "print_sha256": digest,
         "print_bytes": size,
         "required_marker_count": len(markers),
+        "status_entities": len(rows),
+        "goal_entities": sum(row["status"] != "invalid" for row in rows),
+        "trajectory_entities": sum(row["status"] == "success" for row in rows),
+        "trajectory_samples": sum(
+            len(row["trajectory"]["position"])
+            for row in rows
+            if row["status"] == "success"
+        ),
         "missing_markers": [],
     }
 

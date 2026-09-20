@@ -52,7 +52,9 @@ states:
     next: validate
   validate:
     toolRef: workbench.curobo.validate
-    resources: cpu
+    # Independent FK replay executes the retained joints through cuRobo again;
+    # Pinocchio torque replay is CPU-side inside the same digest-pinned image.
+    resources: gpu
     params:
       curobo_input_uri: "{{config.results_uri}}"
       curobo_output_uri: "{{config.validation_uri}}"

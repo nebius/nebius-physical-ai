@@ -26,6 +26,7 @@ from .artifacts import (
     read_journal,
     validate_report,
 )
+from .replay import ReplayError, replay_rows
 from .schemas import BenchmarkManifest, PlanManifest, PrepareRequest, RunRequest
 
 
@@ -153,12 +154,29 @@ def _download_artifacts(request: RunRequest, root: Path):
     return result_bytes, journal, report, rows
 
 
+def _require_replay_tolerance(replay: dict) -> None:
+    if (
+        replay.get("terminal_goal_distance_m", {}).get("max", float("inf")) > 0.005
+        or replay.get("terminal_goal_orientation_rad", {}).get("max", float("inf"))
+        > 0.05
+    ):
+        raise CuroboError("independent terminal goal replay exceeds tolerance")
+
+
 def validate(request: RunRequest):
     with tempfile.TemporaryDirectory(prefix="npa-curobo-validate-") as directory:
-        result_bytes, journal, _report, _rows = _download_artifacts(
+        result_bytes, journal, report, rows = _download_artifacts(
             request, Path(directory)
         )
         result = audit_bytes(result_bytes, journal, run_id=request.run_id)
+        try:
+            replay = replay_rows(rows, report)
+        except ReplayError as exc:
+            raise CuroboError(
+                "independent kinematics or dynamics replay failed"
+            ) from exc
+        _require_replay_tolerance(replay)
+        result["independent_replay"] = replay
         _publish(request.output_path, canonical(result))
         return result
 

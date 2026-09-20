@@ -10,6 +10,7 @@ It is import-safe (no GPU/framework deps) and is used by both
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,17 @@ from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container
 # small default is used when a golden eval does not pin its own serverless GPU.
 DEFAULT_SERVERLESS_GPU = "l40s"
 _TERMINAL_OK = {"completed", "succeeded", "success"}
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _pin_digest(image: str, digest: str) -> str:
+    if not _DIGEST.fullmatch(digest):
+        raise ValueError("image digest must be exact sha256:<64 lowercase hex>")
+    repository = image.split("@", 1)[0]
+    final = repository.rsplit("/", 1)[-1]
+    if ":" in final:
+        repository = repository.rsplit(":", 1)[0]
+    return f"{repository}@{digest}"
 
 
 def resolve_golden_image(
@@ -42,22 +54,27 @@ def resolve_golden_image(
     """Resolve tool, variant, and internal runtime images without misclassifying them."""
 
     spec = container(tool)
+    digest = tag if tag and _DIGEST.fullmatch(tag) else None
+    selected_tag = None if digest else tag
     if spec.internal:
         resolved_registry = (registry or execution_container_registry()).rstrip("/")
-        resolved_tag = tag or spec.default_tag
+        resolved_tag = selected_tag or spec.default_tag
         if not resolved_tag:
             raise RuntimeError(
                 f"internal golden-eval image {tool!r} has no default tag"
             )
-        return f"{resolved_registry}/{spec.image}:{resolved_tag}"
+        image = f"{resolved_registry}/{spec.image}:{resolved_tag}"
+        return _pin_digest(image, digest) if digest else image
     if spec.variant_of:
-        return container_image_for_tool(
+        image = container_image_for_tool(
             spec.variant_of,
             registry=registry,
-            tag=tag,
+            tag=selected_tag,
             image_variant=spec.image_variant,
         )
-    return container_image_for_tool(tool, registry=registry, tag=tag)
+        return _pin_digest(image, digest) if digest else image
+    image = container_image_for_tool(tool, registry=registry, tag=selected_tag)
+    return _pin_digest(image, digest) if digest else image
 
 
 def _project_id(explicit: str | None) -> str:
@@ -115,8 +132,12 @@ def submit_golden_eval(
     command = spec.golden_eval.command
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
 
-    resolved_project = _project_id(project_id)
     image = resolve_golden_image(tool, registry=registry, tag=tag)
+    if tool == "curobo" and not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+        raise RuntimeError(
+            "cuRobo golden acceptance requires --tag sha256:<exact digest>"
+        )
+    resolved_project = _project_id(project_id)
     cfg = load_credentials(export_to_environment=True)
     bucket = (cfg.s3_bucket or "").rstrip("/")
     if not bucket:
@@ -139,6 +160,14 @@ def submit_golden_eval(
         # pyarrow/lancedb/fiftyone deps missing from slim tool images.
         "NPA_SKIP_EAGER_IMPORTS": "1",
     }
+    if tool == "curobo":
+        extra_env.update(
+            {
+                "NPA_IMAGE_DIGEST": image.rsplit("@", 1)[1],
+                "NPA_SMOKE_OUTPUT_DIR": "/tmp/npa-golden",
+                "NPA_SMOKE_RUN_ID": run_id,
+            }
+        )
     # cosmos3-ray-serve requires a bearer token for its authenticated API.
     # Generate an ephemeral token; the smoke_functional.sh start/stop cycle
     # is self-contained so the token never leaves the job.

@@ -16,6 +16,8 @@ from pydantic import ValidationError
 from npa.workbench.curobo import runtime
 from npa.workbench.curobo.artifacts import (
     CuroboError,
+    _hash_and_find,
+    _rrd_markers,
     build_rrd,
     canonical,
     decode_rrd,
@@ -55,6 +57,10 @@ def row():
             "acceleration": [[0.0], [0.0]],
             "jerk": [[0.0], [0.0]],
             "tool_position": [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]],
+            "tool_quaternion": [
+                [1.0, 0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0, 0.0],
+            ],
         },
     }
 
@@ -109,7 +115,8 @@ def test_denominators_preserve_failures_and_invalid_inputs():
 
 
 @pytest.mark.parametrize(
-    "mutation", ["nan", "shape", "dt", "tool", "duplicate", "false_solution"]
+    "mutation",
+    ["nan", "shape", "dt", "tool", "quaternion", "duplicate", "false_solution"],
 )
 def test_malformed_journal_never_passes(mutation):
     rows = [row()]
@@ -121,6 +128,8 @@ def test_malformed_journal_never_passes(mutation):
         rows[0]["trajectory"]["dt"] = -1
     if mutation == "tool":
         rows[0]["trajectory"]["tool_position"] = [[0, 0, 0]]
+    if mutation == "quaternion":
+        rows[0]["trajectory"]["tool_quaternion"][0] = [2, 0, 0, 0]
     if mutation == "duplicate":
         rows.append(copy.deepcopy(rows[0]))
     if mutation == "false_solution":
@@ -371,10 +380,37 @@ def test_validation_recomputes_facts_and_detects_hash_tampering(monkeypatch):
         "write_bytes_uri",
         lambda uri, payload: objects.__setitem__(uri, payload),
     )
+    monkeypatch.setattr(
+        runtime,
+        "replay_rows",
+        lambda _rows, _report: {
+            "valid": True,
+            "terminal_goal_distance_m": {"max": 0.0, "mean": 0.0},
+            "terminal_goal_orientation_rad": {"max": 0.0, "mean": 0.0},
+        },
+    )
     assert runtime.validate(request())["valid"] is True
     objects["s3://example-bucket/input/problems.jsonl"] += b" "
     with pytest.raises(CuroboError, match="hash mismatch"):
         runtime.validate(request())
+
+
+@pytest.mark.parametrize(
+    "distance,orientation,accepted",
+    [(0.005, 0.05, True), (0.005001, 0.0, False), (0.0, 0.050001, False)],
+)
+def test_validation_requires_independent_terminal_pose_replay(
+    distance, orientation, accepted
+):
+    replay = {
+        "terminal_goal_distance_m": {"max": distance},
+        "terminal_goal_orientation_rad": {"max": orientation},
+    }
+    if accepted:
+        runtime._require_replay_tolerance(replay)
+    else:
+        with pytest.raises(CuroboError, match="terminal goal"):
+            runtime._require_replay_tolerance(replay)
 
 
 @pytest.mark.parametrize(
@@ -464,6 +500,23 @@ def test_factual_rrd_round_trip(tmp_path):
         assert entity in printed
 
 
+def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_marker(tmp_path):
+    solved = plan_row()
+    failed = {
+        "mode": "kinematic",
+        "dataset": "operator",
+        "problem_id": "failed",
+        "status": "failed",
+        "query": copy.deepcopy(solved["query"]),
+        "metrics": {"wall_plan_seconds": 0.1},
+    }
+    markers = _rrd_markers([solved, failed], "coverage-run")
+    decoded = tmp_path / "truncated-print.txt"
+    decoded.write_bytes(b"\n".join(markers[:-1]) + b"\n")
+    _digest, _size, missing = _hash_and_find(decoded, markers)
+    assert missing == [markers[-1].decode()]
+
+
 def test_functional_smoke_retains_complete_positive_and_failure_evidence(
     tmp_path, monkeypatch, capsys
 ):
@@ -514,6 +567,23 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
     monkeypatch.setenv("NPA_SMOKE_RUN_ID", "retained-smoke")
     monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "a" * 40)
     monkeypatch.setenv("NPA_IMAGE_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("NPA_OUTPUT_PATH", "s3://example-bucket/golden/")
+    uploaded = {}
+    monkeypatch.setattr(
+        smoke,
+        "write_bytes_uri",
+        lambda uri, payload: uploaded.__setitem__(uri, payload),
+    )
+    monkeypatch.setattr(smoke, "read_bytes_uri", lambda uri: uploaded[uri])
+    monkeypatch.setattr(
+        smoke,
+        "replay_rows",
+        lambda _rows, _report: {
+            "valid": True,
+            "terminal_goal_distance_m": {"max": 0.0, "mean": 0.0},
+            "terminal_goal_orientation_rad": {"max": 0.0, "mean": 0.0},
+        },
+    )
     smoke.main()
     root = tmp_path / "retained-smoke"
     expected = {
@@ -526,6 +596,7 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
         "planning.rrd",
         "rrd-manifest.json",
         "rrd-print.txt",
+        "upload-receipt.json",
     }
     assert {
         str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()
@@ -538,6 +609,7 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
         "failed_control": 1,
         "invalid": 0,
         "independent_validation": True,
+        "independent_replay": True,
         "rrd_decode": "passed",
     }
     assert (
@@ -546,7 +618,63 @@ def test_functional_smoke_retains_complete_positive_and_failure_evidence(
         ]
         == "failed"
     )
+    receipt = json.loads((root / "upload-receipt.json").read_text())
+    assert receipt["readback_verified"] is True
+    assert {item["path"] for item in receipt["objects"]} == expected - {
+        "upload-receipt.json"
+    }
+    assert set(uploaded) == {"s3://example-bucket/golden/" + path for path in expected}
     assert json.loads(capsys.readouterr().out)["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    "missing,error",
+    [
+        ("NPA_IMAGE_SOURCE_SHA", "NPA_IMAGE_SOURCE_SHA"),
+        ("NPA_IMAGE_DIGEST", "NPA_IMAGE_DIGEST"),
+        ("NPA_OUTPUT_PATH", "NPA_OUTPUT_PATH"),
+    ],
+)
+def test_functional_smoke_requires_immutable_durable_identity(
+    tmp_path, monkeypatch, missing, error
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    values = {
+        "NPA_IMAGE_SOURCE_SHA": "a" * 40,
+        "NPA_IMAGE_DIGEST": "sha256:" + "b" * 64,
+        "NPA_OUTPUT_PATH": "s3://example-bucket/golden/",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv(missing)
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        smoke, "execute", lambda *_a, **_k: pytest.fail("planner called")
+    )
+    with pytest.raises(RuntimeError, match=error):
+        smoke.main()
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "distance,orientation,accepted",
+    [(0.005, 0.05, True), (0.0050001, 0.0, False), (0.0, 0.050001, False)],
+)
+def test_functional_smoke_enforces_terminal_pose_threshold(
+    distance, orientation, accepted
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    report = {
+        "terminal_goal_distance_m": {"max": distance},
+        "terminal_goal_orientation_rad": {"max": orientation},
+    }
+    if accepted:
+        smoke._require_feasible_distance(report)
+    else:
+        with pytest.raises(RuntimeError, match="tolerance"):
+            smoke._require_feasible_distance(report)
 
 
 def test_partial_benchmark_cannot_pass_with_self_consistent_summary():

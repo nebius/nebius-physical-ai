@@ -28,8 +28,9 @@ that upstream excludes. The eligible success rate is also reported. Results
 include measured plan/solve times, pose errors, joint and FK tool path lengths,
 motion duration, jerk, inverse-dynamics energy proxy and torque violations.
 The exact optimized trajectory and torque samples behind dynamics metrics are
-retained so the CPU validation stage independently recomputes energy, maximum
-torque and violations. Its Pinocchio replay is a measured downstream consumer,
+retained. The digest-pinned GPU validation stage independently replays FK from
+joint samples while Pinocchio recomputes per-sample torque, energy and limit
+violations CPU-side in the same image. This is a measured downstream consumer,
 not hardware-execution permission. No upstream published performance number is
 presented as a Nebius measurement. Planner feasibility is not independent
 collision certification.
@@ -69,4 +70,6 @@ under `NPA_SMOKE_OUTPUT_DIR`. It requires one feasible pose to succeed and a
 separately declared valid-but-goal-blocked pose to fail; malformed manifest
 rejection is retained as a second negative control. RRD manifests bind the run,
 journal and result hashes and record decoded status, goal-marker and trajectory
-coverage instead of treating a viewer opening as proof.
+coverage instead of treating a viewer opening as proof. Golden acceptance
+requires an exact `sha256:` image passed through `--tag`, uploads every declared
+artifact to `NPA_OUTPUT_PATH`, and reads every object back before success.

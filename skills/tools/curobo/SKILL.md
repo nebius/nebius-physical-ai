@@ -53,10 +53,12 @@ real pose; it does not prove full-benchmark completion.
   tool positions, not upstream's placeholder end-effector metrics.
 - Every solved benchmark row retains the exact optimized joint trajectory,
   torque samples, payload mass and torque limits used for Pinocchio dynamics.
-  The CPU audit is deliberately separate from producer validation and
-  recomputes energy, maximum torque, violations, path measures, timeline
-  duration, jerk, exact identities and per-dataset/mode rates from durable
-  bytes. Treat this replay as a downstream dynamics consumer, not robot safety.
+  Validation is deliberately separate from producer validation: a digest-pinned
+  GPU replays FK position/orientation from retained joints, while Pinocchio
+  replays inverse dynamics CPU-side in the same image. The audit recomputes
+  energy, torque limits, path measures, timeline duration, jerk, exact
+  identities and per-dataset/mode rates from durable bytes. Treat this replay
+  as a downstream dynamics consumer, not robot safety.
 - A matching total count is insufficient evidence. Validate exact problem
   identities and invalid indices against `benchmark_inventory.py`, independently
   derived from the pinned YAML with file hashes. The runner checks those bytes,
@@ -83,6 +85,10 @@ manifest. Acceptance requires the feasible pose to succeed and the separately
 declared goal-blocked pose to fail; malformed manifest rejection is additional
 failure evidence. Set `NPA_IMAGE_DIGEST` to the exact immutable digest for live
 qualification so the artifact manifest binds source, image, GPU and outputs.
+For serverless golden acceptance, pass that digest as `--tag sha256:<hex>`;
+mutable tags are rejected before provider access. The command requires
+`NPA_OUTPUT_PATH`, uploads every declared file, reads each object back and emits
+a separate upload receipt.
 
 On a GPU or upload failure the runtime retains a mode-0700 working directory
 and the already flushed problem journal. Inspect that evidence before any

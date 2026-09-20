@@ -19,6 +19,30 @@ class AuditError(RuntimeError):
     """Durable planner artifacts cannot support the claimed result."""
 
 
+_CELL_GATES = {
+    "kinematic/motion_benchmaker": {
+        "input_count": 800,
+        "invalid": 1,
+        "maximum_unusable_eligible": 7,
+    },
+    "kinematic/mpinets": {
+        "input_count": 1800,
+        "invalid": 9,
+        "maximum_unusable_eligible": 17,
+    },
+    "dynamics/motion_benchmaker": {
+        "input_count": 800,
+        "invalid": 1,
+        "maximum_unusable_eligible": 39,
+    },
+    "dynamics/mpinets": {
+        "input_count": 1800,
+        "invalid": 9,
+        "maximum_unusable_eligible": 89,
+    },
+}
+
+
 def canonical(value: Any) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -87,7 +111,7 @@ def _close(observed: Any, expected: float, *, name: str) -> None:
         raise AuditError(f"{name} does not independently recompute")
 
 
-def _query(row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+def _query(row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     query = row.get("query")
     if not isinstance(query, dict):
         raise AuditError("executed planner query is absent")
@@ -110,11 +134,17 @@ def _query(row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
         )
     ):
         raise AuditError("executed planner query has invalid values")
-    return start, goal
+    return start, goal, quaternion
+
+
+def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
+    first = first / np.linalg.norm(first)
+    second = second / np.linalg.norm(second)
+    return float(2.0 * np.arccos(np.clip(abs(np.dot(first, second)), 0.0, 1.0)))
 
 
 def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
-    _, goal = _query(row)
+    _, goal, goal_quaternion = _query(row)
     trajectory = row.get("trajectory")
     if not isinstance(trajectory, dict):
         raise AuditError("successful row has no trajectory")
@@ -123,6 +153,7 @@ def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
     acceleration = _array(trajectory["acceleration"], name="joint acceleration")
     jerk = _array(trajectory["jerk"], name="joint jerk")
     tool = _array(trajectory["tool_position"], name="FK tool position")
+    tool_quaternion = _array(trajectory["tool_quaternion"], name="FK tool quaternion")
     names = trajectory.get("joint_names")
     dt = trajectory.get("dt")
     if (
@@ -133,6 +164,8 @@ def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
         or acceleration.shape != position.shape
         or jerk.shape != position.shape
         or tool.shape != (len(position), 3)
+        or tool_quaternion.shape != (len(position), 4)
+        or not np.allclose(np.linalg.norm(tool_quaternion, axis=1), 1.0, atol=1e-5)
         or isinstance(dt, bool)
         or not isinstance(dt, (int, float))
         or not math.isfinite(dt)
@@ -164,7 +197,12 @@ def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
         _audit_dynamics(row)
     elif "dynamics_evidence" in row:
         raise AuditError("operator plan unexpectedly carries benchmark dynamics")
-    return {"terminal_goal_distance_m": float(np.linalg.norm(tool[-1] - goal))}
+    return {
+        "terminal_goal_distance_m": float(np.linalg.norm(tool[-1] - goal)),
+        "terminal_goal_orientation_rad": _quaternion_distance(
+            tool_quaternion[-1], goal_quaternion
+        ),
+    }
 
 
 def _audit_dynamics(row: dict[str, Any]) -> None:
@@ -211,6 +249,39 @@ def _audit_dynamics(row: dict[str, Any]) -> None:
     _close(metrics["max_torque_nm"], max_torque, name="maximum torque")
     if metrics["torque_violation"] != violation:
         raise AuditError("torque-violation indicator does not independently recompute")
+
+
+def benchmark_acceptance(cells: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    if set(cells) != set(_CELL_GATES):
+        raise AuditError("benchmark acceptance cells differ")
+    verdicts = {}
+    for name, gate in _CELL_GATES.items():
+        cell = cells[name]
+        if (
+            cell["input_count"] != gate["input_count"]
+            or cell["invalid"] != gate["invalid"]
+            or cell["success"] + cell["failed"] + cell["invalid"]
+            != cell["input_count"]
+            or not 0 <= cell["torque_violation_successes"] <= cell["success"]
+        ):
+            raise AuditError(f"{name} population differs")
+        unusable = (
+            cell["failed"]
+            if name.startswith("kinematic/")
+            else cell["failed"] + cell["torque_violation_successes"]
+        )
+        if unusable > gate["maximum_unusable_eligible"]:
+            raise AuditError(f"{name} exceeds the frozen unusable-row gate")
+        verdicts[name] = {
+            "unusable_eligible": unusable,
+            "maximum_unusable_eligible": gate["maximum_unusable_eligible"],
+            "passed": True,
+        }
+    return {
+        "schema_version": "npa.curobo.benchmark-acceptance.v1",
+        "cells": verdicts,
+        "passed": True,
+    }
 
 
 def audit_bytes(
@@ -260,13 +331,14 @@ def audit_bytes(
     ):
         raise AuditError("operator-plan scope differs")
     terminal_distances = []
+    terminal_orientations = []
     for row in rows:
         if row["status"] != "invalid":
             _query(row)
         if row["status"] == "success":
-            terminal_distances.append(
-                _audit_success(row, benchmark=benchmark)["terminal_goal_distance_m"]
-            )
+            replayed = _audit_success(row, benchmark=benchmark)
+            terminal_distances.append(replayed["terminal_goal_distance_m"])
+            terminal_orientations.append(replayed["terminal_goal_orientation_rad"])
         elif "trajectory" in row or "dynamics_evidence" in row:
             raise AuditError("unsolved row carries solution evidence")
     cells = {}
@@ -280,14 +352,22 @@ def audit_bytes(
                 for status in ("success", "failed", "invalid")
             }
             eligible = counts["success"] + counts["failed"]
+            torque_violations = sum(
+                row["status"] == "success"
+                and row.get("metrics", {}).get("torque_violation") == 1
+                for row in subset
+            )
             cells[f"{mode}/{dataset}"] = {
                 "input_count": len(subset),
                 **counts,
+                "torque_violation_successes": torque_violations,
+                "usable_successes": counts["success"]
+                - (torque_violations if mode == "dynamics" else 0),
                 "eligible_success_fraction": counts["success"] / eligible
                 if eligible
                 else None,
             }
-    return {
+    result = {
         "schema_version": "npa.curobo.validation.v1",
         "run_id": run_id,
         "source_revision": SOURCE_REVISION,
@@ -305,12 +385,21 @@ def audit_bytes(
             "max": max(terminal_distances) if terminal_distances else None,
             "mean": float(np.mean(terminal_distances)) if terminal_distances else None,
         },
+        "terminal_goal_orientation_rad": {
+            "max": max(terminal_orientations) if terminal_orientations else None,
+            "mean": float(np.mean(terminal_orientations))
+            if terminal_orientations
+            else None,
+        },
         "valid": True,
         "limitations": [
             "Recomputes retained trajectory and inverse-dynamics facts; does not independently certify collision freedom.",
             "Terminal FK distance is a consumer check, not permission to execute on hardware.",
         ],
     }
+    if benchmark:
+        result["acceptance"] = benchmark_acceptance(cells)
+    return result
 
 
 def main() -> None:

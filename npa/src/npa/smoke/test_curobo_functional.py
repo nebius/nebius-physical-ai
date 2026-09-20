@@ -10,6 +10,7 @@ import re
 
 from pydantic import ValidationError
 
+from npa.workbench.dataset.storage import read_bytes_uri, uri_join, write_bytes_uri
 from npa.workbench.curobo.audit import audit_bytes
 from npa.workbench.curobo.artifacts import (
     build_rrd,
@@ -18,6 +19,7 @@ from npa.workbench.curobo.artifacts import (
     read_journal,
 )
 from npa.workbench.curobo.runner import execute
+from npa.workbench.curobo.replay import replay_rows
 from npa.workbench.curobo.schemas import PlanManifest
 
 
@@ -29,6 +31,26 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _publish(uri: str, payload: bytes) -> None:
+    write_bytes_uri(uri, payload)
+    if hashlib.sha256(read_bytes_uri(uri)).digest() != hashlib.sha256(payload).digest():
+        raise RuntimeError("golden evidence upload digest mismatch")
+
+
+def _require_feasible_distance(audit: dict) -> None:
+    distance = audit.get("terminal_goal_distance_m", {}).get("max")
+    orientation = audit.get("terminal_goal_orientation_rad", {}).get("max")
+    if (
+        isinstance(distance, bool)
+        or not isinstance(distance, (int, float))
+        or distance > 0.005
+        or isinstance(orientation, bool)
+        or not isinstance(orientation, (int, float))
+        or orientation > 0.05
+    ):
+        raise RuntimeError("feasible control terminal pose exceeds tolerance")
+
+
 def main():
     run_id = os.environ.get("NPA_SMOKE_RUN_ID", "curobo-functional")
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
@@ -36,6 +58,12 @@ def main():
     source_commit = os.environ.get("NPA_IMAGE_SOURCE_SHA", "")
     if not re.fullmatch(r"[0-9a-f]{40}", source_commit):
         raise RuntimeError("NPA_IMAGE_SOURCE_SHA must be an exact lowercase commit")
+    image_digest = os.environ.get("NPA_IMAGE_DIGEST", "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+        raise RuntimeError("NPA_IMAGE_DIGEST must be an exact sha256 digest")
+    output_uri = os.environ.get("NPA_OUTPUT_PATH", "")
+    if not re.fullmatch(r"s3://[^/\s]+/.+", output_uri):
+        raise RuntimeError("NPA_OUTPUT_PATH must be a non-root S3 prefix")
     root = Path(os.environ.get("NPA_SMOKE_OUTPUT_DIR", "/tmp/npa-golden")) / run_id
     root.mkdir(parents=True, exist_ok=False)
     manifest = {
@@ -85,6 +113,9 @@ def main():
     result_bytes = (root / "output/result.json").read_bytes()
     journal_bytes = (root / "output/problems.jsonl").read_bytes()
     audit = audit_bytes(result_bytes, journal_bytes, run_id=run_id)
+    replay = replay_rows(rows, report)
+    _require_feasible_distance(replay)
+    audit["independent_replay"] = replay
     (root / "independent-validation.json").write_bytes(canonical(audit))
     rrd_manifest = build_rrd(
         root / "output/problems.jsonl",
@@ -101,8 +132,14 @@ def main():
     (root / "rrd-manifest.json").write_bytes(canonical(rrd_manifest))
     malformed_rejected = False
     try:
-        PlanManifest.model_validate({"robot": "/tmp/unreviewed.yml", "problems": []})
-    except ValidationError:
+        PlanManifest.model_validate(
+            {"robot": "/tmp/unreviewed.yml", "problems": [manifest["problems"][0]]}
+        )
+    except ValidationError as exc:
+        if not any(error["loc"] == ("robot",) for error in exc.errors()):
+            raise RuntimeError(
+                "malformed control failed outside the robot field"
+            ) from exc
         malformed_rejected = True
     if not malformed_rejected:
         raise RuntimeError("malformed manifest control was not rejected")
@@ -132,7 +169,7 @@ def main():
         "schema_version": "npa.curobo.smoke-artifacts.v1",
         "run_id": run_id,
         "source_commit": source_commit,
-        "image_digest": os.environ.get("NPA_IMAGE_DIGEST", "unavailable"),
+        "image_digest": image_digest,
         "gpu": report["gpu"],
         "artifacts": artifacts,
         "objective": {
@@ -140,11 +177,36 @@ def main():
             "failed_control": 1,
             "invalid": 0,
             "independent_validation": audit["valid"],
+            "independent_replay": replay["valid"],
             "rrd_decode": rrd_manifest["decode"]["print"],
         },
         "limitations": report["limitations"],
     }
     (root / "artifact-manifest.json").write_bytes(canonical(artifact_manifest))
+    uploaded = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = str(path.relative_to(root))
+        payload = path.read_bytes()
+        _publish(uri_join(output_uri, relative), payload)
+        uploaded.append(
+            {
+                "path": relative,
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    upload_receipt = {
+        "schema_version": "npa.curobo.smoke-upload.v1",
+        "run_id": run_id,
+        "image_digest": image_digest,
+        "objects": uploaded,
+        "readback_verified": True,
+    }
+    receipt_bytes = canonical(upload_receipt)
+    (root / "upload-receipt.json").write_bytes(receipt_bytes)
+    _publish(uri_join(output_uri, "upload-receipt.json"), receipt_bytes)
     print(
         json.dumps(
             {
@@ -152,6 +214,7 @@ def main():
                 "run_id": run_id,
                 "source_commit": source_commit,
                 "artifact_manifest_sha256": _sha256(root / "artifact-manifest.json"),
+                "upload_receipt_sha256": _sha256(root / "upload-receipt.json"),
             },
             sort_keys=True,
         )

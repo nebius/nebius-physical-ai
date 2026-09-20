@@ -162,7 +162,8 @@ def solved_row(monkeypatch):
         return SimpleNamespace(
             tool_poses=SimpleNamespace(
                 get_link_pose=lambda _name: SimpleNamespace(
-                    position=Tensor([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]])
+                    position=Tensor([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]),
+                    quaternion=Tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
                 )
             )
         )

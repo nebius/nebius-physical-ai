@@ -162,12 +162,13 @@ def _solve(
             joint_names=kinematic_state.joint_names,
         )
     )
-    tool_positions = _array(
-        fk.tool_poses.get_link_pose(planner.tool_frames[0]).position
-    )
+    tool_pose = fk.tool_poses.get_link_pose(planner.tool_frames[0])
+    tool_positions = _array(tool_pose.position)
+    tool_quaternions = _array(tool_pose.quaternion)
     trajectory = {
         **_joint_series(interpolated),
         "tool_position": tool_positions.tolist(),
+        "tool_quaternion": tool_quaternions.tolist(),
     }
     validate_trajectory(trajectory)
     record.update(status="success", trajectory=trajectory)
