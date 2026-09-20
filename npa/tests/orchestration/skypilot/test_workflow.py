@@ -182,7 +182,7 @@ def _terminal_native_boundaries(monkeypatch, sky, statuses, handles):
 @pytest.mark.parametrize("failure", (
     "FAILED", "FAIL", "FAILED_PRECHECKS", "FAILED_SETUP", "FAILED_RUNTIME",
     "FAILED_CONTROLLER", "FAILED_NO_RESOURCE", "CANCELLED", "CANCELED", "STOPPED",
-    "FAILED_SYNTHETIC_VARIANT", "failed_runtime",
+    "failed_runtime",
 ))
 def test_native_terminal_tasks_fail_submit_without_cleanup_authority(monkeypatch, tmp_path, confidential, failure, mixed_success):
     from npa.orchestration.skypilot.launch_transaction import EvidenceState, ProbeObservation, StabilityPolicy
@@ -268,6 +268,71 @@ def test_native_task_mapping_finalizer_controls(monkeypatch, tmp_path, statuses,
         assert result.launch_result is native and result.job_id == "41"
     else:
         assert not result.ok and all(record["state"] != "submitted" for record in records)
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="SUCCEEDED",
+            workload_observable=False,
+            observed_task_ids=(0, 1),
+        ),
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="SUCCEEDED",
+            workload_observable=True,
+            observed_task_ids=(),
+        ),
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="SUCCEEDED",
+            workload_observable=True,
+            observed_task_ids=(0, 0),
+        ),
+        workflow_module.ReconciliationEvidence(
+            workflow_module.ReconciliationState.FOUND,
+            job_id="41",
+            status="",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+    ),
+)
+def test_native_finalizer_independently_rejects_unobservable_or_incomplete_found(
+    monkeypatch, tmp_path, evidence
+):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+    from npa.orchestration.skypilot.launch_transaction import EvidenceState, StabilityResult
+
+    native = NativeLaunchResult(
+        "attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64
+    )
+    observations = iter(
+        [workflow_module.ReconciliationEvidence(workflow_module.ReconciliationState.ABSENT), evidence]
+    )
+    records = []
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: pytest.fail("external command reached"))
+    with pytest.raises(LaunchTransactionError) as caught:
+        _REAL_RUN_LAUNCH_TRANSACTION(
+            logical_id="native-independent-evidence",
+            readiness=lambda: StabilityResult(EvidenceState.READY, FailureCategory.NONE),
+            launch=lambda: native,
+            reconcile=lambda: next(observations),
+            classify_launch_error=lambda _error: pytest.fail("retry reached"),
+            require_native_result=True,
+            lock_root=tmp_path,
+            record=records.append,
+        )
+    result = caught.value.result
+    assert result.state is LaunchState.INDETERMINATE
+    assert result.job_id == ""
+    assert result.launch_result is None
+    assert all(record["state"] not in {"submitted", "adopted"} for record in records)
 
 
 def _robotwin_bridge_fixture(

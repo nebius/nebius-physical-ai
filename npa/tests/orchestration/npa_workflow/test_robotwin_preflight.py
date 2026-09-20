@@ -919,6 +919,12 @@ def test_worker_materialization_removes_the_file_whose_fsync_fails(
         preflight_module._materialize_authorization(authorization, directory)
     assert str(caught.value) == "injected fsync failure"
     assert list(directory.iterdir()) == []
+    recovery = caught.value.recovery_context
+    assert recovery.cleanup_outcomes == (
+        ("runtime-context.json", "missing"),
+    )
+    assert recovery.residual_names == ()
+    assert recovery.directory_fsync == "error:OSError"
 
 
 def test_materialized_config_mutation_refuses_before_submit(

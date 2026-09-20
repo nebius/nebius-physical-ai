@@ -126,6 +126,55 @@ def test_native_transaction_distinguishes_success_from_reconciliation(tmp_path, 
     assert transaction.reconciliations[-1]["status"] == status
 
 
+def test_native_finalizer_canonicalizes_terminal_status_before_classification(tmp_path):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    observations = iter([
+        ReconciliationEvidence(ReconciliationState.ABSENT),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status=" FAILED_RUNTIME ",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+    ])
+    with pytest.raises(LaunchTransactionError, match="terminally failed or cancelled") as caught:
+        run_launch_transaction(
+            logical_id="native-whitespace-status", readiness=_stable, launch=lambda: native,
+            reconcile=lambda: next(observations), classify_launch_error=_transient,
+            require_native_result=True, lock_root=tmp_path,
+        )
+    assert caught.value.result.state is LaunchState.TERMINAL_FAILURE
+    assert caught.value.result.job_id == native.job_id
+
+
+def test_native_finalizer_rejects_unrecognized_failed_prefix(tmp_path):
+    from npa.orchestration.skypilot._managed_job_api import NativeLaunchResult
+
+    native = NativeLaunchResult("attempt", "00000000-0000-4000-8000-000000000001", "41", (0, 1), "c" * 64)
+    observations = iter([
+        ReconciliationEvidence(ReconciliationState.ABSENT),
+        ReconciliationEvidence(
+            ReconciliationState.FOUND,
+            job_id="41",
+            status="FAILED_UNKNOWN",
+            workload_observable=True,
+            observed_task_ids=(0, 1),
+        ),
+    ])
+    with pytest.raises(LaunchTransactionError) as caught:
+        run_launch_transaction(
+            logical_id="native-unknown-failed-prefix", readiness=_stable, launch=lambda: native,
+            reconcile=lambda: next(observations), classify_launch_error=_transient,
+            require_native_result=True, lock_root=tmp_path,
+        )
+    assert caught.value.result.state is LaunchState.INDETERMINATE
+    assert caught.value.result.job_id == ""
+    assert caught.value.result.launch_result is None
+
+
 @pytest.mark.parametrize("status", (
     "FAILED", "CANCELLED", "FAILED_SETUP", "FAILED_PRECHECKS",
     "FAILED_CONTROLLER", "CANCELED", "STOPPED", "failed_runtime",

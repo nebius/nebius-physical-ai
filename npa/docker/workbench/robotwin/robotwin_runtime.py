@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -58,12 +59,30 @@ REFUSAL_PATH_ENV_KEYS = (
 )
 
 
+@dataclass(frozen=True)
+class RecoveryContext:
+    """Redacted marker rollback receipt safe for owner-only diagnostics."""
+
+    cleanup_outcomes: tuple[tuple[str, str], ...]
+    residual_names: tuple[str, ...]
+    directory_fsync: str
+
+
 class Refusal(RuntimeError):
     """Fixed-category refusal safe for logs."""
 
+    def __init__(self, message: str, *, recovery_context: RecoveryContext | None = None) -> None:
+        super().__init__(message)
+        self.recovery_context = recovery_context
 
-def _refuse(category: str) -> None:
-    raise Refusal(f"ROBOTWIN_RUNTIME_REFUSED:{category}")
+
+def _refuse(
+    category: str, *, recovery_context: RecoveryContext | None = None
+) -> None:
+    raise Refusal(
+        f"ROBOTWIN_RUNTIME_REFUSED:{category}",
+        recovery_context=recovery_context,
+    )
 
 
 def _text(payload: Mapping[str, Any], name: str) -> str:
@@ -172,6 +191,9 @@ def _consume_capability(
     created = False
     committed = False
     failure = ""
+    cleanup_outcomes: list[tuple[str, str]] = []
+    residual_names: tuple[str, ...] = ()
+    directory_fsync = "not-attempted"
     try:
         directory_descriptor = os.open(
             state_dir,
@@ -209,13 +231,34 @@ def _consume_capability(
         if failure and created and not committed and directory_descriptor >= 0:
             try:
                 os.unlink(marker.name, dir_fd=directory_descriptor)
+                cleanup_outcomes.append((marker.name, "removed"))
+            except OSError as exc:
+                errno = getattr(exc, "errno", "unknown")
+                cleanup_outcomes.append(
+                    (marker.name, f"error:{type(exc).__name__}:{errno}")
+                )
+            try:
                 os.fsync(directory_descriptor)
+            except OSError as exc:
+                errno = getattr(exc, "errno", "unknown")
+                directory_fsync = f"error:{type(exc).__name__}:{errno}"
+            else:
+                directory_fsync = "synced"
+            try:
+                residual_names = tuple(sorted(child.name for child in state_dir.iterdir()))
             except OSError:
-                pass
+                residual_names = ("<unavailable>",)
         if directory_descriptor >= 0:
             os.close(directory_descriptor)
     if failure:
-        _refuse(failure)
+        _refuse(
+            failure,
+            recovery_context=RecoveryContext(
+                cleanup_outcomes=tuple(cleanup_outcomes),
+                residual_names=residual_names,
+                directory_fsync=directory_fsync,
+            ),
+        )
 
 
 def _load_lock(path: Path, expected_sha256: str) -> dict[str, Any]:

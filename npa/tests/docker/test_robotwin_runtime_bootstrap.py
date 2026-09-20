@@ -329,12 +329,16 @@ def test_capability_file_fsync_failure_rolls_back_marker(
 
     monkeypatch.setattr(runtime.os, "fsync", fail_file_fsync)
     monkeypatch.setattr(runtime.os, "unlink", record_unlink)
-    with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
+    with pytest.raises(runtime.Refusal, match="capability-state-unavailable") as caught:
         runtime._consume_capability(capability, state_dir=state_dir)
     assert fsync_kinds == ["file", "directory"]
     assert [name for name, _dir_fd in unlink_receipts] == [marker_name]
     assert all(dir_fd is not None for _name, dir_fd in unlink_receipts)
     assert list(state_dir.iterdir()) == []
+    recovery = caught.value.recovery_context
+    assert recovery.cleanup_outcomes == ((marker_name, "removed"),)
+    assert recovery.residual_names == ()
+    assert recovery.directory_fsync == "synced"
 
 
 def test_capability_directory_fsync_failure_rolls_back_marker(
@@ -361,12 +365,16 @@ def test_capability_directory_fsync_failure_rolls_back_marker(
 
     monkeypatch.setattr(runtime.os, "fsync", fail_directory_commit)
     monkeypatch.setattr(runtime.os, "unlink", record_unlink)
-    with pytest.raises(runtime.Refusal, match="capability-state-unavailable"):
+    with pytest.raises(runtime.Refusal, match="capability-state-unavailable") as caught:
         runtime._consume_capability(capability, state_dir=state_dir)
     assert fsync_kinds == ["file", "directory", "directory"]
     assert [name for name, _dir_fd in unlink_receipts] == [marker_name]
     assert all(dir_fd is not None for _name, dir_fd in unlink_receipts)
     assert list(state_dir.iterdir()) == []
+    recovery = caught.value.recovery_context
+    assert recovery.cleanup_outcomes == ((marker_name, "removed"),)
+    assert recovery.residual_names == ()
+    assert recovery.directory_fsync == "synced"
 
 
 def test_capability_rollback_fsync_failure_preserves_exact_recovery_receipt(

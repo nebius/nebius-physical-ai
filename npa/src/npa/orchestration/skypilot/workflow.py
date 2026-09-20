@@ -64,6 +64,7 @@ from npa.orchestration.skypilot.launch_transaction import (
     StabilityPolicy,
     classify_failure,
     is_terminal_failure_job_status,
+    normalize_native_job_status,
     logical_launch_identity,
     run_launch_transaction,
     wait_for_api_stability,
@@ -2594,7 +2595,17 @@ def _reconcile_native_tasks(rows, job_name, job_id, task_ids):
             or any(row.get("job_name", row.get("name")) != job_name for row in selected)):
         return ReconciliationEvidence(ReconciliationState.AMBIGUOUS,
                                       error="native job task coverage is incomplete or conflicting")
-    statuses = {str(row.get("status", "UNKNOWN")).upper() for row in selected}
+    statuses = {
+        normalize_native_job_status(str(row.get("status", "UNKNOWN")))
+        for row in selected
+    }
+    if None in statuses:
+        return ReconciliationEvidence(
+            ReconciliationState.AMBIGUOUS,
+            status="UNKNOWN",
+            error="native job task status is empty or unrecognized",
+        )
+    statuses = {status for status in statuses if status is not None}
     active_statuses = {"PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING"}
     known_terminal = {
         status for status in statuses

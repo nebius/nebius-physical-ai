@@ -78,14 +78,26 @@ def is_terminal_failure_job_status(status: str) -> bool:
     return upper in TERMINAL_FAILURE_JOB_STATUSES or upper.startswith("FAILED")
 
 
+def normalize_native_job_status(status: str) -> str | None:
+    """Normalize a native status only when it belongs to the closed contract."""
+
+    normalized = status.strip().upper()
+    if normalized in RECOGNIZED_JOB_STATUSES or normalized in TERMINAL_FAILURE_JOB_STATUSES:
+        return normalized
+    return None
+
+
+def is_native_terminal_failure_job_status(status: str) -> bool:
+    """Return whether a normalized native status is a recognized failure."""
+
+    normalized = normalize_native_job_status(status)
+    return normalized in TERMINAL_FAILURE_JOB_STATUSES if normalized else False
+
+
 def is_recognized_job_status(status: str) -> bool:
     """Return whether a queue status is a recognized native workload state."""
 
-    normalized = status.strip().upper()
-    return bool(normalized) and (
-        normalized in RECOGNIZED_JOB_STATUSES
-        or is_terminal_failure_job_status(normalized)
-    )
+    return normalize_native_job_status(status) is not None
 
 
 class FailureCategory(str, Enum):
@@ -896,11 +908,12 @@ def _finish_native_transaction(transaction, result, reconcile, checkpoint):
         _raise_result(transaction)
     evidence = reconcile()
     transaction.reconciliations.append(evidence.to_dict())
+    canonical_status = normalize_native_job_status(evidence.status)
     if (
         evidence.state is not ReconciliationState.FOUND
         or evidence.job_id != result.job_id
         or not evidence.workload_observable
-        or not is_recognized_job_status(evidence.status)
+        or canonical_status is None
         or evidence.observed_task_ids != result.task_ids
     ):
         transaction.primary_error = "native result and complete current job evidence disagree"
@@ -911,7 +924,7 @@ def _finish_native_transaction(transaction, result, reconcile, checkpoint):
     transaction.job_id = result.job_id
     transaction.launch_result = result
     transaction.identity_source = "native_request_result"
-    if is_terminal_failure_job_status(evidence.status):
+    if is_native_terminal_failure_job_status(canonical_status):
         _fail_native_terminal_transaction(transaction, checkpoint)
     transaction.state = LaunchState.SUBMITTED
     transaction.recovery_decision = "native_result_and_complete_tasks_verified"
