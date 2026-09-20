@@ -100,7 +100,13 @@ be able to open the thing being asserted.
   than one voxel. The figure is discretization, not fabrication. It collapses to
   0.0075 at factor 1.5 and 0.000084 at 2.0, and the furthest vertex is only 2.21
   voxels out. Genuine fabrication does not collapse like that: on the demo scans
-  the discarded shell reached 18 voxels. So when spacing approaches the voxel,
+  the discarded shell reached 18 voxels. **That 0.2055 does not transfer to a
+  differently sampled capture** — the headline fraction's magnitude depends on the
+  sampling scheme, not only on the reconstruction, because uniform random sampling
+  leaves gaps well above the median nearest-neighbour spacing and pushes the
+  per-triangle maximum further out. Scored against samples drawn from itself, a
+  reconstruction with *zero* error measured 0.75126 unsupported, so at this
+  threshold the fraction is not measuring fabrication at all. So when spacing approaches the voxel,
   raise the factor to 1.5–2.0; at `1.0` the crop removed 8.45% of *correct*
   vertices there. Coverage did not catch it and cannot — coverage asks whether
   observations are explained, not whether correct surface was discarded.
@@ -128,16 +134,27 @@ be able to open the thing being asserted.
   reported **0.5659** unsupported where only **0.0027** of area was actually
   fabricated, overstating by roughly 200-fold. Measurements:
   `evidence/open3d/band-validity-sweep.json`.
-- **The reverse error is open, and cannot be closed with a watertight reference.**
-  A real shell reading as near-threshold is the error that matters more, since it
-  would tell you to loosen a crop that was working. Measuring it needs ground
-  truth, and that is self-defeating: Poisson closure over a hole in a *closed*
-  object tracks the true surface — occluding 205947 of 300000 samples left only
-  0.0003 of area beyond one voxel — so there is no invented surface to miss. The
-  failure the crop exists for is a shell wrapped around an *open scene*, and an
-  open scene has no watertight reference by definition. Don't repeat the sweep
-  expecting a different answer; it is at `band_false_negative_sweep.py` with its
-  result labelled inconclusive. This is why nothing gates on the reading.
+- **A low reading is a lower bound, not a clean bill of health.** The reading has
+  a sensitivity floor near **9% invented area**, and below it the reading is
+  *confidently wrong* rather than undecided: a cap fabricating 3.0% of a surface
+  reports 0.041 and reads `near-threshold surface`. The error is one-sided — the
+  reading only ever under-calls fabrication, never over-calls it — which is the
+  good direction for an advisory field, but it means a low value tells you any
+  fabrication is under roughly a tenth of the area and nothing more. The share is
+  monotone in the invented fraction across two orders of magnitude, so this is a
+  detector with a floor and not a coin toss, and the 0.1012 real scan sits *at*
+  that floor rather than awkwardly on a line. The 9% figure is one synthetic
+  geometry, one sampling scheme, one resolution ratio; the monotonicity and the
+  one-sidedness are the robust parts. Nothing gates on the reading while the floor
+  is this high.
+- **Measuring that floor needs a sphere scored against itself, not an occluded
+  capture.** Occluding a watertight mesh does not work, and it is worth knowing
+  why before trying: Poisson closure over a hole in a *closed* object tracks the
+  true surface, so removing 205947 of 300000 samples left only 0.0003 of area
+  beyond one voxel and there was nothing invented to miss
+  (`band_false_negative_sweep.py`, retained and labelled inconclusive). What works
+  is deleting observations from a polar cap while leaving the mesh covering it, so
+  the invented fraction is known exactly from the cap angle.
 - Both surfaces ship: `mesh.ply` is the cropped result and `mesh_uncropped.ply`
   is what Poisson returned, so the crop is a checkable claim rather than a
   deletion. `reconstruct` also publishes the support measurement before and

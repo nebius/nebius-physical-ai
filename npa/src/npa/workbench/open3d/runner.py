@@ -394,29 +394,45 @@ def _sample_distances(o3d, cloud, vertices):
 #: Below this share of the pre-crop unsupported area lying past three voxels, what the
 #: crop removed is near-threshold surface rather than an extrapolated shell.
 #:
-#: Measured across three scenes: 0.0 on a watertight mesh sampled at roughly voxel
-#: spacing, 0.7297 on the partial demo scans, and 0.1012 on a real scan of a solid
-#: object with real holes. The two poles are three orders of magnitude apart and any
-#: boundary between them would do. The third is not: it sits on this one, so its reading
-#: is a coin toss and the `note` is advice rather than a finding. Treat a share within
-#: roughly a factor of two of this value as undecided and read the bands directly.
+#: This is a detector with a sensitivity floor, not a threshold between two clean
+#: populations, and both of its error directions have now been measured.
 #:
-#: A sweep of sample spacing from 0.50 to 5.45 voxels against a fixed voxel, on a
-#: watertight mesh so that fabrication could be measured against ground truth, produced
-#: no case where a correct surface read as a shell. Over that range the share tracked
-#: the area genuinely further than one voxel from the true surface to within 0.06
-#: absolute, while `unsupported_area_fraction` overstated it by up to 200-fold — 0.5659
-#: reported against 0.0027 actual.
+#: **It never over-calls fabrication.** A sweep of sample spacing from 0.50 to 5.45 voxels
+#: against a fixed voxel, on a watertight mesh so fabrication could be checked against
+#: ground truth, produced no case where a correct surface read as a shell. Over that range
+#: the share tracked the area genuinely further than one voxel from the true surface to
+#: within 0.06 absolute.
 #:
-#: The reverse error, a real shell reading as near-threshold, is open and cannot be closed
-#: the same way. It needs ground truth, and a watertight reference removes the failure
-#: mode: Poisson closure over a hole in a closed object tracks the true surface, so
-#: occluding 205947 of 300000 samples left only 0.0003 of area beyond one voxel and there
-#: was no invented surface to miss. A shell of the kind this crop exists for wraps an open
-#: scene, which has no watertight reference by definition.
+#: **It does under-call small fabrications, and below the floor it is confidently wrong
+#: rather than undecided.** On an icosphere scored against samples drawn from itself, with
+#: observations deleted from a polar cap of increasing size, the share is monotone in the
+#: invented fraction across two orders of magnitude, and the floor sits near 9 percent
+#: invented area: a cap fabricating 3.0 percent of the surface reports 0.041 and reads
+#: `near-threshold surface`. So a *low* reading does not mean the surface is clean. It means
+#: any fabrication is under roughly a tenth of the area. Read it as a lower bound on
+#: invented surface, never as a clean bill of health.
 #:
-#: This is still a reporting boundary and nothing gates on it. Deliberately so, while a
-#: case as close to it as Eagle exists.
+#: The one-sidedness is the useful property: the reading errs only towards saying less was
+#: invented than truly was.
+#:
+#: Two consequences for the numbers reported beside it. `unsupported_area_fraction` is not
+#: measuring fabrication at this threshold at all — a reconstruction with *zero* error,
+#: scored against the samples it was drawn from, measured 0.75126 unsupported. And its
+#: magnitude depends on how the scene was sampled, not only on the reconstruction: uniform
+#: random sampling leaves gaps well above the median nearest-neighbour spacing, so the
+#: per-triangle maximum lands further out. The 0.2055 figure recorded elsewhere in this
+#: module is specific to its sampling scheme and does not transfer to a differently
+#: sampled capture. The distance bands are what carry information.
+#:
+#: The floor of 9 percent is one synthetic geometry, one sampling scheme, one resolution
+#: ratio, and must not be quoted as universal. The monotonicity and the one-sidedness are
+#: the robust parts. The real scan measured at 0.1012 is therefore not an anomaly sitting
+#: awkwardly on a boundary: it is a scan of a solid object with modest real holes sitting
+#: where the sensitivity floor is, which is where it should sit.
+#:
+#: Nothing gates on this reading, and it stays that way while the floor is this high.
+#: Measurements: `evidence/open3d/band-validity-sweep.json` and the review lane's
+#: `program/review/evidence/verify_602_boundary.py`.
 FABRICATION_AREA_SHARE = 0.1
 
 
@@ -459,7 +475,10 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
                 "which is where a correct surface reconstructed from samples of this "
                 "spacing also falls. The crop may have removed correct geometry, and "
                 "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
-                "or 2.0, or pass 0, unless the tighter crop is wanted deliberately."
+                "or 2.0, or pass 0, unless the tighter crop is wanted deliberately. "
+                "This reading is a lower bound and not a clean bill of health: it "
+                "cannot see fabrication below roughly a tenth of the surface area, so "
+                "a small invented region reads exactly like none at all."
             )
         ),
     }

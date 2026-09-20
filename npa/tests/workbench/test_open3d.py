@@ -1088,13 +1088,17 @@ def test_crop_justification_is_silent_when_nothing_was_unsupported() -> None:
     assert result["vertex_fraction_removed"] == 0.0
 
 
-def test_a_real_scan_lands_on_the_boundary_and_that_is_recorded() -> None:
-    """The measured case that makes this a reporting aid and not a gate.
+def test_a_real_scan_sits_at_the_sensitivity_floor_not_on_an_arbitrary_line() -> None:
+    """Why the real scan lands where it does, which is not a coin toss.
 
-    A real scan of a solid object with real holes measured 0.1012 past three voxels as a
-    share of its unsupported area, against a boundary of 0.1. Nothing gates on the
-    reading, and this pins the fact that it is decided by the fourth decimal place so a
-    later change cannot quietly start trusting it.
+    A real scan of a solid object with modest real holes measured 0.1012 past three voxels
+    as a share of its unsupported area, against a boundary of 0.1. That looked like an
+    awkward coincidence until the review lane produced a sensitivity curve: the share is
+    monotone in the invented fraction, and the detector's floor sits near 9 percent
+    invented area. A scan of a solid object with modest holes belongs at that floor.
+
+    Pinned because nothing gates on the reading, and a later change must not quietly start
+    treating a value this close to the floor as decisive.
     """
 
     from npa.workbench.open3d.runner import (
@@ -1139,3 +1143,51 @@ def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() ->
     )
     assert reading["removed_surface_reads_as"] == "near-threshold surface"
     assert reading["unsupported_area_share_beyond_3_voxels"] < 0.001
+
+
+def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> None:
+    """The sensitivity floor, from the review lane's icosphere-scored-against-itself curve.
+
+    Caps of increasing size deleted from the observations of a sphere, with the mesh left
+    covering them, so the invented fraction is known exactly from the cap angle. The share
+    is monotone in it, and the floor is near 9 percent: a cap fabricating 3.0 percent of
+    the surface still reads `near-threshold surface`.
+
+    This is the error direction that matters for a reader. Below the floor the reading is
+    not undecided, it is confidently wrong, so a low value is a lower bound on invented
+    surface rather than a clean bill of health. The test exists so that framing cannot be
+    lost: if a future change made the reading fire on the 3 percent case it would also be
+    over-calling elsewhere, and if it stopped firing on the 9 percent case the floor moved.
+
+    Figures: review lane `program/review/evidence/verify_602_boundary.py`.
+    """
+
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(100000)
+
+    def reading(unsupported: float, beyond_3: float) -> dict:
+        return _crop_justification(
+            _support_block(
+                unsupported=unsupported, beyond_1_5=beyond_3 * 2, beyond_3=beyond_3
+            ),
+            0,
+            _Mesh(),
+        )
+
+    # Zero-error reconstruction: 0.75126 unsupported, and still correctly near-threshold.
+    # The headline fraction is not measuring fabrication at this threshold at all.
+    perfect = reading(0.75126, 0.00973)
+    assert perfect["removed_surface_reads_as"] == "near-threshold surface"
+
+    # Below the floor: genuinely invented surface that the reading misses.
+    for unsupported, beyond_3 in ((0.76106, 0.03149), (0.77010, 0.06375)):
+        missed = reading(unsupported, beyond_3)
+        assert missed["removed_surface_reads_as"] == "near-threshold surface"
+        assert "lower bound and not a clean bill of health" in missed["note"]
+
+    # At and above the floor it fires, and keeps firing.
+    for unsupported, beyond_3 in ((0.77602, 0.08187), (0.87790, 0.48395)):
+        caught = reading(unsupported, beyond_3)
+        assert caught["removed_surface_reads_as"] == "extrapolated shell"
