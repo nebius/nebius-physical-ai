@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from npa.orchestration.npa_workflow.cancellation import (
     assess_run_cancellation,
     reverify_active_cancellation,
@@ -79,6 +81,114 @@ def test_failed_controller_cancellation_cannot_become_an_ambient_absence_noop():
     assert not result.no_cancellation_needed
     assert result.detected_state == "VERIFICATION_UNAVAILABLE"
     assert "original controller absence" in result.errors[0]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "pending",
+        "submitted",
+        "starting",
+        "running",
+        "winding_down",
+        "recovering",
+        "retrying",
+        "cancelling",
+        "manifest_pending",
+    ],
+)
+def test_durable_nonterminal_job_absence_requires_reconciliation(status: str) -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [
+                {
+                    "key": "active-wave",
+                    "job_id": "701",
+                    "job_name": "paidf-runtime-active-wave",
+                    "status": status,
+                }
+            ],
+        }
+    )
+
+    result = assess_run_cancellation(
+        resolution, lookup=lambda *args, **kwargs: ManagedJobEvidence("absent")
+    )
+
+    assert result.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert not result.no_cancellation_needed
+    assert [record.job_id for record in result.absent_jobs] == ["701"]
+    assert result.active_jobs == []
+    assert len(result.errors) == 1
+    assert "durable state remains non-terminal" in result.errors[0]
+
+
+def test_winding_down_wave_without_job_id_is_unverified() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [{"key": "merge-output", "status": "winding_down"}],
+        }
+    )
+
+    result = assess_run_cancellation(resolution)
+
+    assert result.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert result.jobs == []
+    assert "WINDING_DOWN but has no managed-job ID" in result.errors[0]
+
+
+def test_mixed_terminal_and_nonterminal_job_absence_is_unverified() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [
+                {"key": "attempt-1", "job_id": "702", "status": "succeeded"},
+                {"key": "attempt-2", "job_id": "702", "status": "running"},
+            ],
+        }
+    )
+
+    result = assess_run_cancellation(
+        resolution, lookup=lambda *args, **kwargs: ManagedJobEvidence("absent")
+    )
+
+    assert result.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert "RUNNING" in result.errors[0]
+
+
+def test_unrecognized_durable_job_state_absence_is_unverified() -> None:
+    resolution = _resolution(
+        {
+            "status": "running",
+            "waves": [{"key": "future-state", "job_id": "704", "status": "pausing"}],
+        }
+    )
+
+    result = assess_run_cancellation(
+        resolution, lookup=lambda *args, **kwargs: ManagedJobEvidence("absent")
+    )
+
+    assert result.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert "PAUSING" in result.errors[0]
+
+
+def test_explicit_id_without_durable_active_claim_can_be_absent() -> None:
+    resolution = _resolution(
+        {"status": "", "waves": []},
+        manifest={"run_id": "paidf-runtime", "status": ""},
+    )
+
+    result = assess_run_cancellation(
+        resolution,
+        exact_job_id="703",
+        lookup=lambda *args, **kwargs: ManagedJobEvidence("absent"),
+    )
+
+    assert result.detected_state == "NO_ACTIVE_JOB"
+    assert result.no_cancellation_needed
+    assert [record.job_id for record in result.absent_jobs] == ["703"]
 
 
 def test_active_multistage_assessment_targets_every_nonterminal_job_once() -> None:

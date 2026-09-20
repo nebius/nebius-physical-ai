@@ -21,6 +21,7 @@ _NONTERMINAL = {
     "STARTING",
     "SUBMITTED",
     "RUNNING",
+    "WINDING_DOWN",
     "RECOVERING",
     "RETRYING",
     "CANCELLING",
@@ -77,6 +78,15 @@ class WorkflowJobRecord:
         }
 
 
+def _durable_unresolved_states(record: WorkflowJobRecord) -> list[str]:
+    states = sorted(
+        {normalize_workflow_state(item) for item in record.persisted_states if item}
+    )
+    if not states or all(is_terminal_workflow_state(state) for state in states):
+        return []
+    return states
+
+
 @dataclass
 class CancellationAssessment:
     """Cancellation decision made before any mutating SkyPilot call."""
@@ -109,8 +119,9 @@ def assess_run_cancellation(
     Root manifests predate runtime waves and may legitimately have no singular
     ``sky_job_id``.  The runtime ledger, per-step/per-stage records, and exact
     SkyPilot queue evidence are therefore considered together.  Provider/auth
-    unavailability remains an error; a successful exact lookup returning absence
-    is authoritative convergence.
+    unavailability remains an error. A successful exact lookup returning absence
+    is convergence only when durable state makes no contradictory non-terminal
+    claim for that identity.
     """
 
     records: dict[str, WorkflowJobRecord] = {}
@@ -149,7 +160,8 @@ def assess_run_cancellation(
                 and not runtime_waves
             )
             if (
-                cleaned_state in _NONTERMINAL
+                cleaned_state
+                and not is_terminal_workflow_state(cleaned_state)
                 and source != "root manifest"
                 and not child_uses_root_job
             ):
@@ -349,6 +361,13 @@ def assess_run_cancellation(
                 errors.append(
                     "original controller absence is unverified after failed cancellation; "
                     "recover the original caller state or use reconcile-controller"
+                )
+            elif durable_active := _durable_unresolved_states(record):
+                errors.append(
+                    f"managed job {record.job_id} is absent from the verified queue "
+                    "while durable state remains non-terminal or unrecognized "
+                    f"({', '.join(durable_active)}); reconcile the original "
+                    "controller before declaring cancellation complete"
                 )
         elif evidence.outcome == "unavailable":
             errors.append(
