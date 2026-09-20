@@ -353,8 +353,6 @@ __all__ = [
     "VlmProviderEvidence",
     "VlmRequestEvidence",
     "VlmStructuredResponse",
-    "LEGACY_RESULT_FILENAME",
-    "RESULT_FILENAME",
     "benchmark_result_uri_for",
     "benchmark_vlm_eval",
     "VlmLoopRollout",
