@@ -272,15 +272,71 @@ def _publish_manifest(
     }
 
 
+#: Attempts per object read. A truncated read from object storage is transient and
+#: retrying it costs one request; failing the stage costs the whole registration.
+FRAGMENT_READ_ATTEMPTS = 3
+
+
 def _load_manifest(input_path: str) -> RegistrationManifest:
-    try:
-        payload = json.loads(read_bytes_uri(uri_join(input_path, MANIFEST_FILENAME)))
-    except ValueError as exc:
-        raise Open3dError(
-            f"{uri_join(input_path, MANIFEST_FILENAME)} is not valid JSON; run "
-            "`npa workbench open3d prepare` against this prefix first"
-        ) from exc
-    return RegistrationManifest.model_validate(payload)
+    """Read the manifest, retrying a read that arrives unparseable.
+
+    Unlike the fragments, the manifest has no digest recorded ahead of it — it is
+    where the fragments' digests come from — so a retry here is guarded only by
+    JSON well-formedness and schema validation. That is weaker than a digest and
+    is the honest limit of this guard: it catches a stream that ended early,
+    because truncated JSON does not close, and it cannot detect a complete
+    document that is the wrong one. It is still worth doing, since without it a
+    single short read on a small file ends a registration that has not started.
+    """
+
+    uri = uri_join(input_path, MANIFEST_FILENAME)
+    failures: list[str] = []
+    for attempt in range(1, FRAGMENT_READ_ATTEMPTS + 1):
+        try:
+            return RegistrationManifest.model_validate(json.loads(read_bytes_uri(uri)))
+        except ValueError as exc:  # unparseable JSON, or schema rejection
+            failures.append(f"attempt {attempt}: {type(exc).__name__}")
+        except Exception as exc:  # transport-level: truncation, reset, timeout
+            failures.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+    raise Open3dError(
+        f"{uri} could not be read as a valid registration manifest after "
+        f"{FRAGMENT_READ_ATTEMPTS} attempts; run `npa workbench open3d prepare` "
+        "against this prefix first. " + "; ".join(failures)
+    )
+
+
+def _read_fragment(fragment, attempts: int = FRAGMENT_READ_ATTEMPTS) -> bytes:
+    """Read one scan, retrying until its bytes match the recorded digest.
+
+    A live run lost a `register` stage to a truncated read
+    (`IncompleteRead(5848412 bytes read, 276537 more expected)`) while `multiway`
+    read the same three fragments successfully seconds later. Nothing was wrong
+    with the stored object; the stream ended early.
+
+    Retrying is only safe because the digest is already known, so a retry cannot
+    smuggle in different data than the run was supposed to see: every attempt is
+    held to `fragment.sha256`, and bytes that do not match are discarded whether
+    they arrived truncated or intact. A store that has genuinely diverged from the
+    manifest still fails, after a bounded number of attempts rather than forever.
+    """
+
+    failures: list[str] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            payload = read_bytes_uri(fragment.uri)
+        except Exception as exc:  # transport-level: truncation, reset, timeout
+            failures.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+            continue
+        if sha256_bytes(payload) == fragment.sha256:
+            return payload
+        failures.append(
+            f"attempt {attempt}: digest mismatch ({len(payload)} bytes read)"
+        )
+    raise Open3dError(
+        f"fragment {fragment.id} could not be read as the bytes the manifest "
+        f"recorded at prepare time after {attempts} attempts; the manifest and the "
+        "stored scan disagree, or the transport kept truncating. " + "; ".join(failures)
+    )
 
 
 def _download_fragments(manifest: RegistrationManifest, root: Path) -> dict[str, str]:
@@ -290,12 +346,7 @@ def _download_fragments(manifest: RegistrationManifest, root: Path) -> dict[str,
     directory.mkdir(parents=True, exist_ok=True)
     paths: dict[str, str] = {}
     for fragment in manifest.fragments:
-        payload = read_bytes_uri(fragment.uri)
-        if sha256_bytes(payload) != fragment.sha256:
-            raise Open3dError(
-                f"fragment {fragment.id} no longer matches the digest recorded at "
-                "prepare time; the manifest and the stored scan disagree"
-            )
+        payload = _read_fragment(fragment)
         suffix = Path(urlparse(fragment.uri).path or fragment.uri).suffix
         local = directory / f"{fragment.id}{suffix}"
         local.write_bytes(payload)

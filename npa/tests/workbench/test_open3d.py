@@ -630,9 +630,111 @@ def test_download_refuses_a_scan_that_changed_since_prepare(
             "voxel_size": 0.05,
         }
     )
-    monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: b"rewritten")
-    with pytest.raises(Open3dError, match="no longer matches the digest"):
+    calls: list[str] = []
+
+    def rewritten(uri: str) -> bytes:
+        calls.append(uri)
+        return b"rewritten"
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", rewritten)
+    with pytest.raises(Open3dError, match="the manifest and the stored scan disagree"):
         runtime._download_fragments(manifest, tmp_path)
+    # A store that really has diverged must stop, not retry forever.
+    assert len(calls) == runtime.FRAGMENT_READ_ATTEMPTS
+
+
+def test_download_retries_a_truncated_read_rather_than_losing_the_stage(
+    monkeypatch, tmp_path
+) -> None:
+    """A live `register` stage died here while `multiway` read the same scans.
+
+    The stream ended early; the stored object was fine. Retrying is what the
+    fragment digest makes safe, so the stage should survive it.
+    """
+
+    manifest = RegistrationManifest.model_validate(
+        {
+            "fragments": [
+                _fragment("a", sha256_bytes(b"scan-a")),
+                _fragment("b", sha256_bytes(b"scan-b")),
+            ],
+            "voxel_size": 0.05,
+        }
+    )
+    reads: list[str] = []
+
+    def truncate_the_first_read(uri: str) -> bytes:
+        reads.append(uri)
+        if len(reads) == 1:
+            raise OSError("IncompleteRead(5848412 bytes read, 276537 more expected)")
+        return b"scan-a" if uri.endswith("a.ply") else b"scan-b"
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", truncate_the_first_read)
+    paths = runtime._download_fragments(manifest, tmp_path)
+    assert len(reads) == 3  # a truncated, a again, then b
+    assert Path(paths["a"]).read_bytes() == b"scan-a"
+    assert Path(paths["b"]).read_bytes() == b"scan-b"
+
+
+def test_download_retries_bytes_that_arrive_short_without_raising(
+    monkeypatch, tmp_path
+) -> None:
+    """Silently short bytes are the dangerous case: no exception, wrong geometry.
+
+    Registering a truncated point cloud would produce a plausible transform over
+    the wrong input, so the digest must reject it and the retry must recover.
+    """
+
+    manifest = RegistrationManifest.model_validate(
+        {
+            "fragments": [
+                _fragment("a", sha256_bytes(b"the whole cloud")),
+                _fragment("b", sha256_bytes(b"the other cloud")),
+            ],
+            "voxel_size": 0.05,
+        }
+    )
+    responses = [b"the whole", b"the whole cloud", b"the other cloud"]
+    monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: responses.pop(0))
+    paths = runtime._download_fragments(manifest, tmp_path)
+    assert responses == []
+    assert Path(paths["a"]).read_bytes() == b"the whole cloud"
+    assert Path(paths["b"]).read_bytes() == b"the other cloud"
+
+
+def test_download_names_every_failed_attempt_in_the_error(
+    monkeypatch, tmp_path
+) -> None:
+    """An operator triaging a flaky store needs to see what each attempt did."""
+
+    manifest = RegistrationManifest.model_validate(
+        {
+            "fragments": [
+                _fragment("a", sha256_bytes(b"scan-a")),
+                _fragment("b", sha256_bytes(b"scan-b")),
+            ],
+            "voxel_size": 0.05,
+        }
+    )
+    responses: list[bytes | Exception] = [
+        OSError("IncompleteRead(10 bytes read, 5 more expected)"),
+        b"short",
+        OSError("connection reset by peer"),
+    ]
+
+    def flaky(uri: str) -> bytes:
+        item = responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", flaky)
+    with pytest.raises(Open3dError) as failure:
+        runtime._download_fragments(manifest, tmp_path)
+    message = str(failure.value)
+    assert "attempt 1: OSError: IncompleteRead" in message
+    assert "attempt 2: digest mismatch (5 bytes read)" in message
+    assert "attempt 3: OSError: connection reset by peer" in message
 
 
 def test_download_keeps_the_readable_suffix(monkeypatch, tmp_path) -> None:
@@ -703,6 +805,53 @@ def test_manifest_read_error_names_the_command_that_writes_it(monkeypatch) -> No
     monkeypatch.setattr(runtime, "read_bytes_uri", lambda uri: b"<html>404</html>")
     with pytest.raises(Open3dError, match="open3d prepare"):
         runtime._load_manifest("s3://example-bucket/prepared")
+
+
+def test_manifest_read_retries_a_truncated_stream(monkeypatch) -> None:
+    """Fault injection in the built image found this gap the unit mocks missed.
+
+    A truncated read of the manifest ended a `register` stage before it started;
+    only the fragment reads were being retried.
+    """
+
+    good = json.dumps(
+        {
+            "fragments": [
+                _fragment("a", sha256_bytes(b"scan-a")),
+                _fragment("b", sha256_bytes(b"scan-b")),
+            ],
+            "voxel_size": 0.05,
+        }
+    ).encode()
+    responses: list[bytes | Exception] = [
+        OSError("IncompleteRead(5848412 bytes read, 276537 more expected)"),
+        good[: len(good) // 2],  # truncated JSON does not close
+        good,
+    ]
+
+    def flaky(uri: str) -> bytes:
+        item = responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", flaky)
+    manifest = runtime._load_manifest("s3://example-bucket/prepared")
+    assert responses == []
+    assert [fragment.id for fragment in manifest.fragments] == ["a", "b"]
+
+
+def test_manifest_read_stops_after_bounded_attempts(monkeypatch) -> None:
+    reads: list[str] = []
+
+    def always_bad(uri: str) -> bytes:
+        reads.append(uri)
+        return b"{"
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", always_bad)
+    with pytest.raises(Open3dError, match="after 3 attempts"):
+        runtime._load_manifest("s3://example-bucket/prepared")
+    assert len(reads) == runtime.FRAGMENT_READ_ATTEMPTS
 
 
 def test_runner_failure_surfaces_the_upstream_log_tail(tmp_path, monkeypatch) -> None:
