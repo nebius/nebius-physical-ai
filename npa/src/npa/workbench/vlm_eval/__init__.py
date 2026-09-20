@@ -522,6 +522,7 @@ __all__ = [
     "VlmEvalResult",
     "VlmFrameEvidence",
     "VlmJudgeComparisonReport",
+    "VlmJudgeComparisonRequest",
     "VlmJudgeError",
     "VlmJudgeOutcome",
     "VlmProviderEvidence",
