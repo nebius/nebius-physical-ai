@@ -1,0 +1,100 @@
+{
+  "tested_source": "33f670a5a6eda11e66c1737f3e41201f67702e49",
+  "published_head": "43e60003e633cd92b64e37c5577a976679eea964",
+  "identical_source_tree": "74979d8a2461ad5e2bfd2c4c2bb312e4322664fa",
+  "full_cpu_suite": {
+    "passed": 25399,
+    "skipped": 155,
+    "non_strict_xpassed": 1,
+    "failed": 0,
+    "errors": 0,
+    "seconds": 762.77,
+    "live_gpu_e2e_excluded": true,
+    "log_sha256": "d9d27b5542425a5a614ea7b237fb6e75c37b54a5e056c96cf4da8fb98eff69b0",
+    "independent_receipt_sha256": "cd1349bafd9b85c1328bf89f6f5dbbe62b021f8093406f9761f50be8bfd2cb6d"
+  },
+  "independent_boundary_controls": {
+    "pinned_skypilot_merges": 14,
+    "token_realms": 7,
+    "admitted_authority": 6,
+    "defaulting_get_cleanup": 16,
+    "original_boundaries": 11,
+    "verdict": "pass",
+    "receipt_sha256": "28e6bff2565be250c57d43abc36dcbc76ac4046473676ce27d185a2fd31adeca"
+  },
+  "real_kubernetes": {
+    "kind": "0.33.0",
+    "kubernetes": "1.35.8",
+    "containerd": "2.3.4",
+    "actual_kubectl_calls": 34,
+    "created_pods": 4,
+    "cases": [
+      {
+        "case": "public_digest_pull",
+        "status": "verified",
+        "pods_created": 1,
+        "cleanup_inventory_empty": true,
+        "cleanup_status": "verified"
+      },
+      {
+        "case": "exact_requested_node_placement",
+        "status": "verified",
+        "pods_created": 1,
+        "cleanup_inventory_empty": true,
+        "cleanup_status": "verified"
+      },
+      {
+        "case": "admitted_service_account_pull_secret",
+        "status": "verified",
+        "pods_created": 1,
+        "cleanup_inventory_empty": true,
+        "cleanup_status": "verified"
+      },
+      {
+        "case": "missing_service_account",
+        "status": "service_account_unverified",
+        "pods_created": 0,
+        "cleanup_inventory_empty": true,
+        "cleanup_status": "verified"
+      },
+      {
+        "case": "nonexistent_immutable_manifest",
+        "status": "image_pull_failed",
+        "pods_created": 1,
+        "cleanup_inventory_empty": true,
+        "cleanup_status": "verified"
+      },
+      {
+        "case": "host_success_missing_target_secret",
+        "status": "target_pull_unverified",
+        "pods_created": 0,
+        "cleanup_inventory_empty": true,
+        "operator_status": "verified",
+        "target_status": "pull_secret_unverified"
+      }
+    ],
+    "cleanup": "all probe Pods removed with observed UID preconditions; exact owned local cluster removed",
+    "independent_receipt_sha256": "2af3d9895fe70949022457350444ed8b865c4b1d9dd9b348c5d9026f3f055059",
+    "producer_receipt_sha256": "546f101e3e21b59f48c2e807cd38d331d1860b57e3621d2eefad818a97298926"
+  },
+  "security": {
+    "actual_scanner_regressions": "pass",
+    "base_candidate_blocking_findings": 0,
+    "trusted_policy_base": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
+    "receipt_sha256": "34b57a035f43aed59bced4a7bd785c6dbaf736624110f5b16eb1c5f690063f5a",
+    "confidentiality": "pass built-in patterns",
+    "gitleaks": "pass full branch range"
+  },
+  "limitations": [
+    "One local Kubernetes node and public Alpine image; no authenticated private-registry success claim.",
+    "The inherited pull-secret fixture has empty public auth data; no customer credential was used.",
+    "No Nebius target, GPU, multi-node, cold-cache or arbitrary admission-controller certification.",
+    "RuntimeClass-added placement remains typed unverified.",
+    "Current-head hosted CI and merge-queue integration remain required."
+  ],
+  "failed_candidates_retained": [
+    "Original host-only authority acceptance",
+    "Admitted authority/placement mismatch accepted by an intermediate candidate",
+    "Admitted IfNotPresent/Never policy accepted by an intermediate candidate"
+  ]
+}
