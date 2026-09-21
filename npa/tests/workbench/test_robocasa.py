@@ -2897,6 +2897,30 @@ def test_upload_output_rejects_different_commit_after_claim(
         )
 
 
+@pytest.mark.parametrize("mutation", ["foreign-object", "missing-claim"])
+def test_upload_output_rechecks_complete_prefix_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+    s3 = _TransactionalFakeS3()
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    result = {"ok": True}
+    uri = "s3://bucket/runs/complete"
+    capabilities.upload_output(tmp_path, uri, result)
+
+    if mutation == "foreign-object":
+        s3.objects["runs/complete/foreign.bin"] = (b"foreign", {})
+        message = "foreign objects"
+    else:
+        del s3.objects["runs/complete/_NPA_CLAIM.json"]
+        message = "not an owned resumable prefix"
+
+    with pytest.raises(RoboCasaError, match=message):
+        capabilities.upload_output(tmp_path, uri, result)
+
+
 def test_upload_output_rejects_nonempty_destination_before_staging(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

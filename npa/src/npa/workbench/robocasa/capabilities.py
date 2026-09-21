@@ -2700,7 +2700,19 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
         final_prefix,
         limit=population_limit,
     )
+    if not existing_keys <= allowed_keys:
+        raise RoboCasaError("RoboCasa output_uri contains foreign objects")
+    if existing_keys and claim_key not in existing_keys:
+        raise RoboCasaError("RoboCasa output_uri is not an owned resumable prefix")
     if complete_key in existing_keys:
+        _require_s3_object(
+            s3,
+            bucket,
+            claim_key,
+            digest_key="commit-sha256",
+            digest=commit_sha256,
+            byte_count=len(claim_body),
+        )
         _require_committed_s3_tree(
             s3,
             bucket,
@@ -2710,8 +2722,6 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
             final_keys=final_keys,
         )
         return
-    if existing_keys and claim_key not in existing_keys:
-        raise RoboCasaError("RoboCasa output_uri is not an owned resumable prefix")
     _put_s3_once(
         s3,
         bucket=bucket,
