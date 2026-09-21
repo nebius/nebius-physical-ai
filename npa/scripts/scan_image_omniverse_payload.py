@@ -15,6 +15,8 @@ image's filesystem and its layer history.
 Saved Docker and OCI archives must contain their complete manifest, config and
 layer graph. A successful export command alone does not establish completeness.
 The reader keeps metadata in memory and streams layer contents without extraction.
+Tarball JSON reports bind the exact outer archive through ``archive_sha256`` and
+``archive_bytes``, including padding or trailing bytes outside referenced members.
 
 Why it keys on payload signatures rather than the string "isaac"
 ---------------------------------------------------------------
@@ -38,6 +40,7 @@ registry.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -217,6 +220,8 @@ class ScanReport:
     image: str
     source: str
     digest: str | None = None
+    archive_sha256: str | None = None
+    archive_bytes: int | None = None
     entries_scanned: int = 0
     allowlisted_hits: list[str] = field(default_factory=list)
     payload_hits: list[dict[str, str]] = field(default_factory=list)
@@ -231,7 +236,7 @@ class ScanReport:
         return not self.payload_hits and not self.history_hits
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "format": "npa_restricted_payload_scan_v2",
             "image": self.image,
             "source": self.source,
@@ -251,6 +256,17 @@ class ScanReport:
             "allowlisted_paths_present": sorted(self.allowlisted_hits),
             "weight_shaped_paths": sorted(self.weight_shaped_paths),
         }
+        if self.source == "tarball":
+            if (
+                self.archive_sha256 is None
+                or re.fullmatch(r"[0-9a-f]{64}", self.archive_sha256) is None
+                or type(self.archive_bytes) is not int
+                or self.archive_bytes <= 0
+            ):
+                raise RuntimeError("Tarball scan report is missing its archive identity")
+            payload["archive_sha256"] = self.archive_sha256
+            payload["archive_bytes"] = self.archive_bytes
+        return payload
 
 
 def _require(tool: str) -> str:
@@ -443,10 +459,40 @@ def _iter_saved_image(fileobj, *, mode: str):
     _check_saved_image(documents, scanned_layers, sizes)
 
 
-def _iter_tarball(tarball: Path):
-    """Yield member names from a `docker save` tarball, including inside layer blobs."""
+@dataclass
+class _ArchiveIdentity:
+    sha256: str | None = None
+    size: int | None = None
+
+
+class _ArchiveDigestReader:
+    """Hash every archive byte as the saved-image parser consumes it."""
+
+    def __init__(self, handle):
+        self._handle = handle
+        self._digest = hashlib.sha256()
+        self.bytes_read = 0
+
+    def read(self, size=-1):
+        chunk = self._handle.read(size)
+        self._digest.update(chunk)
+        self.bytes_read += len(chunk)
+        return chunk
+
+    def hexdigest(self) -> str:
+        return self._digest.hexdigest()
+
+
+def _iter_tarball(tarball: Path, identity: _ArchiveIdentity | None = None):
+    """Yield saved-image paths and bind the complete outer archive bytes."""
     with tarball.open("rb") as handle:
-        yield from _iter_saved_image(handle, mode="r")
+        reader = _ArchiveDigestReader(handle)
+        yield from _iter_saved_image(reader, mode="r|*")
+        while reader.read(1024 * 1024):
+            pass
+    if identity is not None:
+        identity.sha256 = reader.hexdigest()
+        identity.size = reader.bytes_read
 
 
 def _iter_docker_save(image: str):
@@ -528,13 +574,15 @@ def scan(
     as a fast gate in front of an irreversible action, never as the proof itself -- the
     full scan is what the redistribution claim actually rests on.
     """
+    archive_identity: _ArchiveIdentity | None = None
     if docker_image is not None:
         report = ScanReport(image=docker_image, source="local-docker-stream")
         entries = () if history_only else _iter_docker_save(docker_image)
         history = _local_image_history(docker_image)
     elif tarball is not None:
         report = ScanReport(image=str(tarball), source="tarball")
-        entries = _iter_tarball(tarball)
+        archive_identity = _ArchiveIdentity()
+        entries = _iter_tarball(tarball, archive_identity)
         history: list[str] = []
     else:
         assert image is not None
@@ -566,6 +614,9 @@ def scan(
         if why:
             report.history_hits.append({"command": command.strip()[:400], "why": why})
 
+    if archive_identity is not None:
+        report.archive_sha256 = archive_identity.sha256
+        report.archive_bytes = archive_identity.size
     return report
 
 
@@ -613,6 +664,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"image            {payload['image']}")
     if payload["digest"]:
         print(f"digest           {payload['digest']}")
+    if payload.get("archive_sha256"):
+        print(f"archive sha256   {payload['archive_sha256']}")
+        print(f"archive bytes    {payload['archive_bytes']}")
     if report.history_only:
         print("mode             history-only (layer commands; filesystem NOT scanned)")
     print(f"entries scanned  {payload['entries_scanned']}")

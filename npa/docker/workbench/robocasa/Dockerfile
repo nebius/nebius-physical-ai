@@ -1,13 +1,13 @@
 # npa-robocasa: RoboCasa kitchen-task simulation as a first-class workbench tool.
 #
-# Built independently on the CUDA 12.4 base that the live-accepted RoboCasa BYOF
-# evidence used (nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04), NOT on the
-# purpose-built SONIC MuJoCo application image. RoboCasa and robosuite are
-# Apache-2.0; the pinned versions below match the accepted BYOF capability runs.
+# Built independently on the exact CUDA 12.4 base that the live-accepted
+# RoboCasa BYOF evidence used, NOT on the purpose-built SONIC MuJoCo application
+# image. RoboCasa and robosuite are Apache-2.0; their immutable revisions and
+# the reviewed Python closure below match the accepted capability path.
 #
 # What IS baked, and is fine to redistribute:
 #   * CUDA 12.4 Ubuntu 22.04 base
-#   * RoboCasa source at the pinned v1.0 tag (Apache-2.0)
+#   * RoboCasa source at the pinned commit (Apache-2.0)
 #   * robosuite at the pinned commit (Apache-2.0)
 #   * MuJoCo 3.3.1, Gymnasium 0.29.1, and the OSS Python closure
 #
@@ -16,26 +16,25 @@
 #     the documented download_kitchen_assets script under the operator's own
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
-ARG BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4
-FROM ${BASE_IMAGE}
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4
 
-ARG BASE_IMAGE
-ARG ROBOCASA_REPO_URL=https://github.com/robocasa/robocasa.git
-ARG ROBOCASA_REPO_REF=v1.0
-ARG ROBOSUITE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4
 ARG ROBOCASA_VERSION=0.1.1
 ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
-      npa.base_image="${BASE_IMAGE}" \
+      npa.base_image="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4" \
+      npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
+      npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
-      org.opencontainers.image.base.name="${BASE_IMAGE}" \
+      org.opencontainers.image.base.name="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04" \
       org.opencontainers.image.base.digest="sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1 \
+    ROBOCASA_SOURCE_COMMIT=8f3c96ec8d1bfcd8126cad2bca887da98d30e997 \
+    ROBOSUITE_SOURCE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
@@ -68,32 +67,40 @@ RUN apt-get update \
 
 WORKDIR /opt/robocasa
 
-# Pin the exact dependency closure from the live-accepted BYOF evidence.
-# RoboCasa requires Gymnasium 0.29.1. LeRobot's broad environment dependency
-# requests Gymnasium >=1.1.1, but exact-checkpoint ACT inference uses neither
-# LeRobot environment wrappers nor that newer API. Keep RoboCasa's known-good
-# pin and install only the LeRobot policy package here. Keep Torch/TorchVision
-# on the same 2.9/0.24 stack as the validated LeRobot 0.5.1 workflow image and
-# inside the wheel's declared upper bounds. Resolve those pins together with
-# Accelerate so pip never installs a CUDA 13 Torch stack first and leaves its
-# orphaned runtime packages behind.
-RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" wheel \
-    && python -m pip install --no-cache-dir \
-        "git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_COMMIT}" \
-        numpy==2.2.5 numba==0.61.2 scipy==1.15.3 mujoco==3.3.1 pygame Pillow \
-        "opencv-python>=4.9,<4.14" pyyaml pynput tqdm termcolor imageio \
-        "imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755" \
-        h5py lxml hidapi "gymnasium==0.29.1" huggingface_hub \
-        "fastapi==0.136.1" "uvicorn[standard]==0.38.0" "pydantic==2.13.4" \
-        "boto3==1.42.9" "httpx>=0.27" \
-        "datasets>=4.0.0,<5.0.0" "accelerate>=1.10.0,<2.0.0" \
-        "packaging>=24.2,<26.0" "einops>=0.8.0,<0.9.0" \
-        "draccus==0.10.0" "safetensors>=0.4.3,<1.0.0" \
-        "av>=15.0.0,<16.0.0" "jsonlines>=4.0.0,<5.0.0" \
-        "deepdiff>=7.0.1,<9.0.0" "diffusers>=0.27.2,<0.36.0" \
-        "pyserial>=3.5,<4.0" \
-        "torch==2.9.0" "torchvision==0.24.0" \
-    && python -m pip install --no-cache-dir --no-deps "lerobot==0.5.1" \
+# Install the reviewed CPython 3.12 linux/amd64 closure from hash locks generated
+# only against anonymous PyPI and PyTorch indexes. RoboCasa requires Gymnasium
+# 0.29.1. LeRobot's broad environment dependency requests Gymnasium >=1.1.1 and
+# opencv-python-headless, but exact-checkpoint ACT inference uses neither those
+# environment wrappers nor a second OpenCV provider. Install only the hash-bound
+# LeRobot policy package with --no-deps.
+COPY --chmod=0644 \
+    docker/workbench/robocasa/build-requirements.lock \
+    docker/workbench/robocasa/requirements.lock \
+    docker/workbench/robocasa/lerobot-requirements.lock \
+    /opt/robocasa/locks/
+
+RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
+        --disable-pip-version-check --no-cache-dir \
+        --index-url https://pypi.org/simple \
+        --require-hashes --only-binary=:all: \
+        -r /opt/robocasa/locks/build-requirements.lock \
+    && PIP_CONFIG_FILE=/dev/null python -m pip install \
+        --disable-pip-version-check --no-cache-dir \
+        --index-url https://pypi.org/simple \
+        --extra-index-url https://download.pytorch.org/whl/cu128 \
+        --require-hashes --no-build-isolation \
+        -r /opt/robocasa/locks/requirements.lock \
+    && PIP_CONFIG_FILE=/dev/null python -m pip install \
+        --disable-pip-version-check --no-cache-dir \
+        --index-url https://pypi.org/simple \
+        --require-hashes --only-binary=:all: --no-deps \
+        -r /opt/robocasa/locks/lerobot-requirements.lock \
+    && PIP_CONFIG_FILE=/dev/null python -m pip install \
+        --disable-pip-version-check --no-cache-dir \
+        --index-url https://pypi.org/simple \
+        --no-build-isolation --no-deps \
+        "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_SOURCE_COMMIT}" \
+    && python -c "import json; from importlib.metadata import distribution; direct=json.loads(distribution('robosuite').read_text('direct_url.json')); vcs=direct.get('vcs_info', {}); assert vcs.get('vcs') == 'git' and vcs.get('commit_id') == '${ROBOSUITE_SOURCE_COMMIT}', direct" \
     && find /opt/robocasa/venv -type f \
         -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && rm -f \
@@ -109,18 +116,28 @@ RUN python -m pip install --no-cache-dir --upgrade pip "setuptools>=71,<81" whee
         -path '*/robosuite/scripts/__pycache__/render_dataset_with_omniverse*.pyc' \
         -print -quit)" \
     && python -c "import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == '/usr/bin/ffmpeg'" \
-    && python -c "import itertools, tempfile; from pathlib import Path; import imageio.v2 as imageio; import numpy as np; tmp = tempfile.TemporaryDirectory(); video = Path(tmp.name) / 'probe.mp4'; imageio.mimsave(video, [np.zeros((64, 64, 3), dtype=np.uint8), np.full((64, 64, 3), 255, dtype=np.uint8)], fps=2); reader = imageio.get_reader(video); frames = list(itertools.islice(reader, 3)); reader.close(); assert len(frames) == 2 and frames[0].shape == (64, 64, 3); tmp.cleanup()"
+    && python -c "import itertools, tempfile; from pathlib import Path; import imageio.v2 as imageio; import numpy as np; tmp = tempfile.TemporaryDirectory(); video = Path(tmp.name) / 'probe.mp4'; imageio.mimsave(video, [np.zeros((64, 64, 3), dtype=np.uint8), np.full((64, 64, 3), 255, dtype=np.uint8)], fps=2); reader = imageio.get_reader(video); frames = list(itertools.islice(reader, 3)); reader.close(); assert len(frames) == 2 and frames[0].shape == (64, 64, 3); tmp.cleanup()" \
+    && rm -rf /root/.cache/pip /tmp/pip-*
 
 # Install RoboCasa source (no deps; the closure above is pinned).
-RUN git clone --depth 1 --branch ${ROBOCASA_REPO_REF} \
-      ${ROBOCASA_REPO_URL} /opt/robocasa/source \
-    && python -m pip install --no-cache-dir --no-deps -e /opt/robocasa/source
+RUN git init /opt/robocasa/source \
+    && git -C /opt/robocasa/source remote add origin \
+      https://github.com/robocasa/robocasa.git \
+    && git -C /opt/robocasa/source fetch --depth 1 origin \
+      "${ROBOCASA_SOURCE_COMMIT}" \
+    && git -C /opt/robocasa/source checkout --detach FETCH_HEAD \
+    && test "$(git -C /opt/robocasa/source rev-parse HEAD)" = \
+      "${ROBOCASA_SOURCE_COMMIT}" \
+    && PIP_CONFIG_FILE=/dev/null python -m pip install \
+      --disable-pip-version-check --no-cache-dir \
+      --no-build-isolation --no-deps -e /opt/robocasa/source \
+    && rm -rf /opt/robocasa/source/.git /root/.cache/pip /tmp/pip-*
 
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
     && python -c "from importlib.metadata import metadata, version; from packaging.requirements import Requirement; requirements = [Requirement(raw) for raw in (metadata('lerobot').get_all('Requires-Dist') or [])]; incompatible = [str(req) for req in requirements if req.name in {'torch', 'torchvision'} and not req.specifier.contains(version(req.name), prereleases=True)]; assert not incompatible, incompatible" \
-    && python -c "from importlib.metadata import distributions; forbidden_names = {'cuda-bindings', 'cuda-pathfinder', 'cuda-toolkit', 'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; opencv_names = {'opencv-python', 'opencv-python-headless', 'opencv-contrib-python', 'opencv-contrib-python-headless'}; installed = {str(dist.metadata['Name']).lower() for dist in distributions()}; forbidden = sorted(installed & forbidden_names); opencv = sorted(installed & opencv_names); assert not forbidden, forbidden; assert opencv == ['opencv-python'], opencv" \
-    && python -c "import torch; assert torch.__version__ == '2.9.0+cu128'; assert torch.version.cuda == '12.8'" \
+    && python -c "from importlib.metadata import distributions; forbidden_names = {'cuda-bindings', 'cuda-pathfinder', 'cuda-toolkit', 'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; opencv_names = {'opencv-python', 'opencv-python-headless', 'opencv-contrib-python', 'opencv-contrib-python-headless'}; installed = {str(dist.metadata['Name']).lower() for dist in distributions()}; forbidden = sorted(name for name in installed if name in forbidden_names or name.endswith('-cu13')); opencv = sorted(installed & opencv_names); assert not forbidden, forbidden; assert opencv == ['opencv-python'], opencv" \
+    && python -c "import torch, torchvision; assert torch.__version__ == '2.9.0+cu128'; assert torch.version.cuda == '12.8'; assert torchvision.__version__ == '0.24.0+cu128'" \
     && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
 # Copy the shared workbench implementation into the image.

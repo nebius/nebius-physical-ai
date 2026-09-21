@@ -403,12 +403,22 @@ def test_scanner_allows_runtime_fetch_build_layers(command: str) -> None:
 def test_report_verdict_and_exit_semantics() -> None:
     report = scanner.ScanReport(image="example:tag", source="registry")
     assert report.clean
-    assert report.to_dict()["verdict"] == "clean"
-    assert report.to_dict()["scan_complete"] is True
+    payload = report.to_dict()
+    assert payload["verdict"] == "clean"
+    assert payload["scan_complete"] is True
+    assert "archive_sha256" not in payload
+    assert "archive_bytes" not in payload
 
     report.payload_hits.append({"path": "isaac-sim/kit/libcarb.so", "why": "carb"})
     assert not report.clean
     assert report.to_dict()["verdict"] == "restricted-payload-detected"
+
+
+def test_unbound_tarball_report_cannot_be_serialized() -> None:
+    report = scanner.ScanReport(image="/tmp/image.tar", source="tarball")
+
+    with pytest.raises(RuntimeError, match="missing its archive identity"):
+        report.to_dict()
 
 
 @pytest.mark.parametrize(
@@ -515,6 +525,53 @@ def test_oci_layout_tarball_scans_root_level_blob_layers(tmp_path: Path) -> None
 
     assert "isaac-sim/kit/libcarb.so" in paths
     assert scanner.classify_path("isaac-sim/kit/libcarb.so")
+
+
+def test_tarball_report_binds_every_outer_archive_byte(tmp_path: Path) -> None:
+    archive = tmp_path / "image.tar"
+    original = _tar_bytes(_saved_image_members("docker")) + b"reviewed-trailer"
+    archive.write_bytes(original)
+
+    payload = scanner.scan(None, archive).to_dict()
+
+    assert payload["archive_sha256"] == hashlib.sha256(original).hexdigest()
+    assert payload["archive_bytes"] == len(original)
+    assert payload["source"] == "tarball"
+
+    changed = original + b"-changed"
+    archive.write_bytes(changed)
+    changed_payload = scanner.scan(None, archive).to_dict()
+    assert changed_payload["archive_sha256"] == hashlib.sha256(changed).hexdigest()
+    assert changed_payload["archive_bytes"] == len(changed)
+    assert changed_payload["archive_sha256"] != payload["archive_sha256"]
+
+
+def test_tarball_cli_exposes_bound_archive_identity(tmp_path: Path) -> None:
+    archive = tmp_path / "image.tar"
+    report = tmp_path / "payload.json"
+    raw = _tar_bytes(_saved_image_members("docker"))
+    archive.write_bytes(raw)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCANNER),
+            "--tarball",
+            str(archive),
+            "--json",
+            str(report),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["archive_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert payload["archive_bytes"] == len(raw)
+    assert f"archive sha256   {payload['archive_sha256']}" in result.stdout
+    assert f"archive bytes    {len(raw)}" in result.stdout
 
 
 @pytest.mark.parametrize("format_name", ["docker", "oci"])

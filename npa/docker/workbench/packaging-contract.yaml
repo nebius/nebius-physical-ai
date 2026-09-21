@@ -194,17 +194,19 @@ images:
     ports: [8791]
     redistribution: public
     notes: >-
-      Bakes immutable Apache-2.0 RoboCasa source (pinned v1.0) and robosuite
-      (pinned commit) plus the exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / CUDA 12.4
-      closure from the live-accepted BYOF evidence. Ubuntu's system FFmpeg
-      replaces the imageio-ffmpeg wheel-bundled static executable, and the
-      unused Robosuite Omniverse rendering helper is excluded in the dependency
-      layer. Kitchen assets (textures, fixtures, objects) are NOT baked and
-      download at run time under the operator's own network access. No model
-      weights, credentials, or accepted terms are baked. Built-image byte/layer
-      scanning is mandatory before publication. Workflow toolRefs are service
-      clients and therefore run in the standard task image; this service image
-      grants no passwordless sudo.
+      Bakes immutable Apache-2.0 RoboCasa source at
+      8f3c96ec8d1bfcd8126cad2bca887da98d30e997 and robosuite at its pinned
+      commit plus a uv-generated, hash-verified Python 3.12 linux/amd64 closure
+      on one digest-pinned CUDA 12.4 cuDNN development base. Ubuntu's system
+      FFmpeg replaces the imageio-ffmpeg wheel-bundled static executable, and
+      the unused Robosuite Omniverse rendering helper is excluded in the same
+      dependency layer. Kitchen assets (textures, fixtures, objects) are NOT
+      baked and download at run time under the operator's own network access.
+      No model weights, credentials, or accepted terms are baked. The local
+      build script cannot publish; built-image payload, complete-byte, Trivy,
+      SBOM, and real-GPU gates remain mandatory before publication. Workflow
+      toolRefs are service clients and therefore run in the standard task
+      image; this service image grants no passwordless sudo.
   openarm:
     dockerfile: openarm/Dockerfile
     isaac_runtime_fetch: true

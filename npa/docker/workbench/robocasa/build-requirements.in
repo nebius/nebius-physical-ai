@@ -1,0 +1,4 @@
+# Build backends needed before the hash-locked runtime closure is installed
+# without build isolation. Versions also appear in requirements.in.
+setuptools==80.9.0
+wheel==0.45.1
