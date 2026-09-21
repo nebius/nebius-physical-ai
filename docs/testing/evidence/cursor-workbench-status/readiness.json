@@ -1,7 +1,9 @@
 {
-  "schema": "npa.public-pr-readiness/v1",
-  "snapshot_utc": "2026-09-21T02:07:59.226812+00:00",
-  "tracked_pr_count": 49,
+  "schema": "npa.public-pr-readiness/v2",
+  "snapshot_utc": "2026-09-21T04:23:43.973863+00:00",
+  "required_checks_verified_at": "2026-09-21T04:24:15.628677+00:00",
+  "tracked_open_count": 53,
+  "tracked_historical_count": 54,
   "queue_candidates": [
     579,
     581,
@@ -16,14 +18,19 @@
     621,
     628,
     629,
-    640
+    640,
+    650
   ],
+  "excluded_closed_experiment": 656,
   "limitations": [
-    "Snapshot of exact source commits; any changed head requires renewed review and CI.",
-    "49 historically tracked PRs include closed superseded #611; 48 remain open. #611 adds no delivered improvement.",
-    "Queue candidates still require the repository merge queue and integration checks. No PR was merged by this audit.",
-    "The audit reconciles retained reviews and did not repeat every earlier experiment.",
-    "GPU workload acceptance remains incomplete; CPU reviews do not establish physical correctness or visual quality."
+    "Point-in-time snapshot; later source changes require renewed checks and review.",
+    "The15 candidates have accepted scoped review and applicable evidence; required repository merge-queue integration still applies.",
+    "No PR has been merged by this audit.",
+    "The53 open PRs include adopted work; this is not53 newly created PRs in this turn or53 merge-ready PRs.",
+    "GPU execution and quality acceptance are separate. No blanket GPU or calibrated-VLM pass is claimed.",
+    "Closed superseded #611 and closed experimental #656 are not delivered improvements.",
+    "Stack acceptance is against its present feature base, not current main.",
+    "Historical public proof links retain their original source scope; they are not automatically evidence for the newest head."
   ],
   "prs": [
     {
@@ -31,94 +38,110 @@
       "url": "https://github.com/nebius/nebius-physical-ai/pull/579",
       "title": "Bound Workbench I/O concurrency and preserve downloads on failure",
       "source_commit": "dcc530d9adea4fbec2f656af6f64bddcc57d507c",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 19,
+        "SKIPPED": 3
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SKIPPED": 3,
-        "SUCCESS": 19
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 581,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/581",
       "title": "Report a group-writable checkout once instead of 428 scan failures",
       "source_commit": "f0e2ccfe8fa6fded22dcafb06260e8597959d59c",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/581#issuecomment-5747157850"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 584,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/584",
       "title": "Add evo trajectory evaluation BYOF workflow",
       "source_commit": "8c6bb6b4190610711f410a7bb29e077c9a84b9c7",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/899caeab007bd2d55221ff3bc7b195f02a828c11/docs/testing/evidence/evo-proof/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/synthetic-errors.json"
       ],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 593,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/593",
       "title": "feat(workbench): add SeedVR2 video restoration",
       "source_commit": "b8d9c9c56d8adc2ec76a5a41fd37e97e0069e2f4",
-      "status": "H100 diagnostic ran; objective failed; full acceptance incomplete",
-      "draft": true,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
-      "depends_on": [],
-      "public_proof_links": [],
-      "review_links": [],
       "state": "OPEN",
-      "ci_counts": {
+      "draft": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Acceptance incomplete",
+      "note": "Exact H100 workflows passed; frozen objective and annotation quality gates failed. Controlled 7B remediation in progress.",
+      "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
       },
-      "exact_review_status": "scope_not_fully_qualified",
-      "diagnostic_proof_path": "../seedvr-h100-diagnostic/README.md",
-      "diagnostic_verdict": "FAILED_OBJECTIVE_GATES"
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [],
+      "public_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/0db7db260bbc526061a26c3a16999f94e92b705f/docs/testing/evidence/seedvr-h100-exact-b8d9c9c5/README.md"
+      ],
+      "review_links": []
     },
     {
       "number": 594,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/594",
       "title": "Fail closed on corrupt workflow resume ledgers",
       "source_commit": "93d37b49429b89950eff47ee72406ecd0ddc6d1a",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/93d37b49429b89950eff47ee72406ecd0ddc6d1a/npa/tests/orchestration/npa_workflow/test_run_state.py",
@@ -127,43 +150,46 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/594#issuecomment-5747050271",
         "https://github.com/nebius/nebius-physical-ai/pull/594#issuecomment-5748738332"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 595,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/595",
       "title": "Fix RoboCasa policy evidence alignment",
       "source_commit": "2a79cbd6eaa1ec10dec00485a35076ed34ff07e9",
-      "status": "Full workload evidence incomplete",
-      "draft": true,
-      "required_checks_pass": false,
-      "applicable_ci_passes": false,
-      "depends_on": [],
-      "public_proof_links": [],
-      "review_links": [],
       "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 10,
-        "PENDING": 6,
+      "draft": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Acceptance incomplete",
+      "note": "Previous fresh container failed registration; candidate invalid. Source repair and new image required before real policy rollouts.",
+      "check_counts": {
+        "SUCCESS": 19,
         "SKIPPED": 3
       },
-      "exact_review_status": "scope_not_fully_qualified"
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [],
+      "public_proof_links": [],
+      "review_links": []
     },
     {
       "number": 596,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/596",
       "title": "Retain verifiable provenance for VLM evaluations",
       "source_commit": "93e92802e38004aee83cfbc84f01e871256984e1",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/93e92802e38004aee83cfbc84f01e871256984e1/docs/workbench/evidence/vlm-eval-provenance-review.md"
@@ -171,23 +197,25 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/596#issuecomment-5748487769",
         "https://github.com/nebius/nebius-physical-ai/pull/596#issuecomment-5748929562"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 597,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/597",
       "title": "Expose VLM provider and score-gate contradictions",
       "source_commit": "2995156d4e132d4eec4e4191391dbdb8ad430660",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-20260919",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         596
       ],
@@ -197,116 +225,128 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/597#issuecomment-5748507753",
         "https://github.com/nebius/nebius-physical-ai/pull/597#issuecomment-5748929624"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 602,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/602",
-      "title": "Add Open3D registration and reject reconstructed surface the scan never supported",
-      "source_commit": "81fae3d514cc64042d338163583185ff1cc49f46",
-      "status": "Six-stage CPU runtime verified; final review, viewer proof and current CI incomplete",
-      "draft": false,
-      "required_checks_pass": false,
+      "title": "Add Open3D registration and support-distance surface filtering",
+      "source_commit": "16012b1088579569a8755a1483c4c260c6af3973",
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Acceptance incomplete",
+      "note": "Support-distance source claims and viewer fixes under review. Earlier six-stage CPU workflow succeeded; latest source/image/viewer proof pending.",
+      "check_counts": {
+        "PENDING": 10,
+        "SKIPPED": 1
+      },
       "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [],
       "public_proof_links": [
-        "../open3d-standard-runtime-256c26bc/README.md"
+        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/ATTRIBUTION.md",
+        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/README.md",
+        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/manifest.json",
+        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/metrics.json",
+        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/vlm-calibration-summary.json",
+        "https://github.com/nebius/nebius-physical-ai/pull/602#issuecomment-5754870500"
       ],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/602#issuecomment-5748701073",
         "https://github.com/nebius/nebius-physical-ai/pull/602#issuecomment-5748953745"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 3,
-        "PENDING": 11,
-        "SKIPPED": 3,
-        "IN_PROGRESS": 2
-      },
-      "exact_review_status": "runtime_verified_final_acceptance_pending"
+      ]
     },
     {
       "number": 607,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/607",
       "title": "Let build provenance through the payload scan instead of refusing the image",
       "source_commit": "c0a125720906a2a7bc62e7d4ecb87e3af41fdfbd",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5747890546",
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5749283483",
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5751864095"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 608,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/608",
       "title": "Guard against module-level GPU imports in tests",
       "source_commit": "0d6b5bb08f67bc0912eba47a2c975e4f201acd69",
-      "status": "Exact review accepted; current CI and draft promotion pending",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": false,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Current CI / review closure",
+      "note": "Applicable hosted checks have not completed; retained scoped review does not replace required CI.",
+      "check_counts": {
+        "SUCCESS": 10,
+        "PENDING": 6,
+        "SKIPPED": 3
+      },
       "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/608#issuecomment-5748475166"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 8,
-        "PENDING": 6,
-        "SKIPPED": 3,
-        "IN_PROGRESS": 2
-      },
-      "exact_review_status": "accepted_exact_head_scoped_cpu"
+      ]
     },
     {
       "number": 609,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/609",
       "title": "Recover stage log attribution from durable waves",
       "source_commit": "e962e6fbd46093a4f4b84ce72bc259ac1959ab77",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/609#issuecomment-5748522986"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 610,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/610",
       "title": "Add AprilTag fiducial detection BYOF workflow",
       "source_commit": "c725a44af7ce222f295b0a54d7866d108c1eb070",
-      "status": "Full workload evidence incomplete",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "UNKNOWN",
+      "status": "Acceptance incomplete",
+      "note": "CPU detection evidence accepted; visual calibration failed. New completion-contract and harness controls under review; sealed holdout remains unopened.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [],
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/afc1059a211e967fce453ac3e39e0711a1f405e2/docs/workbench/evidence/apriltag-fiducial/README.md",
@@ -318,45 +358,48 @@
         "https://github.com/nebius/nebius-physical-ai/pull/610#issuecomment-5748121482",
         "https://github.com/nebius/nebius-physical-ai/pull/610#issuecomment-5748710907",
         "https://github.com/nebius/nebius-physical-ai/pull/610#issuecomment-5749938180"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "scope_not_fully_qualified"
+      ]
     },
     {
       "number": 611,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/611",
       "title": "Preserve active SkyPilot jobs during cleanup",
       "source_commit": "87df770d1cf74533bcc92643700eb15ca60be643",
-      "status": "Closed; superseded by #614; not counted as delivered",
+      "state": "CLOSED",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Closed: superseded by #614",
+      "note": "Excluded from open and delivered counts.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/611#issuecomment-5748062599"
-      ],
-      "state": "CLOSED",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "correct_but_superseded",
-      "closure_url": "https://github.com/nebius/nebius-physical-ai/pull/611#issuecomment-5754494671"
+      ]
     },
     {
       "number": 612,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/612",
       "title": "Retain source-frame sampling provenance for VLM requests",
       "source_commit": "d116cbbcb03aefb8190952a41a883b8df812aa63",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-consistency-20260919",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         597
       ],
@@ -367,66 +410,74 @@
         "https://github.com/nebius/nebius-physical-ai/pull/612#issuecomment-5748034323",
         "https://github.com/nebius/nebius-physical-ai/pull/612#issuecomment-5748038060",
         "https://github.com/nebius/nebius-physical-ai/pull/612#issuecomment-5749283574"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 613,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/613",
       "title": "Keep declarative workflow outputs visible",
       "source_commit": "54d61f256fe5efad0b279e109d503e4b179ab0c6",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/613#issuecomment-5748516084"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 614,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/614",
       "title": "Fail closed on contradictory cancellation state",
       "source_commit": "b1123f9128ce998c7bffcd9957a60da49474fa52",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/614#issuecomment-5747683344",
         "https://github.com/nebius/nebius-physical-ai/pull/614#issuecomment-5747723618"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 615,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/615",
       "title": "Fail closed on corrupt submission receipts",
       "source_commit": "eea74da2e0e084293e3facb4f2ed735b8c35b6d7",
-      "status": "Exact review accepted; current CI incomplete",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": false,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Current CI / review closure",
+      "note": "Applicable hosted checks have not completed; retained scoped review does not replace required CI.",
+      "check_counts": {
+        "SUCCESS": 11,
+        "SKIPPED": 3,
+        "PENDING": 4,
+        "IN_PROGRESS": 1
+      },
       "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
@@ -436,46 +487,49 @@
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749498033",
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749606072",
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749967699"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 10,
-        "PENDING": 6,
-        "SKIPPED": 3
-      },
-      "exact_review_status": "accepted_exact_head_scoped_cpu"
+      ]
     },
     {
       "number": 616,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/616",
       "title": "test: stop the unit suite writing into the operator's real ~/.npa",
       "source_commit": "d5798ab097f7e0e8970a2140ab0eea1bef01becd",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/616#issuecomment-5748231108",
         "https://github.com/nebius/nebius-physical-ai/pull/616#issuecomment-5751833498"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 617,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/617",
       "title": "Use backend-neutral VLM result artifact names",
       "source_commit": "e232f713f248b2fdb37c3bf0edeeef2ad7138020",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-sampling-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         612
       ],
@@ -485,23 +539,25 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/617#issuecomment-5748113625",
         "https://github.com/nebius/nebius-physical-ai/pull/617#issuecomment-5749294415"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 619,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/619",
       "title": "Unify managed-job terminality checks",
       "source_commit": "2e1805c5adadceac850724fa9edb20072a34e5c8",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-cancel-absence-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         614
       ],
@@ -509,67 +565,73 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/619#issuecomment-5748622249",
         "https://github.com/nebius/nebius-physical-ai/pull/619#issuecomment-5748687378"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 620,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/620",
       "title": "Guard workflow teardown allowance invariants",
       "source_commit": "788726b343a7bca1151d6eda5124941f7608a838",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-terminality-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         619
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/620#issuecomment-5748687442"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 621,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/621",
       "title": "Complete workflow image preflight across decision paths",
       "source_commit": "4369e175cdc7f1616fbea06ebbe1e8f1880f14e4",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/621#issuecomment-5748967847"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 622,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/622",
       "title": "Preserve paired VLM judge disagreements",
       "source_commit": "f4f4cb7aaf52702e49ec04a9d80f79a7b7d60d7c",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-artifact-name-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         617
       ],
@@ -579,23 +641,25 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/622#issuecomment-5749774685",
         "https://github.com/nebius/nebius-physical-ai/pull/622#issuecomment-5749839846"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 623,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/623",
       "title": "Sanitize workflow CLI failure output",
       "source_commit": "525007e2a431608d3f80185be7ac842f49b691bf",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-submission-receipt-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         615
       ],
@@ -604,23 +668,25 @@
         "https://github.com/nebius/nebius-physical-ai/pull/623#issuecomment-5749783144",
         "https://github.com/nebius/nebius-physical-ai/pull/623#issuecomment-5749810359",
         "https://github.com/nebius/nebius-physical-ai/pull/623#issuecomment-5749967769"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 624,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/624",
       "title": "feat: expose VLM benchmark confusion failures",
       "source_commit": "b88de92b03a57af82ebef03a8e72d41546f283e7",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-second-judge-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         622
       ],
@@ -631,91 +697,84 @@
         "https://github.com/nebius/nebius-physical-ai/pull/624#issuecomment-5749804561",
         "https://github.com/nebius/nebius-physical-ai/pull/624#issuecomment-5749853343",
         "https://github.com/nebius/nebius-physical-ai/pull/624#issuecomment-5749906014"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 625,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/625",
       "title": "feat(curobo): qualify auditable motion-planning image",
-      "source_commit": "b12c1005198d0a1f58fe646db5214c9c75f5c59a",
-      "status": "Full workload evidence incomplete",
+      "source_commit": "d0a606fc9803bbce93aaebdebb8dc8a53f75ec82",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Acceptance incomplete",
+      "note": "Real B200 run failed strict durable-metric audit. Source fix accepted; diagnostic and rebuilt-image GPU qualification incomplete.",
+      "check_counts": {
+        "SUCCESS": 3,
+        "PENDING": 12,
+        "SKIPPED": 3,
+        "FAILURE": 1
+      },
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "scope_not_fully_qualified"
+      "review_links": []
     },
     {
       "number": 626,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/626",
       "title": "Report workflow image preflight planning failures",
       "source_commit": "d15aa243913b5638b2ed39da80fcfbb114629e38",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-preflight-images-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
-        621,
         615,
+        621,
         623
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/626#issuecomment-5749977719",
         "https://github.com/nebius/nebius-physical-ai/pull/626#issuecomment-5750120879"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 627,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/627",
       "title": "Add blinded, order-balanced VLM preference audits",
       "source_commit": "46f50ad77777ca469d6782fe1101896d9999ec2f",
-      "status": "Accepted and ready for review; dependency #624 must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-confusion-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         624
       ],
       "public_proof_links": [
-        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/46f50ad77777ca469d6782fe1101896d9999ec2f/docs/workbench/evidence/vlm-blinded-preference-review.md"
+        "https://github.com/nebius/nebius-physical-ai/blob/2bf755b3129fd904ab69222b944ed1bfee525f62/docs/workbench/evidence/vlm-blinded-preference-review.md"
       ],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/627#issuecomment-5750424491"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head_for_parent_stack",
-      "hosted_evidence_limits": [
-        "The three pairs are three views of one scene and cannot estimate a general or operational preference rate.",
-        "One request per order cannot separate order effects from provider nondeterminism; two pairs changed confidence between orders and remain low-confidence escalations.",
-        "Three responses misread the visible 1.0 m scale as 10 m, and several auxiliary semantic or measurement-provenance claims exceed the pixels.",
-        "The uncapped regression proves omission of max_tokens in exact submitted requests; its 162\u2013279 completion-token responses do not empirically exercise a response longer than the removed 1,000-token cap.",
-        "Retained local evidence and the reviewed no-retry harness support exactly six attempts; provider-side logs were outside this review.",
-        "Visible preference and reviewer-label agreement do not establish model correctness, calibration, qualification, geometry accuracy, collision suitability, physical validity, or robot safety.",
-        "Ready means review-ready for parent stack #624; not eligible for the main merge queue. Revalidate source/head/base and CI after ordered retarget/rebase."
       ]
     },
     {
@@ -723,485 +782,588 @@
       "url": "https://github.com/nebius/nebius-physical-ai/pull/628",
       "title": "Fail closed on unreadable workflow stage status",
       "source_commit": "96b9147b9a3c4eb883db3fdf58b755821f313729",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/628#issuecomment-5751458874"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 629,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/629",
       "title": "Scan every page for workflow prefix outputs",
       "source_commit": "803115985c70dbfa31e14ffebc10756fbd49c2b3",
-      "status": "Ready for required merge queue",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/629#issuecomment-5751458813"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 630,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/630",
       "title": "Reuse complete outputs before recovery limits",
       "source_commit": "48220e837f79b004d80d7434c67c46ea99f1b77a",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-prefix-output-marker-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         629
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/630#issuecomment-5751458744"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 631,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/631",
       "title": "Keep pending workflow artifact lookups exact",
       "source_commit": "fa621c0051b3cb724f9140fe5b3044f4df4625ea",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-artifacts-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         613
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/631#issuecomment-5751458678"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 632,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/632",
       "title": "Block workflow output reuse on identity drift",
       "source_commit": "281fd30bf38ed84c61a94213b2b3177248365828",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
+      "base": "cursor/physicalai-workflows-valid-output-recovery-20260920",
+      "merge_state": "CLEAN",
+      "status": "Stack needs dependency / current-check review",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "CANCELLED": 15,
+        "SUCCESS": 14,
+        "SKIPPED": 5,
+        "FAILURE": 2
+      },
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         630
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/632#issuecomment-5751458598"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 633,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/633",
       "title": "fix(workflow): preserve provider status during output reuse",
       "source_commit": "16601ddbcade28af986f74ac6eb612c03d35b296",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-succeeded-identity-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         632
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/633#issuecomment-5751458455"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 634,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/634",
       "title": "Require visible terminal evidence in VLM rollout gates",
       "source_commit": "52cd330b3895c040288744536f5b782f92e105ee",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-preference-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         627
       ],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 635,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/635",
       "title": "fix(workflow): reconcile blocked waves before resume",
       "source_commit": "edfe23a7ab03abf5ddae827a9b9a404b80868186",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-provider-status-fidelity-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         633
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/635#issuecomment-5751458519"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 637,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/637",
       "title": "fix(workflow): resume verified output reuse after crash",
       "source_commit": "c3e91b8169ee00a25fda341981b700eb96ca78aa",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-block-relaunch-resume-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         635
       ],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751854319"
-      ],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      ]
     },
     {
       "number": 638,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/638",
       "title": "fix(skypilot): contain listener exit race",
       "source_commit": "f6fbad60918a1cd1766e4be73c9d48baffefb1da",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-block-relaunch-resume-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         635
       ],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 639,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/639",
       "title": "fix(workflow): fence completed replay identity",
       "source_commit": "abbe30736ac17dbdba5e7208bb52c21ef092b024",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-output-reuse-crash-resume-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         637
       ],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 640,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/640",
       "title": "fix(skypilot): link default ~/.kube/config into isolated HOME when KUBECONFIG is unset",
       "source_commit": "ca6a515d2562008d96570029ed5cbcc7b447fd71",
-      "status": "Ready for required merge queue",
-      "draft": false,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
-      "depends_on": [],
-      "public_proof_links": [],
-      "review_links": [],
       "state": "OPEN",
-      "ci_counts": {
+      "draft": false,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
       },
-      "exact_review_status": "accepted_exact_head",
-      "independent_review_path": "independent-cpu-reviews/pr640/README.md"
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
+      "depends_on": [],
+      "public_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/pull/640#issuecomment-5754558534"
+      ],
+      "review_links": []
     },
     {
       "number": 641,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/641",
       "title": "fix(workflow): bind image identity to references",
       "source_commit": "d28b270d42dc1f48c9127fd24f81d906e8c7ccae",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-completed-replay-identity-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         639
       ],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 643,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/643",
       "title": "fix(workflow): bind image selection identity",
       "source_commit": "7a6454add3a5464950a116a70f750b6c6dfb0f97",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-image-pin-binding-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         641
       ],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 14,
-        "SKIPPED": 4
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 644,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/644",
       "title": "fix(workflow): reject unmatched image overrides",
       "source_commit": "204e126aefe63d0a363bda9d6be9e1c35b0d919a",
-      "status": "Accepted; dependency must land first",
-      "draft": false,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
-      "depends_on": [
-        643
-      ],
-      "public_proof_links": [],
-      "review_links": [],
       "state": "OPEN",
-      "ci_counts": {
+      "draft": false,
+      "base": "cursor/physicalai-workflows-image-selection-binding-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
       },
-      "exact_review_status": "accepted_exact_head",
-      "independent_review_path": "independent-cpu-reviews/pr644/README.md"
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [
+        643
+      ],
+      "public_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/pull/644#issuecomment-5754558746"
+      ],
+      "review_links": []
     },
     {
       "number": 646,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/646",
       "title": "feat(ncore): qualify full COLMAP conversion for NRE",
       "source_commit": "fe85f6d755db0026703f1da54256a7f777cfc11e",
-      "status": "Changes and validation required",
-      "draft": true,
-      "required_checks_pass": false,
-      "applicable_ci_passes": false,
-      "depends_on": [],
-      "public_proof_links": [],
-      "review_links": [],
       "state": "OPEN",
-      "ci_counts": {
+      "draft": true,
+      "base": "main",
+      "merge_state": "UNKNOWN",
+      "status": "Acceptance incomplete",
+      "note": "Published source has failed checks; local remediation and end-to-end qualification remain pending.",
+      "check_counts": {
         "SUCCESS": 11,
         "FAILURE": 5,
         "CANCELLED": 4,
         "SKIPPED": 2
       },
-      "exact_review_status": "changes_required"
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [],
+      "public_proof_links": [],
+      "review_links": []
     },
     {
       "number": 647,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/647",
       "title": "Add audit-only rich visual VLM reviews",
       "source_commit": "c958ac2a2ba39c8e78778fccc9bde9129ccba34c",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-vlm-missing-terminal-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         634
       ],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 649,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/649",
       "title": "Studio: expose illustrative film-review cues",
       "source_commit": "788b4e6326c4f1ddf9e13a1c65d64606f2d00c97",
-      "status": "Accepted; dependency must land first",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": true,
+      "base": "codex/studio-smoother-edit-20260917",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SKIPPED": 4,
+        "SUCCESS": 11
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         558
       ],
       "public_proof_links": [],
-      "review_links": [],
+      "review_links": []
+    },
+    {
+      "number": 650,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/650",
+      "title": "fix(sim2real): gate submit preflight on all sim2real gated HF repos",
+      "source_commit": "47f7fea38fa5e7d6b2e162bab9ab4e032abc1e03",
       "state": "OPEN",
-      "ci_counts": {
-        "SKIPPED": 4,
-        "SUCCESS": 11
+      "draft": false,
+      "base": "main",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Retained exact-source review and applicable evidence accepted; latest required checks verified against GitHub Actions app15368.",
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
       },
-      "exact_review_status": "accepted_exact_head"
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
+      "depends_on": [],
+      "public_proof_links": [],
+      "review_links": []
+    },
+    {
+      "number": 651,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/651",
+      "title": "docs(sim2real): record Token Factory evaluator decision (NVIDIA TF models are text-only)",
+      "source_commit": "fd4e9cd3fbcb171358cbd833fe8d3b3b8798503e",
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Current CI / review closure",
+      "note": "Applicable hosted checks have not completed; retained scoped review does not replace required CI.",
+      "check_counts": {
+        "SUCCESS": 8,
+        "PENDING": 8,
+        "SKIPPED": 3
+      },
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [],
+      "public_proof_links": [],
+      "review_links": []
+    },
+    {
+      "number": 652,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/652",
+      "title": "fix(skypilot): retry ambiguous Kubernetes readiness evidence instead of failing the launch",
+      "source_commit": "cd196a85a8b603bb2f4897c9216f4c126efb2363",
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Current CI / review closure",
+      "note": "Applicable hosted checks have not completed; retained scoped review does not replace required CI.",
+      "check_counts": {
+        "SUCCESS": 9,
+        "PENDING": 6,
+        "SKIPPED": 3,
+        "IN_PROGRESS": 1
+      },
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [],
+      "public_proof_links": [],
+      "review_links": []
     },
     {
       "number": 653,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/653",
       "title": "fix(workflow): redact durable diagnostics",
-      "source_commit": "7e33da910371462b7ff87fc051cb63f315798fef",
-      "status": "Accepted; dependency must land first",
+      "source_commit": "c3f53eaa755a8ac0c89981d620b67499db2ec302",
+      "state": "OPEN",
       "draft": false,
-      "required_checks_pass": true,
+      "base": "cursor/physicalai-workflows-fail-redaction-20260920",
+      "merge_state": "CLEAN",
+      "status": "Accepted stack; ancestors must land first",
+      "note": "Current target is a feature branch. Land ancestors, retarget or rebase, and verify current source and integration checks before a main-queue claim.",
+      "check_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
       "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [
         623
       ],
       "public_proof_links": [],
-      "review_links": [],
-      "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
-      },
-      "exact_review_status": "accepted_exact_head"
+      "review_links": []
     },
     {
       "number": 654,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/654",
       "title": "Harden agent metadata credential request paths",
-      "source_commit": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
-      "status": "Exact review and live CPU proof accepted; current CI and draft promotion pending",
+      "source_commit": "09d0fa9f3693db57142b82d7d7caf192b72257e0",
+      "state": "OPEN",
       "draft": true,
-      "required_checks_pass": false,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Acceptance incomplete",
+      "note": "Test-only repair independently accepted; production source matches live-tested CPU producer. Exact-head CI pending.",
+      "check_counts": {
+        "PENDING": 9,
+        "IN_PROGRESS": 1,
+        "SKIPPED": 1
+      },
       "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
       "depends_on": [],
       "public_proof_links": [
-        "../agent-metadata-cpu-0666db15/README.md"
+        "https://github.com/nebius/nebius-physical-ai/blob/b83b862e1469d0bfa22ae7c8bffae11db6b1c9b3/docs/testing/evidence/agent-metadata-test-repair-09d0fa9f/README.md"
       ],
-      "review_links": [],
+      "review_links": []
+    },
+    {
+      "number": 659,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/659",
+      "title": "fix(skypilot): retain Nebius storage for Kubernetes jobs",
+      "source_commit": "f1751358cd21bf48384fd597550da4a29fbfebb4",
       "state": "OPEN",
-      "ci_counts": {
-        "SUCCESS": 10,
-        "IN_PROGRESS": 1,
-        "PENDING": 2,
+      "draft": true,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Acceptance incomplete",
+      "note": "Storage-admission fix independently accepted and exercised by a real B200 submission. CI pending; downstream planning failure is retained separately.",
+      "check_counts": {
+        "SUCCESS": 7,
+        "SKIPPED": 4,
+        "PENDING": 4,
+        "IN_PROGRESS": 1
+      },
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [],
+      "public_proof_links": [],
+      "review_links": []
+    },
+    {
+      "number": 678,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/678",
+      "title": "Fix Kimi-K3 hosted VLM completion contract",
+      "source_commit": "a26a868e3bed68d48eb6fd91638e1e1d3d048474",
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "merge_state": "BLOCKED",
+      "status": "Acceptance incomplete",
+      "note": "Kimi-K3 completion-contract repair is draft. Current CI and real hosted calibration remain pending.",
+      "check_counts": {
+        "SUCCESS": 4,
+        "PENDING": 12,
         "SKIPPED": 3
       },
-      "exact_review_status": "accepted_exact_head_scoped_cpu"
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
+      "depends_on": [],
+      "public_proof_links": [],
+      "review_links": []
     }
-  ],
-  "targeted_refresh_utc": "2026-09-21T03:02:07.842946+00:00",
-  "open_pr_count": 48,
-  "closed_superseded_prs": [
-    611
-  ],
-  "targeted_updates": {
-    "579": {
-      "observed_at": "2026-09-21T02:28:13.561616+00:00",
-      "reason": "Applicable current-head CI became terminal successful after independent exact-source acceptance."
-    },
-    "602": {
-      "observed_at": "2026-09-21T03:02:07.842946+00:00",
-      "reason": "Six-stage CPU runtime verified; final review, viewer proof and current CI incomplete"
-    },
-    "608": {
-      "observed_at": "2026-09-21T03:02:07.842946+00:00",
-      "reason": "Exact review accepted; current CI and draft promotion pending"
-    },
-    "615": {
-      "observed_at": "2026-09-21T03:02:07.842946+00:00",
-      "reason": "Exact review accepted; current CI incomplete"
-    },
-    "654": {
-      "observed_at": "2026-09-21T03:02:07.842946+00:00",
-      "reason": "Exact review and live CPU proof accepted; current CI and draft promotion pending"
-    },
-    "627": {
-      "observed_at": "2026-09-21T02:59:46.389955+00:00",
-      "reason": "Exact hosted proof and final docs-only head reviewed; promoted for parent #624 stack, not main queue."
-    }
-  },
-  "adjacent_browser_cursor_cohort": {
-    "included_in_original_49": false,
-    "queue_candidates": [
-      {
-        "number": 650,
-        "url": "https://github.com/nebius/nebius-physical-ai/pull/650",
-        "source_commit": "47f7fea38fa5e7d6b2e162bab9ab4e032abc1e03",
-        "applicable_ci_passes": true,
-        "required_checks_pass": true,
-        "ci_counts": {
-          "SUCCESS": 14,
-          "SKIPPED": 4
-        },
-        "independent_tests": 37,
-        "mutation_kills": 2,
-        "scope": "CPU browser/API wiring; no GPU claim"
-      }
-    ]
-  },
-  "combined_confirmed_queue_candidate_count": 15
+  ]
 }
