@@ -119,6 +119,14 @@ Live coverage is in `npa/tests/e2e/test_behavior_challenge_live.py`. Set
 arguments in an authorized simulator runtime. The test executes or recovers
 that exact partition and checks every assigned case has a completion receipt.
 
+Use the read-only internal `campaign-status` command with the same `--panel-uri`
+and `--output-path` to inspect durable case counts while a workflow runs. It
+distinguishes unclaimed, claimed, started, and complete records. A started record
+does not prove a worker is still alive; use workflow status with the run's exact
+isolated controller for that check. Storage errors fail the query instead of
+appearing as zero progress. Even when all records are complete, run the aggregate
+stage to verify original artifacts before comparing scores.
+
 ## Reusable panel identity
 
 A panel ID covers the pinned evaluator upstream revision and wrapper, registry

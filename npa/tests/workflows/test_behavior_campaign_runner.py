@@ -12,6 +12,7 @@ import pytest
 from npa.clients.storage import StoragePreconditionFailed
 from npa.workflows.behavior_challenge import campaign, campaign_runner, serving_identity
 from npa.workflows.behavior_challenge.case_store import CaseAlreadyStarted, CaseStore
+from npa.workflows.behavior_challenge.campaign_status import panel_status
 
 
 class MemoryStorage:
@@ -77,6 +78,53 @@ def _write_original(case, output):
             )
             container.mux(stream.encode(frame))
         container.mux(stream.encode())
+
+
+def test_status_reads_mixed_case_states_without_mutating_or_scoring(fixture):
+    panel, _, store, _ = fixture
+    claimed, started, complete = panel["cases"][:3]
+    store.claim(claimed, "worker-a")
+    store.start(store.claim(started, "worker-b"))
+    version = store.start(store.claim(complete, "worker-c"))
+    store.complete(version, {**complete, "q_score": 1.0})
+    before = dict(store.storage.objects)
+
+    result = panel_status(store.storage, panel, "s3://example-bucket/campaign")
+
+    assert result["counts"] == {
+        "unclaimed": 7,
+        "claimed": 1,
+        "started": 1,
+        "complete": 1,
+    }
+    assert not result["all_case_records_complete"]
+    assert not result["artifact_bytes_verified"]
+    assert not result["live_worker_state_verified"]
+    assert "q_score" not in json.dumps(result)
+    assert store.storage.objects == before
+
+
+def test_status_requires_aggregation_even_with_all_complete_records(fixture):
+    panel, _, store, _ = fixture
+    for case in panel["cases"]:
+        store.complete(store.start(store.claim(case, "worker")), case)
+
+    result = panel_status(store.storage, panel, "s3://example-bucket/campaign")
+
+    assert result["all_case_records_complete"]
+    assert result["aggregation_required_before_comparison"]
+    assert not result["artifact_bytes_verified"]
+
+
+def test_status_does_not_turn_storage_errors_into_unclaimed_cases(fixture, monkeypatch):
+    panel, _, store, _ = fixture
+
+    def denied(_uri):
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(store.storage, "read_bytes_with_etag", denied)
+    with pytest.raises(PermissionError, match="access denied"):
+        panel_status(store.storage, panel, "s3://example-bucket/campaign")
 
 
 def test_each_case_gets_a_fresh_managed_policy_context(fixture):

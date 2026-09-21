@@ -51,7 +51,12 @@ def _add_runtime_arguments(run):
 
 def _add_campaign_commands(commands):
     from .campaign_runner import aggregate_campaign_worker, evaluate_partition
+    from .campaign_status import observe_campaign
 
+    status = commands.add_parser("campaign-status", help="Read durable case progress")
+    status.add_argument("--panel-uri", required=True)
+    status.add_argument("--output-path", required=True)
+    status.set_defaults(handler=observe_campaign)
     worker = commands.add_parser(
         "campaign-worker", help="Internal resumable case worker"
     )
