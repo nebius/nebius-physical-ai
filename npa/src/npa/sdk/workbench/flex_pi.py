@@ -1,4 +1,4 @@
-"""SDK for flex-pi policy inference."""
+"""SDK for Flex-Pi policy inference and pinned public training."""
 
 from typing import Any
 
@@ -59,4 +59,32 @@ def infer(
     )
 
 
-__all__ = ["FlexPiRequest", "infer"]
+def train(*, output_path: str, mode: str = "train", num_workers: int = 4,
+          prefetch_factor: int = 4, optimizer: str = "default", run_id: str = "",
+          runtime_image: str = "", dry_run: bool = False) -> dict[str, Any]:
+    """Execute the fixed public four-GPU training and checkpoint-resume contract.
+
+    Args:
+        output_path: Authorized run-scoped S3 destination.
+        mode: Train with full validation/resume, or profile.
+        num_workers: Data loader workers per GPU.
+        prefetch_factor: Prefetched batches per worker.
+        optimizer: Default, foreach or fused AdamW execution.
+        run_id: Workflow provenance identifier.
+        runtime_image: Exact runtime image provenance.
+        dry_run: Resolve without fetching data or executing a model.
+    Returns:
+        Measured training acceptance result or the dry-run contract.
+    Raises:
+        FlexPiError: An input, execution, or acceptance gate fails.
+    """
+    from npa.workbench.flex_pi.training import TrainingRequest, run_training
+
+    return run_training(TrainingRequest(
+        output_path=output_path, mode=mode, num_workers=num_workers,
+        prefetch_factor=prefetch_factor, optimizer=optimizer, run_id=run_id,
+        runtime_image=runtime_image, dry_run=dry_run,
+    ))
+
+
+__all__ = ["FlexPiRequest", "infer", "train"]

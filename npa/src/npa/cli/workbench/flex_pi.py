@@ -1,4 +1,4 @@
-"""CLI for flex-pi world-action policy inference."""
+"""CLI for Flex-Pi policy inference and pinned public training."""
 
 from __future__ import annotations
 
@@ -19,9 +19,62 @@ from npa.workbench.flex_pi.runtime import (
 
 app = typer.Typer(
     name="flex-pi",
-    help="Flex-pi multi-stream world-action policy inference.",
+    help="Flex-Pi multi-stream policy inference and public training.",
     no_args_is_help=True,
 )
+
+
+@app.command("train")
+@json_stdout_contract
+def train_cmd(
+    output_path: str = typer.Option(..., "--output-path"),
+    mode: str = typer.Option("train", "--mode", help="Complete epoch and resume, or profile."),
+    num_workers: int = typer.Option(4, "--num-workers", min=0),
+    prefetch_factor: int = typer.Option(4, "--prefetch-factor", min=1),
+    optimizer: str = typer.Option("default", "--optimizer"),
+    run_id: str = typer.Option("", "--run-id"),
+    runtime_image: str = typer.Option("", "--runtime-image"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    output_format: str = typer.Option("json", "--output-format"),
+) -> None:
+    """Train the pinned real public YAM workload on exactly four GPUs.
+
+    Args:
+        output_path: Authorized run-scoped S3 artifacts and checkpoint prefix.
+        mode: Full train/validation/resume or the fixed profiling protocol.
+        num_workers: Loader workers per participating GPU.
+        prefetch_factor: Batches prefetched per loader worker.
+        optimizer: Default, foreach, or fused AdamW execution.
+        run_id: Workflow provenance identifier.
+        runtime_image: Exact runtime image provenance.
+        dry_run: Resolve the immutable contract without downloads or execution.
+        output_format: JSON output contract.
+    Returns:
+        None; prints one JSON result.
+    Raises:
+        typer.Exit: Validation, training or any acceptance gate fails.
+    """
+    from npa.workbench.flex_pi.training import TrainingRequest
+
+    _execute_training_request(output_format, TrainingRequest(
+        output_path=output_path, mode=mode, num_workers=num_workers,
+        prefetch_factor=prefetch_factor, optimizer=optimizer, run_id=run_id,
+        runtime_image=runtime_image, dry_run=dry_run,
+    ))
+
+
+def _execute_training_request(output_format, request):
+    from npa.workbench.flex_pi.training import run_training
+
+    try:
+        if output_format != "json":
+            raise ValueError("output-format must be json")
+        validate_write_path(request.output_path, tool="flex-pi")
+        result = run_training(request)
+    except (FlexPiError, ValueError) as exc:
+        typer.echo(f"flex-pi training failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
 
 
 @app.command("infer")
@@ -106,6 +159,13 @@ def terms_cmd() -> None:
                 "public_input": {
                     "dataset": "flex-pi/robotwin_3d",
                     "license": "not-declared",
+                    "runtime_fetch": True,
+                    "redistribution": False,
+                },
+                "public_training_input": {
+                    "dataset": "flex-pi/sort_utensils",
+                    "revision": "0780dd0a0b281df91abcef9434c4b3ac2757448c",
+                    "license": "CC-BY-4.0",
                     "runtime_fetch": True,
                     "redistribution": False,
                 },

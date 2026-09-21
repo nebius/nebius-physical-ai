@@ -153,6 +153,13 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Native LIBERO policy SFT, matching simulator evaluation, failure feedback, and guarded video candidates. Requires eight GPUs by default and runtime training dependency fetch.",
     ),
     SubmitLiveCase(
+        "flex-pi-b200-public-training.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="flex-pi",
+        notes="Four-GPU public YAM training with runtime-only immutable inputs, complete validation and fresh checkpoint resume; requires current NPA source overlay.",
+    ),
+    SubmitLiveCase(
         "flex-pi-b200-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

@@ -76,6 +76,10 @@ regexes = [
     # Public vhacdx 0.0.10 wheel SHA-256, verified against PyPI metadata and
     # downloaded bytes; the e00 prefix coincides with the identifier rule.
     '''e000a107aa02484572b533ca9e8a42ff96c78baa54b19dd65077a2867684377d''',
+    # Public dataset LFS SHA-256 from flex-pi/sort_utensils at
+    # 0780dd0a0b281df91abcef9434c4b3ac2757448c, left-wrist depth episode 107.
+    # Verified against anonymous immutable upstream metadata; coincidental e00.
+    '''e00cc33ab9e0dfdd4fb8cfc32fdc36afc9e34f30e080bc32bef287a5bf6003c2''',
     # Public Hugging Face revision of nvidia/Cosmos3-Super. The custom Nebius
     # identifier rule matches it only because the Git SHA happens to start e02.
     '''e0262be9d8f7586bc24c069a2aed2b665bdff266''',

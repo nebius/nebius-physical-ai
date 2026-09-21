@@ -16,6 +16,13 @@ The [command reference](../docs/cli/workbench.md) lists the installed tools;
 document on stdout (`--output-format json`, the default); runtime diagnostics
 go to stderr.
 
+[Flex-Pi public training](../docs/workbench/flex-pi.md#public-yam-training)
+uses a pinned real YAM dataset on four GPUs with effective batch 96. Run
+`npa workbench flex-pi train --output-path s3://<artifact-bucket>/<run-prefix>`
+inside the documented GPU workflow; `--mode profile` measures the same workload
+before a complete training epoch. Outputs include full validation and a fresh
+checkpoint-resume check. `--dry-run` returns the fixed contract without GPUs.
+
 The package also provides project provisioning, storage, artifact conversion,
 viewers, and an agent interface. Python access includes typed clients, shared
 implementation functions, and wrappers around CLI callbacks; available imports

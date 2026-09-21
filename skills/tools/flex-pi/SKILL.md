@@ -1,6 +1,6 @@
 ---
 name: flex-pi
-description: Run, package, validate, or troubleshoot flex-pi world-action policy inference in NPA, including its runtime-fetch assets, B200 and RTX PRO 6000 workflows, and action artifacts.
+description: Run, package, validate, or troubleshoot flex-pi inference and pinned public YAM training in NPA, including runtime-fetch assets, GPU workflows, and verified artifacts.
 ---
 
 # flex-pi
@@ -26,6 +26,26 @@ inference with an import check, random action fixture, or manifest-only smoke.
   built image before any registry write.
 
 ## Choose the regime and GPU
+
+For real training use `workbench.flex_pi.train` and the maintained
+`flex-pi-b200-public-training.yaml`. Its public `sort_utensils` dataset has
+136/115,620 train and 16/12,390 validation episodes/anchors, separate CC-BY-4.0
+rights, and the official YAM32 transforms. Require native four-GPU DDP,
+BF16, microbatch one, accumulation 24, and effective batch 96. The final
+36-sample update must preserve every anchor and use its actual denominator.
+Training requires the full Wan VideoDiT and official derived ActionDiT
+initialization; the checkpoint-only inference instructions below apply only to
+the released RoboTwin inference checkpoint.
+
+Freeze the bundled source/split manifests before profiling. Measure the
+six excluded startup/trace updates and three eight-update steady windows
+separately. Accept an execution-only optimization only after fixed-input
+numerical and synchronized model-state parity. Full acceptance additionally
+requires the complete epoch and validation split, finite gradients, non-regressed
+validation, immutable checkpoint readback and matching fresh-process continuation.
+Keep public fallback results explicitly non-comparable to any unverified private
+reference, regardless of their numerical throughput. Record source-overlay
+hashes separately from image qualification. See `docs/workbench/flex-pi.md`.
 
 Use the released action-only regime for policy-serving validation: video and
 DINO are observed, pointmap is absent, and all future-stream joint-denoising

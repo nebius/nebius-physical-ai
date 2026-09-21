@@ -730,6 +730,20 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.flex_pi.train": ToolEntry(
+        name="workbench.flex_pi.train",
+        description="Train the immutable public YAM utensil workload with four GPUs, full validation and verified fresh checkpoint resume.",
+        argv_template=[
+            "npa", "workbench", "flex-pi", "train",
+            "--output-path", "{{config.output_uri}}",
+            "--mode", "{{config.training_mode}}",
+            "--num-workers", "{{config.num_workers}}",
+            "--prefetch-factor", "{{config.prefetch_factor}}",
+            "--optimizer", "{{config.optimizer}}",
+            "--runtime-image", "{{config.runtime_image}}",
+            "--run-id", "{{run.id}}",
+        ],
+    ),
     "workbench.flex_pi.infer": ToolEntry(
         name="workbench.flex_pi.infer",
         description=(

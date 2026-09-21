@@ -1,7 +1,8 @@
 # flex-pi
 
-NPA packages [flex-pi](https://github.com/geyan21/flex-pi) as a single-GPU,
-runtime-fetch workbench for real robot-policy inference. The default path uses
+NPA packages [flex-pi](https://github.com/geyan21/flex-pi) for single-GPU
+robot-policy inference and four-GPU public YAM training with runtime-fetched
+inputs. The default inference path uses
 the released RoboTwin checkpoint in its action-only regime: three RGB cameras,
 a 14D robot state, and a language instruction produce a 32-step bimanual action
 chunk. It does not run a simulator and does not claim task success from one
@@ -259,3 +260,57 @@ the exact digest that passed those gates may be promoted to the supported tag.
 
 Cancel a live run before teardown and remove only resources created for that
 run. Do not destroy shared clusters or buckets.
+## Public YAM training
+
+`npa workbench flex-pi train` runs the pinned upstream YAM utensil task on
+exactly four GPUs. The same implementation is available through
+`npa.sdk.workbench.flex_pi.train`, the authenticated `/train` service route, and
+`workbench.flex_pi.train`. Use
+`workflows/testing/flex-pi-b200-public-training.yaml` with the current NPA source
+overlay, the standard `--runtime` submission mode, and the immutable r2 image.
+Its single-node NCCL configuration retains NVLink peer transfers while disabling
+NVLS and cuMem allocation paths that can stall an unprivileged four-GPU subset.
+Three verified collectives run before any asset downloads or training.
+Training hardware qualification is separate
+from the existing one-GPU inference qualification below.
+
+The real public dataset is
+[`flex-pi/sort_utensils`](https://huggingface.co/datasets/flex-pi/sort_utensils/tree/0780dd0a0b281df91abcef9434c4b3ac2757448c),
+licensed CC-BY-4.0. Its 152 episodes contain 128,010 source frames. The pinned
+upstream seed-42 split selects 136 episodes / 115,620 training anchors and
+16 episodes / 12,390 validation anchors. Every anchor is visited once; the last
+training update has 36 samples and uses its actual sample count for averaging.
+The three cameras supply 640×360 RGB and depth. The official YAM transform uses
+a 256×320 head view, 224×224 wrist views, a 384×320 composite, and 32-dimensional
+state/actions. Thirty-three observations yield nine encoded video frames and
+32 actions using the official frequency ratio and endpoint padding masks.
+
+Training uses the upstream `yam_unified_flex_3cam_32d_rel_1e-4` model and loss,
+Wan VideoDiT initialization plus the official derived ActionDiT backbone,
+BF16 native DDP, AdamW with a peak learning rate of `1e-4`, and effective batch
+96 (microbatch one × 24 accumulation steps × four GPUs). Mixed-attention
+gradient checkpointing is enabled. Model, tokenizer, VAE, DINOv3, and dataset
+bytes are fetched only at runtime under their separate upstream terms. The
+bundled manifests pin source revisions and every downloaded content hash.
+
+This public task is **non-comparable** to the private 5.66 samples/s reference:
+dataset identity, split, source dimensions, task mix, initialization, action
+representation and I/O layout differ. Its results always retain
+`reference_benchmark_beaten=false`.
+
+`--mode profile` performs 30 optimizer updates. The first six startup/profiler
+updates are excluded; three subsequent eight-update windows report sustained
+throughput. `--num-workers`, `--prefetch-factor`, and `--optimizer` expose
+execution choices for controlled comparisons. Compare the sample-order and
+initial/final model digests and numerical losses before accepting a candidate;
+the same settings alone do not prove parity. Full training requires a complete
+epoch, both complete initial/final validation passes, finite losses/gradients,
+synchronized model states, a non-regressed validation loss, and an uploaded
+checkpoint restored byte-for-byte into a fresh process. The continuation update
+must match the uninterrupted update, including its model digest and scheduler.
+The checkpoint also carries all four rank RNG files. Restored optimizer, RNG,
+accumulation and cursor fingerprints must match before continuation; normalization
+and workload hashes establish identity across separate processes and paths.
+Cold preparation, initialization, checkpointing and validation are reported
+separately from update throughput. No throughput or training acceptance is
+claimed until the real target completes these gates.

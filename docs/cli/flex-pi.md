@@ -5,11 +5,12 @@
 ```text
 Usage: npa workbench flex-pi [OPTIONS] COMMAND [ARGS]...
 
-Flex-pi multi-stream world-action policy inference.
+Flex-Pi multi-stream policy inference and public training.
 
 Options
 --help  Show this message and exit.
 Commands
+train  Train the pinned real public YAM workload on exactly four GPUs.
 infer  Run genuine action-only inference and publish verified artifacts.
 terms  Print separately applicable source, model, and public-input terms.
 ```
@@ -24,6 +25,7 @@ terms  Print separately applicable source, model, and public-input terms.
 
 | Command | Description |
 | --- | --- |
+| `train` | Train the pinned real public YAM workload on exactly four GPUs. |
 | `infer` | Run genuine action-only inference and publish verified artifacts. |
 | `terms` | Print separately applicable source, model, and public-input terms. |
 
@@ -31,7 +33,7 @@ terms  Print separately applicable source, model, and public-input terms.
 
 ```bash
 npa workbench flex-pi --help
-npa workbench flex-pi infer --help
+npa workbench flex-pi train --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `flex-pi`.
