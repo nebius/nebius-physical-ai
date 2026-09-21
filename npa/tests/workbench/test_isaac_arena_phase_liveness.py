@@ -172,7 +172,7 @@ def test_termination_escalates_only_for_owned_process(tmp_path):
 def _child_is_active(stat: Path) -> bool:
     try:
         return stat.read_text().split()[2] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         # Reaping can remove /proc/<pid>/stat at any point, including mid-read.
         return False
 
@@ -208,12 +208,14 @@ def test_child_probe_accepts_already_reaped_process(tmp_path):
     assert not _child_is_active(tmp_path / "stat")
 
 
-def test_child_probe_accepts_reaping_during_read(tmp_path, monkeypatch):
+@pytest.mark.parametrize("error_type", [FileNotFoundError, ProcessLookupError])
+def test_child_probe_accepts_reaping_during_read(tmp_path, monkeypatch, error_type):
     """Reproduce init removing process state between observation and reading.
 
     Args:
         tmp_path: Isolated process-stat fixture directory.
         monkeypatch: Simulates reaping at the read boundary.
+        error_type: Kernel error when the process disappears before or during read.
     Returns:
         None.
     Raises:
@@ -224,7 +226,7 @@ def test_child_probe_accepts_reaping_during_read(tmp_path, monkeypatch):
 
     def reap_before_read(path):
         path.unlink()
-        raise FileNotFoundError(path)
+        raise error_type(path)
 
     monkeypatch.setattr(Path, "read_text", reap_before_read)
     assert not _child_is_active(stat)
