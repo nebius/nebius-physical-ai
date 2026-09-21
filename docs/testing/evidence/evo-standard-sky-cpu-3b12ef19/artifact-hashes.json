@@ -1,0 +1,347 @@
+{
+  "artifacts": [
+    {
+      "artifact": "bounded_ape.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "bounded_ape.stdout.log",
+      "bytes": 461,
+      "sha256": "8da84a180d753c6375518737ad4ac88b666674cc4745486911bc5c1155c300df"
+    },
+    {
+      "artifact": "bounded_rpe.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "bounded_rpe.stdout.log",
+      "bytes": 245,
+      "sha256": "2c7ecf0b546aa78a63b570982c7e3be7adc35731c6b459db7b6d107413a19f59"
+    },
+    {
+      "artifact": "byof_repo_listing.txt",
+      "bytes": 1399,
+      "sha256": "df2e73b189df3823b81e081cf4b0e11589ab94f579a2d82b01367ca3377a119d"
+    },
+    {
+      "artifact": "capture-manifest.json",
+      "bytes": 4574,
+      "sha256": "4fa801703eaddeb97ede2731240bfd830a7d4f5b4652db52775a2df658833d47"
+    },
+    {
+      "artifact": "controls/bounded.tum",
+      "bytes": 6560,
+      "sha256": "22a75a0fa711c88a8cd65feb8b165e6e1ee2c1b2b2775379ea5ab81574cea439"
+    },
+    {
+      "artifact": "controls/drifting.tum",
+      "bytes": 6553,
+      "sha256": "fb2d7704beef00311810b86b441caa4aa6c667c8369b8a13ad3843a89f3d03a4"
+    },
+    {
+      "artifact": "controls/exact.tum",
+      "bytes": 6560,
+      "sha256": "f0a4f4aac90005cb99953a20aa5f252216ffbb5f02eadc633998800c3ba9e467"
+    },
+    {
+      "artifact": "controls/malformed.tum",
+      "bytes": 17,
+      "sha256": "b4d3354e01ab04d5dd5ba422eb7e73ab27dbaf61e4964cef8546e805deedca37"
+    },
+    {
+      "artifact": "controls/reference.tum",
+      "bytes": 6560,
+      "sha256": "f0a4f4aac90005cb99953a20aa5f252216ffbb5f02eadc633998800c3ba9e467"
+    },
+    {
+      "artifact": "drifting_ape.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "drifting_ape.stdout.log",
+      "bytes": 406,
+      "sha256": "bca135498618678df0aa6a47766363dd7a43534048c66588e280de886f62fd5c"
+    },
+    {
+      "artifact": "drifting_rpe.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "drifting_rpe.stdout.log",
+      "bytes": 245,
+      "sha256": "7628da42788063c892cce3ae26e7600e4f73b3bb6d9896fe05239cda5a52eee9"
+    },
+    {
+      "artifact": "evo_trajectory_evaluation.json",
+      "bytes": 17433,
+      "sha256": "50b9eced57b3c0494c46c30e5c0244c5c0b95904a52a6d8a721e8ef00368dd8e"
+    },
+    {
+      "artifact": "exact_ape.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "exact_ape.stdout.log",
+      "bytes": 399,
+      "sha256": "2e58dfec5a3602c8eb13cee767c53b2d1c6d69b83a29126d829d93b3f2882abe"
+    },
+    {
+      "artifact": "exact_rpe.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "exact_rpe.stdout.log",
+      "bytes": 245,
+      "sha256": "696a61cf807bcc0cabc167b12ec893fe3f0a093868e750f27f9e15a16f0a8239"
+    },
+    {
+      "artifact": "kitti_matched_plot.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "kitti_matched_plot.stdout.log",
+      "bytes": 817,
+      "sha256": "2b10a951c24128cbc40f9f942a9bf8d5fa21d4769e4f0b04185f2b93b24212c9"
+    },
+    {
+      "artifact": "kitti_orb_ape.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "kitti_orb_ape.stdout.log",
+      "bytes": 410,
+      "sha256": "59ba53278cd4554fdfea50f073cecda5d6295f577986e83ce99c63715aadd195"
+    },
+    {
+      "artifact": "kitti_orb_rpe.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "kitti_orb_rpe.stdout.log",
+      "bytes": 247,
+      "sha256": "1c46b2d79af891c4662b3a05cbf629a3a6f3438e25d5ec1ed00e215b94c56f24"
+    },
+    {
+      "artifact": "kitti_sptam_ape.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "kitti_sptam_ape.stdout.log",
+      "bytes": 415,
+      "sha256": "288e0b976de6a32554b29b67ef9308d79a24c4c0e3683d4d5e0a9120fc585028"
+    },
+    {
+      "artifact": "kitti_sptam_rpe.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "kitti_sptam_rpe.stdout.log",
+      "bytes": 248,
+      "sha256": "6b8ad832126eabedeedef65797769588a77865b6971b8100f63899749a67ef76"
+    },
+    {
+      "artifact": "malformed_ape.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "malformed_ape.stdout.log",
+      "bytes": 114,
+      "sha256": "5cfe04461131e3d8e6e4529d308b596bae2ac75980cec802e6b37dbda4d2d6ce"
+    },
+    {
+      "artifact": "npa_byof_summary.json",
+      "bytes": 16297,
+      "sha256": "1a193b1fb311d4483ece19329a841b6445afbe5b908e05b8ab53f95118aabd5f"
+    },
+    {
+      "artifact": "npa_observer_runtime_inventory.json",
+      "bytes": 5520,
+      "sha256": "7613fbe7e3a4011b3c8fade1b5733d760235a7d9280b826e51f76245470c9bb6"
+    },
+    {
+      "artifact": "npa_source_metadata.json",
+      "bytes": 133,
+      "sha256": "2ffec7290f3154bdea1ef39d5eb1f0bbabb28d66e1144ec1399a158733a9c5ab"
+    },
+    {
+      "artifact": "plots/bounded_ape_map.png",
+      "bytes": 62927,
+      "sha256": "260e8ee03069a2e0e5febca3b469bdb2e0f2527cc62df940b1a7090a65c33cab"
+    },
+    {
+      "artifact": "plots/bounded_ape_raw.png",
+      "bytes": 92612,
+      "sha256": "286f2023f2690ef9af25cfd821753302af1145b699b7608c92f42efc97e9f967"
+    },
+    {
+      "artifact": "plots/drifting_ape_map.png",
+      "bytes": 81065,
+      "sha256": "cfce344f659ffd501a5e6f126a8408f4539cdf9a3f2b7d67d29c28a7fc003589"
+    },
+    {
+      "artifact": "plots/drifting_ape_raw.png",
+      "bytes": 55665,
+      "sha256": "9b0c46b745e6f8870e303332efa97b0c777cd88e22c35eee5d7d40c69f6494bd"
+    },
+    {
+      "artifact": "plots/exact_ape_map.png",
+      "bytes": 63037,
+      "sha256": "a19faf6d58d356c9d75105d8bcc758cddfeb90d0d41fc38ce7b98da661865e76"
+    },
+    {
+      "artifact": "plots/exact_ape_raw.png",
+      "bytes": 50890,
+      "sha256": "668a9690402fcb1617d37c3852b69cf9cc442885c29919021cdce789e434dee2"
+    },
+    {
+      "artifact": "plots/kitti_matched_rpy.png",
+      "bytes": 221108,
+      "sha256": "900b938fdef813ce651034cd8937472ef57a80b52d94e2cdf443aa618fb28598"
+    },
+    {
+      "artifact": "plots/kitti_matched_trajectories.png",
+      "bytes": 106624,
+      "sha256": "16bd99fcdda281df03647967f9c172130414c4ceff56d221f92c92d19fbe73d5"
+    },
+    {
+      "artifact": "plots/kitti_matched_xyz.png",
+      "bytes": 131449,
+      "sha256": "2e1ae3b0c02f4778bc7f5b3366fe07fc46ef79da44d662d09a00007b0c87a9d7"
+    },
+    {
+      "artifact": "plots/kitti_orb_ape_map.png",
+      "bytes": 92806,
+      "sha256": "bf09f427ffdb97c6170b7d20eb9771f9a7504519632768c88fdfe02e6828a4cd"
+    },
+    {
+      "artifact": "plots/kitti_orb_ape_raw.png",
+      "bytes": 83623,
+      "sha256": "5c287f03667e46bf78ce655541e02219c9c8a05538b6781119ad4ba43cf4502d"
+    },
+    {
+      "artifact": "plots/kitti_orb_ape_review.png",
+      "bytes": 90602,
+      "sha256": "979ab3b371ed18245b54fdb0e345aee5855a1ff18a72a1b6848deea4d7bfb03c"
+    },
+    {
+      "artifact": "plots/kitti_sptam_ape_map.png",
+      "bytes": 102582,
+      "sha256": "696ec5a0333cef822f4b6ab088ab984984f1684417b3862da55d777b9d3a8dca"
+    },
+    {
+      "artifact": "plots/kitti_sptam_ape_raw.png",
+      "bytes": 76173,
+      "sha256": "231410bee6fa96e3730d5b831204edb000aef859c7afbc57f4e26fa2a3e4890d"
+    },
+    {
+      "artifact": "plots/kitti_sptam_ape_review.png",
+      "bytes": 99791,
+      "sha256": "fb42a9c1f6372e297e2fa03590faf40851b0ab827cfad8671478dd491ca92e0b"
+    },
+    {
+      "artifact": "plots/synthetic_controls_rpy.png",
+      "bytes": 48329,
+      "sha256": "1685b146781cb3274b1edea1b2f3fba809dc1e8c6fe6a2cb767b0ca80829301c"
+    },
+    {
+      "artifact": "plots/synthetic_controls_speeds.png",
+      "bytes": 40966,
+      "sha256": "5e6ee95e2c7995caccbfc529ec1fbc0285b217d2323f3ef66c49c8c6dc9d4240"
+    },
+    {
+      "artifact": "plots/synthetic_controls_trajectories.png",
+      "bytes": 84768,
+      "sha256": "399161ffcadc065b5d7028ea24fba68aba5d750c9458c5f4e38207942247bf04"
+    },
+    {
+      "artifact": "plots/synthetic_controls_xyz.png",
+      "bytes": 106334,
+      "sha256": "6ff9e4f339f0f4e9ad340d128fbac7b870cd3192020eeee52bc2d130944cc430"
+    },
+    {
+      "artifact": "results/bounded_ape.zip",
+      "bytes": 7107,
+      "sha256": "a53d8191fe9191a69c79dcd95d0e0e788396b22c6e2679e3f54c3a38d31177c2"
+    },
+    {
+      "artifact": "results/bounded_rpe.zip",
+      "bytes": 6744,
+      "sha256": "7be95daf0b89e8f4ba174087035aedca7c0a4569012748eba6331939daf9e5a0"
+    },
+    {
+      "artifact": "results/drifting_ape.zip",
+      "bytes": 7093,
+      "sha256": "c611fa838dec5027e3b0531638f64b5971759a41a109c2e6fe10e71ddab15d72"
+    },
+    {
+      "artifact": "results/drifting_rpe.zip",
+      "bytes": 6733,
+      "sha256": "c0c514ee0cabb14a350a28db3b8e5b678220d92ab8329d5ffaa86d02d61f991a"
+    },
+    {
+      "artifact": "results/exact_ape.zip",
+      "bytes": 7087,
+      "sha256": "6579eef886b98c539e7cca2228378f1829e12ebbb00167a40fe7b6300a970c6d"
+    },
+    {
+      "artifact": "results/exact_rpe.zip",
+      "bytes": 6731,
+      "sha256": "5565553b44b168460ac0c98a3e63b8d0f00c481d74126e964e2773d6b7bf8981"
+    },
+    {
+      "artifact": "results/kitti_orb_ape.zip",
+      "bytes": 37543,
+      "sha256": "7b94f04f9d46a1ec1d5a01b9b5cb57767c346a3409342e1e38252c46d5f65811"
+    },
+    {
+      "artifact": "results/kitti_orb_rpe.zip",
+      "bytes": 36919,
+      "sha256": "c55ec7f779ab020569b292ba0f6b303e89c2895f61cc6008b0ef17d4a2f01976"
+    },
+    {
+      "artifact": "results/kitti_sptam_ape.zip",
+      "bytes": 37546,
+      "sha256": "68e2fd341e550d43ec70fedab5893d9dab571a0c08a180ae630ee96f3f64a9b5"
+    },
+    {
+      "artifact": "results/kitti_sptam_rpe.zip",
+      "bytes": 36921,
+      "sha256": "f23aeedc70f6a32d1f52fb453dded99ba69a905f4d4e65cb2bb7df181b2ced2a"
+    },
+    {
+      "artifact": "solution_smoke_stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "solution_smoke_stdout.log",
+      "bytes": 12150,
+      "sha256": "2f788c5a8983f11c50629e0222edfed137ffa3032cb8a61a3aaec747e8537c7f"
+    },
+    {
+      "artifact": "synthetic_controls_plot.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "artifact": "synthetic_controls_plot.stdout.log",
+      "bytes": 973,
+      "sha256": "5c48e3374ac44afef8fb63d5c0644806519e4bee26b89a58548586c00db3eefb"
+    }
+  ],
+  "count": 68,
+  "schema": "npa.public-artifact-hashes.v1",
+  "scope": "Hashes of actual retained cloud outputs; original raw logs, transport metadata and inventory contents remain private."
+}

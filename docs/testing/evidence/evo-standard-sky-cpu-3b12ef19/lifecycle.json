@@ -1,0 +1,167 @@
+{
+  "actual_managed_execution": {
+    "actual_task_pod_events": 6,
+    "cpu_only": true,
+    "image_id_bound_to_qualified_graph": true,
+    "immutable_task_pod_identities": 1,
+    "node_placement_bound_to_selected_existing_cluster": true,
+    "post_bootstrap_inventory_observed": true,
+    "preflight_scope": "Separate accepted preflight source; its Pod is not the actual task Pod.",
+    "service_account_and_exact_pull_secret_observed": true,
+    "status": "SUCCEEDED"
+  },
+  "cleanup": {
+    "earlier_recipe_revision_run_controller_cleaned_separately": true,
+    "fresh_raw_read_observed_at": "2026-09-21T20:49:01.151094+00:00",
+    "original_incomplete_cleanup_preserved": true,
+    "owned_native_named_pods_services_remaining": 0,
+    "raw_get_responses": [
+      {
+        "method": "GET",
+        "response_body_sha256": "f9b60a2a1fca061d1d656a1ae3caf671ab4b8b34484b299fff8605ff76a1b8ce",
+        "role": "controller_pod_absence",
+        "status": 404
+      },
+      {
+        "method": "GET",
+        "response_body_sha256": "4caa3f9e2fe4719bfa1dde6c0c7e89a7d55a781273c57201228bee53d51ae511",
+        "role": "controller_service_absence_1",
+        "status": 404
+      },
+      {
+        "method": "GET",
+        "response_body_sha256": "949e17f84c73d54b6c1c209b895978979f959cc5e85c682f1c75f1b90aca9fec",
+        "role": "controller_service_absence_2",
+        "status": 404
+      },
+      {
+        "method": "GET",
+        "response_body_sha256": "44120f80345f94a5589e3d11b39bc02c1a023d6d2370607812734d561eb4cb9e",
+        "role": "task_pod_absence",
+        "status": 404
+      },
+      {
+        "method": "GET",
+        "response_body_sha256": "f14701875ee036a9e81ab8d40f63b675ed7a6bee685a10fb9a0e7efc4b237aca",
+        "role": "run_owned_pull_secret_absence",
+        "status": 404
+      },
+      {
+        "method": "GET",
+        "response_body_sha256": "290f7a96eb2decfbc0f5e1bfe294b0412108d6000158c244e036880a1c8817d7",
+        "role": "all_pods_metadata",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "response_body_sha256": "8a8d6ed1b38cadde0d71647f00841efe5c4580db04a30c064fb47e19f3741ac6",
+        "role": "all_services_metadata",
+        "status": 200
+      }
+    ],
+    "scope": "Seven separately timed read-only API responses corroborate cleanup. They are not backfilled responses from the earlier cleanup moment. Public fields omit all infrastructure names, UIDs and endpoints.",
+    "supported_scoped_controller_cleanup_verified": true,
+    "underlying_cluster_preserved": true,
+    "unrelated_controller_uids_preserved": 4
+  },
+  "image": {
+    "all_severity_secret_findings": 0,
+    "config_sha256": "e0900d26a4bd59d53cd2bbe5f619f434de833a0a5423c0384bb4efdc825efb07",
+    "fixable_critical_vulnerabilities": 0,
+    "index_sha256": "2d1e1c074e2b6f066bb49aaee1ac6bf5252ca48689312ee9c368941ca42f15a9",
+    "private_delivery_remote_blobs_rehashed": 16,
+    "public_image_push_performed": false,
+    "raw_complete_byte_findings": 54,
+    "raw_complete_byte_scan_valid": false,
+    "remote_blob_bytes": 220651662,
+    "remote_graph_matches_qualified_archive": true,
+    "reviewed_unresolved_findings": 0,
+    "runtime_manifest_sha256": "4bf6043b377ccabd72fe9d3fac71f0c09863e23b337a343e592cad424f6181df",
+    "sbom_note": "The retained raw SPDX document had one invalid enum value; a separately hashed one-value schema correction is identified in the qualified-image proof."
+  },
+  "independent_scoped_acceptance": {
+    "readiness_scope": "No merge or queue submission; publication still requires fresh exact-head CI and mergeability checks.",
+    "receipt_sha256": "a573662bca253b55485a1b4449694292b48c9d707e2f94624cd0a32fc397339f",
+    "verdict": "PASS_SCOPED_EVO_CPU_SOURCE_IMAGE_NUMERICS_AND_OBSERVED_LIFECYCLE"
+  },
+  "limits": [
+    "Synthetic metric controls and pinned upstream format compatibility; no new SLAM accuracy, navigation safety or physical robot claim.",
+    "No GPU or new hosted VLM evaluation.",
+    "The outer declarative BYOF graph remains plan-only; this result is the supported direct managed Sky CPU task, not nested Sky submission.",
+    "Current hosted CI, required merge-queue integration and PR readiness are separate gates."
+  ],
+  "private_receipt_hashes": {
+    "actual_pod_binding": "fe9c7cbd705237bb3861c22542be111df47c5ae863bd9257f2be1f7ef142a115",
+    "all_remote_blobs": "3754a65d1414eb3e0f1d16b8dbb315ad05a9eaa584620dd7689639fe9698ea0f",
+    "final_lifecycle": "d730523d943d20528eb9b6b7672e841f0f39e04ac0cb4704a39a1e542b231524",
+    "final_native_cleanup": "b4cc9ffc31cacbe6918b73168277be820d7e23b227c36fc489c478230e7455ef",
+    "fresh_raw_cleanup_readback": "967e6990d512fc7b05214d22d7b3c0b23ae8d5aeef4aa578dcc7911c7bcca233",
+    "numeric_recomputation": "dec1cf124b1b6af949e8921063627744f4969c51e0421f98a56ddb3756eaef0f",
+    "root_raw_cleanup_review": "f6e2d5d98a01845789b88d45ea077fb4832a64c5a3e66898c9c888b35de07c3d",
+    "supported_controller_cleanup": "a36cae14b4c56fe7d7ab42e105fa7cc85e01b14ab213813c2ff64601464e7f35"
+  },
+  "rendered_capture_delta": {
+    "amended_run_sha256": "566d04fb0d48ad94180ec27c4fd9a69cd8a9f67db0dd7b1bf6c0ba5c8e2b955b",
+    "capture_fragment_sha256": "d9dadbd741220635df0c938339d45b0c9b8b8e1dd7bae19866a7b0a5708ae55a",
+    "extra_read_only_inventory_outputs": 1,
+    "functional_smoke_unchanged": true,
+    "inventory_script_sha256": "1533223d76a511feb2cd7a326672dd2abfe2c04e3d475a2d2029bac74f78d24b",
+    "original_run_sha256": "a1b87cd10ca82854c7dd7137602d138f86f3373df26958b1da25fbf4ad34545a",
+    "shipped_profile_sha256": "9b9df739c8084f378e88da638b631ac7562fc56dd1a25b0adb77fd234fb86306",
+    "smoke_sha256": "fdc92b72966605921d09c954b49615a99e3e0064cff9f0fca2270a16daa51ca7",
+    "unchanged_functional_outputs": 62,
+    "unchanged_transport_outputs": 5
+  },
+  "runtime_inventory": {
+    "actual_cli_interpreters_observed": 1,
+    "added_distributions": {
+      "boto3": "1.43.99",
+      "botocore": "1.43.99",
+      "jmespath": "1.1.0",
+      "s3transfer": "0.19.2",
+      "urllib3": "2.8.0"
+    },
+    "changed_existing_distribution_versions": 0,
+    "evo_cli_bytes_equal_to_offline_image": true,
+    "inventory_sha256": "7613fbe7e3a4011b3c8fade1b5733d760235a7d9280b826e51f76245470c9bb6",
+    "package_versions": {
+      "Pillow": "12.3.0",
+      "boto3": "1.43.99",
+      "evo": "1.35.1",
+      "matplotlib": "3.10.9",
+      "numpy": "2.2.6",
+      "scipy": "1.15.3"
+    },
+    "python_version": "3.10.12",
+    "removed_distributions": 0,
+    "scope": "Observed before/after distributions; individual additions are not assigned to an unretained installer command. Module origins and CLI shebangs were checked privately, not inferred from a default interpreter.",
+    "verified_cli_commands": [
+      "evo_ape",
+      "evo_rpe",
+      "evo_traj"
+    ]
+  },
+  "schema": "npa.public-evo-sky-lifecycle.v1",
+  "source": {
+    "client_commit": "3b12ef19a4724cd16c1af521fd0cbe9dd95c55cb",
+    "client_tree": "d92bc51b95c89435153e68102bab58a8553ebfd3",
+    "equivalence_receipt_sha256": "2827b404c165fef83e37e98825593fb2e7edb33b7e5ba09274b8c38044e252d6",
+    "evo_submit_matrix_entry_ast_equal": true,
+    "image_recipe_commit": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+    "recipe_byof_workflow_cleanup_bytes_equal_to_recipe_revision": true,
+    "separate_pull_preflight_commit": "33f670a5a6eda11e66c1737f3e41201f67702e49",
+    "upstream_evo_commit": "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422",
+    "upstream_evo_version": "1.35.1"
+  },
+  "source_validation": {
+    "errors": 0,
+    "failures": 0,
+    "full_log_sha256": "b1d2869cea81abf051db7f9b85500c63a0f4bb9c9c35f38ef744a9b186935b53",
+    "full_receipt_sha256": "5c22e559aff6c0ea6825287c56e4c65dff0a155da6e219fadda68a0af546e74c",
+    "non_strict_xpassed": 1,
+    "scope": "Linux CPU suite excludes live/GPU markers and end-to-end tests; real managed CPU execution is independently evidenced here.",
+    "skipped": 155,
+    "source_clean_unchanged": true,
+    "uninterrupted_full_suite_passed": 25514
+  }
+}

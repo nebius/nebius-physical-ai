@@ -1,0 +1,130 @@
+{
+  "capture_only_inventory_outputs": 1,
+  "compatibility_fixture_scope": "Pinned upstream example trajectories; not acceptance against the synthetic metric thresholds or a new SLAM benchmark.",
+  "control_confusion_matrix": {
+    "false_negative": 0,
+    "false_positive": 0,
+    "true_negative": 2,
+    "true_positive": 2
+  },
+  "controls": {
+    "bounded": {
+      "expected": true,
+      "observed": true
+    },
+    "drifting": {
+      "expected": false,
+      "observed": false
+    },
+    "exact": {
+      "expected": true,
+      "observed": true
+    },
+    "malformed": {
+      "expected": false,
+      "observed": false
+    }
+  },
+  "decoded_pngs": 19,
+  "functional_outputs": 62,
+  "independent_error_recomputation": [
+    {
+      "control": "exact",
+      "count": 120,
+      "max_absolute_error": 4.510012084122993e-16,
+      "metric": "ape",
+      "rmse": 7.192261828829402e-16
+    },
+    {
+      "control": "exact",
+      "count": 110,
+      "max_absolute_error": 1.7798229048217483e-15,
+      "metric": "rpe",
+      "rmse": 8.702460453775017e-17
+    },
+    {
+      "control": "bounded",
+      "count": 120,
+      "max_absolute_error": 1.7737547541862853e-15,
+      "metric": "ape",
+      "rmse": 0.0035454338272704767
+    },
+    {
+      "control": "bounded",
+      "count": 110,
+      "max_absolute_error": 2.886579864025407e-15,
+      "metric": "rpe",
+      "rmse": 0.005949814273732503
+    },
+    {
+      "control": "drifting",
+      "count": 120,
+      "max_absolute_error": 1.7763568394002505e-15,
+      "metric": "ape",
+      "rmse": 0.44381160589956903
+    },
+    {
+      "control": "drifting",
+      "count": 110,
+      "max_absolute_error": 4.107825191113079e-15,
+      "metric": "rpe",
+      "rmse": 0.14287670678355574
+    }
+  ],
+  "independently_recomputed_synthetic_errors": 690,
+  "malformed_input_exit_code": 1,
+  "malformed_result_archive_produced": false,
+  "native_result_archives": 10,
+  "native_results": {
+    "bounded_ape": {
+      "count": 120,
+      "rmse": 0.0035454338272704316
+    },
+    "bounded_rpe": {
+      "count": 110,
+      "rmse": 0.00594981427373233
+    },
+    "drifting_ape": {
+      "count": 120,
+      "rmse": 0.4438116058995693
+    },
+    "drifting_rpe": {
+      "count": 110,
+      "rmse": 0.1428767067835559
+    },
+    "exact_ape": {
+      "count": 120,
+      "rmse": 7.175037147775919e-16
+    },
+    "exact_rpe": {
+      "count": 110,
+      "rmse": 7.454745723290291e-16
+    },
+    "kitti_orb_ape": {
+      "count": 4541,
+      "rmse": 1.303449714565045
+    },
+    "kitti_orb_rpe": {
+      "count": 4458,
+      "rmse": 1.250926005096538
+    },
+    "kitti_sptam_ape": {
+      "count": 4541,
+      "rmse": 3.7384879075826025
+    },
+    "kitti_sptam_rpe": {
+      "count": 4458,
+      "rmse": 2.7201316093183894
+    }
+  },
+  "rmse_unit": "metres",
+  "schema": "npa.public-evo-sky-metrics.v1",
+  "thresholds": {
+    "ape_translation_rmse_m_max": 0.05,
+    "minimum_matched_poses": 100,
+    "rpe_translation_rmse_m_max": 0.02
+  },
+  "total_retained_objects": 68,
+  "transport_outputs": 5,
+  "workload_status": "SUCCEEDED"
+}
