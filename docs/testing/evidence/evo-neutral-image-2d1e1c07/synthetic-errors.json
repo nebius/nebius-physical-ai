@@ -1,0 +1,4142 @@
+[
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 0,
+    "translation_error_m": 7.419912782459483e-17
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 1,
+    "translation_error_m": 1.1188630228279524e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 2,
+    "translation_error_m": 2.237726045655905e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 3,
+    "translation_error_m": 2.237726045655905e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 4,
+    "translation_error_m": 2.2887833992611187e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 5,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 6,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 7,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 8,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 9,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 10,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 11,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 12,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 13,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 14,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 15,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 16,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 17,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 18,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 19,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 20,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 21,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 22,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 23,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 24,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 25,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 26,
+    "translation_error_m": 8.955206467987463e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 27,
+    "translation_error_m": 8.955206467987463e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 28,
+    "translation_error_m": 8.900196549101993e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 29,
+    "translation_error_m": 8.920730087951354e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 30,
+    "translation_error_m": 8.90992886097537e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 31,
+    "translation_error_m": 8.903441835098303e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 32,
+    "translation_error_m": 8.960581419835649e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 33,
+    "translation_error_m": 8.968100940422724e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 34,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 35,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 36,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 37,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 38,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 39,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 40,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 41,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 42,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 43,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 44,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 45,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 46,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 47,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 48,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 49,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 50,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 51,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 52,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 53,
+    "translation_error_m": 2.2887833992611187e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 54,
+    "translation_error_m": 2.2887833992611187e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 55,
+    "translation_error_m": 2.2887833992611187e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 56,
+    "translation_error_m": 1.2412670766236366e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 57,
+    "translation_error_m": 1.1443916996305594e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 58,
+    "translation_error_m": 2.7755575615628914e-17
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 59,
+    "translation_error_m": 5.647850449853784e-17
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 60,
+    "translation_error_m": 1.1102230246251565e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 61,
+    "translation_error_m": 1.6711069443220838e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 62,
+    "translation_error_m": 2.237726045655905e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 63,
+    "translation_error_m": 3.3422138886441676e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 64,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 65,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 66,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 67,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 68,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 69,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 70,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 71,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 72,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 73,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 74,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 75,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 76,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 77,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 78,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 79,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 80,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 81,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 82,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 83,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 84,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 85,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 86,
+    "translation_error_m": 8.968100940422724e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 87,
+    "translation_error_m": 8.960581419835649e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 88,
+    "translation_error_m": 8.903441835098303e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 89,
+    "translation_error_m": 8.90992886097537e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 90,
+    "translation_error_m": 8.920730087951354e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 91,
+    "translation_error_m": 8.900196549101993e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 92,
+    "translation_error_m": 8.955206467987463e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 93,
+    "translation_error_m": 8.955206467987463e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 94,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 95,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 96,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 97,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 98,
+    "translation_error_m": 8.899114524108741e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 99,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 100,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 101,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 102,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 103,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 104,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 105,
+    "translation_error_m": 8.95090418262362e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 106,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 107,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 108,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 109,
+    "translation_error_m": 4.577566798522237e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 110,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 111,
+    "translation_error_m": 4.47545209131181e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 112,
+    "translation_error_m": 2.2887833992611187e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 113,
+    "translation_error_m": 2.2887833992611187e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 114,
+    "translation_error_m": 2.2887833992611187e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 115,
+    "translation_error_m": 2.237726045655905e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 116,
+    "translation_error_m": 1.1443916996305594e-16
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 117,
+    "translation_error_m": 1.3877787807814457e-17
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 118,
+    "translation_error_m": 6.938893903907228e-18
+  },
+  {
+    "control": "exact",
+    "metric": "ape",
+    "index": 119,
+    "translation_error_m": 7.419912782459483e-17
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 0,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 1,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 2,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 3,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 4,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 5,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 6,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 7,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 8,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 9,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 10,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 11,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 12,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 13,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 14,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 15,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 16,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 17,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 18,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 19,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 20,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 21,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 22,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 23,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 24,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 25,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 26,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 27,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 28,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 29,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 30,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 31,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 32,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 33,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 34,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 35,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 36,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 37,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 38,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 39,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 40,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 41,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 42,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 43,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 44,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 45,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 46,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 47,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 48,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 49,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 50,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 51,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 52,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 53,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 54,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 55,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 56,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 57,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 58,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 59,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 60,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 61,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 62,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 63,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 64,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 65,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 66,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 67,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 68,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 69,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 70,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 71,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 72,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 73,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 74,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 75,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 76,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 77,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 78,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 79,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 80,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 81,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 82,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 83,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 84,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 85,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 86,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 87,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 88,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 89,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 90,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 91,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 92,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 93,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 94,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 95,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 96,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 97,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 98,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 99,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 100,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 101,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 102,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 103,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 104,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 105,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 106,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 107,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 108,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "exact",
+    "metric": "rpe",
+    "index": 109,
+    "translation_error_m": 0.0
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 0,
+    "translation_error_m": 0.00028639975403400543
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 1,
+    "translation_error_m": 0.0007075126147491671
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 2,
+    "translation_error_m": 0.001662222011484737
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 3,
+    "translation_error_m": 0.0025397182880212044
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 4,
+    "translation_error_m": 0.003305067422000913
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 5,
+    "translation_error_m": 0.0039278208948749106
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 6,
+    "translation_error_m": 0.004383234058853141
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 7,
+    "translation_error_m": 0.004653249549264658
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 8,
+    "translation_error_m": 0.004727214142517379
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 9,
+    "translation_error_m": 0.004602313392949162
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 10,
+    "translation_error_m": 0.004283677019974891
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 11,
+    "translation_error_m": 0.0037841937713444717
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 12,
+    "translation_error_m": 0.0031240097901256004
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 13,
+    "translation_error_m": 0.0023298056596589975
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 14,
+    "translation_error_m": 0.0014341079514165024
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 15,
+    "translation_error_m": 0.00047897204612087365
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 16,
+    "translation_error_m": 0.0005373512699349103
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 17,
+    "translation_error_m": 0.0015097226284264708
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 18,
+    "translation_error_m": 0.002436872864338676
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 19,
+    "translation_error_m": 0.00327651469955198
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 20,
+    "translation_error_m": 0.0039943161456458135
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 21,
+    "translation_error_m": 0.004561238770987421
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 22,
+    "translation_error_m": 0.004954362332424246
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 23,
+    "translation_error_m": 0.005157730150419584
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 24,
+    "translation_error_m": 0.005162963522235941
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 25,
+    "translation_error_m": 0.00496959506517737
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 26,
+    "translation_error_m": 0.004585090309362011
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 27,
+    "translation_error_m": 0.004024562625994507
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 28,
+    "translation_error_m": 0.0033102067120372083
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 29,
+    "translation_error_m": 0.002470547921952556
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 30,
+    "translation_error_m": 0.0015399010078560047
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 31,
+    "translation_error_m": 0.0005639933059035915
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 32,
+    "translation_error_m": 0.0004865923882797064
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 33,
+    "translation_error_m": 0.0014527595892819289
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 34,
+    "translation_error_m": 0.0023699457992093316
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 35,
+    "translation_error_m": 0.003190379947037024
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 36,
+    "translation_error_m": 0.003880358715705691
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 37,
+    "translation_error_m": 0.00441229366262512
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 38,
+    "translation_error_m": 0.004765103987695283
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 39,
+    "translation_error_m": 0.0049249211226306796
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 40,
+    "translation_error_m": 0.004885597895959585
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 41,
+    "translation_error_m": 0.004648939507585214
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 42,
+    "translation_error_m": 0.004224624513821184
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 43,
+    "translation_error_m": 0.003629825632821437
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 44,
+    "translation_error_m": 0.0028885498810961954
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 45,
+    "translation_error_m": 0.0020307608567227673
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 46,
+    "translation_error_m": 0.0010917588975165387
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 47,
+    "translation_error_m": 0.00013799487094648757
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 48,
+    "translation_error_m": 0.0008932834839664942
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 49,
+    "translation_error_m": 0.001847107293528915
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 50,
+    "translation_error_m": 0.0027299386032518303
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 51,
+    "translation_error_m": 0.0035050619185093813
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 52,
+    "translation_error_m": 0.004141176921120531
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 53,
+    "translation_error_m": 0.004612713184863297
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 54,
+    "translation_error_m": 0.004900721368977773
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 55,
+    "translation_error_m": 0.004993599153821116
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 56,
+    "translation_error_m": 0.004887551799596677
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 57,
+    "translation_error_m": 0.004586728516056079
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 58,
+    "translation_error_m": 0.004103067064350244
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 59,
+    "translation_error_m": 0.003455807714712948
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 60,
+    "translation_error_m": 0.0026707333726420468
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 61,
+    "translation_error_m": 0.0017791585334886208
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 62,
+    "translation_error_m": 0.0008167615907108749
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 63,
+    "translation_error_m": 0.00018084877561317669
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 64,
+    "translation_error_m": 0.0011672923400638728
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 65,
+    "translation_error_m": 0.002108694744313083
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 66,
+    "translation_error_m": 0.0029660167532879365
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 67,
+    "translation_error_m": 0.0037049362859860515
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 68,
+    "translation_error_m": 0.004295887045176774
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 69,
+    "translation_error_m": 0.0047151941706823994
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 70,
+    "translation_error_m": 0.004946018482800824
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 71,
+    "translation_error_m": 0.004979026863601716
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 72,
+    "translation_error_m": 0.004812758738119471
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 73,
+    "translation_error_m": 0.004453701163480052
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 74,
+    "translation_error_m": 0.003916036859579134
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 75,
+    "translation_error_m": 0.003221099778014425
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 76,
+    "translation_error_m": 0.0023966393058886667
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 77,
+    "translation_error_m": 0.001476180311881471
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 78,
+    "translation_error_m": 0.0005038733691371187
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 79,
+    "translation_error_m": 0.000533414710042185
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 80,
+    "translation_error_m": 0.0015102201541850884
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 81,
+    "translation_error_m": 0.002437970743657921
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 82,
+    "translation_error_m": 0.0032729741178053984
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 83,
+    "translation_error_m": 0.003981379019840369
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 84,
+    "translation_error_m": 0.0045349875804106795
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 85,
+    "translation_error_m": 0.004911923840384515
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 86,
+    "translation_error_m": 0.005097415152418996
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 87,
+    "translation_error_m": 0.005084345983735215
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 88,
+    "translation_error_m": 0.004873543974873377
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 89,
+    "translation_error_m": 0.004473737825111036
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 90,
+    "translation_error_m": 0.0039012285600595084
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 91,
+    "translation_error_m": 0.0031792766121490554
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 92,
+    "translation_error_m": 0.0023373075707521966
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 93,
+    "translation_error_m": 0.0014104612026236679
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 94,
+    "translation_error_m": 0.00044824484019555206
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 95,
+    "translation_error_m": 0.0005842223813668418
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 96,
+    "translation_error_m": 0.0015320346652371835
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 97,
+    "translation_error_m": 0.002420633235157813
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 98,
+    "translation_error_m": 0.0032066455638079714
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 99,
+    "translation_error_m": 0.003857445030786743
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 100,
+    "translation_error_m": 0.004346524260073275
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 101,
+    "translation_error_m": 0.004654008208594196
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 102,
+    "translation_error_m": 0.004767334718642035
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 103,
+    "translation_error_m": 0.0046817217414489905
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 104,
+    "translation_error_m": 0.0044003430219278095
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 105,
+    "translation_error_m": 0.003934201348463148
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 106,
+    "translation_error_m": 0.003301695966111919
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 107,
+    "translation_error_m": 0.002527909980228214
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 108,
+    "translation_error_m": 0.001643717429754508
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 109,
+    "translation_error_m": 0.0006855680124705912
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 110,
+    "translation_error_m": 0.0003241010379621861
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 111,
+    "translation_error_m": 0.0013136679335668657
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 112,
+    "translation_error_m": 0.0022667675145618678
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 113,
+    "translation_error_m": 0.0031407172969289713
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 114,
+    "translation_error_m": 0.0039004014303279043
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 115,
+    "translation_error_m": 0.004515515602708271
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 116,
+    "translation_error_m": 0.004961563387567264
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 117,
+    "translation_error_m": 0.005220792378020907
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 118,
+    "translation_error_m": 0.005282890750097619
+  },
+  {
+    "control": "bounded",
+    "metric": "ape",
+    "index": 119,
+    "translation_error_m": 0.005145391754025969
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 0,
+    "translation_error_m": 0.004546486999999821
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 1,
+    "translation_error_m": 0.0030491359999995638
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 2,
+    "translation_error_m": 0.0014302250000000072
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 3,
+    "translation_error_m": 0.000245705000000207
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 4,
+    "translation_error_m": 0.001911839999999998
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 5,
+    "translation_error_m": 0.003501755000000273
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 6,
+    "translation_error_m": 0.00495206499999945
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 7,
+    "translation_error_m": 0.006204954000000207
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 8,
+    "translation_error_m": 0.007210471000000496
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 9,
+    "translation_error_m": 0.007928529000000406
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 10,
+    "translation_error_m": 0.008330499999999574
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 11,
+    "translation_error_m": 0.00840036099999919
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 12,
+    "translation_error_m": 0.008135325999999665
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 13,
+    "translation_error_m": 0.007545962000000017
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 14,
+    "translation_error_m": 0.0066557640000004525
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 15,
+    "translation_error_m": 0.005500221000000138
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 16,
+    "translation_error_m": 0.00412540299999975
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 17,
+    "translation_error_m": 0.0025861179999999706
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 18,
+    "translation_error_m": 0.0009437300000003646
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 19,
+    "translation_error_m": 0.0007362789999998398
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 20,
+    "translation_error_m": 0.0023869359999997286
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 21,
+    "translation_error_m": 0.003942431999999663
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 22,
+    "translation_error_m": 0.0053407559999998355
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 23,
+    "translation_error_m": 0.006526162000000113
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 24,
+    "translation_error_m": 0.007451389999999947
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 25,
+    "translation_error_m": 0.008079554000000044
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 26,
+    "translation_error_m": 0.008385611999999654
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 27,
+    "translation_error_m": 0.008357363999999201
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 28,
+    "translation_error_m": 0.007995932000000039
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 29,
+    "translation_error_m": 0.0073157280000009095
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 30,
+    "translation_error_m": 0.006343868000000086
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 31,
+    "translation_error_m": 0.005119099999999932
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 32,
+    "translation_error_m": 0.0036902489999999233
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 33,
+    "translation_error_m": 0.0021142780000000805
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 34,
+    "translation_error_m": 0.00045401900000019424
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 35,
+    "translation_error_m": 0.0012243409999994626
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 36,
+    "translation_error_m": 0.002853889000000276
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 37,
+    "translation_error_m": 0.004369663999999496
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 38,
+    "translation_error_m": 0.005711232999999538
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 39,
+    "translation_error_m": 0.006825112000000466
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 40,
+    "translation_error_m": 0.007666897000000006
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 41,
+    "translation_error_m": 0.008203026999999974
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 42,
+    "translation_error_m": 0.008412127000000158
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 43,
+    "translation_error_m": 0.0082858619999997
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 44,
+    "translation_error_m": 0.007829267999999612
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 45,
+    "translation_error_m": 0.007060543000000141
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 46,
+    "translation_error_m": 0.00601033899999992
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 47,
+    "translation_error_m": 0.004720519000000145
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 48,
+    "translation_error_m": 0.0032425089999996715
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 49,
+    "translation_error_m": 0.0016352309999998482
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 50,
+    "translation_error_m": 3.724199999988187e-05
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 51,
+    "translation_error_m": 0.001708226999999951
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 52,
+    "translation_error_m": 0.003311110999999478
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 53,
+    "translation_error_m": 0.004781991999999846
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 54,
+    "translation_error_m": 0.006062230999999585
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 55,
+    "translation_error_m": 0.00710078699999972
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 56,
+    "translation_error_m": 0.007856256999999811
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 57,
+    "translation_error_m": 0.008298520999999504
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 58,
+    "translation_error_m": 0.008409952000000054
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 59,
+    "translation_error_m": 0.008186103999999972
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 60,
+    "translation_error_m": 0.007635900000000362
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 61,
+    "translation_error_m": 0.006781281000000305
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 62,
+    "translation_error_m": 0.005656310000000442
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 63,
+    "translation_error_m": 0.004305839999999783
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 64,
+    "translation_error_m": 0.0027837120000002713
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 65,
+    "translation_error_m": 0.0011506029999996947
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 66,
+    "translation_error_m": 0.0005283739999999426
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 67,
+    "translation_error_m": 0.0021862879999998697
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 68,
+    "translation_error_m": 0.003757041000000072
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 69,
+    "translation_error_m": 0.00517801200000001
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 70,
+    "translation_error_m": 0.0063925529999999675
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 71,
+    "translation_error_m": 0.00735224400000023
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 72,
+    "translation_error_m": 0.008018821999999926
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 73,
+    "translation_error_m": 0.008365715000000051
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 74,
+    "translation_error_m": 0.008379095999999198
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 75,
+    "translation_error_m": 0.008058425999999397
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 76,
+    "translation_error_m": 0.0074164950000001895
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 77,
+    "translation_error_m": 0.006478888000000627
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 78,
+    "translation_error_m": 0.005282991000000514
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 79,
+    "translation_error_m": 0.0038764769999994897
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 80,
+    "translation_error_m": 0.0023154190000003183
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 81,
+    "translation_error_m": 0.0006620549999993841
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 82,
+    "translation_error_m": 0.0010177049999997578
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 83,
+    "translation_error_m": 0.0026568920000000773
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 84,
+    "translation_error_m": 0.004190155999999057
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 85,
+    "translation_error_m": 0.005556372999999226
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 86,
+    "translation_error_m": 0.006701075999999695
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 87,
+    "translation_error_m": 0.007578625000000727
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 88,
+    "translation_error_m": 0.008154041000000056
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 89,
+    "translation_error_m": 0.008404379999999101
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 90,
+    "translation_error_m": 0.008319662999999977
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 91,
+    "translation_error_m": 0.007903267999999741
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 92,
+    "translation_error_m": 0.007171791999999844
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 93,
+    "translation_error_m": 0.006154400999999865
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 94,
+    "translation_error_m": 0.004891655000000217
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 95,
+    "translation_error_m": 0.003433891999999883
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 96,
+    "translation_error_m": 0.0018392310000003853
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 97,
+    "translation_error_m": 0.00017124699999992998
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 98,
+    "translation_error_m": 0.0015035659999993456
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 99,
+    "translation_error_m": 0.0031184359999993916
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 100,
+    "translation_error_m": 0.004608983999999872
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 101,
+    "translation_error_m": 0.005915785000000451
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 102,
+    "translation_error_m": 0.00698674200000049
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 103,
+    "translation_error_m": 0.007779160999999313
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 104,
+    "translation_error_m": 0.008261450000000004
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 105,
+    "translation_error_m": 0.00841437999999961
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 106,
+    "translation_error_m": 0.00823185500000001
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 107,
+    "translation_error_m": 0.007721151999999787
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 108,
+    "translation_error_m": 0.006902632000000519
+  },
+  {
+    "control": "bounded",
+    "metric": "rpe",
+    "index": 109,
+    "translation_error_m": 0.005808925000000187
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 0,
+    "translation_error_m": 0.5827074874681708
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 1,
+    "translation_error_m": 0.582197195378324
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 2,
+    "translation_error_m": 0.5812866579357284
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 3,
+    "translation_error_m": 0.579979613043414
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 4,
+    "translation_error_m": 0.5782801210616797
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 5,
+    "translation_error_m": 0.5761925297655545
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 6,
+    "translation_error_m": 0.5737214378389396
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 7,
+    "translation_error_m": 0.5708716577609904
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 8,
+    "translation_error_m": 0.5676481881873932
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 9,
+    "translation_error_m": 0.5640561813232406
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 10,
+    "translation_error_m": 0.5601009165231007
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 11,
+    "translation_error_m": 0.5557877675573899
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 12,
+    "translation_error_m": 0.5511221905868331
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 13,
+    "translation_error_m": 0.5461096932141404
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 14,
+    "translation_error_m": 0.5407558247899016
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 15,
+    "translation_error_m": 0.5350661618317086
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 16,
+    "translation_error_m": 0.5290462960330308
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 17,
+    "translation_error_m": 0.522701827520538
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 18,
+    "translation_error_m": 0.5160383645016179
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 19,
+    "translation_error_m": 0.5090615191491722
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 20,
+    "translation_error_m": 0.5017769146426182
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 21,
+    "translation_error_m": 0.4941901872082913
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 22,
+    "translation_error_m": 0.48630699880227624
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 23,
+    "translation_error_m": 0.4781330453826083
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 24,
+    "translation_error_m": 0.46967407038482983
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 25,
+    "translation_error_m": 0.46093588192745544
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 26,
+    "translation_error_m": 0.4519243697775393
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 27,
+    "translation_error_m": 0.44264552131386975
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 28,
+    "translation_error_m": 0.4331054404064775
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 29,
+    "translation_error_m": 0.4233103696004321
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 30,
+    "translation_error_m": 0.4132667054061568
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 31,
+    "translation_error_m": 0.40298102117204737
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 32,
+    "translation_error_m": 0.39246008225128376
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 33,
+    "translation_error_m": 0.3817108631093856
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 34,
+    "translation_error_m": 0.3707405648090574
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 35,
+    "translation_error_m": 0.359556629947245
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 36,
+    "translation_error_m": 0.34816674758430866
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 37,
+    "translation_error_m": 0.33657887269276215
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 38,
+    "translation_error_m": 0.32480122642662324
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 39,
+    "translation_error_m": 0.31284230284897896
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 40,
+    "translation_error_m": 0.3007108700756933
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 41,
+    "translation_error_m": 0.2884159720311924
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 42,
+    "translation_error_m": 0.27596692600488115
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 43,
+    "translation_error_m": 0.2633733166464988
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 44,
+    "translation_error_m": 0.25064499089365283
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 45,
+    "translation_error_m": 0.23779205592492775
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 46,
+    "translation_error_m": 0.2248248712919237
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 47,
+    "translation_error_m": 0.21175405907284384
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 48,
+    "translation_error_m": 0.19859050028854938
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 49,
+    "translation_error_m": 0.1853453724029585
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 50,
+    "translation_error_m": 0.1720301956838186
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 51,
+    "translation_error_m": 0.15865692100136555
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 52,
+    "translation_error_m": 0.14523810094364586
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 53,
+    "translation_error_m": 0.13178718136243237
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 54,
+    "translation_error_m": 0.11831901616964213
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 55,
+    "translation_error_m": 0.10485082896139294
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 56,
+    "translation_error_m": 0.09140404568376938
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 57,
+    "translation_error_m": 0.0780080470980534
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 58,
+    "translation_error_m": 0.06470852708568085
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 59,
+    "translation_error_m": 0.05158841029125568
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 60,
+    "translation_error_m": 0.03882906452956172
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 61,
+    "translation_error_m": 0.02693078265424677
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 62,
+    "translation_error_m": 0.01767429560148507
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 63,
+    "translation_error_m": 0.016329685889967874
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 64,
+    "translation_error_m": 0.02418963521694457
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 65,
+    "translation_error_m": 0.03555815276182286
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 66,
+    "translation_error_m": 0.04796449661779
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 67,
+    "translation_error_m": 0.060743212243435776
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 68,
+    "translation_error_m": 0.07367278555761207
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 69,
+    "translation_error_m": 0.08666204003773312
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 70,
+    "translation_error_m": 0.09966789673478946
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 71,
+    "translation_error_m": 0.11266852882526399
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 72,
+    "translation_error_m": 0.1256529641052313
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 73,
+    "translation_error_m": 0.138616525518946
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 74,
+    "translation_error_m": 0.15155862212160107
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 75,
+    "translation_error_m": 0.16448157264469232
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 76,
+    "translation_error_m": 0.1773899622795301
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 77,
+    "translation_error_m": 0.19029024837107228
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 78,
+    "translation_error_m": 0.20319051150385642
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 79,
+    "translation_error_m": 0.21610027575428656
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 80,
+    "translation_error_m": 0.2290303880646161
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 81,
+    "translation_error_m": 0.24199290442260626
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 82,
+    "translation_error_m": 0.25500100004979714
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 83,
+    "translation_error_m": 0.26806887717835787
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 84,
+    "translation_error_m": 0.28121167525746293
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 85,
+    "translation_error_m": 0.29444538706839346
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 86,
+    "translation_error_m": 0.30778675403140904
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 87,
+    "translation_error_m": 0.3212531787845537
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 88,
+    "translation_error_m": 0.3348626148589541
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 89,
+    "translation_error_m": 0.34863346506565107
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 90,
+    "translation_error_m": 0.36258446831027186
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 91,
+    "translation_error_m": 0.3767345854965454
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 92,
+    "translation_error_m": 0.3911028912358583
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 93,
+    "translation_error_m": 0.40570844796896377
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 94,
+    "translation_error_m": 0.4205701967904504
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 95,
+    "translation_error_m": 0.4357068418752963
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 96,
+    "translation_error_m": 0.45113673536137333
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 97,
+    "translation_error_m": 0.46687777187816
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 98,
+    "translation_error_m": 0.4829472849898084
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 99,
+    "translation_error_m": 0.49936194755592583
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 100,
+    "translation_error_m": 0.5161376809128945
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 101,
+    "translation_error_m": 0.5332895738569542
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 102,
+    "translation_error_m": 0.5508318070295615
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 103,
+    "translation_error_m": 0.5687775883009666
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 104,
+    "translation_error_m": 0.587139094671212
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 105,
+    "translation_error_m": 0.6059274257856359
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 106,
+    "translation_error_m": 0.6251525702357393
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 107,
+    "translation_error_m": 0.6448233747398414
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 108,
+    "translation_error_m": 0.664947529876647
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 109,
+    "translation_error_m": 0.6855315621310699
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 110,
+    "translation_error_m": 0.7065808319313566
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 111,
+    "translation_error_m": 0.7280995471502201
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 112,
+    "translation_error_m": 0.7500907765103093
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 113,
+    "translation_error_m": 0.7725564783120152
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 114,
+    "translation_error_m": 0.7954975267811282
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 115,
+    "translation_error_m": 0.8189137574634618
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 116,
+    "translation_error_m": 0.8428040008106475
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 117,
+    "translation_error_m": 0.8671661323720994
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 118,
+    "translation_error_m": 0.8919971287680621
+  },
+  {
+    "control": "drifting",
+    "metric": "ape",
+    "index": 119,
+    "translation_error_m": 0.9172931149821336
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 0,
+    "translation_error_m": 0.010592471999999908
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 1,
+    "translation_error_m": 0.01271096799999949
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 2,
+    "translation_error_m": 0.014829462000000238
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 3,
+    "translation_error_m": 0.016947955999999653
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 4,
+    "translation_error_m": 0.0190664500000004
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 5,
+    "translation_error_m": 0.021184943999999817
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 6,
+    "translation_error_m": 0.023303439000000203
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 7,
+    "translation_error_m": 0.025421933999999702
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 8,
+    "translation_error_m": 0.02754042799999956
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 9,
+    "translation_error_m": 0.029658921999999865
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 10,
+    "translation_error_m": 0.03177741699999981
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 11,
+    "translation_error_m": 0.033895911000000556
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 12,
+    "translation_error_m": 0.03601440599999961
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 13,
+    "translation_error_m": 0.03813290000000036
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 14,
+    "translation_error_m": 0.04025139399999933
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 15,
+    "translation_error_m": 0.04236988899999927
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 16,
+    "translation_error_m": 0.0444883840000001
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 17,
+    "translation_error_m": 0.04660687799999996
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 18,
+    "translation_error_m": 0.048725372999999905
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 19,
+    "translation_error_m": 0.05084386700000021
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 20,
+    "translation_error_m": 0.05296236199999971
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 21,
+    "translation_error_m": 0.05508085600000001
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 22,
+    "translation_error_m": 0.057199350000000315
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 23,
+    "translation_error_m": 0.059317844999999814
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 24,
+    "translation_error_m": 0.0614363400000002
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 25,
+    "translation_error_m": 0.06355483300000042
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 26,
+    "translation_error_m": 0.06567332799999992
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 27,
+    "translation_error_m": 0.0677918230000003
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 28,
+    "translation_error_m": 0.06991031699999972
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 29,
+    "translation_error_m": 0.07202881100000003
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 30,
+    "translation_error_m": 0.07414730500000033
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 31,
+    "translation_error_m": 0.07626579999999983
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 32,
+    "translation_error_m": 0.07838429499999977
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 33,
+    "translation_error_m": 0.08050278900000007
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 34,
+    "translation_error_m": 0.08262128300000038
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 35,
+    "translation_error_m": 0.08473977800000032
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 36,
+    "translation_error_m": 0.08685827299999938
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 37,
+    "translation_error_m": 0.0889767659999996
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 38,
+    "translation_error_m": 0.09109526100000043
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 39,
+    "translation_error_m": 0.09321375700000001
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 40,
+    "translation_error_m": 0.09533225100000031
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 41,
+    "translation_error_m": 0.09745074499999973
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 42,
+    "translation_error_m": 0.09956923999999967
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 43,
+    "translation_error_m": 0.10168773400000042
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 44,
+    "translation_error_m": 0.10380622799999983
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 45,
+    "translation_error_m": 0.10592472300000022
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 46,
+    "translation_error_m": 0.10804321700000052
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 47,
+    "translation_error_m": 0.11016171300000055
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 48,
+    "translation_error_m": 0.11228020700000041
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 49,
+    "translation_error_m": 0.11439870000000019
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 50,
+    "translation_error_m": 0.11651719500000013
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 51,
+    "translation_error_m": 0.11863568899999999
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 52,
+    "translation_error_m": 0.12075418299999985
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 53,
+    "translation_error_m": 0.12287267899999987
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 54,
+    "translation_error_m": 0.12499117399999982
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 55,
+    "translation_error_m": 0.12710966800000012
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 56,
+    "translation_error_m": 0.12922816199999954
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 57,
+    "translation_error_m": 0.13134665499999976
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 58,
+    "translation_error_m": 0.13346515099999978
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 59,
+    "translation_error_m": 0.13558364600000017
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 60,
+    "translation_error_m": 0.13770213899999995
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 61,
+    "translation_error_m": 0.13982063500000042
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 62,
+    "translation_error_m": 0.14193913000000036
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 63,
+    "translation_error_m": 0.14405762200000005
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 64,
+    "translation_error_m": 0.146176117
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 65,
+    "translation_error_m": 0.14829461199999994
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 66,
+    "translation_error_m": 0.15041310600000024
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 67,
+    "translation_error_m": 0.15253160099999974
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 68,
+    "translation_error_m": 0.15465009500000004
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 69,
+    "translation_error_m": 0.15676858900000012
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 70,
+    "translation_error_m": 0.15888708499999993
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 71,
+    "translation_error_m": 0.16100557800000015
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 72,
+    "translation_error_m": 0.163124072
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 73,
+    "translation_error_m": 0.16524256900000012
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 74,
+    "translation_error_m": 0.16736106200000034
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 75,
+    "translation_error_m": 0.16947955700000028
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 76,
+    "translation_error_m": 0.17159805100000058
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 77,
+    "translation_error_m": 0.17371654599999964
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 78,
+    "translation_error_m": 0.1758350390000003
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 79,
+    "translation_error_m": 0.1779535339999998
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 80,
+    "translation_error_m": 0.18007202900000063
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 81,
+    "translation_error_m": 0.1821905229999996
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 82,
+    "translation_error_m": 0.1843090179999991
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 83,
+    "translation_error_m": 0.1864275119999994
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 84,
+    "translation_error_m": 0.18854600700000024
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 85,
+    "translation_error_m": 0.1906645010000001
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 86,
+    "translation_error_m": 0.19278299599999915
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 87,
+    "translation_error_m": 0.19490149000000034
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 88,
+    "translation_error_m": 0.1970199849999994
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 89,
+    "translation_error_m": 0.19913848000000023
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 90,
+    "translation_error_m": 0.20125697399999964
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 91,
+    "translation_error_m": 0.20337546900000048
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 92,
+    "translation_error_m": 0.20549396200000025
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 93,
+    "translation_error_m": 0.2076124560000001
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 94,
+    "translation_error_m": 0.2097309509999996
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 95,
+    "translation_error_m": 0.21184944499999947
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 96,
+    "translation_error_m": 0.21396794000000052
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 97,
+    "translation_error_m": 0.21608643500000002
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 98,
+    "translation_error_m": 0.21820492900000032
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 99,
+    "translation_error_m": 0.22032342299999996
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 100,
+    "translation_error_m": 0.22244191699999938
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 101,
+    "translation_error_m": 0.22456041199999932
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 102,
+    "translation_error_m": 0.22667890700000015
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 103,
+    "translation_error_m": 0.22879740200000054
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 104,
+    "translation_error_m": 0.23091589499999987
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 105,
+    "translation_error_m": 0.23303439000000026
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 106,
+    "translation_error_m": 0.23515288499999976
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 107,
+    "translation_error_m": 0.23727137900000006
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 108,
+    "translation_error_m": 0.23938987399999956
+  },
+  {
+    "control": "drifting",
+    "metric": "rpe",
+    "index": 109,
+    "translation_error_m": 0.24150836799999986
+  }
+]

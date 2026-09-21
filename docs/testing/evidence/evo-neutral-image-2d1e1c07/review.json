@@ -1,0 +1,113 @@
+{
+  "schema": "npa.review.evo-neutral-image-cpu.v1",
+  "at": "2026-09-21T18:26:57.766662+00:00",
+  "recipe_source": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+  "upstream_source": "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422",
+  "image_index_digest": "sha256:2d1e1c074e2b6f066bb49aaee1ac6bf5252ca48689312ee9c368941ca42f15a9",
+  "runtime_manifest_digest": "sha256:4bf6043b377ccabd72fe9d3fac71f0c09863e23b337a343e592cad424f6181df",
+  "execution": "native Docker, configured ubuntu user, network none, no source overlay",
+  "functional_outputs": 62,
+  "logs": 2,
+  "all64artifacts_rehashed": true,
+  "result_archives": 10,
+  "metrics": {
+    "bounded_ape": {
+      "count": 120,
+      "rmse_m": 0.0035454338272704316,
+      "archive_sha256": "706c87e33726396aca8594c35b301ad3f4ab422d220f0f3c23ebfaf8ec545a80"
+    },
+    "bounded_rpe": {
+      "count": 110,
+      "rmse_m": 0.00594981427373233,
+      "archive_sha256": "12520e03fad1dbd694e412a85a8068a694e81d69b4343020ac03c04efbe8e62c"
+    },
+    "drifting_ape": {
+      "count": 120,
+      "rmse_m": 0.4438116058995693,
+      "archive_sha256": "2a90fa790ec39fcf8046330902fdad3c3d124c15372b38cff98c78ac86958dae"
+    },
+    "drifting_rpe": {
+      "count": 110,
+      "rmse_m": 0.1428767067835559,
+      "archive_sha256": "97fb341a4c3f9b3f73b471f461edbddd5f7e56d5c0489ad3cd54d9182ab29e14"
+    },
+    "exact_ape": {
+      "count": 120,
+      "rmse_m": 7.175037147775919e-16,
+      "archive_sha256": "73a8003bf524a06f3d16a5bde838c4f6d086b5d2317aee0afd90060e508e6210"
+    },
+    "exact_rpe": {
+      "count": 110,
+      "rmse_m": 7.454745723290291e-16,
+      "archive_sha256": "55756910d10745d7150cbf6a1df34ed1851a154ca19b241906262c326495712d"
+    },
+    "kitti_orb_ape": {
+      "count": 4541,
+      "rmse_m": 1.303449714565045,
+      "archive_sha256": "5ddd25d9186e5921135f0afa9ae07d487f04e711eb154fee398c9576968fdbbf"
+    },
+    "kitti_orb_rpe": {
+      "count": 4458,
+      "rmse_m": 1.250926005096538,
+      "archive_sha256": "bb039b3d6f0d04685c2ed821cf6c419cb1678f33f384f62f69c2c352623194f2"
+    },
+    "kitti_sptam_ape": {
+      "count": 4541,
+      "rmse_m": 3.7384879075826025,
+      "archive_sha256": "92085cbea8dd52dce3ec56d9d1c25c66325013bc5ed1806dd5d4408f3038a9db"
+    },
+    "kitti_sptam_rpe": {
+      "count": 4458,
+      "rmse_m": 2.7201316093183894,
+      "archive_sha256": "4dbf00034378acad9f17346a7458843f4cfa46ccf4475748be709cce906ea42a"
+    }
+  },
+  "independently_recomputed_synthetic_values": 690,
+  "thresholds": {
+    "ape_translation_rmse_m_max": 0.05,
+    "minimum_matched_poses": 100,
+    "rpe_translation_rmse_m_max": 0.02
+  },
+  "controls": {
+    "bounded": {
+      "expected": true,
+      "observed": true
+    },
+    "drifting": {
+      "expected": false,
+      "observed": false
+    },
+    "exact": {
+      "expected": true,
+      "observed": true
+    },
+    "malformed": {
+      "expected": false,
+      "observed": false
+    }
+  },
+  "confusion_matrix": {
+    "false_negative": 0,
+    "false_positive": 0,
+    "true_negative": 2,
+    "true_positive": 2
+  },
+  "malformed_returncode": 1,
+  "decoded_plot_count": 19,
+  "owned_container_absent": true,
+  "new_gpu_calls": 0,
+  "new_vlm_calls": 0,
+  "standard_sky_execution": false,
+  "public_image_push": false,
+  "whole_image_security_acceptance": false,
+  "synthetic_plot_sha256": "399161ffcadc065b5d7028ea24fba68aba5d750c9458c5f4e38207942247bf04",
+  "synthetic_plot_dimensions": [
+    1011,
+    1001
+  ],
+  "limits": [
+    "Native CPU compatibility and synthetic metric controls only; no real-world SLAM, navigation or robot-safety claim.",
+    "New runtime bytes differ from predecessor; this is fresh execution, not transfer of old CPU proof.",
+    "Image security, complete-byte acceptance and current hosted PR checks remain separate."
+  ]
+}

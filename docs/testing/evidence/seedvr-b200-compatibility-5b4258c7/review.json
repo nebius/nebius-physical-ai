@@ -1,0 +1,151 @@
+{
+  "schema": "npa.review.seedvr-native-compatibility.v1",
+  "at": "2026-09-21T18:17:41.838837+00:00",
+  "source": "b8d9c9c56d8adc2ec76a5a41fd37e97e0069e2f4",
+  "image": "ghcr.io/nebius/nebius-physical-ai/npa-seedvr2@sha256:5b4258c7a3be29962c928237fa2d46bcc9667db02757349ad114033df21db7ca",
+  "inspection_tool_image": "nvidia/cuda@sha256:ae7f650405a3964972dacfa889273bf8e3fbe9709899afd187da01c4cdff3105",
+  "archive_sha256": "d73210844c06ee1684f284bd787fb68cb3fe21671a1367446f78d2e5b801d1f4",
+  "network": "none",
+  "gpu_execution": false,
+  "inspected_extensions": [
+    {
+      "name": "flash_attn_2_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 220990768,
+      "sha256": "2ef19f55f417a8f4aeda8e96c61ee90517e46d3a6c6f9672c05eeef45ffecba6",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "125ead7b99ea504b20299d1c407fb57bf0240e35fc8156bf1ebb9fc5ce490bd0",
+      "ptx_output_sha256": "b84bacd92a9ab90224e271b886c9580e908719761775c3cf4e0250a4a62db3dc"
+    },
+    {
+      "name": "amp_C.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 15848544,
+      "sha256": "ce65361c70f1d7a034886faf422b54fbfc29b5c8204cfa1e8d3b543543febcb3",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "9cee0a43dbbe6cbaf1aa02c9c40cb1cab7e297bfedac14f4465b0de2caeb7b38",
+      "ptx_output_sha256": "48fd0f159b48d55e415c123d867af93ddfe725d55ba703eabff8ab55b2232970"
+    },
+    {
+      "name": "fused_dense_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 11033104,
+      "sha256": "4b139efd7a961da8112a07c069a54b0ecaf1b88dd078bc232b89711722113889",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "3a868735b648e815a4f2a85a985fe2d0fa1f32df51013e905b82fcb9737b9336",
+      "ptx_output_sha256": "8f730bb618ebd0406565d29df5077241ee65507a44c78087ce78a10ff4188bed"
+    },
+    {
+      "name": "fused_layer_norm_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 13143944,
+      "sha256": "55ce05257b85ac5245b4f890b545cf4e50bed9c7f50aeb3ac841993e90d599bb",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "e5723e9ef67ef667cf9354da1e17e321ed9eb305c9538598aafdc0538399d7ca",
+      "ptx_output_sha256": "0679a7bcb68d2d405e2f3a13224d9c08fa1bb229b4828bca607c2f020e4a4d26"
+    },
+    {
+      "name": "fused_rotary_positional_embedding.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 11313808,
+      "sha256": "e80dd58c6e3fffdba2f336d08ec24d9678a726710ebc453e76760992223a006e",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "e88b9a15c6d4274e490ef8e8759203f8fbda0c256e853c2a83549ed504011c5b",
+      "ptx_output_sha256": "f33d81189d12a44bfad1aaa9cf62ce852b7bd1715767da41b74d63e8e133c1b0"
+    },
+    {
+      "name": "fused_weight_gradient_mlp_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 10602152,
+      "sha256": "2cbf43de7301b8f8685e79d06f839e70a374c92fdda408297721e685e85aeeda",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "af67a714c8732eab16983c794c3fbc8062e79a341c6127fd2b15862ae884de09",
+      "ptx_output_sha256": "c86532f135141f5b015d7e9b582a5cc93c79cd4fff45bdfc31577561997f2c11"
+    },
+    {
+      "name": "generic_scaled_masked_softmax_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 10738056,
+      "sha256": "e71c20fe0c201b2aca163f60ccb1a997540844709e431a0fdf53406957084637",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "f2dfbcf434554a6ff0c806ad74f73c0065d1163a934a38f5abd50616dd642856",
+      "ptx_output_sha256": "e6447d527992cd850c3942cf4ebfe8f44c5106dd3686988e1a59743f52eea65d"
+    },
+    {
+      "name": "mlp_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 11381800,
+      "sha256": "71935316eec4ef8989c59edcd63dceec5ac2e75360091cbe83ec65531d9f96bb",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "57687d715c08f47a735c411a9b2d75589be915ad5ea5d6c8bb2d953d8a84b755",
+      "ptx_output_sha256": "0ed873c1da598fbba096796fb1db823760b3fdb79ab48a884a5cab6440cd7901"
+    },
+    {
+      "name": "scaled_masked_softmax_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 11630160,
+      "sha256": "1ad7a50aa2b8805300718d8598dfc10fc0f47c7dc7be02d88304e3180dd147d8",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "9bd6da441af1ad92620b9c0bb8a5b855839767673a2d44b442ab481f6a6dcb09",
+      "ptx_output_sha256": "f5c93dc69f65997d8429ecbe0704681b3bd162ef4a437554b475693427f5660e"
+    },
+    {
+      "name": "scaled_softmax_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 12353152,
+      "sha256": "81e3bfcc460900aaa79fadf10e35d9b5418cf6f3870b5687daa54638728de085",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "d53ffca4912feaf70d1bcf72eb257f8147e8941fd9c97750359aa34a986e05bf",
+      "ptx_output_sha256": "9379dfff5ce2687387bd23ced8608d133894836691a1ce4e378722d231d4c725"
+    },
+    {
+      "name": "scaled_upper_triang_masked_softmax_cuda.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 13434016,
+      "sha256": "e8d52f754224d64fae40a4f95ea9801557ff602c03a7c183674ff808657424a5",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "da2620db0a7364d70d4521532461623131e7b0223397b495548d5f84044702e8",
+      "ptx_output_sha256": "0277e0f42ac320e521e15d733c57e17a4f0317e26e71d92c4f14f6006a3bb4e8"
+    },
+    {
+      "name": "syncbn.cpython-312-x86_64-linux-gnu.so",
+      "bytes": 11843816,
+      "sha256": "a7f69b07ee4a5bcf7364ef025d2bb8ffa05cf80ac49a6cc4f5a471644a7dd5ed",
+      "native_architectures": [
+        "sm_90"
+      ],
+      "ptx_present": false,
+      "elf_output_sha256": "8de0a4f5548b44c2a75549fcd5681185fe0b5ff2ed661d2deb1a525d4588d921",
+      "ptx_output_sha256": "5a8c5eee30b3d75cbd7f0617d0079daa56e18c39348f4238a0a43e9afdd4d4d2"
+    }
+  ],
+  "verdict": "UNCHANGED_IMAGE_NOT_B200_COMPATIBLE",
+  "basis": "Actual cuobjdump lists only SM90 cubins and no PTX for all twelve separately compiled native extensions. The model invokes the FlashAttention varlen backend. Torch SM100 support does not replace extension kernels.",
+  "inference": "Rebuilding these extensions is required before B200 execution; no B200 runtime failure was induced or claimed.",
+  "reference": "https://docs.nvidia.com/cuda/blackwell-compatibility-guide/index.html",
+  "quality_result": null,
+  "h200_preflight": "Available project quota was zero; no new H200 provision attempted.",
+  "next_step": "Prospective same-version rebuild retaining SM90 and adding SM100; fresh image, kernel and unchanged paired quality gates."
+}
