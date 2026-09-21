@@ -4,6 +4,7 @@
 Workbench workloads.
 
 - [Development desktop](development-desktop.md): a persistent Ubuntu desktop
-  with VS Code, Codex, Retina rendering, authenticated HTTPS, and mobile chat.
+  with VS Code, Codex, Retina rendering, authenticated HTTPS, and mobile chat;
+  `chat-setup --local` also connects the shared chat UI to existing Mac sessions.
 
 Use `npa tools --help` for the installed command groups.

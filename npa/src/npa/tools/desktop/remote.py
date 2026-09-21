@@ -576,6 +576,8 @@ def _chat_setup(config):
         "chat_proxy.py",
         "chat_history.py",
         "chat_models.py",
+        "chat_delivery.py",
+        "chat_session.py",
         "chat.html",
         "chat.css",
         "chat.js",
@@ -703,7 +705,7 @@ _NGINX_CHAT = """    location = /chat { return 308 /chat/; }
         proxy_set_header Connection "";
         proxy_read_timeout 65s;
         proxy_buffering off;
-        client_max_body_size 2m;
+        client_max_body_size 16m;
     }
 """
 _GATEWAY_UNIT = """[Unit]

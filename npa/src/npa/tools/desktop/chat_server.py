@@ -5,6 +5,7 @@ import binascii
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import re
 from pathlib import Path
 import sys
 import threading
@@ -14,10 +15,14 @@ try:
     from .chat_rpc import CodexConnection
     from .chat_history import owned_elsewhere
     from .chat_models import available_models, model_selection
+    from .chat_delivery import Deliveries
+    from .chat_session import mobile_session
 except ImportError:
     from chat_rpc import CodexConnection
     from chat_history import owned_elsewhere
     from chat_models import available_models, model_selection
+    from chat_delivery import Deliveries
+    from chat_session import mobile_session
 
 _SOURCES = [
     "cli",
@@ -114,7 +119,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _guard(self, mutation=False):
         config = self.server.config
         password = Path(config["password_file"]).read_text().strip()
-        if not _authorized(
+        if not mobile_session(self.headers.get("Cookie", ""), config.get("session_secret")) and not _authorized(
             self.headers.get("Authorization", ""), config["username"], password
         ):
             self._respond(
@@ -177,6 +182,9 @@ class ChatHandler(BaseHTTPRequestHandler):
         rpc = self.server.rpc
         if path == "/chat/api/models":
             return {"data": available_models(rpc)}
+        if path == "/chat/api/modes":
+            modes = rpc.call("collaborationMode/list", {})["data"]
+            return {"data": [{"mode": mode["mode"], "name": mode.get("name", mode["mode"])} for mode in modes]}
         if path == "/chat/api/threads":
             return self._list_threads(query)
         if path == "/chat/api/thread":
@@ -192,6 +200,10 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "cursor": rpc.sequence,
                 "cwd": self.server.config["cwd"],
                 "instance": rpc.instance,
+                "installationId": self.server.config.get("installation_id"),
+                "hostLabel": self.server.config.get("host_label", "VDI"),
+                "native": self.server.config.get("backend") == "native",
+                "runtime": rpc.call("runtime/status", {}) if self.server.config.get("backend") == "native" else {},
             }
         raise ValueError("Unknown chat route.")
 
@@ -256,7 +268,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if not 0 < length <= 2 * 1024 * 1024:
+            if not 0 < length <= 16 * 1024 * 1024:
                 raise ValueError("Request body is missing or too large.")
             if self.headers.get_content_type() != "application/json":
                 raise ValueError("Send JSON data.")
@@ -283,6 +295,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             return rpc.call(
                 "turn/interrupt", {"threadId": body["id"], "turnId": body["turnId"]}
             )
+        if path == "/chat/api/open" and self.server.config.get("backend") == "native":
+            return rpc.call("thread/open", {"threadId": body["id"]})
         if path == "/chat/api/answer":
             request = next(
                 (r for r in rpc.pending() if str(r["id"]) == str(body["requestId"])),
@@ -297,10 +311,11 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _new_thread(self, body):
         cwd = Path(body.get("cwd") or self.server.config["cwd"]).expanduser()
         if not cwd.is_dir():
-            raise ValueError("Choose an existing project directory on the VDI.")
+            raise ValueError("Choose an existing project directory on the execution host.")
         result = self.server.rpc.call("thread/start", {"cwd": str(cwd.resolve())})
         self.server.attached.add(result["thread"]["id"])
-        self.server.created[result["thread"]["id"]] = result["thread"]
+        if self.server.config.get("backend") != "native":
+            self.server.created[result["thread"]["id"]] = result["thread"]
         return result
 
     def _settings(self, body):
@@ -312,6 +327,11 @@ class ChatHandler(BaseHTTPRequestHandler):
         created = self.server.created.get(body["id"])
         if created is not None:
             created.update(model=params["model"], reasoningEffort=params["effort"])
+            if "serviceTier" in params:
+                created["serviceTier"] = params["serviceTier"]
+            if "collaborationMode" in params:
+                created["collaborationMode"] = params["collaborationMode"]
+                created["mode"] = params["collaborationMode"]["mode"]
         return {"model": params["model"], "effort": params["effort"]}
 
     def _resume(self, identifier):
@@ -322,7 +342,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         thread = rpc.call(
             "thread/read", {"threadId": identifier, "includeTurns": False}
         )["thread"]
-        if owned_elsewhere(thread, self.server.config["socket"]):
+        if self._owned_elsewhere(thread):
             return {"thread": thread, "externalOwner": True}
         if identifier in self.server.attached:
             return {"thread": thread}
@@ -334,14 +354,39 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def _send(self, body):
         thread = self._thread(body["id"])
-        if owned_elsewhere(thread, self.server.config["socket"]):
+        if self._owned_elsewhere(thread):
             raise ValueError(
                 "This session is open in an older Codex client. Close it there, then refresh to continue here."
             )
-        text = body["text"]
-        if not isinstance(text, str) or not text.strip():
+        text = body.get("text", "")
+        images = body.get("images", [])
+        if not isinstance(text, str) or (not text.strip() and not images):
             raise ValueError("Write a message first.")
+        if not isinstance(images, list) or any(
+            not isinstance(image, str) or not re.fullmatch(
+                r"data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+", image
+            ) for image in images
+        ):
+            raise ValueError("Attach PNG, JPEG, or WebP images.")
+        return self._deliver(body, text, images)
+
+    def _owned_elsewhere(self, thread):
+        if self.server.config.get("backend") == "native":
+            return False
+        return owned_elsewhere(thread, self.server.config["socket"])
+
+    def _deliver(self, body, text, images):
         params = {"threadId": body["id"], "input": [{"type": "text", "text": text}]}
+        params["input"].extend({"type": "image", "url": image} for image in images)
+        identifier = body.get("clientUserMessageId")
+        if identifier is not None:
+            params["clientUserMessageId"] = identifier
+            return self.server.deliveries.execute(
+                identifier, body, lambda: self._start_or_steer(body, params)
+            )
+        return self._start_or_steer(body, params)
+
+    def _start_or_steer(self, body, params):
         if body.get("turnId"):
             params["expectedTurnId"] = body["turnId"]
             return self.server.rpc.call("turn/steer", params)
@@ -366,10 +411,17 @@ def main(config_path):
     server.config = config
     server.attached = set()
     server.created = {}
-    server.rpc = CodexConnection(
-        config["socket"],
-        on_notification=lambda message: _update_created_threads(server.created, message),
-    )
+    server.deliveries = Deliveries(Path(config_path).parent / "deliveries.sqlite")
+    def notify(message):
+        _update_created_threads(server.created, message)
+    if config.get("backend") == "native":
+        try:
+            from .chat_native import native_connection
+        except ImportError:
+            from chat_native import native_connection
+        server.rpc = native_connection(config, config_path, notify)
+    else:
+        server.rpc = CodexConnection(config["socket"], on_notification=notify)
 
     def disconnected():
         server.rpc.closed.wait()

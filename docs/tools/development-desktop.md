@@ -183,11 +183,88 @@ restore the saved `chatgpt.cliExecutable` setting from the private chat state an
 reload the window after work finishes. Stop the shared engine only after its
 active conversations have finished.
 
+## Local Mac sessions
+
+Use the same mobile interface with Codex running on your Mac:
+
+```sh
+npa tools desktop chat-setup --local --dry-run --json
+npa tools desktop chat-setup --local
+npa tools desktop status --local --json
+npa tools desktop open --local --chat
+```
+
+Local mode requires macOS, Node.js 22.13 or newer, npm, and an existing signed-in
+Codex installation. It follows the native VS Code conversation owner and keeps
+the same session IDs, so existing open chats can receive prompts, steering,
+interruptions, model changes, and supported approval responses. It does not
+replace the VS Code executable or require reloading an active window. Local
+mode uses a private adapter for the installed extension's IPC protocol; verify
+compatibility after extension upgrades. New or unowned chats use a separate
+Codex app-server that belongs to the local service.
+
+For access outside the Mac, select an existing managed HTTPS gateway:
+
+```sh
+npa tools desktop chat-setup --local --gateway-ssh-host "$CHAT_GATEWAY_HOST"
+```
+
+The gateway must already be an authenticated `npa tools desktop public-access`
+deployment or the standalone Codex Mobile deployment being migrated. This command
+does not allocate cloud resources, change the public IP, or install a Linux
+desktop on the Mac. It preserves the gateway's existing applications and login.
+The standalone gateway's saved private access file is required for migration.
+An existing signed mobile login cookie continues to work on its new chat route.
+
+The Mac opens an outbound SSH connection using the selected alias and your
+existing SSH authentication. Both ends of the forwarded listener bind to
+loopback. Phones use the public HTTPS URL and need no VPN or SSH client. A
+desktop gateway retains its Linux chat at `/chat/` and adds the Mac at
+`/local-chat/`; the standalone mobile gateway adds `/chat/` and keeps its original
+root interface. `status --local` reports the selected URL. `--local-port` and
+`--gateway-port` default to 6091 and can select unused unprivileged ports for the
+first installation. Repeated setup preserves the saved configuration. A local
+installation can adopt a gateway on a later setup; switching an existing gateway
+requires an explicit configuration migration.
+
+The Mac engine, web service, and tunnel are independent LaunchAgents under the signed-in macOS user.
+Keep that user logged in and the Mac awake. VS Code must remain open for turns
+it owns. The password file, runtime configuration, private logs, versioned
+runtime assets, and send journal live under
+`~/.local/share/nebius-desktop/local-chat/`; never commit that directory.
+Setup reports the username and password-file location without printing the
+password. To return to the prior standalone interface, use its unchanged root
+URL. Stop the local LaunchAgents before removing their private runtime directory.
+
+Both runtime modes share model/reasoning controls, account-supported speed and
+Plan settings, image input, working indicators, and browser-local text drafts.
+Model and mode changes apply to the next turn. If the Linux runtime has not reported its current mode or speed, the
+picker says **Choose mode** or **Choose speed**; it updates when you make a
+selection or receive a settings notification. The Mac adapter reads these
+settings from the native owner. Browser sends retain a stable
+identity, and a private SQLite journal returns saved outcomes on retries even
+after the web service restarts. If the process dies after forwarding a send but
+before recording its result, the UI reports an uncertain delivery and requires
+checking the conversation before discarding that pending send. It does not
+automatically replay the prompt. Pending approvals follow the active runtime;
+specialized requests must still be answered in VS Code.
+
+Local runtime updates are versioned and refuse to restart while a mobile-owned
+turn is active. VS Code-owned turns run independently. A web-service restart preserves mobile-owned turns. An engine restart can
+interrupt a mobile-owned turn; it preserves saved history but cannot restore
+RAM or resume shell actions automatically. Back up the Mac's Codex state and
+private service configuration separately from the gateway disk. The recovery
+procedures below describe backup requirements; setup does not create a backup
+repository or assert that recovery has been rehearsed.
+
 ## Recovery
 
 | Failure | Recovery |
 | --- | --- |
-| Browser or SSH disconnect | Reopen the same running desktop. |
+| Browser disconnect | Reopen the same conversation; the engine keeps running. |
+| Mac web service or SSH tunnel exits | Its LaunchAgent restarts it; reconnect to the saved URL. The independent engine keeps its active turns. |
+| Mac sleeps, logs out, or loses its network | Wake it, sign in, and restore connectivity. The gateway cannot execute Mac work while the Mac is unavailable. |
+| Mac engine exits | Saved history remains; inspect interrupted work before sending again. An uncertain send is never replayed automatically. |
 | VM or desktop restart with disk intact | Enabled services restart; saved files and session history remain. Running processes and RAM do not. |
 | Disk loss or corruption | Restore a READY disk snapshot and newer files from an independently retained encrypted backup. |
 

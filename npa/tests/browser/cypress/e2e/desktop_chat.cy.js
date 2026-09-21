@@ -45,6 +45,9 @@ function mockChat() {
       model("model-b", ["low", "medium"]),
     ],
   });
+  cy.intercept("GET", "/chat/api/modes", {data: [
+    {mode: "default", name: "Default"}, {mode: "plan", name: "Plan"},
+  ]});
   mockThreadRoutes(chat);
   mockEventStream(chat);
   return chat;
@@ -68,6 +71,8 @@ function mockThreadRoutes(chat) {
       ...chat.thread,
       model: req.body.model,
       reasoningEffort: req.body.effort,
+      ...(req.body.mode ? {mode: req.body.mode} : {}),
+      ...(req.body.serviceTier !== undefined ? {serviceTier: req.body.serviceTier} : {}),
     };
     req.reply({ model: req.body.model, effort: req.body.effort });
   }).as("settings");
@@ -129,7 +134,8 @@ describe("Mobile Codex conversations", () => {
   it("reflects model changes and working state originating in the IDE", () => {
     cy.then(() => {
       publish(chat, "thread/settings/updated", {
-        threadSettings: { model: "model-b", effort: "medium" },
+        threadSettings: { model: "model-b", effort: "medium", serviceTier: "default",
+          collaborationMode: {mode: "plan"} },
       });
       publish(chat, "turn/started", {
         turn: { id: "live-turn", status: "inProgress", items: [] },
@@ -137,6 +143,8 @@ describe("Mobile Codex conversations", () => {
     });
     cy.get("#model").should("have.value", "model-b");
     cy.get("#effort").should("have.value", "medium");
+    cy.get("#speed").should("have.value", "default");
+    cy.get("#mode").should("have.value", "plan");
     cy.title().should("contain", "Working");
     cy.get("#header-activity").should("be.visible");
     cy.get(".session-spinner").should("exist");
@@ -178,5 +186,60 @@ describe("Mobile Codex conversations", () => {
     });
     cy.get("#messages").should("contain", "Follow-up from VS Code");
     cy.location("hash").should("equal", "#same-thread");
+  });
+
+  it("keeps drafts after reloading and supports Plan and Standard speed", () => {
+    cy.get("#prompt").type("Draft stays in this browser");
+    cy.reload();
+    cy.get("#prompt").should("have.value", "Draft stays in this browser");
+    cy.get("#mode").should("be.enabled").select("plan");
+    cy.wait("@settings").its("request.body.mode").should("equal", "plan");
+    cy.get("#speed").should("be.enabled").select("default");
+    cy.wait("@settings").its("request.body.serviceTier").should("equal", "default");
+  });
+
+  it("keeps the final native update when history is still loading", () => {
+    let delayed = false;
+    cy.intercept("GET", "/chat/api/turns?*", req => {
+      const snapshot = JSON.parse(JSON.stringify(chat.turns));
+      if (!delayed) {
+        delayed = true;
+        setTimeout(() => {
+          chat.thread.status = {type: "idle"};
+          chat.turns[0].status = "completed";
+          publish(chat, "native/changed", {});
+        }, 50);
+        req.reply({delay: 700, body: {data: snapshot, nextCursor: null}});
+      } else req.reply({data: snapshot, nextCursor: null});
+    }).as("nativeHistory");
+    cy.then(() => {
+      chat.thread.status = {type: "active"};
+      chat.turns = [{id: "native-turn", status: "inProgress", items: []}];
+      publish(chat, "native/changed", {});
+    });
+    cy.wait("@nativeHistory");
+    cy.title().should("not.contain", "Working");
+    cy.get("#header-activity").should("not.be.visible");
+  });
+
+  it("reuses a send identity after an ambiguous response and reload", () => {
+    const identifiers = [];
+    cy.intercept("POST", "/chat/api/send", req => {
+      identifiers.push(req.body.clientUserMessageId);
+      if (identifiers.length === 1) req.reply({statusCode: 503, body: {error: "Response lost"}});
+      else req.reply({accepted: true});
+    }).as("sendRetry");
+    cy.get("#prompt").type("Submit this once");
+    cy.get("#send").click();
+    cy.wait("@sendRetry");
+    cy.get("#notice").should("contain", "Response lost");
+    cy.reload();
+    cy.get("#send").should("be.enabled").click();
+    cy.wait("@sendRetry");
+    cy.then(() => {
+      expect(identifiers).to.have.length(2);
+      expect(identifiers[1]).to.equal(identifiers[0]);
+    });
+    cy.get("#clear-send").should("not.be.visible");
   });
 });

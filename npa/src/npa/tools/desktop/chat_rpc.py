@@ -16,6 +16,7 @@ class CodexConnection:
     Args:
         socket: Private app-server Unix socket.
         on_notification: Optional callback for shared runtime notifications.
+        transport: Optional private native adapter instead of the Unix WebSocket.
     Returns:
         None.
     Raises:
@@ -23,9 +24,9 @@ class CodexConnection:
         RuntimeError: Initialization fails.
     """
 
-    def __init__(self, socket, on_notification=None):
+    def __init__(self, socket, on_notification=None, *, transport=None):
         # Codex's Unix listener rejects a permessage-deflate negotiation.
-        self.connection = unix_connect(
+        self.connection = transport or unix_connect(
             socket, uri="ws://localhost", max_size=None, compression=None
         )
         self.closed = threading.Event()
@@ -96,6 +97,11 @@ class CodexConnection:
 
     def _receive(self, message):
         with self.condition:
+            if message.get("method") == "native/changed":
+                self.requests = {
+                    str(request["id"]): request
+                    for request in message["params"].pop("pending", [])
+                }
             if "method" not in message:
                 future = self.futures.get(message.get("id"))
                 if future is not None and not future.done():

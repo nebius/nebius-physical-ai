@@ -16,6 +16,9 @@ const state = {
   changingModel: false,
   models: [],
   statuses: new Map(),
+  images: [],
+  modes: [],
+  hostLabel: "VDI",
 };
 const node = (tag, className, text) => {
   const el = document.createElement(tag);
@@ -34,7 +37,7 @@ async function api(path, body) {
     options.headers = { "Content-Type": "application/json" };
     options.body = JSON.stringify(body);
   }
-  const response = await fetch("/chat/api/" + path, options);
+  const response = await fetch(new URL("./api/" + path, location.href), options);
   if (response.status === 401)
     throw new Error("Sign-in expired. Reload this page to sign in again.");
   const data = await response.json();
@@ -116,7 +119,7 @@ function updateControls() {
     state.sending ||
     state.changingModel ||
     state.externalOwner ||
-    !$("#prompt").value.trim() ||
+    (!$("#prompt").value.trim() && !state.images.length) ||
     !state.connected;
   $("#stop").hidden = !active;
   $("#run-state").textContent = active
@@ -136,12 +139,22 @@ function updateControls() {
       state.changingModel ||
       !state.connected ||
       !state.models.length;
+  $("#speed").disabled = $("#model").disabled;
+  $("#mode").disabled = $("#model").disabled || !state.modes.length;
   updateActivity();
 }
 async function selectThread(id) {
+  saveDraft();
   const generation = ++state.generation;
   notice();
   state.id = id;
+  $("#prompt").value = localStorage.getItem("codex-draft:" + id) || "";
+  state.images = [];
+  const pendingSend = JSON.parse(localStorage.getItem("codex-send:" + id) || "null");
+  if (pendingSend) state.images = pendingSend.images || [];
+  renderAttachments();
+  $("#delivery-status").hidden = true;
+  $("#clear-send").hidden = !localStorage.getItem("codex-send:" + id);
   state.loading = true;
   state.turns = [];
   state.thread = null;
@@ -161,6 +174,7 @@ async function selectThread(id) {
       "This session is open in an older Codex client. You can read it here. Close it in that client, then reopen it here to continue safely.",
     );
   state.thread = resumed.thread;
+  if ("serviceTier" in resumed) state.thread.serviceTier = resumed.serviceTier;
   renderModelControls();
   $("#title").textContent = title(state.thread);
   $("#project").textContent = state.thread.cwd || "VDI";
@@ -172,6 +186,7 @@ async function selectThread(id) {
 }
 
 function renderModelControls() {
+  renderExtraControls();
   const current = state.thread?.model;
   const model = state.models.find((model) => model.model === current);
   const select = $("#model");
@@ -246,7 +261,7 @@ async function refreshThread() {
   const generation = state.generation;
   const result = await api("thread?id=" + encodeURIComponent(state.id));
   if (generation !== state.generation) return;
-  state.thread = result.thread;
+  state.thread = {...state.thread, ...result.thread};
   state.statuses.set(state.id, result.thread.status);
   $("#title").textContent = title(state.thread);
   renderModelControls();
@@ -321,6 +336,10 @@ function sessionEvent(event) {
   ) {
     state.thread.model = params.threadSettings.model;
     state.thread.reasoningEffort = params.threadSettings.effort;
+    if ("serviceTier" in params.threadSettings)
+      state.thread.serviceTier = params.threadSettings.serviceTier;
+    if (params.threadSettings.collaborationMode)
+      state.thread.mode = params.threadSettings.collaborationMode.mode;
     renderModelControls();
   }
   if (
@@ -333,6 +352,7 @@ function sessionEvent(event) {
 }
 async function loadTurns(older = false, generation = state.generation) {
   if (!state.id) return;
+  const firstLoad = !state.turns.length;
   const query = new URLSearchParams({ id: state.id });
   if (older && state.turnCursor) query.set("cursor", state.turnCursor);
   const result = await api("turns?" + query);
@@ -342,7 +362,7 @@ async function loadTurns(older = false, generation = state.generation) {
   state.turns = older ? [...state.turns, ...turns] : turns;
   const unique = new Map(state.turns.map((turn) => [turn.id, turn]));
   state.turns = [...unique.values()];
-  renderMessages(!older);
+  renderMessages(!older && firstLoad);
   $("#older").hidden = !state.turnCursor;
   updateControls();
 }
@@ -379,6 +399,13 @@ function renderItem(item) {
     if (item.type !== "userMessage")
       article.append(node("div", "role", "CODEX"));
     appendText(article, text);
+    for (const entry of item.content || []) {
+      if (entry.type !== "image" || !/^data:image\/(png|jpeg|webp);base64,/.test(entry.url || "")) continue;
+      const image = node("img", "message-image");
+      image.src = entry.url;
+      image.alt = "Attached image";
+      article.append(image);
+    }
     if (item.type === "agentMessage" && text) {
       const copy = node("button", "copy", "Copy");
       copy.addEventListener("click", () =>
@@ -475,6 +502,10 @@ function eventTurn(params) {
   return turn;
 }
 function handleEvent(event) {
+  if (event.method === "native/changed") {
+    refreshNative();
+    return;
+  }
   sessionEvent(event);
   const p = event.params || {},
     method = event.method;
@@ -612,7 +643,7 @@ async function events() {
       const result = await api("events?after=" + state.cursor);
       state.connected = result.connected;
       $("#connection").textContent = result.connected
-        ? "● Connected to VDI"
+        ? "● Connected to " + state.hostLabel
         : "Reconnecting…";
       if (!result.connected)
         throw new Error(
@@ -643,6 +674,7 @@ $("#menu").addEventListener("click", () =>
 );
 $("#scrim").addEventListener("click", closeSidebar);
 $("#prompt").addEventListener("input", () => {
+  saveDraft();
   $("#prompt").style.height = "auto";
   $("#prompt").style.height = Math.min($("#prompt").scrollHeight, 180) + "px";
   updateControls();
@@ -657,19 +689,21 @@ $("#composer").addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = $("#prompt").value;
   const generation = state.generation;
-  if ($("#send").disabled || state.sending || !text.trim()) return;
+  if ($("#send").disabled || state.sending || (!text.trim() && !state.images.length)) return;
   state.sending = true;
   updateControls();
   notice();
   try {
-    const active = activeTurn();
-    await api("send", { id: state.id, text, turnId: active?.id });
+    const sent = await sendMessage(text);
     if (generation !== state.generation) return;
     if (state.thread && !state.thread.name && !state.thread.preview) {
       state.thread.preview = text;
       $("#title").textContent = title(state.thread);
     }
     if ($("#prompt").value === text) $("#prompt").value = "";
+    state.images = state.images.filter(image => !sent.images.includes(image));
+    renderAttachments();
+    saveDraft();
     $("#prompt").style.height = "auto";
     await loadTurns();
   } catch (error) {
@@ -748,9 +782,14 @@ async function start() {
     state.instance = info.instance;
     state.pending = info.pending;
     state.connected = info.connected;
+    state.hostLabel = info.hostLabel || "VDI";
+    state.native = !!info.native;
+    configureHost();
     loadModels().catch((error) => notice("Model controls: " + error.message));
+    api("modes").then(result => { state.modes = result.data; renderExtraControls(); })
+      .catch(() => { state.modes = []; });
     $("#cwd").value = info.cwd;
-    $("#connection").textContent = "● Connected to VDI";
+    $("#connection").textContent = "● Connected to " + state.hostLabel;
     events();
     await loadSessions();
     const id = decodeURIComponent(location.hash.slice(1));
@@ -785,3 +824,149 @@ setInterval(() => {
     activityFrame++;
   updateActivity();
 }, 750);
+
+function configureHost() {
+  $("#host-tag").textContent = state.native ? "Mac" : "VDI";
+  $("#settings-status").textContent = "Same conversations. Work stays on " + state.hostLabel + ".";
+  if (!state.native) return;
+  $("#open-host").textContent = "Open in VS Code ↗";
+  $("#open-host").removeAttribute("href");
+  $("#open-host").onclick = async () => {
+    if (!state.id) return;
+    try {
+      const result = await api("open", {id: state.id});
+      notice(result.connected ? "Open in VS Code on your Mac." : "Open request sent. Accept the VS Code link on your Mac if prompted.");
+    } catch (error) { notice(error.message); }
+  };
+}
+
+function saveDraft() {
+  if (!state.id) return;
+  try { localStorage.setItem("codex-draft:" + state.id, $("#prompt").value); }
+  catch { notice("Browser storage is unavailable; keep this page open to retain your draft."); }
+}
+
+function options(select, choices, value) {
+  select.replaceChildren();
+  for (const [key, label] of choices) {
+    const option = node("option", "", label);
+    option.value = key;
+    select.append(option);
+  }
+  select.value = value || "";
+}
+
+function renderExtraControls() {
+  const selected = state.models.find(model => model.model === state.thread?.model);
+  const speeds = [["", "Account default"], ["default", "Standard"],
+    ...(selected?.serviceTiers || []).map(tier => [tier.id, tier.id === "priority" ? "Fast · higher usage" : tier.name || tier.id])];
+  const currentMode = state.thread?.mode || state.thread?.collaborationMode?.mode;
+  const speed = state.thread?.serviceTier;
+  if (speed === undefined) speeds.unshift(["unknown", "Choose speed"]);
+  options($("#speed"), speeds, speed === undefined ? "unknown" : speed);
+  const modes = state.modes.map(mode => [mode.mode, mode.name || mode.mode]);
+  if (!currentMode) modes.unshift(["unknown", "Choose mode"]);
+  options($("#mode"), modes, currentMode || "unknown");
+  for (const select of [$("#speed"), $("#mode")]) {
+    const unknown = select.querySelector('option[value="unknown"]');
+    if (unknown) unknown.disabled = true;
+  }
+}
+
+async function changeExtraSettings(field, value) {
+  if (!state.id || state.changingModel) return;
+  const generation = state.generation;
+  state.changingModel = true;
+  updateControls();
+  try {
+    await api("settings", {id: state.id, model: state.thread.model,
+      effort: state.thread.reasoningEffort, [field]: value});
+    if (generation === state.generation) {
+      await refreshThread();
+      state.thread[field] = value;
+      renderExtraControls();
+    }
+    $("#settings-status").textContent = "Saved to this conversation · applies to the next turn";
+  } catch (error) { notice(error.message); }
+  finally { state.changingModel = false; updateControls(); }
+}
+
+$("#speed").onchange = () => changeExtraSettings("serviceTier", $("#speed").value || null);
+$("#mode").onchange = () => changeExtraSettings("mode", $("#mode").value);
+$("#attach").onclick = () => $("#image-input").click();
+$("#image-input").onchange = async () => {
+  const id = state.id;
+  for (const file of $("#image-input").files) {
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      notice("Attach a PNG, JPEG, or WebP image.");
+      continue;
+    }
+    const url = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    if (state.id === id) state.images.push(url);
+  }
+  $("#image-input").value = "";
+  renderAttachments();
+  updateControls();
+};
+
+function renderAttachments() {
+  $("#attachments").replaceChildren();
+  state.images.forEach((url, index) => {
+    const button = node("button", "attachment", "×");
+    button.type = "button";
+    button.setAttribute("aria-label", "Remove attached image");
+    const image = node("img");
+    image.src = url;
+    image.alt = "Image to send";
+    button.prepend(image);
+    button.onclick = () => { state.images.splice(index, 1); renderAttachments(); updateControls(); };
+    $("#attachments").append(button);
+  });
+}
+
+async function sendMessage(text) {
+  const key = "codex-send:" + state.id;
+  const previous = JSON.parse(localStorage.getItem(key) || "null");
+  if (previous && (previous.text !== text || JSON.stringify(previous.images) !== JSON.stringify(state.images)))
+    throw new Error("Check the previous send, then discard its pending state before sending different content.");
+  const body = previous || {id: state.id, text, images: [...state.images],
+    turnId: activeTurn()?.id, clientUserMessageId: crypto.randomUUID()};
+  localStorage.setItem(key, JSON.stringify(body));
+  $("#clear-send").hidden = false;
+  const result = await api("send", body);
+  localStorage.removeItem(key);
+  if (state.id === body.id) {
+    $("#clear-send").hidden = true;
+    $("#delivery-status").hidden = false;
+    $("#delivery-status").textContent = result.delivery?.target === "VS Code" ?
+      (result.delivery.visible ? "✓ Message visible in VS Code on your Mac" : "Sent · waiting for VS Code to display the message") : "✓ Sent to this conversation";
+  }
+  return body;
+}
+
+$("#clear-send").onclick = () => {
+  localStorage.removeItem("codex-send:" + state.id);
+  $("#clear-send").hidden = true;
+  notice("Pending send cleared. Check the conversation before sending again.");
+};
+
+let nativeRefreshing = false;
+let nativeRefreshQueued = false;
+async function refreshNative() {
+  nativeRefreshQueued = true;
+  if (nativeRefreshing) return;
+  nativeRefreshing = true;
+  try {
+    while (nativeRefreshQueued) {
+      nativeRefreshQueued = false;
+      await Promise.all([loadSessions(), refreshThread(), loadTurns()]);
+    }
+  }
+  catch (error) { notice(error.message); }
+  finally { nativeRefreshing = false; }
+}

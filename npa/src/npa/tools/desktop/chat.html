@@ -14,15 +14,15 @@
     />
     <title>Codex · Your desktop</title>
     <link id="tab-icon" rel="icon" type="image/svg+xml" />
-    <link rel="stylesheet" href="/chat/chat.css" />
-    <script src="/chat/chat.js" defer></script>
+    <link rel="stylesheet" href="./chat.css" />
+    <script src="./chat.js" defer></script>
   </head>
   <body>
     <button id="scrim" aria-label="Close sessions"></button>
     <aside id="sidebar" aria-label="Codex sessions">
       <div class="brand">
         <span class="brand-icon" aria-hidden="true">⌘</span
-        ><strong>Codex</strong><span class="tag">VDI</span>
+        ><strong>Codex</strong><span class="tag" id="host-tag">VDI</span>
       </div>
       <button id="new-chat" class="new-chat"><span>＋</span> New chat</button>
       <label class="search"
@@ -48,7 +48,7 @@
       </button>
       <footer>
         <span id="connection" role="status">Connecting…</span
-        ><a href="/desktop.html" target="_blank" rel="noopener"
+        ><a id="open-host" href="/desktop.html" target="_blank" rel="noopener"
           >Open desktop ↗</a
         >
       </footer>
@@ -76,8 +76,7 @@
           <span class="welcome-icon">⌘</span>
           <h2>Your work, wherever you are.</h2>
           <p>
-            Open a session or start a new chat.<br />Codex runs on your desktop
-            in the cloud.
+            Open a session or start a new chat.<br />Work continues on your connected computer.
           </p>
           <button id="welcome-new" class="primary">Start a chat</button>
         </div>
@@ -101,6 +100,10 @@
               ></select
             ></label>
           </div>
+          <div class="model-controls secondary-controls">
+            <label>Speed<select id="speed" aria-label="Response speed" disabled></select></label>
+            <label>Mode<select id="mode" aria-label="Chat mode" disabled></select></label>
+          </div>
           <p id="model-description" class="model-description"></p>
           <textarea
             id="prompt"
@@ -109,7 +112,10 @@
             aria-label="Message Codex"
             disabled
           ></textarea>
+          <div id="attachments"></div>
           <div class="compose-bottom">
+            <button type="button" id="attach" aria-label="Attach image">＋</button>
+            <input id="image-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
             <span id="run-state">Choose a session to begin</span>
             <div>
               <button type="button" id="stop" hidden>■ Stop</button
@@ -128,12 +134,14 @@
         <p class="composer-note" id="settings-status" role="status">
           Same conversations. Work stays on your VDI.
         </p>
+        <p id="delivery-status" class="composer-note" role="status" hidden></p>
+        <button type="button" id="clear-send" class="subtle" hidden>Discard pending send after checking the conversation</button>
       </form>
     </main>
     <dialog id="new-dialog">
       <form id="new-form">
         <h2>New chat</h2>
-        <p>Choose the project directory on your VDI.</p>
+        <p>Choose the project directory on your connected computer.</p>
         <label
           >Working directory<input id="cwd" autocomplete="off" required
         /></label>

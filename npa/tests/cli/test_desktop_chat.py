@@ -3,6 +3,7 @@
 from collections import deque
 from http.server import ThreadingHTTPServer
 import threading
+import uuid
 from unittest.mock import Mock
 
 import httpx
@@ -14,6 +15,7 @@ from npa.tools.desktop.chat_server import (
 from npa.tools.desktop.chat_rpc import CodexConnection
 from npa.tools.desktop.chat_history import owned_elsewhere
 from npa.tools.desktop.chat_models import available_models, model_selection
+from npa.tools.desktop.chat_delivery import Deliveries
 
 _MODEL = {
     "model": "example-model",
@@ -40,6 +42,7 @@ def chat(tmp_path):
     server.rpc = Mock()
     server.attached = set()
     server.created = {}
+    server.deliveries = Deliveries(tmp_path / "deliveries.sqlite")
     server.config["socket"] = str(tmp_path / "codex.sock")
     server.rpc.call.side_effect = lambda method, params: (
         {"thread": {"id": "existing-thread", "status": {"type": "idle"}}}
@@ -88,6 +91,32 @@ def test_wrong_password_cannot_read_threads(chat):
     rpc.call.assert_not_called()
 
 
+def test_send_identity_is_forwarded_and_replayed_without_a_second_turn(chat):
+    client, rpc = chat
+    body = {"id": "existing-thread", "text": "one send", "clientUserMessageId": str(uuid.uuid4())}
+    assert client.post("/chat/api/send", json=body).status_code == 200
+    assert client.post("/chat/api/send", json=body).status_code == 200
+    sends = [call for call in rpc.call.call_args_list if call.args[0] == "turn/start"]
+    assert len(sends) == 1
+    assert sends[0].args[1]["clientUserMessageId"] == body["clientUserMessageId"]
+
+
+def test_image_only_prompt_preserves_image_input(chat):
+    client, rpc = chat
+    image = "data:image/png;base64,aGVsbG8="
+    response = client.post("/chat/api/send", json={"id": "existing-thread", "images": [image]})
+    assert response.status_code == 200
+    assert rpc.call.call_args.args[1]["input"][-1] == {"type": "image", "url": image}
+
+
+@pytest.mark.parametrize("image", ["https://example.test/private.png", "data:image/svg+xml;base64,PHN2Zz4=", {}])
+def test_images_cannot_fetch_remote_resources_or_execute_svg(chat, image):
+    client, rpc = chat
+    response = client.post("/chat/api/send", json={"id": "existing-thread", "text": "image", "images": [image]})
+    assert response.status_code == 400
+    assert all(call.args[0] != "turn/start" for call in rpc.call.call_args_list)
+
+
 @pytest.mark.parametrize("origin", [None, "https://hostile.example.test", "null"])
 def test_cross_origin_mutations_are_rejected(chat, origin):
     client, rpc = chat
@@ -108,7 +137,7 @@ def test_static_page_has_no_inline_script_or_cache(chat):
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store"
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
-    assert '<script src="/chat/chat.js" defer>' in response.text
+    assert '<script src="./chat.js" defer>' in response.text
     assert "unit-test-only-password" not in response.text
 
 

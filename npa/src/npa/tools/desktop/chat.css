@@ -29,6 +29,14 @@
     animation: none;
   }
 }
+.secondary-controls { margin-top: 8px; }
+.model-controls select { height: 44px; min-height: 44px; appearance: none; -webkit-appearance: none; }
+#attachments { display: flex; gap: 8px; overflow-x: auto; }
+.attachment { display: flex; align-items: center; padding: 4px; }
+.attachment img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; }
+.message-image { display: block; max-width: 100%; max-height: 360px; border-radius: 8px; }
+#clear-send { white-space: normal; }
+#open-host { cursor: pointer; }
 .model-controls {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);

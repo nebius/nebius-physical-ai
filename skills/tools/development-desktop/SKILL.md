@@ -51,6 +51,18 @@ Implementation belongs in `npa/src/npa/tools/desktop`, independently of Workbenc
    restore test selections afterward. Preserve
    the existing account and model configuration. Never copy account tokens to
    the browser or restart a shared engine with active work during setup.
+8. For existing Mac sessions, use `chat-setup --local` and optionally
+   `--gateway-ssh-host <existing-managed-gateway>`. Local mode follows the native
+   VS Code owner, preserving active chats without changing `chatgpt.cliExecutable`.
+   Require macOS, Node.js 22.13+, npm, and a signed-in Codex installation. Keep
+   credentials in private runtime files. Preserve the existing HTTPS origin,
+   credentials, desktop, and remote chat route; only add the separate local chat
+   route and loopback SSH forwarding. Validate local/remote CLI exclusivity,
+   same-thread messages, images, Plan/speed settings, draft retention, reconnects,
+   repeated setup, and lost-response delivery without duplicate execution.
+   Use `status --local --json` and `open --local --chat` for the saved setup.
+   Recheck extension IPC compatibility after upgrades. Do not claim a backup
+   exists from setup alone, or restart a mobile-owned active turn during updates.
 
 See [the operator guide](../../../docs/tools/development-desktop.md) for login,
 recovery, public-access prerequisites, and cleanup. Use the contribution,
