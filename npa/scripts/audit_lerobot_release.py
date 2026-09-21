@@ -97,6 +97,11 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         ("npa/src/npa/setup/install_lerobot.sh",),
     ),
     (
+        "lerobot.datasets.video_utils",
+        "decode_video_frames",
+        ("npa/src/npa/workflows/behavior_challenge/comet_training_data.py",),
+    ),
+    (
         "lerobot.datasets.factory",
         "make_dataset",
         ("research/lerobot-deploy/training/profile_train.py",),
