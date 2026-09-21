@@ -226,3 +226,19 @@ def test_provenance_failure_preserves_primary_evaluator_error(
     with pytest.raises(RuntimeError, match="original evaluator failure"):
         campaign_runner._execute_partition(args, panel, partition, store, workspace)
     assert "Provenance upload also failed" in caplog.text
+
+
+def test_parallel_workers_have_separate_original_provenance(tmp_path):
+    storage = MemoryStorage()
+    for index in range(2):
+        workspace = tmp_path / str(index)
+        workspace.mkdir()
+        (workspace / "policy.log").write_text(f"worker {index} original log")
+        campaign_runner._publish_worker_provenance(
+            storage, workspace, f"s3://example-bucket/run/workers/worker-{index}.json"
+        )
+    assert len(storage.objects) == 2
+    assert {value[0] for value in storage.objects.values()} == {
+        b"worker 0 original log",
+        b"worker 1 original log",
+    }

@@ -68,7 +68,8 @@ identities verified during packaging.
 
 For managed workers, construct the serving artifact with
 `serving_identity.serving_artifact(args)`. It hashes the actual adapter files,
-policy kind, execution variant, and optional correlation/export receipts.
+policy kind, execution variant, per-episode process lifecycle, and optional
+correlation/export receipts.
 The worker recomputes that identity and checks the checkpoint archive bytes
 before starting the policy. This prevents a changed controller from inheriting
 an earlier policy's completed cases.
@@ -86,9 +87,12 @@ Run and monitor it with `npa workbench workflow submit`, `status`, `logs`, and
 The per-case ledger uses atomic conditional S3 writes:
 
 1. A worker claims a prescribed case. A replaced pre-start owner cannot start it.
-2. The worker commits `started` before invoking the unchanged evaluator.
+2. It starts a fresh policy process for that case, waits for readiness, then
+   commits `started` immediately before invoking the unchanged evaluator.
 3. After evaluator success, it validates the original JSON and fully decodes the
-   MP4, uploads both without overwriting conflicting bytes, then marks `complete`.
+   MP4, stops the policy, and preserves case-specific policy and evaluator logs.
+   It uploads original artifacts without overwriting conflicting bytes, then
+   marks `complete`.
 4. A resumed worker downloads and verifies completed cases. It can recover a
    started case from its original uploaded artifacts or successful evaluator
    output retained on the worker volume. It never invokes that case again.
@@ -96,6 +100,12 @@ The per-case ledger uses atomic conditional S3 writes:
 If a started case has no recoverable original evidence, recovery stops and
 identifies the case. Creating a new output prefix to repeat it would defeat the
 protocol. Keep the original volume and logs for investigation.
+
+Each case starts with the policy's native initial random state. A websocket
+reset alone does not reset the RLC sampler's random generator. Fresh processes
+keep the sampler state independent of preceding cases, worker assignments, and
+resumes. A policy startup failure leaves the case reclaimable; recovering an
+original completed rollout does not start a policy process.
 
 Pure planning supports any official task subset. A managed worker currently
 serves one task per panel; use separate task panels for multiple tasks.

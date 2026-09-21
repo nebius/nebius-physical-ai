@@ -182,6 +182,7 @@ class CaseStore:
             or record.get("schema") != SCHEMA
             or record.get("panel_id") != self.panel_id
             or record.get("case") != case
+            or not isinstance(record.get("state"), str)
             or record.get("state") not in {"claimed", "started", "complete"}
             or not _valid_claim_fields(record)
             or not _valid_state_fields(record)

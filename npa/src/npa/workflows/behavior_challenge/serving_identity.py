@@ -9,6 +9,7 @@ from pathlib import Path
 from .protocol import file_digest
 
 _SERVING_FILES = (
+    "campaign_runner.py",
     "policy.py",
     "policy_server.py",
     "rlc_policy.py",
@@ -45,6 +46,7 @@ def serving_artifact(args) -> dict:
         "schema": "npa.behavior.serving-identity.v1",
         "kind": args.policy_kind,
         "execution_variant": args.policy_execution_variant,
+        "episode_lifecycle": "fresh-managed-process-per-case-v1",
         "source": {name: file_digest(root / name) for name in _SERVING_FILES},
         "inputs": {
             field: file_digest(Path(getattr(args, field)))

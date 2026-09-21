@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import logging
 from pathlib import Path
@@ -41,6 +41,7 @@ def _put_original(storage, payload, uri):
 
 def _record_originals(store, version, output, record):
     prefix = store.artifact_prefix(version)
+    _record_case_provenance(store, version, output)
     _put_original(store.storage, _json_bytes(record), f"{prefix}/validation.json")
     for relative, digest in record["files"].items():
         source = output / relative
@@ -48,6 +49,32 @@ def _record_originals(store, version, output, record):
             raise ValueError("Original artifact changed after inspection")
         _put_original(store.storage, source.read_bytes(), f"{prefix}/{relative}")
     return store.complete(version, record)
+
+
+def _record_case_provenance(store, version, output):
+    prefix = store.artifact_prefix(version)
+    files = {}
+    for path in sorted(output.iterdir()):
+        if path.is_file() and not path.is_symlink():
+            _put_original(
+                store.storage, path.read_bytes(), f"{prefix}/provenance/{path.name}"
+            )
+            files[path.name] = file_digest(path)
+    _put_original(store.storage, _json_bytes(files), f"{prefix}/provenance.json")
+
+
+def _restore_case_provenance(store, version, output):
+    prefix = store.artifact_prefix(version)
+    saved = store.storage.read_bytes_with_etag(f"{prefix}/provenance.json")
+    if saved is None:
+        raise CaseAlreadyStarted("Original policy and evaluator provenance is missing")
+    for name, digest in json.loads(saved[0]).items():
+        if not name or Path(name).name != name or name in {".", ".."}:
+            raise ValueError("Invalid original provenance filename")
+        destination = output / name
+        store.storage.download_file(f"{prefix}/provenance/{name}", str(destination))
+        if file_digest(destination) != digest:
+            raise ValueError("Original provenance failed SHA-256 verification")
 
 
 def _restore_originals(store, version, output, panel):
@@ -59,6 +86,7 @@ def _restore_originals(store, version, output, panel):
     bind_inspected_rollout(panel, record)
     if any(record.get(key) != value for key, value in version.record["case"].items()):
         raise ValueError("Recovery manifest differs from the prescribed case")
+    _restore_case_provenance(store, version, output)
     for relative, digest in record["files"].items():
         destination = output / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -94,7 +122,9 @@ def recover_case(store, version, output: Path, panel: dict) -> dict:
     return record
 
 
-def run_partition(panel, partition, worker_index, store, workspace, execute_case):
+def run_partition(
+    panel, partition, worker_index, store, workspace, execute_case, *, prepare_case=None
+):
     """Run unstarted prescribed cases and verify every reused original artifact.
 
     Args:
@@ -104,12 +134,14 @@ def run_partition(panel, partition, worker_index, store, workspace, execute_case
         store: Durable case store bound to the panel.
         workspace: Persistent, panel-specific output directory.
         execute_case: Prepared evaluator callback accepting case and output path.
+        prepare_case: Optional context factory starting a fresh policy before each case.
     Returns:
         Validated original rollout records assigned to this worker.
     Raises:
         ValueError: Panel, partition, worker, or original evidence differs.
         CaseAlreadyStarted: A begun case has no recoverable original artifacts.
-        Exception: Evaluator or storage fails; the started marker is retained.
+        Exception: Startup failures retain a reclaimable claim; evaluator failures
+            retain the started marker.
     """
     validate_panel(panel)
     validate_partition(partition, panel)
@@ -123,12 +155,16 @@ def run_partition(panel, partition, worker_index, store, workspace, execute_case
     assigned = set(partition["workers"][worker_index]["case_ids"])
     cases = [case for case in panel["cases"] if case["case_id"] in assigned]
     return [
-        _run_or_recover(store, panel, case, workspace, worker_index, execute_case)
+        _run_or_recover(
+            store, panel, case, workspace, worker_index, execute_case, prepare_case
+        )
         for case in cases
     ]
 
 
-def _run_or_recover(store, panel, case, workspace, worker_index, execute_case):
+def _run_or_recover(
+    store, panel, case, workspace, worker_index, execute_case, prepare_case
+):
     existing = store.read(case)
     if existing and existing.record["state"] in {"started", "complete"}:
         output = _case_directory(workspace, existing)
@@ -137,13 +173,28 @@ def _run_or_recover(store, panel, case, workspace, worker_index, execute_case):
     output = _case_directory(workspace, claim)
     if claim.record["state"] == "complete":
         return recover_case(store, claim, output, panel)
-    started = store.start(claim)
-    execute_case(case, output)
-    (output / "evaluator-exit.json").write_bytes(_json_bytes(case))
+    preparation = prepare_case(case, output) if prepare_case else nullcontext()
+    try:
+        with preparation:
+            started = store.start(claim)
+            execute_case(case, output)
+            (output / "evaluator-exit.json").write_bytes(_json_bytes(case))
+    except BaseException:
+        _preserve_failed_case(store, claim, output)
+        raise
     record = inspect_rollout(output, case)
     bind_inspected_rollout(panel, record)
     _record_originals(store, started, output, record)
     return record
+
+
+def _preserve_failed_case(store, claim, output):
+    try:
+        _record_case_provenance(store, claim, output)
+    except Exception:
+        logging.getLogger(__name__).warning(
+            "Case provenance upload also failed; retain its original workspace"
+        )
 
 
 def _case_directory(workspace, version):
@@ -223,16 +274,16 @@ def _worker_declarations(args, storage, workspace):
     return panel, partition
 
 
-def _managed_plan(panel, task):
+def _managed_plan(panel, case):
     return {
         "recipe": {
-            "tasks": [task],
+            "tasks": [case["task"]],
             "split": panel["split"],
             "policy_checkpoint_sha256": panel["policy"]["artifacts"]["checkpoint"][
                 "sha256"
             ],
         },
-        "cases": [case for case in panel["cases"] if case["task"] == task],
+        "cases": [case],
     }
 
 
@@ -247,26 +298,28 @@ def _prepared_evaluator(args, panel, workspace):
     task = panel["selected_tasks"]
     if len(task) != 1:
         raise ValueError("Managed campaign worker currently serves one task per panel")
-    with managed_policy(args, _managed_plan(panel, task[0]), workspace):
 
-        def execute(case, output):
-            verify_upstream(args.upstream_root)
-            command = evaluator_argv(
-                case,
-                root=args.upstream_root,
-                python=args.evaluator_python,
-                host=args.host,
-                port=args.port,
-                output=output,
-            )
-            _run_case(command, args, output, case, environment)
-            verify_upstream(args.upstream_root)
+    def execute(case, output):
+        verify_upstream(args.upstream_root)
+        command = evaluator_argv(
+            case,
+            root=args.upstream_root,
+            python=args.evaluator_python,
+            host=args.host,
+            port=args.port,
+            output=output,
+        )
+        _run_case(command, args, output, case, environment)
+        verify_upstream(args.upstream_root)
 
-        yield execute
+    def prepare(case, output):
+        return managed_policy(args, _managed_plan(panel, case), output)
+
+    yield execute, prepare
 
 
 def _publish_worker_provenance(storage, workspace, receipt_uri):
-    prefix = receipt_uri.rsplit("/", 1)[0] + "/provenance"
+    prefix = receipt_uri.removesuffix(".json") + "/provenance"
     for path in sorted(workspace.iterdir()):
         if path.is_file() and not path.is_symlink():
             _put_original(storage, path.read_bytes(), f"{prefix}/{path.name}")
@@ -274,9 +327,15 @@ def _publish_worker_provenance(storage, workspace, receipt_uri):
 
 def _execute_partition(args, panel, partition, store, workspace):
     try:
-        with _prepared_evaluator(args, panel, workspace) as execute:
+        with _prepared_evaluator(args, panel, workspace) as (execute, prepare):
             records = run_partition(
-                panel, partition, args.worker_index, store, workspace, execute
+                panel,
+                partition,
+                args.worker_index,
+                store,
+                workspace,
+                execute,
+                prepare_case=prepare,
             )
     except BaseException:
         try:
