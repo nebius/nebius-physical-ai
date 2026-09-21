@@ -964,22 +964,36 @@ if ! command -v kubectl >/dev/null 2>&1; then
   sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
   rm -f /tmp/kubectl
 fi
+metadata_env=(env -u IAM_TOKEN -u NEBIUS_ENDPOINT -u NEBIUS_IAM_TOKEN -u NEBIUS_IAM_TOKEN_FILE -u NPA_NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN_FILE -u NPA_REUSE_IAM_TOKEN -u TF_VAR_iam_token)
+root_metadata_env=(env -u IAM_TOKEN -u NEBIUS_ENDPOINT -u NEBIUS_IAM_TOKEN -u NEBIUS_IAM_TOKEN_FILE -u NPA_NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN_FILE -u NPA_REUSE_IAM_TOKEN -u TF_VAR_iam_token HOME=/root)
 if [ -s /mnt/cloud-metadata/token ]; then
-  if ! "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
-    "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  if ! "${{metadata_env[@]}}" "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
+    "${{metadata_env[@]}}" "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
   fi
   # The backend systemd service runs as root. Provision the same rotating
   # metadata profile under root's CLI home so tenant inventory does not fail
   # merely because bootstrap itself ran through the SSH user's home.
-  if ! sudo -H "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
-    sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  if ! sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
+    sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  fi
+  if ! user_token_file="$("${{metadata_env[@]}}" "$NEBIUS_BIN" --config "$HOME/.nebius/config.yaml" --profile {nebius_profile} config get token-file --format text)"; then
+    echo "attached metadata profile provenance verification failed" >&2
+    exit 1
+  fi
+  if ! root_token_file="$(sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} config get token-file --format text)"; then
+    echo "attached metadata profile provenance verification failed" >&2
+    exit 1
+  fi
+  if [ "$user_token_file" != /mnt/cloud-metadata/token ] || [ "$root_token_file" != /mnt/cloud-metadata/token ]; then
+    echo "attached metadata profile provenance verification failed" >&2
+    exit 1
   fi
   # Inventory must use the exact attached identity and its rotating metadata
   # token. Scrub any operator/bootstrap token inherited by SSH before verifying.
   expected_sa={expected_agent_service_account_id}
   expected_tenant={expected_agent_tenant_id}
   expected_project={nebius_parent_id}
-  inventory_env=(env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN -u TF_VAR_iam_token -u NPA_REUSE_IAM_TOKEN HOME=/root NEBIUS_PROFILE={nebius_profile})
+  inventory_env=(env -u IAM_TOKEN -u NEBIUS_ENDPOINT -u NEBIUS_IAM_TOKEN -u NEBIUS_IAM_TOKEN_FILE -u NPA_NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN_FILE -u NPA_REUSE_IAM_TOKEN -u TF_VAR_iam_token HOME=/root NEBIUS_PROFILE={nebius_profile})
   whoami_json="$(sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam whoami --format json)"
   if [ -n "$expected_sa" ] && ! python3 -c 'import json, sys; expected = sys.argv[1]; matches = lambda value: any(map(matches, value.values())) if isinstance(value, dict) else any(map(matches, value)) if isinstance(value, list) else isinstance(value, str) and value == expected; raise SystemExit(0 if matches(json.load(sys.stdin)) else 1)' "$expected_sa" <<<"$whoami_json"; then
     echo "attached service-account verification failed" >&2
@@ -3731,7 +3745,7 @@ def _safe_structured_transaction_detail(stdout: str) -> str:
 
 
 def _run_agent_npa_json(
-    args: list[str], *, timeout_s: int = 300, expect_json: bool = True,
+    args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True,
     extra_env: dict[str, str] | None = None,
 ) -> dict:
     ready, reason = _agent_npa_ready()
@@ -3739,8 +3753,10 @@ def _run_agent_npa_json(
         raise HTTPException(status_code=409, detail=reason)
     try:
         command_env = _agent_command_env()
+        credential_source = staged_agent_credential_source(command_env)
         if extra_env:
             command_env.update({{str(key): str(value) for key, value in extra_env.items()}})
+        command_env["NPA_NEBIUS_CREDENTIAL_SOURCE"] = credential_source
         command_env, _credential_source = prepare_agent_cloud_environment(command_env)
         proc = run_bounded_agent_command(
             [str(NPA_CLI), *args],
@@ -3749,6 +3765,14 @@ def _run_agent_npa_json(
             timeout_s=timeout_s,
         )
     except TimeoutError as exc:
+        if timeout_s is None or str(exc) != "agent command timed out":
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Agent command execution is temporarily unavailable while "
+                    "subprocess cleanup completes."
+                ),
+            ) from exc
         raise HTTPException(
             status_code=502,
             detail=f"NPA command timed out after {{timeout_s}}s: {{args}}",
@@ -3981,14 +4005,14 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
     _update_sim2real_run(run_id, mutate=_start)
     cmd = _sim2real_agent_command(run_id, output_dir)
     try:
-        proc = subprocess.run(
+        command_env, _credential_source = prepare_agent_cloud_environment(
+            _agent_command_env()
+        )
+        proc = run_bounded_agent_command(
             cmd,
             cwd=str(NPA_SOURCE_ROOT),
-            env=_agent_command_env(),
-            text=True,
-            capture_output=True,
-            timeout=900,
-            check=False,
+            env=command_env,
+            timeout_s=900,
         )
     except Exception as exc:
         def _fail_exc(details: dict) -> dict:
@@ -4460,7 +4484,7 @@ def _execute_agent_workflow_yaml(
     )
 
     def run_npa_for_context(
-        args: list[str], *, timeout_s: int = 300, expect_json: bool = True
+        args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True
     ) -> dict:
         return _run_agent_npa_json(
             args,
@@ -4548,10 +4572,15 @@ def _workflow_yaml_requests_gpu(yaml_text: str) -> bool:
 def _agent_context_has_schedulable_gpu(*, project: str, kubernetes_context: str) -> bool:
     # Check selected-context GPU capacity without exposing node metadata to the browser.
 
-    environment = _agent_workflow_operation_env(project, kubernetes_context)
+    try:
+        environment, _credential_source = prepare_agent_cloud_environment(
+            _agent_workflow_operation_env(project, kubernetes_context)
+        )
+    except ValueError:
+        return False
     kubectl = str(environment.get("NPA_KUBECTL_BIN") or "kubectl")
     try:
-        result = subprocess.run(
+        result = run_bounded_agent_command(
             [
                 kubectl,
                 "get",
@@ -4563,15 +4592,12 @@ def _agent_context_has_schedulable_gpu(*, project: str, kubernetes_context: str)
                 "--request-timeout=20s",
             ],
             env=environment,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=False,
+            timeout_s=30,
         )
         if result.returncode:
             return False
         payload = json.loads(result.stdout or "{{}}")
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+    except (OSError, TimeoutError, ValueError, TypeError):
         return False
     items = payload.get("items") if isinstance(payload, dict) else []
     if not isinstance(items, list):
@@ -10358,8 +10384,15 @@ def submit_sim2real(payload: dict | None = None):
     live_submit = None
     if script.is_file():
         try:
-            proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
-        except subprocess.TimeoutExpired as exc:
+            command_env, _credential_source = prepare_agent_cloud_environment(
+                _agent_command_env()
+            )
+            proc = run_bounded_agent_command(
+                [str(script), run_id],
+                env=command_env,
+                timeout_s=30,
+            )
+        except TimeoutError as exc:
             live_submit = {{"ok": False, "error": f"live sim2real submit timed out after 30s: {{exc}}"}}
             state["latest_submit"]["live_submit"] = live_submit
             details["result"] = "failed"
@@ -10381,7 +10414,7 @@ def submit_sim2real(payload: dict | None = None):
                     "live_submit": live_submit,
                 }},
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             live_submit = {{"ok": False, "error": f"live sim2real submit failed to start: {{exc}}"}}
         else:
             if proc.returncode == 0:

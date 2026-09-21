@@ -772,8 +772,9 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
         seen["timeout"] = kwargs.get("timeout_s")
         raise TimeoutError(canary)
 
-    config = "/fixture/nebius/config.yaml"
-    denied = {"/mnt/cloud-metadata/token", config}
+    poisoned_config = "/fixture/nebius/config.yaml"
+    exact_config = "/root/.nebius/config.yaml"
+    denied = {"/mnt/cloud-metadata/token", poisoned_config, exact_config}
     real_stat = runtime.os.stat
 
     def reject_credential_path_stat(path, *args, **kwargs):
@@ -783,15 +784,21 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
             )
         return real_stat(path, *args, **kwargs)
 
-    monkeypatch.setenv("NPA_NEBIUS_CONFIG", config)
-    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", poisoned_config)
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "must-not-propagate")
     monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
     monkeypatch.setattr(runtime.os, "stat", reject_credential_path_stat)
     monkeypatch.setattr(runtime, "run_bounded_agent_command", timeout_run)
 
-    assert runtime._agent_inventory_credential_context()[3] == "instance_metadata"
+    env, profile, config, source = runtime._agent_inventory_credential_context()
+    assert (profile, config, source) == (
+        "cursor-sa",
+        exact_config,
+        "instance_metadata",
+    )
+    assert env["HOME"] == "/root"
     with pytest.raises(AccessProbeError) as exc_info:
         runtime._agent_nebius_json(
             ["iam", "project", "list", "--parent-id", "tenant-test"],
@@ -803,7 +810,7 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     assert seen["command"][:5] == [
         "/bin/true",
         "--config",
-        config,
+        exact_config,
         "--profile",
         "cursor-sa",
     ]

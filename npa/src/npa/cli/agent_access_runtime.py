@@ -374,17 +374,22 @@ def _agent_inventory_credential_context() -> tuple[dict[str, str], str, str, str
     """Return a deterministic metadata-profile environment for read inventory."""
     base = _agent_command_env() if callable(_agent_command_env) else dict(os.environ)
     env = {str(key): str(value) for key, value in dict(base or {}).items()}
-    config_path = str(
-        os.environ.get("NPA_NEBIUS_CONFIG") or "/root/.nebius/config.yaml"
-    ).strip()
-    profile = str(os.environ.get("NPA_NEBIUS_PROFILE") or "cursor-sa").strip()
-    env["HOME"] = str(Path(config_path).parent.parent) if config_path else "/root"
-    env["NEBIUS_PROFILE"] = profile
+    for key in ("NPA_NEBIUS_CONFIG", "NPA_NEBIUS_PROFILE"):
+        if key not in env:
+            env[key] = str(os.environ.get(key) or "").strip()
     if "NPA_NEBIUS_CREDENTIAL_SOURCE" not in env:
         env["NPA_NEBIUS_CREDENTIAL_SOURCE"] = str(
             os.environ.get("NPA_NEBIUS_CREDENTIAL_SOURCE") or ""
         ).strip()
     env, source = prepare_agent_cloud_environment(env)
+    config_path = str(
+        env.get("NPA_NEBIUS_CONFIG") or "/root/.nebius/config.yaml"
+    ).strip()
+    profile = str(
+        env.get("NPA_NEBIUS_PROFILE") or env.get("NEBIUS_PROFILE") or "cursor-sa"
+    ).strip()
+    env["HOME"] = str(Path(config_path).parent.parent) if config_path else "/root"
+    env["NEBIUS_PROFILE"] = profile
     return env, profile, config_path, source
 
 

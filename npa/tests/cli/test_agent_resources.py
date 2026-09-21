@@ -40,7 +40,7 @@ class _NeverExits:
         self.stderr = _Pipe()
         self.barrier = barrier
         self.communicate_calls = 0
-        self.poll_calls = 0
+        self.wait_calls = 0
 
     def communicate(self, *, timeout: float):
         self.communicate_calls += 1
@@ -48,9 +48,10 @@ class _NeverExits:
             self.barrier.wait(timeout=2)
         raise subprocess.TimeoutExpired(["nebius"], timeout)
 
-    def poll(self):
-        self.poll_calls += 1
-        return None
+    def wait(self, *, timeout: float):
+        self.wait_calls += 1
+        self.returncode = -9
+        return self.returncode
 
 
 def _isolated_process_registry(monkeypatch) -> None:
@@ -58,6 +59,11 @@ def _isolated_process_registry(monkeypatch) -> None:
     monkeypatch.setattr(agent_resources, "_AGENT_ABANDONED_PROCESS_GROUPS", {})
     monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_BREAKER_OPEN", False)
     monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_REAPER", None)
+    monkeypatch.setattr(
+        agent_resources,
+        "_agent_process_is_owned_child",
+        lambda process: process.returncode is None,
+    )
 
 
 def test_cloud_environment_requires_provenance_and_scrubs_ambient_tokens() -> None:
@@ -67,19 +73,40 @@ def test_cloud_environment_requires_provenance_and_scrubs_ambient_tokens() -> No
     environment, source = prepare_agent_cloud_environment(
         {
             "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
+            "HOME": "/must-not-propagate",
+            "NEBIUS_CONFIG_DIR": "/must-not-propagate/.nebius",
+            "NEBIUS_ENDPOINT": "https://must-not-propagate.example",
+            "NEBIUS_PROFILE": "must-not-propagate",
             "NEBIUS_IAM_TOKEN": "secret",
             "NEBIUS_IAM_TOKEN_FILE": "/private/token",
             "NPA_NEBIUS_IAM_TOKEN": "secret",
             "NPA_NEBIUS_IAM_TOKEN_FILE": "/private/other-token",
+            "NPA_NEBIUS_CONFIG": "/must-not-propagate/config.yaml",
+            "NPA_NEBIUS_PROFILE": "must-not-propagate",
             "NPA_REUSE_IAM_TOKEN": "1",
             "TF_VAR_iam_token": "secret",
             "IAM_TOKEN": "secret",
         }
     )
 
+    supported_keys = {
+        "IAM_TOKEN",
+        "NEBIUS_ENDPOINT",
+        "NEBIUS_IAM_TOKEN",
+        "NEBIUS_IAM_TOKEN_FILE",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN_FILE",
+        "NPA_REUSE_IAM_TOKEN",
+        "TF_VAR_iam_token",
+    }
     assert source == "instance_metadata"
+    assert environment["HOME"] == "/root"
+    assert environment["NEBIUS_CONFIG_DIR"] == "/root/.nebius"
     assert environment["NEBIUS_PROFILE"] == "cursor-sa"
-    assert not (agent_resources._AMBIENT_NEBIUS_TOKEN_KEYS & set(environment))
+    assert environment["NPA_NEBIUS_CONFIG"] == "/root/.nebius/config.yaml"
+    assert environment["NPA_NEBIUS_PROFILE"] == "cursor-sa"
+    assert agent_resources._AMBIENT_NEBIUS_AUTH_KEYS == supported_keys
+    assert supported_keys.isdisjoint(environment)
 
 
 def test_resource_discovery_rejects_unknown_source_and_scrubs_tokens(
@@ -178,19 +205,113 @@ def test_reaper_clears_breaker_only_after_process_groups_exit(monkeypatch) -> No
     agent_resources._AGENT_ACTIVE_PROCESSES[process.pid] = process
     agent_resources._AGENT_ABANDONED_PROCESS_GROUPS[process.pid] = process
     agent_resources._AGENT_COMMAND_BREAKER_OPEN = True
-    checks = iter((True, False))
+    exited = iter((False, True))
 
     monkeypatch.setattr(
-        agent_resources, "_agent_process_group_exists", lambda _pid: next(checks)
+        agent_resources,
+        "_agent_process_exited_without_reaping",
+        lambda _process: next(exited),
+    )
+    monkeypatch.setattr(
+        agent_resources,
+        "_agent_process_group_has_other_members",
+        lambda _group, _leader: False,
     )
     monkeypatch.setattr(agent_resources.time, "sleep", lambda _seconds: None)
 
     agent_resources._reap_abandoned_agent_processes()
 
-    assert process.poll_calls == 3
+    assert process.wait_calls == 1
     assert agent_resources._AGENT_ABANDONED_PROCESS_GROUPS == {}
     assert agent_resources._AGENT_ACTIVE_PROCESSES == {}
     assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is False
+
+
+def test_reaper_thread_is_started_while_registry_lock_is_held(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    starts: list[bool] = []
+
+    class Reaper:
+        alive = False
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def start(self) -> None:
+            starts.append(agent_resources._AGENT_COMMAND_LOCK.locked())
+            self.alive = True
+
+    monkeypatch.setattr(
+        agent_resources.threading,
+        "Thread",
+        lambda **_kwargs: Reaper(),
+    )
+
+    agent_resources._start_agent_process_reaper()
+    agent_resources._start_agent_process_reaper()
+
+    assert starts == [True]
+
+
+def test_successful_completion_does_not_remove_reused_process_slot(
+    monkeypatch,
+) -> None:
+    _isolated_process_registry(monkeypatch)
+    replacement = _NeverExits(981031)
+
+    class Completed(_NeverExits):
+        def communicate(self, *, timeout):
+            agent_resources._AGENT_ACTIVE_PROCESSES[self.pid] = replacement
+            self.returncode = 0
+            return "{}", ""
+
+    process = Completed(replacement.pid)
+    monkeypatch.setattr(
+        agent_resources.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        agent_resources,
+        "_agent_process_group_has_other_members",
+        lambda *_args: pytest.fail(
+            "completed leaders must not inspect reusable groups"
+        ),
+    )
+
+    result = run_bounded_agent_command(["nebius"], timeout_s=None)
+
+    assert result.returncode == 0
+    assert agent_resources._AGENT_ACTIVE_PROCESSES[process.pid] is replacement
+
+
+def test_pipe_close_failure_still_starts_reaper(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    process = _NeverExits(981041)
+    reaper_starts: list[bool] = []
+
+    def fail_close() -> None:
+        raise OSError("synthetic close failure")
+
+    process.stdout.close = fail_close
+    monkeypatch.setattr(
+        agent_resources.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(agent_resources, "_kill_agent_process_group", lambda _pid: None)
+    monkeypatch.setattr(
+        agent_resources,
+        "_start_agent_process_reaper",
+        lambda: reaper_starts.append(True),
+    )
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        run_bounded_agent_command(["nebius"], timeout_s=0.01)
+
+    assert reaper_starts == [True]
+    assert process.stderr.closed is True
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is True
 
 
 def test_bounded_command_kills_and_reaps_real_descendant_group(monkeypatch) -> None:

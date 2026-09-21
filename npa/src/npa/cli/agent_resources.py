@@ -29,11 +29,14 @@ _AGENT_ABANDONED_PROCESS_GROUPS: dict[int, subprocess.Popen[str]] = {}
 _AGENT_COMMAND_BREAKER_OPEN = False
 _AGENT_COMMAND_REAPER: threading.Thread | None = None
 _AGENT_COMMAND_REAPER_INTERVAL_SECONDS = 0.1
-_AGENT_MAX_ACTIVE_PROCESSES = 8
 _AGENT_CREDENTIAL_SOURCES = frozenset({"configured_profile", "instance_metadata"})
-_AMBIENT_NEBIUS_TOKEN_KEYS = frozenset(
+_AGENT_METADATA_PROFILE = "cursor-sa"
+_AGENT_METADATA_CONFIG = "/root/.nebius/config.yaml"
+_AGENT_METADATA_HOME = "/root"
+_AMBIENT_NEBIUS_AUTH_KEYS = frozenset(
     {
         "IAM_TOKEN",
+        "NEBIUS_ENDPOINT",
         "NEBIUS_IAM_TOKEN",
         "NEBIUS_IAM_TOKEN_FILE",
         "NPA_NEBIUS_IAM_TOKEN",
@@ -85,27 +88,75 @@ def prepare_agent_cloud_environment(
     source = staged_agent_credential_source(env)
     if not source:
         raise ValueError("agent credential source is unavailable")
-    for key in _AMBIENT_NEBIUS_TOKEN_KEYS:
+    for key in _AMBIENT_NEBIUS_AUTH_KEYS:
         env.pop(key, None)
     if source == "instance_metadata":
-        env.setdefault("NEBIUS_PROFILE", "cursor-sa")
+        env["HOME"] = _AGENT_METADATA_HOME
+        env["NEBIUS_CONFIG_DIR"] = "/root/.nebius"
+        env["NEBIUS_PROFILE"] = _AGENT_METADATA_PROFILE
+        env["NPA_NEBIUS_CONFIG"] = _AGENT_METADATA_CONFIG
+        env["NPA_NEBIUS_PROFILE"] = _AGENT_METADATA_PROFILE
     return env, source
 
 
-def _agent_process_group_exists(process_group: int) -> bool:
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
+def _agent_process_is_owned_child(process: subprocess.Popen[str]) -> bool:
+    # WNOWAIT proves this PID is still our child without freeing it for reuse.
+    if process.returncode is not None:
         return False
-    except PermissionError:
-        return True
+    try:
+        os.waitid(
+            os.P_PID,
+            process.pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except (ChildProcessError, ProcessLookupError):
+        return False
     return True
+
+
+def _agent_process_exited_without_reaping(
+    process: subprocess.Popen[str],
+) -> bool | None:
+    if process.returncode is not None:
+        return None
+    try:
+        result = os.waitid(
+            os.P_PID,
+            process.pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except (ChildProcessError, ProcessLookupError):
+        return None
+    return result is not None
+
+
+def _agent_process_group_has_other_members(process_group: int, leader_pid: int) -> bool:
+    # The unreaped leader keeps its PID/PGID reserved while /proc is inspected.
+    uncertain = False
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            text = stat_path.read_text(encoding="utf-8")
+            closing_parenthesis = text.rfind(")")
+            fields = text[closing_parenthesis + 2 :].split()
+            pid = int(text.split(" ", 1)[0])
+            member_group = int(fields[2])
+        except FileNotFoundError:
+            continue
+        except (IndexError, OSError, ValueError):
+            uncertain = True
+            continue
+        if pid != leader_pid and member_group == process_group:
+            return True
+    return uncertain
 
 
 def _close_agent_process_pipes(process: subprocess.Popen[str]) -> None:
     for stream in (process.stdout, process.stderr):
         if stream is not None and not stream.closed:
-            stream.close()
+            try:
+                stream.close()
+            except Exception:
+                continue
 
 
 def _kill_agent_process_group(process_group: int) -> None:
@@ -121,13 +172,24 @@ def _reap_abandoned_agent_processes() -> None:
         with _AGENT_COMMAND_LOCK:
             abandoned = tuple(_AGENT_ABANDONED_PROCESS_GROUPS.items())
         for process_group, process in abandoned:
-            process.poll()
-            if _agent_process_group_exists(process_group):
+            exited = _agent_process_exited_without_reaping(process)
+            if exited is False:
                 continue
-            process.poll()
+            if exited is True and _agent_process_group_has_other_members(
+                process_group, process.pid
+            ):
+                _kill_agent_process_group(process_group)
+                continue
+            if exited is True:
+                try:
+                    process.wait(timeout=0)
+                except subprocess.TimeoutExpired:
+                    continue
             with _AGENT_COMMAND_LOCK:
-                _AGENT_ABANDONED_PROCESS_GROUPS.pop(process_group, None)
-                _AGENT_ACTIVE_PROCESSES.pop(process_group, None)
+                if _AGENT_ABANDONED_PROCESS_GROUPS.get(process_group) is process:
+                    _AGENT_ABANDONED_PROCESS_GROUPS.pop(process_group, None)
+                if _AGENT_ACTIVE_PROCESSES.get(process_group) is process:
+                    _AGENT_ACTIVE_PROCESSES.pop(process_group, None)
         with _AGENT_COMMAND_LOCK:
             if not _AGENT_ABANDONED_PROCESS_GROUPS:
                 _AGENT_COMMAND_BREAKER_OPEN = False
@@ -147,7 +209,7 @@ def _start_agent_process_reaper() -> None:
             daemon=True,
         )
         _AGENT_COMMAND_REAPER = reaper
-    reaper.start()
+        reaper.start()
 
 
 def _start_bounded_agent_process(
@@ -159,8 +221,6 @@ def _start_bounded_agent_process(
     with _AGENT_COMMAND_LOCK:
         if _AGENT_COMMAND_BREAKER_OPEN:
             raise TimeoutError("a prior agent cloud command has not exited")
-        if len(_AGENT_ACTIVE_PROCESSES) >= _AGENT_MAX_ACTIVE_PROCESSES:
-            raise TimeoutError("too many agent cloud commands are active")
         process = subprocess.Popen(
             command,
             cwd=cwd,
@@ -181,9 +241,18 @@ def _abandon_agent_process(process: subprocess.Popen[str]) -> None:
     with _AGENT_COMMAND_LOCK:
         _AGENT_ABANDONED_PROCESS_GROUPS[process.pid] = process
         _AGENT_COMMAND_BREAKER_OPEN = True
-    _kill_agent_process_group(process.pid)
-    _close_agent_process_pipes(process)
-    _start_agent_process_reaper()
+    try:
+        if _agent_process_is_owned_child(process):
+            _kill_agent_process_group(process.pid)
+    finally:
+        _close_agent_process_pipes(process)
+        _start_agent_process_reaper()
+
+
+def _remove_owned_active_process(process: subprocess.Popen[str]) -> None:
+    with _AGENT_COMMAND_LOCK:
+        if _AGENT_ACTIVE_PROCESSES.get(process.pid) is process:
+            _AGENT_ACTIVE_PROCESSES.pop(process.pid, None)
 
 
 def run_bounded_agent_command(
@@ -191,7 +260,7 @@ def run_bounded_agent_command(
     *,
     env: dict[str, str] | None = None,
     cwd: str | None = None,
-    timeout_s: float,
+    timeout_s: float | None,
 ) -> subprocess.CompletedProcess[str]:
     """Run one agent child without waiting synchronously after its deadline.
 
@@ -199,7 +268,8 @@ def run_bounded_agent_command(
         command: Argument vector to execute without a shell.
         env: Sanitized child environment.
         cwd: Optional child working directory.
-        timeout_s: Positive request-time deadline in seconds.
+        timeout_s: Positive request-time deadline, or ``None`` only for an
+            explicitly durable operation with no wall-clock cap.
 
     Returns:
         The completed child-process result.
@@ -209,8 +279,10 @@ def run_bounded_agent_command(
         ValueError: The command or deadline is invalid.
         OSError: The command could not be started.
     """
-    if not command or timeout_s <= 0:
-        raise ValueError("agent command and positive timeout are required")
+    if not command:
+        raise ValueError("agent command is required")
+    if timeout_s is not None and timeout_s <= 0:
+        raise ValueError("agent command timeout must be positive or None")
     process = _start_bounded_agent_process(command, env=env, cwd=cwd)
     try:
         stdout, stderr = process.communicate(timeout=timeout_s)
@@ -220,8 +292,7 @@ def run_bounded_agent_command(
     except BaseException:
         _abandon_agent_process(process)
         raise
-    with _AGENT_COMMAND_LOCK:
-        _AGENT_ACTIVE_PROCESSES.pop(process.pid, None)
+    _remove_owned_active_process(process)
     return subprocess.CompletedProcess(
         command, int(process.returncode), stdout or "", stderr or ""
     )

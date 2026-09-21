@@ -4035,13 +4035,13 @@ def test_bootstrap_installs_nebius_cli_and_sa_profile() -> None:
     assert 'nebius_profile = "cursor-sa"' in source
     assert "--profile {nebius_profile}" in source
     assert (
-        '"$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null'
-        in source
+        '"${{metadata_env[@]}}" "$NEBIUS_BIN" --profile {nebius_profile} '
+        "iam get-access-token >/dev/null" in source
     )
-    assert 'sudo -H "$NEBIUS_BIN" profile create' in source
+    assert 'sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" profile create' in source
     assert (
-        'sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token'
-        in source
+        'sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" '
+        "--profile {nebius_profile} iam get-access-token" in source
     )
     assert "nebius CLI binary not found after install" in source
     assert "--parent-id" in source
@@ -4219,8 +4219,29 @@ def test_bootstrap_verifies_attached_identity_with_project_scoped_fallback() -> 
     assert 'iam project list --parent-id "$expected_tenant" --all' in source
     assert 'iam project get --id "$expected_project"' in source
     assert "forcing a broad tenant editors grant" in source
-    assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
+    assert "inventory_env=(env -u IAM_TOKEN" in source
+    assert "-u NEBIUS_IAM_TOKEN_FILE" in source
+    assert "-u NPA_NEBIUS_IAM_TOKEN_FILE" in source
+    assert "-u IAM_TOKEN" in source
+    assert "-u NEBIUS_ENDPOINT" in source
+    assert "config get token-file --format text" in source
+    assert "attached metadata profile provenance verification failed" in source
     assert 'echo "attached metadata credential source is unavailable" >&2' in source
+
+
+def test_embedded_sim2real_cloud_commands_use_sanitized_runner() -> None:
+    source = _agent_source()
+    background = source.split("def _run_sim2real_pipeline_background", 1)[1].split(
+        "def _write_workflow_temp_yaml", 1
+    )[0]
+    live_submit = source.split(
+        'script = Path("/opt/npa-agent/run-live-sim2real.sh")', 1
+    )[1].split("_save_state(state)", 1)[0]
+
+    for command_path in (background, live_submit):
+        assert "prepare_agent_cloud_environment(" in command_path
+        assert "run_bounded_agent_command(" in command_path
+        assert "subprocess.run(" not in command_path
 
 
 def test_creds_from_terraform_state(monkeypatch) -> None:
