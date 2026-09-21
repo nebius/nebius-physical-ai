@@ -946,8 +946,9 @@ def test_checkpoint_selection_rejects_malformed_distance(distance: Any) -> None:
         select_best_checkpoint([_distance_candidate("bad", distance)])
 
 
-@pytest.mark.parametrize("rate", [math.nan, math.inf, -0.1, 1.1, "half"])
+@pytest.mark.parametrize("rate", [None, math.nan, math.inf, -0.1, 1.1, "half"])
 def test_checkpoint_selection_rejects_malformed_strict_rate(rate: Any) -> None:
+    """A supplied null rate is invalid; an absent metric is handled separately."""
     candidate = {
         "evaluation_split": "validation",
         "training_iteration": 100,
@@ -963,8 +964,9 @@ def test_checkpoint_selection_rejects_malformed_strict_rate(rate: Any) -> None:
         select_best_checkpoint([candidate])
 
 
-@pytest.mark.parametrize("rate", [math.nan, math.inf, -0.1, 1.1, "half"])
+@pytest.mark.parametrize("rate", [None, math.nan, math.inf, -0.1, 1.1, "half"])
 def test_checkpoint_selection_rejects_malformed_decomposed_rate(rate: Any) -> None:
+    """Do not silently turn an explicit unknown rate into a measured zero."""
     candidate = {
         "evaluation_split": "validation",
         "training_iteration": 100,
