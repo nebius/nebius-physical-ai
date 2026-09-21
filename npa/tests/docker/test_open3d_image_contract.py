@@ -33,6 +33,29 @@ AT_THE_PINNED_SNAPSHOT = {
     "perl-base": "5.40.1-6+deb13u1",
 }
 
+#: The snapshot the two versions above were read out of, and the identity of the index
+#: they were read from. Retained so a reviewer can re-derive the claim instead of taking
+#: it, and so that moving the pin fails here: these hashes describe one snapshot and
+#: nothing else, and the versions stop being evidence the moment it changes.
+PINNED_SNAPSHOT = "20260913T000000Z"
+SNAPSHOT_INDEXES = {
+    "debian trixie Release": {
+        "sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
+        "bytes": 138612,
+        "says": "Version 13.7, dated 2026-09-12, which is the point release the fixes shipped in",
+    },
+    "debian trixie main/binary-amd64/Packages.xz": {
+        "sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
+        "bytes": 9678380,
+        "says": "named by that Release under SHA256, and lists both versions above",
+    },
+    "debian-security trixie-security Release": {
+        "sha256": "5faa5f143a2cfd1dce82502bd15438fd5a4f24c78696432285bea920999caca6",
+        "bytes": 41759,
+        "says": "the security suite at the same snapshot, dated 2026-09-12",
+    },
+}
+
 
 def _segment_rank(text: str, index: int) -> int:
     """Rank one character of a version, as dpkg orders them.
@@ -139,6 +162,20 @@ def test_pinned_snapshot_clears_the_versions_the_scan_failed_on() -> None:
         )
 
 
+def test_the_versions_stay_tied_to_the_snapshot_they_were_read_from() -> None:
+    # `AT_THE_PINNED_SNAPSHOT` is a claim about one archive state, and the hashes above
+    # are its identity. Moving the pin without re-reading the index would leave the
+    # claim standing over an archive nobody checked, so it fails here first.
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert _build_arg(text, "DEBIAN_SNAPSHOT") == PINNED_SNAPSHOT, (
+        "the snapshot moved; re-read the index and refresh SNAPSHOT_INDEXES and "
+        "AT_THE_PINNED_SNAPSHOT from the new signed Release"
+    )
+    for index in SNAPSHOT_INDEXES.values():
+        assert re.fullmatch(r"[0-9a-f]{64}", index["sha256"])
+        assert index["bytes"] > 0
+
+
 def test_the_floor_is_enforced_at_build_time_by_dpkg() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
@@ -164,7 +201,12 @@ def test_mcap_notice_is_delivered_and_bound_to_the_installed_package() -> None:
     # mcap is MIT but ships no licence file in its wheel or its sdist, so the image is
     # where the grant has to come from.
     assert notice.is_file()
-    digest = hashlib.sha256(notice.read_bytes()).hexdigest()
+    raw = notice.read_bytes()
+    # The exact upstream grant, byte for byte. A reformatted or re-wrapped copy of a
+    # licence is a different document from the one the project published.
+    assert len(raw) == 1077
+    digest = hashlib.sha256(raw).hexdigest()
+    assert digest == "da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d"
     assert digest == _build_arg(text, "MCAP_NOTICE_SHA256"), (
         "the retained notice no longer hashes to what the Dockerfile checks"
     )
@@ -198,6 +240,10 @@ def test_open3d_image_keeps_its_cpu_and_non_root_contract() -> None:
         "python:3.11-slim-trixie@sha256:"
         "a3ab0b966bc4e91546a033e22093cb840908979487a9fc0e6e38295747e49ac0"
     ]
+    # This runtime compiles no bytecode of its own, which is how a `cpython-312.pyc`
+    # found in a layer was identifiable as copied from the build host rather than
+    # produced here. The exclusion that keeps it out lives in `npa/.dockerignore`.
+    assert "PYTHONDONTWRITEBYTECODE=1" in text
     assert "USER ubuntu" in text
     assert "useradd -m -s /bin/bash -u 1000 ubuntu" in text
     assert "rm -f /etc/ssh/ssh_host_*" in text

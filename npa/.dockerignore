@@ -3,6 +3,13 @@
 .venv/
 __pycache__/
 *.py[cod]
+# The two rules above only reach the context root. A build scan found
+# src/npa/cli/cluster/__pycache__/terraform_lifecycle.cpython-312.pyc inside a
+# shipped image: host bytecode, since the runtime is 3.11 and writes none. Docker
+# needs ** for any number of directories, so the nested copies entered through
+# COPY src/npa and no later RUN could remove them from the ancestor layer.
+**/__pycache__/
+**/*.py[cod]
 ._*
 
 build/
