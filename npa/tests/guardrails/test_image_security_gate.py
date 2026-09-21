@@ -1,5 +1,6 @@
 """Keep image security fail closed without queue-amplifying scan matrices."""
 
+import json
 from pathlib import Path
 import sys
 
@@ -161,9 +162,37 @@ def test_sarif_uploads_preserve_existing_alert_categories() -> None:
         for step in jobs["base-image-cve-scan"]["steps"]
         if "upload-sarif" in step.get("uses", "")
     ]
-    assert len(uploads) == 7
-    assert len({step["with"]["category"] for step in uploads}) == 7
     assert all(
         step["env"]["CODEQL_ACTION_ANALYSIS_KEY"].endswith(":base-image-cve-scan")
         for step in uploads
     )
+
+
+def test_base_image_sarif_uploads_exactly_cover_inventory() -> None:
+    """Publish every scanned base under its exact, distinct report identity.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: An upload is omitted, duplicated, or misidentified.
+    """
+
+    inventory = json.loads(
+        (ROOT / "npa/docker/workbench/base-image-security.json").read_text()
+    )
+    job = _workflow("image-security-scan.yml")["jobs"]["base-image-cve-scan"]
+    uploads = [step for step in job["steps"] if "upload-sarif" in step.get("uses", "")]
+    expected = {
+        (
+            "${{ runner.temp }}/base-image-sarif/trivy-" + entry["name"] + ".sarif",
+            "trivy-image-" + entry["name"],
+        )
+        for entry in inventory
+    }
+    actual = [
+        (step["with"]["sarif_file"], step["with"]["category"]) for step in uploads
+    ]
+    assert len(actual) == len(inventory)
+    assert set(actual) == expected
