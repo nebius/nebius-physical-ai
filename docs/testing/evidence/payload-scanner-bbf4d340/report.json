@@ -1,0 +1,533 @@
+{
+  "format": "npa.payload-scanner.public-review.v1",
+  "created_at": "2026-09-21T13:40:57.609422+00:00",
+  "source_commit": "bbf4d340d7db9463bb55ad9988bde5a370e96877",
+  "source_tree": "fc6f1de5c317536fa14c9650fdbf17c7f3e7e60f",
+  "source_files": [
+    {
+      "file": "image_payload_credentials.py",
+      "sha256": "23d34c87e17410ebf18fdf5fbadf122a4d4a1b342c6b840ceb95ccf44cf91815"
+    },
+    {
+      "file": "scan_image_alpamayo2_payload.py",
+      "sha256": "7b6f82f2fe6f3b56dd885b27f9ec891e8f0ad0130e398060736fd9cf384e0c9b"
+    },
+    {
+      "file": "scan_image_cosmos3_ray_serve_payload.py",
+      "sha256": "cf57c3707efec2f8878d956501363239a90bd99e9f8393b809f402f8b78ac1aa"
+    },
+    {
+      "file": "scan_image_cosmos3_serving_payload.py",
+      "sha256": "693e8ff27c219dbd7da629d2cda79a772907c234f45d298b301c1fbad297b441"
+    }
+  ],
+  "independent_source_verdict": "ACCEPTED_EXACT_SOURCE_SCOPED_SCANNER_REPAIR",
+  "native_cli_cases": [
+    {
+      "case": "ec_application",
+      "description": "Parse-valid EC key: application path",
+      "member": "opt/npa-src/application-config.bin",
+      "archive_sha256": "ef81c8a658d340c35e1a118ee296d36e166400c5d181f717db114007f2bd5155",
+      "payload_sha256": "89e86f0a148cea33ff6beefc9c9e0a93bd710954d2c79ccead4f1524ae72dd5c",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        }
+      }
+    },
+    {
+      "case": "ec_outside",
+      "description": "Identical EC key: other path",
+      "member": "opt/application/application-config.bin",
+      "archive_sha256": "6bdb01920b0610e304924786295a4c574eed538bea53ef8294b3672ab6d84909",
+      "payload_sha256": "89e86f0a148cea33ff6beefc9c9e0a93bd710954d2c79ccead4f1524ae72dd5c",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        }
+      }
+    },
+    {
+      "case": "encrypted_application",
+      "description": "Parse-valid encrypted PKCS8: application path",
+      "member": "opt/alpamayo2/application-config.bin",
+      "archive_sha256": "1757c354a037a934cabc5a6dc0f513d50b2baa6535eca33197b5f37bd5b7b1a2",
+      "payload_sha256": "8f5506753943053203c481c749f4df69d225a75d46b8b8bbcfa5de42c1ab8155",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        }
+      }
+    },
+    {
+      "case": "encrypted_outside",
+      "description": "Identical encrypted PKCS8: other path",
+      "member": "opt/application/application-config.bin",
+      "archive_sha256": "bda40b9c8ba20ac494ff2f7e2ffcc4189e18b45be4eedcb0a2a8f2494c85ac2c",
+      "payload_sha256": "8f5506753943053203c481c749f4df69d225a75d46b8b8bbcfa5de42c1ab8155",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        }
+      }
+    },
+    {
+      "case": "assignment_application",
+      "description": "Credential assignment: application path",
+      "member": "opt/npa-src/settings.py",
+      "archive_sha256": "5c6f6d02837d6fb77bc3209dd9ce7b720cd63134305e1171c74be0e9ac4fb580",
+      "payload_sha256": "b3688c4b692f34f3e1d3e996137daa9cc482b1429e848fddab7ab9181798daf7",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "quoted_secret_assignment"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "quoted_secret_assignment"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "quoted_secret_assignment"
+          ]
+        }
+      }
+    },
+    {
+      "case": "assignment_outside",
+      "description": "Identical assignment: other path",
+      "member": "opt/application/settings.py",
+      "archive_sha256": "498e83ccb70d1c1cde499ef7c25942db47f2392cbe3a259f999cd6bfe6a04a18",
+      "payload_sha256": "b3688c4b692f34f3e1d3e996137daa9cc482b1429e848fddab7ab9181798daf7",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "quoted_secret_assignment"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "quoted_secret_assignment"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "quoted_secret_assignment"
+          ]
+        }
+      }
+    },
+    {
+      "case": "clean",
+      "description": "Ordinary text",
+      "member": "opt/application/clean.txt",
+      "archive_sha256": "c02044bc43a193ca219199647f8b738df5786759c5400dca96bb2776eb6a01b2",
+      "payload_sha256": "501c2be432e2cba93a6522b605b816593dcaeb0336079852c855c43dbbf5029a",
+      "expected_exit_code": 0,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        }
+      }
+    },
+    {
+      "case": "libcrypto.so.3",
+      "description": "Unchanged actual libcrypto binary",
+      "member": "usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+      "archive_sha256": "ec0383953fce4506cc427155cc9c11cbc053fc45714fc4af4a864603d960b623",
+      "payload_sha256": "fae58327d2557631217a0c2f97db3da6bf9bfcd80a221d8d6d285acc0040df00",
+      "expected_exit_code": 0,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        }
+      }
+    },
+    {
+      "case": "ssh-keygen",
+      "description": "Unchanged actual ssh-keygen binary",
+      "member": "usr/bin/ssh-keygen",
+      "archive_sha256": "5513f07d046134fb56dbe71f7d93e2853ed69e1c77aca0183b2bb743dea52a94",
+      "payload_sha256": "4a16f170f7c80d6643d3ffada36d396c9d7b1d63238a218628e37af38d6107c0",
+      "expected_exit_code": 0,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        }
+      }
+    },
+    {
+      "case": "sshd-auth",
+      "description": "Unchanged actual sshd-auth binary",
+      "member": "usr/lib/openssh/sshd-auth",
+      "archive_sha256": "ab4d9988b598e3d1c3336a8f7801a2adfc089b506541d07dc212db3603236b68",
+      "payload_sha256": "2b1ca22b077b106a6fb02ed229c13b9311f392267bea2e4d42933934e3c06afa",
+      "expected_exit_code": 0,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "finding_kinds": []
+        }
+      }
+    },
+    {
+      "case": "ssh-keygen_with_appended_disposable_key",
+      "description": "Same ssh-keygen with disposable EC key appended",
+      "member": "usr/bin/ssh-keygen",
+      "archive_sha256": "1cb7fb7713526d23eb8a69b3b905feac08fddcc4212c3ac0fba53b03c9cb5d34",
+      "payload_sha256": "e1de5847c000b6e7a242a7c670465dfdd11ff15869f5646e17b9f71bfca906c0",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        }
+      }
+    },
+    {
+      "case": "sshd-auth_with_appended_disposable_key",
+      "description": "Same sshd-auth with disposable EC key appended",
+      "member": "usr/lib/openssh/sshd-auth",
+      "archive_sha256": "459ecbf47e7f7567a377f6a1021766cd6d681d5b38594f0647698fdea39c368f",
+      "payload_sha256": "6a36affbd5df8935403109432e46b7ccc1cfb3818065e380b2d7f5aed7ea8523",
+      "expected_exit_code": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "finding_kinds": [
+            "private_key_content"
+          ]
+        }
+      }
+    }
+  ],
+  "native_cli_invocations": 36,
+  "review_copy_mutants": [
+    {
+      "mutant": "restore_application_skip",
+      "case": "ec_application",
+      "scanner": "alpamayo2",
+      "fixed_expected_exit_code": 1,
+      "mutant_exit_code": 0,
+      "control_detected_mutant": true,
+      "archive_sha256": "ef81c8a658d340c35e1a118ee296d36e166400c5d181f717db114007f2bd5155",
+      "scanner_source_sha256": "11c0750193a4416bd508181a75441f9f33d9ddb25731f768ce4eb1d537d29af0",
+      "shared_source_sha256": "23d34c87e17410ebf18fdf5fbadf122a4d4a1b342c6b840ceb95ccf44cf91815"
+    },
+    {
+      "mutant": "restore_application_skip",
+      "case": "encrypted_application",
+      "scanner": "alpamayo2",
+      "fixed_expected_exit_code": 1,
+      "mutant_exit_code": 0,
+      "control_detected_mutant": true,
+      "archive_sha256": "1757c354a037a934cabc5a6dc0f513d50b2baa6535eca33197b5f37bd5b7b1a2",
+      "scanner_source_sha256": "11c0750193a4416bd508181a75441f9f33d9ddb25731f768ce4eb1d537d29af0",
+      "shared_source_sha256": "23d34c87e17410ebf18fdf5fbadf122a4d4a1b342c6b840ceb95ccf44cf91815"
+    },
+    {
+      "mutant": "restore_application_skip",
+      "case": "assignment_application",
+      "scanner": "alpamayo2",
+      "fixed_expected_exit_code": 1,
+      "mutant_exit_code": 0,
+      "control_detected_mutant": true,
+      "archive_sha256": "5c6f6d02837d6fb77bc3209dd9ce7b720cd63134305e1171c74be0e9ac4fb580",
+      "scanner_source_sha256": "11c0750193a4416bd508181a75441f9f33d9ddb25731f768ce4eb1d537d29af0",
+      "shared_source_sha256": "23d34c87e17410ebf18fdf5fbadf122a4d4a1b342c6b840ceb95ccf44cf91815"
+    },
+    {
+      "mutant": "restore_header_only_marker",
+      "case": "ssh-keygen",
+      "scanner": "alpamayo2",
+      "fixed_expected_exit_code": 0,
+      "mutant_exit_code": 1,
+      "control_detected_mutant": true,
+      "archive_sha256": "5513f07d046134fb56dbe71f7d93e2853ed69e1c77aca0183b2bb743dea52a94",
+      "scanner_source_sha256": "7b6f82f2fe6f3b56dd885b27f9ec891e8f0ad0130e398060736fd9cf384e0c9b",
+      "shared_source_sha256": "7b2ea41acdf11e312d4012c3115c5612b433c454090056d2ec4b56e4e4b4de40"
+    },
+    {
+      "mutant": "restore_header_only_marker",
+      "case": "ssh-keygen",
+      "scanner": "cosmos3_serving",
+      "fixed_expected_exit_code": 0,
+      "mutant_exit_code": 1,
+      "control_detected_mutant": true,
+      "archive_sha256": "5513f07d046134fb56dbe71f7d93e2853ed69e1c77aca0183b2bb743dea52a94",
+      "scanner_source_sha256": "693e8ff27c219dbd7da629d2cda79a772907c234f45d298b301c1fbad297b441",
+      "shared_source_sha256": "7b2ea41acdf11e312d4012c3115c5612b433c454090056d2ec4b56e4e4b4de40"
+    },
+    {
+      "mutant": "restore_header_only_marker",
+      "case": "ssh-keygen",
+      "scanner": "cosmos3_ray_serve",
+      "fixed_expected_exit_code": 0,
+      "mutant_exit_code": 1,
+      "control_detected_mutant": true,
+      "archive_sha256": "5513f07d046134fb56dbe71f7d93e2853ed69e1c77aca0183b2bb743dea52a94",
+      "scanner_source_sha256": "cf57c3707efec2f8878d956501363239a90bd99e9f8393b809f402f8b78ac1aa",
+      "shared_source_sha256": "7b2ea41acdf11e312d4012c3115c5612b433c454090056d2ec4b56e4e4b4de40"
+    },
+    {
+      "mutant": "restore_header_only_marker",
+      "case": "sshd-auth",
+      "scanner": "alpamayo2",
+      "fixed_expected_exit_code": 0,
+      "mutant_exit_code": 1,
+      "control_detected_mutant": true,
+      "archive_sha256": "ab4d9988b598e3d1c3336a8f7801a2adfc089b506541d07dc212db3603236b68",
+      "scanner_source_sha256": "7b6f82f2fe6f3b56dd885b27f9ec891e8f0ad0130e398060736fd9cf384e0c9b",
+      "shared_source_sha256": "7b2ea41acdf11e312d4012c3115c5612b433c454090056d2ec4b56e4e4b4de40"
+    },
+    {
+      "mutant": "restore_header_only_marker",
+      "case": "sshd-auth",
+      "scanner": "cosmos3_serving",
+      "fixed_expected_exit_code": 0,
+      "mutant_exit_code": 1,
+      "control_detected_mutant": true,
+      "archive_sha256": "ab4d9988b598e3d1c3336a8f7801a2adfc089b506541d07dc212db3603236b68",
+      "scanner_source_sha256": "693e8ff27c219dbd7da629d2cda79a772907c234f45d298b301c1fbad297b441",
+      "shared_source_sha256": "7b2ea41acdf11e312d4012c3115c5612b433c454090056d2ec4b56e4e4b4de40"
+    },
+    {
+      "mutant": "restore_header_only_marker",
+      "case": "sshd-auth",
+      "scanner": "cosmos3_ray_serve",
+      "fixed_expected_exit_code": 0,
+      "mutant_exit_code": 1,
+      "control_detected_mutant": true,
+      "archive_sha256": "ab4d9988b598e3d1c3336a8f7801a2adfc089b506541d07dc212db3603236b68",
+      "scanner_source_sha256": "cf57c3707efec2f8878d956501363239a90bd99e9f8393b809f402f8b78ac1aa",
+      "shared_source_sha256": "7b2ea41acdf11e312d4012c3115c5612b433c454090056d2ec4b56e4e4b4de40"
+    }
+  ],
+  "distinct_mutants_detected": 2,
+  "focused_tests_passed": 193,
+  "focused_test_seconds": 2.82,
+  "root_boundary_and_path_controls": {
+    "distinct_case_caller_outcomes": 30,
+    "long_whitespace_streaming_agreement": true,
+    "quoted_assignment_bytes": 2097152,
+    "scope": "Retained root scripts replayed against exact current source; repeated internal baselines are not extra unique fixture types."
+  },
+  "disposable_key_validation": {
+    "reused_disposable_keys_parse_valid": true,
+    "same_public_key": true,
+    "ec_payload_sha256": "89e86f0a148cea33ff6beefc9c9e0a93bd710954d2c79ccead4f1524ae72dd5c",
+    "encrypted_pkcs8_payload_sha256": "8f5506753943053203c481c749f4df69d225a75d46b8b8bbcfa5de42c1ab8155",
+    "private_key_bytes_printed": false,
+    "actual_credentials_used": false
+  },
+  "original_receipt_sha256": {
+    "independent_verdict": "1a16819798abf1442fcbd5fea55dd26d7eaeb032efdaaefaeecac044fbd5e321",
+    "native-semantics.private.json": "529c5dac7d0953580644993476a88a531d83726c13888efa90dcac64c23d7697",
+    "root-probe-replay.private.json": "b899724f873706e362e783cf8fa6bed24aad750eee09c228c66b0e8f1c79720d",
+    "targeted-mutant-controls.private.json": "a934d927c7ed256d5b3c042cbc2333ecae5f263f9f63037718cbb4333f4e019c",
+    "disposable-key-validation.private.json": "0c06f814356eee813243ad5fe54edd4e05e16abc9d55e5ad764ddecf11dd4de5",
+    "focused-tests.stdout": "8b9b9eeeea7cc4806cee2dd2f6632445c01c1023a961df2819304aca3871a9ae"
+  },
+  "scope": {
+    "gpu_applicable": false,
+    "vlm_applicable": false,
+    "full_image_qualification_claimed": false,
+    "raw_image_members_or_keys_published": false,
+    "author_sixteen_mutant_campaign_independently_verified": false
+  },
+  "full_suite": {
+    "status": "PASS",
+    "source_commit": "bbf4d340d7db9463bb55ad9988bde5a370e96877",
+    "source_tree": "fc6f1de5c317536fa14c9650fdbf17c7f3e7e60f",
+    "exit_code": 0,
+    "failed": 0,
+    "errors": 0,
+    "source_clean_unchanged": true,
+    "passed": 25433,
+    "skipped": 155,
+    "xpassed": 1,
+    "pytest_seconds": 771.18,
+    "wrapper_seconds": 773.7491417679994,
+    "workers": 47,
+    "started_at": "2026-09-21T13:11:59.414894+00:00",
+    "finished_at": "2026-09-21T13:24:53.164015+00:00",
+    "log_sha256": "628ffb9827d617a4b45ce9a176f6a1aad520b3056e49cf3269ac78d7dc8a1ba9",
+    "original_result_sha256": "65edd8a4da8598de0aa2eba95637eb7c4bda813892ae67f8e9367f8afe1e343d",
+    "independent_verdict_sha256": "73500b7ef661e2e34a88fb9bb566dad4e32743e4910064187c03df7323009b5e",
+    "scope": "Repository make test full local CPU unit gate; live/GPU markers and e2e excluded. Hosted coverage CI and image qualification are separate."
+  },
+  "hosted_ci": {
+    "status": "PENDING_SEPARATE_GATE"
+  }
+}
