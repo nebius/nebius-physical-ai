@@ -189,12 +189,8 @@ def _dynamics_model_contract(dynamics_model, active_names):
     model_names = _validated_names(
         getattr(model, "names", None), label="Pinocchio model"
     )
-    model_nq = _model_dimension(
-        getattr(model, "nq", None), label="Pinocchio model nq"
-    )
-    model_nv = _model_dimension(
-        getattr(model, "nv", None), label="Pinocchio model nv"
-    )
+    model_nq = _model_dimension(getattr(model, "nq", None), label="Pinocchio model nq")
+    model_nv = _model_dimension(getattr(model, "nv", None), label="Pinocchio model nv")
     try:
         limits = np.asarray(raw_limits, dtype=float)
     except (TypeError, ValueError) as exc:
@@ -259,9 +255,7 @@ def _dynamics_result(dynamic, trajectory, limits):
     expected_violation = bool(np.any(np.abs(torques).max(axis=0) > limits))
     if (
         not math.isclose(energy, expected_energy, rel_tol=1e-9, abs_tol=1e-9)
-        or not math.isclose(
-            max_torque, expected_max, rel_tol=1e-9, abs_tol=1e-9
-        )
+        or not math.isclose(max_torque, expected_max, rel_tol=1e-9, abs_tol=1e-9)
         or torque_violation != expected_violation
     ):
         raise CuroboError("inverse-dynamics metrics do not match retained evidence")

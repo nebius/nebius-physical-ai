@@ -173,7 +173,7 @@ def test_replay_rows_executes_independent_fk_path(monkeypatch):
                             ),
                         )
                     )
-                )
+                ),
             )
 
         def destroy(self):

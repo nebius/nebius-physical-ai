@@ -103,12 +103,8 @@ def _dynamics_model_contract(model_data, active_names: list[str]) -> np.ndarray:
     model_names = _validated_names(
         getattr(model, "names", None), label="Pinocchio model"
     )
-    model_nq = _model_dimension(
-        getattr(model, "nq", None), label="Pinocchio model nq"
-    )
-    model_nv = _model_dimension(
-        getattr(model, "nv", None), label="Pinocchio model nv"
-    )
+    model_nq = _model_dimension(getattr(model, "nq", None), label="Pinocchio model nq")
+    model_nv = _model_dimension(getattr(model, "nv", None), label="Pinocchio model nv")
     try:
         limits = np.asarray(raw_limits, dtype=float)
     except (TypeError, ValueError) as exc:
@@ -303,9 +299,8 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
             names = _validated_names(
                 trajectory.get("joint_names"), label="retained trajectory"
             )
-            if (
-                not set(active_names).issubset(names)
-                or not set(names).issubset(available_names)
+            if not set(active_names).issubset(names) or not set(names).issubset(
+                available_names
             ):
                 raise ReplayError("retained trajectory joint identity differs")
             index_by_name = {name: index for index, name in enumerate(names)}
@@ -364,15 +359,16 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
             series = evidence["trajectory"]
             arrays, dt = _dynamics_arrays(series, active_names)
             retained_limits = np.asarray(evidence["torque_limits_nm"], dtype=float)
-            if (
-                retained_limits.shape != (_DYNAMICS_DOF,)
-                or not np.array_equal(retained_limits, dynamics_limits[row["mode"]])
+            if retained_limits.shape != (_DYNAMICS_DOF,) or not np.array_equal(
+                retained_limits, dynamics_limits[row["mode"]]
             ):
                 raise ReplayError("retained inverse-dynamics torque limits differ")
             replay_input = SimpleNamespace(
                 position=torch.as_tensor(arrays["position"], dtype=torch.float64),
                 velocity=torch.as_tensor(arrays["velocity"], dtype=torch.float64),
-                acceleration=torch.as_tensor(arrays["acceleration"], dtype=torch.float64),
+                acceleration=torch.as_tensor(
+                    arrays["acceleration"], dtype=torch.float64
+                ),
                 dt=torch.as_tensor(dt, dtype=torch.float64),
             )
             replayed = upstream.compute_trajectory_energy(
