@@ -40,7 +40,9 @@ def _hcl_providers(path: Path, text: str) -> list[_Provider]:
     try:
         body = hcl2.parses_to_tree(text).children[0]
     except LarkError:
-        raise ValueError(f"Invalid Terraform HCL configuration: {path.name}") from None
+        raise ValueError(
+            f"Unsupported or invalid Terraform HCL configuration: {path.name}"
+        ) from None
     providers = []
     for block in body.children:
         if not isinstance(block, Tree) or block.data != "block":

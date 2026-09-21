@@ -195,6 +195,6 @@ def test_unsupported_comment_before_label_refuses_without_writes(tmp_path):
     path = tmp_path / "provider.tf"
     original = 'provider /* brace { } */ "nebius" {}\n'
     path.write_text(original)
-    with pytest.raises(ValueError, match="Invalid Terraform HCL"):
+    with pytest.raises(ValueError, match="Unsupported or invalid Terraform HCL"):
         rpc.configure_provider_rpc_deadlines(tmp_path, 120)
     assert path.read_text() == original
