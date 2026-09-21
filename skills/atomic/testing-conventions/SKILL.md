@@ -37,6 +37,12 @@ duration-balanced Python 3.12 coverage shards, then merges their data before
 enforcing the floor. Narrow prose-only candidates retain smoke, docs, guardrails,
 and security gates; see `CONTRIBUTING.md` for the trusted-base classification.
 Scheduled/manual audits repeat four shards across supported interpreters.
+Repository-wide runner slots limit PR validation to seven jobs, merge validation
+to nine, and background audits to three; these totals do not grow with PR count.
+PR shards share two slots, while merges retain five; each candidate pool also has
+a completion slot. Keep shared slots queued with `queue: max`, never default replacement of
+waiting jobs. `test_ci_concurrency` guards every runner job and prevents nested
+caller/child locks; `test_ci_workflows` guards cancellation and required results.
 Every full Python 3.12 run uploads module timings; successful runs emit a merged
 profile. Use successful scheduled main profiles for reviewed weight updates.
 The independent CI timing report separates runner waiting from execution and

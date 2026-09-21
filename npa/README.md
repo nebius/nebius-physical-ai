@@ -267,6 +267,15 @@ CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
 intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
 also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
+For queue rejections, follow the
+[merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
+The shared [validation concurrency pools](../CONTRIBUTING.md#validation-concurrency)
+allow seven PR jobs, nine merge-candidate jobs, and three background audit jobs at
+once across the repository. Each candidate pool has a separate slot for coverage
+and the final required check. Waiting jobs are retained up to GitHub's queue limit,
+while superseded commits of the same PR still cancel their old checks.
+Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
+parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,
