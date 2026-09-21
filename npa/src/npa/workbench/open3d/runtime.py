@@ -215,9 +215,13 @@ def prepare(request: PrepareRequest) -> dict[str, Any]:
 def stage_demo(request: StageDemoRequest) -> dict[str, Any]:
     """Publish the upstream `open3d.data` fragments as this run's input scans.
 
-    These are real captured indoor scans from the upstream release, not generated
-    geometry, which is why staging them is an acceptable self-contained input and
-    why the shipped reference spec can start from nothing.
+    These are fragments of the Redwood augmented ICL-NUIM benchmark (CC BY 3.0):
+    depth frames rendered from a modelled indoor scene with simulated sensor
+    noise, not real captures. They are a fixed published dataset carrying the
+    overlap and noise the pipeline expects, which is why staging them is an
+    acceptable self-contained input and why the shipped reference spec can start
+    from nothing. Nothing measured against them is a statement about real-sensor
+    accuracy.
     """
 
     validate_write_path(request.output_path, tool="open3d", required=True)
