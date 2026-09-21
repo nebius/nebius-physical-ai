@@ -208,6 +208,31 @@ For artifact conversion and sharing, see the
 
 ## Developing and testing npa
 
+Build actual RGB/action robot demonstrations with
+[robot SDG and LeRobot export](../docs/workbench/token-factory-robot-sdg.md).
+`npa workbench token-factory robot-sdg` uses S3 handoffs; the SDK's `robot_sdg`
+accepts local paths. Install `npa[robot-sdg]` and `ffmpeg`. The default router
+is Token Factory, and the simulator seed defaults to zero. Set
+`NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE=1` and `NPA_LEROBOT_PROOF_PYTHON` to a native
+LeRobot 0.5.1 interpreter to run live simulation and dataset validation. Optional
+`NPA_ROBOT_SDG_OUTPUT_DIR` preserves the run in a new local directory. These
+environment variables are unset by default; the simulator uses no physical robot.
+
+Build synthetic instruction datasets with the
+[automatically routed Token Factory SDG pipeline](../docs/workbench/token-factory-sdg.md).
+`npa workbench token-factory sdg` accepts S3 input/output paths; the SDK accepts
+local files for development. Routing defaults to Token Factory's hosted Lightning
+model, with Lightning/MiniMax generation and MiniMax review. Optional `--router jev`
+requires a separate TypeSafe key. `NPA_TOKEN_FACTORY_SDG_LIVE=1` opts into paid live
+pipeline tests; it defaults to unset.
+
+The optional [Jev model router](../docs/workbench/jev-routing.md) selects between
+eligible Token Factory text models in agent chat. `NPA_AGENT_MODEL_ROUTER=jev`
+enables it during agent deployment/bootstrap; it defaults to unset.
+`TYPESAFE_API_KEY` is required and can be saved in the existing private NPA
+credential store. The guide includes the live evaluation script, the opt-in
+`NPA_JEV_ROUTING_LIVE=1` tests, and provider-reported prefix-cache evidence.
+
 To work on `npa` itself, create the contributor environment and use the `make`
 targets from the repo root:
 
@@ -234,17 +259,36 @@ PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
   make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
 ```
 
+To recheck checkpoint selection from a completed GPU validation job, set
+`NPA_E2E_CHECKPOINT_SELECTION_EVIDENCE_CONFIG` to an owner-only JSON file and run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py -q
+```
+
+There is no default evidence target; the live check skips without the variable.
+The [test module](tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py)
+documents the required provider identity, digest-pinned image, source archive,
+GPU platform/count, training-output prefix, and minimum episode count. It reads
+existing resources, verifies checkpoint and source bytes, recomputes distances
+from recorded final positions, and reruns selection in both candidate orders.
+The input bundle must come from real policy rollouts; this check does not launch
+training, establish policy quality, or claim a complete Sim2Real pipeline run.
+Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests receive smoke, affected subsystem tests, and security feedback.
-Agent/browser changes also run Cypress before queue admission; unknown and
-shared changes receive full Python 3.12 validation. The merge queue runs the
-combined latest-main candidate through one dedicated browser job and focused
-Python 3.10/3.14 checks alongside five duration-balanced Python 3.12 coverage
-shards, then enforces the merged floor. Recognized prose-only edits retain smoke,
-documentation, lint, guardrail, and security checks while skipping runtime suites.
+Pull requests and merge candidates run the same full Python 3.12 suite,
+dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
+Five duration-balanced coverage shards run with xdist and cached constrained
+installs, then enforce the merged coverage floor. Full suites include smoke
+and CLI install checks without a duplicate subsystem job. The queue reruns
+these checks against the combined latest-main candidate. Recognized prose-only
+edits retain smoke, documentation, lint, guardrail, and security checks while
+skipping runtime suites.
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
 on all three supported versions. Every full Python 3.12 run publishes module
@@ -269,13 +313,20 @@ also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
 For queue rejections, follow the
 [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
-The shared [validation concurrency pools](../CONTRIBUTING.md#validation-concurrency)
-allow seven PR jobs, nine merge-candidate jobs, and three background audit jobs at
-once across the repository. Each candidate pool has a separate slot for coverage
-and the final required check. Waiting jobs are retained up to GitHub's queue limit,
-while superseded commits of the same PR still cancel their old checks.
+The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
+lets independent jobs use available GitHub runner capacity without shared
+repository-wide job queues. Newer commits still cancel older checks of the same
+PR. Organization runner limits can cause waiting; already queued runs retain
+their original workflow configuration until their branches are refreshed.
 Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
 parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
+
+Application and CI dependency scans reject known vulnerabilities even when the
+same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
+update `npa/requirements-lock.txt` and regenerate CI pins when changing package
+requirements. `.github/dependabot.yml` schedules daily update proposals for
+Python, browser-test npm, and GitHub Actions dependencies. Reproduce the scan
+with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
 
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,
@@ -302,6 +353,13 @@ to an operator-owned S3 prefix; it has no default. The check requires an existin
 authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
+
+For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
+plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
+`NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the
+configured bucket and storage service account for real. See
+[`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
+for the full env contract and safety preconditions.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).

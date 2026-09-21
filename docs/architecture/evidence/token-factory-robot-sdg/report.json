@@ -1,0 +1,300 @@
+{
+  "accepted_count": 6,
+  "application_response_cache": false,
+  "artifacts": {
+    "dataset/data/chunk-000/file-000.parquet": {
+      "bytes": 84032,
+      "sha256": "b77aa83a520be5da2bcf4a9c95453258f98080a96cf8056d3f30455123ab654a"
+    },
+    "dataset/meta/episodes/chunk-000/file-000.parquet": {
+      "bytes": 32632,
+      "sha256": "fb76320734e94e3ba11ed3985d8cea1156aec426156f55b21f5fb1db206cc491"
+    },
+    "dataset/meta/info.json": {
+      "bytes": 2370,
+      "sha256": "d34ca828b36453f325b5dd6fc1c02c18193d81145882a5cc13ef9cb8fca227ae"
+    },
+    "dataset/meta/stats.json": {
+      "bytes": 4345,
+      "sha256": "06f2817feaafb4fe31af792a2a2b92a260f0623183f51fdbc0bba02c1e02a555"
+    },
+    "dataset/meta/tasks.parquet": {
+      "bytes": 2453,
+      "sha256": "83392b8d35615f5c4a62aa46c327b2e6bca2cf51327f4bb6be89f531c7180871"
+    },
+    "dataset/videos/observation.images.workspace/chunk-000/file-000.mp4": {
+      "bytes": 808981,
+      "sha256": "a642a35fcc6fab1d55a9631904ee19b086b53a154b9f772aab253ac32def11d5"
+    },
+    "dataset/videos/observation.images.workspace/chunk-000/file-001.mp4": {
+      "bytes": 803258,
+      "sha256": "afea33f4635c8c25690c8dc0d2da9fc71235f4727261e757f90c91db740087eb"
+    },
+    "dataset/videos/observation.images.workspace/chunk-000/file-002.mp4": {
+      "bytes": 798218,
+      "sha256": "84834d276c6e8c9ca56c80e9df13b50717f5e82cabe82d4157f57ea35e57774a"
+    },
+    "dataset/videos/observation.images.workspace/chunk-000/file-003.mp4": {
+      "bytes": 809629,
+      "sha256": "6bb5e87a9f87b2f4654432079d96b624fb4cda9d104c614c9a059a511a51f2c0"
+    },
+    "dataset/videos/observation.images.workspace/chunk-000/file-004.mp4": {
+      "bytes": 817279,
+      "sha256": "3a87a0cd7400733cc7f6b3c9f8c010511b285263b1e8f4f0f8c3593cb3452cc5"
+    },
+    "dataset/videos/observation.images.workspace/chunk-000/file-005.mp4": {
+      "bytes": 805860,
+      "sha256": "c60dbc5c5886bb06ec49d999a10c164a736c9a190dedc74fbbe613803ab13db9"
+    },
+    "dataset/videos/observation.images.wrist/chunk-000/file-000.mp4": {
+      "bytes": 308956,
+      "sha256": "f218a67982760ae978666f5d332040f640be6e48faac0d07e7b2864c1eba6b1f"
+    },
+    "dataset/videos/observation.images.wrist/chunk-000/file-001.mp4": {
+      "bytes": 307677,
+      "sha256": "d289896ec92e8ca8a2aacfe346c8876d337e9a4b086d9f9155f2033803f47f36"
+    },
+    "dataset/videos/observation.images.wrist/chunk-000/file-002.mp4": {
+      "bytes": 289603,
+      "sha256": "e11be4444b429cb4d09062d7536d0b6af8f85b39a9451336a43c2df978a6b8a0"
+    },
+    "dataset/videos/observation.images.wrist/chunk-000/file-003.mp4": {
+      "bytes": 291621,
+      "sha256": "3ce3fb33ec40a44688011652b0bc159a6cb7d5f25b7bbb0210490d2362ddb59a"
+    },
+    "dataset/videos/observation.images.wrist/chunk-000/file-004.mp4": {
+      "bytes": 277866,
+      "sha256": "35f20b7078bd2faa68e21a158362c957375fed4e24c22694276ed4d92f680c11"
+    },
+    "dataset/videos/observation.images.wrist/chunk-000/file-005.mp4": {
+      "bytes": 291753,
+      "sha256": "dc05084ea8041dc08ccf3c95197373be8df111fcb48c0c8605cdd90dad958199"
+    },
+    "episodes/episode_0000/actions.npy": {
+      "bytes": 3088,
+      "sha256": "b31ff26706c19854dd3c91108c3ebd9abb45b75734bc8a53a0efb70864a7bb14"
+    },
+    "episodes/episode_0000/obs_workspace.npy": {
+      "bytes": 95904128,
+      "sha256": "332e29893e12bb49333a23d8d9ec9bc8d1f89281785b213ec4e7330e7b1244ef"
+    },
+    "episodes/episode_0000/obs_wrist.npy": {
+      "bytes": 95904128,
+      "sha256": "b04a5998bbf26450c64ad78eb135044342cc408c044fb33a7b8565be7e75e753"
+    },
+    "episodes/episode_0000/physics.npz": {
+      "bytes": 29375,
+      "sha256": "190de9bd521d1c609775ed7a38bebc0c4a32f17a0360f76781e4c0f88f6ab280"
+    },
+    "episodes/episode_0000/preview.mp4": {
+      "bytes": 1117580,
+      "sha256": "31b5f59117f3efc9afda40e93871fa8345dd93871cf9e1569bce191293d7f74a"
+    },
+    "episodes/episode_0000/state.npy": {
+      "bytes": 6788,
+      "sha256": "a3d758d194632f5790e8cf3de38e9a7dec7cde41e65dfa2d9887f14f6965391c"
+    },
+    "episodes/episode_0001/actions.npy": {
+      "bytes": 3088,
+      "sha256": "4a256ccec09348c1b1d4f5ceaaacb7f8b41e564f5cff0166521681e75ac1a47a"
+    },
+    "episodes/episode_0001/obs_workspace.npy": {
+      "bytes": 95904128,
+      "sha256": "ded2133fcc5b200c5c6fb414fd367d42776cde54d44c33dd046784ce9c51e33d"
+    },
+    "episodes/episode_0001/obs_wrist.npy": {
+      "bytes": 95904128,
+      "sha256": "0ca5399ec3ab307803c692fdafbb5a641c6c8dc4d0ad753f9ba961e87e7f9cb7"
+    },
+    "episodes/episode_0001/physics.npz": {
+      "bytes": 29336,
+      "sha256": "1e19c65fa6ee5fe967a465baf2792a7208eaefbbbdfa53263cdb2ee60c8b5813"
+    },
+    "episodes/episode_0001/preview.mp4": {
+      "bytes": 1112030,
+      "sha256": "5326610dc4dbdb83d710c4ba526384ec1a1a584f8ca5910d1c790765abec3d0a"
+    },
+    "episodes/episode_0001/state.npy": {
+      "bytes": 6788,
+      "sha256": "6637ee62347289e6f103c60e42923bfac261e3626f6f6274eb605278734566b4"
+    },
+    "episodes/episode_0002/actions.npy": {
+      "bytes": 3088,
+      "sha256": "5ca7fcb753960785a07e1ea2e12ac36dff97eab313cbd1ca9c5984d352ac3153"
+    },
+    "episodes/episode_0002/obs_workspace.npy": {
+      "bytes": 95904128,
+      "sha256": "60672d8d5e07a134c23925c01d99432b2acab6d377d288e5e9081ae0afa395d3"
+    },
+    "episodes/episode_0002/obs_wrist.npy": {
+      "bytes": 95904128,
+      "sha256": "89cb7c6daf82b87566c065cf06b6e0680c69f80efb3b87375bed01288ca31f99"
+    },
+    "episodes/episode_0002/physics.npz": {
+      "bytes": 29518,
+      "sha256": "d79b4d4af5480d07306f5ae4dd2a73ebd5be8513c870eae4db838c6c17f3bb0f"
+    },
+    "episodes/episode_0002/preview.mp4": {
+      "bytes": 1088548,
+      "sha256": "b0b7205003f100e712ad1d8a0e8575d99eb5a21b10b38470535e213ba73960b2"
+    },
+    "episodes/episode_0002/state.npy": {
+      "bytes": 6788,
+      "sha256": "a21714c440a667a7c37c90210e0ab90a1220d6428fd7e4e758300aeb7387b993"
+    },
+    "episodes/episode_0003/actions.npy": {
+      "bytes": 3088,
+      "sha256": "d7385ea1a67bb0201910cd6b944514a339c0a5c1e117f7546155478bdc0b34ae"
+    },
+    "episodes/episode_0003/obs_workspace.npy": {
+      "bytes": 95904128,
+      "sha256": "a1420353c805f550feebed89f08b3516fa0f82834572c3f7f8531072cc45017f"
+    },
+    "episodes/episode_0003/obs_wrist.npy": {
+      "bytes": 95904128,
+      "sha256": "ed2c3edef2f0ce2bb003bf8cf949d41345811f3774efd97fe68cdc434cc33302"
+    },
+    "episodes/episode_0003/physics.npz": {
+      "bytes": 29444,
+      "sha256": "a627e9ea90da6d5113cf4f61f91135e1bff6a1986d9b4d1ed021b0de52881844"
+    },
+    "episodes/episode_0003/preview.mp4": {
+      "bytes": 1102487,
+      "sha256": "cf51c8900aacf52bf64865bd0e29c4cfa68aca11a99d39eb3fa7186a26809eb1"
+    },
+    "episodes/episode_0003/state.npy": {
+      "bytes": 6788,
+      "sha256": "8b64c0d084d20bb1bd5f784e071c3d9a4e9e74ebbd3110f4c921cdc4218d462d"
+    },
+    "episodes/episode_0004/actions.npy": {
+      "bytes": 3088,
+      "sha256": "c6a8708b5e14e58356a796fcc9fc4899bd9be093954bbca7afcaf36e6ae8bc66"
+    },
+    "episodes/episode_0004/obs_workspace.npy": {
+      "bytes": 95904128,
+      "sha256": "dbf26cd591e070ca6defca5cc0f840f19ce533ba6a4fe7a70f7d7264e9e01c29"
+    },
+    "episodes/episode_0004/obs_wrist.npy": {
+      "bytes": 95904128,
+      "sha256": "5f3772a58885a53f6bd704e5ca95584f5f0ccc35146f3b9cc07b16bf4e967526"
+    },
+    "episodes/episode_0004/physics.npz": {
+      "bytes": 29512,
+      "sha256": "1229d7ac56347f7070477dfc43f741f9edff1cf10f50a63dd42b8827b318ce30"
+    },
+    "episodes/episode_0004/preview.mp4": {
+      "bytes": 1096297,
+      "sha256": "0f2a5a2785faa894a596aaeb28dd0a83e5649589d7ba873a854b9cb39f69b4ed"
+    },
+    "episodes/episode_0004/state.npy": {
+      "bytes": 6788,
+      "sha256": "ace0dbc81980921cbecdbe32404490a4f4f10031c69b009e4c314d2edc8a352a"
+    },
+    "episodes/episode_0005/actions.npy": {
+      "bytes": 3088,
+      "sha256": "f15fff69a2711c2dd03e89627c15418844dad1080318fd603586f1d82e8ca8fa"
+    },
+    "episodes/episode_0005/obs_workspace.npy": {
+      "bytes": 95904128,
+      "sha256": "8420f81844c678fa46b1a023afda4b653311a01cd95f4560f14ccca68b956bf2"
+    },
+    "episodes/episode_0005/obs_wrist.npy": {
+      "bytes": 95904128,
+      "sha256": "d8a809366c801a30400ff5d21988feb26682b08697f02998b3237de74ef4983c"
+    },
+    "episodes/episode_0005/physics.npz": {
+      "bytes": 29400,
+      "sha256": "860e4a3afb6532a4120be01cdf61338bc6175276a37a62ee3b1791ed70c7e496"
+    },
+    "episodes/episode_0005/preview.mp4": {
+      "bytes": 1098042,
+      "sha256": "0b4187c1574fef62fbc25f5dd6dbd287eefb06aeea19278f17ca8b8b731bbb76"
+    },
+    "episodes/episode_0005/state.npy": {
+      "bytes": 6788,
+      "sha256": "0358b120bfc5bf6cfae2330e7a9e12cbaa166de345735ffa372afa859ae01fdf"
+    },
+    "index.html": {
+      "bytes": 7420,
+      "sha256": "fffe033d3ac256031be5544d4afc5ed9811c43b9eb3a364eb583d6575a826016"
+    },
+    "provenance.jsonl": {
+      "bytes": 23577,
+      "sha256": "991bfb014f5f6f014bdabd47091dc7584ddac10509d89301b2bcb1d5ff52252d"
+    },
+    "rejected.jsonl": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "seeds.jsonl": {
+      "bytes": 1777,
+      "sha256": "d0d20ca5a68d414d7c9642251106355a3e98e11b4940218736391c140f02c4c8"
+    }
+  },
+  "context_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "dataset_format": "LeRobotDataset v3.0",
+  "dataset_path": "dataset",
+  "error_count": 0,
+  "fps": 25,
+  "generated_at": "2026-09-20T20:56:36.212180+00:00",
+  "generation_model_counts": {
+    "MiniMaxAI/MiniMax-M3": 3,
+    "nvidia/Nemotron-3_5-Lightning": 3
+  },
+  "input_sha256": "d0d20ca5a68d414d7c9642251106355a3e98e11b4940218736391c140f02c4c8",
+  "jev_usage": [],
+  "model_cards": {
+    "MiniMaxAI/MiniMax-M3": "https://huggingface.co/MiniMaxAI/MiniMax-M3",
+    "nvidia/Nemotron-3_5-Lightning": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+  },
+  "physical_robot_execution": false,
+  "policy_training_performed": false,
+  "prompt_revision": "npa-token-factory-robot-sdg-v1",
+  "rejected_count": 0,
+  "router": "token_factory",
+  "router_location": "workbench",
+  "routing_status_counts": {
+    "accepted": 6
+  },
+  "schema": "npa.token_factory.robot_sdg.v1",
+  "seed_count": 6,
+  "simulator_versions": {
+    "gymnasium-robotics": "1.4.1",
+    "mujoco": "3.3.7"
+  },
+  "status": "completed",
+  "success_judge": "mujoco_state_and_contacts",
+  "total_frames": 1110,
+  "usage_by_stage": [
+    {
+      "cache_counters_reported": 3,
+      "cached_tokens": 1920,
+      "completion_tokens": 842,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "prompt_tokens": 2627,
+      "request_count": 3,
+      "stage": "robot_plan",
+      "total_tokens": 3469
+    },
+    {
+      "cache_counters_reported": 3,
+      "cached_tokens": 0,
+      "completion_tokens": 278,
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "prompt_tokens": 2226,
+      "request_count": 3,
+      "stage": "robot_plan",
+      "total_tokens": 2504
+    },
+    {
+      "cache_counters_reported": 6,
+      "cached_tokens": 0,
+      "completion_tokens": 483,
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "prompt_tokens": 1283,
+      "request_count": 6,
+      "stage": "route",
+      "total_tokens": 1766
+    }
+  ]
+}

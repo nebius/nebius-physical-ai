@@ -4533,7 +4533,7 @@ def test_agent_preflight_fails_on_missing_terraform_and_keys(
     from npa.cli import agent as agent_module
 
     monkeypatch.delenv("NPA_TERRAFORM_BIN", raising=False)
-    monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(
         agent_module, "_resolve_deploy_llm_credentials", lambda: ("", "m")
     )
@@ -4802,7 +4802,6 @@ def test_deploy_fails_fast_on_missing_ssh_key(monkeypatch, tmp_path) -> None:
 
 def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
     """Deploy aborts on a missing terraform binary BEFORE any cloud side effects."""
-    from npa.cli import agent as agent_module
     from npa.cli.agent import deploy_cmd
 
     (tmp_path / "id_ed25519.pub").write_text(
@@ -4810,7 +4809,7 @@ def test_deploy_fails_fast_on_missing_terraform(monkeypatch, tmp_path) -> None:
     )
     (tmp_path / "id_ed25519").write_text("priv\n")
     monkeypatch.delenv("NPA_TERRAFORM_BIN", raising=False)
-    monkeypatch.setattr(agent_module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(
         "npa.cli.agent.resolve_environment",
         lambda *a, **k: SimpleNamespace(
