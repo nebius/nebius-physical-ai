@@ -122,6 +122,27 @@ See the [redistribution record](../../npa/docker/workbench/seedvr2/REDISTRIBUTIO
 and [operator skill](../../skills/tools/seedvr2/SKILL.md) for exact payload
 identities and validation gates.
 
+## Check nonroot packaging locally
+
+The final COPY instructions normalize license and source permissions so UID 1000
+can read them even when the source context was created with umask `077`.
+The native Docker regression creates disposable fixture images from an existing
+local immutable image; it does not pull images, use GPUs, or verify restoration.
+Set `NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE` to that local `sha256:<64-hex>` image ID
+(no default), then run:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE="sha256:<local-image-id>" \
+npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_seedvr2_image_readability.py -q
+```
+
+Both umasks `022` and `077` must pass with UID 1000 reading the copied notice,
+metadata, and nested source while retaining executable-file permissions.
+Each test removes only its unique temporary image tag. The actual final image
+still requires its own nonroot runtime, payload, and qualification checks.
+
 ## Limits
 
 SeedVR2 does not recover unobserved truth, metric geometry, camera calibration,

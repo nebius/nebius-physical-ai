@@ -227,7 +227,7 @@ COPY --from=seedvr2-build /usr/share/doc/npa-seedvr2/extension-arches /usr/share
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/cudnn-runtime.json /usr/share/doc/npa-seedvr2/cudnn-runtime.json
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/nvshmem-runtime.json /usr/share/doc/npa-seedvr2/nvshmem-runtime.json
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/video-io-compat.json /usr/share/doc/npa-seedvr2/video-io-compat.json
-COPY --from=seedvr2-build /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt /usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt
+COPY --from=seedvr2-build --chmod=0444 /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt /usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt
 
 RUN /opt/seedvr2-venv/bin/pip check \
     && /opt/seedvr2-venv/bin/python - <<'PY'
@@ -251,8 +251,8 @@ assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
 assert read_video and read_image
 PY
 
-COPY pyproject.toml README.md /opt/npa-src/
-COPY src/npa /opt/npa-src/src/npa
+COPY --chmod=u=rwX,go=rX pyproject.toml README.md /opt/npa-src/
+COPY --chmod=u=rwX,go=rX src/npa /opt/npa-src/src/npa
 COPY docker/workbench/seedvr2/service-requirements.lock /tmp/seedvr2-service.lock
 COPY --chmod=0555 docker/workbench/seedvr2/verify_no_weight_payloads.py /opt/npa-tools/verify_no_weight_payloads.py
 RUN python3.12 -m venv /opt/npa-venv \

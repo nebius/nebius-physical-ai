@@ -48,7 +48,7 @@ def test_seedvr2_packaging_is_public_runtime_fetch_only() -> None:
     assert "nvshmem-runtime.json" in redistribution
 
 
-def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
+def test_seedvr2_dockerfile_pins_source_and_native_dependencies() -> None:
     dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
     assert "SEEDVR2_SOURCE_REF=e4de8c24441a67e1b7df56abea10645059bb1185" in dockerfile
     assert "APEX_SOURCE_REF=8a6508aaad6e75a2b939e33f308cd63d745d97f1" in dockerfile
@@ -78,13 +78,19 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
     )
     assert "NVSHMEM-License-v3.4.5-0.txt" in dockerfile
     assert "COPY --from=seedvr2-build /opt/seedvr2-venv" in dockerfile
+
+
+def test_seedvr2_runtime_source_follows_compilers_and_payload_removal() -> None:
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
     build_stage, final_stage = dockerfile.split(
         "FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@", 1
     )
     assert "NPA_SOURCE_SHA" not in build_stage
     assert "SOURCE_DATE_EPOCH" not in build_stage
-    assert final_stage.index("COPY src/npa") < final_stage.index("ARG NPA_SOURCE_SHA")
-    assert final_stage.index("COPY src/npa") < final_stage.index(
+    assert final_stage.index("COPY --chmod=u=rwX,go=rX src/npa") < final_stage.index(
+        "ARG NPA_SOURCE_SHA"
+    )
+    assert final_stage.index("COPY --chmod=u=rwX,go=rX src/npa") < final_stage.index(
         'LABEL org.opencontainers.image.revision="${NPA_SOURCE_SHA}"'
     )
     assert "/opt/seedvr2-venv/bin/pip check" in final_stage
@@ -97,7 +103,7 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
         dockerfile.index(
             "RUN curl --fail --location \\\n"
             '      "https://codeload.github.com/ByteDance-Seed/SeedVR/'
-        ) : dockerfile.index("COPY pyproject.toml README.md")
+        ) : dockerfile.index("COPY --chmod=u=rwX,go=rX pyproject.toml README.md")
     ]
     assert "/opt/seedvr2/neg_emb.pt" in source_layer
     assert "/opt/seedvr2/pos_emb.pt" in source_layer
