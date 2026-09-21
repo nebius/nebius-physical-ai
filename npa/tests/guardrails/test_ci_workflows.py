@@ -586,6 +586,7 @@ def test_queue_reuse_requires_proof_and_fresh_security_scans(result):
     step = gate["steps"][0]
     environment = {name: "skipped" for name in step["env"]}
     environment.update(EVENT_NAME="merge_group", VALIDATION_MODE="reuse")
+    environment["GITHUB_STEP_SUMMARY"] = os.devnull
     fresh = (
         "PLAN_RESULT",
         "SCANNER_RESULT",
@@ -597,12 +598,7 @@ def test_queue_reuse_requires_proof_and_fresh_security_scans(result):
     for name in fresh:
         rejected = subprocess.run(
             ["bash", "-c", step["run"]],
-            env={
-                **os.environ,
-                **environment,
-                name: result,
-                "GITHUB_STEP_SUMMARY": os.devnull,
-            },
+            env={**os.environ, **environment, name: result},
             capture_output=True,
         )
         assert rejected.returncode != 0, (name, result)

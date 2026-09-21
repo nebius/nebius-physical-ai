@@ -215,12 +215,16 @@ def test_rerun_during_verification_invalidates_evidence(metadata):
         evidence.verify(REPOSITORY, event, NOW)
 
 
-def test_optional_reporting_does_not_hold_the_queue(metadata):
+@pytest.mark.parametrize("status", ["in_progress", "queued"])
+def test_optional_reporting_does_not_hold_the_queue(metadata, status):
     event, values = metadata
     for run in (values["runs"][0], values["current"]):
-        run.update(status="in_progress", conclusion=None)
+        run.update(status=status, conclusion=None)
     values["jobs"].append({"name": "ci-timing-report", "conclusion": None})
     assert evidence.verify(REPOSITORY, event, NOW)["tree"] == TREE
+    values["jobs"][0]["conclusion"] = None
+    with pytest.raises(ValueError, match="Required PR checks"):
+        evidence.verify(REPOSITORY, event, NOW)
 
 
 def test_prose_smoke_can_replace_full_tests_but_not_security(metadata):

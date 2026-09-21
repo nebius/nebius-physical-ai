@@ -47,6 +47,7 @@ def _validation_available(run: dict) -> bool:
     return (run["status"], run["conclusion"]) in {
         ("completed", "success"),
         ("in_progress", None),
+        ("queued", None),
     }
 
 
