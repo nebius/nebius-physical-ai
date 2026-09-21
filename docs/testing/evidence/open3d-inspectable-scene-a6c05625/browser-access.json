@@ -1,0 +1,43 @@
+{
+  "schema": "npa.open3d.anonymous-browser-proof.v1",
+  "checked_at": "2026-09-21T12:20:01.428Z",
+  "viewer_url": "https://app.rerun.io/version/0.31.4/index.html?url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F1facf99f28060b9f868cbe770e8b47f060b73552%2Fdocs%2Ftesting%2Fevidence%2Fopen3d-inspectable-scene-a6c05625%2Fscene.rrd",
+  "recording_url": "https://raw.githubusercontent.com/nebius/nebius-physical-ai/1facf99f28060b9f868cbe770e8b47f060b73552/docs/testing/evidence/open3d-inspectable-scene-a6c05625/scene.rrd",
+  "browser_version": "153.0.8010.52",
+  "fresh_anonymous_context": true,
+  "viewer_http_status": 200,
+  "browser_page_cors_fetch": {
+    "status": 200,
+    "bytes": 8105428,
+    "sha256": "83022627eb1d509e97ba5f11f2d8cdf066997a38012beefecf559cbf8290bf4d"
+  },
+  "viewer_recording_download_statuses": [
+    200,
+    200
+  ],
+  "cors_allow_origin": [
+    "*"
+  ],
+  "viewer_reports_recording_decoded": true,
+  "page_error_count": 0,
+  "console_warning_count": 4,
+  "screenshot": "browser-view.png",
+  "screenshot_sha256": "b3b0462ccd630f48a8f13844260a47fbe770319deaf7f9c86ae5d9357bd3f333",
+  "screenshot_dimensions": [
+    1748,
+    1400
+  ],
+  "independent_visual_inspection": {
+    "reviewed_at": "2026-09-21T12:23:04.179529+00:00",
+    "both_geometry_panes_visible": true,
+    "scene_not_clipped_at_pane_boundaries": true,
+    "separate_surface_tabs_visible": true,
+    "no_authentication_or_load_error_overlay": true,
+    "result": "PASS_FOR_THIS_BROWSER_LOAD_AND_RENDER"
+  },
+  "limitations": [
+    "One fresh Chrome session on the tested browser version; this does not certify every browser or future host availability.",
+    "Light browser theme and viewport differ from the dark native image supplied to the visual model. The RRD bytes are identical; the browser screenshot is not the VLM input.",
+    "Browser access and rendering do not establish geometry correctness, physics readiness or workflow acceptance."
+  ]
+}

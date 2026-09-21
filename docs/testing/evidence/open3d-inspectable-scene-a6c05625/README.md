@@ -4,7 +4,11 @@ Six shipped Open3D CLI stages ran successfully in private CPU containers. The re
 
 ![Native Rerun capture of the retained geometry](native-view.png)
 
+[**Open the interactive scene in Rerun**](https://app.rerun.io/version/0.31.4/index.html?url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F1facf99f28060b9f868cbe770e8b47f060b73552%2Fdocs%2Ftesting%2Fevidence%2Fopen3d-inspectable-scene-a6c05625%2Fscene.rrd)
+
 [Download the Rerun recording](scene.rrd) · [Independently recomputed measurements](measurements.json) · [Hosted visual-review answers](VLM-REVIEW.md) · [Prompts and response provenance](vlm-review.json) · [Recording verification](recording-review.json) · [File hashes](SHA256SUMS)
+
+The interactive link was tested in a fresh unsigned-in Chrome session: the browser fetched the exact 8,105,428-byte recording across the real CORS boundary, its SHA-256 matched, the viewer reported successful decoding, and both rendered panes were independently inspected. [Browser screenshot](browser-view.png) · [Access verification](browser-access.json). This browser capture is separate from the native frame supplied to the visual model.
 
 ## What executed
 
