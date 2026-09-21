@@ -216,6 +216,27 @@ independent recomputation. The audit verified all five stage manifests,
 matched native and exported checkpoint bytes, recomputed both paired intervals,
 decoded all 16 MP4s, and verified and decoded the Rerun recording.
 
+## Operator assessment: four independent boundaries
+
+Treat the following as four separate conclusions from the historical B200 run.
+Successful execution and intact artifacts do not establish task success or
+deployment readiness.
+
+| Assessment boundary | Checked-in evidence and conclusion |
+| --- | --- |
+| **Execution** | All four waves completed, both ACT arms trained for 20,000 updates, and all 768 paired trials ran. This establishes workflow completion, not task success. |
+| **Artifact integrity** | The audit verified five stage manifests, matched the native and exported checkpoint bytes, decoded all 16 MP4s, and verified the RRD. The checked-in [evidence JSON](../evidence/lerobot-transfer-b200.json) and [complete trial CSV](../evidence/lerobot-transfer-b200-trials.csv) preserve the summary and trial-level evidence for local inspection. |
+| **Task fidelity** | The report preserves `improvement_demonstrated=false`: every candidate condition remains below the 70% gate, delayed-control performance did not improve, and the uncertainty evidence covers only one training seed per arm. The run is useful negative evidence, not benchmark qualification. |
+| **Deployment readiness** | The report preserves `ready_for_robot_deployment=false` and `physical_robot_tested=false`. A separate hardware experiment is required before any robot-deployment claim. |
+
+These conclusions describe checked-in historical evidence. The workflow's
+[readiness record](../../../workflows/testing/lerobot-transfer.readiness.json)
+records what was verified for that run; it is not a reusable preflight for a
+future run. A future operator must independently verify current credentials,
+writable project storage, the exact staged source, image pullability, and B200
+runtime readiness before execution. None of those current prerequisites can be
+established from the evidence JSON, trial CSV, or historical readiness record.
+
 ## Validation
 
 See the workflow's [readiness record](../../../workflows/testing/lerobot-transfer.readiness.json)

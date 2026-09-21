@@ -17,7 +17,8 @@ import time.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any, Callable, Iterable
 
 from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_failure
@@ -25,7 +26,7 @@ from npa.workflows.sim2real_health import FAIL, PASS, WARN, CheckResult, has_fai
 HF = "huggingface"
 NGC = "ngc"
 TOKEN_FACTORY = "token_factory"
-HF_GATING_LAST_VERIFIED = "2026-08-31"
+HF_GATING_LAST_VERIFIED = "2026-09-04"
 
 _HF_PAYLOAD_SUFFIXES = (
     ".arrow",
@@ -70,6 +71,17 @@ class GatedAsset:
     probe_path: str = ""
 
 
+class UnknownAccessCapabilityError(ValueError):
+    """Raised when an access preflight capability has no asset contract."""
+
+    def __init__(self, capabilities: Iterable[str]) -> None:
+        unknown = tuple(
+            sorted({str(item).strip() for item in capabilities if str(item).strip()})
+        )
+        super().__init__("unknown access capability: " + ", ".join(unknown))
+        self.capabilities = unknown
+
+
 def usable_hf_payload_probe(asset: GatedAsset) -> bool:
     """Return whether a gated HF asset names a pinned, non-metadata payload."""
 
@@ -91,7 +103,7 @@ def usable_hf_payload_probe(asset: GatedAsset) -> bool:
 # `gated_hf_repos()` / `check_workbench_access()` all derive from it, so no other
 # file needs to change.
 # Gating metadata was reverified against Hugging Face's authoritative model and
-# dataset APIs on 2026-08-31; capability-default drift tests below keep membership
+# dataset APIs on 2026-09-04; capability-default drift tests below keep membership
 # current, while the online preflight remains the final access authority.
 #
 # The entries mirror the tool default-model constants in:
@@ -210,16 +222,103 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         ),
     ),
     GatedAsset("nvidia/Cosmos-Reason1-7B", HF, ("cosmos",), False),
-    GatedAsset("nvidia/Cosmos3-Nano", HF, ("cosmos3",), False),
+    GatedAsset(
+        "nvidia/Cosmos3-Nano",
+        HF,
+        ("cosmos3", "paidf", "paidf-dig"),
+        False,
+        revision="411f42a8fdfb8c5b2583cb8786e0938f49796eaa",
+        probe_path="transformer/diffusion_pytorch_model-00001-of-00007.safetensors",
+        official_url="https://huggingface.co/nvidia/Cosmos3-Nano",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos3-Edge",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="a9d944e2c6a1bf9f48b92ad16348e70c5f1836ba",
+        probe_path="processor_config.json",
+        official_url="https://huggingface.co/nvidia/Cosmos3-Edge",
+    ),
+    GatedAsset(
+        "Qwen/Qwen-Image-Edit-2511",
+        HF,
+        ("paidf", "paidf-iaa"),
+        False,
+        revision="6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9",
+        official_url="https://huggingface.co/Qwen/Qwen-Image-Edit-2511",
+    ),
+    GatedAsset(
+        "nvidia/Cosmos3-Super-Image2Video",
+        HF,
+        ("paidf", "paidf-evg"),
+        False,
+        revision="4f847566f3d3388fbf0ac07b99dd1a6432db9ecd",
+        official_url="https://huggingface.co/nvidia/Cosmos3-Super-Image2Video",
+    ),
     GatedAsset(
         "nvidia/Cosmos-Guardrail1",
         HF,
-        ("cosmos2", "cosmos3", "sim2real"),
+        ("cosmos2", "cosmos3", "paidf", "paidf-dig", "sim2real"),
         True,
         revision="d6d4bfa899a71454a700907664f3e88f503950cf",
         probe_path="video_content_safety_filter/safety_filter.pt",
         official_url="https://huggingface.co/nvidia/Cosmos-Guardrail1",
         terms_revision="huggingface-gated-repository-current",
+    ),
+    GatedAsset(
+        "facebook/dinov2-large",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="47b73eefe95e8d44ec3623f8890bd894b6ea2d6c",
+        probe_path="pytorch_model.bin",
+        official_url="https://huggingface.co/facebook/dinov2-large",
+    ),
+    GatedAsset(
+        "nvidia/C-RADIOv3-B",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="44653a0482cf460bb4f12595fc3cc3dfecc403d1",
+        probe_path="model.safetensors",
+        official_url="https://huggingface.co/nvidia/C-RADIOv3-B",
+    ),
+    GatedAsset(
+        "Wan-AI/Wan2.2-TI2V-5B",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+        probe_path="Wan2.2_VAE.pth",
+        official_url="https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B",
+    ),
+    GatedAsset(
+        "facebook/sam2.1-hiera-large",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="665f8e2ad61cf5f53d65644ff27c8ee525124610",
+        probe_path="sam2.1_hiera_large.pt",
+        official_url="https://huggingface.co/facebook/sam2.1-hiera-large",
+    ),
+    GatedAsset(
+        "Qwen/Qwen3Guard-Gen-0.6B",
+        HF,
+        ("paidf", "paidf-dig", "paidf-evg"),
+        False,
+        revision="fada3b2f655b89601929198343c94cd2f64d93cc",
+        probe_path="model.safetensors",
+        official_url="https://huggingface.co/Qwen/Qwen3Guard-Gen-0.6B",
+    ),
+    GatedAsset(
+        "Qwen/Qwen3-VL-8B-Instruct",
+        HF,
+        ("paidf-dig",),
+        False,
+        revision="0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+        probe_path="tokenizer.json",
+        official_url="https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct",
     ),
     GatedAsset(
         "nvidia/Cosmos-Predict2.5-2B",
@@ -234,7 +333,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
     GatedAsset(
         "nvidia/Cosmos-1.0-Guardrail",
         HF,
-        ("cosmos3-serving",),
+        ("cosmos3-serving", "paidf", "paidf-evg"),
         True,
         revision="cf03c0395fac8c4de386c0bdab12cc4fc8d66362",
         probe_path="video_content_safety_filter/safety_filter.pt",
@@ -283,6 +382,46 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         ),
         terms_revision="nvidia-nurec-ngc-governing-terms-current",
     ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e",
+        NGC,
+        ("paidf-label-detection",),
+        True,
+        repo_type="container",
+        revision="sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-detection-and-tracking-rfdetr-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
+    ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804",
+        NGC,
+        ("paidf-label-captioning",),
+        True,
+        repo_type="container",
+        revision="sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-captioning-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
+    ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c",
+        NGC,
+        ("paidf-label-visual-qa",),
+        True,
+        repo_type="container",
+        revision="sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-visual-qa-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
+    ),
+    GatedAsset(
+        "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
+        NGC,
+        ("paidf-label-attribute-search",),
+        True,
+        repo_type="container",
+        revision="sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a",
+        official_url="https://catalog.ngc.nvidia.com/orgs/nvidia/containers/paidf-event-and-person-attribute-search-service",
+        terms_revision="nvidia-ngc-governing-terms-current",
+    ),
 )
 
 # Capabilities whose NVIDIA containers/models are pulled from NGC and therefore
@@ -298,6 +437,23 @@ NGC_CAPABILITIES: tuple[str, ...] = tuple(
     )
 )
 
+# Stable user-facing umbrella names. A named alias retains any assets assigned
+# directly to it (for example the established Transfer VDA closure) and expands
+# to every workflow-specific capability listed here. This makes `paidf` useful
+# as the complete PAIDF preflight without obscuring the narrower per-workflow
+# checks used by toolRef planning.
+ACCESS_CAPABILITY_ALIASES: dict[str, tuple[str, ...]] = {
+    "paidf": (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    ),
+}
+
 
 def hf_model_url(repo: str) -> str:
     """Return the Hugging Face page where a gated repo's license is accepted."""
@@ -310,18 +466,34 @@ def all_capabilities() -> tuple[str, ...]:
     for asset in WORKBENCH_ASSETS:
         seen.update(asset.capabilities)
     seen.update(NGC_CAPABILITIES)
+    seen.update(ACCESS_CAPABILITY_ALIASES)
+    for expanded in ACCESS_CAPABILITY_ALIASES.values():
+        seen.update(expanded)
     return tuple(sorted(seen))
 
 
 def assets_for(capabilities: Iterable[str] | None) -> tuple[GatedAsset, ...]:
-    """Return the assets needed for *capabilities* (all when ``None``)."""
+    """Return assets for *capabilities*, failing closed on catalog drift.
+
+    ``None`` and an empty iterable intentionally retain the historical meaning
+    of "all assets" for the unfiltered health command. Any named capability,
+    however, must be represented by at least one exact asset record. Workflow
+    submission must never turn an unknown catalog capability into an empty,
+    misleading approval plan.
+    """
     if capabilities is None:
         return WORKBENCH_ASSETS
     wanted = {item.strip() for item in capabilities if item and item.strip()}
     if not wanted:
         return WORKBENCH_ASSETS
+    unknown = wanted.difference(all_capabilities())
+    if unknown:
+        raise UnknownAccessCapabilityError(unknown)
+    expanded = set(wanted)
+    for capability in wanted:
+        expanded.update(ACCESS_CAPABILITY_ALIASES.get(capability, ()))
     return tuple(
-        asset for asset in WORKBENCH_ASSETS if wanted.intersection(asset.capabilities)
+        asset for asset in WORKBENCH_ASSETS if expanded.intersection(asset.capabilities)
     )
 
 
@@ -348,7 +520,10 @@ def _ngc_needed(capabilities: Iterable[str] | None) -> bool:
     wanted = {item.strip() for item in capabilities if item and item.strip()}
     if not wanted:
         return True
-    return bool(wanted.intersection(NGC_CAPABILITIES))
+    expanded = set(wanted)
+    for capability in wanted:
+        expanded.update(ACCESS_CAPABILITY_ALIASES.get(capability, ()))
+    return bool(expanded.intersection(NGC_CAPABILITIES))
 
 
 def _cap_suffix(asset: GatedAsset) -> str:
@@ -482,11 +657,42 @@ def check_hf_asset(
     )
 
 
+def check_ngc_artifact_access(api_key: str, *, image: str) -> str:
+    """Probe the selected NGC manifest using the worker's registry pull protocol."""
+
+    from npa.orchestration.skypilot.registry_preflight import (
+        check_image_pull,
+        parse_image_reference,
+    )
+
+    try:
+        reference = parse_image_reference(image)
+        if reference.registry != "nvcr.io":
+            return "unresolved"
+        result = check_image_pull(image, username="$oauthtoken", password=api_key)
+    except Exception:  # noqa: BLE001 - provider errors must not expose credentials
+        return "unreachable"
+    if result.ok:
+        return "reachable"
+    if result.http_status == 402 or result.status == "forbidden":
+        return "entitlement-required"
+    if result.status in {"unauthorized", "no_credentials"}:
+        return (
+            f"auth-{result.http_status}"
+            if result.http_status in {401, 403}
+            else "auth-no-token"
+        )
+    if result.status == "not_found":
+        return "manifest-404"
+    return "unreachable"
+
+
 def check_ngc_key(
     ngc_key: str,
     *,
     needed: bool,
-    ngc_validator: Callable[[str], str] | None = None,
+    ngc_validator: Callable[..., str] | None = None,
+    images: Iterable[str] | None = None,
 ) -> CheckResult:
     """Check NGC credentials and, online, actual repository pull entitlement."""
 
@@ -501,7 +707,7 @@ def check_ngc_key(
         return CheckResult(
             name="ngc",
             status=WARN,
-            summary="NGC_API_KEY is not set (needed for the NuRec NRE image pull).",
+            summary="NGC_API_KEY is not set (needed for the selected NGC artifact pulls).",
             remedy=(
                 "Sign in with an ordinary individual NGC account at "
                 "https://ngc.nvidia.com/signin, create a personal API key, and run "
@@ -518,6 +724,37 @@ def check_ngc_key(
                 "not probed in offline mode."
             ),
         )
+    if images is not None:
+        image_results = [
+            (
+                image,
+                check_ngc_key(
+                    key,
+                    needed=True,
+                    ngc_validator=partial(ngc_validator, image=image),
+                ),
+            )
+            for image in images
+        ]
+        if not image_results:
+            return check_ngc_key(key, needed=False)
+        # Preserve the aggregate ``ngc`` row consumed by configure and callers,
+        # while recording every exact artifact and retaining the worst outcome.
+        primary = max(
+            image_results, key=lambda row: {PASS: 0, WARN: 1, FAIL: 2}[row[1].status]
+        )[1]
+        return replace(
+            primary,
+            summary=(
+                f"NGC_API_KEY can pull all {len(image_results)} selected NGC artifact(s)."
+                if primary.status == PASS
+                else primary.summary
+            ),
+            details=tuple(
+                f"{image}: {result.status}: {result.summary}"
+                for image, result in image_results
+            ),
+        )
     try:
         outcome = _redact_secret(ngc_validator(key) or "unreachable", key)
     except Exception as exc:  # noqa: BLE001 - a probe exception is transient
@@ -532,7 +769,7 @@ def check_ngc_key(
         return CheckResult(
             name="ngc",
             status=PASS,
-            summary="NGC_API_KEY can pull the selected NuRec NRE image tag/digest.",
+            summary="NGC_API_KEY can pull the selected NGC image tag/digest.",
         )
     credential_rejected = outcome in {
         "auth-no-token",
@@ -546,11 +783,13 @@ def check_ngc_key(
         "tags-401",
         "tags-403",
     }
-    rejected = credential_rejected or entitlement_rejected
+    rejected = credential_rejected or entitlement_rejected or outcome == "manifest-404"
     if credential_rejected:
         summary = f"NGC credential rejected during repository auth: {outcome}."
     elif entitlement_rejected:
         summary = f"NGC exact image entitlement denied: {outcome}."
+    elif outcome == "manifest-404":
+        summary = "The selected NGC image manifest does not exist: manifest-404."
     else:
         summary = f"NGC repository pull preflight failed: {outcome}."
     return CheckResult(
@@ -558,7 +797,10 @@ def check_ngc_key(
         status=FAIL if rejected else WARN,
         summary=summary,
         remedy=(
-            "Regenerate NGC_API_KEY with NGC Catalog access if needed, verify the "
+            "Verify the selected NGC repository and immutable image digest, "
+            "then re-run `npa workbench health access`."
+            if outcome == "manifest-404"
+            else "Regenerate NGC_API_KEY with NGC Catalog access if needed, verify the "
             "repository entitlement, then re-run `npa workbench health access`."
             if rejected
             else "Retry when the NGC registry is reachable; credential presence "
@@ -572,7 +814,7 @@ def check_workbench_access(
     hf_token: str,
     ngc_key: str,
     hf_validator: Callable[..., Any] | None = None,
-    ngc_validator: Callable[[str], str] | None = None,
+    ngc_validator: Callable[..., str] | None = None,
     capabilities: Iterable[str] | None = None,
     gated_only: bool = False,
 ) -> list[CheckResult]:
@@ -591,6 +833,9 @@ def check_workbench_access(
             ngc_key,
             needed=_ngc_needed(selected),
             ngc_validator=ngc_validator,
+            images=tuple(
+                asset.repo for asset in assets_for(selected) if asset.provider == NGC
+            ),
         )
     ]
     for asset in assets_for(selected):
@@ -665,11 +910,13 @@ __all__ = [
     "HF_GATING_LAST_VERIFIED",
     "NGC",
     "NGC_CAPABILITIES",
+    "UnknownAccessCapabilityError",
     "WORKBENCH_ASSETS",
     "access_note",
     "all_capabilities",
     "assets_for",
     "check_hf_asset",
+    "check_ngc_artifact_access",
     "check_ngc_key",
     "check_workbench_access",
     "gated_hf_assets",

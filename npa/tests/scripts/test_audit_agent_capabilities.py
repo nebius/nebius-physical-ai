@@ -23,6 +23,11 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "npa" / "scripts" / "audit_agent_capabilities.py"
 
@@ -38,6 +43,15 @@ def _load():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_live_audit_declares_its_selected_websocket_runtime() -> None:
+    project = tomllib.loads((REPO_ROOT / "npa/pyproject.toml").read_text())
+    optional_dev = project["project"]["optional-dependencies"]["dev"]
+    grouped_dev = project["dependency-groups"]["dev"]
+
+    for dependencies in (optional_dev, grouped_dev):
+        assert any(item.startswith("websockets>=") for item in dependencies)
 
 
 @pytest.fixture

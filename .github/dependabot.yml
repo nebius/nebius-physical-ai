@@ -1,0 +1,18 @@
+# Propose dependency updates before stale pins accumulate new advisories.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories:
+      - /npa
+      - /npa/ci
+      - /scripts
+    schedule:
+      interval: daily
+  - package-ecosystem: npm
+    directory: /npa/tests/browser
+    schedule:
+      interval: daily
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
