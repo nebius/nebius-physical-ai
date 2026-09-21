@@ -865,6 +865,29 @@ def test_target_pull_and_cleanup_failures_are_both_reported(
     assert "cleanup was not verified" in checks[0].detail
 
 
+def test_target_verifier_exception_never_claims_cleanup_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+
+    def unavailable(**kwargs):
+        raise subprocess.TimeoutExpired(kwargs["image"], 30)
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(manifest_status=200),
+        pull_secret_names=("pull-secret",),
+        context="target-context",
+        namespace="default",
+        secret_runner=lambda *args, **kwargs: _docker_secret_result(REGISTRY),
+        target_pull_verifier=unavailable,
+    )
+
+    assert checks[0].status == "target_pull_unverified"
+    assert checks[0].target_status == "verifier_unavailable_TimeoutExpired"
+    assert "cleanup was not verified" in checks[0].detail
+
+
 def test_vm_private_path_keeps_exact_host_manifest_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1027,7 +1050,7 @@ def test_effective_target_uses_selected_context_namespace() -> None:
     assert target.pull_secret_names == ()
 
 
-def test_effective_target_merges_global_and_context_config(tmp_path) -> None:
+def test_effective_target_applies_context_secret_override(tmp_path) -> None:
     config = tmp_path / "sky.yaml"
     config.write_text(
         """
@@ -1037,6 +1060,7 @@ kubernetes:
     spec:
       imagePullSecrets:
         - name: global-secret
+        - name: global-fallback
   context_configs:
     target-context:
       namespace: team-namespace
@@ -1057,7 +1081,7 @@ kubernetes:
     )
 
     assert target.namespace == "team-namespace"
-    assert target.pull_secret_names == ("global-secret", "context-secret")
+    assert target.pull_secret_names == ("context-secret", "global-fallback")
 
 
 def test_target_namespace_lookup_never_renders_kubectl_diagnostics() -> None:
@@ -1250,6 +1274,34 @@ def test_target_pull_probe_fails_when_owned_cleanup_is_unverified() -> None:
     assert check.digest == DIGEST
     assert check.cleanup_status == "unverified"
     assert check.ok is False
+
+
+def test_target_pull_probe_retries_when_delete_times_out() -> None:
+    run, _calls = _target_probe_runner()
+    delete_attempts = 0
+
+    def timeout_delete(cmd, **kwargs):  # noqa: ANN001
+        nonlocal delete_attempts
+        if "delete" in cmd:
+            delete_attempts += 1
+            raise subprocess.TimeoutExpired(cmd, 30)
+        return run(cmd, **kwargs)
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=timeout_delete,
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check.status == "verified"
+    assert check.digest == DIGEST
+    assert check.cleanup_status == "unverified"
+    assert check.ok is False
+    assert delete_attempts == 4
 
 
 def test_target_pull_probe_bounds_create_exception_text() -> None:

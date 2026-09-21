@@ -120,10 +120,27 @@ class KubernetesPullCheck:
 
 @dataclass(frozen=True)
 class KubernetesPullTarget:
-    """Effective SkyPilot namespace and global pull-secret additions."""
+    """Effective SkyPilot namespace and config-level pull-secret set."""
 
     namespace: str
     pull_secret_names: tuple[str, ...] = ()
+
+
+def merge_skypilot_pull_secret_names(
+    base_names: tuple[str, ...],
+    override_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Apply SkyPilot 0.12's legacy imagePullSecrets override semantics."""
+
+    if not override_names:
+        return base_names
+    if not base_names:
+        return override_names
+    if len(override_names) != 1:
+        raise RegistryPreflightError(
+            "SkyPilot imagePullSecrets override must contain exactly one entry"
+        )
+    return (override_names[0], *base_names[1:])
 
 
 def parse_image_reference(image: str) -> ImageReference:
@@ -821,7 +838,8 @@ def check_image_pulls_with_credentials(
                         subprocess.SubprocessError,
                     ) as exc:
                         target_check = KubernetesPullCheck(
-                            status=f"verifier_unavailable_{type(exc).__name__}"
+                            status=f"verifier_unavailable_{type(exc).__name__}",
+                            cleanup_status="unverified",
                         )
                     if not target_check.ok:
                         target_verified = False
@@ -992,7 +1010,7 @@ def resolve_kubernetes_pull_target(
     if not selected_context:
         raise RegistryPreflightError("an exact Kubernetes context is required")
     namespace = ""
-    secret_names: list[str] = []
+    secret_names: tuple[str, ...] = ()
     if global_config_path is not None:
         try:
             document = (
@@ -1027,7 +1045,10 @@ def resolve_kubernetes_pull_target(
                         "selected SkyPilot namespace must be a non-empty string"
                     )
                 namespace = raw_namespace.strip()
-            secret_names.extend(_configured_pull_secret_names(config))
+        secret_names = merge_skypilot_pull_secret_names(
+            tuple(_configured_pull_secret_names(kubernetes)),
+            tuple(_configured_pull_secret_names(context_config)),
+        )
     if not namespace:
         execute = runner or subprocess.run
         try:
@@ -1087,7 +1108,7 @@ def resolve_kubernetes_pull_target(
         )
     return KubernetesPullTarget(
         namespace=namespace,
-        pull_secret_names=tuple(dict.fromkeys(secret_names)),
+        pull_secret_names=secret_names,
     )
 
 
@@ -1423,16 +1444,20 @@ def verify_kubernetes_image_pull(
                     "gracePeriodSeconds": 0,
                     "preconditions": {"uid": expected_uid},
                 }
-                delete = run(
-                    [
-                        "delete",
-                        "--raw",
-                        (f"/api/v1/namespaces/{namespace}/pods/{name}"),
-                        "-f",
-                        "-",
-                    ],
-                    input_text=json.dumps(delete_options, separators=(",", ":")),
-                )
+                try:
+                    delete = run(
+                        [
+                            "delete",
+                            "--raw",
+                            (f"/api/v1/namespaces/{namespace}/pods/{name}"),
+                            "-f",
+                            "-",
+                        ],
+                        input_text=json.dumps(delete_options, separators=(",", ":")),
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    cleanup_status = "unverified"
+                    continue
                 if delete.returncode != 0:
                     cleanup_status = "unverified"
                     continue

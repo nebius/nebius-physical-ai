@@ -738,6 +738,75 @@ def _stub_pull(
 NEBIUS_IMAGE = "registry-us.example/u000/npa-cosmos2-transfer:2.5.1"
 
 
+def test_single_state_workflow_runs_manifest_and_target_image_preflights(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-test:latest"
+    document = {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "single-state-image-preflight"},
+        "config": {"bucket": "demo-bucket", "prefix": "demo"},
+        "resources": {
+            "k8s": {
+                "cloud": "kubernetes",
+                "image": image,
+            }
+        },
+        "initial": "only",
+        "states": {
+            "only": {
+                "resources": "k8s",
+                "run": {"shell": "true"},
+                "terminal": True,
+            }
+        },
+    }
+    path = tmp_path / "single-state.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    checked: list[list[str]] = []
+
+    def check_images(images, **kwargs):  # noqa: ANN001
+        checked.append(images)
+        return [ImagePullCheck(image=item, status="ok") for item in images]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        check_images,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda *, images, **_kwargs: [
+            {"image": item, "state": "compatible"} for item in images
+        ],
+    )
+
+    workflow_cli._preflight_submit_image_manifests(
+        path,
+        options=SkypilotRenderOptions(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/target-context",
+    )
+    result = workflow_cli._preflight_submit_images(
+        path,
+        options=SkypilotRenderOptions(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/target-context",
+    )
+
+    assert checked == [[image], [image]]
+    assert result == {image: image}
+
+
 def test_public_manifest_failure_blocks_before_target_exists(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path
 ) -> None:

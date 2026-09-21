@@ -173,9 +173,11 @@ successful `npa skypilot verify --cluster <exact-context>`:
   `--infra k8s/<context>` and resolves the same effective namespace SkyPilot
   uses: a context-specific/global SkyPilot override, otherwise the selected
   kubeconfig context namespace, otherwise `default`. Every distinct rendered
-  Secret set is probed independently; anonymous host access never substitutes
-  for a target pull. It never falls back to the ambient context or mints a
-  Secret. Run it standalone with
+  Secret set is probed independently. SkyPilot 0.12 replaces the first
+  `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
+  that effective set instead of unioning overridden Secrets. Anonymous host
+  access never substitutes for a target pull. It never falls back to the
+  ambient context or mints a Secret. Run it standalone with
   `npa workbench workflow preflight-images <spec.yaml>` plus
   `--infra k8s/<context>`, or skip with `--no-preflight-images`.
 - **A large authenticated cold pull is not an access failure.** Bootstrap probes

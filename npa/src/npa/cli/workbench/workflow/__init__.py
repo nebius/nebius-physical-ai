@@ -3181,6 +3181,26 @@ def _resolve_submit_registry(registry: str, project: str) -> str:
     return explicit
 
 
+def _image_preflight_steps(spec, *, run_id: str, assume_decision: str) -> list[object]:
+    """Build every decision plan, including workflows with no transitions."""
+
+    from npa.orchestration.npa_workflow import build_plan
+
+    decisions = [assume_decision.strip()] if assume_decision.strip() else []
+    decisions.extend(
+        str(transition.when).strip()
+        for state in spec.states.values()
+        for transition in state.transitions
+        if transition.when
+    )
+    selected_decisions = list(dict.fromkeys(decisions)) or [""]
+    steps: list[object] = []
+    for decision in selected_decisions:
+        plan = build_plan(spec, run_id=run_id, assume_decision=decision)
+        steps.extend(plan.steps)
+    return steps
+
+
 def _preflight_submit_image_manifests(
     yaml_path: Path,
     *,
@@ -3196,7 +3216,6 @@ def _preflight_submit_image_manifests(
         return
 
     from npa.deploy.images import is_official_public_image
-    from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import (
         plan_image_pull_requirements,
@@ -3209,16 +3228,11 @@ def _preflight_submit_image_manifests(
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-manifest-preflight"
-        decisions = [assume_decision] if assume_decision.strip() else []
-        decisions.extend(
-            transition.when
-            for state in resolved_spec.states.values()
-            for transition in state.transitions
+        steps = _image_preflight_steps(
+            resolved_spec,
+            run_id=run_id,
+            assume_decision=assume_decision,
         )
-        steps = []
-        for decision in dict.fromkeys(decisions):
-            plan = build_plan(resolved_spec, run_id=run_id, assume_decision=decision)
-            steps.extend(plan.steps)
         images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
         requirements = plan_image_pull_requirements(
             resolved_spec, steps, run_id=run_id, options=options
@@ -3285,7 +3299,6 @@ def _preflight_submit_images(
     if not enabled:
         return {}
 
-    from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import (
         plan_image_pull_requirements,
@@ -3302,16 +3315,11 @@ def _preflight_submit_images(
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-preflight"
-        decisions = [assume_decision] if assume_decision.strip() else []
-        decisions.extend(
-            transition.when
-            for state in resolved_spec.states.values()
-            for transition in state.transitions
+        steps = _image_preflight_steps(
+            resolved_spec,
+            run_id=run_id,
+            assume_decision=assume_decision,
         )
-        steps = []
-        for decision in dict.fromkeys(decisions):
-            plan = build_plan(resolved_spec, run_id=run_id, assume_decision=decision)
-            steps.extend(plan.steps)
         images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
         pull_requirements = plan_image_pull_requirements(
             resolved_spec, steps, run_id=run_id, options=options
@@ -3340,12 +3348,15 @@ def _preflight_submit_images(
             _fail(f"image-preflight target resolution failed: {exc}")
         target_namespace = target.namespace
         inherited_pull_secrets = target.pull_secret_names
-    pull_secret_sets_by_image = _image_pull_secret_sets(
-        images=images,
-        requirements=pull_requirements,
-        kubernetes_images=kubernetes_images,
-        inherited_pull_secrets=inherited_pull_secrets,
-    )
+    try:
+        pull_secret_sets_by_image = _image_pull_secret_sets(
+            images=images,
+            requirements=pull_requirements,
+            kubernetes_images=kubernetes_images,
+            inherited_pull_secrets=inherited_pull_secrets,
+        )
+    except RegistryPreflightError as exc:
+        _fail(f"image-preflight target delivery resolution failed: {exc}")
     pull_secrets_by_image = {
         image: (sets[0] if sets else ())
         for image, sets in pull_secret_sets_by_image.items()
@@ -3427,6 +3438,10 @@ def _image_pull_secret_sets(
 ) -> dict[str, tuple[tuple[str, ...], ...]]:
     """Preserve every rendered Kubernetes path's effective Secret set."""
 
+    from npa.orchestration.skypilot.registry_preflight import (
+        merge_skypilot_pull_secret_names,
+    )
+
     selected_kubernetes = set(kubernetes_images)
     result: dict[str, tuple[tuple[str, ...], ...]] = {}
     for image in images:
@@ -3441,8 +3456,9 @@ def _image_pull_secret_sets(
             tuple(
                 dict.fromkeys(
                     (
-                        *inherited_pull_secrets,
-                        *declared_names,
+                        *merge_skypilot_pull_secret_names(
+                            inherited_pull_secrets, declared_names
+                        ),
                         *additional_pull_secrets,
                     )
                 )
@@ -7968,13 +7984,16 @@ def preflight_images_cmd(
             _fail(f"image-preflight target resolution failed: {exc}")
         target_namespace = target.namespace
         inherited_pull_secrets = target.pull_secret_names
-    pull_secret_sets_by_image = _image_pull_secret_sets(
-        images=images,
-        requirements=pull_requirements,
-        kubernetes_images=kubernetes_images,
-        inherited_pull_secrets=inherited_pull_secrets,
-        additional_pull_secrets=explicit_pull_secrets,
-    )
+    try:
+        pull_secret_sets_by_image = _image_pull_secret_sets(
+            images=images,
+            requirements=pull_requirements,
+            kubernetes_images=kubernetes_images,
+            inherited_pull_secrets=inherited_pull_secrets,
+            additional_pull_secrets=explicit_pull_secrets,
+        )
+    except RegistryPreflightError as exc:
+        _fail(f"image-preflight target delivery resolution failed: {exc}")
     pull_secrets_by_image = {
         selected: (sets[0] if sets else ())
         for selected, sets in pull_secret_sets_by_image.items()

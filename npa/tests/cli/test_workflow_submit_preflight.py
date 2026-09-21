@@ -1173,10 +1173,34 @@ def test_effective_pull_secret_sets_do_not_union_distinct_paths() -> None:
         images=["image"],
         requirements=requirements,
         kubernetes_images={"image"},
-        inherited_pull_secrets=("global",),
+        inherited_pull_secrets=("global-primary", "global-secondary"),
     )
 
-    assert effective == {"image": (("global", "path-a"), ("global", "path-b"))}
+    assert effective == {
+        "image": (
+            ("path-a", "global-secondary"),
+            ("path-b", "global-secondary"),
+        )
+    }
+
+
+def test_effective_pull_secret_sets_reject_invalid_multi_entry_override() -> None:
+    from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
+
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("task-a", "task-b"),),
+        )
+    }
+
+    with pytest.raises(RegistryPreflightError, match="exactly one entry"):
+        workflow_cli._image_pull_secret_sets(
+            images=["image"],
+            requirements=requirements,
+            kubernetes_images={"image"},
+            inherited_pull_secrets=("global",),
+        )
 
 
 def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
