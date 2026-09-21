@@ -34,6 +34,24 @@ says so rather than publishing a precise-looking number. `floor-vs-resolution.js
 case. Re-running will move those values; the directions and orders of magnitude are what the claims
 rest on.
 
+## View framing
+
+`capability-record-view-framing.json` is the entry point. The operator reported a clipped scene and
+root's independent inspection of the delivered PNGs found the top-down clipped at the bottom and the
+baseline overview past the frame edge. There were two separate causes, and the interesting part is
+that neither was a missing camera fit.
+
+`camera-framing-probe.json` measures the product viewer: one camera fitted to the fused cloud, shared
+across four Rerun views, in frame half-extents where 1.0 is the edge. Three views sit at 0.93-0.95 and
+the fourth at 1.233. The one that clipped is the audit view, whose whole purpose is showing the
+surface the crop removed -- geometry that lies outside the cloud by construction.
+
+`frame-edge-audit-before.json` and `-after.json` measure the evidence renders from PNG bytes, so
+"clipped at the bottom" is a count rather than an impression. `background-choice-sweep-refit.json`
+chooses the page by measuring contrast against the content's own luminance; it also records that I
+expected a trade there and the measurement found none, and separates the controlled comparison from
+the confounded one.
+
 ## The live workflow-runtime gate
 
 `live-runtime-attempt.json` records how far a real run gets and where it stops. It is the honest

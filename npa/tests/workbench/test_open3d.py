@@ -1346,3 +1346,152 @@ def test_the_floor_is_setup_dependent_so_no_test_pins_it_to_a_number() -> None:
             f"a zero-error reconstruction reporting {unsupported} unsupported must not "
             "read as an extrapolated shell"
         )
+
+
+def _inside_frame(points, camera: dict, aspect: float) -> float:
+    """Worst frame-relative coordinate over ``points``; 1.0 is exactly the edge.
+
+    Mirrors the projection the camera fit solves against, in the same units, so a
+    result just under 1.0 means the geometry sits just inside the frame.
+    """
+
+    import numpy as np
+
+    eye = np.asarray(camera["eye"], float)
+    forward = np.asarray(camera["look_target"], float) - eye
+    forward /= np.linalg.norm(forward)
+    right = np.cross(forward, np.asarray(camera["up"], float))
+    right /= np.linalg.norm(right)
+    true_up = np.cross(right, forward)
+    half = math.tan(math.radians(camera["fov_degrees"]) / 2.0)
+
+    local = np.asarray(points, float) - eye
+    depth = local @ forward
+    assert (depth > 1e-6).all(), "geometry behind the camera cannot be framed"
+    return float(
+        max(
+            np.abs((local @ right) / (half * aspect * depth)).max(),
+            np.abs((local @ true_up) / (half * depth)).max(),
+        )
+    )
+
+
+def _sprawling_scene():
+    """A cropped surface inside a scan, plus a removed surface reaching outside it.
+
+    This is the real shape of the defect rather than an invented one: the support
+    crop removes surface precisely where Poisson closed a hole far from any
+    sample, so the unsupported geometry lies outside the cloud by construction.
+    """
+
+    import numpy as np
+
+    rng = np.random.default_rng(20260921)
+    fused = rng.uniform([-1.0, 0.0, -1.0], [1.0, 0.4, 1.0], size=(4000, 3))
+    mesh = rng.uniform([-0.9, 0.0, -0.9], [0.9, 0.35, 0.9], size=(600, 3))
+    unsupported = rng.uniform([-1.0, 1.6, -1.0], [1.0, 2.4, 1.0], size=(300, 3))
+    return {"fused": fused, "mesh": mesh, "unsupported": unsupported}
+
+
+def test_every_view_frames_the_geometry_that_view_actually_shows():
+    """The invariant the shipped blueprint broke, pinned for all four views.
+
+    The operator's first complaint was a clipped scene. The camera distance was
+    already solved rather than guessed, so the bug was not a missing fit — it was
+    that one fit was shared by four views and only three of them draw geometry
+    that fits inside the fused cloud. The fourth draws the surface the crop
+    removed, which is outside that cloud by construction, and it clipped 23% past
+    its own edge: measured 1.233 on the delivered artifacts, recorded in
+    evidence/open3d/camera-framing-probe.json.
+
+    A clipped audit view is worse than no audit view, because it looks like the
+    audit happened.
+    """
+
+    from npa.workbench.open3d.runner import (
+        CAMERA_ASPECT,
+        VIEW_GEOMETRY,
+        _view_cameras,
+    )
+
+    geometry = _sprawling_scene()
+    cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
+
+    assert set(cameras) == set(VIEW_GEOMETRY), "every view needs its own camera"
+    for view_name, keys in VIEW_GEOMETRY.items():
+        for key in keys:
+            reach = _inside_frame(geometry[key], cameras[view_name], CAMERA_ASPECT)
+            assert reach <= 1.0, (
+                f"{view_name!r} clips its own {key} geometry at {reach:.3f} of the "
+                "frame half-extent"
+            )
+
+
+def test_a_view_is_framed_snugly_rather_than_stranded_in_an_empty_frame():
+    """Fitting is two-sided: clipping fails review, and so does a distant speck.
+
+    Without this, the previous test passes trivially by placing the eye a
+    kilometre back. The fit targets 1/CAMERA_FRAME_MARGIN, so the worst point
+    should land just inside the edge rather than anywhere inside it.
+    """
+
+    from npa.workbench.open3d.runner import (
+        CAMERA_ASPECT,
+        CAMERA_FRAME_MARGIN,
+        VIEW_GEOMETRY,
+        _view_cameras,
+    )
+
+    import numpy as np
+
+    geometry = _sprawling_scene()
+    cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
+    for view_name, keys in VIEW_GEOMETRY.items():
+        shown = np.vstack([geometry[key] for key in keys])
+        reach = _inside_frame(shown, cameras[view_name], CAMERA_ASPECT)
+        assert reach >= 1.0 / CAMERA_FRAME_MARGIN - 0.05, (
+            f"{view_name!r} strands its geometry at {reach:.3f}; the frame is "
+            "mostly empty, which is as hard to review as a crop"
+        )
+
+
+def test_a_scene_with_nothing_removed_gets_no_audit_camera_rather_than_a_fake_one():
+    """The audit view is dropped from the layout when there is nothing to audit.
+
+    A camera fitted to absent geometry would either raise or invent a viewpoint,
+    and the blueprint only adds that tab when a crop actually removed surface.
+    """
+
+    from npa.workbench.open3d.runner import REMOVED_VIEW, SCENE_VIEW, _view_cameras
+
+    geometry = _sprawling_scene()
+    geometry["unsupported"] = None
+    cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
+
+    assert REMOVED_VIEW not in cameras
+    assert SCENE_VIEW in cameras
+
+
+def test_a_cloud_only_run_still_gets_a_scene_camera():
+    """Visualize does not require a mesh, and the layout must survive without one.
+
+    Dropping a view when its defining geometry is missing is right; dropping the
+    scene view because the optional surface is missing would crash the caller that
+    reads the scene camera.
+    """
+
+    from npa.workbench.open3d.runner import (
+        SCAN_VIEW,
+        SCENE_VIEW,
+        SURFACE_VIEW,
+        _view_cameras,
+    )
+
+    geometry = _sprawling_scene()
+    cameras = _view_cameras(
+        {"fused": geometry["fused"], "mesh": None, "unsupported": None},
+        [0.0, 1.0, 0.0],
+    )
+
+    assert SCENE_VIEW in cameras and SCAN_VIEW in cameras
+    assert SURFACE_VIEW not in cameras

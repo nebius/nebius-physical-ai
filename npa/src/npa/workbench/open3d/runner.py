@@ -767,19 +767,24 @@ CAMERA_FRAME_MARGIN = 1.08
 CAMERA_ASPECT = 4.0 / 3.0
 
 
-def _camera(cloud, up: list[float]) -> dict[str, Any]:
-    """Place an elevated three-quarter eye far enough back to fit the whole scan.
+def _camera(points, up: list[float]) -> dict[str, Any]:
+    """Place an elevated three-quarter eye far enough back to fit ``points``.
 
     The distance is solved rather than guessed: a hand-picked multiple of the
     scene span either clips the scan or strands it in the middle of an empty
     frame, and both make the result harder to review than it needs to be.
+
+    Takes the points to frame rather than a cloud, because the caller decides
+    what belongs in frame and that is not always one cloud. Fitting this against
+    the fused cloud while a view drew the uncropped surface on top is what left
+    the audit view clipped 23% past its own edge.
     """
 
     import numpy as np
 
-    box = cloud.get_axis_aligned_bounding_box()
-    centre = np.asarray(box.get_center(), dtype=float)
-    extent = np.asarray(box.get_extent(), dtype=float)
+    points = np.asarray(points, dtype=float)
+    centre = (points.min(axis=0) + points.max(axis=0)) / 2.0
+    extent = points.max(axis=0) - points.min(axis=0)
     up_vector = np.asarray(up, dtype=float)
     up_vector = up_vector / float(np.linalg.norm(up_vector))
 
@@ -803,7 +808,6 @@ def _camera(cloud, up: list[float]) -> dict[str, Any]:
     right = np.cross(forward, up_vector)
     right = right / float(np.linalg.norm(right))
     true_up = np.cross(right, forward)
-    points = np.asarray(cloud.points)
     relative = points - centre
     half_angle = np.tan(np.radians(CAMERA_FOV_DEGREES) / 2.0)
     lateral = relative @ right
@@ -832,7 +836,53 @@ def _camera(cloud, up: list[float]) -> dict[str, Any]:
     }
 
 
-def _blueprint(rr, rrb, camera: dict[str, Any], has_removed: bool):
+SCENE_VIEW = "Scene: observed scan and supported surface"
+SCAN_VIEW = "Observed scan only"
+SURFACE_VIEW = "Supported surface only"
+REMOVED_VIEW = "Removed: unsupported surface"
+
+#: Which geometry each view draws, and therefore which geometry its camera has to
+#: frame. One table drives both so they cannot drift apart. They did drift: every
+#: view shared a camera fitted to the fused cloud, which frames three of these
+#: four, and the one it clipped was the audit view -- the view whose entire
+#: purpose is showing the surface the crop removed, which lies outside the cloud
+#: by construction. A clipped audit view is worse than a missing one, because it
+#: looks like the audit happened.
+#:
+#: The first key defines the view and the view is dropped without it: no removed
+#: surface means no audit view, and a cloud-only run has no surface view. Later
+#: keys are context, framed when present so the defining geometry is never shown
+#: floating free of the scan it came from.
+VIEW_GEOMETRY: dict[str, tuple[str, ...]] = {
+    SCENE_VIEW: ("fused", "mesh"),
+    SCAN_VIEW: ("fused",),
+    SURFACE_VIEW: ("mesh",),
+    REMOVED_VIEW: ("unsupported", "mesh", "fused"),
+}
+
+
+def _view_cameras(geometry: dict[str, Any], up: list[float]) -> dict[str, Any]:
+    """Fit one camera per view against that view's own geometry."""
+
+    import numpy as np
+
+    def present(key: str) -> bool:
+        return geometry.get(key) is not None and len(geometry[key]) > 0
+
+    cameras: dict[str, Any] = {}
+    for view_name, keys in VIEW_GEOMETRY.items():
+        if not present(keys[0]):
+            continue
+        cameras[view_name] = _camera(
+            np.vstack(
+                [np.asarray(geometry[key], float) for key in keys if present(key)]
+            ),
+            up,
+        )
+    return cameras
+
+
+def _blueprint(rr, rrb, cameras: dict[str, Any], has_removed: bool):
     """A first view that shows the result, with the evidence a click away.
 
     The default Rerun layout gave every entity one auto view, so the closed
@@ -840,38 +890,42 @@ def _blueprint(rr, rrb, camera: dict[str, Any], has_removed: bool):
     third of the window. This puts the scene first, keeps the scan and the surface
     on independent toggles, gives the removed surface its own tab instead of
     deleting it from the record, and moves provenance into a tab.
+
+    Each view carries its own fitted camera. Sharing one costs nothing on the
+    three views whose geometry sits inside the fused cloud, and clips the fourth.
     """
 
-    controls = rrb.EyeControls3D(
-        kind=rrb.Eye3DKind.Orbital,
-        position=camera["eye"],
-        look_target=camera["look_target"],
-        eye_up=camera["up"],
-    )
+    scene_camera = cameras[SCENE_VIEW]
     # A metre grid on the floor plane, so the view carries a readable scale.
-    grid = rrb.LineGrid3D(visible=True, plane=rr.components.Plane3D(camera["up"]))
+    grid = rrb.LineGrid3D(visible=True, plane=rr.components.Plane3D(scene_camera["up"]))
 
     def view(name: str, contents: list[str], **kwargs):
+        camera = cameras.get(name, scene_camera)
         return rrb.Spatial3DView(
             name=name,
             origin="/world",
             contents=contents,
-            eye_controls=controls,
+            eye_controls=rrb.EyeControls3D(
+                kind=rrb.Eye3DKind.Orbital,
+                position=camera["eye"],
+                look_target=camera["look_target"],
+                eye_up=camera["up"],
+            ),
             line_grid=grid,
             **kwargs,
         )
 
     tabs = [
         view(
-            "Observed scan only",
+            SCAN_VIEW,
             ["/world/fused", "/world/fragments/**"],
         ),
-        view("Supported surface only", ["/world/mesh"]),
+        view(SURFACE_VIEW, ["/world/mesh"]),
     ]
     if has_removed:
         tabs.append(
             view(
-                "Removed: unsupported surface",
+                REMOVED_VIEW,
                 ["/world/mesh", "/world/mesh_unsupported", "/world/fused"],
             )
         )
@@ -879,7 +933,7 @@ def _blueprint(rr, rrb, camera: dict[str, Any], has_removed: bool):
     return rrb.Blueprint(
         rrb.Horizontal(
             view(
-                "Scene: observed scan and supported surface",
+                SCENE_VIEW,
                 ["/world/fused", "/world/mesh", "/world/fragments/**"],
                 overrides={
                     # Per-fragment clouds duplicate the fused cloud in space. Keep
@@ -962,15 +1016,18 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
             static=True,
         )
         mesh_summary: dict[str, Any] | None = None
+        mesh_vertices = None
+        removed_vertices = None
         if mesh_path is not None:
             mesh = o3d.io.read_triangle_mesh(str(mesh_path))
             if not mesh.has_triangles():
                 raise Open3dError("mesh artifact decoded without triangles")
             mesh.compute_vertex_normals()
+            mesh_vertices = np.asarray(mesh.vertices)
             recording.log(
                 "world/mesh",
                 rr.Mesh3D(
-                    vertex_positions=np.asarray(mesh.vertices),
+                    vertex_positions=mesh_vertices,
                     triangle_indices=np.asarray(mesh.triangles),
                     vertex_normals=np.asarray(mesh.vertex_normals),
                 ),
@@ -985,7 +1042,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                 and support_factor > 0.0
                 and vertices_cropped > 0
             ):
-                removed_triangles = _log_removed_surface(
+                removed_triangles, removed_vertices = _log_removed_surface(
                     o3d,
                     rr,
                     recording,
@@ -994,7 +1051,15 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                     voxel * support_factor,
                 )
         up = _up_axis(o3d, fused, voxel)
-        camera = _camera(fused, up["up"])
+        cameras = _view_cameras(
+            {
+                "fused": fused_points,
+                "mesh": mesh_vertices,
+                "unsupported": removed_vertices,
+            },
+            up["up"],
+        )
+        camera = cameras[SCENE_VIEW]
         recording.log(
             "provenance",
             rr.TextDocument(
@@ -1007,6 +1072,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                         "fused_sha256": pose_graph["fused_sha256"],
                         "logged_fragments": logged,
                         "camera": camera,
+                        "view_cameras": cameras,
                         "up_axis_inference": up,
                         "unsupported_triangles_shown": removed_triangles,
                         "limitations": (
@@ -1023,7 +1089,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
             ),
             static=True,
         )
-        recording.send_blueprint(_blueprint(rr, rrb, camera, removed_triangles > 0))
+        recording.send_blueprint(_blueprint(rr, rrb, cameras, removed_triangles > 0))
     finally:
         recording.flush()
         del recording
@@ -1036,6 +1102,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
         "mesh": mesh_summary,
         "unsupported_triangles_shown": removed_triangles,
         "camera": camera,
+        "view_cameras": cameras,
         "up_axis_inference": up,
         "sha256": _digest(recording_path),
         "bytes": recording_path.stat().st_size,
@@ -1060,31 +1127,32 @@ def _log_removed_surface(o3d, rr, recording, uncropped_path: Path, cloud, limit:
 
     full = o3d.io.read_triangle_mesh(str(uncropped_path))
     if not full.has_triangles():
-        return 0
+        return 0, None
     vertices = np.asarray(full.vertices)
     distances = _sample_distances(o3d, cloud, vertices)
     keep = np.asarray(full.triangles)[
         distances[np.asarray(full.triangles)].max(axis=1) > limit
     ]
     if len(keep) == 0:
-        return 0
+        return 0, None
     removed = o3d.geometry.TriangleMesh(
         o3d.utility.Vector3dVector(vertices), o3d.utility.Vector3iVector(keep)
     )
     removed.remove_unreferenced_vertices()
     removed.compute_vertex_normals()
+    removed_vertices = np.asarray(removed.vertices)
     recording.log(
         "world/mesh_unsupported",
         rr.Mesh3D(
-            vertex_positions=np.asarray(removed.vertices),
+            vertex_positions=removed_vertices,
             triangle_indices=np.asarray(removed.triangles),
             vertex_normals=np.asarray(removed.vertex_normals),
             # Red, so an unsupported surface never reads as observed structure.
-            vertex_colors=np.tile([220, 60, 60], (len(removed.vertices), 1)),
+            vertex_colors=np.tile([220, 60, 60], (len(removed_vertices), 1)),
         ),
         static=True,
     )
-    return int(len(removed.triangles))
+    return int(len(removed.triangles)), removed_vertices
 
 
 KINDS = {
