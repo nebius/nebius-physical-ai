@@ -20,12 +20,17 @@ FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14ef
 
 ARG ROBOCASA_VERSION=0.1.1
 ARG NPA_SOURCE_SHA
+ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.base_image="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
+      npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
+      npa.lerobot.derivative="0.6.1+npa1" \
+      npa.lerobot.archive.sha256="869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee" \
+      npa.lerobot.patch.sha256="7d90538cc6c66351256f394d555797a6aacf34cb17dad2d0c9fc781c7e22404c" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.base.name="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04" \
@@ -35,6 +40,7 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1 \
     ROBOCASA_SOURCE_COMMIT=8f3c96ec8d1bfcd8126cad2bca887da98d30e997 \
     ROBOSUITE_SOURCE_COMMIT=85abee228d1c43ab1939bce33028099945d453b4 \
+    LEROBOT_SOURCE_COMMIT=${LEROBOT_SOURCE_COMMIT} \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
@@ -80,15 +86,18 @@ WORKDIR /opt/robocasa
 
 # Install the reviewed CPython 3.12 linux/amd64 closure from hash locks generated
 # only against anonymous PyPI and PyTorch indexes. RoboCasa requires Gymnasium
-# 0.29.1. LeRobot's broad environment dependency requests Gymnasium >=1.1.1 and
-# opencv-python-headless, but exact-checkpoint ACT inference uses neither those
-# environment wrappers nor a second OpenCV provider. Install only the hash-bound
-# LeRobot policy package with --no-deps.
+# 0.29.1. The exact upstream LeRobot revision is rebuilt as a locally versioned
+# NPA ACT derivative whose metadata declares this closure. The patch changes no
+# Python implementation bytes; the image validates the resolver and real ACT path.
 COPY --chmod=0644 \
     docker/workbench/robocasa/build-requirements.lock \
     docker/workbench/robocasa/requirements.lock \
-    docker/workbench/robocasa/lerobot-requirements.lock \
     /opt/robocasa/locks/
+COPY --chmod=0644 \
+    docker/workbench/robocasa/lerobot-npa-act.patch.b64 \
+    docker/workbench/robocasa/lerobot-npa-act.NOTICE \
+    docker/workbench/robocasa/verify_lerobot_act_derivative.py \
+    /opt/robocasa/derivative/
 
 RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
@@ -101,11 +110,41 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --extra-index-url https://download.pytorch.org/whl/cu129 \
         --require-hashes --no-build-isolation \
         -r /opt/robocasa/locks/requirements.lock \
+    && curl --fail --silent --show-error --location \
+        "https://github.com/huggingface/lerobot/archive/${LEROBOT_SOURCE_COMMIT}.tar.gz" \
+        --output /tmp/lerobot-source.tar.gz \
+    && echo \
+        "869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee  /tmp/lerobot-source.tar.gz" \
+        | sha256sum --check --strict - \
+    && mkdir -p /opt/robocasa/lerobot-source \
+    && tar --extract --gzip --file /tmp/lerobot-source.tar.gz \
+        --strip-components=1 --directory /opt/robocasa/lerobot-source \
+    && rm -f /tmp/lerobot-source.tar.gz \
+    && base64 --decode /opt/robocasa/derivative/lerobot-npa-act.patch.b64 \
+        > /tmp/lerobot-npa-act.patch \
+    && echo \
+        "7d90538cc6c66351256f394d555797a6aacf34cb17dad2d0c9fc781c7e22404c  /tmp/lerobot-npa-act.patch" \
+        | sha256sum --check --strict - \
+    && git -C /opt/robocasa/lerobot-source apply --check \
+        /tmp/lerobot-npa-act.patch \
+    && git -C /opt/robocasa/lerobot-source apply \
+        /tmp/lerobot-npa-act.patch \
+    && rm -f /tmp/lerobot-npa-act.patch \
+    && mkdir -p /opt/robocasa/lerobot-wheel \
+    && PIP_CONFIG_FILE=/dev/null python -m pip wheel \
+        --disable-pip-version-check --no-cache-dir --no-build-isolation --no-deps \
+        --wheel-dir /opt/robocasa/lerobot-wheel \
+        /opt/robocasa/lerobot-source \
+    && test "$(find /opt/robocasa/lerobot-wheel -maxdepth 1 -type f -name 'lerobot-0.6.1+npa1-*.whl' | wc -l)" = 1 \
     && PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
         --index-url https://pypi.org/simple \
-        --require-hashes --only-binary=:all: --no-deps \
-        -r /opt/robocasa/locks/lerobot-requirements.lock \
+        /opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa1-*.whl \
+    && python -m pip check \
+    && python /opt/robocasa/derivative/verify_lerobot_act_derivative.py \
+    && install -D -m 0644 /opt/robocasa/derivative/lerobot-npa-act.NOTICE \
+        /usr/share/doc/lerobot-npa-act/NOTICE \
+    && rm -rf /opt/robocasa/lerobot-source /opt/robocasa/lerobot-wheel \
     && PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
         --index-url https://pypi.org/simple \
@@ -153,7 +192,8 @@ RUN apt-get purge -y --auto-remove linux-libc-dev \
 
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
-    && python -c "from importlib.metadata import metadata; from packaging.requirements import Requirement; requirements = [Requirement(raw) for raw in (metadata('lerobot').get_all('Requires-Dist') or [])]; selected = {'diffusers', 'gymnasium', 'opencv-python-headless', 'setuptools', 'torch', 'torchvision'}; observed = {req.name: str(req.specifier) for req in requirements if req.name in selected and req.marker is None}; expected = {'diffusers': '<0.36.0,>=0.27.2', 'gymnasium': '<2.0.0,>=1.1.1', 'opencv-python-headless': '<4.14.0,>=4.9.0', 'setuptools': '<81.0.0,>=71.0.0', 'torch': '<2.11.0,>=2.7', 'torchvision': '<0.26.0,>=0.22.0'}; assert observed == expected, observed" \
+    && python -c "from importlib.metadata import version; assert version('lerobot') == '0.6.1+npa1'" \
+    && python -m pip check \
     && python -c "from importlib.metadata import distributions; forbidden_names = {'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; opencv_names = {'opencv-python', 'opencv-python-headless', 'opencv-contrib-python', 'opencv-contrib-python-headless'}; installed = {str(dist.metadata['Name']).lower(): str(dist.version) for dist in distributions()}; forbidden = sorted(name for name in installed if name in forbidden_names or name.endswith('-cu13')); opencv = sorted(set(installed) & opencv_names); cuda_helpers = {name: installed[name] for name in installed if name.startswith('cuda-')}; assert not forbidden, forbidden; assert opencv == ['opencv-python'], opencv; assert cuda_helpers == {'cuda-bindings': '12.9.8', 'cuda-pathfinder': '1.8.2', 'cuda-toolkit': '12.9.1'}, cuda_helpers" \
     && python -c "import torch, torchvision; assert torch.__version__ == '2.13.0+cu129'; assert torch.version.cuda == '12.9'; assert torchvision.__version__ == '0.28.0+cu129'" \
     && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"

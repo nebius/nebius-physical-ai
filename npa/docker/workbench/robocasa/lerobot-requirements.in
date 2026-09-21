@@ -1,3 +1,0 @@
-# Policy package only. Its selected ACT dependency closure is reviewed in
-# requirements.in; install this lock with --no-deps.
-lerobot==0.5.1

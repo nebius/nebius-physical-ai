@@ -72,12 +72,13 @@ The pod and container both enforce `runAsNonRoot`.
 
 The `0.1.1` image uses a CUDA 12.4 base with the pinned PyTorch 2.13.0+cu129
 runtime; this is the first available CUDA 12 wheel set that clears the declared
-Torch dependency vulnerabilities. LeRobot 0.5.1 is installed without dependency
-resolution: its older Torch, setuptools, Gymnasium, OpenCV, and Diffusers bounds
-are asserted unchanged, fixed Diffusers 0.38 remains for LeRobot's eager policy
-package import, and the selected ACT path must pass real construction, queued
-inference, and exact checkpoint save/load before deployment. Use L40S for
-pixel-bearing EGL runs.
+Torch dependency vulnerabilities. The image rebuilds exact upstream LeRobot
+v0.6.1 as a locally versioned `0.6.1+npa1` derivative. Its packaging-only patch
+declares the fixed Torch pair and RoboCasa Gymnasium/OpenCV closure; normal
+resolver checks, real ACT construction, inference, shape rejection, and exact
+checkpoint save/load must pass before deployment. This qualifies only the ACT
+path used here and does not claim upstream support for Torch 2.13 or qualify
+other LeRobot policies. Use L40S for pixel-bearing EGL runs.
 RTX PRO 6000, B200, and B300 are
 unverified for this exact image until its wheel architecture set and real EGL
 path are measured; do not infer support or a blocker from the base-image tag or

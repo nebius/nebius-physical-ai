@@ -23,7 +23,9 @@ GENERATOR = IMAGE_DIR / "generate-locks.sh"
 RUNTIME_INPUT = IMAGE_DIR / "requirements.in"
 RUNTIME_LOCK = IMAGE_DIR / "requirements.lock"
 BUILD_LOCK = IMAGE_DIR / "build-requirements.lock"
-LEROBOT_LOCK = IMAGE_DIR / "lerobot-requirements.lock"
+LEROBOT_PATCH = IMAGE_DIR / "lerobot-npa-act.patch.b64"
+LEROBOT_NOTICE = IMAGE_DIR / "lerobot-npa-act.NOTICE"
+LEROBOT_VERIFY = IMAGE_DIR / "verify_lerobot_act_derivative.py"
 DEADSNAKES_KEY = IMAGE_DIR / "deadsnakes-ppa.gpg.b64"
 BASE_INVENTORY = IMAGE_DIR.parent / "base-image-security.json"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
@@ -138,34 +140,70 @@ def _from_refs(text: str) -> list[str]:
     ]
 
 
-def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
+def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     runtime_input = RUNTIME_INPUT.read_text(encoding="utf-8")
     runtime_lock = RUNTIME_LOCK.read_text(encoding="utf-8")
-    lerobot_lock = LEROBOT_LOCK.read_text(encoding="utf-8")
+    patch = base64.b64decode(
+        "".join(LEROBOT_PATCH.read_text(encoding="ascii").split()), validate=True
+    ).decode("utf-8")
+    notice = LEROBOT_NOTICE.read_text(encoding="utf-8")
+    verifier = LEROBOT_VERIFY.read_text(encoding="utf-8")
 
-    assert "gymnasium==0.29.1" in runtime_lock
-    assert "lerobot==0.5.1" in lerobot_lock
-    assert "--require-hashes --only-binary=:all: --no-deps" in dockerfile
-    assert "-r /opt/robocasa/locks/lerobot-requirements.lock" in dockerfile
     for requirement in (
-        "av>=15.0.0,<16.0.0",
-        "diffusers==0.38.0",
-        "pyserial>=3.5,<4.0",
-        "draccus==0.10.0",
-        "einops>=0.8.0,<0.9.0",
+        "gymnasium==0.29.1",
+        "draccus>=0.11.6,<0.12.0",
         "opencv-python>=4.9,<4.14",
+        "setuptools==83.0.0",
+        "torch==2.13.0",
+        "torchvision==0.28.0",
     ):
         assert requirement in runtime_input
-    assert "diffusers==0.38.0" in runtime_lock
+    assert "diffusers" not in runtime_input
+    assert "diffusers==" not in runtime_lock
     assert "opencv-python-headless" not in runtime_input
-    assert "from lerobot.policies.act.modeling_act import ACTPolicy" in dockerfile
-    assert "from lerobot.policies.factory import make_pre_post_processors" in dockerfile
-    assert "opencv == ['opencv-python']" in dockerfile
-    assert "--no-build-isolation --no-deps -e /opt/robocasa/source" in dockerfile
+
+    assert (
+        "ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1"
+        in dockerfile
+    )
+    assert 'npa.lerobot.derivative="0.6.1+npa1"' in dockerfile
+    assert (
+        'npa.lerobot.archive.sha256="869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee"'
+        in dockerfile
+    )
+    assert (
+        "https://github.com/huggingface/lerobot/archive/${LEROBOT_SOURCE_COMMIT}.tar.gz"
+        in dockerfile
+    )
+    assert "--strip-components=1 --directory /opt/robocasa/lerobot-source" in dockerfile
+    assert "git -C /opt/robocasa/lerobot-source apply --check" in dockerfile
+    assert (
+        "7d90538cc6c66351256f394d555797a6aacf34cb17dad2d0c9fc781c7e22404c" in dockerfile
+    )
+    assert "/opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa1-*.whl" in dockerfile
+    local_install = dockerfile.split(
+        "/opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa1-*.whl", 1
+    )[0].rsplit("python -m pip install", 1)[1]
+    assert "--no-deps" not in local_install
+    assert dockerfile.count("python -m pip check") >= 2
+    assert "verify_lerobot_act_derivative.py" in dockerfile
+
+    assert 'version = "0.6.1+npa1"' in patch
+    assert '"torch>=2.13.0,<2.14.0"' in patch
+    assert '"torchvision>=0.28.0,<0.29.0"' in patch
+    assert '"gymnasium==0.29.1"' in patch
+    assert '"opencv-python>=4.9.0,<4.14.0"' in patch
+    assert '"setuptools>=83.0.0,<84.0.0"' in patch
+    assert "src/lerobot" not in patch
+    assert "packaging metadata only" in notice
+    assert "Other LeRobot policies and training paths are not qualified" in notice
+    assert "ACTPolicy.from_pretrained" in verifier
+    assert "ACT accepted a 15-wide state" in verifier
+    assert "ACT accepted a checkpoint with missing weights" in verifier
 
 
-def test_robocasa_act_runtime_binds_reviewed_lerobot_metadata_deviations() -> None:
+def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     runtime_lock = RUNTIME_LOCK.read_text(encoding="utf-8")
 
@@ -173,14 +211,7 @@ def test_robocasa_act_runtime_binds_reviewed_lerobot_metadata_deviations() -> No
     assert "torchvision==0.28.0+cu129" in runtime_lock
     assert "torch==2.9.0" not in runtime_lock
     assert "torchvision==0.24.0" not in runtime_lock
-    assert (
-        "selected = {'diffusers', 'gymnasium', 'opencv-python-headless', "
-        "'setuptools', 'torch', 'torchvision'}"
-    ) in dockerfile
-    assert "'torch': '<2.11.0,>=2.7'" in dockerfile
-    assert "'torchvision': '<0.26.0,>=0.22.0'" in dockerfile
-    assert "'diffusers': '<0.36.0,>=0.27.2'" in dockerfile
-    assert "assert observed == expected, observed" in dockerfile
+    assert "version('lerobot') == '0.6.1+npa1'" in dockerfile
     assert "torchvision.__version__ == '0.28.0+cu129'" in dockerfile
 
 
@@ -603,7 +634,7 @@ def test_every_robocasa_from_base_has_one_security_inventory_entry() -> None:
 
 
 def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
-    for lock in (BUILD_LOCK, RUNTIME_LOCK, LEROBOT_LOCK):
+    for lock in (BUILD_LOCK, RUNTIME_LOCK):
         text = lock.read_text(encoding="utf-8")
         assert "npa/docker/workbench/robocasa/generate-locks.sh" in text
         blocks = _requirement_blocks(lock)
@@ -612,7 +643,6 @@ def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
     runtime_names = _locked_names(RUNTIME_LOCK)
     assert runtime_names & OPENCV_PROVIDERS == {"opencv-python"}
     assert {"gymnasium", "torch", "torchvision"} <= runtime_names
-    assert _locked_names(LEROBOT_LOCK) == {"lerobot"}
 
 
 def test_robocasa_lock_generation_uses_only_anonymous_indexes() -> None:

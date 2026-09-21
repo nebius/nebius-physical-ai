@@ -37,9 +37,3 @@ common=(
   "${common[@]}" \
   --torch-backend cu129 \
   --output-file "${SCRIPT_DIR}/requirements.lock"
-
-"${UV_BIN}" pip compile \
-  "${SCRIPT_DIR}/lerobot-requirements.in" \
-  "${common[@]}" \
-  --no-deps \
-  --output-file "${SCRIPT_DIR}/lerobot-requirements.lock"

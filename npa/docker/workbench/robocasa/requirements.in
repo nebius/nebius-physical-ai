@@ -1,11 +1,10 @@
 # RoboCasa + ACT policy runtime for CPython 3.12 on linux/amd64.
 #
-# LeRobot is hash-locked separately and installed with --no-deps because its
-# Gymnasium/OpenCV environment dependencies conflict with RoboCasa, and its
-# conservative Torch, Diffusers, and packaging-tool caps retain versions with
-# fixed CVEs. Diffusers remains required by LeRobot's eager policy-package
-# import, although the selected ACT path does not execute a diffusion policy.
-# The final image proves ACT construction, inference, and checkpoint roundtrips.
+# LeRobot is built from an exact upstream revision as a locally versioned NPA
+# ACT derivative. Its small packaging-only patch declares this fixed closure,
+# including RoboCasa's Gymnasium and OpenCV provider. The final image proves
+# resolver consistency, ACT construction, inference, shape rejection, and
+# checkpoint roundtrips before any GPU qualification.
 # Robosuite is installed separately from an immutable Git commit so its
 # direct_url.json can bind the checkout.
 setuptools==83.0.0
@@ -28,7 +27,8 @@ h5py
 lxml
 hidapi
 gymnasium==0.29.1
-huggingface_hub
+huggingface_hub>=1.6.0,<2.0.0
+requests>=2.32.0,<3.0.0
 
 fastapi==0.136.1
 uvicorn[standard]==0.38.0
@@ -40,12 +40,11 @@ datasets>=4.0.0,<5.0.0
 accelerate>=1.10.0,<2.0.0
 packaging>=24.2,<26.0
 einops>=0.8.0,<0.9.0
-draccus==0.10.0
+draccus>=0.11.6,<0.12.0
 safetensors>=0.4.3,<1.0.0
 av>=15.0.0,<16.0.0
 jsonlines>=4.0.0,<5.0.0
 deepdiff>=7.0.1,<9.0.0
-diffusers==0.38.0
 pyserial>=3.5,<4.0
 
 torch==2.13.0
