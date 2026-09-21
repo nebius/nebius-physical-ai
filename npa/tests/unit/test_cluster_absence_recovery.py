@@ -436,11 +436,14 @@ def test_audit_directory_never_follows_links_or_changes_existing_permissions(
     directory = operation.path.parent / "absence-recovery"
     foreign = path.parent / "unowned-directory"
     foreign.mkdir(mode=0o755)
+    foreign.chmod(0o755)  # Establish the hostile fixture independently of umask.
     if symlink:
         directory.symlink_to(foreign, target_is_directory=True)
     else:
         directory.mkdir(mode=0o755)
+        directory.chmod(0o755)
     before = foreign.stat().st_mode if symlink else directory.stat().st_mode
+    assert before & 0o777 == 0o755
     result = _run(path)
     assert result.returncode != 0
     assert operation.read()["phase"] == "recovery-required"
