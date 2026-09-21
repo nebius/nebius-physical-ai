@@ -38,6 +38,7 @@ def _lifecycle_documents(source):
         "provision_result": {"started_at": "attempt-one", "exit": 0},
         "deployment_sidecar": {
             "project_id": "project-test",
+            "region": "example-region",
             "cluster_name": "owned-cluster",
             "status": "deployed",
         },
@@ -75,6 +76,7 @@ def _authority_fixture(tmp_path):
     authority = {
         "profile": "owned-profile",
         "project_id": "project-test",
+        "region": "example-region",
         "tenant_id": "tenant-test",
         "endpoint": "api.example.invalid",
     }
@@ -98,6 +100,7 @@ def binding(tmp_path):
         "context": "owned-context",
         "project_alias": "owned",
         "project_id": "project-test",
+        "region": "example-region",
         "tenant_id": "tenant-test",
         "profile": "owned-profile",
         "cluster_id": "cluster-test",
@@ -299,7 +302,11 @@ def test_project_authority_required_before_absence(
 ):
     response = {
         "metadata": {"id": project, "parent_id": tenant},
-        "status": {"state": state},
+        "status": {
+            "container_state": state,
+            "suspension_state": "NONE",
+            "region": "example-region",
+        },
     }
     monkeypatch.setattr(
         live,
@@ -326,3 +333,60 @@ def test_cleanup_checks_authority_before_any_absence(
     with pytest.raises(AssertionError, match="project authority"):
         live.test_mk8s_provider_rpc_live_cleanup()
     assert calls == ["project-authority"]
+
+
+@pytest.mark.parametrize(
+    "status,accepted",
+    [
+        (
+            {
+                "container_state": "ACTIVE",
+                "suspension_state": "NONE",
+                "region": "example-region",
+            },
+            True,
+        ),
+        ({}, False),
+        ({"state": "ACTIVE"}, False),
+        (
+            {
+                "container_state": "ACTIVE",
+                "suspension_state": "SUSPENDED",
+                "region": "example-region",
+            },
+            False,
+        ),
+        (
+            {
+                "container_state": "ACTIVE",
+                "suspension_state": "NONE",
+                "region": "foreign-region",
+            },
+            False,
+        ),
+        ({"container_state": "ACTIVE", "region": "example-region"}, False),
+    ],
+)
+def test_real_project_container_status_contract(
+    live, binding, monkeypatch, tmp_path, status, accepted
+):
+    response = {
+        "metadata": {"id": "project-test", "parent_id": "tenant-test"},
+        "status": status,
+    }
+    monkeypatch.setattr(
+        live,
+        "_provider",
+        lambda *args: SimpleNamespace(returncode=0, stdout=json.dumps(response)),
+    )
+    if accepted:
+        live._verify_project_authority(binding, tmp_path)
+    else:
+        with pytest.raises((AssertionError, KeyError)):
+            live._verify_project_authority(binding, tmp_path)
+
+
+def test_original_region_cannot_be_changed(live, binding):
+    binding["region"] = "foreign-region"
+    with pytest.raises(AssertionError, match="producing scope changed"):
+        live._bindings(binding, binding["source_revision"])

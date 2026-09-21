@@ -37,7 +37,7 @@ def _authority(config, start):
     authority = config["authority"]
     assert start["authority"] == authority, "producing authority changed"
     assert authority["profile"] == config["profile"] and config["profile"]
-    for key in ("project_id", "tenant_id"):
+    for key in ("project_id", "tenant_id", "region"):
         assert authority[key] == config[key], "producing scope changed"
     profiles = yaml.safe_load(_bound_bytes(authority["config_file"]))["profiles"]
     profile = profiles[authority["profile"]]
@@ -88,6 +88,7 @@ def _bindings(config, source_revision):
     assert argv[argv.index("--project") + 1] == config["project_alias"]
     assert finish["exit"] == 0, "provisioning did not pass its required gates"
     assert saved["project_id"] == config["project_id"]
+    assert saved["region"] == config["region"]
     assert saved["cluster_name"] == config["cluster_name"]
     assert saved["status"] == "deployed"
     resources = {}
@@ -173,7 +174,9 @@ def _verify_project_authority(config, evidence):
     payload = json.loads(result.stdout)
     assert payload["metadata"]["id"] == config["project_id"]
     assert payload["metadata"]["parent_id"] == config["tenant_id"]
-    assert payload["status"]["state"] == "ACTIVE"
+    assert payload["status"]["container_state"] == "ACTIVE"
+    assert payload["status"]["suspension_state"] == "NONE"
+    assert payload["status"]["region"] == config["region"]
 
 
 def _check_live_identity(payload, expected_id, expected_parent, expected_name=None):
