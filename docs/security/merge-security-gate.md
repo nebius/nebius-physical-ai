@@ -5,19 +5,24 @@ runs **Security regression / security-regression**. It is the only automatic PR
 workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
 source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
-PRs receive smoke and affected subsystem tests, with browser coverage for
-agent/UI changes and full tests for unknown/shared changes. Merge-queue candidates
-run browser and compatibility checks alongside the full duration-balanced
-coverage suite against the latest `main`. The narrow prose-only exception
-described in [the contributor CI guide](../../CONTRIBUTING.md) retains smoke,
-documentation, lint, guardrails, and every security gate. The test selector comes
-from the trusted base commit; missing policy keeps full validation and invalid
-comparisons fail. The full three-interpreter test audit runs
-daily instead of immediately after each merge. Repository-wide job concurrency
+PRs and merge-queue candidates run the same browser and focused Python
+compatibility checks alongside the complete duration-balanced Python 3.12
+coverage suite. This catches cross-subsystem failures before queue admission;
+the queue rechecks the combined candidate against the latest main revision.
+The narrow prose-only exception described in
+[the contributor CI guide](../../CONTRIBUTING.md) retains smoke, documentation,
+lint, guardrails, and every security gate. The test selector comes from the
+trusted base commit and uses its merge-candidate policy for both events,
+including when an older base still has a narrower PR policy. Missing policy
+keeps full validation and invalid comparisons fail. The full three-interpreter
+test audit runs daily instead of immediately after each merge. Repository-wide
+job concurrency
 limits validation to seven PR jobs, nine merge-candidate jobs, and three background
-audit jobs. Each candidate pool has a separate slot for coverage and the final
-required check; optional timing reports use the audit pool. These groups bound
-repository demand but cannot reserve organization runners. See the
+audit jobs. Each candidate pool has a separate slot for the short test-scope
+selector, coverage, and the final required check. Shards can start without
+waiting for long docs and guardrail jobs. Optional timing reports use the audit
+pool. These groups bound repository demand but cannot reserve organization
+runners. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
 for queue retention, superseded-commit cancellation, and rollout limits.
 
