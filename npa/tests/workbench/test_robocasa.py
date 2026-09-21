@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import ctypes
 import hashlib
 import json
 import multiprocessing
@@ -39,20 +38,8 @@ from npa.workbench.robocasa.schemas import RoboCasaStatusResponse
 from npa.workbench.robocasa.service import RunRegistry, create_app
 
 
-def _acknowledge_worker_process_group(sender) -> None:
-    sender.send_bytes(
-        json.dumps(
-            {"kind": "ready", "process_group": os.getpgrp()},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
-
-
 def _blocking_robocasa_worker(sender, request_payload) -> None:
     try:
-        os.setsid()
-        _acknowledge_worker_process_group(sender)
         output_dir = Path(str(request_payload["_worker_output_dir"]))
         (output_dir / "partial.bin").write_bytes(b"x" * 1024 * 1024)
         asset_temp_root = str(request_payload.get("_worker_asset_temp_root") or "")
@@ -67,8 +54,6 @@ def _blocking_robocasa_worker(sender, request_payload) -> None:
 
 def _successful_robocasa_worker(sender, _request_payload) -> None:
     try:
-        os.setsid()
-        _acknowledge_worker_process_group(sender)
         sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
         sender.recv_bytes(1)
     except (EOFError, OSError):
@@ -87,10 +72,21 @@ def _robocasa_worker_without_isolation_ack(sender, _request_payload) -> None:
         sender.close()
 
 
+def _supervisor_without_containment_ack(
+    sender, _request_payload, _worker_target
+) -> None:
+    try:
+        sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
+        sender.recv_bytes(1)
+        sender.send_bytes(b'{"kind":"stopped","stopped":false}')
+    except (EOFError, OSError):
+        pass
+    finally:
+        sender.close()
+
+
 def _robocasa_worker_with_term_ignoring_descendant(sender, _request_payload) -> None:
     try:
-        os.setsid()
-        _acknowledge_worker_process_group(sender)
         descendant = subprocess.Popen(
             [
                 sys.executable,
@@ -104,6 +100,7 @@ def _robocasa_worker_with_term_ignoring_descendant(sender, _request_payload) -> 
             ],
             stdout=subprocess.PIPE,
             text=True,
+            start_new_session=True,
         )
         assert descendant.stdout is not None
         assert descendant.stdout.readline().strip() == "ready"
@@ -124,8 +121,6 @@ def _robocasa_worker_with_term_ignoring_descendant(sender, _request_payload) -> 
 
 def _robocasa_worker_whose_leader_exits(sender, _request_payload) -> None:
     try:
-        os.setsid()
-        _acknowledge_worker_process_group(sender)
         descendant = subprocess.Popen(
             [
                 sys.executable,
@@ -139,6 +134,7 @@ def _robocasa_worker_whose_leader_exits(sender, _request_payload) -> None:
             ],
             stdout=subprocess.PIPE,
             text=True,
+            start_new_session=True,
         )
         assert descendant.stdout is not None
         assert descendant.stdout.readline().strip() == "ready"
@@ -154,43 +150,40 @@ def _robocasa_worker_whose_leader_exits(sender, _request_payload) -> None:
         sender.close()
 
 
-def _run_subreaper_cleanup_harness(sender) -> None:
+def _robocasa_worker_with_double_fork_daemon(sender, _request_payload) -> None:
     try:
-        libc = ctypes.CDLL(None, use_errno=True)
-        if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
-            error_number = ctypes.get_errno()
-            raise OSError(error_number, os.strerror(error_number))
-        from npa.workbench.robocasa import service
-
-        request = RoboCasaRunRequest(
-            capability="kitchen_task_registration",
-            output_uri="s3://example/output",
-            timeout_seconds=5,
-            download_assets=False,
+        descendant = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import os,signal,time;"
+                    "child=os.fork();"
+                    "\nif child: os._exit(0);"
+                    "\nos.setsid();"
+                    "\nchild=os.fork();"
+                    "\nif child: os._exit(0);"
+                    "\nsignal.signal(signal.SIGTERM, signal.SIG_IGN);"
+                    "\nprint(os.getpid(), flush=True);"
+                    "\ntime.sleep(30)"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
         )
-        outcome = service._execute_capability_in_worker(
-            request,
-            worker_target=_robocasa_worker_with_term_ignoring_descendant,
-            process_context=multiprocessing.get_context("spawn"),
+        assert descendant.stdout is not None
+        daemon_pid = int(descendant.stdout.readline().strip())
+        sender.send_bytes(
+            json.dumps(
+                {
+                    "kind": "result",
+                    "result": {"descendant_pid": daemon_pid},
+                }
+            ).encode("utf-8")
         )
-        descendant_pid = (
-            int(outcome.result["descendant_pid"]) if outcome.result is not None else -1
-        )
-        try:
-            os.kill(descendant_pid, 0)
-        except ProcessLookupError:
-            descendant_absent = True
-        else:
-            descendant_absent = False
-        sender.send(
-            {
-                "stopped": outcome.stopped,
-                "error": outcome.error,
-                "descendant_absent": descendant_absent,
-            }
-        )
-    except BaseException as exc:
-        sender.send({"harness_error": f"{type(exc).__name__}: {exc}"})
+        sender.recv_bytes(1)
+    except (EOFError, OSError):
+        pass
     finally:
         sender.close()
 
@@ -884,7 +877,7 @@ def test_capability_worker_retains_result_before_group_cleanup() -> None:
     request = RoboCasaRunRequest(
         capability="kitchen_task_registration",
         output_uri="s3://example/output",
-        timeout_seconds=5,
+        timeout_seconds=15,
         download_assets=False,
     )
 
@@ -910,12 +903,13 @@ def test_capability_worker_fails_closed_without_isolation_ack() -> None:
     outcome = service._execute_capability_in_worker(
         request,
         worker_target=_robocasa_worker_without_isolation_ack,
+        supervisor_target=_supervisor_without_containment_ack,
         process_context=multiprocessing.get_context("spawn"),
     )
 
     assert outcome.stopped is False
     assert outcome.result is None
-    assert "did not acknowledge" in str(outcome.error)
+    assert "containment was not acknowledged" in str(outcome.error)
 
 
 def test_capability_worker_kills_term_ignoring_descendants() -> None:
@@ -924,7 +918,7 @@ def test_capability_worker_kills_term_ignoring_descendants() -> None:
     request = RoboCasaRunRequest(
         capability="kitchen_task_registration",
         output_uri="s3://example/output",
-        timeout_seconds=5,
+        timeout_seconds=15,
         download_assets=False,
     )
 
@@ -942,72 +936,153 @@ def test_capability_worker_kills_term_ignoring_descendants() -> None:
         os.kill(descendant_pid, 0)
 
 
-def test_capability_worker_reaps_subreaper_adopted_descendant() -> None:
-    context = multiprocessing.get_context("spawn")
-    receiver, sender = context.Pipe(duplex=False)
-    harness = context.Process(target=_run_subreaper_cleanup_harness, args=(sender,))
+def test_worker_supervisor_reaps_double_forked_session_daemon() -> None:
+    from npa.workbench.robocasa import service
+
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=15,
+        download_assets=False,
+    )
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_robocasa_worker_with_double_fork_daemon,
+        process_context=multiprocessing.get_context("spawn"),
+    )
+
+    assert outcome.stopped is True
+    assert outcome.error is None
+    assert outcome.result is not None
+    descendant_pid = int(outcome.result["descendant_pid"])
+    with pytest.raises(ProcessLookupError):
+        os.kill(descendant_pid, 0)
+
+
+def test_worker_supervisor_preserves_unrelated_sibling_process() -> None:
+    from npa.workbench.robocasa import service
+
+    sentinel = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
-        harness.start()
-        sender.close()
-        assert receiver.poll(15), "subreaper cleanup harness did not report"
-        result = receiver.recv()
-        harness.join(5)
+        request = RoboCasaRunRequest(
+            capability="kitchen_task_registration",
+            output_uri="s3://example/output",
+            timeout_seconds=15,
+            download_assets=False,
+        )
+        outcome = service._execute_capability_in_worker(
+            request,
+            worker_target=_robocasa_worker_with_term_ignoring_descendant,
+            process_context=multiprocessing.get_context("spawn"),
+        )
 
-        assert harness.exitcode == 0
-        assert "harness_error" not in result, result
-        assert result == {
-            "stopped": True,
-            "error": None,
-            "descendant_absent": True,
-        }
+        assert outcome.stopped is True
+        assert sentinel.poll() is None
     finally:
-        receiver.close()
-        if harness.is_alive():
-            harness.kill()
-            harness.join()
-        if hasattr(harness, "close"):
-            harness.close()
+        sentinel.terminate()
+        sentinel.wait(timeout=5)
 
 
-def test_worker_cleanup_uses_acknowledged_group_after_leader_exits() -> None:
+def test_worker_supervisor_reaps_escaped_descendant_after_capability_exits() -> None:
+    from npa.workbench.robocasa import service
+
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=15,
+        download_assets=False,
+    )
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_robocasa_worker_whose_leader_exits,
+        process_context=multiprocessing.get_context("spawn"),
+    )
+
+    assert outcome.stopped is True
+    assert outcome.error is None
+    assert outcome.result is not None
+    descendant_pid = int(outcome.result["descendant_pid"])
+    with pytest.raises(ProcessLookupError):
+        os.kill(descendant_pid, 0)
+
+
+def test_worker_supervisor_control_eof_still_reaps_descendants(
+    tmp_path: Path,
+) -> None:
     from npa.workbench.robocasa import service
 
     context = multiprocessing.get_context("spawn")
     receiver, sender = context.Pipe(duplex=True)
-    process = context.Process(
-        target=_robocasa_worker_whose_leader_exits,
-        args=(sender, {}),
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=15,
+        download_assets=False,
     )
-    descendant_pid: int | None = None
+    payload = request.model_dump(mode="json")
+    worker_output = tmp_path / "worker"
+    worker_output.mkdir()
+    payload["_worker_output_dir"] = str(worker_output)
+    payload["_worker_asset_temp_root"] = ""
+    process = context.Process(
+        target=service._supervisor_worker_entry,
+        args=(sender, payload, _robocasa_worker_with_term_ignoring_descendant),
+    )
     try:
         process.start()
         sender.close()
-        ready = json.loads(receiver.recv_bytes().decode("utf-8"))
-        result = json.loads(receiver.recv_bytes().decode("utf-8"))
-        process.join(5)
-        assert process.is_alive() is False
-        assert ready == {"kind": "ready", "process_group": process.pid}
+        ready = service._receive_worker_message(receiver)
+        assert ready["kind"] == "ready"
+        result = service._receive_worker_message(receiver)
         descendant_pid = int(result["result"]["descendant_pid"])
-
-        assert service._stop_worker(
-            process,
-            terminate=True,
-            process_group=int(ready["process_group"]),
-        )
+        receiver.close()
+        process.join(timeout=15)
+        assert process.exitcode == 0
         with pytest.raises(ProcessLookupError):
             os.kill(descendant_pid, 0)
     finally:
-        receiver.close()
         if process.is_alive():
             process.kill()
-            process.join()
-        if descendant_pid is not None:
-            try:
-                os.kill(descendant_pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        if hasattr(process, "close"):
-            process.close()
+            process.join(timeout=5)
+
+
+def test_pidfd_signal_rejects_reused_process_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.robocasa import service
+
+    identity = service._ProcessIdentity(
+        pid=123,
+        ppid=456,
+        start_time=789,
+        state="S",
+    )
+    descriptor, writer = os.pipe()
+    signalled = []
+    monkeypatch.setattr(service.os, "pidfd_open", lambda _pid: descriptor)
+    monkeypatch.setattr(
+        service,
+        "_process_identity",
+        lambda _pid: service._ProcessIdentity(
+            pid=123,
+            ppid=456,
+            start_time=790,
+            state="S",
+        ),
+    )
+    monkeypatch.setattr(
+        service.signal,
+        "pidfd_send_signal",
+        lambda *_args: signalled.append(True),
+    )
+
+    with pytest.raises(RoboCasaError, match="identity changed"):
+        service._signal_process_identity(identity, signal.SIGKILL)
+
+    os.close(writer)
+    assert signalled == []
 
 
 def test_worker_cleanup_exception_returns_fail_closed_outcome(
@@ -1017,11 +1092,12 @@ def test_worker_cleanup_exception_returns_fail_closed_outcome(
 
     real_stop_worker = service._stop_worker
 
-    def stop_then_raise(process, *, terminate, process_group=None):
+    def stop_then_raise(process, control, *, terminate, supervisor_pid=None):
         assert real_stop_worker(
             process,
+            control,
             terminate=terminate,
-            process_group=process_group,
+            supervisor_pid=supervisor_pid,
         )
         raise OSError("injected cleanup failure")
 
@@ -1029,7 +1105,7 @@ def test_worker_cleanup_exception_returns_fail_closed_outcome(
     request = RoboCasaRunRequest(
         capability="kitchen_task_registration",
         output_uri="s3://example/output",
-        timeout_seconds=5,
+        timeout_seconds=15,
         download_assets=False,
     )
 

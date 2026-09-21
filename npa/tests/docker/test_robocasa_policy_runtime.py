@@ -74,6 +74,51 @@ def _committed_builder_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
     return repo, script, source_sha
 
 
+def _run_recording_builder(
+    tmp_path: Path,
+    repo: Path,
+    script: Path,
+    source_sha: str,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    docker = binary / "docker"
+    docker.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['DOCKER_STDIN']).write_bytes(sys.stdin.buffer.read())\n"
+        "pathlib.Path(os.environ['DOCKER_ARGV']).write_text(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    archive = tmp_path / "context.tar"
+    argv = tmp_path / "docker-argv.json"
+    result = subprocess.run(
+        [
+            str(script),
+            "--registry",
+            "registry.example.invalid/npa",
+            "--tag",
+            f"dev-{source_sha}",
+        ],
+        cwd=repo / "npa",
+        env={
+            **os.environ,
+            **(extra_env or {}),
+            "PATH": f"{binary}{os.pathsep}{os.environ['PATH']}",
+            "NPA_SOURCE_SHA": source_sha,
+            "DOCKER_STDIN": str(archive),
+            "DOCKER_ARGV": str(argv),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result, archive, argv
+
+
 def _requirement_blocks(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     starts = [match.start() for match in re.finditer(r"(?m)^[A-Za-z0-9_.-]+", text)]
@@ -257,11 +302,9 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1" in dockerfile
     assert "FROM --platform=" not in dockerfile
+    assert 'REPO_ROOT="$(git_exact -C "${NPA_ROOT}"' in build_script
     assert (
-        'REPO_ROOT="$(git -C "${NPA_ROOT}" rev-parse --show-toplevel)"' in build_script
-    )
-    assert (
-        'git -C "${REPO_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa"'
+        'git_exact -C "${REPO_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa"'
         in build_script
     )
     assert "| docker build \\\n      --platform linux/amd64 \\" in build_script
@@ -277,6 +320,12 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert "from npa.workbench.robocasa.service import app" in dockerfile
     assert 'rev-parse HEAD)" != "${NPA_SOURCE_SHA}"' in build_script
     assert "status --porcelain=v1 --untracked-files=all -- ." in build_script
+    assert "GIT_NO_REPLACE_OBJECTS=1" in build_script
+    assert "GIT_ATTR_NOSYSTEM=1" in build_script
+    assert "GIT_CONFIG_GLOBAL=/dev/null" in build_script
+    assert "-c core.attributesFile=/dev/null" in build_script
+    assert "-c tar.umask=0002" in build_script
+    assert "--git-path info/attributes" in build_script
 
 
 def test_robocasa_builder_streams_the_committed_npa_subtree(
@@ -285,53 +334,106 @@ def test_robocasa_builder_streams_the_committed_npa_subtree(
     repo, script, source_sha = _committed_builder_fixture(tmp_path)
     # Untracked data outside npa must never enter the committed subtree archive.
     (repo / "private-input").write_text("not build input\n", encoding="utf-8")
-
-    binary = tmp_path / "bin"
-    binary.mkdir()
-    docker = binary / "docker"
-    docker.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, pathlib, sys\n"
-        "pathlib.Path(os.environ['DOCKER_STDIN']).write_bytes(sys.stdin.buffer.read())\n"
-        "pathlib.Path(os.environ['DOCKER_ARGV']).write_text(json.dumps(sys.argv[1:]))\n",
-        encoding="utf-8",
-    )
-    docker.chmod(0o755)
-    archive = tmp_path / "context.tar"
-    argv = tmp_path / "docker-argv.json"
-    result = subprocess.run(
-        [
-            str(script),
-            "--registry",
-            "registry.example.invalid/npa",
-            "--tag",
-            f"dev-{source_sha}",
-        ],
-        cwd=repo / "npa",
-        env={
-            **os.environ,
-            "PATH": f"{binary}{os.pathsep}{os.environ['PATH']}",
-            "NPA_SOURCE_SHA": source_sha,
-            "DOCKER_STDIN": str(archive),
-            "DOCKER_ARGV": str(argv),
-        },
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    result, archive, argv = _run_recording_builder(tmp_path, repo, script, source_sha)
 
     assert result.returncode == 0, result.stderr
     with tarfile.open(fileobj=io.BytesIO(archive.read_bytes())) as context:
         names = set(context.getnames())
+        tracked = context.getmember("tracked.txt")
     assert "docker/workbench/robocasa/Dockerfile" in names
     assert "tracked.txt" in names
     assert "private-input" not in names
+    assert tracked.mode == 0o664
     docker_argv = json.loads(argv.read_text(encoding="utf-8"))
     assert docker_argv[0] == "build"
     assert docker_argv[-1] == "-"
     assert docker_argv[docker_argv.index("-f") + 1] == (
         "docker/workbench/robocasa/Dockerfile"
     )
+
+
+def test_robocasa_builder_ignores_replace_objects_and_custom_replace_base(
+    tmp_path: Path,
+) -> None:
+    repo, script, source_sha = _committed_builder_fixture(tmp_path)
+    original = subprocess.check_output(
+        ["git", "rev-parse", "HEAD:npa/tracked.txt"], cwd=repo, text=True
+    ).strip()
+    replacement = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        cwd=repo,
+        input="replacement context\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "replace", original, replacement], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "update-ref", f"refs/custom-replacements/{original}", replacement],
+        cwd=repo,
+        check=True,
+    )
+
+    result, archive, _argv = _run_recording_builder(
+        tmp_path,
+        repo,
+        script,
+        source_sha,
+        extra_env={"GIT_REPLACE_REF_BASE": "refs/custom-replacements/"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    with tarfile.open(fileobj=io.BytesIO(archive.read_bytes())) as context:
+        tracked = context.extractfile("tracked.txt")
+        assert tracked is not None
+        assert tracked.read() == b"committed context\n"
+
+
+def test_robocasa_builder_rejects_repository_info_attributes(
+    tmp_path: Path,
+) -> None:
+    repo, script, source_sha = _committed_builder_fixture(tmp_path)
+    info_attributes = repo / ".git/info/attributes"
+    info_attributes.write_text("npa/tracked.txt export-ignore\n", encoding="utf-8")
+
+    result, archive, argv = _run_recording_builder(tmp_path, repo, script, source_sha)
+
+    assert result.returncode == 2
+    assert "info/attributes may alter the build context" in result.stderr
+    assert not archive.exists()
+    assert not argv.exists()
+
+
+def test_robocasa_builder_ignores_ambient_global_attributes(
+    tmp_path: Path,
+) -> None:
+    repo, script, source_sha = _committed_builder_fixture(tmp_path)
+    attributes = tmp_path / "ambient-attributes"
+    attributes.write_text("npa/tracked.txt export-ignore\n", encoding="utf-8")
+    global_config = tmp_path / "ambient-gitconfig"
+    subprocess.run(
+        [
+            "git",
+            "config",
+            "--file",
+            str(global_config),
+            "core.attributesFile",
+            str(attributes),
+        ],
+        check=True,
+    )
+
+    result, archive, _argv = _run_recording_builder(
+        tmp_path,
+        repo,
+        script,
+        source_sha,
+        extra_env={"GIT_CONFIG_GLOBAL": str(global_config)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    with tarfile.open(fileobj=io.BytesIO(archive.read_bytes())) as context:
+        assert "tracked.txt" in context.getnames()
 
 
 def test_robocasa_builder_fails_closed_when_git_status_fails(

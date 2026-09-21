@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import hmac
 import json
 import logging
@@ -15,6 +16,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
+from multiprocessing.connection import wait as wait_connections
 from pathlib import Path
 from typing import Any
 
@@ -442,13 +444,8 @@ def _execution_available(execution_gate: Any) -> bool:
 
 
 def _capability_worker_entry(sender: Any, request_payload: dict[str, Any]) -> None:
-    """Execute one capability in its own killable process group."""
+    """Execute one capability below its dedicated containment supervisor."""
     try:
-        os.setsid()
-        _send_worker_message(
-            sender,
-            {"kind": "ready", "process_group": os.getpgrp()},
-        )
         payload = dict(request_payload)
         output_dir = Path(str(payload.pop("_worker_output_dir")))
         asset_temp_root = str(payload.pop("_worker_asset_temp_root", "")).strip()
@@ -481,6 +478,123 @@ def _capability_worker_entry(sender: Any, request_payload: dict[str, Any]) -> No
         sender.close()
 
 
+def _capability_child_entry(
+    worker_target: Any,
+    child_sender: Any,
+    request_payload: dict[str, Any],
+    supervisor_sender: Any,
+    child_receiver: Any,
+) -> None:
+    """Close fork-inherited supervisor endpoints before running capability code."""
+    supervisor_sender.close()
+    child_receiver.close()
+    worker_target(child_sender, request_payload)
+
+
+def _supervisor_worker_entry(
+    sender: Any,
+    request_payload: dict[str, Any],
+    worker_target: Any,
+) -> None:
+    """Own, terminate, and reap exactly one capability process tree."""
+    child = None
+    receiver = child_sender = None
+    try:
+        os.setsid()
+        _become_child_subreaper()
+        _send_worker_message(
+            sender,
+            {
+                "kind": "ready",
+                "containment": "subreaper-pidfd-v1",
+                "supervisor_pid": os.getpid(),
+            },
+        )
+        # The supervisor itself was spawned before any capability imports or GPU
+        # initialization. Forking this single-threaded clean process avoids a
+        # second interpreter startup consuming the request deadline.
+        context = multiprocessing.get_context("fork")
+        receiver, child_sender = context.Pipe(duplex=True)
+        child = context.Process(
+            target=_capability_child_entry,
+            args=(
+                worker_target,
+                child_sender,
+                request_payload,
+                sender,
+                receiver,
+            ),
+            name="robocasa-capability",
+        )
+        child.start()
+        child_sender.close()
+        child_sender = None
+        result_forwarded = False
+        while True:
+            ready = wait_connections(
+                [sender] if result_forwarded else [sender, receiver]
+            )
+            if receiver in ready and not result_forwarded:
+                try:
+                    raw = receiver.recv_bytes(_WORKER_MESSAGE_LIMIT)
+                except (EOFError, OSError):
+                    raw = json.dumps(
+                        {
+                            "kind": "error",
+                            "error": "RoboCasa capability exited without a result",
+                        },
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                sender.send_bytes(raw)
+                result_forwarded = True
+            if sender in ready:
+                try:
+                    command = sender.recv_bytes(1)
+                except (EOFError, OSError):
+                    command = b""
+                cleaned = _stop_supervised_children(child)
+                stopped = command == b"\0" and cleaned
+                _send_worker_message(
+                    sender,
+                    {"kind": "stopped", "stopped": stopped},
+                )
+                return
+    except Exception as exc:
+        try:
+            _send_worker_message(
+                sender,
+                {
+                    "kind": "error",
+                    "error": f"RoboCasa containment failed: {type(exc).__name__}: {exc}",
+                },
+            )
+            stopped = _stop_supervised_children(child)
+            _send_worker_message(
+                sender,
+                {"kind": "stopped", "stopped": stopped},
+            )
+        except (EOFError, OSError):
+            pass
+    finally:
+        if child is not None:
+            # Control EOF or a failed acknowledgement must not strand a child
+            # after the service has poisoned its execution gate.
+            _stop_supervised_children(child)
+        if child_sender is not None:
+            child_sender.close()
+        if receiver is not None:
+            receiver.close()
+        if (
+            child is not None
+            and child.pid is not None
+            and not child.is_alive()
+            and hasattr(child, "close")
+        ):
+            child.close()
+        sender.close()
+
+
 def _send_worker_message(sender: Any, payload: dict[str, Any]) -> None:
     try:
         encoded = json.dumps(
@@ -507,10 +621,132 @@ def _send_worker_message(sender: Any, payload: dict[str, Any]) -> None:
     sender.send_bytes(encoded)
 
 
+@dataclass(frozen=True)
+class _ProcessIdentity:
+    pid: int
+    ppid: int
+    start_time: int
+    state: str
+
+
+def _become_child_subreaper() -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _process_identity(pid: int) -> _ProcessIdentity | None:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    end = raw.rfind(")")
+    if end < 0:
+        raise RoboCasaError("cannot parse supervised process identity")
+    fields = raw[end + 2 :].split()
+    if len(fields) < 20:
+        raise RoboCasaError("cannot parse supervised process identity")
+    return _ProcessIdentity(
+        pid=pid,
+        ppid=int(fields[1]),
+        start_time=int(fields[19]),
+        state=fields[0],
+    )
+
+
+def _direct_child_identities() -> list[_ProcessIdentity]:
+    parent_pid = os.getpid()
+    children = []
+    with os.scandir("/proc") as entries:
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            try:
+                identity = _process_identity(int(entry.name))
+            except FileNotFoundError:
+                continue
+            if identity is not None and identity.ppid == parent_pid:
+                children.append(identity)
+    return children
+
+
+def _reap_supervised_children(primary: Any = None) -> None:
+    for identity in _direct_child_identities():
+        if identity.state != "Z":
+            continue
+        if primary is not None and identity.pid == primary.pid:
+            primary.join(timeout=0)
+            continue
+        try:
+            os.waitpid(identity.pid, os.WNOHANG)
+        except ChildProcessError:
+            continue
+        except InterruptedError:
+            continue
+
+
+def _signal_process_identity(identity: _ProcessIdentity, signal_number: int) -> None:
+    try:
+        descriptor = os.pidfd_open(identity.pid)
+    except ProcessLookupError:
+        return
+    try:
+        current = _process_identity(identity.pid)
+        if current is None:
+            return
+        if (
+            current.pid,
+            current.ppid,
+            current.start_time,
+        ) != (
+            identity.pid,
+            identity.ppid,
+            identity.start_time,
+        ):
+            raise RoboCasaError("supervised process identity changed")
+        signal.pidfd_send_signal(descriptor, signal_number)
+    except ProcessLookupError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
+def _stop_supervised_children(primary: Any = None) -> bool:
+    """Drain only children of this dedicated subreaper, including escaped sessions."""
+    try:
+        for signal_number in (signal.SIGTERM, signal.SIGKILL):
+            deadline = time.monotonic() + _WORKER_TERMINATE_GRACE_SECONDS
+            while True:
+                _reap_supervised_children(primary)
+                children = _direct_child_identities()
+                if not children:
+                    if primary is not None:
+                        primary.join(timeout=0)
+                        if primary.is_alive():
+                            return False
+                    return True
+                for identity in children:
+                    if identity.state != "Z":
+                        _signal_process_identity(identity, signal_number)
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.01)
+        _reap_supervised_children(primary)
+        children = _direct_child_identities()
+        if primary is not None:
+            primary.join(timeout=0)
+        return not children and (primary is None or not primary.is_alive())
+    except (OSError, RoboCasaError, ValueError):
+        LOGGER.debug("RoboCasa containment supervisor failed closed", exc_info=True)
+        return False
+
+
 def _execute_capability_in_worker(
     body: RoboCasaRunRequest,
     *,
     worker_target: Any = _capability_worker_entry,
+    supervisor_target: Any = _supervisor_worker_entry,
     process_context: Any = None,
     output_root: Path | None = None,
 ) -> _WorkerOutcome:
@@ -545,8 +781,8 @@ def _execute_capability_in_worker(
         str(worker_asset_output) if worker_asset_output is not None else ""
     )
     process = context.Process(
-        target=worker_target,
-        args=(sender, request_payload),
+        target=supervisor_target,
+        args=(sender, request_payload, worker_target),
         name=f"robocasa-{body.capability}",
     )
     try:
@@ -563,28 +799,27 @@ def _execute_capability_in_worker(
     timed_out = False
     cleanup_error: str | None = None
     protocol_error: str | None = None
-    process_group: int | None = None
+    supervisor_pid: int | None = None
     deadline = time.monotonic() + body.timeout_seconds
     try:
         remaining = max(0.0, deadline - time.monotonic())
         if receiver.poll(remaining):
             ready = _receive_worker_message(receiver)
-            reported_group = ready.get("process_group")
+            reported_pid = ready.get("supervisor_pid")
             if (
                 ready.get("kind") == "ready"
+                and ready.get("containment") == "subreaper-pidfd-v1"
                 and isinstance(process.pid, int)
-                and reported_group == process.pid
+                and reported_pid == process.pid
             ):
-                process_group = reported_group
+                supervisor_pid = reported_pid
                 remaining = max(0.0, deadline - time.monotonic())
                 if receiver.poll(remaining):
                     message = _receive_worker_message(receiver)
                 else:
                     timed_out = True
             else:
-                protocol_error = (
-                    "RoboCasa worker did not acknowledge its isolated process group"
-                )
+                protocol_error = "RoboCasa worker containment was not acknowledged"
         else:
             timed_out = True
     except (EOFError, OSError, ValueError) as exc:
@@ -596,25 +831,19 @@ def _execute_capability_in_worker(
         try:
             stopped = _stop_worker(
                 process,
+                receiver,
                 terminate=True,
-                process_group=process_group,
+                supervisor_pid=supervisor_pid,
             )
         except Exception as exc:  # pragma: no cover - defensive cleanup boundary.
             stopped = False
             cleanup_error = (
                 f"RoboCasa worker cleanup failed: {type(exc).__name__}: {exc}"
             )
-            try:
-                _signal_worker(process, signal.SIGKILL, process_group=process_group)
-            except Exception:
-                LOGGER.debug(
-                    "RoboCasa fallback SIGKILL failed during worker cleanup",
-                    exc_info=True,
-                )
-        if process_group is None:
+        if supervisor_pid is None:
             stopped = False
             protocol_error = protocol_error or (
-                "RoboCasa worker isolation was not acknowledged"
+                "RoboCasa worker containment was not acknowledged"
             )
         try:
             receiver.close()
@@ -683,88 +912,38 @@ def _receive_worker_message(receiver: Any) -> dict[str, Any]:
 
 def _stop_worker(
     process: Any,
+    control: Any,
     *,
     terminate: bool,
-    process_group: int | None = None,
+    supervisor_pid: int | None = None,
 ) -> bool:
     if not terminate:
         process.join(_WORKER_TERMINATE_GRACE_SECONDS)
-        terminate = process.is_alive()
-    group_alive = process_group is not None and _process_group_exists(process_group)
-    if terminate and (process.is_alive() or group_alive):
-        _signal_worker(process, signal.SIGTERM, process_group=process_group)
-        process.join(_WORKER_TERMINATE_GRACE_SECONDS)
-    leader_stopped = not process.is_alive()
-    if leader_stopped and process_group is not None:
-        _reap_exited_group_children(process_group)
-    group_alive = process_group is not None and _process_group_exists(process_group)
-    if not leader_stopped or group_alive:
-        _signal_worker(process, signal.SIGKILL, process_group=process_group)
-        process.join(_WORKER_TERMINATE_GRACE_SECONDS)
-    leader_stopped = not process.is_alive()
-    if not leader_stopped:
+        if not process.is_alive():
+            return process.exitcode == 0
+    if (
+        not isinstance(supervisor_pid, int)
+        or supervisor_pid <= 0
+        or supervisor_pid != process.pid
+    ):
         return False
-    if process_group is not None:
-        _reap_exited_group_children(process_group)
-    group_stopped = process_group is None or _wait_for_process_group_exit(
-        process_group, _WORKER_TERMINATE_GRACE_SECONDS
-    )
-    return group_stopped
-
-
-def _signal_worker(
-    process: Any, signal_number: int, *, process_group: int | None
-) -> None:
-    if process_group is not None:
-        try:
-            os.killpg(process_group, signal_number)
-            return
-        except ProcessLookupError:
-            pass
-        except OSError:
-            pass
-    pid = process.pid
-    if not isinstance(pid, int) or pid <= 0:
-        return
     try:
-        os.kill(pid, signal_number)
-    except ProcessLookupError:
-        pass
-
-
-def _process_group_exists(process_group: int) -> bool:
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
+        control.send_bytes(b"\0")
+    except (BrokenPipeError, EOFError, OSError):
         return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _reap_exited_group_children(process_group: int) -> None:
-    """Reap only exited descendants adopted from this worker process group."""
-
-    while True:
-        try:
-            pid, _status = os.waitpid(-process_group, os.WNOHANG)
-        except ChildProcessError:
-            return
-        except InterruptedError:
-            continue
-        if pid == 0:
-            return
-
-
-def _wait_for_process_group_exit(process_group: int, timeout: float) -> bool:
-    deadline = time.monotonic() + max(timeout, 0.0)
-    while True:
-        _reap_exited_group_children(process_group)
-        if not _process_group_exists(process_group):
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.01)
+    deadline = time.monotonic() + 4 * _WORKER_TERMINATE_GRACE_SECONDS
+    stopped = False
+    while time.monotonic() < deadline:
+        if not control.poll(max(0.0, deadline - time.monotonic())):
+            break
+        message = _receive_worker_message(control)
+        if message.get("kind") == "stopped":
+            stopped = message.get("stopped") is True
+            break
+    if not stopped:
+        return False
+    process.join(4 * _WORKER_TERMINATE_GRACE_SECONDS)
+    return not process.is_alive() and process.exitcode == 0
 
 
 def _reap_worker_async(
