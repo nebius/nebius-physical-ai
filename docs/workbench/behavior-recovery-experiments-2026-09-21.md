@@ -5,9 +5,10 @@ The previous complete six-task development comparison regressed from stock
 See the [completed results](behavior-matched-results-2026-09-19.md) for per-task
 scores, partial diagnostics, and the model-state dtype difference.
 
-This document records experiment choices before their rollout results.
-Packages have local validation; GPU training and simulator results are pending.
-There is no demonstrated aggregate improvement from these experiments yet.
+This document records the frozen experiment choices and their current evidence.
+The five-arm simulator comparison and anchored training completed. The anchored
+export has not passed GPU qualification, and no new candidate has passed the
+separate reporting gate.
 
 ## Recent research reviewed
 
@@ -115,6 +116,19 @@ The selected export must reproduce the native checkpoint's typed model state and
 fixed-seed actions after reloading. Simulator development evaluation then decides
 whether it improves mean Q across all three tasks. Radio and shoes have historical
 stock comparisons; trash also has a contemporaneous stock run.
+
+### Completed training and failed export check
+
+The anchored run completed 2,400 updates. Stock and six saved checkpoints were
+scored on 102,403 held-out rows. Selected step 2399 reduced equal-task action loss
+from 0.333278408726 to 0.223172082376, a 33.04% reduction; all three trained tasks
+improved this offline metric. This does not establish a simulator Q improvement.
+
+The subsequent B200 qualification verified the frozen runtime, parent checkpoint,
+dataset, traces, and archived selected-model bytes. Its native-versus-reloaded
+inference check then failed with `fixed-seed action bytes differ`. The failure
+log and input identities were preserved. The difference's cause and magnitude
+remain under investigation; this export is not qualified for rollout serving.
 
 Development indices 10–19 are reused and are not unseen data. Reporting indices
 0–9 remain separate until the choice is fixed. Keep interrupted panels and failed
