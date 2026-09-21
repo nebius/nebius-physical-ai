@@ -380,6 +380,30 @@ def confidential_ledger(tmp_path, detector):
     )
 
 
+def test_schedulable_cpus_prefers_the_affinity_mask(monkeypatch):
+    # The helper runs one worker per schedulable CPU, so the caller has to read
+    # the same mask rather than the machine's total.
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {1, 3, 5}, raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    assert W.schedulable_cpus() == 3
+
+
+def test_schedulable_cpus_falls_back_where_there_is_no_affinity_call(monkeypatch):
+    # macOS has no sched_getaffinity, and the hermetic tests import this module
+    # there, so the accessor must not reach for it unconditionally.
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 6)
+    assert W.schedulable_cpus() == 6
+    monkeypatch.setattr(os, "cpu_count", lambda: None)
+    assert W.schedulable_cpus() == 1
+
+
+def test_pipeline_depth_follows_the_schedulable_cpu_count():
+    # A fixed depth would starve the helper's workers on a large host and
+    # oversubscribe them on a constrained one.
+    assert W.PIPELINE_RECORDS == 4 * W.schedulable_cpus()
+
+
 def test_pipeline_byte_bound_is_checked_before_the_next_record_is_read(
     tmp_path, monkeypatch
 ):
