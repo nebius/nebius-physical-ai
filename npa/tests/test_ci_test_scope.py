@@ -1,4 +1,4 @@
-"""Prove test selection retains full coverage outside narrow recognized changes."""
+"""Prove PR admission and queue validation retain the same coverage."""
 
 import os
 from pathlib import Path
@@ -77,7 +77,6 @@ def test_existing_prose_edits_skip_only_runtime_suites(comparison_repo, event, p
         "prose_only": True,
         "full_suite": False,
         "browser": False,
-        "test_paths": [],
     }
 
 
@@ -176,50 +175,41 @@ def test_document_file_operations_do_not_receive_the_prose_exception(
     )
 
 
-def test_cli_changes_get_subsystem_tests_before_full_queue_validation(comparison_repo):
-    """Move subsystem failures before admission without reducing queue coverage.
-
-    Args:
-        comparison_repo: Local repository and base SHA.
-    Returns:
-        None.
-    Raises:
-        AssertionError: PR tests are missing or queue validation is narrowed.
-    """
-    repo, base = comparison_repo
-    _write(repo, "npa/src/npa/cli/example.py", "VALUE = 2\n")
-    head = _commit(repo)
-    assert scope.classify(repo, base, head, "pull_request") == {
-        "prose_only": False,
-        "full_suite": False,
-        "browser": False,
-        "test_paths": ["npa/tests/cli"],
-    }
-    assert scope.classify(repo, base, head, "merge_group") == scope._full_scope()
-
-
 @pytest.mark.parametrize(
-    "path", ["npa/src/npa/cli/agent_ui.html", "npa/src/npa/agent_backend/foxglove.py"]
+    "path",
+    [
+        "npa/src/npa/cli/example.py",
+        "npa/src/npa/agent_backend/foxglove.py",
+        "npa/src/npa/workbench/example.py",
+        "npa/src/npa/clients/example.py",
+        "npa/src/npa/orchestration/example.py",
+        "npa/src/npa/workflows/example.py",
+        "npa/workflows/example/workflow.yaml",
+        "npa/tests/cli/test_example.py",
+        "npa/tests/browser/example.cy.js",
+    ],
 )
-def test_agent_changes_require_both_browser_and_python_feedback(comparison_repo, path):
-    """Exercise browser coverage before an agent change enters the queue.
+def test_code_and_test_changes_require_identical_full_candidate_coverage(
+    comparison_repo, path
+):
+    """Catch cross-subsystem and compatibility failures before queue admission.
 
     Args:
         comparison_repo: Local repository and base SHA.
-        path: Agent implementation file.
+        path: Source or test path previously eligible for a narrower PR check.
     Returns:
         None.
     Raises:
-        AssertionError: UI dependencies omit browser or Python tests.
+        AssertionError: The PR or merge candidate omits full Python or browser tests.
     """
     repo, base = comparison_repo
     _write(repo, path, "changed\n")
-    result = scope.classify(repo, base, _commit(repo), "pull_request")
-    assert result["browser"]
-    assert result["test_paths"] == ["npa/tests/cli"]
+    head = _commit(repo)
+    for event in ("pull_request", "merge_group"):
+        assert scope.classify(repo, base, head, event) == scope._full_scope()
 
 
-def test_multiple_changes_union_tests_and_do_not_hide_code_behind_prose(
+def test_multiple_changes_do_not_hide_code_behind_prose(
     comparison_repo,
 ):
     """Classify the complete candidate diff, including all queued predecessors.
@@ -259,54 +249,6 @@ def test_workflow_readme_examples_do_not_take_the_prose_exception(comparison_rep
     )
 
 
-@pytest.mark.parametrize(
-    "path,tests,browser",
-    [
-        ("npa/tests/cli/test_example.py", ["npa/tests/cli/test_example.py"], False),
-        ("npa/tests/browser/example.cy.js", [], True),
-        ("npa/src/npa/workbench/example.py", [], True),
-    ],
-)
-def test_direct_test_edits_and_missing_subsystem_tests(
-    comparison_repo, path, tests, browser
-):
-    """Run changed tests directly and fall back when a mapped suite is absent.
-
-    Args:
-        comparison_repo: Local repository and base SHA.
-        path: Changed test or implementation path.
-        tests: Expected selected pytest paths.
-        browser: Expected browser requirement.
-    Returns:
-        None.
-    Raises:
-        AssertionError: Selection misses changed tests or accepts missing coverage.
-    """
-    repo, base = comparison_repo
-    _write(repo, path, "changed\n")
-    result = scope.classify(repo, base, _commit(repo), "pull_request")
-    assert result["test_paths"] == tests
-    assert result["browser"] == browser
-    assert result["full_suite"] == path.startswith("npa/src/npa/workbench/")
-
-
-def test_affected_subsystems_are_combined(comparison_repo):
-    """Retain both changed subsystems when selecting early tests.
-
-    Args:
-        comparison_repo: Local repository and base SHA.
-    Returns:
-        None.
-    Raises:
-        AssertionError: One subsystem overwrites another.
-    """
-    repo, base = comparison_repo
-    _write(repo, "npa/src/npa/cli/example.py", "VALUE = 2\n")
-    _write(repo, "npa/workflows/example/workflow.yaml", "steps: []\n")
-    result = scope.classify(repo, base, _commit(repo), "pull_request")
-    assert result["test_paths"] == ["npa/tests/cli", "npa/tests/workflows"]
-
-
 @pytest.mark.parametrize("event", ["schedule", "workflow_dispatch", "push", "unknown"])
 def test_audits_always_keep_full_coverage(comparison_repo, event):
     """Never apply candidate shortcuts to scheduled, manual, or unknown events.
@@ -341,14 +283,17 @@ def test_missing_comparison_fails_and_empty_diff_keeps_full_validation(compariso
         scope.classify(repo, "main", base, "pull_request")
 
 
-def _run_scope_step(repo: Path, base: str, head: str) -> list[str]:
+def _run_scope_step(
+    repo: Path, base: str, head: str, event: str = "pull_request"
+) -> list[str]:
     workflow_path = Path(__file__).resolve().parents[2] / ".github/workflows/test.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
     command = workflow["jobs"]["scope"]["steps"][-1]["run"]
     output = repo / "scope-output"
+    output.unlink(missing_ok=True)
     environment = dict(
         os.environ,
-        EVENT_NAME="pull_request",
+        EVENT_NAME=event,
         BASE_SHA=base,
         GITHUB_SHA=head,
         GITHUB_OUTPUT=str(output),
@@ -387,5 +332,36 @@ def test_workflow_uses_the_base_policy_and_bootstraps_with_full_tests(
         "prose_only=false",
         "full_suite=true",
         "browser=true",
-        "test_paths=[]",
+    ]
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+def test_workflow_applies_queue_coverage_even_with_a_legacy_base_policy(
+    comparison_repo, event
+):
+    """Prevent the installing PR from inheriting the old admission shortcut.
+
+    Args:
+        comparison_repo: Local repository and base SHA.
+        event: Actual candidate event supplied to the workflow step.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A legacy trusted selector still narrows PR validation.
+    """
+    repo, _ = comparison_repo
+    legacy = """import pathlib, sys
+event = sys.argv[sys.argv.index('--event') + 1]
+output = pathlib.Path(sys.argv[sys.argv.index('--github-output') + 1])
+full = 'true' if event == 'merge_group' else 'false'
+output.write_text(f'prose_only=false\\nfull_suite={full}\\nbrowser={full}\\n')
+"""
+    _write(repo, "npa/scripts/ci_test_scope.py", legacy)
+    base = _commit(repo)
+    _write(repo, "npa/src/npa/cli/example.py", "VALUE = 2\n")
+    head = _commit(repo)
+    assert _run_scope_step(repo, base, head, event) == [
+        "prose_only=false",
+        "full_suite=true",
+        "browser=true",
     ]
