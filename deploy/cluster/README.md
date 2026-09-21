@@ -192,6 +192,13 @@ and its `cleanup` phase after supported teardown. The verifier is read-only:
 it binds the producing source/start/result, exact state and deployment
 sidecar, materialized provider hash, and actual provider identities. Cleanup
 requires typed NotFound for the exact cluster and each recorded node group.
+Before those reads, the verifier requires the same plain service-account
+profile, credential/config file byte hashes, endpoint, project and tenant that
+the provision-start receipt recorded. It checks the live project/tenant identity
+and removes ambient Nebius selectors from the subprocess environment. Missing
+legacy authority bindings are refused; never backfill them after a run. This
+read-only harness supports explicit key-backed profiles, not attached metadata
+or arbitrary authentication plugins.
 It does not adopt or destroy resources, and a failed provision cannot be
 reported as a successful lifecycle. Keep all configuration and receipts
 private because they contain operational identifiers.

@@ -14,21 +14,70 @@ from pathlib import Path
 import subprocess
 
 import pytest
+import yaml
+
+from npa.clients.nebius import nebius_cli_env
 
 pytestmark = pytest.mark.e2e
 
 
-def _pinned(config, name):
-    entry = config[name]
+def _bound_bytes(entry):
     path = Path(entry["path"])
     assert path.is_file() and not path.is_symlink(), "private input must be regular"
     data = path.read_bytes()
     assert hashlib.sha256(data).hexdigest() == entry["sha256"], "input binding changed"
-    return json.loads(data)
+    return data
+
+
+def _pinned(config, name):
+    return json.loads(_bound_bytes(config[name]))
+
+
+def _authority(config, start):
+    authority = config["authority"]
+    assert start["authority"] == authority, "producing authority changed"
+    assert authority["profile"] == config["profile"] and config["profile"]
+    for key in ("project_id", "tenant_id"):
+        assert authority[key] == config[key], "producing scope changed"
+    profiles = yaml.safe_load(_bound_bytes(authority["config_file"]))["profiles"]
+    profile = profiles[authority["profile"]]
+    assert set(profile) == {
+        "endpoint",
+        "auth-type",
+        "service-account-credentials-file-path",
+        "parent-id",
+        "tenant-id",
+    }, "live verifier requires an explicit plain service-account profile"
+    assert profile["auth-type"] == "service account"
+    assert profile["endpoint"] == authority["endpoint"]
+    assert profile["parent-id"] == config["project_id"]
+    assert profile["tenant-id"] == config["tenant_id"]
+    assert (
+        profile["service-account-credentials-file-path"]
+        == authority["credentials_file"]["path"]
+    )
+    _bound_bytes(authority["credentials_file"])
+    return authority
+
+
+def _provider_env(authority):
+    # Reject unknown future selectors too; only explicitly bound selectors survive.
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("NEBIUS_", "NPA_NEBIUS_"))
+    }
+    env.pop("NPA_REUSE_IAM_TOKEN", None)
+    env = nebius_cli_env(env)
+    env["NEBIUS_CONFIG_DIR"] = str(Path(authority["config_file"]["path"]).parent)
+    env["NEBIUS_PROFILE"] = authority["profile"]
+    env["AWS_EC2_METADATA_DISABLED"] = "true"
+    return env
 
 
 def _bindings(config, source_revision):
     start = _pinned(config, "provision_start")
+    _authority(config, start)
     finish = _pinned(config, "provision_result")
     saved = _pinned(config, "deployment_sidecar")
     state = _pinned(config, "terraform_state")
@@ -84,16 +133,18 @@ def _configured(phase):
 
 
 def _provider(config, evidence, label, args):
-    env = dict(os.environ)
-    for name in (
-        "NEBIUS_IAM_TOKEN",
-        "NPA_NEBIUS_IAM_TOKEN",
-        "NEBIUS_IAM_TOKEN_FILE",
-        "NPA_NEBIUS_IAM_TOKEN_FILE",
-    ):
-        env.pop(name, None)
-    env["AWS_EC2_METADATA_DISABLED"] = "true"
-    argv = ["nebius", "--profile", config["profile"], *args, "--format", "json"]
+    authority = _authority(config, _pinned(config, "provision_start"))
+    env = _provider_env(authority)
+    argv = [
+        "nebius",
+        "--config",
+        authority["config_file"]["path"],
+        "--profile",
+        authority["profile"],
+        *args,
+        "--format",
+        "json",
+    ]
     result = subprocess.run(argv, capture_output=True, text=True, env=env)
     descriptor = os.open(
         evidence / (label + ".json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
@@ -109,6 +160,20 @@ def _provider(config, evidence, label, args):
             stream,
         )
     return result
+
+
+def _verify_project_authority(config, evidence):
+    result = _provider(
+        config,
+        evidence,
+        "project-authority",
+        ["iam", "project", "get", "--id", config["project_id"]],
+    )
+    assert result.returncode == 0, "project authority must be verified before absence"
+    payload = json.loads(result.stdout)
+    assert payload["metadata"]["id"] == config["project_id"]
+    assert payload["metadata"]["parent_id"] == config["tenant_id"]
+    assert payload["status"]["state"] == "ACTIVE"
 
 
 def _check_live_identity(payload, expected_id, expected_parent, expected_name=None):
@@ -128,6 +193,7 @@ def _check_absence(result):
 
 def test_mk8s_provider_rpc_live_deployment():
     config, saved, evidence = _configured("live")
+    _verify_project_authority(config, evidence)
     receipt = saved["provider_rpc_deadlines"]
     minutes = config["apply_timeout_minutes"]
     assert receipt["apply_timeout_minutes"] == minutes
@@ -167,6 +233,7 @@ def test_mk8s_provider_rpc_live_deployment():
 
 def test_mk8s_provider_rpc_live_cleanup():
     config, _saved, evidence = _configured("cleanup")
+    _verify_project_authority(config, evidence)
     result = _provider(
         config,
         evidence,

@@ -5,8 +5,10 @@ import importlib.util
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import copy
 
 import pytest
+import yaml
 
 
 @pytest.fixture
@@ -51,19 +53,60 @@ def _lifecycle_documents(source):
     }
 
 
+def _authority_fixture(tmp_path):
+    credentials = tmp_path / "credentials.json"
+    credentials.write_text('{"test-only": "no credential material"}')
+    profile_file = tmp_path / "config.yaml"
+    profile_file.write_text(
+        yaml.safe_dump(
+            {
+                "profiles": {
+                    "owned-profile": {
+                        "endpoint": "api.example.invalid",
+                        "auth-type": "service account",
+                        "parent-id": "project-test",
+                        "tenant-id": "tenant-test",
+                        "service-account-credentials-file-path": str(credentials),
+                    }
+                }
+            }
+        )
+    )
+    authority = {
+        "profile": "owned-profile",
+        "project_id": "project-test",
+        "tenant_id": "tenant-test",
+        "endpoint": "api.example.invalid",
+    }
+    for name, path in (
+        ("config_file", profile_file),
+        ("credentials_file", credentials),
+    ):
+        authority[name] = {
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+    return authority
+
+
 @pytest.fixture
 def binding(tmp_path):
     source = "a" * 40
+    authority = _authority_fixture(tmp_path)
     config = {
         "source_revision": source,
         "context": "owned-context",
         "project_alias": "owned",
         "project_id": "project-test",
+        "tenant_id": "tenant-test",
+        "profile": "owned-profile",
         "cluster_id": "cluster-test",
         "cluster_name": "owned-cluster",
         "node_group_ids": ["group-test"],
+        "authority": authority,
     }
     documents = _lifecycle_documents(source)
+    documents["provision_start"]["authority"] = copy.deepcopy(authority)
     for name, document in documents.items():
         path = tmp_path / (name + ".json")
         path.write_text(json.dumps(document))
@@ -163,3 +206,123 @@ def test_absence_requires_typed_not_found(live):
             stderr="rpc error: code = NotFound desc = resource missing",
         )
     )
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("profile", "another-profile"),
+        ("endpoint", "other.example.invalid"),
+        ("project_id", "foreign-project"),
+        ("tenant_id", "foreign-tenant"),
+    ],
+)
+def test_authority_cannot_be_replaced_after_provision(live, binding, key, value):
+    binding["authority"][key] = value
+    with pytest.raises(AssertionError, match="producing authority changed"):
+        live._bindings(binding, "a" * 40)
+
+
+@pytest.mark.parametrize("field", ["config_file", "credentials_file"])
+def test_changed_authority_file_is_rejected(live, binding, field):
+    Path(binding["authority"][field]["path"]).write_text("changed")
+    with pytest.raises(AssertionError, match="input binding changed"):
+        live._bindings(binding, "a" * 40)
+
+
+def test_legacy_producer_without_authority_is_rejected(live, binding):
+    _change(binding, "provision_start", lambda doc: doc.pop("authority"))
+    with pytest.raises(KeyError):
+        live._bindings(binding, "a" * 40)
+
+
+def test_profile_selector_cannot_change_independently(live, binding):
+    binding["profile"] = "foreign-profile"
+    with pytest.raises(AssertionError):
+        live._bindings(binding, "a" * 40)
+
+
+def test_provider_subprocess_binds_authority_and_scrubs_selectors(
+    live,
+    binding,
+    monkeypatch,
+    tmp_path,
+):
+    for key in (
+        "NEBIUS_ENDPOINT",
+        "NEBIUS_CONFIG",
+        "NEBIUS_PROFILE",
+        "NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN_FILE",
+        "NEBIUS_IMPERSONATE_SERVICE_ACCOUNT_ID",
+        "NPA_REUSE_IAM_TOKEN",
+    ):
+        monkeypatch.setenv(key, "hostile-ambient-selector")
+    observed = []
+
+    def run(argv, **kwargs):
+        observed.append((argv, kwargs["env"]))
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(live.subprocess, "run", run)
+    live._provider(binding, tmp_path, "bound", ["iam", "project", "get"])
+    argv, env = observed[0]
+    assert argv[1:5] == [
+        "--config",
+        binding["authority"]["config_file"]["path"],
+        "--profile",
+        "owned-profile",
+    ]
+    assert not any(value == "hostile-ambient-selector" for value in env.values())
+    assert env["NEBIUS_CONFIG_DIR"] == str(tmp_path)
+    assert env["NEBIUS_PROFILE"] == "owned-profile"
+
+
+@pytest.mark.parametrize(
+    "code,project,tenant,state",
+    [
+        (1, "project-test", "tenant-test", "ACTIVE"),
+        (0, "foreign-project", "tenant-test", "ACTIVE"),
+        (0, "project-test", "foreign-tenant", "ACTIVE"),
+        (0, "project-test", "tenant-test", "DELETING"),
+    ],
+)
+def test_project_authority_required_before_absence(
+    live,
+    binding,
+    monkeypatch,
+    tmp_path,
+    code,
+    project,
+    tenant,
+    state,
+):
+    response = {
+        "metadata": {"id": project, "parent_id": tenant},
+        "status": {"state": state},
+    }
+    monkeypatch.setattr(
+        live,
+        "_provider",
+        lambda *args: SimpleNamespace(returncode=code, stdout=json.dumps(response)),
+    )
+    with pytest.raises(AssertionError):
+        live._verify_project_authority(binding, tmp_path)
+
+
+def test_cleanup_checks_authority_before_any_absence(
+    live, binding, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(live, "_configured", lambda phase: (binding, {}, tmp_path))
+    calls = []
+
+    def provider(config, evidence, label, args):
+        calls.append(label)
+        return SimpleNamespace(
+            returncode=1, stdout="", stderr="code = PermissionDenied"
+        )
+
+    monkeypatch.setattr(live, "_provider", provider)
+    with pytest.raises(AssertionError, match="project authority"):
+        live.test_mk8s_provider_rpc_live_cleanup()
+    assert calls == ["project-authority"]
