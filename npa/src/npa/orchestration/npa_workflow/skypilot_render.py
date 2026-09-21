@@ -1892,20 +1892,25 @@ def plan_images(
     return images
 
 
-def plan_image_pull_secrets(
+@dataclass(frozen=True)
+class ImagePullRequirements:
+    """Credential-delivery paths that must independently pull one image."""
+
+    requires_operator: bool = False
+    requires_kubernetes: bool = False
+    pull_secret_names: tuple[str, ...] = ()
+
+
+def plan_image_pull_requirements(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
     *,
     run_id: str,
     options: SkypilotRenderOptions,
-) -> dict[str, tuple[str, ...]]:
-    """Return declared Kubernetes pull-secret names for each exact image path.
+) -> dict[str, ImagePullRequirements]:
+    """Preserve VM and Kubernetes pull requirements for each exact image."""
 
-    If an image is also used by a non-Kubernetes step, its mapping is empty: a
-    Kubernetes secret cannot prove that VM execution path can pull the image.
-    """
-
-    paths: dict[str, list[tuple[str, ...] | None]] = {}
+    paths: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
     for step in steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
         resources = task.get("resources") or {}
@@ -1919,7 +1924,7 @@ def plan_image_pull_secrets(
             continue
         cloud = str(resources.get("cloud") or "").strip().casefold()
         if cloud not in {"kubernetes", "k8s"}:
-            paths.setdefault(image, []).append(None)
+            paths.setdefault(image, []).append(("operator", ()))
             continue
         kubernetes = resources.get("kubernetes")
         kubernetes = kubernetes if isinstance(kubernetes, dict) else {}
@@ -1934,12 +1939,43 @@ def plan_image_pull_secrets(
             for item in raw_names
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         )
-        paths.setdefault(image, []).append(names)
+        paths.setdefault(image, []).append(("kubernetes", names))
     return {
-        image: ()
-        if any(item is None for item in authorities)
-        else tuple(dict.fromkeys(name for item in authorities for name in (item or ())))
+        image: ImagePullRequirements(
+            requires_operator=any(kind == "operator" for kind, _ in authorities),
+            requires_kubernetes=any(kind == "kubernetes" for kind, _ in authorities),
+            pull_secret_names=tuple(
+                dict.fromkeys(
+                    name
+                    for kind, names in authorities
+                    if kind == "kubernetes"
+                    for name in names
+                )
+            ),
+        )
         for image, authorities in paths.items()
+    }
+
+
+def plan_image_pull_secrets(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> dict[str, tuple[str, ...]]:
+    """Return declared Kubernetes pull-secret names for each exact image path.
+
+    If an image is also used by a non-Kubernetes step, its mapping is empty: a
+    Kubernetes secret cannot prove that VM execution path can pull the image.
+    """
+
+    requirements = plan_image_pull_requirements(
+        spec, steps, run_id=run_id, options=options
+    )
+    return {
+        image: (() if requirement.requires_operator else requirement.pull_secret_names)
+        for image, requirement in requirements.items()
     }
 
 
@@ -2267,7 +2303,13 @@ def _inject_operator_registry_docker_secrets(
     creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
     if not creds_server:
         return
-    if creds_server != server:
+    from npa.orchestration.skypilot.registry_preflight import (
+        canonical_registry_host,
+    )
+
+    canonical_server = canonical_registry_host(server)
+    canonical_creds_server = canonical_registry_host(creds_server)
+    if canonical_creds_server != canonical_server:
         from npa.deploy.images import is_public_registry
 
         image_registry = image_id.removeprefix("docker:").rsplit("/", 1)[0]
@@ -2286,7 +2328,7 @@ def _inject_operator_registry_docker_secrets(
         resolve_registry_credentials,
     )
 
-    username, password = resolve_registry_credentials(server, image=image_id)
+    username, password = resolve_registry_credentials(canonical_server, image=image_id)
     if not username:
         return
     if materialize:
@@ -2298,7 +2340,7 @@ def _inject_operator_registry_docker_secrets(
     secrets = doc.setdefault("secrets", {})
     if not isinstance(secrets, dict):
         raise NpaWorkflowRenderError("SkyPilot task secrets must be a mapping")
-    secrets.setdefault("SKYPILOT_DOCKER_SERVER", server)
+    secrets.setdefault("SKYPILOT_DOCKER_SERVER", canonical_server)
     secrets.setdefault("SKYPILOT_DOCKER_USERNAME", username)
     secrets.setdefault("SKYPILOT_DOCKER_PASSWORD", password)
 

@@ -30,7 +30,10 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
-    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        ImagePullRequirements,
+        SkypilotRenderOptions,
+    )
 
 app = typer.Typer(
     name="workflow",
@@ -404,7 +407,10 @@ def submit_cmd(
     infra: str = typer.Option(
         "",
         "--infra",
-        help="SkyPilot infrastructure target, for example k8s/<context>.",
+        help=(
+            "SkyPilot infrastructure target. Private Kubernetes image preflight "
+            "requires an exact k8s/<context>; the ambient context is never used."
+        ),
     ),
     submit_timeout: int = typer.Option(
         1800,
@@ -3159,9 +3165,9 @@ def _preflight_submit_images(
     """Fail before the run starts when a step's image cannot actually be pulled.
 
     Authority is resolved per registry and execution path. An exact operator-side
-    manifest fetch proves the pull directly; a Kubernetes path may instead prove a
-    declared docker-config imagePullSecret for that registry. If neither authority
-    is verified, every registry fails closed with a path-specific remedy.
+    manifest fetch proves a VM path. A private Kubernetes path must exercise an
+    owned probe pod in its exact context, with its declared imagePullSecret when
+    present. If either required path is unverified, the image fails closed.
     """
 
     if not enabled:
@@ -3170,7 +3176,7 @@ def _preflight_submit_images(
     from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import (
-        plan_image_pull_secrets,
+        plan_image_pull_requirements,
         plan_images,
     )
     from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
@@ -3192,7 +3198,7 @@ def _preflight_submit_images(
             plan = build_plan(resolved_spec, run_id=run_id, assume_decision=decision)
             steps.extend(plan.steps)
         images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
-        pull_secrets_by_image = plan_image_pull_secrets(
+        pull_requirements = plan_image_pull_requirements(
             resolved_spec, steps, run_id=run_id, options=options
         )
     except NpaWorkflowError:
@@ -3201,11 +3207,23 @@ def _preflight_submit_images(
     if not images:
         return {}
 
+    pull_secrets_by_image = {
+        image: requirement.pull_secret_names
+        for image, requirement in pull_requirements.items()
+    }
+    operator_images, kubernetes_images = _image_pull_execution_paths(
+        images=images,
+        requirements=pull_requirements,
+        infra=infra,
+    )
     checks = check_image_pulls_with_credentials(
         images,
         mint=True,
         pull_secrets_by_image=pull_secrets_by_image,
+        operator_images=operator_images,
+        kubernetes_images=kubernetes_images,
         context=context_from_infra(infra),
+        target_pull_timeout_seconds=image_bootstrap_timeout_seconds,
     )
     blocking = []
     for check in checks:
@@ -3233,6 +3251,33 @@ def _preflight_submit_images(
         image: str(item.get("image") or "")
         for image, item in zip(dict.fromkeys(images), contract_checks, strict=True)
     }
+
+
+def _image_pull_execution_paths(
+    *,
+    images: Sequence[str],
+    requirements: Mapping[str, ImagePullRequirements],
+    infra: str,
+) -> tuple[set[str], set[str]]:
+    """Resolve VM/Kubernetes paths without inferring them from Secret presence."""
+
+    selected = str(infra or "").strip()
+    selected_kind = selected.partition("/")[0]
+    if selected_kind in {"k8s", "kubernetes"}:
+        return set(), set(images)
+    if selected:
+        return set(images), set()
+    operator_images = {
+        image
+        for image in images
+        if bool(getattr(requirements.get(image), "requires_operator", False))
+    }
+    kubernetes_images = {
+        image
+        for image in images
+        if bool(getattr(requirements.get(image), "requires_kubernetes", False))
+    }
+    return operator_images, kubernetes_images
 
 
 def _preflight_image_bootstrap_contracts(
@@ -7637,7 +7682,12 @@ def preflight_images_cmd(
         "", "--image-variant", help="SONIC image variant."
     ),
     infra: str = typer.Option(
-        "", "--infra", help="Exact k8s/<context> used for unattested image probes."
+        "",
+        "--infra",
+        help=(
+            "Execution target. Private Kubernetes pull verification requires an "
+            "exact k8s/<context>; the ambient kubectl context is never used."
+        ),
     ),
     image_pull_secret: list[str] = typer.Option(
         [],
@@ -7658,19 +7708,19 @@ def preflight_images_cmd(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
 ) -> None:
-    """Prove every image this spec pulls is pullable, with the run's own credentials.
+    """Prove every image this spec pulls through each selected execution path.
 
     Kubernetes retries image pulls forever, so a registry that answers 403 leaves the
-    job in PENDING/ImagePullBackOff rather than failing. Being able to list a
-    repository's tags is a different permission from pulling it, so this reproduces
-    the actual manifest fetch a worker performs.
+    job in PENDING/ImagePullBackOff rather than failing. VM paths reproduce the
+    manifest fetch. Private Kubernetes paths create an owned, bounded probe pod in
+    the exact context and verify its cleanup.
     """
 
     from npa.orchestration.npa_workflow import build_plan
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
-        plan_image_pull_secrets,
+        plan_image_pull_requirements,
         plan_images,
     )
     from npa.orchestration.skypilot.registry_preflight import (
@@ -7701,9 +7751,13 @@ def preflight_images_cmd(
     run_id = f"{spec.name}-preflight"
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     images = plan_images(spec, plan.steps, run_id=run_id, options=options)
-    pull_secrets_by_image = plan_image_pull_secrets(
+    pull_requirements = plan_image_pull_requirements(
         spec, plan.steps, run_id=run_id, options=options
     )
+    pull_secrets_by_image = {
+        selected: requirement.pull_secret_names
+        for selected, requirement in pull_requirements.items()
+    }
     if image_pull_secret:
         explicit = tuple(
             dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())
@@ -7721,11 +7775,19 @@ def preflight_images_cmd(
     from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
 
     target_context = context_from_infra(infra)
+    operator_images, kubernetes_images = _image_pull_execution_paths(
+        images=images,
+        requirements=pull_requirements,
+        infra=infra,
+    )
     checks = check_image_pulls_with_credentials(
         images,
         mint=True,
         pull_secrets_by_image=pull_secrets_by_image,
+        operator_images=operator_images,
+        kubernetes_images=kubernetes_images,
         context=target_context,
+        target_pull_timeout_seconds=image_bootstrap_timeout_seconds,
     )
     failed = [check for check in checks if not check.ok]
     contract_checks: list[dict[str, object]] = []

@@ -165,15 +165,22 @@ successful `npa skypilot verify --cluster <exact-context>`:
 - **A registry `403` stalls rather than fails.** Kubernetes retries image pulls
   forever, so an unpullable image leaves the job in `PENDING`/`ImagePullBackOff`.
   Listing a repository's tags is a *different permission* from pulling it, so a
-  `200` on `/v2/<repo>/tags/list` proves nothing. Submit reproduces each planned
-  pull with the credentials it injects and refuses to launch on a `403`; run it
-  standalone with `npa workbench workflow preflight-images <spec.yaml>`, or skip
-  with `--no-preflight-images`.
+  `200` on `/v2/<repo>/tags/list` proves nothing. Submit verifies every rendered
+  execution path independently: VM paths use the exact host-scoped registry
+  credential, while private Kubernetes paths use an owned pull-probe pod and the
+  declared `imagePullSecret`. Kubernetes verification requires the exact
+  `--infra k8s/<context>` and targets SkyPilot's documented `default` task
+  namespace; it never falls back to the ambient context or mints a Secret. Run
+  it standalone with `npa workbench workflow preflight-images <spec.yaml>` plus
+  `--infra k8s/<context>`, or skip with `--no-preflight-images`.
 - **A large authenticated cold pull is not an access failure.** Bootstrap probes
   default to a 30-minute observation window. Use
   `--image-bootstrap-timeout-seconds 0` for no deadline while warming large
   images; digest, authentication, attestation, capability, exact ownership, and
-  verified cleanup gates remain mandatory.
+  verified cleanup gates remain mandatory. A pull-probe cleanup failure blocks
+  submission and leaves an auditable
+  `npa.nebius.com/purpose=image-pull-preflight` label; inspect that exact-context
+  pod before retrying rather than deleting an unverified name.
 - **A silent 15-minute submit is usually the kubernetes client.** SkyPilot 0.12.2
   does not cap the client version, and client 36+ makes every `pod_config` fail
   validation, so the managed-jobs controller retries forever. `npa skypilot

@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.npa_workflow.skypilot_render import ImagePullRequirements
 
 runner = CliRunner()
 
@@ -1120,6 +1121,38 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     assert set(checked_images) == {digest_image}
 
 
+@pytest.mark.parametrize(
+    ("infra", "expected_operator", "expected_kubernetes"),
+    (
+        ("", {"vm", "mixed"}, {"kubernetes", "mixed"}),
+        ("nebius", {"vm", "kubernetes", "mixed"}, set()),
+        ("k8s/target-context", set(), {"vm", "kubernetes", "mixed"}),
+    ),
+)
+def test_image_pull_execution_paths_preserve_each_rendered_target(
+    infra: str,
+    expected_operator: set[str],
+    expected_kubernetes: set[str],
+) -> None:
+    requirements = {
+        "vm": ImagePullRequirements(requires_operator=True),
+        "kubernetes": ImagePullRequirements(requires_kubernetes=True),
+        "mixed": ImagePullRequirements(
+            requires_operator=True,
+            requires_kubernetes=True,
+        ),
+    }
+
+    operator, kubernetes = workflow_cli._image_pull_execution_paths(
+        images=list(requirements),
+        requirements=requirements,
+        infra=infra,
+    )
+
+    assert operator == expected_operator
+    assert kubernetes == expected_kubernetes
+
+
 def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
     checks = mocker.patch(
@@ -1159,6 +1192,9 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
         digest_image: ("operator-registry",)
     }
     assert checks.call_args.kwargs["context"] == "target-context"
+    assert checks.call_args.kwargs["operator_images"] == set()
+    assert checks.call_args.kwargs["kubernetes_images"] == {digest_image}
+    assert checks.call_args.kwargs["target_pull_timeout_seconds"] == 1800
     assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
         digest_image: ("operator-registry",)
     }

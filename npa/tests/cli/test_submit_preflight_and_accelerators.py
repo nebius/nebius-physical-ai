@@ -15,7 +15,10 @@ from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
 from npa.execution_preflight import ExecutionPreflightError
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
-from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+from npa.orchestration.npa_workflow.skypilot_render import (
+    ImagePullRequirements,
+    SkypilotRenderOptions,
+)
 from npa.orchestration.skypilot.image_bootstrap_contract import (
     ATTESTATION_LABEL,
     CONTRACT_VERSION,
@@ -687,18 +690,30 @@ def test_workflow_gpus_resolves_templated_accelerator_config(
     ]
 
 
-def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) -> None:
+def _stub_pull(
+    monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]
+) -> dict[str, object]:
+    observed: dict[str, object] = {}
+
+    def check_images(images, **kwargs):  # noqa: ANN001
+        observed["images"] = images
+        observed.update(kwargs)
+        return checks
+
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
-        lambda images, **kwargs: checks,
+        check_images,
     )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.skypilot_render.plan_images",
         lambda *args, **kwargs: [check.image for check in checks],
     )
     monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_secrets",
-        lambda *args, **kwargs: {},
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            check.image: ImagePullRequirements(requires_kubernetes=True)
+            for check in checks
+        },
     )
     monkeypatch.setattr(
         workflow_cli,
@@ -711,6 +726,7 @@ def _stub_pull(monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]) ->
             for image in images
         ],
     )
+    return observed
 
 
 NEBIUS_IMAGE = "registry-us.example/u000/npa-cosmos2-transfer:2.5.1"
@@ -765,15 +781,24 @@ def test_a_third_party_registry_failure_blocks_submit(
 def test_pullable_images_pass(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _stub_pull(
+    observed = _stub_pull(
         monkeypatch, [ImagePullCheck(image=NEBIUS_IMAGE, status="ok", http_status=200)]
     )
 
     workflow_cli._preflight_submit_images(
-        spec_path, options=object(), assume_decision="", enabled=True
+        spec_path,
+        options=object(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/target-context",
+        image_bootstrap_timeout_seconds=321,
     )
 
     assert "1 image(s) pullable" in capsys.readouterr().err
+    assert observed["operator_images"] == set()
+    assert observed["kubernetes_images"] == {NEBIUS_IMAGE}
+    assert observed["context"] == "target-context"
+    assert observed["target_pull_timeout_seconds"] == 321
 
 
 def test_image_preflight_plans_with_submit_config_overrides(
@@ -789,7 +814,7 @@ def test_image_preflight_plans_with_submit_config_overrides(
         "npa.orchestration.npa_workflow.skypilot_render.plan_images", plan_images
     )
     monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_secrets",
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
         lambda *_args, **_kwargs: {},
     )
     digest = "cr.example/openpi@sha256:" + "b" * 64

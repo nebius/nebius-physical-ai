@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
     normalize_resources,
+    plan_image_pull_requirements,
     plan_image_pull_secrets,
     render_skypilot_yaml,
     resolve_task_image,
@@ -490,6 +492,27 @@ def test_render_ok_when_registry_matches_credentials(
     assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
 
+def test_render_uses_same_docker_hub_alias_as_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry-1.docker.io")
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="docker.io/operator"),
+    )
+
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "docker.io"
+    assert task["secrets"]["SKYPILOT_DOCKER_USERNAME"] == "operator"
+    assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "test-token"
+
+
 def test_kubernetes_private_image_references_the_refreshed_pull_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -530,6 +553,54 @@ def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
     )
 
     assert set(authorities.values()) == {()}
+    requirements = plan_image_pull_requirements(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    assert all(
+        requirement.requires_kubernetes and not requirement.requires_operator
+        for requirement in requirements.values()
+    )
+
+
+def test_mixed_image_preserves_vm_and_kubernetes_pull_requirements() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    kubernetes = replace(
+        step,
+        state="kubernetes-path",
+        resources_profile={
+            **step.resources_profile,
+            "cloud": "kubernetes",
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {"imagePullSecrets": [{"name": "target-secret"}]}
+                }
+            },
+        },
+    )
+    operator = replace(
+        step,
+        state="vm-path",
+        resources_profile={**step.resources_profile, "cloud": "nebius"},
+    )
+    options = SkypilotRenderOptions(registry="registry.example/customer")
+
+    requirements = plan_image_pull_requirements(
+        spec, [kubernetes, operator], run_id="demo", options=options
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.requires_operator is True
+    assert requirement.requires_kubernetes is True
+    assert requirement.pull_secret_names == ("target-secret",)
+    assert set(
+        plan_image_pull_secrets(
+            spec, [kubernetes, operator], run_id="demo", options=options
+        ).values()
+    ) == {()}
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
