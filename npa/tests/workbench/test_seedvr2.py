@@ -235,6 +235,63 @@ def test_restore_publishes_readback_verified_artifacts(
     assert not list((tmp_path / "runs").glob("*"))
 
 
+def test_upstream_failure_surfaces_a_bounded_redacted_log_tail(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "upstream.log"
+
+    def failing_runner(argv, *, cwd, env, stdout, stderr, check):
+        stdout.write(b"x" * (runtime.UPSTREAM_FAILURE_TAIL_BYTES + 100))
+        stdout.write(
+            b"\nHF_TOKEN=hf_privateexample123\n"
+            b"AWS_SECRET_ACCESS_KEY: very-secret-value\n"
+            b"'AWS_SECRET_ACCESS_KEY': 'dict-secret-value'\n"
+            b"OPENAI_API_KEY='quoted-secret-value'\n"
+            b"Authorization: Bearer authorization-token-value\n"
+            b"Authorization: Basic SYNTHETIC_BASIC_123456\n"
+            b"'Authorization': 'Digest username=\"user\", response=\"digest-secret\"'\n"
+            b"request header Bearer abcdefghijklmnop\n"
+            b"ModuleNotFoundError: No module named 'pytorch'\n"
+        )
+        return subprocess.CompletedProcess(argv, 1)
+
+    with pytest.raises(runtime.SeedVR2Error) as error:
+        runtime._execute_upstream(
+            ["torchrun", "inference.py"],
+            tmp_path,
+            log_path,
+            failing_runner,
+        )
+
+    message = str(error.value)
+    assert "[truncated to complete lines within final 16384 bytes]" in message
+    assert "ModuleNotFoundError: No module named 'pytorch'" in message
+    assert message.count("<redacted>") == 8
+    assert "hf_privateexample123" not in message
+    assert "very-secret-value" not in message
+    assert "dict-secret-value" not in message
+    assert "quoted-secret-value" not in message
+    assert "authorization-token-value" not in message
+    assert "SYNTHETIC_BASIC_123456" not in message
+    assert "digest-secret" not in message
+    assert "abcdefghijklmnop" not in message
+    assert log_path.stat().st_size > runtime.UPSTREAM_FAILURE_TAIL_BYTES
+
+
+def test_upstream_failure_tail_discards_a_partial_boundary_line(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "boundary.log"
+    secret_line = b"HF_TOKEN=" + b"boundary-secret-" * 1200
+    log_path.write_bytes(secret_line + b"\nTraceback: retained root cause\n")
+
+    tail = runtime._upstream_failure_tail(log_path)
+
+    assert tail.startswith("[truncated to complete lines within final 16384 bytes]")
+    assert "Traceback: retained root cause" in tail
+    assert "boundary-secret" not in tail
+
+
 def test_verify_and_review_recompute_identity_and_make_nonblended_media(
     tmp_path: Path,
     source_video: Path,

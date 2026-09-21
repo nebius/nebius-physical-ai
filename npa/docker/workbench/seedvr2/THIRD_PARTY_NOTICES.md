@@ -10,6 +10,7 @@ principal runtime components and immutable source identities.
 | FlashAttention | `flash-attn==2.8.3.post1` | BSD-3-Clause; installed distribution license |
 | PyTorch | `torch==2.13.0` | BSD-3-Clause; installed distribution license |
 | TorchVision | `torchvision==0.28.0` | BSD-3-Clause; installed distribution license |
+| PyAV | `av==16.0.1` | BSD-3-Clause; installed distribution license |
 | Hugging Face Diffusers | `diffusers==0.38.0` | Apache-2.0; installed distribution license |
 | Hugging Face Safetensors | `safetensors==0.8.0` | Apache-2.0; installed distribution license |
 | NVIDIA NVSHMEM runtime | `nvidia-nvshmem-cu13==3.4.5`; product notice `NVIDIA/nvshmem@v3.4.5-0` | `LicenseRef-NVIDIA-Proprietary` plus bundled third-party terms; installed wheel license and `/usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt` |
@@ -29,6 +30,18 @@ are retained. The latter carries the DF-NVSHMEM, Sandia OpenSHMEM, Argonne,
 RDMA Core, and libfabric notices missing from the wheel license. Their
 identities are recorded in
 `/usr/share/doc/npa-seedvr2/nvshmem-runtime.json`.
+
+The pinned upstream inference entrypoint imports TorchVision's deprecated
+`read_video` API. Public TorchVision 0.28.0 wheels delegate that module to an
+unpublished internal package, so the image replaces that one exact import with
+an NPA-authored PyAV adapter. The patch refuses any upstream source identity
+other than the reviewed entrypoint SHA-256 and records the original, patched,
+and adapter hashes in
+`/usr/share/doc/npa-seedvr2/video-io-compat.json`. The adapter only performs the
+full-file RGB input decode used by SeedVR2. It changes that decoder boundary but
+does not modify model configuration, weights, model execution, or output
+post-processing; unusual media can therefore still produce decoder-dependent
+inputs and generated output.
 
 SeedVR2-3B model payloads are not image members. Runtime fetch accepts only
 Hugging Face revision `37255ff8cccfb01071b87f635a5948ca8d53117c` and verifies:

@@ -27,6 +27,11 @@ This record is engineering classification, not legal advice.
    as distributable under its agreement; the image retains the full terms and
    supplies material application functionality around the runtime. No SeedVR
    checkpoint, customer media, credential, or populated model cache is baked.
+   One source-hash-bound integration patch replaces the pinned entrypoint's
+   unusable public TorchVision video import with a narrow NPA-authored PyAV
+   decoder. Its original, patched, and adapter hashes are retained in
+   `/usr/share/doc/npa-seedvr2/video-io-compat.json`; the model path remains the
+   official upstream implementation.
 3. Weights: `ByteDance-Seed/SeedVR2-3B` revision
    `37255ff8cccfb01071b87f635a5948ca8d53117c` is public and marked
    Apache-2.0. The four required payloads are fetched at runtime and verified

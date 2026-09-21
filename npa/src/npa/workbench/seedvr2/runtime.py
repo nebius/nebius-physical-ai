@@ -33,6 +33,20 @@ MAX_SOURCE_PIXELS = 1920 * 1080
 MIN_H100_MEMORY_MIB = 75_000
 SOURCE_ROOT = Path("/opt/seedvr2")
 RUNTIME_TEMP_ROOT = Path("/workspace/tmp")
+UPSTREAM_FAILURE_TAIL_BYTES = 16 * 1024
+_UPSTREAM_SENSITIVE_ASSIGNMENT = re.compile(
+    r"(?i)([\"']?\b(?:AUTHORIZATION|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|"
+    r"AWS_SESSION_TOKEN|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|NGC_API_KEY|"
+    r"OPENAI_API_KEY|TOKEN_FACTORY_API_KEY)\b[\"']?\s*[:=]\s*)"
+    r"[^\r\n]*"
+)
+_UPSTREAM_TOKEN_PATTERNS = (
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"hf_[A-Za-z0-9_=-]{8,}"),
+    re.compile(r"nvapi-[A-Za-z0-9_=-]{8,}"),
+    re.compile(r"gh[pousr]_[A-Za-z0-9_=-]{20,}"),
+    re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"),
+)
 
 
 class SeedVR2Error(RuntimeError):
@@ -438,6 +452,33 @@ def _inference_environment() -> dict[str, str]:
     return environment
 
 
+def _upstream_failure_tail(log_path: Path) -> str:
+    with log_path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        snapshot_size = stream.tell()
+        start = max(0, snapshot_size - UPSTREAM_FAILURE_TAIL_BYTES)
+        preceding = b""
+        if start:
+            stream.seek(start - 1)
+            preceding = stream.read(1)
+        stream.seek(start)
+        payload = stream.read(snapshot_size - start)
+    if start and preceding not in {b"\n", b"\r"}:
+        payload = b"".join(payload.splitlines(keepends=True)[1:])
+    text = payload.decode("utf-8", errors="replace")
+    for pattern in _UPSTREAM_TOKEN_PATTERNS:
+        text = pattern.sub("<redacted>", text)
+    text = _UPSTREAM_SENSITIVE_ASSIGNMENT.sub(r"\1<redacted>", text)
+    if start:
+        text = (
+            "[truncated to complete lines within final "
+            f"{UPSTREAM_FAILURE_TAIL_BYTES} bytes]\n{text}"
+        )
+    return "".join(
+        character for character in text if character in "\n\r\t" or ord(character) >= 32
+    ).strip()
+
+
 def _execute_upstream(
     argv: list[str],
     workspace: Path,
@@ -454,9 +495,11 @@ def _execute_upstream(
             check=False,
         )
     if completed.returncode != 0:
+        tail = _upstream_failure_tail(log_path)
+        detail = f"; redacted log tail:\n{tail}" if tail else ""
         raise SeedVR2Error(
             f"official SeedVR2 inference exited {completed.returncode}; "
-            f"retained log: {log_path}"
+            f"retained log: {log_path}{detail}"
         )
 
 

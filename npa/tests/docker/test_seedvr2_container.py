@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 
+import pytest
 import yaml
 
 from npa.deploy.images import (
@@ -102,6 +105,96 @@ def test_seedvr2_dockerfile_pins_source_and_refuses_weight_payloads() -> None:
     assert source_layer.index("rm -f") < source_layer.index("find /opt/seedvr2")
 
 
+def test_seedvr2_video_compatibility_patch_is_identity_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patch_path = DOCKER_DIR / "patch_video_io.py"
+    spec = importlib.util.spec_from_file_location("seedvr2_video_patch", patch_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.EXPECTED_ENTRYPOINT_SHA256 == (
+        "089de47cd576bfd51b63b77b8f430146ae85bdd98bc2076011f869e54e2922ee"
+    )
+
+    root = tmp_path / "seedvr2"
+    entrypoint = root / "projects" / "inference_seedvr2_3b.py"
+    entrypoint.parent.mkdir(parents=True)
+    source = (
+        b"import torch\n"
+        b"from torchvision.io.video import read_video\n"
+        b"print(read_video)\n"
+    )
+    entrypoint.write_bytes(source)
+    adapter = DOCKER_DIR / "npa_seedvr2_video_io.py"
+    monkeypatch.setattr(
+        module,
+        "EXPECTED_ENTRYPOINT_SHA256",
+        hashlib.sha256(source).hexdigest(),
+    )
+
+    report = module.patch_video_io(entrypoint, adapter)
+
+    patched = entrypoint.read_text()
+    installed_adapter = root / adapter.name
+    assert "from npa_seedvr2_video_io import read_video" in patched
+    assert "torchvision.io.video" not in patched
+    assert installed_adapter.read_bytes() == adapter.read_bytes()
+    assert report["source_sha256"] == hashlib.sha256(source).hexdigest()
+    assert report["adapter_sha256"] == hashlib.sha256(adapter.read_bytes()).hexdigest()
+    assert installed_adapter.stat().st_mode & 0o777 == 0o444
+
+    entrypoint.write_bytes(source + b"# drift\n")
+    installed_adapter.unlink()
+    with pytest.raises(RuntimeError, match="identity differs"):
+        module.patch_video_io(entrypoint, adapter)
+
+    duplicate_import = source.replace(
+        module.ORIGINAL_IMPORT,
+        module.ORIGINAL_IMPORT + module.ORIGINAL_IMPORT,
+    )
+    entrypoint.write_bytes(duplicate_import)
+    monkeypatch.setattr(
+        module,
+        "EXPECTED_ENTRYPOINT_SHA256",
+        hashlib.sha256(duplicate_import).hexdigest(),
+    )
+    with pytest.raises(RuntimeError, match="does not match"):
+        module.patch_video_io(entrypoint, adapter)
+
+    already_patched = source.replace(module.ORIGINAL_IMPORT, module.PATCHED_IMPORT)
+    entrypoint.write_bytes(already_patched)
+    monkeypatch.setattr(
+        module,
+        "EXPECTED_ENTRYPOINT_SHA256",
+        hashlib.sha256(already_patched).hexdigest(),
+    )
+    with pytest.raises(RuntimeError, match="does not match"):
+        module.patch_video_io(entrypoint, adapter)
+
+
+def test_seedvr2_video_adapter_is_narrow_and_build_smoked() -> None:
+    adapter = (DOCKER_DIR / "npa_seedvr2_video_io.py").read_text()
+    dockerfile = (DOCKER_DIR / "Dockerfile").read_text()
+
+    assert "from torchvision" not in adapter
+    assert 'format="rgb24"' in adapter
+    assert '"TCHW"' in adapter
+    assert "supports full-file decoding only" in adapter
+    assert "patch_video_io.py" in dockerfile
+    assert "video-io-compat.json" in dockerfile
+    assert "seedvr2-video-io-smoke.mp4" in dockerfile
+    assert "tuple(video.shape) == (3, 3, 16, 32)" in dockerfile
+    adapter_copy = dockerfile.index(
+        "COPY --chmod=0444 docker/workbench/seedvr2/npa_seedvr2_video_io.py"
+    )
+    assert dockerfile.index("--distribution apex") < adapter_copy
+    assert adapter_copy < dockerfile.index(
+        '"https://codeload.github.com/ByteDance-Seed/SeedVR/'
+    )
+
+
 def test_seedvr2_build_and_entrypoint_scripts_are_executable() -> None:
     assert os.access(DOCKER_DIR / "build.sh", os.X_OK)
     assert os.access(DOCKER_DIR / "entrypoint.sh", os.X_OK)
@@ -165,6 +258,7 @@ def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
     notices = (DOCKER_DIR / "THIRD_PARTY_NOTICES.md").read_text()
 
     for requirement in (
+        "av==16.0.1",
         "diffusers==0.38.0",
         "pillow==12.3.0",
         "safetensors==0.8.0",
@@ -174,7 +268,7 @@ def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
     ):
         assert requirement in requirements
         assert requirement in lock
-        if requirement.startswith(("diffusers", "safetensors", "torch")):
+        if requirement.startswith(("av", "diffusers", "safetensors", "torch")):
             assert f"`{requirement}`" in notices
     assert "accelerate==" not in requirements
     assert "accelerate==" not in lock

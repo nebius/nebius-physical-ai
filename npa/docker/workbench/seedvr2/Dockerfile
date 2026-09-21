@@ -112,6 +112,8 @@ RUN install -d -m 0755 /usr/share/doc/npa-seedvr2/extension-arches \
       --min-size-mb 0 --skip-no-fatbin --exact sm_90 --json \
       > /usr/share/doc/npa-seedvr2/extension-arches/apex.json
 
+COPY --chmod=0444 docker/workbench/seedvr2/npa_seedvr2_video_io.py /opt/npa-tools/npa_seedvr2_video_io.py
+COPY --chmod=0555 docker/workbench/seedvr2/patch_video_io.py /opt/npa-tools/patch_video_io.py
 RUN curl --fail --location \
       "https://codeload.github.com/ByteDance-Seed/SeedVR/tar.gz/${SEEDVR2_SOURCE_REF}" \
       -o /tmp/seedvr2.tar.gz \
@@ -120,6 +122,10 @@ RUN curl --fail --location \
     && tar -xzf /tmp/seedvr2.tar.gz --strip-components=1 -C /opt/seedvr2 \
     && test -s /opt/seedvr2/LICENSE \
     && printf '%s\n' "${SEEDVR2_SOURCE_REF}" > /opt/seedvr2/NPA_SOURCE_REVISION \
+    && /usr/bin/python3.12 -I -S /opt/npa-tools/patch_video_io.py \
+      --entrypoint /opt/seedvr2/projects/inference_seedvr2_3b.py \
+      --adapter /opt/npa-tools/npa_seedvr2_video_io.py \
+      > /opt/seedvr2-build-reports/video-io-compat.json \
     && rm -rf /opt/seedvr2/.git \
     && rm -f \
       /opt/seedvr2/neg_emb.pt \
@@ -128,6 +134,28 @@ RUN curl --fail --location \
     && test -z "$(find /opt/seedvr2 -type f \
       \( -iname '*.pth' -o -iname '*.pt' -o -iname '*.safetensors' \
          -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) -print -quit)"
+
+RUN ffmpeg -hide_banner -loglevel error -y \
+      -f lavfi -i testsrc=size=32x16:rate=5 -frames:v 3 \
+      -c:v libx264 -pix_fmt yuv420p /tmp/seedvr2-video-io-smoke.mp4 \
+    && PYTHONPATH=/opt/seedvr2 /opt/seedvr2-venv/bin/python - <<'PY'
+from pathlib import Path
+
+from npa_seedvr2_video_io import read_video
+from torchvision.io import read_image
+
+path = Path("/tmp/seedvr2-video-io-smoke.mp4")
+assert read_image
+video, audio, info = read_video(path, output_format="TCHW")
+assert tuple(video.shape) == (3, 3, 16, 32), video.shape
+assert str(video.dtype) == "torch.uint8", video.dtype
+assert tuple(audio.shape) == (1, 0), audio.shape
+assert info == {"video_fps": 5.0}, info
+source = Path("/opt/seedvr2/projects/inference_seedvr2_3b.py").read_text()
+assert "from npa_seedvr2_video_io import read_video" in source
+assert "from torchvision.io.video import read_video" not in source
+path.unlink()
+PY
 
 FROM nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04@sha256:4d242f206abc4b9588a6506cce2d88932cc879849395aae3785075179718cc49
 
@@ -180,18 +208,24 @@ COPY --from=seedvr2-build /opt/seedvr2 /opt/seedvr2
 COPY --from=seedvr2-build /usr/share/doc/npa-seedvr2/extension-arches /usr/share/doc/npa-seedvr2/extension-arches
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/cudnn-runtime.json /usr/share/doc/npa-seedvr2/cudnn-runtime.json
 COPY --from=seedvr2-build /opt/seedvr2-build-reports/nvshmem-runtime.json /usr/share/doc/npa-seedvr2/nvshmem-runtime.json
+COPY --from=seedvr2-build /opt/seedvr2-build-reports/video-io-compat.json /usr/share/doc/npa-seedvr2/video-io-compat.json
 COPY --from=seedvr2-build /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt /usr/share/doc/npa-seedvr2/NVSHMEM-License-v3.4.5-0.txt
 
 RUN /opt/seedvr2-venv/bin/pip check \
     && /opt/seedvr2-venv/bin/python - <<'PY'
 import torch
 import torchvision
+import sys
 from apex.normalization import FusedLayerNorm, FusedRMSNorm
 from flash_attn import flash_attn_varlen_func
+sys.path.insert(0, "/opt/seedvr2")
+from npa_seedvr2_video_io import read_video
+from torchvision.io import read_image
 assert torch.version.cuda == "13.0", torch.version.cuda
 assert "sm_90" in set(torch._C._cuda_getArchFlags().split())
 assert torchvision.__version__.startswith("0.28.0")
 assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
+assert read_video and read_image
 PY
 
 COPY pyproject.toml README.md /opt/npa-src/
