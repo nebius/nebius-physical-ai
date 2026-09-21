@@ -1735,6 +1735,46 @@ def test_list_json_uris_bucket_root_with_trailing_slash(
     assert st.list_json_uris("s3://bucket/") == ["s3://bucket/a/manifest.json"]
 
 
+def test_list_jsonl_uris_bucket_root_without_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root input must list bucket contents, not the literal prefix ``"/"``."""
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(["a/records.jsonl", "b/records.jsonl"])
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_jsonl_uris("s3://bucket") == [
+        "s3://bucket/a/records.jsonl",
+        "s3://bucket/b/records.jsonl",
+    ]
+
+
+def test_list_jsonl_uris_bucket_root_with_trailing_slash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(["a/records.jsonl"])
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_jsonl_uris("s3://bucket/") == ["s3://bucket/a/records.jsonl"]
+
+
+def test_list_jsonl_uris_does_not_mix_sibling_prefixes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``a`` is a lexical prefix of ``a-old``; a non-root prefix must exclude it."""
+    from npa.workbench.insights import storage as st
+
+    client = _FakeListS3Client(
+        ["a/records.jsonl", "a-old/records.jsonl", "b/records.jsonl"]
+    )
+    monkeypatch.setattr(st, "_s3_client", lambda: client)
+
+    assert st.list_jsonl_uris("s3://bucket/a") == ["s3://bucket/a/records.jsonl"]
+
+
 def test_list_json_uris_succeeds_when_head_object_is_denied_by_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

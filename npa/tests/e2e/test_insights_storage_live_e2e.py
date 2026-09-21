@@ -12,12 +12,23 @@ Proves, against real object storage rather than a mock, that:
   path.
 * A real provider authentication rejection while reading record input remains
   a typed storage failure, using a deliberately invalid signing secret.
+* ``list_jsonl_uris`` pointed at the bucket root (with or without a trailing
+  slash) finds this test's own owned-prefix object on real S3, rather than
+  the empty result the pre-fix bucket-root handling produced (the same class
+  of bug ``list_json_uris`` already had a regression test for above). This
+  bucket-root proof requires a second, separate opt-in
+  (``NPA_E2E_INSIGHTS_BUCKET_ROOT=1``, skipped when unset) because listing the
+  bucket root enumerates every key's metadata in the named project's bucket
+  rather than only this test's own prefix; it still never reads, writes, or
+  deletes any object body outside the owned prefix it creates and deletes
+  itself.
 
 No infrastructure is provisioned by this test. It resolves only the exact,
 explicitly named project's already-configured storage credentials — never an
 auto-discovered project, never a host-credential fallback — and touches only
 a single unique, test-owned prefix that it creates and deletes itself;
-nothing outside that prefix is read, written, or deleted. Deletion is
+object bodies and mutations stay inside that prefix. The separate root-listing
+opt-in also enumerates bucket metadata. Deletion is
 positively verified (inspected ``DeleteObjects`` errors, then follow-up
 current-object and version listings) rather than inferred from an HTTP 200.
 The selected credential must permit listing and deleting object versions.
@@ -29,7 +40,10 @@ Run (env contract):
     npa/.venv/bin/python -m pytest npa/tests/e2e/test_insights_storage_live_e2e.py -q
 
 Both variables are required; the test skips before touching any cloud
-resource if either is unset. ``NPA_E2E_PROJECT`` must name a project with its
+resource if either is unset. Add ``NPA_E2E_INSIGHTS_BUCKET_ROOT=1`` to also
+run the bucket-root listing proof (a separate opt-in — see that test's
+docstring for why it is not gated on the two variables above alone).
+``NPA_E2E_PROJECT`` must name a project with its
 own configured object-storage credentials (``~/.npa/credentials.yaml`` /
 ``~/.npa/config.yaml`` or that project's env-var overrides) — this test never
 falls back to ambient host credentials, so it cannot write into an unrelated
@@ -168,6 +182,25 @@ def _put_json(s3: Any, bucket: str, key: str, payload: dict[str, Any]) -> None:
         Key=key,
         Body=json.dumps(payload).encode("utf-8"),
     )
+
+
+def _put_jsonl(s3: Any, bucket: str, key: str, rows: list[dict[str, Any]]) -> None:
+    body = "".join(json.dumps(row) + "\n" for row in rows)
+    s3.put_object(Bucket=bucket, Key=key, Body=body.encode("utf-8"))
+
+
+@pytest.fixture
+def bucket_root_optin() -> None:
+    """Second explicit opt-in required before any bucket-root listing runs.
+
+    Every other fixture/test in this file touches only its own generated
+    prefix. Listing the bucket root is a materially different exposure — it
+    enumerates every key's metadata in the named project's bucket — so it must
+    never turn on merely because ``NPA_INTEGRATION_E2E``/``NPA_E2E_PROJECT``
+    are set. The test body cannot list the bucket until this fixture passes.
+    """
+    if os.environ.get("NPA_E2E_INSIGHTS_BUCKET_ROOT") != "1":
+        pytest.skip("NPA_E2E_INSIGHTS_BUCKET_ROOT must be '1' to list the bucket root")
 
 
 def test_cleanup_removes_overwritten_objects_and_delete_markers(
@@ -318,3 +351,31 @@ def test_query_against_a_never_written_store_is_empty_not_an_error(
 
     assert queried.count == 0
     assert queried.records == []
+
+
+def test_list_jsonl_uris_finds_owned_key_from_real_bucket_root(
+    bucket_root_optin: None,
+    insights_s3: Any,
+    insights_bucket_and_prefix: tuple[str, str],
+    owned_prefix_cleanup: None,
+) -> None:
+    """Bucket-root listing (either URI form) must surface this test's own key.
+
+    Metadata only: this reads key names back from a ``ListObjectsV2`` page,
+    never an object body, and the only object it writes or deletes is the one
+    fixture below, under this test's own owned prefix.
+    """
+    from npa.workbench.insights import storage as st
+
+    bucket, prefix = insights_bucket_and_prefix
+    key = f"{prefix}/rootcheck/records.jsonl"
+    _put_jsonl(insights_s3, bucket, key, [{"probe": "bucket-root"}])
+    owned_uri = f"s3://{bucket}/{key}"
+
+    no_slash = st.list_jsonl_uris(f"s3://{bucket}")
+    with_slash = st.list_jsonl_uris(f"s3://{bucket}/")
+
+    assert owned_uri in no_slash
+    assert owned_uri in with_slash
+    assert no_slash == with_slash
+    assert no_slash == sorted(no_slash)

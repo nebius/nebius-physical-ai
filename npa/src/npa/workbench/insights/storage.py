@@ -244,7 +244,8 @@ def list_jsonl_uris(prefix: str) -> list[str]:
     target = authorize_uri(prefix, operation="read")
     if target.kind == "s3":
         client = _s3_client()
-        directory_prefix = target.key.rstrip("/") + "/"
+        # The bucket root uses an empty prefix, not keys beginning with a slash.
+        directory_prefix = f"{target.key}/" if target.key else ""
         found = _list_s3_keys_with_suffix(
             client, target.bucket, directory_prefix, suffix=".jsonl"
         )
