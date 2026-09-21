@@ -1,0 +1,89 @@
+{
+  "at": "2026-09-21T05:33:58.461866+00:00",
+  "source_commit": "a26a868e3bed68d48eb6fd91638e1e1d3d048474",
+  "model": "moonshotai/Kimi-K3",
+  "request_policy": {
+    "reasoning_effort": "low",
+    "temperature_sent": false,
+    "max_tokens_sent": false
+  },
+  "scope": "Four disclosed AprilTag visual calibration controls for hosted request behavior; no sealed holdout or final judge qualification.",
+  "schema": "npa.kimi-k3.disclosed-calibration.v1",
+  "rows": [
+    {
+      "case": "correct-overlay",
+      "input_image": "correct-overlay.png",
+      "input_image_sha256": "6200c46a3dd743926d44c7c945c75cdbe5648177b8756b6249abda71d02b6c44",
+      "request_body_sha256": "cb41c91ed0f8ce47dcbfb8b8dd6adc16926eadf1b994b6203bef844e1ea9e727",
+      "raw_response_body_sha256": "553b07903f8454e1f6d53a1fbba5fd23bbccf29523c5d90fbb5fd33e56b457d0",
+      "http_status": 200,
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "visible_answer": {
+        "success": true,
+        "score": 0.95,
+        "rationale": "Crop alignment: In all four bottom crops the cyan expected quadrilateral and magenta detected quadrilateral closely follow the same physical black-and-white tag perimeter on the cube faces, with only minor stroke-width nesting; 'id 0' text extending outside the polygons is per rubric not a false detection. Full-frame inspection: all visible magenta quadrilaterals lie on actual printed tag faces on the cubes; no floating polygons on road, robot, or background (the small circles near the robot/road are corner dot markers, not displaced quadrilaterals). Banner metadata: matches exactly - basename 33369213973_9d9bb4cc96_c.jpg, source SHA256 prefix 6f2888334e654405, 12 expected / 12 detected, family tag36h11. Strong reviewable evidence."
+      },
+      "expected_condition_met": true
+    },
+    {
+      "case": "shifted-detections",
+      "input_image": "shifted-detections.png",
+      "input_image_sha256": "2167204af72dacbaab0a719e85c688bff825a0432a0a664b1334a2b48b3e0917",
+      "request_body_sha256": "4510e0f88d0a8925171815d2b177973c219be59a73a0f90c9df564bab561a1a7",
+      "raw_response_body_sha256": "a817f8fd1131a01a07314f9d1b2e5420b80df381eb3c68e7d7c2a16f75f2e676",
+      "http_status": 200,
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "visible_answer": {
+        "success": false,
+        "score": 0.2,
+        "rationale": "Crop alignment: The bottom crops show cyan expected quadrilaterals tightly wrapping the printed tag borders, but magenta detected quadrilaterals are essentially absent from the tag perimeters in the crops (only small stray magenta marks near crop 3), so cyan and magenta do not coincide on the same square perimeters. Full-frame false/shifted polygons: The enlarged frame shows numerous clearly visible magenta quadrilaterals floating on empty road and background well above/left of the tag cluster, displaced from any cyan outline or physical tag; the magenta detections systematically sit away from the cyan/tag perimeters rather than nested a few pixels inside them. This is exactly the failure mode the rubric describes (representative crops lack aligned magenta while the full frame contains displaced magenta polygons). Banner metadata: The header matches the expected source basename (33369213973_9d9bb4cc96_c.jpg), the SHA256 prefix 6f2888334e654405, family tag36h11, and counts 12 expected / 12 detected, so metadata passes. However, geometry is judged first and clearly fails: detected overlays do not align to the real printed tag borders, so this is not suitable evidence."
+      },
+      "expected_condition_met": true
+    },
+    {
+      "case": "blank",
+      "input_image": "blank.png",
+      "input_image_sha256": "5d9bfca8dfc716de40fcdb373e56286920e31bf5d6895786b4b2783bdca8e051",
+      "request_body_sha256": "c6c6b45fabc67bfc2da4e1f63780f8d948fd40bd38b1d8303557aebc438c87f7",
+      "raw_response_body_sha256": "c1f4f0d62fe7d515662f7414b72fb24f67a8b3cd1208a8b4390d05cee63e7317",
+      "http_status": 200,
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "visible_answer": {
+        "success": false,
+        "score": 0.05,
+        "rationale": "The supplied image is entirely blank/white: no header/banner, no enlarged top overlay frame, and no bottom tag crops are visible. Crop alignment: cannot be assessed because no crops exist. Full-frame false/shifted polygons: cannot be assessed; no magenta/cyan geometry is visible at all. Banner metadata: completely absent, so the expected basename (33369213973_9d9bb4cc96_c.jpg), SHA256 prefix (6f2888334e654405), counts (12/12), and tag36h11 family cannot be verified. Per the rubric, a blank image is a clear failure."
+      },
+      "expected_condition_met": true
+    },
+    {
+      "case": "mismatched-source",
+      "input_image": "mismatched-source.png",
+      "input_image_sha256": "29fbaf9c9446d3f29f60aa11b72bb7fc1ab60cd43d0cd8dd7bdbf5d6100e3866",
+      "request_body_sha256": "326fbe79229ca3132a4d71a6dbf2f3f2582c752ae8bcff4b562db40de8b27dbe",
+      "raw_response_body_sha256": "5d51389c28592d63effc238a39ba3c1614edec53b41244e948345b5c6e370d65",
+      "http_status": 200,
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "visible_answer": {
+        "success": false,
+        "score": 0.25,
+        "rationale": "Crop alignment: the four bottom crops show cyan expected and magenta detected quadrilaterals nested tightly on the printed tag perimeters (cyan just outside magenta), consistent with correct detection. Full-frame inspection: magenta polygons in the enlarged frame appear to sit on the physical cube tags, with no clearly displaced or floating quadrilaterals on road, robot body, or background. Banner metadata: FAIL \u2014 banner reports basename 34139872896_defdb2f8d9_c.jpg instead of expected 33369213973_9d9bb4cc96_c.jpg; source SHA prefix 435a619d642e2d50 instead of required 6f2888334e654405; counts '10 expected | 10 detected' instead of required 12/12 (family tag36h11 is correct). Despite acceptable geometry, the wrong source, hash, and counts make this a clear failure per the rubric."
+      },
+      "expected_condition_met": true
+    }
+  ],
+  "reported_physical_http_sends": 4,
+  "reported_http_responses": 4,
+  "attempt_summary_sha256": "0cd61e5f56f51e6ae358a34908d9301970d6e3142f85804630fe67ccec0107c0",
+  "root_audit_sha256": "35c1875e817aaca5497230cf08c6ef28538a6caf29a40b5566ce73278c2e91c2",
+  "limits": [
+    "Raw credential-bearing/operational envelopes remain private. Only the provider's visible JSON answer is copied here; hidden reasoning and provider request identifiers are omitted.",
+    "Image files are exact decoded data-URL bytes from retained provider requests, not edited reproductions.",
+    "Root verified32retained per-case file hashes,4frozen request bodies and raw-score/product-result equality; no new provider query or independent image-ground-truth rescore in that receipt.",
+    "The disclosed cases are not a heldout benchmark. The independent holdout harness is being repaired before calls; no final visual judge qualification is claimed.",
+    "Earlier failed calibration attempt remains retained; this is the separately declared request-policy repair."
+  ]
+}
