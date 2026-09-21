@@ -70,8 +70,15 @@ override `robocasa_endpoint` in the workflow. For a private image, create the
 named pull secret in the selected namespace and pass `--image-pull-secret`.
 The pod and container both enforce `runAsNonRoot`.
 
-The `0.1.1` image uses a CUDA 12.4 base with the pinned PyTorch 2.9.0+cu128
-runtime. Use L40S for pixel-bearing EGL runs. RTX PRO 6000, B200, and B300 are
+The `0.1.1` image uses a CUDA 12.4 base with the pinned PyTorch 2.13.0+cu129
+runtime; this is the first available CUDA 12 wheel set that clears the declared
+Torch dependency vulnerabilities. LeRobot 0.5.1 is installed without dependency
+resolution: its older Torch, setuptools, Gymnasium, OpenCV, and Diffusers bounds
+are asserted unchanged, fixed Diffusers 0.38 remains for LeRobot's eager policy
+package import, and the selected ACT path must pass real construction, queued
+inference, and exact checkpoint save/load before deployment. Use L40S for
+pixel-bearing EGL runs.
+RTX PRO 6000, B200, and B300 are
 unverified for this exact image until its wheel architecture set and real EGL
 path are measured; do not infer support or a blocker from the base-image tag or
 generic rendering capability alone.

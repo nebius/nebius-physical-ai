@@ -415,7 +415,7 @@ def test_report_verdict_and_exit_semantics() -> None:
 
 
 def test_unbound_tarball_report_cannot_be_serialized() -> None:
-    report = scanner.ScanReport(image="/tmp/image.tar", source="tarball")
+    report = scanner.ScanReport(image="private/image.tar", source="tarball")
 
     with pytest.raises(RuntimeError, match="missing its archive identity"):
         report.to_dict()

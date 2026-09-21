@@ -319,8 +319,8 @@ def test_system_info_reports_policy_runtime_versions(
 ) -> None:
     versions = {
         "lerobot": "0.5.1",
-        "torch": "2.9.0",
-        "torchvision": "0.24.0",
+        "torch": "2.13.0",
+        "torchvision": "0.28.0",
     }
     monkeypatch.setattr(
         capabilities,
@@ -333,8 +333,8 @@ def test_system_info_reports_policy_runtime_versions(
     info = system_info()
 
     assert info.lerobot_version == "0.5.1"
-    assert info.torch_version == "2.9.0"
-    assert info.torchvision_version == "0.24.0"
+    assert info.torch_version == "2.13.0"
+    assert info.torchvision_version == "0.28.0"
 
 
 def test_system_info_reports_exact_image_source(

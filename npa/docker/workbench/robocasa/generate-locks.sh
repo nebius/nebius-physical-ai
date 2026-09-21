@@ -35,7 +35,7 @@ common=(
 "${UV_BIN}" pip compile \
   "${SCRIPT_DIR}/requirements.in" \
   "${common[@]}" \
-  --torch-backend cu128 \
+  --torch-backend cu129 \
   --output-file "${SCRIPT_DIR}/requirements.lock"
 
 "${UV_BIN}" pip compile \

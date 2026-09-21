@@ -150,13 +150,14 @@ def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
     assert "-r /opt/robocasa/locks/lerobot-requirements.lock" in dockerfile
     for requirement in (
         "av>=15.0.0,<16.0.0",
-        "diffusers>=0.27.2,<0.36.0",
+        "diffusers==0.38.0",
         "pyserial>=3.5,<4.0",
         "draccus==0.10.0",
         "einops>=0.8.0,<0.9.0",
         "opencv-python>=4.9,<4.14",
     ):
         assert requirement in runtime_input
+    assert "diffusers==0.38.0" in runtime_lock
     assert "opencv-python-headless" not in runtime_input
     assert "from lerobot.policies.act.modeling_act import ACTPolicy" in dockerfile
     assert "from lerobot.policies.factory import make_pre_post_processors" in dockerfile
@@ -164,16 +165,23 @@ def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
     assert "--no-build-isolation --no-deps -e /opt/robocasa/source" in dockerfile
 
 
-def test_robocasa_act_runtime_stays_within_lerobot_dependency_bounds() -> None:
+def test_robocasa_act_runtime_binds_reviewed_lerobot_metadata_deviations() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     runtime_lock = RUNTIME_LOCK.read_text(encoding="utf-8")
 
-    assert "torch==2.9.0+cu128" in runtime_lock
-    assert "torchvision==0.24.0+cu128" in runtime_lock
-    assert "torch==2.12.1" not in runtime_lock
-    assert "torchvision==0.27.1" not in runtime_lock
-    assert "req.specifier.contains(version(req.name), prereleases=True)" in dockerfile
-    assert "torchvision.__version__ == '0.24.0+cu128'" in dockerfile
+    assert "torch==2.13.0+cu129" in runtime_lock
+    assert "torchvision==0.28.0+cu129" in runtime_lock
+    assert "torch==2.9.0" not in runtime_lock
+    assert "torchvision==0.24.0" not in runtime_lock
+    assert (
+        "selected = {'diffusers', 'gymnasium', 'opencv-python-headless', "
+        "'setuptools', 'torch', 'torchvision'}"
+    ) in dockerfile
+    assert "'torch': '<2.11.0,>=2.7'" in dockerfile
+    assert "'torchvision': '<0.26.0,>=0.22.0'" in dockerfile
+    assert "'diffusers': '<0.36.0,>=0.27.2'" in dockerfile
+    assert "assert observed == expected, observed" in dockerfile
+    assert "torchvision.__version__ == '0.28.0+cu129'" in dockerfile
 
 
 def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
@@ -181,18 +189,25 @@ def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
     runtime_lock = RUNTIME_LOCK.read_text(encoding="utf-8")
     locked_names = _locked_names(RUNTIME_LOCK)
 
-    assert runtime_lock.count("torch==2.9.0+cu128") == 1
-    assert runtime_lock.count("torchvision==0.24.0+cu128") == 1
+    assert runtime_lock.count("torch==2.13.0+cu129") == 1
+    assert runtime_lock.count("torchvision==0.28.0+cu129") == 1
     assert any(
         name.startswith("nvidia-") and name.endswith("-cu12") for name in locked_names
     )
     assert not any(name.endswith("-cu13") for name in locked_names)
-    assert not {"cuda-bindings", "cuda-pathfinder", "cuda-toolkit"} & locked_names
-    assert "--extra-index-url https://download.pytorch.org/whl/cu128" in dockerfile
+    assert {"cuda-bindings", "cuda-pathfinder", "cuda-toolkit"} <= locked_names
+    for requirement in (
+        "cuda-bindings==12.9.8",
+        "cuda-pathfinder==1.8.2",
+        "cuda-toolkit==12.9.1",
+    ):
+        assert requirement in runtime_lock
+    assert "--extra-index-url https://download.pytorch.org/whl/cu129" in dockerfile
     assert "forbidden_names = {" in dockerfile
     assert "name.endswith('-cu13')" in dockerfile
-    assert "torch.__version__ == '2.9.0+cu128'" in dockerfile
-    assert "torch.version.cuda == '12.8'" in dockerfile
+    assert "assert cuda_helpers == {'cuda-bindings': '12.9.8'" in dockerfile
+    assert "torch.__version__ == '2.13.0+cu129'" in dockerfile
+    assert "torch.version.cuda == '12.9'" in dockerfile
 
 
 def test_robocasa_public_runtime_excludes_restricted_optional_payloads() -> None:
@@ -260,8 +275,11 @@ def test_robocasa_python_repository_uses_pinned_scoped_signing_key() -> None:
     packet_size = int.from_bytes(key[1:3], byteorder="big")
     public_key_packet = key[3 : 3 + packet_size]
     assert public_key_packet[0] == 4
+    # OpenPGP v4 defines this SHA-1 fingerprint. Artifact trust is independently
+    # pinned by SHA-256 above; this digest only verifies the standardized key id.
     key_fingerprint = hashlib.sha1(
-        b"\x99" + packet_size.to_bytes(2, byteorder="big") + public_key_packet
+        b"\x99" + packet_size.to_bytes(2, byteorder="big") + public_key_packet,
+        usedforsecurity=False,
     ).hexdigest()
 
     assert key_sha256 == (
@@ -603,7 +621,7 @@ def test_robocasa_lock_generation_uses_only_anonymous_indexes() -> None:
     assert "uv 0.12.5 (x86_64-unknown-linux-gnu)" in generator
     assert "--python-version 3.12" in generator
     assert "--python-platform x86_64-manylinux_2_28" in generator
-    assert "--torch-backend cu128" in generator
+    assert "--torch-backend cu129" in generator
     assert "--config-file /dev/null" in generator
     assert "--default-index https://pypi.org/simple" in generator
     assert "--keyring-provider disabled" in generator
