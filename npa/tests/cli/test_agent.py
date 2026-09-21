@@ -4220,6 +4220,7 @@ def test_bootstrap_verifies_attached_identity_with_project_scoped_fallback() -> 
     assert 'iam project get --id "$expected_project"' in source
     assert "forcing a broad tenant editors grant" in source
     assert "env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN" in source
+    assert 'echo "attached metadata credential source is unavailable" >&2' in source
 
 
 def test_creds_from_terraform_state(monkeypatch) -> None:

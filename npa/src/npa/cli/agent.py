@@ -993,6 +993,9 @@ if [ -s /mnt/cloud-metadata/token ]; then
       sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project get --id "$expected_project" --format json >/dev/null
     fi
   fi
+else
+  echo "attached metadata credential source is unavailable" >&2
+  exit 1
 fi
 sudo mkdir -p /opt/npa-agent
 printf '%s' {shlex.quote(deployment_b64)} | base64 -d | sudo tee /opt/npa-agent/deployment.json >/dev/null
@@ -1077,7 +1080,10 @@ from npa.cli.agent_resources import (
     assemble_k8s_backend_inventory,
     build_resource_inventory,
     discover_mk8s_accelerators,
+    prepare_agent_cloud_environment,
+    run_bounded_agent_command,
     run_resource_discovery_command,
+    staged_agent_credential_source,
 )
 {_AGENT_S3_GUARD_EMBED}
 
@@ -3481,9 +3487,7 @@ def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> 
 
 def _agent_uses_metadata_credentials(environment: dict | None = None) -> bool:
     # Bootstrap stages this marker only after binding the attached-identity profile.
-    values = environment if environment is not None else os.environ
-    source = str(values.get("NPA_NEBIUS_CREDENTIAL_SOURCE") or "").strip()
-    return source == "instance_metadata"
+    return staged_agent_credential_source(environment) == "instance_metadata"
 
 
 def _agent_command_env() -> dict:
@@ -3652,25 +3656,28 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
     if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
         return []
-    command_env = _agent_command_env()
-    command: list[str] = [nebius_bin]
-    if _agent_uses_metadata_credentials(command_env):
-        for key in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE"):
-            command_env.pop(key, None)
-        command.extend(["--profile", "cursor-sa"])
     try:
-        proc = subprocess.run(
+        command_env, credential_source = prepare_agent_cloud_environment(
+            _agent_command_env()
+        )
+    except ValueError:
+        return []
+    command: list[str] = [nebius_bin]
+    profile = str(command_env.get("NEBIUS_PROFILE") or "").strip()
+    if credential_source == "instance_metadata" and not profile:
+        profile = "cursor-sa"
+    if profile:
+        command.extend(["--profile", profile])
+    try:
+        proc = run_bounded_agent_command(
             [*command, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
             env=command_env,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=False,
+            timeout_s=30,
         )
         if proc.returncode != 0:
             return []
         payload = json.loads(proc.stdout or "{{}}")
-    except Exception:
+    except (OSError, TimeoutError, TypeError, ValueError):
         return []
     items = payload.get("items") if isinstance(payload, dict) else []
     clusters: list[dict] = []
@@ -3724,7 +3731,7 @@ def _safe_structured_transaction_detail(stdout: str) -> str:
 
 
 def _run_agent_npa_json(
-    args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True,
+    args: list[str], *, timeout_s: int = 300, expect_json: bool = True,
     extra_env: dict[str, str] | None = None,
 ) -> dict:
     ready, reason = _agent_npa_ready()
@@ -3734,19 +3741,22 @@ def _run_agent_npa_json(
         command_env = _agent_command_env()
         if extra_env:
             command_env.update({{str(key): str(value) for key, value in extra_env.items()}})
-        proc = subprocess.run(
+        command_env, _credential_source = prepare_agent_cloud_environment(command_env)
+        proc = run_bounded_agent_command(
             [str(NPA_CLI), *args],
             cwd=str(NPA_SOURCE_ROOT),
             env=command_env,
-            text=True,
-            capture_output=True,
-            timeout=timeout_s if timeout_s and timeout_s > 0 else None,
-            check=False,
+            timeout_s=timeout_s,
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutError as exc:
         raise HTTPException(
             status_code=502,
             detail=f"NPA command timed out after {{timeout_s}}s: {{args}}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent credential source is unavailable.",
         ) from exc
     except OSError as exc:
         raise HTTPException(status_code=502, detail=f"NPA command failed to start: {{exc}}") from exc
@@ -4450,7 +4460,7 @@ def _execute_agent_workflow_yaml(
     )
 
     def run_npa_for_context(
-        args: list[str], *, timeout_s: int | None = 300, expect_json: bool = True
+        args: list[str], *, timeout_s: int = 300, expect_json: bool = True
     ) -> dict:
         return _run_agent_npa_json(
             args,

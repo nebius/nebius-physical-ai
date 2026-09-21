@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import threading
+import time
 
+import pytest
+
+from npa.cli import agent_resources
 from npa.cli.agent_resources import (
     build_resource_inventory,
     category_payload,
@@ -11,7 +18,202 @@ from npa.cli.agent_resources import (
     format_resource_inventory,
     inventory_summary,
     merge_configured_references,
+    prepare_agent_cloud_environment,
+    run_bounded_agent_command,
+    run_resource_discovery_command,
 )
+
+
+class _Pipe:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _NeverExits:
+    def __init__(self, pid: int, barrier: threading.Barrier | None = None) -> None:
+        self.pid = pid
+        self.returncode = None
+        self.stdout = _Pipe()
+        self.stderr = _Pipe()
+        self.barrier = barrier
+        self.communicate_calls = 0
+        self.poll_calls = 0
+
+    def communicate(self, *, timeout: float):
+        self.communicate_calls += 1
+        if self.barrier is not None:
+            self.barrier.wait(timeout=2)
+        raise subprocess.TimeoutExpired(["nebius"], timeout)
+
+    def poll(self):
+        self.poll_calls += 1
+        return None
+
+
+def _isolated_process_registry(monkeypatch) -> None:
+    monkeypatch.setattr(agent_resources, "_AGENT_ACTIVE_PROCESSES", {})
+    monkeypatch.setattr(agent_resources, "_AGENT_ABANDONED_PROCESS_GROUPS", {})
+    monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_BREAKER_OPEN", False)
+    monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_REAPER", None)
+
+
+def test_cloud_environment_requires_provenance_and_scrubs_ambient_tokens() -> None:
+    with pytest.raises(ValueError, match="credential source"):
+        prepare_agent_cloud_environment({"NEBIUS_IAM_TOKEN": "secret"})
+
+    environment, source = prepare_agent_cloud_environment(
+        {
+            "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
+            "NEBIUS_IAM_TOKEN": "secret",
+            "NEBIUS_IAM_TOKEN_FILE": "/private/token",
+            "NPA_NEBIUS_IAM_TOKEN": "secret",
+            "NPA_NEBIUS_IAM_TOKEN_FILE": "/private/other-token",
+            "NPA_REUSE_IAM_TOKEN": "1",
+            "TF_VAR_iam_token": "secret",
+            "IAM_TOKEN": "secret",
+        }
+    )
+
+    assert source == "instance_metadata"
+    assert environment["NEBIUS_PROFILE"] == "cursor-sa"
+    assert not (agent_resources._AMBIENT_NEBIUS_TOKEN_KEYS & set(environment))
+
+
+def test_resource_discovery_rejects_unknown_source_and_scrubs_tokens(
+    monkeypatch,
+) -> None:
+    command = ["nebius", "--profile", "cursor-sa", "iam", "project", "list"]
+    assert run_resource_discovery_command(command, command_env={}) == (
+        2,
+        "",
+        "agent credential source is unavailable",
+    )
+    seen: dict[str, object] = {}
+
+    def bounded(argv, *, env, timeout_s):
+        seen.update(argv=list(argv), env=dict(env), timeout=timeout_s)
+        return subprocess.CompletedProcess(argv, 0, '{"items": []}', "")
+
+    monkeypatch.setattr(agent_resources, "run_bounded_agent_command", bounded)
+    environment = {
+        "NPA_NEBIUS_CREDENTIAL_SOURCE": "configured_profile",
+        "NEBIUS_IAM_TOKEN": "must-not-propagate",
+    }
+
+    assert run_resource_discovery_command(command, command_env=environment) == (
+        0,
+        '{"items": []}',
+        "",
+    )
+    assert seen["timeout"] == 30
+    assert "NEBIUS_IAM_TOKEN" not in seen["env"]
+
+
+def test_bounded_command_times_out_without_waiting_and_opens_breaker(
+    monkeypatch,
+) -> None:
+    _isolated_process_registry(monkeypatch)
+    process = _NeverExits(981001)
+    starts = 0
+    killed: list[int] = []
+
+    def popen(*_args, **_kwargs):
+        nonlocal starts
+        starts += 1
+        return process
+
+    monkeypatch.setattr(agent_resources.subprocess, "Popen", popen)
+    monkeypatch.setattr(agent_resources, "_kill_agent_process_group", killed.append)
+    monkeypatch.setattr(agent_resources, "_start_agent_process_reaper", lambda: None)
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        run_bounded_agent_command(["nebius"], timeout_s=0.01)
+    with pytest.raises(TimeoutError, match="prior agent cloud command"):
+        run_bounded_agent_command(["nebius"], timeout_s=0.01)
+
+    assert starts == 1
+    assert process.communicate_calls == 1
+    assert killed == [process.pid]
+    assert process.stdout.closed and process.stderr.closed
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is True
+
+
+def test_concurrent_timeouts_retain_every_process_group(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    barrier = threading.Barrier(2)
+    processes = [_NeverExits(981011, barrier), _NeverExits(981012, barrier)]
+    starts = iter(processes)
+    failures: list[type[BaseException]] = []
+
+    monkeypatch.setattr(
+        agent_resources.subprocess, "Popen", lambda *_args, **_kwargs: next(starts)
+    )
+    monkeypatch.setattr(agent_resources, "_kill_agent_process_group", lambda _pid: None)
+    monkeypatch.setattr(agent_resources, "_start_agent_process_reaper", lambda: None)
+
+    def invoke() -> None:
+        try:
+            run_bounded_agent_command(["nebius"], timeout_s=0.01)
+        except BaseException as exc:
+            failures.append(type(exc))
+
+    workers = [threading.Thread(target=invoke) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=3)
+
+    assert failures == [TimeoutError, TimeoutError]
+    assert set(agent_resources._AGENT_ABANDONED_PROCESS_GROUPS) == {
+        process.pid for process in processes
+    }
+
+
+def test_reaper_clears_breaker_only_after_process_groups_exit(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    process = _NeverExits(981021)
+    agent_resources._AGENT_ACTIVE_PROCESSES[process.pid] = process
+    agent_resources._AGENT_ABANDONED_PROCESS_GROUPS[process.pid] = process
+    agent_resources._AGENT_COMMAND_BREAKER_OPEN = True
+    checks = iter((True, False))
+
+    monkeypatch.setattr(
+        agent_resources, "_agent_process_group_exists", lambda _pid: next(checks)
+    )
+    monkeypatch.setattr(agent_resources.time, "sleep", lambda _seconds: None)
+
+    agent_resources._reap_abandoned_agent_processes()
+
+    assert process.poll_calls == 3
+    assert agent_resources._AGENT_ABANDONED_PROCESS_GROUPS == {}
+    assert agent_resources._AGENT_ACTIVE_PROCESSES == {}
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is False
+
+
+def test_bounded_command_kills_and_reaps_real_descendant_group(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    child = (
+        "import subprocess, sys, time;"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+        "time.sleep(60)"
+    )
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        run_bounded_agent_command(
+            [sys.executable, "-c", child],
+            timeout_s=0.1,
+        )
+
+    assert time.monotonic() - started < 2
+    deadline = time.monotonic() + 3
+    while agent_resources._AGENT_COMMAND_BREAKER_OPEN and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is False
+    assert agent_resources._AGENT_ABANDONED_PROCESS_GROUPS == {}
 
 
 def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(
@@ -39,9 +241,14 @@ def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(
         )
 
     monkeypatch.setattr(
-        "npa.cli.agent_resources.subprocess.run", lambda *_a, **_kw: Result()
+        "npa.cli.agent_resources.run_bounded_agent_command",
+        lambda *_a, **_kw: Result(),
     )
-    discovered = discover_mk8s_accelerators("cluster-id", ["nebius"], {})
+    discovered = discover_mk8s_accelerators(
+        "cluster-id",
+        ["nebius"],
+        {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"},
+    )
     assert discovered == {
         "available_accelerators": ["RTXPRO6000"],
         "gpu_platforms": ["cpu-d3", "gpu-rtx6000"],

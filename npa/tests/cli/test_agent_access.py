@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 import base64
 import json
 import secrets
-import subprocess
 import threading
 import time
 from types import SimpleNamespace
@@ -770,8 +769,8 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
 
     def timeout_run(command, **kwargs):
         seen["command"] = list(command)
-        seen["timeout"] = kwargs.get("timeout")
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=canary)
+        seen["timeout"] = kwargs.get("timeout_s")
+        raise TimeoutError(canary)
 
     config = "/fixture/nebius/config.yaml"
     denied = {"/mnt/cloud-metadata/token", config}
@@ -790,7 +789,7 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
     monkeypatch.setattr(runtime.os, "stat", reject_credential_path_stat)
-    monkeypatch.setattr(runtime.subprocess, "run", timeout_run)
+    monkeypatch.setattr(runtime, "run_bounded_agent_command", timeout_run)
 
     assert runtime._agent_inventory_credential_context()[3] == "instance_metadata"
     with pytest.raises(AccessProbeError) as exc_info:
@@ -815,19 +814,23 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     [
         ("instance_metadata", "instance_metadata"),
         ("configured_profile", "configured_profile"),
-        ("operator-supplied", "configured_profile"),
-        ("", "configured_profile"),
+        ("operator-supplied", None),
+        ("", None),
     ],
 )
 def test_agent_inventory_credential_source_is_allowlisted(
-    monkeypatch, staged: str, expected: str
+    monkeypatch, staged: str, expected: str | None
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
     monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", staged)
     monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
 
-    assert runtime._agent_inventory_credential_context()[3] == expected
+    if expected is None:
+        with pytest.raises(ValueError, match="credential source"):
+            runtime._agent_inventory_credential_context()
+    else:
+        assert runtime._agent_inventory_credential_context()[3] == expected
 
 
 def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
@@ -853,6 +856,7 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
 
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "configured_profile")
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(
         runtime,
@@ -865,7 +869,7 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
             "NEBIUS_PROFILE": "stale-profile",
         },
     )
-    monkeypatch.setattr(runtime.subprocess, "run", run)
+    monkeypatch.setattr(runtime, "run_bounded_agent_command", run)
 
     assert runtime._agent_nebius_json(
         ["iam", "project", "list", "--parent-id", "tenant-test"],
@@ -882,7 +886,10 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     ]
     assert env["NEBIUS_PROFILE"] == "cursor-sa"
     assert env["HOME"] == str(tmp_path)
-    assert not (runtime._AMBIENT_NEBIUS_TOKEN_KEYS & set(env))
+    assert "NEBIUS_IAM_TOKEN" not in env
+    assert "NPA_NEBIUS_IAM_TOKEN" not in env
+    assert "TF_VAR_iam_token" not in env
+    assert "NPA_REUSE_IAM_TOKEN" not in env
     assert canary not in repr(command)
     assert canary not in repr(env)
 
@@ -907,6 +914,7 @@ def test_access_cache_refresh_is_singleflight_after_expiry(monkeypatch) -> None:
         "_agent_artifact_s3_client_optional",
         lambda: (object(), {"bucket": ""}),
     )
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     monkeypatch.setattr(runtime, "discover_agent_access", discover)
     monkeypatch.setattr(runtime, "NPA_PROJECT_ALIAS", "test")
     with runtime._AGENT_ACCESS_CONDITION:

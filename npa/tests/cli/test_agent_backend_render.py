@@ -5661,21 +5661,53 @@ def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) 
     config_path = "/agent-home/.nebius/config.yaml"
     denied = {"/mnt/cloud-metadata/token", config_path}
     real_stat = module.os.stat
+    calls: list[tuple[list[str], dict[str, str], float]] = []
 
     def reject_credential_stat(path, *args, **kwargs):
         if module.os.fspath(path) in denied:
             raise AssertionError("credential paths must not be preflight statted")
         return real_stat(path, *args, **kwargs)
 
+    class Result:
+        returncode = 0
+        stdout = '{"items": []}'
+        stderr = ""
+
+    def bounded(command, *, env, timeout_s, **_kwargs):
+        calls.append((list(command), dict(env), float(timeout_s)))
+        return Result()
+
+    def discover(command, *, command_env):
+        assert command_env["NPA_NEBIUS_CREDENTIAL_SOURCE"] == "instance_metadata"
+        assert "NEBIUS_IAM_TOKEN" not in command_env
+        return 0, '{"items": []}', ""
+
     monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa"))
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", config_path)
     monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "project-test")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "must-not-propagate")
     monkeypatch.setattr(module.os, "stat", reject_credential_stat)
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(module, "_agent_exact_kubeconfig", lambda: "")
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(module, "_load_agent_config_yaml", lambda: {})
+    monkeypatch.setattr(module, "_load_state", lambda: {})
+    monkeypatch.setattr(module, "run_bounded_agent_command", bounded)
+    monkeypatch.setattr(module, "run_resource_discovery_command", discover)
     try:
         environment = module._agent_command_env()
         assert environment["NEBIUS_PROFILE"] == "cursor-sa"
         assert module._agent_inventory_credential_context()[3] == "instance_metadata"
+        assert module._agent_cloud_mk8s_clusters() == []
+        module._tenant_resource_inventory(force_refresh=True)
+        assert module._run_agent_npa_json(["--help"]) == {"items": []}
+        assert len(calls) == 2
+        assert calls[0][0][:3] == ["/bin/true", "--profile", "cursor-sa"]
+        assert calls[0][2] == 30
+        assert calls[1][0][-1] == "--help"
+        assert calls[1][2] == 300
+        assert all("NEBIUS_IAM_TOKEN" not in env for _command, env, _timeout in calls)
     finally:
         sys.modules.pop(module_name, None)
 
