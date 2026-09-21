@@ -32,10 +32,12 @@ The unchanged revision-15 gates still reject the candidate:
 | Median mask IoU ↑ | 0.86574586 | 0.91309071 | **PASS** |
 | Median mask centroid error, px ↓ | 2.01676585 | 0.95332806 | **PASS** |
 
-Compared with the exact 3B result, 7B lowers median LPIPS by 0.01113 and
-temporal error by 0.000126, but it does not close the frozen temporal gate. The
-unchanged-light output also has a 5.741× median edge-overshoot ratio, worse than
-3B's 4.423× diagnostic value. No threshold was relaxed.
+Compared with the [independently published exact 3B result](https://github.com/nebius/nebius-physical-ai/blob/0db7db260bbc526061a26c3a16999f94e92b705f/docs/testing/evidence/seedvr-h100-exact-b8d9c9c5/objective-metrics.json),
+7B lowers median LPIPS by 0.01113 and temporal error by 0.000126, but it does
+not close the frozen temporal gate. The unchanged-light output also has a
+5.741× median edge-overshoot ratio, worse than 3B's 4.423× diagnostic value.
+The exact source metrics and public/private report hashes are embedded in
+[objective-metrics.json](objective-metrics.json). No threshold was relaxed.
 
 The complete per-frame, per-pair, mask, stratum, and light-input measurements
 are in [objective-metrics.json](objective-metrics.json).
@@ -70,8 +72,8 @@ failure. This is presentation evidence only: the model was disqualified as an
 acceptance judge before candidate bytes existed, and visual preference cannot
 override the objective or annotation failures.
 
-Selected scored rows, exact submitted-image hashes, raw-response hashes, and
-limitations are in [hosted-review.json](hosted-review.json).
+Selected scored rows, all 29 exact submitted-image hashes, raw-response hashes,
+and limitations are in [hosted-review.json](hosted-review.json).
 
 ## Scope and limits
 
@@ -95,3 +97,6 @@ Derived from **Li, Zhiyuan / Hoshipu, RoboPro**, revision
 [Independent audit](independent-audit.json) verified five retained artifact hashes, terminal platform receipts, ten saved metric medians, both output videos and the selected scored-review fields. [Independent comparison-pixel audit](independent-pixel-audit.json) reproduced all three frame-60 panels and six sampled tiles using the originally bound Linux decoder. A separate macOS FFmpeg8.1 check differed by1–2 channel values due to decoder output rounding and was retained as non-exact; no tolerance was substituted for the exact comparison. The independent audit did not rerun LPIPS/flow inference or rescore raw hosted provider envelopes.
 
 [SHA256 file manifest](SHA256SUMS).
+
+
+Correction: the original attachment omitted the submitted-image hash fields that its README referenced. This revision supplies all 29 bindings, explicitly distinguishes image hashes from response-record hashes, and pins the 3B comparison and media hashes. Retained image bytes and completed-response bindings were independently rechecked; the failed objective and annotation verdicts are unchanged.

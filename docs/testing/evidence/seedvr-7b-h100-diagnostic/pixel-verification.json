@@ -26,6 +26,12 @@
       "role": "restored_7b"
     }
   ],
+  "published_media_sha256": {
+    "bicubic.mp4": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+    "frame60-source-bicubic-7b.png": "ce6131a5f633416cdfe090389a6cc6d189660896e2870c6b6030895e192a17d2",
+    "restored-7b-six-frames.png": "8512ed2a1a282e179f2be0edb2e16a4672c383473580133af5554308a9a0918d",
+    "restored-7b.mp4": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70"
+  },
   "schema": "npa.seedvr2.7b-public-pixel-verification.v1",
   "six_frame_sheet": [
     {
@@ -58,5 +64,9 @@
       "frame_index": 99,
       "tile_index": 5
     }
-  ]
+  ],
+  "source_media_sha256": {
+    "degraded_input": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4",
+    "source_reference": "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198"
+  }
 }

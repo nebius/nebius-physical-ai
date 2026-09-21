@@ -2,6 +2,15 @@
   "acceptance_scope": "Controlled 7B diagnostic only; objective failure cannot establish shipped 7B support or source truth.",
   "comparison_to_exact_3b": {
     "exact_3b_private_report_sha256": "83e2bf132f44745b402e77b6f313eb510f71164dbe3ec1c988feb914040654ae",
+    "exact_3b_public_report_sha256": "7a17ab044cf2185ab92e3eb77bdcf5459dd1b362a5ce1a91198aef67e6b968c1",
+    "exact_3b_source_metrics": {
+      "main_lpips_median": 0.1113964393734932,
+      "main_mask_centroid_error_px_median": 1.0506910749826432,
+      "main_mask_iou_median": 0.9183222958057395,
+      "main_temporal_warp_error_median": 0.002567234693789015,
+      "unchanged_light_edge_overshoot_median_ratio": 4.423076923076923
+    },
+    "immutable_public_source": "https://github.com/nebius/nebius-physical-ai/blob/0db7db260bbc526061a26c3a16999f94e92b705f/docs/testing/evidence/seedvr-h100-exact-b8d9c9c5/objective-metrics.json",
     "lpips_median_change_7b_minus_3b": -0.01113336905837059,
     "mask_centroid_error_change_7b_minus_3b": -0.09736301590333307,
     "mask_iou_change_7b_minus_3b": -0.005231584235940501,
