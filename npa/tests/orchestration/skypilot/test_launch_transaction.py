@@ -205,7 +205,6 @@ def test_ambiguous_readiness_exhausts_deadline_as_retryable_transient() -> None:
     assert "within 3s" in result.error
 
 
-
 def test_readiness_interruption_is_prompt_and_typed() -> None:
     clock = FakeClock()
 
