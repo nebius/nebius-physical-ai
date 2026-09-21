@@ -106,7 +106,32 @@ def test_audit_fails_closed_on_inconsistent_durable_facts(mutation):
         audit.audit_bytes(canonical(report), journal, run_id="audit-run")
 
 
-@pytest.mark.parametrize("mutation", ["none", "torque", "limit", "mass", "energy"])
+@pytest.mark.parametrize(
+    "metric,changed",
+    [
+        ("joint_path_length_rad", 0.2001),
+        ("tool_path_length_m", 0.1001),
+        ("trajectory_duration_seconds", 0.1001),
+        ("max_abs_jerk_rad_s3", 0.0001),
+    ],
+)
+def test_audit_rejects_material_mutations_to_each_trajectory_metric(metric, changed):
+    result_bytes, journal = plan_bytes()
+    report = json.loads(result_bytes)
+    row = json.loads(journal)
+    row["metrics"][metric] = changed
+    journal = canonical(row) + b"\n"
+    report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+    report["summary"] = summarize([row])
+
+    with pytest.raises(audit.AuditError):
+        audit.audit_bytes(canonical(report), journal, run_id="audit-run")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["none", "torque", "limit", "mass", "energy", "max_torque", "violation"],
+)
 def test_dynamics_audit_recomputes_torque_and_energy(mutation):
     row = {
         "mode": "kinematic",
@@ -137,6 +162,10 @@ def test_dynamics_audit_recomputes_torque_and_energy(mutation):
         row["dynamics_evidence"]["attached_mass_kg"] = 3.0
     elif mutation == "energy":
         row["metrics"]["energy_proxy_j"] = 1.0
+    elif mutation == "max_torque":
+        row["metrics"]["max_torque_nm"] = 1.0001
+    elif mutation == "violation":
+        row["metrics"]["torque_violation"] = 1
     if mutation == "none":
         audit._audit_dynamics(row)
     else:
