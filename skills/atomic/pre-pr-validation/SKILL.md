@@ -14,8 +14,15 @@ compatibility checks alongside the complete five-shard Python 3.12 coverage suit
 against the latest `main`, except for narrowly recognized prose edits. Those keep
 smoke and every documentation, repository, and security gate. See
 `CONTRIBUTING.md` for the trusted-base selector and conservative exception rules.
-A daily audit covers all supported Python versions without competing with the
-next merge-queue candidate after every merge.
+A daily audit covers all supported Python versions in the smaller background
+pool instead of starting a full audit after every merge. Job concurrency permits
+seven PR jobs, nine merge-candidate jobs, and three audit jobs across the repository.
+Each candidate pool has a separate slot for coverage and final required checks.
+Preserve `queue: max` with `cancel-in-progress: false` on shared job slots and
+per-PR supersession on the parent. Reusable callers must not hold child slots.
+`test_ci_concurrency` guards slot routing and queue retention; `test_ci_workflows`
+guards cancellation and required results. See the contributor concurrency guide
+for platform queue limits and rollout behavior.
 `Security regression / security-regression` requires
 every candidate component and the reusable image-security workflow.
 The required workflows have no top-level path filters. Image scope is classified

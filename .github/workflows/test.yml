@@ -17,6 +17,10 @@ concurrency:
 
 jobs:
   scope:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-checks
+      queue: max
+      cancel-in-progress: false
     name: test-scope
     runs-on: ubuntu-latest
     outputs:
@@ -66,6 +70,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   browser-mocked:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ github.event_name == 'pull_request' && 'test-2' || github.event_name == 'merge_group' && 'test-5' || 'test' }}
+      queue: max
+      cancel-in-progress: false
     name: browser-and-compatibility
     needs: scope
     if: needs.scope.outputs.browser != 'false'
@@ -149,9 +157,14 @@ jobs:
             -q
 
   pr-smoke:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'test-1' || 'test' }}
+      queue: max
+      cancel-in-progress: false
     name: pr-smoke
     needs: scope
-    if: github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'
+    # Full shards already collect these tests and run the CLI install check.
+    if: needs.scope.outputs.full_suite == 'false' && (github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true')
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
@@ -205,6 +218,10 @@ jobs:
         run: ./scripts/check-source-drift.sh
 
   test:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ github.event_name == 'merge_group' && format('test-{0}', matrix.shard) || github.event_name == 'pull_request' && (contains(fromJSON('[1, 3, 5]'), matrix.shard) && 'test-1' || 'test-2') || 'test' }}
+      queue: max
+      cancel-in-progress: false
     name: pytest-${{ matrix.python-version }}-shard-${{ matrix.shard }}
     needs: scope
     if: needs.scope.outputs.full_suite != 'false'
@@ -374,6 +391,10 @@ jobs:
         run: ./scripts/check-source-drift.sh
 
   affected-tests:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'test-1' || 'test' }}
+      queue: max
+      cancel-in-progress: false
     name: affected-tests
     needs: scope
     if: github.event_name == 'pull_request' && needs.scope.outputs.full_suite == 'false' && needs.scope.outputs.test_paths != '[]'
@@ -436,9 +457,15 @@ jobs:
           PY
 
   coverage:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'completion' || 'checks' }}
+      queue: max
+      cancel-in-progress: false
     name: coverage
     needs: [scope, test]
-    if: ${{ always() && needs.scope.outputs.full_suite != 'false' }}
+    # Failed shards already fail test-gate. Do not reserve another runner after
+    # failure or keep a superseded reusable workflow alive during cancellation.
+    if: ${{ !cancelled() && needs.scope.outputs.full_suite != 'false' && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Require successful pytest shards

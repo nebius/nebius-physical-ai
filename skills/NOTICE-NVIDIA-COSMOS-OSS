@@ -3,7 +3,8 @@ NVIDIA Cosmos open-source components used by the NPA workbench
 Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 
 Two NVIDIA Cosmos projects are wrapped as NPA workbench tools and invoked by the
-`physical-ai-data-factory` blueprint. Both are Apache-2.0.
+established `physical-ai-data-factory` blueprint and the separately named
+`nvidia-paidf-vda-cosmos-transfer25` translation. Both are Apache-2.0.
 
 ## Cosmos Evaluator
 
