@@ -219,6 +219,9 @@ def _stage_producer_run(case):
     candidate = run / "cosmos_augmented/candidate-a"
     candidate.mkdir(parents=True)
     shutil.copyfile(case.video, candidate / "augmented_video.mp4")
+    source = run / "input/source.mp4"
+    source.parent.mkdir(parents=True)
+    shutil.copyfile(case.video, source)
     payloads = {
         "cosmos_augmented/manifest.json": {
             "schema": "npa.cosmos2.transfer.v1",
@@ -259,6 +262,7 @@ def test_live_audit_accepts_current_recording_producer_output(
     before = {path: path.read_bytes() for path in run.rglob("*.json")}
     result = build_run_rrd(str(run), str(case.path))
     assert result["augmented_video_components"] == 1
+    assert result["source_video_components"] == 1
 
     _audit(live_audit, case)
 

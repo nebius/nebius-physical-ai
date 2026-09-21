@@ -964,6 +964,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "nvidia-paidf-vda-cosmos-transfer25.yaml",
+        "multi",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        requires_token_factory=True,
+        runtime=True,
+        config_vars=(("n_augmentations", "1"),),
+        image_overrides=(
+            ("workbench.cosmos2.transfer_execute", "cosmos2-transfer"),
+            ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
+            ("workbench.cosmos_curate.curate", "cosmos-curate"),
+            ("workbench.fiftyone.curate_augmented", "fiftyone"),
+        ),
+        notes=(
+            "Authorized GPU-daily acceptance for the separately named, direct "
+            "NVIDIA-derived VDA translation. Proves the pinned upstream contract, "
+            "conditioned Cosmos Transfer 2.5, Evaluator, Curator, FiftyOne and Rerun "
+            "artifacts without changing the established PAIDF workflows."
+        ),
+    ),
+    SubmitLiveCase(
         "paidf-cosmos3.yaml",
         "multi",
         secret_envs=(
@@ -987,6 +1012,55 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "Real dynamic PAIDF Cosmos 3 acceptance using only the repository-owned "
             "synthetic MP4 fixture. Proves source-video-conditioned framework output, "
             "Cosmos Evaluator, Cosmos Curator, FiftyOne Brain, and Rerun evidence."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-defect-image-generation.yaml",
+        "gpu",
+        runtime=True,
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+        ),
+        notes=(
+            "Direct DIG Day-1 manual-ROI acceptance in the restricted, "
+            "operator-built AnomalyGen compatibility image; requires "
+            "operator-authorized upstream sample data."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-image-attribute-augmentation.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Direct IAA DAG acceptance with Qwen Image Edit, the real PAIDF "
+            "augmentation verifier, and the real Person Attribute Search service."
+        ),
+    ),
+    SubmitLiveCase(
+        "paidf-event-video-generation.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "HF_TOKEN",
+            "NGC_API_KEY",
+        ),
+        requires_token_factory=True,
+        notes=(
+            "Direct EVG DAG acceptance with Cosmos3 Super and the published "
+            "detection, captioning, dual Visual-QA, and PAS service chain."
         ),
     ),
     # --- Plan-only: stubs or separately covered BYOF onboarding flows ---

@@ -26,8 +26,13 @@ import math
 import random
 import re
 import tempfile
+import threading
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
@@ -35,6 +40,14 @@ from botocore.exceptions import ClientError
 
 class RefinementStateError(RuntimeError):
     """Fail-closed, operator-safe refinement state error."""
+
+
+class CandidateSelectionLockError(RuntimeError):
+    """A candidate-selection destination lock was lost or malformed."""
+
+
+_CANDIDATE_SELECTION_LOCK_SCHEMA = "npa.paidf.candidate-selection-lock/v1"
+_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS = 300
 
 
 # Coherent appearance profiles for a replaceable physical scene. Sampling each
@@ -109,6 +122,135 @@ APPEARANCE_VARIABLES = {
     for key in APPEARANCE_PROFILES[0]
 }
 
+SOURCE_FIDELITY_PROMPT_POLICY_V2 = "source-fidelity-v2"
+SOURCE_FIDELITY_PROMPT_POLICY = "source-fidelity-v3"
+SOURCE_FIDELITY_APPEARANCE_PROFILES_V2: tuple[dict[str, str], ...] = (
+    {
+        "lighting": "bright diffuse daylight",
+        "background": "neutral gray backdrop",
+        "color_grade": "neutral balanced backdrop palette",
+        "surface_finish": "matte low-gloss backdrop finish",
+    },
+    {
+        "lighting": "soft warm studio illumination",
+        "background": "solid beige backdrop",
+        "color_grade": "gently warm backdrop palette",
+        "surface_finish": "satin soft-sheen backdrop finish",
+    },
+    {
+        "lighting": "bright indirect studio illumination",
+        "background": "solid light-gray backdrop",
+        "color_grade": "natural daylight backdrop palette",
+        "surface_finish": "fine-textured low-gloss backdrop finish",
+    },
+    {
+        "lighting": "soft even studio illumination",
+        "background": "solid warm-gray backdrop",
+        "color_grade": "softly muted neutral backdrop palette",
+        "surface_finish": "matte uniform backdrop finish",
+    },
+    {
+        "lighting": "soft directional side lighting with clear shadows",
+        "background": "solid warm beige backdrop",
+        "color_grade": "warm amber backdrop palette",
+        "surface_finish": "satin softly reflective backdrop finish",
+    },
+    {
+        "lighting": "warm diffuse studio illumination",
+        "background": "solid tan backdrop",
+        "color_grade": "warm balanced backdrop palette",
+        "surface_finish": "low-gloss smooth backdrop finish",
+    },
+    {
+        "lighting": "bright directional daylight with clear side shadows",
+        "background": "solid terracotta backdrop",
+        "color_grade": "warm earth-tone backdrop palette",
+        "surface_finish": "fine canvas-textured backdrop finish",
+    },
+    {
+        "lighting": "balanced overhead studio illumination",
+        "background": "solid taupe backdrop",
+        "color_grade": "muted earth-tone backdrop palette",
+        "surface_finish": "satin uniform backdrop finish",
+    },
+    {
+        "lighting": "soft diffuse evening illumination",
+        "background": "neutral warm-gray backdrop",
+        "color_grade": "subtly warm neutral backdrop palette",
+        "surface_finish": "matte fine-grain backdrop finish",
+    },
+)
+# Cosmos Transfer consistently interprets the broad ``backdrop`` request above
+# as the horizontal work surface in close manipulation footage. Keep v2 intact
+# for durable-run replay, but make the current policy name and score the pixels
+# that are actually replaceable. Every profile still carries four independently
+# observable attributes; foreground identity, geometry, contact, and motion stay
+# invariants rather than becoming part of the requested appearance.
+SOURCE_FIDELITY_APPEARANCE_PROFILES: tuple[dict[str, str], ...] = (
+    {
+        "lighting": "bright diffuse daylight",
+        "background": "solid neutral-gray work surface beneath the manipulation",
+        "color_grade": "neutral balanced work-surface palette",
+        "surface_finish": "matte low-gloss work-surface finish",
+    },
+    {
+        "lighting": "soft warm studio illumination",
+        "background": "solid beige work surface beneath the manipulation",
+        "color_grade": "gently warm work-surface palette",
+        "surface_finish": "satin soft-sheen work-surface finish",
+    },
+    {
+        "lighting": "bright indirect studio illumination",
+        "background": "solid light-gray work surface beneath the manipulation",
+        "color_grade": "natural daylight work-surface palette",
+        "surface_finish": "fine-textured low-gloss work-surface finish",
+    },
+    {
+        "lighting": "soft even studio illumination",
+        "background": "solid warm-gray work surface beneath the manipulation",
+        "color_grade": "softly muted neutral work-surface palette",
+        "surface_finish": "matte uniform work-surface finish",
+    },
+    {
+        "lighting": "soft directional side lighting with clear shadows",
+        "background": "solid warm-beige work surface beneath the manipulation",
+        "color_grade": "warm amber work-surface palette",
+        "surface_finish": "satin softly reflective work-surface finish",
+    },
+    {
+        "lighting": "warm diffuse studio illumination",
+        "background": "solid tan work surface beneath the manipulation",
+        "color_grade": "warm balanced work-surface palette",
+        "surface_finish": "low-gloss smooth work-surface finish",
+    },
+    {
+        "lighting": "bright directional daylight with clear side shadows",
+        "background": "solid terracotta work surface beneath the manipulation",
+        "color_grade": "warm earth-tone work-surface palette",
+        "surface_finish": "matte low-gloss work-surface finish",
+    },
+    {
+        "lighting": "balanced overhead studio illumination",
+        "background": "solid taupe work surface beneath the manipulation",
+        "color_grade": "muted earth-tone work-surface palette",
+        "surface_finish": "satin uniform work-surface finish",
+    },
+    {
+        "lighting": "soft diffuse evening illumination",
+        "background": "solid warm-gray fine-grain work surface beneath the manipulation",
+        "color_grade": "subtly warm neutral work-surface palette",
+        "surface_finish": "matte fine-grain work-surface finish",
+    },
+)
+SOURCE_FIDELITY_NEGATIVE_PROMPT = (
+    "cyan or blue color cast, washed-out exposure, clipped highlights, extreme "
+    "oversaturation, distorted or warped objects, duplicated or missing objects, "
+    "changed foreground object colors, inconsistent object scale or position, "
+    "broken gripper-object contact, changed action order, camera reframing, split "
+    "screen, scene cuts, repeated action, temporal jumps, flicker, frozen motion, "
+    "cartoon, text, watermark"
+)
+
 LEISAAC_SCENES = {
     "LeIsaac-SO101-PickOrange-v0": (
         "An SO101 robot arm demonstrating the same orange pick-and-place motion"
@@ -119,7 +261,9 @@ LEISAAC_SCENES = {
 }
 
 
-def prompt_from_combo(combo: dict[str, Any], *, scene: str = "") -> str:
+def prompt_from_combo(
+    combo: dict[str, Any], *, scene: str = "", prompt_policy: str = ""
+) -> str:
     """Turn a sampled appearance combo into a natural-language Cosmos prompt.
 
     The clip defines the scene. This varies appearance only and explicitly
@@ -132,6 +276,45 @@ def prompt_from_combo(combo: dict[str, Any], *, scene: str = "") -> str:
     subject = (
         scene or "Photorealistic input-conditioned physical robot manipulation scene"
     )
+    if prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+        return (
+            f"Photorealistic video of {subject}. "
+            "The input video is the authoritative scene and action reference. "
+            "Keep every foreground object at the same position, scale, silhouette, "
+            "orientation, depth ordering, and contact relationship in every frame. "
+            "Keep the exact camera framing, action order, trajectory, and timing. "
+            "Preserve each foreground object's source color, texture, material identity, "
+            "and illumination without clipping. The replaceable non-identity-bearing "
+            "horizontal work surface is the tabletop beneath and around the manipulation; "
+            "do not treat walls, cabinets, the robot, gripper, or task objects as that surface. "
+            "Apply all four visible appearance requirements consistently: "
+            f"lighting is {lighting or 'bright diffuse daylight'}; "
+            f"the work surface is a {background or 'solid neutral-gray work surface beneath the manipulation'}; "
+            "only that work surface uses the "
+            f"{color_grade or 'neutral balanced work-surface palette'}; "
+            "that work surface has a "
+            f"{surface_finish or 'matte low-gloss work-surface finish'}. "
+            "Do not recolor, relight into clipping, add, remove, duplicate, resize, "
+            "reshape, or spatially move any foreground object."
+        )
+    if prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY_V2:
+        return (
+            f"Photorealistic video of {subject}. "
+            "The input video is the authoritative scene and action reference. "
+            "Keep every foreground object at the same position, scale, silhouette, "
+            "orientation, depth ordering, and contact relationship in every frame. "
+            "Keep the exact camera framing, action order, trajectory, and timing. "
+            "Preserve each foreground object's source color, texture, and material identity. "
+            "Apply all four visible appearance requirements consistently: "
+            f"lighting is {lighting or 'bright diffuse daylight'}; "
+            f"the non-identity-bearing background is a {background or 'neutral gray backdrop'}; "
+            "only that non-identity-bearing background uses the "
+            f"{color_grade or 'neutral balanced backdrop palette'}; "
+            "that background has a "
+            f"{surface_finish or 'matte low-gloss backdrop finish'}. "
+            "Do not recolor, relight into clipping, add, remove, duplicate, resize, "
+            "reshape, or spatially move any foreground object."
+        )
     return (
         f"Photorealistic {subject}. "
         "Apply all four visible appearance requirements consistently in every frame: "
@@ -334,6 +517,442 @@ def _put_immutable_json(payload: dict[str, Any], uri: str, *, label: str) -> str
             f"{label} could not be verified after its immutable write"
         )
     return uri
+
+
+def _candidate_selection_lock_uri(selection_uri: str) -> str:
+    """Keep the coordination record outside the selected artifact inventory."""
+
+    bucket, prefix = _split(selection_uri)
+    if not bucket or not prefix:
+        raise CandidateSelectionLockError(
+            "candidate selection requires an exact S3 destination prefix"
+        )
+    return f"s3://{bucket}/{prefix.rstrip('/')}.lock.json"
+
+
+def _candidate_selection_lock_payload(
+    *,
+    owner: str,
+    generation: int,
+    state: str,
+    now: datetime,
+    commit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    expires = now + timedelta(seconds=_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS)
+    payload = {
+        "schema": _CANDIDATE_SELECTION_LOCK_SCHEMA,
+        "owner": owner,
+        "generation": generation,
+        "state": state,
+        "updated_at": now.isoformat(),
+        "expires_at": expires.isoformat() if state == "held" else now.isoformat(),
+    }
+    if commit is not None:
+        payload["commit"] = dict(commit)
+    return payload
+
+
+def _candidate_selection_lock_record(raw: bytes, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+        expires = datetime.fromisoformat(str(payload["expires_at"]))
+        if expires.tzinfo is None:
+            raise ValueError("timezone required")
+        generation = int(payload["generation"])
+    except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):
+        raise CandidateSelectionLockError(f"{label} is malformed") from None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != _CANDIDATE_SELECTION_LOCK_SCHEMA
+        or payload.get("state") not in {"held", "released", "committed"}
+        or not str(payload.get("owner") or "")
+        or generation < 1
+    ):
+        raise CandidateSelectionLockError(f"{label} is malformed")
+    if payload.get("state") == "committed":
+        commit = payload.get("commit")
+        required = {
+            "attempt_uri",
+            "manifest_uri",
+            "report_uri",
+            "canonical_manifest_uri",
+            "canonical_report_uri",
+            "manifest_sha256",
+            "report_sha256",
+            "attempt_inventory_sha256",
+        }
+        if not isinstance(commit, dict) or any(
+            not str(commit.get(field) or "").strip() for field in required
+        ):
+            raise CandidateSelectionLockError(f"{label} is malformed")
+    payload["generation"] = generation
+    payload["_expires"] = expires.astimezone(timezone.utc)
+    return payload
+
+
+def _candidate_selection_lock_write(
+    storage: Any,
+    lock_uri: str,
+    payload: dict[str, Any],
+    *,
+    etag: str = "",
+) -> str:
+    from npa.clients.storage import StoragePreconditionFailed
+
+    try:
+        return storage.put_bytes_conditional(
+            _canonical_json_bytes(payload),
+            lock_uri,
+            if_match=etag,
+            if_none_match=not etag,
+            content_type="application/json",
+        )
+    except StoragePreconditionFailed:
+        raise
+    except Exception as exc:  # noqa: BLE001 - sanitized coordination boundary
+        raise CandidateSelectionLockError(
+            f"candidate selection lock write failed ({type(exc).__name__})"
+        ) from None
+
+
+def _renew_candidate_selection_lock(lock: dict[str, Any]) -> None:
+    """Renew only the exact owner/generation version that is still held."""
+
+    from npa.clients.storage import StoragePreconditionFailed
+
+    guard = lock.get("_guard")
+    if guard is None:
+        guard = threading.Lock()
+    with guard:
+        if lock.get("_lost"):
+            raise CandidateSelectionLockError(
+                "candidate selection lock renewal previously failed"
+            )
+        try:
+            storage = lock["storage"]
+            current = storage.read_bytes_with_etag(lock["uri"])
+            if current is None:
+                raise CandidateSelectionLockError(
+                    "candidate selection lock disappeared"
+                )
+            record = _candidate_selection_lock_record(
+                current[0], label="candidate selection lock"
+            )
+            committed = lock.get("_committed_record")
+            if (
+                isinstance(committed, dict)
+                and record["state"] == "committed"
+                and record["owner"] == lock["owner"]
+                and record["generation"] == lock["generation"]
+                and current[1] == lock["etag"]
+                and record.get("commit") == committed
+            ):
+                # A heartbeat that wakes after the publication CAS observes the
+                # same terminal fence and has nothing left to renew.
+                return
+            if (
+                record["state"] != "held"
+                or record["owner"] != lock["owner"]
+                or record["generation"] != lock["generation"]
+                or current[1] != lock["etag"]
+            ):
+                raise CandidateSelectionLockError(
+                    "candidate selection lock was superseded"
+                )
+            now = datetime.now(timezone.utc)
+            payload = _candidate_selection_lock_payload(
+                owner=lock["owner"],
+                generation=lock["generation"],
+                state="held",
+                now=now,
+            )
+            lock["etag"] = _candidate_selection_lock_write(
+                storage, lock["uri"], payload, etag=lock["etag"]
+            )
+        except StoragePreconditionFailed:
+            lock["_lost"] = True
+            raise CandidateSelectionLockError(
+                "candidate selection lock was superseded"
+            ) from None
+        except CandidateSelectionLockError:
+            lock["_lost"] = True
+            raise
+        except Exception as exc:  # noqa: BLE001 - sanitized coordination boundary
+            lock["_lost"] = True
+            raise CandidateSelectionLockError(
+                f"candidate selection lock renewal failed ({type(exc).__name__})"
+            ) from None
+
+
+def _commit_candidate_selection_lock(
+    lock: dict[str, Any], commit: dict[str, Any]
+) -> None:
+    """Atomically turn the held lease into the authoritative publication fence."""
+
+    from npa.clients.storage import StoragePreconditionFailed
+
+    with lock["_guard"]:
+        try:
+            current = lock["storage"].read_bytes_with_etag(lock["uri"])
+            if current is None:
+                raise CandidateSelectionLockError(
+                    "candidate selection lock disappeared before publication"
+                )
+            record = _candidate_selection_lock_record(
+                current[0], label="candidate selection lock"
+            )
+            if (
+                record["state"] != "held"
+                or record["owner"] != lock["owner"]
+                or record["generation"] != lock["generation"]
+                or current[1] != lock["etag"]
+            ):
+                raise CandidateSelectionLockError(
+                    "candidate selection lock was superseded before publication"
+                )
+            payload = _candidate_selection_lock_payload(
+                owner=lock["owner"],
+                generation=lock["generation"],
+                state="committed",
+                now=datetime.now(timezone.utc),
+                commit=commit,
+            )
+            lock["etag"] = _candidate_selection_lock_write(
+                lock["storage"], lock["uri"], payload, etag=lock["etag"]
+            )
+            lock["_committed_record"] = dict(commit)
+        except StoragePreconditionFailed:
+            lock["_lost"] = True
+            raise CandidateSelectionLockError(
+                "candidate selection publication was fenced by a newer owner"
+            ) from None
+        except CandidateSelectionLockError:
+            lock["_lost"] = True
+            raise
+
+
+def _candidate_selection_lock_heartbeat(lock: dict[str, Any]) -> None:
+    """Keep a held lease current even while one object operation is slow."""
+
+    interval = max(0.05, _CANDIDATE_SELECTION_LOCK_LEASE_SECONDS / 3)
+    while not lock["_stop"].wait(interval):
+        try:
+            _renew_candidate_selection_lock(lock)
+        except CandidateSelectionLockError:
+            return
+
+
+@contextmanager
+def _candidate_selection_destination_lock(
+    selection_uri: str,
+) -> Iterator[dict[str, Any]]:
+    """Acquire a CAS-fenced, stale-recoverable lock for one destination.
+
+    Active owners are waited out without an arbitrary deadline. A crashed
+    owner's lease can be replaced only with the exact observed ETag, and every
+    renewal/release is fenced by owner, generation, and ETag.
+    """
+
+    from npa.clients.storage import StoragePreconditionFailed
+
+    storage = _storage()
+    lock_uri = _candidate_selection_lock_uri(selection_uri)
+    owner = uuid.uuid4().hex
+    lock: dict[str, Any] | None = None
+    while lock is None:
+        current = storage.read_bytes_with_etag(lock_uri)
+        now = datetime.now(timezone.utc)
+        if current is None:
+            generation = 1
+            etag = ""
+        else:
+            record = _candidate_selection_lock_record(
+                current[0], label="candidate selection lock"
+            )
+            if record["state"] == "committed":
+                lock = {
+                    "storage": storage,
+                    "uri": lock_uri,
+                    "owner": record["owner"],
+                    "generation": record["generation"],
+                    "etag": current[1],
+                    "_guard": threading.Lock(),
+                    "_stop": threading.Event(),
+                    "_lost": False,
+                    "_committed_record": dict(record["commit"]),
+                    "_replay": True,
+                }
+                break
+            if record["state"] == "held" and record["_expires"] > now:
+                time.sleep(
+                    min(1.0, max(0.05, (record["_expires"] - now).total_seconds()))
+                )
+                continue
+            generation = int(record["generation"]) + 1
+            etag = current[1]
+        payload = _candidate_selection_lock_payload(
+            owner=owner, generation=generation, state="held", now=now
+        )
+        try:
+            acquired_etag = _candidate_selection_lock_write(
+                storage, lock_uri, payload, etag=etag
+            )
+        except StoragePreconditionFailed:
+            continue
+        lock = {
+            "storage": storage,
+            "uri": lock_uri,
+            "owner": owner,
+            "generation": generation,
+            "etag": acquired_etag,
+            "_guard": threading.Lock(),
+            "_stop": threading.Event(),
+            "_lost": False,
+        }
+    heartbeat = None
+    if not lock.get("_replay"):
+        heartbeat = threading.Thread(
+            target=_candidate_selection_lock_heartbeat,
+            args=(lock,),
+            name="npa-paidf-selection-lock",
+            daemon=True,
+        )
+        heartbeat.start()
+    body_failed = False
+    try:
+        yield lock
+    except BaseException:
+        body_failed = True
+        raise
+    finally:
+        if heartbeat is not None:
+            lock["_stop"].set()
+            heartbeat.join()
+            with lock["_guard"]:
+                current = storage.read_bytes_with_etag(lock_uri)
+                if current is not None:
+                    record = _candidate_selection_lock_record(
+                        current[0], label="candidate selection lock"
+                    )
+                    if lock.get("_committed_record"):
+                        if not (
+                            record["state"] == "committed"
+                            and record["owner"] == owner
+                            and record["generation"] == lock["generation"]
+                            and current[1] == lock["etag"]
+                            and record.get("commit") == lock["_committed_record"]
+                        ):
+                            lock["_lost"] = True
+                    elif (
+                        record["state"] == "held"
+                        and record["owner"] == owner
+                        and record["generation"] == lock["generation"]
+                        and current[1] == lock["etag"]
+                    ):
+                        payload = _candidate_selection_lock_payload(
+                            owner=owner,
+                            generation=lock["generation"],
+                            state="released",
+                            now=datetime.now(timezone.utc),
+                        )
+                        try:
+                            _candidate_selection_lock_write(
+                                storage, lock_uri, payload, etag=lock["etag"]
+                            )
+                        except StoragePreconditionFailed:
+                            # A newer recovery owner is authoritative; never release it.
+                            lock["_lost"] = True
+                    else:
+                        # A successor became authoritative between the last heartbeat
+                        # and exit. Fence this result even if the body did not perform
+                        # another explicit renewal.
+                        lock["_lost"] = True
+                else:
+                    lock["_lost"] = True
+            if lock["_lost"] and not body_failed:
+                raise CandidateSelectionLockError(
+                    "candidate selection lock was lost during the critical section"
+                )
+
+
+def _immutable_candidate_copy(
+    *,
+    source_bucket: str,
+    source_row: dict[str, Any],
+    destination_bucket: str,
+    destination_key: str,
+) -> None:
+    """Conditionally create one exact media object and verify retry identity."""
+
+    source_key = str(source_row["key"])
+    source_size = int(source_row.get("size") or 0)
+    source_etag = str(source_row.get("etag") or "").strip('"')
+    if not source_key or source_size <= 0 or not source_etag:
+        raise RuntimeError("candidate selection source lacks immutable identity")
+    client = _s3_client()
+
+    def verify_existing() -> bool:
+        try:
+            head = client.head_object(Bucket=destination_bucket, Key=destination_key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return False
+            raise
+        observed_size = int(head.get("ContentLength") or 0)
+        metadata = (
+            head.get("Metadata") if isinstance(head.get("Metadata"), dict) else {}
+        )
+        observed_source_etag = str(metadata.get("npa-source-etag") or "").strip('"')
+        observed_etag = str(head.get("ETag") or "").strip('"')
+        if observed_size != source_size or (
+            source_etag
+            and observed_source_etag not in {source_etag, ""}
+            and observed_etag != source_etag
+        ):
+            raise RuntimeError("candidate selection prior media differs from source")
+        if source_etag and not observed_source_etag and observed_etag != source_etag:
+            raise RuntimeError("candidate selection prior media lacks source identity")
+        return True
+
+    if verify_existing():
+        return
+    response = client.get_object(Bucket=source_bucket, Key=source_key)
+    body = response["Body"]
+    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as stream:
+        copied = 0
+        try:
+            while chunk := body.read(1024 * 1024):
+                stream.write(chunk)
+                copied += len(chunk)
+        finally:
+            body.close()
+        if copied != source_size:
+            raise RuntimeError("candidate selection source changed during copy")
+        stream.seek(0)
+        try:
+            client.put_object(
+                Bucket=destination_bucket,
+                Key=destination_key,
+                Body=stream,
+                ContentLength=copied,
+                IfNoneMatch="*",
+                Metadata={"npa-source-etag": source_etag},
+            )
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code not in {
+                "409",
+                "412",
+                "ConditionalRequestConflict",
+                "PreconditionFailed",
+            } and status not in {409, 412}:
+                raise
+    if not verify_existing():
+        raise RuntimeError("candidate selection media write could not be verified")
 
 
 def _quality_gate_contract(report: dict[str, Any], threshold: float) -> dict[str, Any]:
@@ -649,6 +1268,7 @@ def generate_configs(
     augmentation_seed: str = "",
     quality_anchor_uri: str = "",
     appearance_profiles_json: str = "",
+    prompt_policy: str = "",
 ) -> dict[str, Any]:
     """Sample appearance-only augmentation combos and write a real config manifest.
 
@@ -675,6 +1295,7 @@ def generate_configs(
         augmentation_seed: Reproducible appearance sampling seed.
         quality_anchor_uri: Optional prior accepted appearance selection.
         appearance_profiles_json: Optional JSON profiles, incompatible with anchors.
+        prompt_policy: Optional source-fidelity prompt contract.
     Returns:
         Published configuration manifest, including its destination.
     Raises:
@@ -691,7 +1312,6 @@ def generate_configs(
         raise ValueError(
             "custom appearance profiles cannot be combined with a quality anchor"
         )
-    selected_profiles = custom_profiles or APPEARANCE_PROFILES
     try:
         n = int(n_augmentations)
     except (TypeError, ValueError):
@@ -704,12 +1324,39 @@ def generate_configs(
         or leisaac_scene
         or "input-conditioned physical robot manipulation"
     )
+    normalized_prompt_policy = str(prompt_policy or "").strip()
+    source_fidelity_policies = {
+        SOURCE_FIDELITY_PROMPT_POLICY_V2,
+        SOURCE_FIDELITY_PROMPT_POLICY,
+    }
+    if normalized_prompt_policy not in {"", *source_fidelity_policies}:
+        raise ValueError(
+            "prompt_policy must be empty, source-fidelity-v2, or source-fidelity-v3"
+        )
+    if normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
+        profile_table = SOURCE_FIDELITY_APPEARANCE_PROFILES
+    elif normalized_prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY_V2:
+        profile_table = SOURCE_FIDELITY_APPEARANCE_PROFILES_V2
+    else:
+        profile_table = APPEARANCE_PROFILES
+    selected_profiles = custom_profiles or profile_table
+    if custom_profiles:
+        variables = {key: list(values) for key, values in APPEARANCE_VARIABLES.items()}
+        for profile in custom_profiles:
+            for key, value in profile.items():
+                if value not in variables[key]:
+                    variables[key].append(value)
+    else:
+        variables = {
+            key: list(dict.fromkeys(profile[key] for profile in selected_profiles))
+            for key in selected_profiles[0]
+        }
     anchor = _derive_quality_anchor(quality_anchor_uri)
-    variables = {key: list(values) for key, values in APPEARANCE_VARIABLES.items()}
-    for profile in custom_profiles or []:
-        for key, value in profile.items():
-            if value not in variables[key]:
-                variables[key].append(value)
+    if anchor and normalized_prompt_policy in source_fidelity_policies:
+        if any(
+            value not in variables[key] for key, value in anchor["variables"].items()
+        ):
+            anchor = None
     if anchor:
         for key, value in anchor["variables"].items():
             if value not in variables[key]:
@@ -735,17 +1382,23 @@ def generate_configs(
         )
         # The prompt is what actually conditions the Cosmos Transfer augmentation,
         # so the sampled appearance drives the pixels (not just a Rerun label).
-        combo["prompt"] = (
-            appearance_prompt(profile, subject)
-            if custom_profiles
-            else prompt_from_combo(combo, scene=subject)
-        )
+        if normalized_prompt_policy:
+            combo["prompt"] = prompt_from_combo(
+                combo, scene=subject, prompt_policy=normalized_prompt_policy
+            )
+        elif custom_profiles:
+            combo["prompt"] = appearance_prompt(profile, subject)
+        else:
+            combo["prompt"] = prompt_from_combo(combo, scene=subject)
+        if normalized_prompt_policy in source_fidelity_policies:
+            combo["negative_prompt"] = SOURCE_FIDELITY_NEGATIVE_PROMPT
         combos.append(combo)
     manifest = {
         "schema": "npa.data_factory.configs.v1",
         "scene": subject,
         "n_augmentations": len(combos),
         "augmentation_seed": effective_augmentation_seed,
+        "prompt_policy": normalized_prompt_policy or "legacy-v1",
         "appearance_profile_source": "custom" if custom_profiles else "default",
         "appearance_profiles": [dict(profile) for profile in selected_profiles],
         "variables": variables,
@@ -1434,6 +2087,33 @@ def _persist_quality_disposition(
 
     accepted = not reasons
     decision = "promote_checkpoint" if accepted else "loop_back"
+    criterion_fields = (
+        "attribute_verification",
+        "hallucination",
+        "temporal_consistency",
+        "appearance_fidelity",
+    )
+    criterion_evidence = []
+    raw_clips = report.get("clips")
+    for clip in raw_clips if isinstance(raw_clips, list) else []:
+        if not isinstance(clip, dict):
+            continue
+        criterion_evidence.append(
+            json.loads(
+                json.dumps(
+                    {
+                        "clip_id": str(clip.get("clip_id") or ""),
+                        "score": clip.get("score"),
+                        "passed": clip.get("passed") is True,
+                        **{
+                            field: clip[field]
+                            for field in criterion_fields
+                            if field in clip
+                        },
+                    }
+                )
+            )
+        )
     payload = {
         "schema": "npa.data_factory.quality_disposition.v1",
         "quality_status": "accepted" if accepted else "rejected",
@@ -1443,6 +2123,8 @@ def _persist_quality_disposition(
         "threshold": numeric_threshold,
         "hard_checks_passed": hard_checks_passed,
         "evaluator_report_uri": report_uri,
+        "evaluator_report_sha256": _payload_sha256(report) if report else "",
+        "criterion_evidence": criterion_evidence,
         "reasons": reasons,
     }
     payload["written_uri"] = _upload_json(payload, disposition_uri)
@@ -2168,19 +2850,160 @@ def select_hard_passing_candidates(
     lets final validation emit a fail-closed report instead of crashing the loop.
     """
 
+    with _candidate_selection_destination_lock(selection_uri) as destination_lock:
+        return _select_hard_passing_candidates_locked(
+            augment_uri,
+            ranking_scores_uri,
+            selection_uri,
+            selection_report_uri,
+            threshold,
+            destination_lock=destination_lock,
+        )
+
+
+def _candidate_selection_attempt_uri(
+    selection_uri: str, destination_lock: dict[str, Any]
+) -> str:
+    return (
+        selection_uri.rstrip("/")
+        + f"/_attempts/fence-{int(destination_lock['generation'])}/"
+    )
+
+
+def _replay_committed_candidate_selection(
+    *,
+    commit: dict[str, Any],
+    augment_uri: str,
+    ranking_scores_uri: str,
+    selection_uri: str,
+    selection_report_uri: str,
+    threshold: float | str,
+) -> dict[str, Any]:
+    """Verify one immutable committed generation and repair only its aliases."""
+
+    canonical_manifest_uri = selection_uri.rstrip("/") + "/manifest.json"
+    if (
+        commit.get("canonical_manifest_uri") != canonical_manifest_uri
+        or commit.get("canonical_report_uri") != selection_report_uri
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection commit targets a different destination"
+        )
+    manifest = _download_json(str(commit["manifest_uri"]))
+    report = _download_json(str(commit["report_uri"]))
+    if not isinstance(manifest, dict) or not isinstance(report, dict):
+        raise CandidateSelectionLockError(
+            "candidate selection commit references invalid evidence"
+        )
+    if (
+        _payload_sha256(manifest) != commit["manifest_sha256"]
+        or _payload_sha256(report) != commit["report_sha256"]
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection committed evidence changed after publication"
+        )
     source_rows = _inventory_rows(augment_uri)
-    destination_rows = _inventory_rows(selection_uri)
-    if destination_rows:
-        raise RuntimeError("candidate selection refuses to overwrite prior evidence")
-    listed_keys = [str(row["key"]) for row in source_rows]
-    manifest = _committed_augment_manifest(augment_uri, listed_keys=listed_keys)
-    if not isinstance(manifest, dict):
-        raise RuntimeError("candidate selection requires a committed augment manifest")
-    ranking = _download_json(
+    source_manifest = _committed_augment_manifest(
+        augment_uri, listed_keys=[str(row["key"]) for row in source_rows]
+    )
+    ranking_uri = (
         ranking_scores_uri
         if ranking_scores_uri.endswith(".json")
         else ranking_scores_uri.rstrip("/") + "/cosmos_evaluator.json"
     )
+    ranking = _download_json(ranking_uri)
+    if (
+        not isinstance(source_manifest, dict)
+        or not isinstance(ranking, dict)
+        or report.get("ranking_pool_inventory_sha256") != _inventory_digest(source_rows)
+        or report.get("ranking_report_sha256") != _payload_sha256(ranking)
+        or manifest.get("source_manifest_sha256") != _payload_sha256(source_manifest)
+        or float(report.get("threshold", -1.0)) != _quality_threshold(threshold)
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection inputs differ from the committed generation"
+        )
+    attempt_rows = {
+        str(row["key"]): row for row in _inventory_rows(str(commit["attempt_uri"]))
+    }
+    if _inventory_digest(list(attempt_rows.values())) != commit.get(
+        "attempt_inventory_sha256"
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection committed generation inventory changed"
+        )
+    attempt_bucket, attempt_prefix = _split(str(commit["attempt_uri"]))
+    del attempt_bucket
+    required_keys = {
+        _split(str(commit["manifest_uri"]))[1],
+        _split(str(commit["report_uri"]))[1],
+    }
+    for variant in manifest.get("variants", []):
+        video_uri = str(variant.get("augmented_video_uri") or "")
+        video_bucket, video_key = _split(video_uri)
+        if video_bucket != _split(selection_uri)[0] or not video_key.startswith(
+            attempt_prefix
+        ):
+            raise CandidateSelectionLockError(
+                "candidate selection commit references media outside its generation"
+            )
+        required_keys.update(
+            key
+            for key in attempt_rows
+            if key.startswith(video_key.rsplit("/", 1)[0] + "/")
+        )
+    if not required_keys.issubset(attempt_rows) or any(
+        int(attempt_rows[key].get("size") or 0) <= 0 for key in required_keys
+    ):
+        raise CandidateSelectionLockError(
+            "candidate selection committed generation is incomplete"
+        )
+    _put_immutable_json(
+        manifest, canonical_manifest_uri, label="candidate selection manifest alias"
+    )
+    _put_immutable_json(
+        report,
+        selection_report_uri,
+        label="candidate selection report alias",
+    )
+    return {**report, "written_uri": selection_report_uri, "replayed": True}
+
+
+def _select_hard_passing_candidates_locked(
+    augment_uri: str,
+    ranking_scores_uri: str,
+    selection_uri: str,
+    selection_report_uri: str,
+    threshold: float | str,
+    *,
+    destination_lock: dict[str, Any],
+) -> dict[str, Any]:
+    """Execute selection while holding the destination's durable fence."""
+
+    committed = destination_lock.get("_committed_record")
+    if isinstance(committed, dict):
+        return _replay_committed_candidate_selection(
+            commit=committed,
+            augment_uri=augment_uri,
+            ranking_scores_uri=ranking_scores_uri,
+            selection_uri=selection_uri,
+            selection_report_uri=selection_report_uri,
+            threshold=threshold,
+        )
+    _renew_candidate_selection_lock(destination_lock)
+    source_rows = _inventory_rows(augment_uri)
+    attempt_uri = _candidate_selection_attempt_uri(selection_uri, destination_lock)
+    destination_rows = _inventory_rows(attempt_uri)
+    listed_keys = [str(row["key"]) for row in source_rows]
+    manifest = _committed_augment_manifest(augment_uri, listed_keys=listed_keys)
+    if not isinstance(manifest, dict):
+        raise RuntimeError("candidate selection requires a committed augment manifest")
+    ranking_uri = (
+        ranking_scores_uri
+        if ranking_scores_uri.endswith(".json")
+        else ranking_scores_uri.rstrip("/") + "/cosmos_evaluator.json"
+    )
+    ranking = _download_json(ranking_uri)
     if not isinstance(ranking, dict) or ranking.get("status") != "completed":
         raise RuntimeError("candidate selection requires a completed ranking report")
     numeric_threshold = _quality_threshold(threshold)
@@ -2201,12 +3024,13 @@ def select_hard_passing_candidates(
     }
     source_bucket, _source_prefix = _split(augment_uri)
     destination_bucket, destination_prefix = _split(
-        selection_uri if selection_uri.endswith("/") else selection_uri + "/"
+        attempt_uri if attempt_uri.endswith("/") else attempt_uri + "/"
     )
     if source_bucket != destination_bucket:
         raise RuntimeError("candidate selection must remain in canonical run storage")
     source_keys = {str(row["key"]): row for row in source_rows}
     selected_variants: list[dict[str, Any]] = []
+    candidate_copies: list[tuple[dict[str, Any], str]] = []
     for variant in variants:
         clip = str(variant.get("clip") or "")
         if clip not in eligible:
@@ -2226,11 +3050,7 @@ def select_hard_passing_candidates(
         for key in candidate_keys:
             relative = key[len(source_directory) :]
             destination_key = f"{destination_prefix}{clip}/{relative}"
-            _s3_client().copy_object(
-                Bucket=destination_bucket,
-                CopySource={"Bucket": source_bucket, "Key": key},
-                Key=destination_key,
-            )
+            candidate_copies.append((source_keys[key], destination_key))
         selected_variants.append(
             {
                 "clip": clip,
@@ -2259,15 +3079,10 @@ def select_hard_passing_candidates(
     }
     from npa.workbench.cosmos.transfer import validate_committed_run_manifest
 
-    validate_committed_run_manifest(selected_manifest, selection_uri)
+    validate_committed_run_manifest(selected_manifest, attempt_uri)
     manifest_uri = selection_uri.rstrip("/") + "/manifest.json"
-    _upload_json(selected_manifest, manifest_uri)
-    after_source = _inventory_rows(augment_uri)
-    if source_rows != after_source:
-        raise RuntimeError("candidate selection changed the preserved ranking pool")
-    selected_rows = _inventory_rows(selection_uri)
-    if not selected_rows or any(int(row["size"]) <= 0 for row in selected_rows):
-        raise RuntimeError("candidate selection produced an incomplete final batch")
+    attempt_manifest_uri = attempt_uri.rstrip("/") + "/manifest.json"
+    attempt_report_uri = attempt_uri.rstrip("/") + "/selection.json"
     result = {
         "schema": "npa.paidf.candidate-selection/v1",
         "status": "completed",
@@ -2277,8 +3092,11 @@ def select_hard_passing_candidates(
         "threshold": numeric_threshold,
         "selected_clip_ids": [item["clip"] for item in selected_variants],
         "ranking_pool_inventory_sha256": _inventory_digest(source_rows),
+        "ranking_report_sha256": _payload_sha256(ranking),
         "ranking_pool_unchanged_after_selection": True,
         "selection_manifest_uri": manifest_uri,
+        "selection_attempt_uri": attempt_uri,
+        "publication_generation": int(destination_lock["generation"]),
         "candidate_results": [
             {
                 "clip_id": clip,
@@ -2289,7 +3107,80 @@ def select_hard_passing_candidates(
             for clip, evaluation in sorted(evaluations.items())
         ],
     }
-    result["written_uri"] = _upload_json(result, selection_report_uri)
+
+    report_bucket, _report_key = _split(selection_report_uri)
+    manifest_bucket, manifest_key = _split(attempt_manifest_uri)
+    report_attempt_bucket, report_attempt_key = _split(attempt_report_uri)
+    if any(
+        bucket != destination_bucket
+        for bucket in (report_bucket, manifest_bucket, report_attempt_bucket)
+    ):
+        raise RuntimeError("candidate selection evidence left canonical storage")
+    expected_rows = {
+        destination_key: source_row for source_row, destination_key in candidate_copies
+    }
+    expected_keys = {*expected_rows, manifest_key, report_attempt_key}
+    actual_rows = {str(row["key"]): row for row in destination_rows}
+    unexpected = set(actual_rows).difference(expected_keys)
+    if unexpected:
+        raise RuntimeError(
+            "candidate selection prior evidence inventory differs from replay"
+        )
+    replayed = set(actual_rows) == expected_keys
+
+    for source_row, destination_key in candidate_copies:
+        _renew_candidate_selection_lock(destination_lock)
+        _immutable_candidate_copy(
+            source_bucket=source_bucket,
+            source_row=source_row,
+            destination_bucket=destination_bucket,
+            destination_key=destination_key,
+        )
+    _renew_candidate_selection_lock(destination_lock)
+    _put_immutable_json(
+        selected_manifest,
+        attempt_manifest_uri,
+        label="candidate selection attempt manifest",
+    )
+    after_source = _inventory_rows(augment_uri)
+    if source_rows != after_source:
+        raise RuntimeError("candidate selection changed the preserved ranking pool")
+    _renew_candidate_selection_lock(destination_lock)
+    _put_immutable_json(
+        result,
+        attempt_report_uri,
+        label="candidate selection attempt report",
+    )
+    selected_rows = {str(row["key"]): row for row in _inventory_rows(attempt_uri)}
+    if set(selected_rows) != expected_keys or any(
+        int(row["size"]) <= 0 for row in selected_rows.values()
+    ):
+        raise RuntimeError("candidate selection produced an incomplete final batch")
+    for key, source_row in expected_rows.items():
+        if int(selected_rows[key].get("size") or 0) != int(source_row.get("size") or 0):
+            raise RuntimeError(
+                "candidate selection prior media size differs from source"
+            )
+    commit = {
+        "attempt_uri": attempt_uri,
+        "manifest_uri": attempt_manifest_uri,
+        "report_uri": attempt_report_uri,
+        "canonical_manifest_uri": manifest_uri,
+        "canonical_report_uri": selection_report_uri,
+        "manifest_sha256": _payload_sha256(selected_manifest),
+        "report_sha256": _payload_sha256(result),
+        "attempt_inventory_sha256": _inventory_digest(list(selected_rows.values())),
+    }
+    _commit_candidate_selection_lock(destination_lock, commit)
+    # These canonical objects are immutable compatibility aliases. They are
+    # written only after the lock object's compare-and-swap made this attempt
+    # authoritative; a stale generation can write solely under its own prefix.
+    _put_immutable_json(
+        selected_manifest, manifest_uri, label="candidate selection manifest alias"
+    )
+    _put_immutable_json(
+        result, selection_report_uri, label="candidate selection report alias"
+    )
     print(
         json.dumps(
             {
@@ -2297,10 +3188,12 @@ def select_hard_passing_candidates(
                 "ranked_count": result["ranked_count"],
                 "selected_count": result["selected_count"],
                 "ranking_pool_unchanged": True,
+                "replayed": replayed,
+                "publication_generation": destination_lock["generation"],
             }
         )
     )
-    return result
+    return {**result, "written_uri": selection_report_uri, "replayed": replayed}
 
 
 def curate(
@@ -2504,9 +3397,50 @@ def _enrich_with_fiftyone_curation(
     return result
 
 
-def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
+def finalize(
+    run_root_uri: str,
+    report_uri: str,
+    *,
+    upstream_variant: str = "",
+    run_id: str = "",
+    selection_uri: str = "",
+) -> dict[str, Any]:
     """Aggregate the run's stage artifacts into a real final report."""
     keys = _list_keys(run_root_uri)
+    bucket, run_prefix = _split(run_root_uri)
+    iteration_numbers: set[int] = set()
+    for key in keys:
+        match = re.search(r"cosmos_augmented/iteration-(\d+)/", key)
+        if match:
+            iteration_numbers.add(int(match.group(1)))
+
+    # Adaptive runs keep every iteration immutable. Once an accepted run reaches
+    # finalization, publish the winning iteration through the stable root paths
+    # promised by the workflow output contract and artifact browser. This is a
+    # copy, not a move: iteration evidence remains append-only and auditable.
+    if iteration_numbers:
+        final_iteration = max(iteration_numbers)
+        canonical_sources = {
+            "cosmos_augmented/manifest.json": (
+                f"cosmos_augmented/iteration-{final_iteration}/manifest.json"
+            ),
+            "grade/cosmos_evaluator.json": (
+                f"grade/iteration-{final_iteration}/cosmos_evaluator.json"
+            ),
+            "grade/decision.json": f"grade/iteration-{final_iteration}/decision.json",
+        }
+        for target_relative, source_relative in canonical_sources.items():
+            if not any(key.endswith("/" + source_relative) for key in keys):
+                continue
+            payload = _download_json(run_root_uri.rstrip("/") + "/" + source_relative)
+            if not isinstance(payload, dict):
+                raise RuntimeError(
+                    f"adaptive canonical source is not a JSON object: {source_relative}"
+                )
+            _upload_json(payload, run_root_uri.rstrip("/") + "/" + target_relative)
+            target_key = run_prefix.rstrip("/") + "/" + target_relative
+            if target_key not in keys:
+                keys.append(target_key)
     run_seg = run_root_uri.rstrip("/").split("/")[-1]
     marker = f"/{run_seg}/"
     stages: dict[str, int] = {}
@@ -2523,11 +3457,6 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     # excluding the top-level run manifest) so the final report reflects the real
     # "multiply" fan-out — one Cosmos Transfer 2.5 inference per sampled combo.
     aug_marker = "cosmos_augmented/"
-    iteration_numbers: set[int] = set()
-    for key in keys:
-        match = re.search(r"cosmos_augmented/iteration-(\d+)/", key)
-        if match:
-            iteration_numbers.add(int(match.group(1)))
     selected_aug_marker = (
         f"{aug_marker}iteration-{max(iteration_numbers)}/"
         if iteration_numbers
@@ -2546,7 +3475,17 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
                 if segment and segment != "_attempts":
                     aug_clips.add(segment)
         n_variants = len(aug_clips)
-    bucket, _prefix = _split(run_root_uri)
+    if selection_uri:
+        selected = _committed_augment_manifest(selection_uri, listed_keys=keys)
+        if selected is None:
+            raise RuntimeError(
+                "PAIDF accepted finalization requires a committed hard-pass selection"
+            )
+        n_variants = int(selected.get("variant_count", 0) or 0)
+        if n_variants <= 0:
+            raise RuntimeError(
+                "PAIDF accepted finalization requires at least one hard-pass candidate"
+            )
     lineage_key = next(
         (key for key in keys if key.endswith("/input/leisaac-lineage.json")), ""
     )
@@ -2579,6 +3518,29 @@ def finalize(run_root_uri: str, report_uri: str) -> dict[str, Any]:
     if transfer_manifest:
         report["augmentation_engine"] = str(transfer_manifest.get("mode") or "")
         report["input_conditioned"] = transfer_manifest.get("input_conditioned") is True
+    if bool(upstream_variant) != bool(run_id.strip()):
+        raise RuntimeError(
+            "PAIDF finalization requires both an upstream variant and run identity"
+        )
+    upstream = None
+    if upstream_variant:
+        try:
+            upstream = _download_json(
+                run_root_uri.rstrip("/") + "/reports/upstream.json"
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "PAIDF upstream provenance is missing or unreadable"
+            ) from exc
+        if (
+            not isinstance(upstream, dict)
+            or upstream.get("schema") != "npa.paidf.upstream.v1"
+            or upstream.get("run_id") != run_id
+            or upstream.get("workflow_variant") != upstream_variant
+        ):
+            raise RuntimeError("PAIDF upstream provenance does not match this run")
+    if upstream is not None:
+        report["upstream"] = upstream
     report["written_uri"] = _upload_json(report, report_uri)
     print(
         json.dumps(
