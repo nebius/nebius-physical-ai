@@ -187,8 +187,28 @@ This baseline includes an execution modification; it is not a measurement of
 native RLC. Its score is separate from the historical 0.50 result above, whose
 policy process lifecycle differed. These ten development cases are reused;
 this result does not demonstrate generalization or a reliable full-success gain.
-Native RLC and both released Comet checkpoints still need the same evaluation
-before the baseline tournament and independent reporting gate can be completed.
+Native RLC and Comet12 still need the same evaluation before the baseline
+tournament and separate reporting gate can be completed. The reporting cases
+are separate within this campaign but have some historical exposure.
+
+### Native Comet50 development result
+
+The released Comet50 checkpoint completed the same ten development cases with
+its native 32-action chunk, five-step replanning, and three-chunk ensemble.
+Mean Q was **0.266667**, with **0/10 full successes**; all cases reached 7,902
+simulator steps. Instances 314, 317, 318, and 320 scored Q=2/3; the other six
+scored zero. Every original metrics file and video was hash-verified, and all
+ten videos were fully decoded.
+
+The checkpoint revision is `61739ffbced89dd5ba1b87c30d93d6084b79b0af`,
+Comet source is `4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5`, and Workbench
+source is `13f07569cd95207147be6c5ed5f166236c88b1d6`. The verified aggregate
+artifact SHA-256 is
+`ceb168bd42c84894b12bc63a02b2a403985634a854b6fb2ebabe04770da6ba48`.
+This result ranks below the transition-refresh candidate on development Q and
+full successes. The remaining native baselines and reporting evaluation still
+determine whether the candidate meets the local task target; this result does
+not establish challenge-wide competitiveness or the official policy-GPU limit.
 
 ### Released Comet checkpoint qualification
 
