@@ -5228,7 +5228,14 @@ def test_rendered_visual_turn_with_approval_words_stays_on_vision_path(
     }
     captured: dict[str, object] = {}
 
-    def visual_chat(*, messages, requested_model="", tier="standard", interactive=True):
+    def visual_chat(
+        *,
+        messages,
+        requested_model="",
+        tier="standard",
+        interactive=True,
+        use_model_router=False,
+    ):
         captured.update(
             messages=messages,
             requested_model=requested_model,

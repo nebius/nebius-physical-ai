@@ -208,6 +208,31 @@ For artifact conversion and sharing, see the
 
 ## Developing and testing npa
 
+Build actual RGB/action robot demonstrations with
+[robot SDG and LeRobot export](../docs/workbench/token-factory-robot-sdg.md).
+`npa workbench token-factory robot-sdg` uses S3 handoffs; the SDK's `robot_sdg`
+accepts local paths. Install `npa[robot-sdg]` and `ffmpeg`. The default router
+is Token Factory, and the simulator seed defaults to zero. Set
+`NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE=1` and `NPA_LEROBOT_PROOF_PYTHON` to a native
+LeRobot 0.5.1 interpreter to run live simulation and dataset validation. Optional
+`NPA_ROBOT_SDG_OUTPUT_DIR` preserves the run in a new local directory. These
+environment variables are unset by default; the simulator uses no physical robot.
+
+Build synthetic instruction datasets with the
+[automatically routed Token Factory SDG pipeline](../docs/workbench/token-factory-sdg.md).
+`npa workbench token-factory sdg` accepts S3 input/output paths; the SDK accepts
+local files for development. Routing defaults to Token Factory's hosted Lightning
+model, with Lightning/MiniMax generation and MiniMax review. Optional `--router jev`
+requires a separate TypeSafe key. `NPA_TOKEN_FACTORY_SDG_LIVE=1` opts into paid live
+pipeline tests; it defaults to unset.
+
+The optional [Jev model router](../docs/workbench/jev-routing.md) selects between
+eligible Token Factory text models in agent chat. `NPA_AGENT_MODEL_ROUTER=jev`
+enables it during agent deployment/bootstrap; it defaults to unset.
+`TYPESAFE_API_KEY` is required and can be saved in the existing private NPA
+credential store. The guide includes the live evaluation script, the opt-in
+`NPA_JEV_ROUTING_LIVE=1` tests, and provider-reported prefix-cache evidence.
+
 To work on `npa` itself, create the contributor environment and use the `make`
 targets from the repo root:
 
