@@ -71,8 +71,12 @@
       "sha256": "60aecdfdaf4ea824020f9eb17fc079a6d6883ede3d8669ce6bac495126c13a1d"
     }
   ],
-  "summary_sha256": "a07baa81a3b5996d1ff96a558a535cdd44a1e56bdd2bc7794ab4a7a6d0e03f60",
   "raw_artifacts": "OWNER_ONLY_NOT_FOR_PUBLICATION",
   "retained_source_json_sha256": "4ba7cc0544b2fcb3f53e17833c035c7868ffc53a9cfcd50c285638d3c8089e77",
-  "publication_transform": "Operator profile/config paths omitted; metric and source/artifact hashes preserved."
+  "publication_transform": "Operator profile/config paths omitted; metric and source/artifact hashes preserved.",
+  "original_private_summary_sha256": "a07baa81a3b5996d1ff96a558a535cdd44a1e56bdd2bc7794ab4a7a6d0e03f60",
+  "published_summary": {
+    "file": "proof-summary.json",
+    "sha256": "3c0b82dd7a09c009e7cd29cbc7f506a371d164d2dcdf54c8fd8b18724d5d2fad"
+  }
 }

@@ -19,3 +19,5 @@ Current-head hosted CI and draft promotion are separate readiness gates. This pr
 To reproduce the CPU failure control on Linux, check out the exact source commit, install the repository development environment, and run `npa/.venv/bin/python /path/to/verify_process_cleanup.py`. The script verifies the imported source commit and launches only its own temporary test processes.
 
 Independent exact-source review accepted the scoped CPU proof with zero blockers: **74 resource/access tests and 132 rendered backend tests passed**, alongside the unmocked process-control check. [Review measurements and limits](independent-review.json). Hosted current-head CI was still incomplete at publication preparation; no merge is claimed.
+
+Hash-chain scope: `original_private_summary_sha256` binds the unchanged retained private summary; `published_summary.sha256` separately binds the sanitized `proof-summary.json` in this pack. Omitted operator profile/config paths do not change the preserved measurement values.
