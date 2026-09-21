@@ -1596,6 +1596,8 @@ def _target_probe_runner(
     active_deadline_seconds: int | None = 30,
     pod_placement: dict[str, object] | None = None,
     service_account_name: str = "skypilot-service-account",
+    secret_names: tuple[str, ...] = ("pull-secret",),
+    default_pull_secrets: tuple[str, ...] = (),
 ):
     calls: list[list[str]] = []
     deleted = False
@@ -1610,7 +1612,19 @@ def _target_probe_runner(
                 "npa.nebius.com/probe-id": "abc123",
             },
         },
-        "spec": {"containers": [{"name": "pull", "image": IMAGE}]},
+        "spec": {
+            "containers": [{"name": "pull", "image": IMAGE}],
+            "serviceAccountName": service_account_name,
+            "imagePullSecrets": [{"name": name} for name in secret_names],
+            "nodeSelector": {"kubernetes.io/os": "linux"},
+            "tolerations": [
+                {
+                    "key": "nvidia.com/gpu",
+                    "operator": "Exists",
+                    "effect": "NoSchedule",
+                }
+            ],
+        },
         "status": {
             "containerStatuses": [
                 {
@@ -1629,9 +1643,19 @@ def _target_probe_runner(
     def run(cmd, **kwargs):  # noqa: ANN001
         nonlocal deleted
         calls.append(cmd)
+        if "serviceaccount" in cmd:
+            account = {
+                "apiVersion": "v1",
+                "kind": "ServiceAccount",
+                "metadata": {"name": service_account_name, "namespace": cmd[4]},
+                "imagePullSecrets": [{"name": name} for name in default_pull_secrets],
+            }
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(account), "")
         if "create" in cmd:
             manifest = json.loads(kwargs["input"])
-            assert manifest["spec"]["imagePullSecrets"] == [{"name": "pull-secret"}]
+            assert manifest["spec"]["imagePullSecrets"] == [
+                {"name": name} for name in secret_names
+            ]
             assert manifest["spec"]["serviceAccountName"] == service_account_name
             expected_tolerations = [
                 {
@@ -1653,6 +1677,11 @@ def _target_probe_runner(
                     manifest["spec"]["activeDeadlineSeconds"] == active_deadline_seconds
                 )
             assert ".dockerconfigjson" not in kwargs["input"]
+            payload["spec"] = manifest["spec"]
+            if not secret_names:
+                payload["spec"]["imagePullSecrets"] = [
+                    {"name": name} for name in default_pull_secrets
+                ]
             return subprocess.CompletedProcess(
                 cmd, 0, stdout=json.dumps(payload), stderr=""
             )
@@ -1722,6 +1751,217 @@ def test_exact_target_pull_probe_reproduces_pod_placement() -> None:
     )
 
     assert check.ok
+
+
+@pytest.mark.parametrize(
+    ("field", "changed_value", "expected_status"),
+    [
+        ("serviceAccountName", "different-account", "authority_mismatch"),
+        ("imagePullSecrets", [{"name": "different-secret"}], "authority_mismatch"),
+        ("nodeSelector", {"kubernetes.io/os": "other"}, "placement_mismatch"),
+        ("tolerations", [], "placement_mismatch"),
+    ],
+)
+@pytest.mark.parametrize("change_on_create", [True, False])
+def test_admitted_probe_changes_reject_proof_but_preserve_owned_cleanup(
+    field: str, changed_value: object, expected_status: str, change_on_create: bool
+) -> None:
+    run, calls = _target_probe_runner()
+
+    def changed_admission(command, **kwargs):  # noqa: ANN001
+        result = run(command, **kwargs)
+        if result.stdout.strip() and (change_on_create or "get" in command):
+            payload = json.loads(result.stdout)
+            payload["spec"][field] = changed_value
+            result.stdout = json.dumps(payload)
+        return result
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=changed_admission,
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check.status == expected_status
+    assert not check.ok
+    assert check.digest == ""
+    assert check.cleanup_status == "verified"
+    assert sum("delete" in command for command in calls) == 1
+
+
+@pytest.mark.parametrize("inherited", [(), ("account-pull-secret",)])
+def test_empty_pod_pull_secrets_bind_service_account_defaults(
+    inherited: tuple[str, ...],
+) -> None:
+    run, calls = _target_probe_runner(secret_names=(), default_pull_secrets=inherited)
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=(),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=run,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check.ok
+    assert calls[0] == [
+        "kubectl",
+        "--context",
+        "target-context",
+        "--namespace",
+        "target-namespace",
+        "get",
+        "serviceaccount",
+        "skypilot-service-account",
+        "-o",
+        "json",
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure", ["forbidden", "namespace", "name", "references", "exception"]
+)
+def test_unverifiable_service_account_defaults_stop_before_pod_creation(
+    failure: str,
+) -> None:
+    run, calls = _target_probe_runner(secret_names=())
+
+    def unavailable_account(command, **kwargs):  # noqa: ANN001
+        result = run(command, **kwargs)
+        if "serviceaccount" in command:
+            if failure == "exception":
+                raise OSError("synthetic-private-error")
+            if failure == "forbidden":
+                return subprocess.CompletedProcess(
+                    command, 1, "", "synthetic-private-error"
+                )
+            account = json.loads(result.stdout)
+            if failure == "references":
+                account["imagePullSecrets"] = [{"name": "", "unexpected": "value"}]
+            else:
+                account["metadata"][failure] = "different"
+            result.stdout = json.dumps(account)
+        return result
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=(),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=unavailable_account,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check.status == "service_account_unverified"
+    assert not any("create" in command for command in calls)
+    assert "synthetic-private-error" not in repr(check)
+
+
+def test_changed_inherited_secret_rejects_proof_and_cleans_owned_probe() -> None:
+    run, calls = _target_probe_runner(secret_names=(), default_pull_secrets=("before",))
+
+    def changed_account(command, **kwargs):  # noqa: ANN001
+        result = run(command, **kwargs)
+        if result.stdout.strip() and "serviceaccount" not in command:
+            pod = json.loads(result.stdout)
+            pod["spec"]["imagePullSecrets"] = [{"name": "after"}]
+            result.stdout = json.dumps(pod)
+        return result
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=(),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=changed_account,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check.status == "authority_mismatch"
+    assert check.cleanup_status == "verified"
+    assert sum("delete" in command for command in calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("additional", "accepted"),
+    [
+        (
+            [
+                {
+                    "key": "node.kubernetes.io/not-ready",
+                    "operator": "Exists",
+                    "effect": "NoExecute",
+                    "tolerationSeconds": 600,
+                }
+            ],
+            True,
+        ),
+        (
+            [
+                {
+                    "key": "node.kubernetes.io/unreachable",
+                    "operator": "Exists",
+                    "effect": "NoExecute",
+                    "tolerationSeconds": 0,
+                }
+            ],
+            True,
+        ),
+        (
+            [
+                {
+                    "key": "node.kubernetes.io/not-ready",
+                    "operator": "Exists",
+                    "effect": "NoExecute",
+                }
+            ],
+            False,
+        ),
+        (
+            [
+                {
+                    "key": "node.kubernetes.io/not-ready",
+                    "operator": "Exists",
+                    "effect": "NoSchedule",
+                    "tolerationSeconds": 300,
+                }
+            ],
+            False,
+        ),
+        ([{"key": "unrequested-pool", "operator": "Exists"}], False),
+        ([{"key": [], "operator": "Exists"}], False),
+    ],
+)
+def test_probe_allows_only_bounded_kubernetes_eviction_toleration_defaults(
+    additional: list[dict[str, object]],
+    accepted: bool,
+) -> None:
+    run, _calls = _target_probe_runner()
+
+    def admission_defaults(command, **kwargs):  # noqa: ANN001
+        result = run(command, **kwargs)
+        if result.stdout.strip():
+            pod = json.loads(result.stdout)
+            pod["spec"]["tolerations"].extend(additional)
+            result.stdout = json.dumps(pod)
+        return result
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=admission_defaults,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check.ok is accepted
+    assert check.status == ("verified" if accepted else "placement_mismatch")
+    assert check.cleanup_status == "verified"
 
 
 def test_target_pull_probe_fails_when_owned_cleanup_is_unverified() -> None:

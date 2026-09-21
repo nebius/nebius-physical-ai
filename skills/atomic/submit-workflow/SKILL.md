@@ -181,6 +181,16 @@ successful `npa skypilot verify --cluster <exact-context>`:
   (`nodeSelector`, affinity, runtime class, tolerations, and related scheduling
   fields) is probed independently. NPA uses the first `KUBECONFIG` file because
   that is the file pinned SkyPilot 0.12 exposes in its isolated home.
+  Both the creation response and the observed pod must preserve the requested
+  ServiceAccount, pull Secret references, and placement. When the pod requests
+  no pull Secrets, preflight first reads that exact ServiceAccount in the same
+  context and namespace and binds its inherited references; an unavailable or
+  changed default cannot produce a verified result. Requested tolerations are
+  preserved, allowing only Kubernetes' two additional `NoExecute` eviction
+  defaults for not-ready/unreachable nodes with finite nonnegative seconds.
+  Additional RuntimeClass or custom admission placement changes are currently
+  reported as unverified rather than assumed equivalent. A rejected proof still
+  runs UID-preconditioned cleanup of the owned probe.
   SkyPilot 0.12 replaces the first
   `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
   that effective set instead of unioning overridden Secrets. An initial empty

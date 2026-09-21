@@ -1236,6 +1236,11 @@ def _target_pull_status_detail(status: str) -> str:
         "digest_mismatch": "host and target resolved different immutable image bytes",
         "digest_unverified": "target runtime did not report an immutable image digest",
         "placement_invalid": "target pull placement could not be reproduced exactly",
+        "placement_mismatch": "admitted pull probe placement differs from the request",
+        "authority_mismatch": "admitted pull probe credentials differ from the request",
+        "service_account_unverified": (
+            "the exact ServiceAccount's default pull Secrets could not be verified"
+        ),
         "target_probe_failed": "target probe could not start after pulling the image",
         "pull_secret_required": "private Kubernetes path requires an imagePullSecret",
         "service_account_invalid": (
@@ -1703,6 +1708,104 @@ def _cleanup_kubernetes_pull_probe(
     return "unverified", interrupted
 
 
+def _service_account_pull_secrets(
+    run: Callable[..., subprocess.CompletedProcess[str]],
+    *,
+    name: str,
+    namespace: str,
+) -> list[dict[str, str]] | None:
+    """Read only references needed to bind normal ServiceAccount admission."""
+
+    try:
+        result = run(["get", "serviceaccount", name, "-o", "json"])
+        if result.returncode != 0:
+            return None
+        account = json.loads(result.stdout)
+        metadata = account["metadata"]
+        if metadata["name"] != name or metadata["namespace"] != namespace:
+            return None
+        references = account.get("imagePullSecrets", [])
+        if not isinstance(references, list):
+            return None
+        for reference in references:
+            if (
+                not isinstance(reference, dict)
+                or set(reference) != {"name"}
+                or not isinstance(reference["name"], str)
+                or not _KUBERNETES_NAME_RE.fullmatch(reference["name"])
+            ):
+                return None
+    except (OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError):
+        return None
+    return references
+
+
+def _normalized_toleration(value: Any) -> dict[str, Any] | None:
+    """Account for Kubernetes' omitted empty fields and default Equal operator."""
+
+    if not isinstance(value, Mapping):
+        return None
+    return {"key": "", "operator": "Equal", "value": "", "effect": "", **value}
+
+
+def _pull_tolerations_match(requested: Any, observed: Any) -> bool:
+    """Preserve requested tolerations and allow only standard eviction defaults."""
+
+    if not isinstance(requested, list) or not isinstance(observed, list):
+        return False
+    remaining = [_normalized_toleration(value) for value in observed]
+    if None in remaining:
+        return False
+    for value in requested:
+        normalized = _normalized_toleration(value)
+        if normalized is None or normalized not in remaining:
+            return False
+        remaining.remove(normalized)
+    seen = set()
+    for value in remaining:
+        key = value.get("key")
+        seconds = value.get("tolerationSeconds")
+        if (
+            not isinstance(key, str)
+            or key
+            not in {"node.kubernetes.io/not-ready", "node.kubernetes.io/unreachable"}
+            or key in seen
+            or value.get("operator") != "Exists"
+            or value.get("effect") != "NoExecute"
+            or value.get("value") != ""
+            or type(seconds) is not int
+            or seconds < 0
+            or set(value) != {"key", "operator", "value", "effect", "tolerationSeconds"}
+        ):
+            return False
+        seen.add(key)
+    return True
+
+
+def _pull_probe_admission_status(
+    raw: str, *, requested: Mapping[str, Any], pull_secrets: list[dict[str, str]]
+) -> str:
+    """Reject changed authority independently of the UID used for owned cleanup."""
+
+    try:
+        observed = json.loads(raw)["spec"]
+    except (KeyError, TypeError, ValueError):
+        return "authority_mismatch"
+    if (
+        not isinstance(observed, Mapping)
+        or observed.get("serviceAccountName") != requested["serviceAccountName"]
+        or observed.get("imagePullSecrets", []) != pull_secrets
+    ):
+        return "authority_mismatch"
+    for field in _PULL_PLACEMENT_FIELDS.intersection(requested):
+        if field == "tolerations":
+            if not _pull_tolerations_match(requested[field], observed.get(field)):
+                return "placement_mismatch"
+        elif observed.get(field) != requested[field]:
+            return "placement_mismatch"
+    return ""
+
+
 def verify_kubernetes_image_pull(
     *,
     image: str,
@@ -1817,6 +1920,13 @@ def verify_kubernetes_image_pull(
             env=({**os.environ, "KUBECONFIG": kubeconfig} if kubeconfig else None),
         )
 
+    expected_pull_secrets = manifest["spec"]["imagePullSecrets"]
+    if not expected_pull_secrets:
+        expected_pull_secrets = _service_account_pull_secrets(
+            run, name=service_account_name, namespace=namespace
+        )
+        if expected_pull_secrets is None:
+            return KubernetesPullCheck(status="service_account_unverified")
     create_attempted = False
     creation_confirmed = False
     expected_uid = ""
@@ -1843,8 +1953,16 @@ def verify_kubernetes_image_pull(
                 )
                 if created_identity is not None:
                     expected_uid = created_identity[0]
+                created_admission_status = _pull_probe_admission_status(
+                    create.stdout,
+                    requested=manifest["spec"],
+                    pull_secrets=expected_pull_secrets,
+                )
                 deadline = monotonic() + timeout_seconds if timeout_seconds else None
                 while True:
+                    if created_admission_status:
+                        status = created_admission_status
+                        break
                     try:
                         observed = run(["get", "pod", name, "-o", "json"])
                     except (OSError, subprocess.SubprocessError):
@@ -1864,6 +1982,14 @@ def verify_kubernetes_image_pull(
                         status = "identity_mismatch"
                         break
                     expected_uid, image_id, waiting_reason = identity
+                    admission_status = _pull_probe_admission_status(
+                        observed.stdout,
+                        requested=manifest["spec"],
+                        pull_secrets=expected_pull_secrets,
+                    )
+                    if admission_status:
+                        status = admission_status
+                        break
                     digest_match = re.search(
                         r"(?:@|://)(sha256:[0-9a-fA-F]{64})$",
                         image_id,
