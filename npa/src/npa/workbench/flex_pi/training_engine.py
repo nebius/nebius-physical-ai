@@ -115,9 +115,9 @@ class VerifiedTrainer(Wan22Trainer):
             raise RuntimeError(
                 "actual DDP wrapping differs from the fixed bucket policy"
             )
-        if self.accelerator.num_processes != 4 or self.batch_size not in {1, 3}:
+        if self.accelerator.num_processes != 4 or self.batch_size != 1:
             raise RuntimeError(
-                "the accepted contract requires four ranks and microbatch one or three"
+                "the accepted contract requires four ranks and microbatch one"
             )
         if self.gradient_accumulation_steps * self.batch_size != 24:
             raise RuntimeError("the accepted effective batch is 96")
@@ -217,8 +217,6 @@ class VerifiedTrainer(Wan22Trainer):
         return indices
 
     def _record_update(self, start, losses, loader_wait):
-        compiled = self.cfg.get("npa_compile_mode", "off") == "rmsnorm"
-        compiler = self._compiler_by_rank() if compiled else None
         torch.cuda.synchronize()
         elapsed = torch.tensor(
             time.perf_counter() - start, device=self.accelerator.device
@@ -238,16 +236,7 @@ class VerifiedTrainer(Wan22Trainer):
             "loss": float(loss_sum.item()) / count,
             "rank_zero_loader_wait_seconds": loader_wait,
         }
-        if compiler is not None:
-            measurement["compiler_by_rank"] = compiler
         self._record(measurement)
-
-    def _compiler_by_rank(self):
-        from npa.workbench.flex_pi.training_compile import compiler_receipt
-
-        receipts = [None] * 4
-        torch.distributed.all_gather_object(receipts, compiler_receipt())
-        return receipts
 
     def _profile_updates(self, updates):
         if not self.accelerator.is_main_process:
@@ -417,7 +406,6 @@ class VerifiedTrainer(Wan22Trainer):
             "world_size": 4,
             "initial_model_sha256": initial_digest,
         }
-        self._qualify_execution(mode, result)
         if mode == "resume":
             return self._resume_result(result, profile=profile_resume)
         if mode == "train":
@@ -445,22 +433,6 @@ class VerifiedTrainer(Wan22Trainer):
         result["sample_order_sha256"] = self._verify_indices(indices, expected)
         result["samples"] = expected
         result["final_model_sha256"] = self._synchronized_digest()
-
-    def _qualify_execution(self, mode, result):
-        from npa.workbench.flex_pi.training_parity import verify_execution_parity
-
-        compiled = self.cfg.get("npa_compile_mode", "off") == "rmsnorm"
-        if (self.batch_size == 3 or compiled) and mode != "resume":
-            started = time.perf_counter()
-            result["execution_parity"] = verify_execution_parity(self)
-            result["rank_zero_qualification_seconds"] = time.perf_counter() - started
-        if compiled:
-            from npa.workbench.flex_pi.training_compile import (
-                enable_rmsnorm_compilation,
-            )
-
-            model = self.accelerator.unwrap_model(self.model)
-            result["compiled_rmsnorm_modules"] = enable_rmsnorm_compilation(model)
 
     def _resume_result(self, result, *, profile=False):
         result["loaded_model_sha256"] = _state_digest(

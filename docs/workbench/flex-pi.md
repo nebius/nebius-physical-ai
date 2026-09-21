@@ -320,21 +320,8 @@ remain enabled, but tensor-shape recording is disabled because PyTorch 2.7.1
 overflows while recording deterministic FlashAttention allocations
 ([upstream issue](https://github.com/pytorch/pytorch/issues/150601)). This changes
 profiling metadata only; deterministic algorithms and attention math stay fixed.
-`--microbatch-per-rank 3` uses
-eight accumulation steps and automatically qualifies the decomposition before
-timing. It captures the stochastic inputs for 96 real anchors and the 36-anchor
-tail, requires exact microbatch-one replay, then compares every gradient,
-applied update and optimizer moment against microbatch three. Zero-reference
-tensors require exact agreement; other tensors allow at most 5% relative L2
-error, with gradient cosine at least 0.999 and norm error at most 2%. Losses
-must agree within 1%. The gate restores model state and RNG before training;
-its artifact contains summaries and hashes, never the input tensors. A failed
-gate rejects the candidate. Microbatch two is unsupported because the exact
-split would produce uneven rank batches. Semantic workload hashes normalize
-the supported decomposition and compilation scope, while checkpoint resume keeps its stricter
-execution identity. Compare the sample-order and
-initial/final model digests and numerical losses before accepting a candidate;
-the same settings alone do not prove parity. Full training requires a complete
+Compare sample-order and model-state digests and numerical losses before
+accepting any execution change; the same settings alone do not prove parity. Full training requires a complete
 epoch, both complete initial/final validation passes, finite losses/gradients,
 synchronized model states, a non-regressed validation loss, and an uploaded
 checkpoint restored byte-for-byte into a fresh process. The continuation update
@@ -348,8 +335,8 @@ baseline and candidate jobs, pass the same `--normalization-path` S3 object and
 `--normalization-sha256`. The options must be supplied together. Both training
 and validation load the verified phase-local file. Workload hashing canonicalizes
 its location while retaining its exact content hash. Nondefault optimizer modes
-require a separate comparison against default AdamW before selection; the
-microbatch and RMSNorm gates compare execution under the selected optimizer.
+require a separate fixed-input gradient, update and optimizer-state comparison
+against default AdamW before selection.
 Cold preparation, initialization, checkpointing and validation are reported
 separately from update throughput. No throughput or training acceptance is
 claimed until the real target completes these gates.
@@ -361,15 +348,3 @@ anchors from the frozen permutation, and their complete loaded state and next
 update must match. The probe update is excluded from throughput. Its separate
 `profile_checkpoint_resume_verified` result never claims a complete epoch or
 full validation; `--mode train` retains the final epoch-boundary resume gate.
-
-`--compile-mode rmsnorm` compiles only the 240 pinned Wan query/key RMSNorm
-modules, retaining their FP32 normalization, BF16 cast, learned scales and
-parameter identities. It uses in-place Inductor compilation with full graphs
-and the default mode; the stochastic loss and attention masks stay unchanged.
-The same 96-anchor and 36-anchor parity checks compare it with eager microbatch
-one before timing. Every rank records compiler graph counts and outer compile
-duration. Graph breaks or compilation during steady windows reject the result;
-the first six updates remain separately reported startup. Compilation is also
-enabled in the fresh resume process, which must pass the same checkpoint and
-continuation checks. This is an optional candidate until full target acceptance
-is recorded, and it defaults to `off`.

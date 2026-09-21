@@ -18,14 +18,13 @@ def _configuration(plan, root, assets):
     from npa.workbench.flex_pi.training_assets import _hydra_overrides
 
     register_default_resolvers()
-    microbatch = plan["execution"].get("microbatch_per_rank", 1)
     overrides = (
         _hydra_overrides(assets)
         + normalization_overrides(plan, root)
         + [
             f"output_dir={root}",
-            f"batch_size={microbatch}",
-            f"gradient_accumulation_steps={24 // microbatch}",
+            "batch_size=1",
+            "gradient_accumulation_steps=24",
             "num_epochs=1",
             "max_steps=null",
             "mixed_precision=bf16",
@@ -39,7 +38,6 @@ def _configuration(plan, root, assets):
             "data.train._target_=npa.workbench.flex_pi.training_engine.ExactTrainingDataset",
             "data.val._target_=npa.workbench.flex_pi.training_engine.ExactTrainingDataset",
             "+npa_optimizer=" + plan["execution"]["optimizer"],
-            "+npa_compile_mode=" + plan["execution"].get("compile_mode", "off"),
             "+npa_deterministic_training=true",
             "+npa_ddp_bucket_policy=fixed_find_unused",
             "+npa_prefetch_factor=" + str(plan["execution"]["prefetch_factor"]),
@@ -347,7 +345,6 @@ def _workload_identity(plan, root, assets):
     return {
         "normalization_sha256": normalization,
         "workload_sha256": hashlib.sha256(payload).hexdigest(),
-        "semantic_workload_sha256": _semantic_workload_digest(workload),
     }
 
 
@@ -357,20 +354,6 @@ def _canonical_normalization(configuration):
         selected = configuration.get("data", {}).get(dataset, {})
         selected["pretrained_norm_stats"] = "<verified-normalization>"
     return configuration
-
-
-def _semantic_workload_digest(workload):
-    configuration = dict(workload["configuration"])
-    compile_mode = configuration.pop("npa_compile_mode", "off")
-    if compile_mode not in {"off", "rmsnorm"}:
-        raise RuntimeError("semantic workload requires qualified compilation scope")
-    microbatch = configuration.pop("batch_size", 1)
-    accumulation = configuration.pop("gradient_accumulation_steps", 24)
-    if microbatch not in {1, 3} or microbatch * accumulation * 4 != 96:
-        raise RuntimeError("semantic workload requires a supported effective batch")
-    configuration["global_batch_size"] = 96
-    body = {**workload, "configuration": configuration}
-    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
 def main():

@@ -39,23 +39,15 @@ Keep the guarded fixed DDP bucket policy for all comparisons. Before a full
 epoch, use `--mode profile-resume` to prove the exact next 96 anchors and full
 fresh-process state/update parity after the real 30-update profile. This early
 diagnostic does not satisfy full-epoch, validation or final-resume acceptance.
-`--microbatch-per-rank 3` uses accumulation eight only after automatic untimed
-fixed-input parity on a full update and the epoch tail; failed checks reject
-the candidate. Preserve the same data, objective, transforms and effective
-batch, and compare semantic workload hashes before throughput. The final
-36-sample update must preserve every anchor and use its actual denominator.
+The final 36-sample update must preserve every anchor and use its actual
+denominator. Microbatch one and eager execution are fixed in this adapter.
 Freeze the baseline's `dataset_stats.json` and provide its exact S3 object with
 `--normalization-path` and `--normalization-sha256` for every independent
 comparison run. Checkpoints include these bytes and fresh resume must reload
 them; never recompute normalization or relax its content-hash check on resume.
 Keep the default optimizer unless separate default-versus-selected optimizer
-parity is proven; microbatch and RMSNorm checks use the selected optimizer.
+parity is proven.
 
-`--compile-mode rmsnorm` is a separately gated candidate that compiles only
-the pinned deterministic normalization modules. It must pass fixed-input
-gradient/update/optimizer parity; graph breaks or steady-window recompilation
-on any rank reject its throughput. Keep compilation off unless this scope is
-being explicitly qualified, and prove fresh compiled resume for any winner.
 Training requires the full Wan VideoDiT and official derived ActionDiT
 initialization; the checkpoint-only inference instructions below apply only to
 the released RoboTwin inference checkpoint.

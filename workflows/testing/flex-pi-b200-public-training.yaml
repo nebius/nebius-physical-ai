@@ -11,8 +11,6 @@ config:
   prefix: "runs/{{run.id}}/flex-pi-public-training"
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   training_mode: train
-  microbatch_per_rank: "1"
-  compile_mode: "off"
   normalization_path: ""
   normalization_sha256: ""
   num_workers: "4"

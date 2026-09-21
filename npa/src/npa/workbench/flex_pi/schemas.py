@@ -28,8 +28,6 @@ class TrainingBody(BaseModel):
         default="train", max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
     )
     mode: Literal["train", "profile", "profile-resume"] = "train"
-    microbatch_per_rank: Literal[1, 3] = 1
-    compile_mode: Literal["off", "rmsnorm"] = "off"
     normalization_path: str = ""
     normalization_sha256: str = ""
     num_workers: int = Field(default=4, ge=0)

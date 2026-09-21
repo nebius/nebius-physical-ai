@@ -20,12 +20,8 @@ from npa.workbench.flex_pi.training_assets import _prepare_derived
 from npa.workbench.flex_pi.training_worker import _workload_identity
 
 
-@pytest.mark.parametrize("microbatch", [1, 3])
-@pytest.mark.parametrize("compile_mode", ["off", "rmsnorm"])
 @pytest.mark.parametrize("mode", ["train", "profile-resume"])
-def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
-    microbatch, compile_mode, mode
-):
+def test_cli_and_sdk_resolve_the_same_immutable_public_contract(mode):
     result = CliRunner().invoke(
         app,
         [
@@ -34,10 +30,6 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
             "train",
             "--mode",
             mode,
-            "--microbatch-per-rank",
-            str(microbatch),
-            "--compile-mode",
-            compile_mode,
             "--normalization-path",
             "s3://example-bucket/original/dataset_stats.json",
             "--normalization-sha256",
@@ -52,8 +44,6 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
     assert cli == train(
         output_path="s3://example-bucket/run/train",
         mode=mode,
-        microbatch_per_rank=microbatch,
-        compile_mode=compile_mode,
         normalization_path="s3://example-bucket/original/dataset_stats.json",
         normalization_sha256="a" * 64,
         dry_run=True,
@@ -67,13 +57,15 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(
     assert cli["reference_benchmark_beaten"] is False
 
 
-def test_unsupported_microbatch_rejected_before_training():
-    with pytest.raises(FlexPiError, match="microbatch"):
-        train(
-            output_path="s3://example-bucket/run/train",
-            microbatch_per_rank=2,
-            dry_run=True,
-        )
+@pytest.mark.parametrize(
+    "candidate", [{"microbatch_per_rank": 3}, {"compile_mode": "rmsnorm"}]
+)
+def test_unqualified_execution_options_are_not_http_controls(candidate):
+    from pydantic import ValidationError
+    from npa.workbench.flex_pi.schemas import TrainingBody
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        TrainingBody.model_validate(candidate)
 
 
 @pytest.mark.parametrize(
@@ -238,22 +230,3 @@ def test_training_state_digest_preserves_dictionary_boundaries():
     assert state_digest({"a": {"b": 1}, "c": 2}) != state_digest(
         {"a": {"b": 1, "c": 2}}
     )
-
-
-def test_workload_semantics_preserve_global_batch_while_resume_identity_stays_strict(
-    tmp_path,
-):
-    (tmp_path / "dataset_stats.json").write_text('{"mean":1}')
-    plan = {"configuration": {"batch_size": 1, "gradient_accumulation_steps": 24}}
-    baseline = _workload_identity(plan, tmp_path, tmp_path / "assets")
-    plan["configuration"].update(batch_size=3, gradient_accumulation_steps=8)
-    candidate = _workload_identity(plan, tmp_path, tmp_path / "assets")
-    assert baseline["semantic_workload_sha256"] == candidate["semantic_workload_sha256"]
-    assert baseline["workload_sha256"] != candidate["workload_sha256"]
-    plan["configuration"]["npa_compile_mode"] = "rmsnorm"
-    compiled = _workload_identity(plan, tmp_path, tmp_path / "assets")
-    assert baseline["semantic_workload_sha256"] == compiled["semantic_workload_sha256"]
-    assert candidate["workload_sha256"] != compiled["workload_sha256"]
-    plan["configuration"]["gradient_accumulation_steps"] = 9
-    with pytest.raises(RuntimeError, match="effective batch"):
-        _workload_identity(plan, tmp_path, tmp_path / "assets")

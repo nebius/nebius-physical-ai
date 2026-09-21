@@ -63,8 +63,6 @@ def train(
     *,
     output_path: str,
     mode: str = "train",
-    microbatch_per_rank: int = 1,
-    compile_mode: str = "off",
     normalization_path: str = "",
     normalization_sha256: str = "",
     num_workers: int = 4,
@@ -79,8 +77,6 @@ def train(
     Args:
         output_path: Authorized run-scoped S3 destination.
         mode: Train with full validation/resume, or profile.
-        microbatch_per_rank: One anchor, or automatically qualified groups of three.
-        compile_mode: Off, or automatically qualified RMSNorm compilation.
         normalization_path: Original run's statistics as an exact S3 object.
         normalization_sha256: Required content hash when reusing statistics.
         num_workers: Data loader workers per GPU.

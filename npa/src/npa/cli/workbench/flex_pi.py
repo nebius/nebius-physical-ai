@@ -29,10 +29,6 @@ app = typer.Typer(
 def train_cmd(
     output_path: str = typer.Option(..., "--output-path"),
     mode: str = typer.Option("train", "--mode", help="train, profile, profile-resume"),
-    microbatch_per_rank: int = typer.Option(
-        1, "--microbatch-per-rank", help="1, or 3 after fixed-batch parity checks."
-    ),
-    compile_mode: str = typer.Option("off", "--compile-mode"),
     normalization_path: str = typer.Option("", "--normalization-path"),
     normalization_sha256: str = typer.Option("", "--normalization-sha256"),
     num_workers: int = typer.Option(4, "--num-workers", min=0),
@@ -48,8 +44,6 @@ def train_cmd(
     Args:
         output_path: Authorized run-scoped S3 artifacts and checkpoint prefix.
         mode: Full train/validation/resume or the fixed profiling protocol.
-        microbatch_per_rank: One anchor, or parity-qualified groups of three.
-        compile_mode: Off, or parity-qualified RMSNorm compilation.
         normalization_path: Original run's statistics as an exact S3 object.
         normalization_sha256: Required content hash when reusing statistics.
         num_workers: Loader workers per participating GPU.
