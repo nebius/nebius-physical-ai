@@ -74,6 +74,189 @@ def rrd_scale_rows(count: int) -> list[dict]:
     return rows
 
 
+def _decoded_rrd_events(path: Path) -> list[dict]:
+    import rerun_bindings
+
+    events = []
+    recording = rerun_bindings.load_recording(str(path))
+    for chunk in recording.chunks():
+        batch = chunk.to_record_batch()
+        columns = batch.to_pydict()
+        if "problem_index" not in columns:
+            continue
+        component_names = [
+            name
+            for name in columns
+            if name
+            not in {
+                "rerun.controls.RowId",
+                "log_tick",
+                "log_time",
+                "problem_index",
+                "trajectory_time",
+                "Clear:is_recursive",
+            }
+        ]
+        clear_values = columns.get("Clear:is_recursive", [None] * batch.num_rows)
+        for offset in range(batch.num_rows):
+            fact = any(columns[name][offset] is not None for name in component_names)
+            events.append(
+                {
+                    "entity_path": chunk.entity_path.lstrip("/"),
+                    "problem_index": columns["problem_index"][offset],
+                    "row_id": int.from_bytes(
+                        columns["rerun.controls.RowId"][offset], "big"
+                    ),
+                    "recursive_clear": clear_values[offset] == [True],
+                    "fact": fact,
+                }
+            )
+    return events
+
+
+def _latest_decoded_fact(
+    events: list[dict], entity_path: str, problem_index: int
+) -> dict | None:
+    facts = [
+        event
+        for event in events
+        if event["entity_path"] == entity_path
+        and event["fact"]
+        and event["problem_index"] <= problem_index
+    ]
+    if not facts:
+        return None
+    clears = [
+        event
+        for event in events
+        if event["recursive_clear"]
+        and event["problem_index"] <= problem_index
+        and (
+            entity_path == event["entity_path"]
+            or entity_path.startswith(event["entity_path"] + "/")
+        )
+    ]
+
+    def event_key(event: dict) -> tuple[int, int]:
+        return event["problem_index"], event["row_id"]
+
+    fact = max(facts, key=event_key)
+    return (
+        None
+        if clears and event_key(max(clears, key=event_key)) >= event_key(fact)
+        else fact
+    )
+
+
+def _mixed_sparse_rows() -> list[dict]:
+    success = copy.deepcopy(row())
+    success["problem_id"] = "success"
+    success["metrics"] = {"success_only": 1.0, "shared": 10.0}
+    failed = {
+        "mode": "kinematic",
+        "dataset": "synthetic",
+        "problem_id": "failed",
+        "status": "failed",
+        "query": copy.deepcopy(success["query"]),
+        "metrics": {"failure_only": 2.0},
+    }
+    failed["query"]["goal_pose"]["position_xyz"] = [0.2, 0.0, 0.0]
+    invalid = {
+        "mode": "kinematic",
+        "dataset": "synthetic",
+        "problem_id": "invalid",
+        "status": "invalid",
+        "query": copy.deepcopy(success["query"]),
+        "metrics": {"invalid_only": 3.0},
+    }
+    return [success, failed, invalid]
+
+
+def _assert_decoded_goal_state(events: list[dict]) -> None:
+    for clear_root in ("problems/goal", "metrics", "trajectory"):
+        clear_indices = [
+            event["problem_index"]
+            for event in events
+            if event["entity_path"] == clear_root and event["recursive_clear"]
+        ]
+        assert sorted(clear_indices) == [0, 1, 2]
+    goal_at_failure = _latest_decoded_fact(events, "problems/goal", 1)
+    assert _latest_decoded_fact(events, "problems/goal", 0) is not None
+    assert goal_at_failure is not None and goal_at_failure["problem_index"] == 1
+    assert _latest_decoded_fact(events, "problems/goal", 2) is None
+
+
+def _assert_decoded_metric_state(events: list[dict]) -> None:
+    metric_paths = ("success_only", "shared", "failure_only", "invalid_only")
+    expected_metrics = [
+        {"success_only", "shared"},
+        {"failure_only"},
+        {"invalid_only"},
+    ]
+    for problem_index, expected_names in enumerate(expected_metrics):
+        observed_names = {
+            name
+            for name in metric_paths
+            if _latest_decoded_fact(events, f"metrics/{name}", problem_index)
+        }
+        assert observed_names == expected_names
+
+
+def _assert_decoded_trajectory_state(events: list[dict]) -> None:
+    trajectory_paths = (
+        "trajectory/joint_names",
+        "trajectory/tool_path",
+        "trajectory/tool",
+        "trajectory/tool_quaternion/w",
+        "trajectory/joints/0/position",
+    )
+    assert all(_latest_decoded_fact(events, path, 0) for path in trajectory_paths)
+    for problem_index in (1, 2):
+        assert not any(
+            _latest_decoded_fact(events, path, problem_index)
+            for path in trajectory_paths
+        )
+
+
+def _assert_decoded_sparse_state(events: list[dict]) -> None:
+    _assert_decoded_goal_state(events)
+    _assert_decoded_metric_state(events)
+    _assert_decoded_trajectory_state(events)
+
+
+def _assert_decoded_clear_order(events: list[dict]) -> None:
+    clear_roots = {
+        "problems/goal": "problems/goal",
+        "metrics/success_only": "metrics",
+        "metrics/failure_only": "metrics",
+        "metrics/invalid_only": "metrics",
+        "trajectory/tool": "trajectory",
+    }
+    current_facts = {
+        0: ("problems/goal", "metrics/success_only", "trajectory/tool"),
+        1: ("problems/goal", "metrics/failure_only"),
+        2: ("metrics/invalid_only",),
+    }
+    for problem_index, entity_paths in current_facts.items():
+        for entity_path in entity_paths:
+            clear_row_ids = [
+                event["row_id"]
+                for event in events
+                if event["entity_path"] == clear_roots[entity_path]
+                and event["problem_index"] == problem_index
+                and event["recursive_clear"]
+            ]
+            fact_row_ids = [
+                event["row_id"]
+                for event in events
+                if event["entity_path"] == entity_path
+                and event["problem_index"] == problem_index
+                and event["fact"]
+            ]
+            assert len(clear_row_ids) == 1
+            assert fact_row_ids and clear_row_ids[0] < min(fact_row_ids)
+
+
 def plan_row():
     result = row()
     result["dataset"] = "operator"
@@ -614,8 +797,13 @@ def test_factual_rrd_round_trip(tmp_path):
     assert result["goal_markers"] == 1
     assert result["metric_samples"] == 1
     assert result["trajectory_samples"] == 2
-    assert result["rrd_layout"] == "npa.curobo.problem-index.v1"
-    assert result["entity_path_count"] == 15
+    assert result["rrd_layout"] == "npa.curobo.problem-index.v2"
+    assert result["entity_path_count"] == 17
+    assert result["state_clear_records"] == {
+        "problems/goal": 1,
+        "metrics": 1,
+        "trajectory": 1,
+    }
     decoded_path = tmp_path / "rrd-print.txt"
     decoded = decode_rrd(
         target, rows=[row()], run_id="unit-rrd", decoded_output=decoded_path
@@ -624,7 +812,7 @@ def test_factual_rrd_round_trip(tmp_path):
     assert decoded["print"] == "passed"
     assert decoded["print_bytes"] == decoded_path.stat().st_size
     assert decoded["chunk_mismatches"] == []
-    assert decoded["decoded_chunk_rows"] == 24
+    assert decoded["decoded_chunk_rows"] == 27
     import sys
 
     executable = Path(sys.executable).with_name("rerun")
@@ -650,6 +838,28 @@ def test_factual_rrd_round_trip(tmp_path):
     ):
         assert entity in printed
     assert "problems/000000" not in printed
+
+
+def test_decoded_latest_at_state_clears_sparse_shared_paths(tmp_path):
+    import sys
+
+    from npa.workbench.curobo.artifacts import _normalize_rrd_for_compare
+
+    rows = _mixed_sparse_rows()
+    journal = tmp_path / "mixed.jsonl"
+    journal.write_bytes(b"".join(canonical(problem) + b"\n" for problem in rows))
+    target = tmp_path / "mixed.rrd"
+    build_rrd(journal, target, run_id="mixed-state")
+    decoded = decode_rrd(target, rows=rows, run_id="mixed-state")
+    assert decoded["semantic_compare"] == "passed"
+
+    normalized = tmp_path / "mixed-normalized.rrd"
+    rerun = str(Path(sys.executable).with_name("rerun"))
+    _normalize_rrd_for_compare(target, normalized, rerun=rerun)
+    for recording in (target, normalized):
+        events = _decoded_rrd_events(recording)
+        _assert_decoded_sparse_state(events)
+        _assert_decoded_clear_order(events)
 
 
 def test_decoded_rrd_rejects_truncated_recording(tmp_path):
@@ -678,14 +888,19 @@ def test_rrd_layout_decodes_full_matrix_scale_with_bounded_paths(tmp_path):
     )
 
     assert result["problem_count"] == 5200
-    assert result["entity_path_count"] == 15
-    assert decoded["required_chunk_count"] == 15
+    assert result["entity_path_count"] == 17
+    assert decoded["required_chunk_count"] == 17
     assert decoded["status_entities"] == 5200
     assert decoded["goal_entities"] == 5200
     assert decoded["metric_samples"] == 5200
+    assert decoded["state_clear_records"] == {
+        "problems/goal": 5200,
+        "metrics": 5200,
+        "trajectory": 5200,
+    }
     assert decoded["trajectory_entities"] == 5200
     assert decoded["trajectory_samples"] == 10400
-    assert decoded["decoded_chunk_rows"] == 119601
+    assert decoded["decoded_chunk_rows"] == 135201
 
 
 @pytest.mark.parametrize(
@@ -729,6 +944,9 @@ def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation
     )
     problem_index = 1 if mutation == "problem_index" else 0
     recording.set_time("problem_index", sequence=problem_index)
+    recording.log("problems/goal", rr.Clear(recursive=True))
+    recording.log("metrics", rr.Clear(recursive=True))
+    recording.log("trajectory", rr.Clear(recursive=True))
     status = {
         key: original[key] for key in ("problem_id", "mode", "dataset", "status")
     }

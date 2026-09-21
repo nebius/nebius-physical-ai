@@ -314,9 +314,14 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
         raise CuroboError("invalid planner journal") from exc
 
 
-_RRD_LAYOUT = "npa.curobo.problem-index.v1"
+_RRD_LAYOUT = "npa.curobo.problem-index.v2"
 _RRD_PROBLEM_ROOT = "problems"
 _RRD_TRAJECTORY_ROOT = "trajectory"
+_RRD_CLEAR_ROOTS = (
+    f"{_RRD_PROBLEM_ROOT}/goal",
+    "metrics",
+    _RRD_TRAJECTORY_ROOT,
+)
 
 
 def log_trajectory_columns(
@@ -373,10 +378,18 @@ def _rrd_provenance(
     }
 
 
+def _clear_rrd_problem_state(recording) -> None:
+    import rerun as rr
+
+    for entity_path in _RRD_CLEAR_ROOTS:
+        recording.log(entity_path, rr.Clear(recursive=True))
+
+
 def _log_rrd_problem(recording, row: dict[str, Any], *, problem_index: int) -> None:
     import rerun as rr
 
     recording.set_time("problem_index", sequence=problem_index)
+    _clear_rrd_problem_state(recording)
     status = {key: row[key] for key in ("problem_id", "mode", "dataset", "status")}
     recording.log(
         f"{_RRD_PROBLEM_ROOT}/status", rr.TextDocument(json.dumps(status))
@@ -434,6 +447,9 @@ def _rrd_manifest(
         "status_entities": len(rows),
         "goal_markers": sum(row["status"] != "invalid" for row in rows),
         "metric_samples": sum(len(row.get("metrics", {})) for row in rows),
+        "state_clear_records": {
+            entity_path: len(rows) for entity_path in _RRD_CLEAR_ROOTS
+        },
         "trajectory_samples": sum(
             len(row["trajectory"]["position"])
             for row in rows
@@ -481,6 +497,8 @@ def _add_expected_rows(
 def _expected_rrd_chunks(rows: list[dict[str, Any]]) -> dict[str, int]:
     expected: dict[str, int] = {"provenance": 1}
     for row in rows:
+        for entity_path in _RRD_CLEAR_ROOTS:
+            _add_expected_rows(expected, entity_path)
         _add_expected_rows(expected, f"{_RRD_PROBLEM_ROOT}/status")
         if row["status"] != "invalid":
             _add_expected_rows(expected, f"{_RRD_PROBLEM_ROOT}/goal")
@@ -658,6 +676,9 @@ def _decode_rrd_to(
         "status_entities": len(rows),
         "goal_entities": sum(row["status"] != "invalid" for row in rows),
         "metric_samples": sum(len(row.get("metrics", {})) for row in rows),
+        "state_clear_records": {
+            entity_path: len(rows) for entity_path in _RRD_CLEAR_ROOTS
+        },
         "trajectory_entities": sum(row["status"] == "success" for row in rows),
         "trajectory_samples": sum(
             len(row["trajectory"]["position"])
