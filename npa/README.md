@@ -451,6 +451,16 @@ for the full env contract and safety preconditions.
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
+## Workbench specialists
+
+For independently running GLM/DeepSeek agents, install `npa[agent-specialists]`
+and run `npa workbench specialists --config <operator-team.json> serve`.
+The [specialist guide](../docs/workbench/specialists.md) covers explicit model
+endpoints, optional Jev routing, scoped workspaces, durable restart, task controls,
+and the required `NPA_SPECIALISTS_TOKEN` service credential. `NEBIUS_TOKEN_FACTORY_KEY`
+supplies hosted inference; `TYPESAFE_API_KEY` is needed only for optional Jev.
+Configuration contains credential environment names, never credential values.
+
 ## Workbench Studio
 
 Studio `preview` and `final` can also deliver the finished MP4 with

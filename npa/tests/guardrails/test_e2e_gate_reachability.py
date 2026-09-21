@@ -20,6 +20,10 @@ MANUAL_GATES = {
         "requires an explicitly selected disposable cluster with administrator access; "
         "creates namespaces, temporary client contexts, and CPU pods"
     ),
+    "NPA_SPECIALISTS_LIVE": (
+        "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
+        "run the restart and workflow-repair proof in docs/workbench/specialists.md"
+    ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
         "run with docs/workbench/token-factory-robot-sdg.md"

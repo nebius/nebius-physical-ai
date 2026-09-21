@@ -107,6 +107,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.sim2real import app as sim2real_app
     from npa.cli.workbench.sim2real_envgen import app as sim2real_envgen_app
     from npa.cli.workbench.sonic import app as sonic_app
+    from npa.cli.workbench.specialists import app as specialists_app
     from npa.cli.workbench.token_factory import app as token_factory_app
     from npa.cli.workbench.vlm_eval import app as vlm_eval_app
     from npa.cli.workbench.workflow import app as workflow_app
@@ -116,6 +117,7 @@ def _full_app() -> typer.Typer:
         help="Physical AI workbench tools.",
         no_args_is_help=True,
     )
+    full.add_typer(specialists_app, name="specialists")
 
     @full.callback()
     def main() -> None:

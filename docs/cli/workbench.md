@@ -11,6 +11,7 @@ Options
 --help  Show this message and exit.
 Commands
 antioch  Run Antioch simulations and collect policy-compatible data.
+specialists  Self-hosted specialist agents and durable task monitoring.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
 cosmos  NVIDIA Cosmos world model serving and inference endpoints.
 cosmos2  Cosmos2 transfer workflow contracts.
@@ -65,6 +66,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | Command | Description |
 | --- | --- |
 | `antioch` | Run Antioch simulations and collect policy-compatible data. |
+| `specialists` | Self-hosted specialist agents and durable task monitoring. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
 | `cosmos` | NVIDIA Cosmos world model serving and inference endpoints. |
 | `cosmos2` | Cosmos2 transfer workflow contracts. |
@@ -110,6 +112,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 ```bash
 npa workbench --help
 npa workbench antioch --help
+npa workbench specialists --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workbench`.

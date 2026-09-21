@@ -1,0 +1,575 @@
+"""Prove durable multi-specialist execution, replay safety and public tool boundaries."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import json
+import os
+import signal
+import subprocess
+import threading
+import time
+
+from fastapi.testclient import TestClient
+import pytest
+
+from npa.agent_backend.specialists.config import Operation, Profile, TeamConfig
+from npa.agent_backend.specialists.service import create_app
+from npa.agent_backend.specialists.team import SpecialistTeam
+from npa.agent_backend.specialists.tools import WorkbenchTools
+
+
+def _response(
+    model, *, text="", tool="", arguments=None, call_id="call-one", finish=None
+):
+    message = {"role": "assistant", "content": text}
+    if tool:
+        message["tool_calls"] = [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": tool, "arguments": json.dumps(arguments or {})},
+            }
+        ]
+    return {
+        "id": "synthetic-response",
+        "model": model,
+        "choices": [
+            {
+                "message": message,
+                "finish_reason": finish or ("tool_calls" if tool else "stop"),
+            }
+        ],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25},
+    }
+
+
+class _Client:
+    def __init__(self, responses, barrier=None):
+        self.responses = iter(responses)
+        self.calls = []
+        self.barrier = barrier
+
+    def chat_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.barrier:
+            self.barrier.wait(timeout=10)
+        return next(self.responses)
+
+
+@pytest.fixture
+def configuration(tmp_path):
+    profiles = []
+    for name in ("simulation", "data"):
+        workspace = tmp_path / name
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "src/value.txt").write_text("broken\n")
+        profiles.append(
+            Profile(
+                name=name,
+                description="Inspect and improve " + name,
+                model="synthetic/" + name,
+                workspace=workspace,
+                read_paths=["src"],
+                write_paths=["src"],
+                operations={
+                    "check": Operation(
+                        argv=[
+                            "{python}",
+                            "-c",
+                            "from pathlib import Path; assert Path('src/value.txt').read_text() == 'fixed\\n'",
+                        ],
+                        description="Check the repaired value",
+                    )
+                },
+            )
+        )
+    return TeamConfig(
+        state_directory=tmp_path / "state",
+        profiles=profiles,
+        default_profile="simulation",
+    )
+
+
+def _team(configuration, responses):
+    return SpecialistTeam(configuration, clients={"simulation": _Client(responses)})
+
+
+def test_tool_checkpoint_survives_new_coordinator(configuration):
+    model = configuration.profiles[0].model
+    client = _Client(
+        [
+            _response(model, tool="read_file", arguments={"path": "src/value.txt"}),
+            _response(model, text="Read the source successfully."),
+        ]
+    )
+    first = SpecialistTeam(configuration, clients={"simulation": client})
+    first.submit("Inspect the source", task_id="restart", specialist="simulation")
+    assert first.work_once("simulation")["status"] == "running"
+    assert first.store._calls("restart") == []
+    second = SpecialistTeam(configuration, clients={"simulation": client})
+    second.work_once("simulation")
+    assert len(client.calls) == 1
+    assert second.work_once("simulation")["status"] == "completed"
+    assert len(client.calls) == 2
+    assert (
+        json.loads(client.calls[-1]["messages"][-1]["content"])["content"] == "broken\n"
+    )
+
+
+def test_real_edit_command_and_patch_complete(configuration):
+    model = configuration.profiles[0].model
+    responses = [
+        _response(
+            model,
+            tool="edit_file",
+            arguments={
+                "path": "src/value.txt",
+                "expected_sha256": hashlib.sha256(b"broken\n").hexdigest(),
+                "old": "broken",
+                "new": "fixed",
+            },
+        ),
+        _response(
+            model,
+            tool="run_operation",
+            arguments={"name": "check"},
+            call_id="check-one",
+        ),
+        _response(model, text="Fixed and checked the source."),
+    ]
+    team = _team(configuration, responses)
+    team.submit("Repair and test", task_id="repair", specialist="simulation")
+    for _ in range(5):
+        result = team.work_once("simulation")
+    assert result["status"] == "completed"
+    assert (
+        configuration.profiles[0].workspace.joinpath("src/value.txt").read_text()
+        == "fixed\n"
+    )
+    assert "-broken\n+fixed\n" in team.patch("repair")
+    operations = [
+        event for event in team.status("repair")["events"] if event["type"] == "tool"
+    ]
+    assert operations[-1]["result"]["returncode"] == 0
+
+
+def test_specialists_reach_model_concurrently(configuration):
+    barrier = threading.Barrier(2)
+    clients = {
+        profile.name: _Client([_response(profile.model, text=profile.name)], barrier)
+        for profile in configuration.profiles
+    }
+    team = SpecialistTeam(configuration, clients=clients)
+    for profile in configuration.profiles:
+        team.submit("Inspect", specialist=profile.name, task_id=profile.name)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(team.work_once, ["simulation", "data"]))
+    assert all(result["status"] == "completed" for result in results)
+
+
+def test_completed_tool_receipt_prevents_reexecution_after_checkpoint_gap(
+    configuration, monkeypatch
+):
+    model = configuration.profiles[0].model
+    team = _team(
+        configuration,
+        [_response(model, tool="run_operation", arguments={"name": "check"})],
+    )
+    team.submit("Check", specialist="simulation", task_id="gap")
+    team.work_once("simulation")
+    call = _response(model, tool="run_operation", arguments={"name": "check"})[
+        "choices"
+    ][0]["message"]["tool_calls"][0]
+    executor = WorkbenchTools(configuration.profiles[0], team.store, "gap")
+    expected = executor.execute(call)
+    monkeypatch.setattr(
+        executor.__class__,
+        "_run_operation",
+        lambda *_: pytest.fail("operation replayed"),
+    )
+    team.work_once("simulation")
+    assert team.store._calls("gap")[0]["status"] == "completed"
+    assert expected["returncode"] == 1
+
+
+def test_uncertain_call_requires_operator_receipt(configuration):
+    model = configuration.profiles[0].model
+    response = _response(model, tool="run_operation", arguments={"name": "check"})
+    team = _team(configuration, [response, _response(model, text="Reconciled")])
+    team.submit("Check", specialist="simulation", task_id="uncertain")
+    team.work_once("simulation")
+    call = response["choices"][0]["message"]["tool_calls"][0]
+    invocation = {"name": "run_operation", "arguments": call["function"]["arguments"]}
+    team.store._begin_call("uncertain", "call-one", invocation)
+    assert team.work_once("simulation")["status"] == "needs_attention"
+    with pytest.raises(ValueError, match="reconcile"):
+        team.pause(task_id="uncertain", paused=False)
+    team.reconcile(
+        "uncertain", call_id="call-one", result={"ok": True, "returncode": 0}
+    )
+    team.work_once("simulation")
+    assert team.work_once("simulation")["status"] == "completed"
+
+
+def test_duplicate_id_does_not_reroute_or_infer(configuration, monkeypatch):
+    team = _team(configuration, [])
+    first = team.submit("Inspect", task_id="same")
+    monkeypatch.setattr(
+        team, "_route", lambda *_: pytest.fail("duplicate routed again")
+    )
+    assert team.submit("Inspect", task_id="same") == first
+    with pytest.raises(ValueError, match="different request"):
+        team.submit("Changed goal", task_id="same")
+
+
+def test_paused_profile_and_task_do_not_block_other_specialist(configuration):
+    clients = {
+        item.name: _Client([_response(item.model, text="Done")])
+        for item in configuration.profiles
+    }
+    team = SpecialistTeam(configuration, clients=clients)
+    team.submit("Inspect", specialist="simulation", task_id="paused")
+    team.submit("Inspect next", specialist="simulation", task_id="next")
+    team.submit("Inspect", specialist="data", task_id="independent")
+    team.pause(task_id="paused")
+    assert team.work_once("simulation") is None
+    assert team.work_once("data")["status"] == "completed"
+    team.pause(task_id="paused", paused=False)
+    team.pause(specialist="simulation")
+    assert team.work_once("simulation") is None
+    team.pause(specialist="simulation", paused=False)
+    assert team.work_once("simulation")["status"] == "completed"
+
+
+@pytest.mark.parametrize("mutation", ["model", "length", "empty"])
+def test_unusable_model_response_never_executes_tools(configuration, mutation):
+    model = configuration.profiles[0].model
+    response = _response(model, tool="run_operation", arguments={"name": "check"})
+    if mutation == "model":
+        response["model"] = "different/model"
+    elif mutation == "length":
+        response["choices"][0]["finish_reason"] = "length"
+    else:
+        response = _response(model, text="")
+    team = _team(configuration, [response])
+    team.submit("Check", specialist="simulation", task_id="invalid")
+    assert team.work_once("simulation")["status"] == "needs_attention"
+    assert team.store._calls("invalid") == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../outside", "/etc/passwd", ".git/config", "outside.txt", "src/../../outside"],
+)
+def test_tool_paths_cannot_escape_grants(configuration, path):
+    team = _team(configuration, [])
+    tools = WorkbenchTools(configuration.profiles[0], team.store, "scope")
+    call = _response("test", tool="read_file", arguments={"path": path})["choices"][0][
+        "message"
+    ]["tool_calls"][0]
+    assert tools.execute(call)["ok"] is False
+
+
+def test_symlinks_hardlinks_stale_edits_and_unknown_operations_are_rejected(
+    configuration, tmp_path
+):
+    profile = configuration.profiles[0]
+    external = tmp_path / "outside.txt"
+    external.write_text("private")
+    (profile.workspace / "src/link.txt").symlink_to(external)
+    os.link(external, profile.workspace / "src/hard.txt")
+    team = _team(configuration, [])
+    executor = WorkbenchTools(profile, team.store, "scope")
+    invocations = [
+        ("read_file", {"path": "src/link.txt"}),
+        ("read_file", {"path": "src/hard.txt"}),
+        (
+            "edit_file",
+            {
+                "path": "src/value.txt",
+                "expected_sha256": "stale",
+                "old": "broken",
+                "new": "fixed",
+            },
+        ),
+        ("run_operation", {"name": "shell"}),
+    ]
+    for index, (tool, arguments) in enumerate(invocations):
+        call = _response(
+            "test", tool=tool, arguments=arguments, call_id=f"call-{index}"
+        )["choices"][0]["message"]["tool_calls"][0]
+        assert executor.execute(call)["ok"] is False
+    assert external.read_text() == "private"
+
+
+def test_changed_profile_does_not_reuse_old_grants(configuration):
+    team = _team(configuration, [])
+    team.submit("Inspect", task_id="policy", specialist="simulation")
+    configuration.profiles[0].write_paths.append("docs")
+    assert team.work_once("simulation")["status"] == "needs_attention"
+
+
+def test_followup_and_authentication_share_real_coordinator(configuration, monkeypatch):
+    team = _team(configuration, [])
+    monkeypatch.setenv("NPA_SPECIALISTS_TOKEN", "synthetic-service-credential-long")
+    app = create_app("unused", with_workers=False, team=team)
+    headers = {"Authorization": "Bearer synthetic-service-credential-long"}
+    with TestClient(app) as client:
+        assert client.get("/").status_code == 200
+        assert client.get("/api/status").status_code == 401
+        assert client.post("/api/tasks", json={"goal": "inspect"}).status_code == 401
+        result = client.post(
+            "/api/tasks",
+            headers=headers,
+            json={"goal": "inspect", "task_id": "http-task"},
+        )
+        assert result.status_code == 200
+        assert client.post(
+            "/api/tasks/http-task/pause", headers=headers, json={"paused": True}
+        ).json()["paused"]
+        assert client.get("/api/tasks/missing", headers=headers).status_code == 404
+        team.store._update("http-task", "completed", result="Verified original result")
+        result = client.post(
+            "/api/tasks",
+            headers=headers,
+            json={"goal": "continue", "parent_id": "http-task"},
+        )
+        assert "Verified original result" in result.json()["goal"]
+        assert (
+            "synthetic-service-credential-long"
+            not in client.get("/api/status", headers=headers).text
+        )
+
+
+def test_jev_fallback_and_explicit_assignment(configuration, monkeypatch):
+    configuration.router = "jev"
+    team = _team(configuration, [])
+    calls = []
+
+    def classify(text, candidates, **kwargs):
+        calls.append((text, candidates))
+        return {"status": "accepted", "selected_model": "data"}
+
+    monkeypatch.setattr(
+        "npa.agent_backend.specialists.team.classify_generation_model", classify
+    )
+    assert team.submit("data task")["profile"] == "data"
+    assert team.submit("explicit", specialist="simulation")["profile"] == "simulation"
+    assert len(calls) == 1
+    monkeypatch.setattr(
+        "npa.agent_backend.specialists.team.classify_generation_model",
+        lambda *a, **k: {"status": "unavailable"},
+    )
+    assert team.submit("fallback")["profile"] == "simulation"
+
+
+def test_multi_call_response_runs_each_effect_at_its_own_checkpoint(configuration):
+    model = configuration.profiles[0].model
+    response = _response(model, tool="read_file", arguments={"path": "src/value.txt"})
+    second = _response(
+        model, tool="run_operation", arguments={"name": "check"}, call_id="second"
+    )["choices"][0]["message"]["tool_calls"][0]
+    response["choices"][0]["message"]["tool_calls"].append(second)
+    client = _Client([response, _response(model, text="Both results inspected")])
+    team = SpecialistTeam(configuration, clients={"simulation": client})
+    team.submit("Read and check", specialist="simulation", task_id="batch")
+    team.work_once("simulation")
+    team.work_once("simulation")
+    assert len(team.store._calls("batch")) == 1
+    restarted = SpecialistTeam(configuration, clients={"simulation": client})
+    restarted.work_once("simulation")
+    assert len(team.store._calls("batch")) == 2
+    assert len(client.calls) == 1
+    assert restarted.work_once("simulation")["status"] == "completed"
+
+
+def test_profile_file_lock_rejects_concurrent_worker(configuration):
+    team = _team(configuration, [])
+    with team._ownership("simulation"):
+        with pytest.raises(BlockingIOError):
+            team.work_once("simulation")
+    assert team.work_once("simulation") is None
+
+
+def test_duplicate_call_ids_rejected_before_any_effect(configuration):
+    model = configuration.profiles[0].model
+    response = _response(model, tool="read_file", arguments={"path": "src/value.txt"})
+    message = response["choices"][0]["message"]
+    message["tool_calls"].append(message["tool_calls"][0].copy())
+    team = _team(configuration, [response])
+    team.submit("Inspect", specialist="simulation", task_id="duplicate-call")
+    assert team.work_once("simulation")["status"] == "needs_attention"
+    assert team.store._calls("duplicate-call") == []
+
+
+def test_operation_environment_does_not_implicitly_forward_model_credentials(
+    configuration, monkeypatch
+):
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "private-fixture-value")
+    profile = configuration.profiles[0]
+    profile.operations["environment"] = Operation(
+        argv=[
+            "{python}",
+            "-c",
+            "import os; assert 'NEBIUS_TOKEN_FACTORY_KEY' not in os.environ",
+        ],
+        description="Assert credential isolation",
+    )
+    team = _team(configuration, [])
+    call = _response(
+        profile.model, tool="run_operation", arguments={"name": "environment"}
+    )["choices"][0]["message"]["tool_calls"][0]
+    assert (
+        WorkbenchTools(profile, team.store, "environment").execute(call)["returncode"]
+        == 0
+    )
+
+
+def test_cancel_during_model_call_cannot_be_overwritten(configuration):
+    entered, release = threading.Event(), threading.Event()
+    model = configuration.profiles[0].model
+
+    class SlowClient:
+        def chat_completion(self, **kwargs):
+            entered.set()
+            assert release.wait(10)
+            return _response(model, tool="run_operation", arguments={"name": "check"})
+
+    team = SpecialistTeam(configuration, clients={"simulation": SlowClient()})
+    team.submit("Check", specialist="simulation", task_id="cancel-inflight")
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(team.work_once, "simulation")
+        assert entered.wait(10)
+        team.cancel("cancel-inflight")
+        release.set()
+        assert pending.result()["status"] == "cancelled"
+    assert team.work_once("simulation") is None
+    assert team.store._calls("cancel-inflight") == []
+
+
+def test_listing_stays_inside_scope_and_ignores_symlinks(configuration, tmp_path):
+    profile = configuration.profiles[0]
+    (profile.workspace / "src/link").symlink_to(tmp_path, target_is_directory=True)
+    team = _team(configuration, [])
+    call = _response(profile.model, tool="list_files", arguments={"path": "src"})[
+        "choices"
+    ][0]["message"]["tool_calls"][0]
+    result = WorkbenchTools(profile, team.store, "list").execute(call)
+    assert result["paths"] == ["src/value.txt"]
+
+
+def test_patch_without_trailing_newline_can_be_applied_by_git(configuration):
+    profile = configuration.profiles[0]
+    path = profile.workspace / "src/value.txt"
+    path.write_text("broken")
+    team = _team(configuration, [])
+    team.submit("Repair", specialist="simulation", task_id="patch-check")
+    call = _response(
+        profile.model,
+        tool="edit_file",
+        arguments={
+            "path": "src/value.txt",
+            "expected_sha256": hashlib.sha256(b"broken").hexdigest(),
+            "old": "broken",
+            "new": "fixed",
+        },
+    )["choices"][0]["message"]["tool_calls"][0]
+    assert WorkbenchTools(profile, team.store, "patch-check").execute(call)["ok"]
+    path.write_text("broken")
+    result = subprocess.run(
+        ["git", "apply", "--check", "-"],
+        input=team.patch("patch-check"),
+        cwd=profile.workspace,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cli_uses_shared_task_store_and_returns_json(configuration, tmp_path):
+    from typer.testing import CliRunner
+    from npa.cli.main import app
+
+    path = tmp_path / "team.json"
+    path.write_text(configuration.model_dump_json())
+    prefix = ["workbench", "specialists", "--config", str(path)]
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            *prefix,
+            "submit",
+            "Inspect",
+            "--specialist",
+            "simulation",
+            "--task-id",
+            "cli-task",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["id"] == "cli-task"
+    result = runner.invoke(app, [*prefix, "cancel", "cli-task"])
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["status"] == "cancelled"
+    assert SpecialistTeam(configuration).status("cli-task")["status"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    "calls", [[None], [{"id": "call", "function": None}], {"id": "call"}]
+)
+def test_malformed_tool_calls_surface_attention_without_worker_crash(
+    configuration, calls
+):
+    model = configuration.profiles[0].model
+    response = _response(model, tool="read_file", arguments={"path": "src/value.txt"})
+    response["choices"][0]["message"]["tool_calls"] = calls
+    team = _team(configuration, [response])
+    team.submit("Inspect", specialist="simulation", task_id="malformed")
+    assert team.work_once("simulation")["status"] == "needs_attention"
+    assert team.store._calls("malformed") == []
+
+
+def _wait_for_workers(team, previous=None):
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        workers = team.store._workers()
+        if len(workers) == 2 and all(
+            previous is None or worker["pid"] != previous[name]["pid"]
+            for name, worker in workers.items()
+        ):
+            return workers
+        time.sleep(0.05)
+    pytest.fail("supervised workers did not report new heartbeats")
+
+
+def test_supervisor_restarts_real_workers_and_cleans_up(configuration, tmp_path):
+    from npa.agent_backend.specialists.worker import supervise
+
+    path = tmp_path / "team.json"
+    path.write_text(configuration.model_dump_json())
+    team = SpecialistTeam(configuration)
+    with supervise(str(path)):
+        first = _wait_for_workers(team)
+        for worker in first.values():
+            os.kill(worker["pid"], signal.SIGTERM)
+        second = _wait_for_workers(team, first)
+    for worker in second.values():
+        with pytest.raises(ProcessLookupError):
+            os.kill(worker["pid"], 0)
+
+
+def test_supervisor_startup_failure_propagates(configuration, tmp_path, monkeypatch):
+    from npa.agent_backend.specialists.worker import supervise
+
+    path = tmp_path / "team.json"
+    path.write_text(configuration.model_dump_json())
+
+    def reject_start(*args, **kwargs):
+        raise OSError("process creation failed")
+
+    monkeypatch.setattr(subprocess, "Popen", reject_start)
+    with pytest.raises(OSError, match="process creation failed"):
+        with supervise(str(path)):
+            pytest.fail("service reported ready without starting workers")

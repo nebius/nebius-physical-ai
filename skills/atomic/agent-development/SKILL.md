@@ -349,6 +349,18 @@ invent either. Use the existing private live-agent credential configuration.
 
 ## Source Layout
 
+Independent specialist operation is an optional agent layer under
+`npa.agent_backend.specialists`, exposed by `npa workbench specialists` and
+`npa.sdk.workbench.specialists`. See `docs/workbench/specialists.md`. It uses the
+public LangGraph library with local SQLite checkpoints, explicit model profiles,
+one worker per disjoint workspace, and named operator-authorized commands.
+Keep the existing grounded chat path unchanged. Task completion means a model
+returned a final answer; verify workflow/test receipts before claiming workload
+success. Never replay an uncertain operation automatically: reconcile its durable
+tool journal first. Install `npa[agent-specialists]`; development extras include
+the same pinned graph/checkpointer dependencies for real persistence tests.
+
+
 - CLI + bootstrap + embedded backend: `npa/src/npa/cli/agent.py`
 - Grounded intent router (testable): `npa/src/npa/cli/agent_chat.py`
 - Cost-tier routing (testable): `npa/src/npa/cli/agent_routing.py`
