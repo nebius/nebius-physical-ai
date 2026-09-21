@@ -24,6 +24,8 @@ class ReplayError(RuntimeError):
 
 
 QUATERNION_REPLAY_ATOL_RAD = 1e-5
+_DYNAMICS_DOF = 7
+_TORQUE_LIMITS_NM = (87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0)
 
 
 def _runtime_source() -> Path:
@@ -64,6 +66,113 @@ def _benchmark_module(source: Path):
 
 def _tensor_array(tensor) -> np.ndarray:
     return tensor.detach().cpu().reshape(-1, tensor.shape[-1]).numpy()
+
+
+def _validated_names(value: Any, *, label: str) -> list[str]:
+    if isinstance(value, (str, bytes)):
+        raise ReplayError(f"{label} joint names are invalid")
+    try:
+        names = list(value)
+    except TypeError as exc:
+        raise ReplayError(f"{label} joint names are invalid") from exc
+    if (
+        not names
+        or any(not isinstance(name, str) or not name for name in names)
+        or len(names) != len(set(names))
+    ):
+        raise ReplayError(f"{label} joint names are invalid")
+    return names
+
+
+def _model_dimension(value: Any, *, label: str) -> int:
+    if isinstance(value, bool):
+        raise ReplayError(f"{label} is invalid")
+    try:
+        dimension = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ReplayError(f"{label} is invalid") from exc
+    if dimension < 0 or dimension != value:
+        raise ReplayError(f"{label} is invalid")
+    return dimension
+
+
+def _dynamics_model_contract(model_data, active_names: list[str]) -> np.ndarray:
+    if not isinstance(model_data, tuple) or len(model_data) != 3:
+        raise ReplayError("inverse-dynamics model identity is invalid")
+    model, _data, raw_limits = model_data
+    model_names = _validated_names(
+        getattr(model, "names", None), label="Pinocchio model"
+    )
+    model_nq = _model_dimension(
+        getattr(model, "nq", None), label="Pinocchio model nq"
+    )
+    model_nv = _model_dimension(
+        getattr(model, "nv", None), label="Pinocchio model nv"
+    )
+    try:
+        limits = np.asarray(raw_limits, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ReplayError("inverse-dynamics torque limits are invalid") from exc
+    if (
+        model_nq != _DYNAMICS_DOF
+        or model_nv != _DYNAMICS_DOF
+        or model_names[1:] != active_names
+        or len(model_names) != len(active_names) + 1
+        or limits.shape != (_DYNAMICS_DOF,)
+        or not np.isfinite(limits).all()
+        or not np.array_equal(limits, np.asarray(_TORQUE_LIMITS_NM))
+    ):
+        raise ReplayError(
+            "inverse-dynamics model, joint order, or torque limits are invalid"
+        )
+    return limits
+
+
+def _planner_joint_contract(planner) -> tuple[list[str], list[str]]:
+    active_names = _validated_names(
+        getattr(planner, "joint_names", None), label="planner active"
+    )
+    kinematic_names = _validated_names(
+        getattr(planner.kinematics, "joint_names", None), label="kinematics active"
+    )
+    available_names = _validated_names(
+        getattr(planner.kinematics, "all_articulated_joint_names", None),
+        label="kinematics articulated",
+    )
+    if (
+        len(active_names) != _DYNAMICS_DOF
+        or active_names != kinematic_names
+        or not set(active_names).issubset(available_names)
+    ):
+        raise ReplayError("replay joint identity is invalid")
+    return active_names, available_names
+
+
+def _dynamics_arrays(series: dict[str, Any], active_names: list[str]):
+    names = _validated_names(series.get("joint_names"), label="dynamics evidence")
+    try:
+        arrays = {
+            field: np.asarray(series[field], dtype=float)
+            for field in ("position", "velocity", "acceleration", "jerk")
+        }
+        dt = series["dt"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ReplayError("dynamics trajectory fields are invalid") from exc
+    shape = arrays["position"].shape
+    if (
+        names != active_names
+        or len(shape) != 2
+        or shape[0] < 2
+        or shape[1] != _DYNAMICS_DOF
+        or any(array.shape != shape for array in arrays.values())
+        or any(not np.isfinite(array).all() for array in arrays.values())
+        or isinstance(dt, bool)
+        or not isinstance(dt, (int, float))
+        or not math.isfinite(dt)
+        or dt <= 0
+    ):
+        raise ReplayError("dynamics trajectory fields are invalid")
+    return arrays, dt
 
 
 def _quaternion_comparison(
@@ -161,6 +270,7 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
             robot="franka.yml", scene_model=SceneCfg.create({"cuboid": {}})
         )
     )
+    active_names, available_names = _planner_joint_contract(planner)
     dynamics_models = (
         {
             "kinematic": upstream.load_robot_model_for_dynamics(
@@ -173,6 +283,10 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
         if upstream
         else {}
     )
+    dynamics_limits = {
+        mode: _dynamics_model_contract(model, active_names)
+        for mode, model in dynamics_models.items()
+    }
     fk_rows = 0
     dynamics_rows = 0
     max_position_replay_error = 0.0
@@ -186,15 +300,20 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
             if row["status"] != "success":
                 continue
             trajectory = row["trajectory"]
-            names = trajectory["joint_names"]
-            try:
-                indices = [names.index(name) for name in planner.joint_names]
-            except ValueError as exc:
-                raise ReplayError("retained trajectory omits an active joint") from exc
+            names = _validated_names(
+                trajectory.get("joint_names"), label="retained trajectory"
+            )
+            if (
+                not set(active_names).issubset(names)
+                or not set(names).issubset(available_names)
+            ):
+                raise ReplayError("retained trajectory joint identity differs")
+            index_by_name = {name: index for index, name in enumerate(names)}
+            indices = [index_by_name[name] for name in active_names]
             positions = np.asarray(trajectory["position"], dtype=float)[:, indices]
             state = JointState.from_position(
                 planner.device_cfg.to_device(positions.tolist()),
-                joint_names=list(planner.joint_names),
+                joint_names=active_names,
             )
             fk = planner.kinematics.compute_kinematics(state)
             pose = fk.tool_poses.get_link_pose(planner.tool_frames[0])
@@ -243,13 +362,18 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
                 continue
             evidence = row["dynamics_evidence"]
             series = evidence["trajectory"]
+            arrays, dt = _dynamics_arrays(series, active_names)
+            retained_limits = np.asarray(evidence["torque_limits_nm"], dtype=float)
+            if (
+                retained_limits.shape != (_DYNAMICS_DOF,)
+                or not np.array_equal(retained_limits, dynamics_limits[row["mode"]])
+            ):
+                raise ReplayError("retained inverse-dynamics torque limits differ")
             replay_input = SimpleNamespace(
-                position=torch.as_tensor(series["position"], dtype=torch.float64),
-                velocity=torch.as_tensor(series["velocity"], dtype=torch.float64),
-                acceleration=torch.as_tensor(
-                    series["acceleration"], dtype=torch.float64
-                ),
-                dt=torch.as_tensor(series["dt"], dtype=torch.float64),
+                position=torch.as_tensor(arrays["position"], dtype=torch.float64),
+                velocity=torch.as_tensor(arrays["velocity"], dtype=torch.float64),
+                acceleration=torch.as_tensor(arrays["acceleration"], dtype=torch.float64),
+                dt=torch.as_tensor(dt, dtype=torch.float64),
             )
             replayed = upstream.compute_trajectory_energy(
                 replay_input, dynamics_models[row["mode"]]

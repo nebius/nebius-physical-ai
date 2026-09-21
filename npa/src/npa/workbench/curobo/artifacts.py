@@ -216,10 +216,15 @@ def _validate_planner_metrics(row: dict[str, Any], *, kind: str) -> None:
 def validate_joint_series(value: dict[str, Any]) -> np.ndarray:
     names = value["joint_names"]
     position = np.asarray(value["position"], dtype=float)
+    if (
+        not isinstance(names, list)
+        or not names
+        or any(not isinstance(name, str) or not name for name in names)
+        or len(names) != len(set(names))
+    ):
+        raise CuroboError("joint names must be unique nonempty strings")
     if position.ndim != 2 or len(position) < 2 or position.shape[1] != len(names):
         raise CuroboError("trajectory requires at least two aligned joint samples")
-    if len(set(names)) != len(names) or not names:
-        raise CuroboError("joint names must be unique")
     if (
         isinstance(value["dt"], bool)
         or not isinstance(value["dt"], (int, float))
@@ -269,9 +274,12 @@ def _validate_dynamics_evidence(row: dict[str, Any]) -> None:
     velocities = np.asarray(trajectory["velocity"], dtype=float)
     torques = np.asarray(evidence["torques_nm"], dtype=float)
     limits = np.asarray(evidence["torque_limits_nm"], dtype=float)
+    dynamics_names = trajectory["joint_names"]
+    retained_names = row["trajectory"]["joint_names"]
     expected_limits = np.asarray([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])
     if (
         positions.shape[1] != 7
+        or not set(dynamics_names).issubset(retained_names)
         or torques.shape != velocities.shape
         or limits.shape != (positions.shape[1],)
         or not np.isfinite(torques).all()

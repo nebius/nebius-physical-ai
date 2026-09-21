@@ -118,6 +118,8 @@ def test_replay_does_not_import_producer_or_validator_helpers():
 
 
 def test_replay_rows_executes_independent_fk_path(monkeypatch):
+    active_names = [f"j{index}" for index in range(7)]
+
     class Tensor:
         def __init__(self, values):
             self.values = np.asarray(values, dtype=float)
@@ -154,12 +156,14 @@ def test_replay_rows_executes_independent_fk_path(monkeypatch):
     destroyed = []
 
     class Planner:
-        joint_names = ["j0"]
+        joint_names = active_names
         tool_frames = ["tool"]
         device_cfg = types.SimpleNamespace(to_device=lambda value: value)
 
         def __init__(self, _cfg):
             self.kinematics = types.SimpleNamespace(
+                joint_names=active_names,
+                all_articulated_joint_names=active_names,
                 compute_kinematics=lambda _state: types.SimpleNamespace(
                     tool_poses=types.SimpleNamespace(
                         get_link_pose=lambda _frame: types.SimpleNamespace(
@@ -189,12 +193,12 @@ def test_replay_rows_executes_independent_fk_path(monkeypatch):
     row = {
         "status": "success",
         "trajectory": {
-            "joint_names": ["j0"],
+            "joint_names": active_names,
             "dt": 0.1,
-            "position": [[0.0], [0.1]],
-            "velocity": [[0.0], [0.0]],
-            "acceleration": [[0.0], [0.0]],
-            "jerk": [[0.0], [0.0]],
+            "position": [[0.0] * 7, [0.1] * 7],
+            "velocity": [[0.0] * 7, [0.0] * 7],
+            "acceleration": [[0.0] * 7, [0.0] * 7],
+            "jerk": [[0.0] * 7, [0.0] * 7],
             "tool_position": [[0.4, 0.0, 0.2], [0.5, 0.0, 0.3]],
             "tool_quaternion": [
                 [1.0, 0.0, 0.0, 0.0],

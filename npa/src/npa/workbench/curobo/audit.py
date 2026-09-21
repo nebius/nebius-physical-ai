@@ -102,6 +102,17 @@ def _array(value: Any, *, name: str) -> np.ndarray:
     return array
 
 
+def _joint_names(value: Any, width: int, *, name: str) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or len(value) != width
+        or any(not isinstance(joint, str) or not joint for joint in value)
+        or len(value) != len(set(value))
+    ):
+        raise AuditError(f"{name} joint names are invalid")
+    return value
+
+
 def _close(observed: Any, expected: float, *, name: str) -> None:
     if (
         isinstance(observed, bool)
@@ -180,13 +191,12 @@ def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
     jerk = _array(trajectory["jerk"], name="joint jerk")
     tool = _array(trajectory["tool_position"], name="FK tool position")
     tool_quaternion = _array(trajectory["tool_quaternion"], name="FK tool quaternion")
-    names = trajectory.get("joint_names")
+    _joint_names(
+        trajectory.get("joint_names"), position.shape[1], name="successful trajectory"
+    )
     dt = trajectory.get("dt")
     if (
-        not isinstance(names, list)
-        or len(names) != position.shape[1]
-        or len(names) != len(set(names))
-        or position.shape != velocity.shape
+        position.shape != velocity.shape
         or acceleration.shape != position.shape
         or jerk.shape != position.shape
         or tool.shape != (len(position), 3)
@@ -231,7 +241,7 @@ def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
     }
 
 
-def _audit_dynamics(row: dict[str, Any]) -> None:
+def _dynamics_evidence_arrays(row: dict[str, Any]):
     evidence = row.get("dynamics_evidence")
     if not isinstance(evidence, dict):
         raise AuditError("benchmark success lacks dynamics evidence")
@@ -239,13 +249,25 @@ def _audit_dynamics(row: dict[str, Any]) -> None:
     if not isinstance(trajectory, dict):
         raise AuditError("dynamics trajectory is absent")
     position = _array(trajectory["position"], name="dynamics position")
-    velocity = _array(trajectory["velocity"], name="dynamics velocity")
-    acceleration = _array(trajectory["acceleration"], name="dynamics acceleration")
-    jerk = _array(trajectory["jerk"], name="dynamics jerk")
+    arrays = tuple(
+        _array(trajectory[field], name=f"dynamics {field}")
+        for field in ("velocity", "acceleration", "jerk")
+    )
     torques = _array(evidence.get("torques_nm"), name="inverse-dynamics torque")
     limits = np.asarray(evidence.get("torque_limits_nm"), dtype=float)
+    names = _joint_names(
+        trajectory.get("joint_names"), position.shape[1], name="dynamics trajectory"
+    )
+    return evidence, trajectory, position, arrays, torques, limits, names
+
+
+def _audit_dynamics(row: dict[str, Any]) -> None:
+    evidence, trajectory, position, arrays, torques, limits, names = (
+        _dynamics_evidence_arrays(row)
+    )
+    velocity, acceleration, jerk = arrays
     dt = trajectory.get("dt")
-    names = trajectory.get("joint_names")
+    retained_names = row["trajectory"]["joint_names"]
     expected_limits = np.asarray([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0])
     expected_mass = 3.0 if row["mode"] == "dynamics" else 0.0
     if (
@@ -254,8 +276,7 @@ def _audit_dynamics(row: dict[str, Any]) -> None:
         or jerk.shape != position.shape
         or torques.shape != position.shape
         or position.shape[1] != 7
-        or not isinstance(names, list)
-        or len(names) != 7
+        or not set(names).issubset(retained_names)
         or limits.shape != (7,)
         or not np.array_equal(limits, expected_limits)
         or evidence.get("attached_mass_kg") != expected_mass

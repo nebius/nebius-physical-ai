@@ -111,6 +111,8 @@ def test_same_population_and_recomputed_summary_cannot_hide_wrong_inputs(change)
 def solved_row(monkeypatch):
     """Drive the actual runner formatter through mocked CUDA/planner boundaries."""
 
+    active_names = [f"joint{i}" for i in range(7)]
+
     class Tensor:
         def __init__(self, data):
             self.data = np.asarray(data)
@@ -145,7 +147,7 @@ def solved_row(monkeypatch):
         SimpleNamespace(cuda=SimpleNamespace(synchronize=lambda: None)),
     )
     path = SimpleNamespace(
-        joint_names=[f"joint{i}" for i in range(7)],
+        joint_names=active_names.copy(),
         position=Tensor([[0.0] * 7, [0.1] * 7]),
         velocity=Tensor([[0.0] * 7, [0.1] * 7]),
         acceleration=Tensor([[0.0] * 7, [0.0] * 7]),
@@ -157,13 +159,17 @@ def solved_row(monkeypatch):
         indices = [path.joint_names.index(name) for name in names]
         return SimpleNamespace(
             joint_names=list(names),
-            position=Tensor(path.position.data[:, indices]),
+            dt=path.dt,
+            **{
+                field: Tensor(getattr(path, field).data[:, indices])
+                for field in ("position", "velocity", "acceleration", "jerk")
+            },
         )
 
     path.reorder = reorder
 
     def forward_kinematics(state):
-        assert state.joint_names == [f"joint{i}" for i in range(7)]
+        assert state.joint_names == active_names
         active = np.asarray(state.position.data)
         return SimpleNamespace(
             tool_poses=SimpleNamespace(
@@ -192,11 +198,19 @@ def solved_row(monkeypatch):
     )
     planner = SimpleNamespace(
         device_cfg=SimpleNamespace(to_device=Tensor),
-        joint_names=[f"joint{i}" for i in range(7)],
+        joint_names=active_names,
         tool_frames=["tool"],
         reset_seed=lambda: None,
         plan_pose=lambda *_args, **_kwargs: result,
-        kinematics=SimpleNamespace(compute_kinematics=forward_kinematics),
+        kinematics=SimpleNamespace(
+            compute_kinematics=forward_kinematics,
+            joint_names=active_names,
+            all_articulated_joint_names=[
+                *active_names,
+                "left_finger",
+                "right_finger",
+            ],
+        ),
     )
     problem = {
         "start": [0.0] * 7,
@@ -211,7 +225,7 @@ def solved_row(monkeypatch):
             assert not include_fingers
             values = np.asarray(positions)
             assert values.ndim == 2 and values.shape[1] == 7
-            path.joint_names = [f"joint{i}" for i in range(7)]
+            path.joint_names = active_names.copy()
             path.position = Tensor(values)
             for field in ("velocity", "acceleration", "jerk"):
                 setattr(path, field, Tensor(np.zeros_like(values)))
@@ -240,20 +254,32 @@ def solved_row(monkeypatch):
                 setattr(path, field, Tensor(np.stack(columns, axis=-1)))
             path.joint_names = names
         result.success = Tensor(success)
+
+        def compute_energy(trajectory, _model):
+            assert trajectory.joint_names == active_names
+            assert trajectory.position.shape == (2, 7)
+            return {
+                "energy": 0.07,
+                "max_torque": 1.0,
+                "torque_violation": False,
+                "torques": np.ones((2, 7)),
+            }
+
         upstream = (
-            SimpleNamespace(
-                compute_trajectory_energy=lambda *_args: {
-                    "energy": 0.07,
-                    "max_torque": 1.0,
-                    "torque_violation": False,
-                    "torques": np.ones((2, 7)),
-                }
-            )
+            SimpleNamespace(compute_trajectory_energy=compute_energy)
             if benchmark
             else None
         )
         dynamics_model = (
-            (None, None, np.asarray([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]))
+            (
+                SimpleNamespace(
+                    nq=7,
+                    nv=7,
+                    names=["universe", *active_names],
+                ),
+                object(),
+                np.asarray([87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0]),
+            )
             if benchmark
             else None
         )
@@ -305,6 +331,20 @@ def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solv
         assert np.asarray(trajectory[field]).shape == (2, 9)
     np.testing.assert_array_equal(np.asarray(trajectory["position"])[:, [0, 4]], 0.04)
     assert trajectory["tool_position"] == [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]
+
+
+def test_benchmark_retains_named_active_order_used_for_dynamics(solved_row):
+    row = solved_row(benchmark=True, include_fingers=True)
+
+    assert len(row["trajectory"]["joint_names"]) == 9
+    assert row["dynamics_evidence"]["trajectory"]["joint_names"] == [
+        f"joint{index}" for index in range(7)
+    ]
+    for field in ("position", "velocity", "acceleration", "jerk"):
+        assert np.asarray(row["dynamics_evidence"]["trajectory"][field]).shape == (
+            2,
+            7,
+        )
 
 
 def test_actual_runner_metrics_bind_serialized_float32_trajectory(solved_row):

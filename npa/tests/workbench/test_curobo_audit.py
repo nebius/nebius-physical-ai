@@ -170,11 +170,23 @@ def test_audit_rejects_material_mutations_to_each_trajectory_metric(metric, chan
 
 @pytest.mark.parametrize(
     "mutation",
-    ["none", "torque", "limit", "mass", "energy", "max_torque", "violation"],
+    [
+        "none",
+        "torque",
+        "limit",
+        "mass",
+        "energy",
+        "max_torque",
+        "violation",
+        "duplicate_name",
+        "unexpected_name",
+    ],
 )
 def test_dynamics_audit_recomputes_torque_and_energy(mutation):
+    joint_names = [f"joint{i}" for i in range(7)]
     row = {
         "mode": "kinematic",
+        "trajectory": {"joint_names": joint_names},
         "metrics": {
             "energy_proxy_j": 0.07,
             "max_torque_nm": 1.0,
@@ -183,7 +195,7 @@ def test_dynamics_audit_recomputes_torque_and_energy(mutation):
         "dynamics_evidence": {
             "attached_mass_kg": 0.0,
             "trajectory": {
-                "joint_names": [f"joint{i}" for i in range(7)],
+                "joint_names": joint_names.copy(),
                 "dt": 0.1,
                 "position": [[0.0] * 7, [0.1] * 7],
                 "velocity": [[0.0] * 7, [0.1] * 7],
@@ -206,6 +218,10 @@ def test_dynamics_audit_recomputes_torque_and_energy(mutation):
         row["metrics"]["max_torque_nm"] = 1.0001
     elif mutation == "violation":
         row["metrics"]["torque_violation"] = 1
+    elif mutation == "duplicate_name":
+        row["dynamics_evidence"]["trajectory"]["joint_names"][0] = "joint1"
+    elif mutation == "unexpected_name":
+        row["dynamics_evidence"]["trajectory"]["joint_names"][0] = "other"
     if mutation == "none":
         audit._audit_dynamics(row)
     else:

@@ -181,11 +181,21 @@ def test_prepare_full_recipe_readback_and_hash_mismatch(monkeypatch):
         runtime.prepare(PrepareRequest(output_path="s3://example-bucket/recipe.json"))
 
 
-def test_gpu_subprocess_failure_preserves_interrupted_journal_and_receipt(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize(
+    ("partial_journal", "physical_line_count", "complete_record_count"),
+    [
+        (canonical(row()) + b"\n\n42\n" + b'{"status":"truncated"', 4, 1),
+        (b"", 0, 0),
+    ],
+)
+def test_gpu_subprocess_failure_preserves_empty_or_truncated_journal_and_receipt(
+    monkeypatch,
+    tmp_path,
+    partial_journal,
+    physical_line_count,
+    complete_record_count,
 ):
     monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
-    partial_journal = canonical(row()) + b"\n\n" + b"42\n" + b'{"status":"truncated"'
     objects = {
         request().input_path: canonical(BenchmarkManifest().model_dump(mode="json"))
     }
@@ -244,8 +254,8 @@ def test_gpu_subprocess_failure_preserves_interrupted_journal_and_receipt(
                 "bytes": len(partial_journal),
                 "sha256": hashlib.sha256(partial_journal).hexdigest(),
                 "partial": True,
-                "physical_line_count": 4,
-                "complete_record_count": 1,
+                "physical_line_count": physical_line_count,
+                "complete_record_count": complete_record_count,
             },
         ],
     }
