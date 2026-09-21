@@ -48,7 +48,6 @@ deepdiff>=7.0.1,<9.0.0
 pyserial>=3.5,<4.0
 
 # Pinned upstream RoboCasa and robosuite runtime metadata closure.
-tianshou==0.4.10
 qpsolvers[quadprog]>=4.3.1
 pytest>=8,<10
 

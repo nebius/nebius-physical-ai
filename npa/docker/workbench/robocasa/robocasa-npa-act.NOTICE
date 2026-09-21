@@ -2,14 +2,18 @@ NPA RoboCasa ACT runtime derivative
 
 Upstream: RoboCasa commit 8f3c96ec8d1bfcd8126cad2bca887da98d30e997
 Upstream license: Apache-2.0
-Local version: 1.0.0+npa1
+Local version: 1.0.0+npa2
 
 The local patch changes setup.py packaging metadata only. It identifies the
-derivative and updates RoboCasa's LeRobot dependency from 0.3.3 to the separately
-reviewed 0.6.1+npa1 NPA ACT derivative. It changes no RoboCasa implementation,
-assets, task semantics, or simulator behavior. The pinned tianshou dependency and
-all other upstream runtime requirements remain declared and resolver-checked.
+derivative, updates RoboCasa's LeRobot dependency from 0.3.3 to the separately
+reviewed 0.6.1+npa1 NPA ACT derivative, and removes tianshou 0.4.10 from the
+declared closure. Exact-source inspection found tianshou is imported only by
+upstream robocasa/scripts/bench_speed.py, a vectorized speed benchmark outside
+the NPA service and matched ACT rollout path. That upstream benchmark script is
+not qualified by this derivative. The patch changes no RoboCasa implementation,
+assets, task semantics, or simulator behavior. All dependencies used by the
+qualified NPA service remain declared and resolver-checked.
 
 Only the repository's matched RoboCasa ACT rollout path is qualified. This does not
 claim upstream support for LeRobot 0.6.1 or qualify other RoboCasa policy, training,
-or deployment paths.
+benchmark, or deployment paths.

@@ -26,8 +26,8 @@ LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.base_image="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
-      npa.robocasa.derivative="1.0.0+npa1" \
-      npa.robocasa.patch.sha256="bb14ebc827b72d04cf462ef7c01ada10912f90587606c0778b57182c8bcf6608" \
+      npa.robocasa.derivative="1.0.0+npa2" \
+      npa.robocasa.patch.sha256="2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
       npa.lerobot.derivative="0.6.1+npa1" \
@@ -186,7 +186,7 @@ RUN git init /opt/robocasa/source \
     && base64 --decode /opt/robocasa/derivative/robocasa-npa-act.patch.b64 \
       > /tmp/robocasa-npa-act.patch \
     && echo \
-      "bb14ebc827b72d04cf462ef7c01ada10912f90587606c0778b57182c8bcf6608  /tmp/robocasa-npa-act.patch" \
+      "2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e  /tmp/robocasa-npa-act.patch" \
       | sha256sum --check --strict - \
     && git -C /opt/robocasa/source apply --check /tmp/robocasa-npa-act.patch \
     && git -C /opt/robocasa/source apply /tmp/robocasa-npa-act.patch \
@@ -195,7 +195,7 @@ RUN git init /opt/robocasa/source \
       --disable-pip-version-check --no-cache-dir \
       --index-url https://pypi.org/simple \
       --no-build-isolation -e /opt/robocasa/source \
-    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa1'" \
+    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa2'" \
     && python -m pip check \
     && install -D -m 0644 /opt/robocasa/derivative/robocasa-npa-act.NOTICE \
       /usr/share/doc/robocasa-npa-act/NOTICE \

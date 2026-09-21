@@ -162,7 +162,6 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
         "draccus>=0.11.6,<0.12.0",
         "opencv-python>=4.9,<4.14",
         "setuptools==83.0.0",
-        "tianshou==0.4.10",
         "qpsolvers[quadprog]>=4.3.1",
         "pytest>=8,<10",
         "torch==2.13.0",
@@ -212,13 +211,16 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     assert "ACT accepted a 15-wide state" in verifier
     assert "ACT accepted a checkpoint with missing weights" in verifier
 
-    assert 'npa.robocasa.derivative="1.0.0+npa1"' in dockerfile
+    assert 'npa.robocasa.derivative="1.0.0+npa2"' in dockerfile
     assert (
-        'npa.robocasa.patch.sha256="bb14ebc827b72d04cf462ef7c01ada10912f90587606c0778b57182c8bcf6608"'
+        'npa.robocasa.patch.sha256="2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e"'
         in dockerfile
     )
-    assert '"lerobot==0.6.1+npa1"' in robocasa_patch
-    assert 'version="1.0.0+npa1"' in robocasa_patch
+    assert '-        "tianshou==0.4.10",' in robocasa_patch
+    assert '+        "lerobot==0.6.1+npa1",' in robocasa_patch
+    assert 'version="1.0.0+npa2"' in robocasa_patch
+    assert "tianshou is imported only" in robocasa_notice
+    assert "benchmark script is\nnot qualified" in robocasa_notice
     assert robocasa_patch.count("diff --git") == 1
     assert "diff --git a/setup.py b/setup.py" in robocasa_patch
     assert "packaging metadata only" in robocasa_notice
@@ -231,7 +233,7 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     )[1]
     assert "--no-deps" not in robosuite_install
     assert "--no-deps" not in robocasa_install
-    assert "version('robocasa') == '1.0.0+npa1'" in dockerfile
+    assert "version('robocasa') == '1.0.0+npa2'" in dockerfile
 
 
 def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:
@@ -695,10 +697,11 @@ def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
         "pytest",
         "qpsolvers",
         "quadprog",
-        "tianshou",
         "torch",
         "torchvision",
     } <= runtime_names
+    assert "tianshou" not in runtime_names
+    assert "protobuf" not in runtime_names
 
 
 def test_robocasa_lock_generation_uses_only_anonymous_indexes() -> None:

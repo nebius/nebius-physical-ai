@@ -73,12 +73,15 @@ The pod and container both enforce `runAsNonRoot`.
 The `0.1.1` image uses a CUDA 12.4 base with the pinned PyTorch 2.13.0+cu129
 runtime; this is the first available CUDA 12 wheel set that clears the declared
 Torch dependency vulnerabilities. The image rebuilds exact upstream RoboCasa
-and LeRobot sources as locally versioned `1.0.0+npa1` and `0.6.1+npa1`
+and LeRobot sources as locally versioned `1.0.0+npa2` and `0.6.1+npa1`
 derivatives. Their packaging-only patches bind RoboCasa's ACT path to the
 reviewed LeRobot derivative and declare the fixed Torch pair and Gymnasium/OpenCV
-closure; normal resolver checks, real ACT construction, inference, shape rejection,
-and exact
-checkpoint save/load must pass before deployment. This qualifies only the ACT
+closure. The RoboCasa derivative omits tianshou because its sole exact-source
+import is the unqualified vectorized speed-benchmark script; the NPA service and
+matched ACT rollout path do not import it. Normal resolver checks, real ACT
+construction, inference, shape rejection, dataset round trips, and exact
+checkpoint save/load through the production adapter must pass before deployment.
+This qualifies only the ACT
 path used here and does not claim upstream support for Torch 2.13 or qualify
 other LeRobot policies. Use L40S for pixel-bearing EGL runs.
 RTX PRO 6000, B200, and B300 are
