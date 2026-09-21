@@ -90,7 +90,7 @@ DEFAULT_HALLUCINATION_WEIGHT = 0.5
 
 # Sampled appearance combos carry a `prompt` alongside the attributes; it is an
 # instruction, not a visual attribute, so it is never turned into a question.
-NON_ATTRIBUTE_KEYS = frozenset({"prompt", "inference_seed"})
+NON_ATTRIBUTE_KEYS = frozenset({"prompt", "negative_prompt", "inference_seed"})
 
 
 @dataclass(frozen=True)
@@ -134,6 +134,8 @@ class EvaluateRunResult:
     temporal_mode: str = "advisory"
     appearance_mode: str = "advisory"
     attribute_sample_policy: str = "ranking"
+    attribute_evidence_mode: str = "full-frame"
+    attribute_lighting_vlm_model: str = ""
     engines: list[str] = field(default_factory=list)
     clips: list[ClipEvaluation] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -181,6 +183,8 @@ def evaluate_run(
     vlm_model: str = "",
     max_clips: int = 0,
     attribute_sample_policy: str = "ranking",
+    attribute_evidence_mode: str = "full-frame",
+    attribute_lighting_vlm_model: str = "",
     alignment_mode: str = "off",
     attribute_threshold: float = 1.0,
     client: Any | None = None,
@@ -201,6 +205,10 @@ def evaluate_run(
     if attribute_sample_policy not in {"ranking", "holdout"}:
         raise CosmosEvaluatorError(
             "--attribute-sample-policy must be ranking or holdout"
+        )
+    if attribute_evidence_mode not in {"full-frame", "source-relative-change"}:
+        raise CosmosEvaluatorError(
+            "--attribute-evidence-mode must be full-frame or source-relative-change"
         )
     if not 0.0 <= hallucination_weight <= 1.0:
         raise CosmosEvaluatorError("--hallucination-weight must be between 0.0 and 1.0")
@@ -268,6 +276,8 @@ def evaluate_run(
                 temporal_mode=temporal_mode,
                 appearance_mode=appearance_mode,
                 attribute_sample_policy=attribute_sample_policy,
+                attribute_evidence_mode=attribute_evidence_mode,
+                attribute_lighting_vlm_model=attribute_lighting_vlm_model,
                 warnings=["ranking produced no independently hard-passing candidate"],
             )
         if max_clips and max_clips > 0:
@@ -313,6 +323,8 @@ def evaluate_run(
                         question_model=question_model,
                         vlm_model=vlm_model,
                         attribute_sample_policy=attribute_sample_policy,
+                        attribute_evidence_mode=attribute_evidence_mode,
+                        attribute_lighting_vlm_model=attribute_lighting_vlm_model,
                         alignment_mode=alignment_mode,
                         attribute_threshold=attribute_threshold,
                         warnings=warnings,
@@ -374,6 +386,8 @@ def evaluate_run(
         temporal_mode=temporal_mode,
         appearance_mode=appearance_mode,
         attribute_sample_policy=attribute_sample_policy,
+        attribute_evidence_mode=attribute_evidence_mode,
+        attribute_lighting_vlm_model=attribute_lighting_vlm_model,
         engines=engines,
         clips=evaluations,
         warnings=warnings,
@@ -410,6 +424,8 @@ def _evaluate_clip(
     question_model: str,
     vlm_model: str,
     attribute_sample_policy: str,
+    attribute_evidence_mode: str,
+    attribute_lighting_vlm_model: str,
     warnings: list[str],
     alignment_mode: str = "off",
     attribute_threshold: float = 1.0,
@@ -490,6 +506,13 @@ def _evaluate_clip(
                 client=client,
                 sample_policy=attribute_sample_policy,
                 threshold=attribute_threshold,
+                reference_video=(str(source_clip) if source_clip is not None else None),
+                evidence_mode=attribute_evidence_mode,
+                variable_vlm_models=(
+                    {"lighting": attribute_lighting_vlm_model}
+                    if attribute_lighting_vlm_model
+                    else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - keep grading the remaining variants
             message = f"attribute verification failed for {clip_id}: {exc}"[:300]
@@ -820,6 +843,17 @@ def _list_clip_targets(augment_uri: str, *, store: Any) -> list[tuple[str, str]]
             variants = validate_committed_run_manifest(manifest, augment_uri)
         except (TypeError, ValueError) as exc:
             raise CosmosEvaluatorError(str(exc)) from exc
+        if (
+            not variants
+            and manifest.get("selection_policy") == "independent-hard-pass-only"
+            and manifest.get("variant_count") == 0
+            and manifest.get("variants") == []
+        ):
+            # Candidate selection is append-only, so its committed empty batch
+            # legitimately coexists with the fenced attempt that produced it.
+            # Return no targets and let evaluate_run emit the explicit rejected
+            # report; never infer media from those preserved attempt objects.
+            return []
         if variants:
             targets: list[tuple[str, str]] = []
             for item in variants:

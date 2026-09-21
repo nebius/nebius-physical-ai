@@ -14,6 +14,10 @@ concurrency:
 
 jobs:
   guardrails:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ github.event_name == 'pull_request' && 'docs' || 'checks' }}
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
@@ -35,7 +39,7 @@ jobs:
           npa/.venv/bin/python -m pip install -e "npa[dev]"
 
       - name: Run guardrail tests
-        run: npa/.venv/bin/python -m pytest npa/tests/guardrails -q
+        run: npa/.venv/bin/python -m pytest npa/tests/guardrails -n auto --dist worksteal -q
 
       - name: Assert standard test collection is non-zero
         run: |

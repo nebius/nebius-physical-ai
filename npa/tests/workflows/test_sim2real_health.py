@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -192,12 +194,44 @@ def test_tokens_warns_when_missing_and_passes_when_present() -> None:
     assert ok.status == health.PASS
 
 
-def _kube_nodes(gpu_count: int, nodes: int = 1) -> str:
-    items = [
-        {"status": {"allocatable": {"nvidia.com/gpu": str(gpu_count)}}}
-        for _ in range(nodes)
-    ]
+def _kube_nodes(gpu_count: int, nodes: int = 1, product: str | None = None) -> str:
+    items: list[dict[str, object]] = []
+    for _ in range(nodes):
+        node: dict[str, object] = {
+            "status": {"allocatable": {"nvidia.com/gpu": str(gpu_count)}}
+        }
+        if product is not None:
+            node["metadata"] = {"labels": {"nvidia.com/gpu.product": product}}
+        items.append(node)
     return json.dumps({"items": items})
+
+
+def _kube_nodes_mixed(entries: list[tuple[int, str | None]]) -> str:
+    """One (gpu_count, product label or None) entry per node."""
+    items: list[dict[str, object]] = []
+    for gpu_count, product in entries:
+        node: dict[str, object] = {
+            "status": {"allocatable": {"nvidia.com/gpu": str(gpu_count)}}
+        }
+        if product is not None:
+            node["metadata"] = {"labels": {"nvidia.com/gpu.product": product}}
+        items.append(node)
+    return json.dumps({"items": items})
+
+
+def _cluster_runner(nodes_json: str) -> Callable[[list[str]], KubeResult]:
+    def runner(args: list[str]) -> KubeResult:
+        if args[:2] == ["config", "current-context"]:
+            return KubeResult(0, "prod-cluster")
+        if args[:2] == ["auth", "can-i"]:
+            return KubeResult(0, "yes")
+        if args[:2] == ["get", "pvc"]:
+            return KubeResult(0, _bound_rwx_pvc())
+        if args[:2] == ["get", "nodes"]:
+            return KubeResult(0, nodes_json)
+        return KubeResult(1, "", "unexpected")
+
+    return runner
 
 
 def _bound_rwx_pvc() -> str:
@@ -225,10 +259,13 @@ def test_cluster_pass_counts_schedulable_gpus() -> None:
         if args[:2] == ["get", "pvc"]:
             return KubeResult(0, _bound_rwx_pvc())
         if args[:2] == ["get", "nodes"]:
-            return KubeResult(0, _kube_nodes(8, nodes=2))
+            return KubeResult(0, _kube_nodes(8, nodes=2, product="TEST-GPU-A"))
         return KubeResult(1, "", "unexpected")
 
-    result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(kube_runner=runner),
+    )
     assert result.status == health.PASS
     assert "16 schedulable" in result.summary
 
@@ -246,6 +283,159 @@ def test_cluster_fails_on_zero_gpus() -> None:
         return KubeResult(1, "", "x")
 
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
+    assert result.status == health.FAIL
+    assert "0 schedulable" in result.summary
+
+
+def test_cluster_passes_when_gpu_product_matches() -> None:
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(
+            kube_runner=_cluster_runner(_kube_nodes(8, nodes=2, product="TEST-GPU-A"))
+        ),
+    )
+    assert result.status == health.PASS
+    assert "16 schedulable" in result.summary
+
+
+def test_cluster_fails_on_gpu_product_mismatch() -> None:
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(
+            kube_runner=_cluster_runner(_kube_nodes(8, nodes=2, product="TEST-GPU-B"))
+        ),
+    )
+    assert result.status == health.FAIL
+    assert "TEST-GPU-A" in result.summary
+    assert "TEST-GPU-B" in result.remedy
+
+
+def test_cluster_warns_when_gpu_nodes_unlabelled() -> None:
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(kube_runner=_cluster_runner(_kube_nodes(8, nodes=2))),
+    )
+    assert result.status == health.WARN
+    assert "nvidia.com/gpu.product" in result.summary
+    assert "TEST-GPU-A" in result.summary
+
+
+def test_cluster_passes_on_mixed_gpu_products_with_match() -> None:
+    nodes = _kube_nodes_mixed([(8, "TEST-GPU-A"), (4, "TEST-GPU-B")])
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-B"),
+        probes=DoctorProbes(kube_runner=_cluster_runner(nodes)),
+    )
+    assert result.status == health.PASS
+
+
+def test_cluster_fails_on_mixed_gpu_products_without_match() -> None:
+    nodes = _kube_nodes_mixed([(8, "TEST-GPU-A"), (4, "TEST-GPU-B")])
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-C"),
+        probes=DoctorProbes(kube_runner=_cluster_runner(nodes)),
+    )
+    assert result.status == health.FAIL
+    assert "TEST-GPU-C" in result.summary
+    assert "TEST-GPU-A" in result.remedy
+    assert "TEST-GPU-B" in result.remedy
+
+
+def test_cluster_passes_when_no_gpu_product_requested() -> None:
+    config = dataclasses.replace(_config(), k8s_gpu_product="")
+    result = check_cluster(
+        config,
+        probes=DoctorProbes(kube_runner=_cluster_runner(_kube_nodes(8, nodes=2))),
+    )
+    assert result.status == health.PASS
+
+
+def test_count_schedulable_gpus_extracts_product_labels() -> None:
+    payload = {
+        "items": [
+            {
+                "status": {"allocatable": {"nvidia.com/gpu": "8"}},
+                "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-A"}},
+            },
+            {
+                "status": {"allocatable": {"nvidia.com/gpu": "4"}},
+                "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-B"}},
+            },
+            {"status": {"allocatable": {"nvidia.com/gpu": "2"}}},
+            {"status": {"allocatable": {}}},
+        ]
+    }
+    node_count, total, products = health._count_schedulable_gpus(
+        json.dumps(payload), "nvidia.com/gpu"
+    )
+    assert (node_count, total) == (4, 14)
+    assert products == {"TEST-GPU-A", "TEST-GPU-B"}
+
+
+def test_cluster_passes_when_candidate_product_matches() -> None:
+    # The workflow falls back through k8s_gpu_candidates (gpu_fallback.py);
+    # the preflight must not false-fail when the primary product is absent
+    # but a candidate is present.
+    nodes = _kube_nodes_mixed([(8, "TEST-GPU-B")])
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A", k8s_gpu_candidates=("TEST-GPU-B",)),
+        probes=DoctorProbes(kube_runner=_cluster_runner(nodes)),
+    )
+    assert result.status == health.PASS
+
+
+def test_cluster_fails_when_no_requested_product_matches() -> None:
+    nodes = _kube_nodes_mixed([(8, "TEST-GPU-C")])
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A", k8s_gpu_candidates=("TEST-GPU-B",)),
+        probes=DoctorProbes(kube_runner=_cluster_runner(nodes)),
+    )
+    assert result.status == health.FAIL
+    assert "TEST-GPU-A" in result.summary
+    assert "TEST-GPU-B" in result.summary
+    assert "TEST-GPU-C" in result.remedy
+
+
+def test_count_schedulable_gpus_skips_cordoned_nodes() -> None:
+    payload = {
+        "items": [
+            {
+                "spec": {"unschedulable": True},
+                "status": {"allocatable": {"nvidia.com/gpu": "8"}},
+                "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-A"}},
+            },
+            {
+                "status": {"allocatable": {"nvidia.com/gpu": "4"}},
+                "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-B"}},
+            },
+            {"status": {"allocatable": {"nvidia.com/gpu": "0"}}},
+        ]
+    }
+    node_count, total, products = health._count_schedulable_gpus(
+        json.dumps(payload), "nvidia.com/gpu"
+    )
+    # The cordoned 8-GPU node contributes nothing: not to the total, not to
+    # the product set, and not to the node count.
+    assert (node_count, total) == (2, 4)
+    assert products == {"TEST-GPU-B"}
+
+
+def test_cluster_fails_when_only_cordoned_nodes_have_gpus() -> None:
+    payload = json.dumps(
+        {
+            "items": [
+                {
+                    "spec": {"unschedulable": True},
+                    "status": {"allocatable": {"nvidia.com/gpu": "8"}},
+                    "metadata": {"labels": {"nvidia.com/gpu.product": "TEST-GPU-A"}},
+                }
+            ]
+        }
+    )
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(kube_runner=_cluster_runner(payload)),
+    )
     assert result.status == health.FAIL
     assert "0 schedulable" in result.summary
 
@@ -306,10 +496,13 @@ def test_cluster_checks_workflow_identity_without_legacy_account_impersonation()
         if args[:2] == ["get", "pvc"]:
             return KubeResult(0, _bound_rwx_pvc())
         if args[:2] == ["get", "nodes"]:
-            return KubeResult(0, _kube_nodes(8, nodes=2))
+            return KubeResult(0, _kube_nodes(8, nodes=2, product="TEST-GPU-A"))
         return KubeResult(1, "", "unexpected")
 
-    result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(kube_runner=runner),
+    )
     assert result.status == health.PASS
 
 
@@ -382,4 +575,4 @@ def test_run_preflight_selects_requested_checks() -> None:
 
 @pytest.mark.parametrize("gpu_resource", ["nvidia.com/gpu"])
 def test_count_schedulable_handles_bad_json(gpu_resource: str) -> None:
-    assert health._count_schedulable_gpus("not-json", gpu_resource) == (0, 0)
+    assert health._count_schedulable_gpus("not-json", gpu_resource) == (0, 0, set())

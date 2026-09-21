@@ -598,7 +598,9 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
             remedy="Confirm RBAC allows listing nodes to verify schedulable GPU capacity.",
             details=(_short(nodes.stderr or nodes.stdout),),
         )
-    node_count, gpu_total = _count_schedulable_gpus(nodes.stdout, gpu_resource)
+    node_count, gpu_total, gpu_products = _count_schedulable_gpus(
+        nodes.stdout, gpu_resource
+    )
     if gpu_total <= 0:
         return CheckResult(
             name="cluster",
@@ -612,6 +614,51 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
                 "for some accelerators is zero by default."
             ),
         )
+    # The workflow itself falls back through k8s_gpu_candidates when the
+    # primary k8s_gpu_product is unavailable (see gpu_fallback.py), so the
+    # preflight must accept any of them instead of false-failing valid
+    # multi-product configs.
+    requested_products = [
+        product
+        for product in (
+            config.k8s_gpu_product,
+            *getattr(config, "k8s_gpu_candidates", ()),
+        )
+        if product
+    ]
+    if requested_products:
+        wanted = ", ".join(repr(product) for product in requested_products)
+        if not gpu_products:
+            return CheckResult(
+                name="cluster",
+                status=WARN,
+                summary=(
+                    f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
+                    "but no nvidia.com/gpu.product labels were detected, so the "
+                    f"requested product(s) {wanted} could not be verified."
+                ),
+                remedy=(
+                    "Ensure the NVIDIA k8s-device-plugin labels GPU nodes with "
+                    "nvidia.com/gpu.product, or clear k8s_gpu_product in the "
+                    "sim2real config to skip product matching."
+                ),
+            )
+        matched = [product for product in requested_products if product in gpu_products]
+        if not matched:
+            available = ", ".join(sorted(gpu_products))
+            return CheckResult(
+                name="cluster",
+                status=FAIL,
+                summary=(
+                    f"Context {context!r} has {gpu_total} schedulable {gpu_resource} "
+                    f"but none match the requested product(s) {wanted}."
+                ),
+                remedy=(
+                    f"Available GPU products: {available}. Update k8s_gpu_product "
+                    "or k8s_gpu_candidates in the sim2real config to match, or "
+                    "provision nodes with a requested accelerator."
+                ),
+            )
     return CheckResult(
         name="cluster",
         status=PASS,
@@ -622,16 +669,25 @@ def check_cluster(config: Sim2RealLoopConfig, *, probes: DoctorProbes) -> CheckR
     )
 
 
-def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, int]:
+def _count_schedulable_gpus(
+    nodes_json: str, gpu_resource: str
+) -> tuple[int, int, set[str]]:
     import json
 
     try:
         payload = json.loads(nodes_json)
     except (json.JSONDecodeError, TypeError):
-        return (0, 0)
+        return (0, 0, set())
     items = payload.get("items") or []
     total = 0
+    products: set[str] = set()
+    cordoned = 0
     for node in items:
+        # Cordoned nodes accept no new pods: their GPUs are not schedulable
+        # capacity and must not satisfy the preflight.
+        if (node.get("spec") or {}).get("unschedulable"):
+            cordoned += 1
+            continue
         allocatable = (node.get("status") or {}).get("allocatable") or {}
         raw = allocatable.get(gpu_resource)
         if raw is None:
@@ -640,7 +696,11 @@ def _count_schedulable_gpus(nodes_json: str, gpu_resource: str) -> tuple[int, in
             total += int(raw)
         except (TypeError, ValueError):
             continue
-    return (len(items), total)
+        labels = (node.get("metadata") or {}).get("labels") or {}
+        product = labels.get("nvidia.com/gpu.product")
+        if product:
+            products.add(product)
+    return (len(items) - cordoned, total, products)
 
 
 # Orchestration -------------------------------------------------------------

@@ -7,17 +7,30 @@ import sys
 from pathlib import Path
 
 from film_brief import _authoring_packet
+from film_voice import _voice_settings
 
 _ROOT = Path(__file__).parent
 
 
 def _project(path):
     project = json.loads(path.read_text())
-    allowed = {"storyboard", "assets", "voice_dir", "output_dir", "voice", "music_path"}
+    allowed = {
+        "storyboard",
+        "assets",
+        "voice_dir",
+        "output_dir",
+        "voice",
+        "music_path",
+        "voice_rate",
+        "voice_pitch",
+    }
     if not isinstance(project, dict) or set(project) - allowed:
         raise ValueError(
             "Film projects support only local editing paths and voice; keep cloud configuration external"
         )
+    _voice_settings(
+        project.get("voice_rate", "+0%"), project.get("voice_pitch", "+0Hz")
+    )
     for field in [
         "storyboard",
         "assets",
@@ -68,6 +81,8 @@ def _narrate_command(args, project):
         str(project["voice_dir"]),
         "--voice",
         project.get("voice", "en-US-AndrewMultilingualNeural"),
+        "--rate=" + project.get("voice_rate", "+0%"),
+        "--pitch=" + project.get("voice_pitch", "+0Hz"),
     ]
     if args.recorded:
         command.append("--recorded")
