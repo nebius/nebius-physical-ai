@@ -50,7 +50,7 @@ def runtime_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str
         for name in ("pip", "antioch", "python"):
             executable = bin_dir / name
             body = (
-                "#!/bin/sh\nprintf 'antioch 0.4.265\\n'\n"
+                "#!/bin/sh\nprintf 'antioch 0.4.289\\n'\n"
                 if name == "python"
                 else "#!/bin/sh\nexit 0\n"
             )
@@ -66,7 +66,7 @@ def runtime_harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str
     )
     monkeypatch.setattr(
         "npa.workbench.antioch.vendor_cli.subprocess.run",
-        lambda *a, **k: subprocess.CompletedProcess(a, 0, "antioch 0.4.265\n", ""),
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, "antioch 0.4.289\n", ""),
     )
     return calls
 
@@ -81,7 +81,7 @@ def test_terms_preflight_is_exact_and_scoped(monkeypatch: pytest.MonkeyPatch) ->
         "name": "Antioch Terms of Service",
         "url": "https://antioch.com/terms",
         "version": "2026-02-28",
-        "scope": "antioch-sim==0.4.265 and Antioch Service use",
+        "scope": "antioch-sim==0.4.289 and Antioch Service use",
         "accepted": True,
     }
 
@@ -97,9 +97,12 @@ def test_ensure_runtime_downloads_pinned_wheel_and_verifies_sha256(
     )
 
 
-def test_ensure_runtime_refuses_retired_manifest_client_before_fetch(runtime_harness) -> None:
+@pytest.mark.parametrize("retired_version", ["0.4.236", "0.4.265"])
+def test_ensure_runtime_refuses_retired_manifest_client_before_fetch(
+    runtime_harness, retired_version: str,
+) -> None:
     with pytest.raises(runtime.AntiochRuntimeError, match="unsupported Antioch CLI version"):
-        runtime.ensure_runtime(expected_version="0.4.236")
+        runtime.ensure_runtime(expected_version=retired_version)
     assert runtime_harness == {"downloads": 0, "installs": 0}
 
 
@@ -203,5 +206,5 @@ def test_ensure_runtime_publishes_relocatable_executable(
     )
     os.close(write_fd)
     with os.fdopen(read_fd) as output:
-        assert output.read().strip() == "antioch 0.4.265"
+        assert output.read().strip() == "antioch 0.4.289"
     assert process.wait() == 0

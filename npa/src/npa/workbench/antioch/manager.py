@@ -195,7 +195,7 @@ class AntiochManager:
         self.storage = storage
         self.states = StateStore(self.storage)
 
-    def _cli(self, expected_version: str = "0.4.265") -> AntiochCli:
+    def _cli(self, expected_version: str = "0.4.289") -> AntiochCli:
         return AntiochCli(ensure_runtime(expected_version=expected_version))
 
     def _record_for(self, request: ResumeRequest) -> OperationRecord:
