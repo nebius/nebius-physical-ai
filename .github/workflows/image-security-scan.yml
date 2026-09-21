@@ -184,6 +184,13 @@ jobs:
           bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
           echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
 
+      - name: Reclaim unused hosted-runner SDK space
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          # CUDA images and Trivy's exports must coexist on this disposable runner.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc
+          df -h /
+
       - name: Scan all pinned bases with three local workers
         if: steps.scope.outputs.deep == 'true'
         env:
