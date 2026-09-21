@@ -922,7 +922,8 @@ containers:
       network: FastAPI service on :8791 (/health, /system-info, /run, /status); kitchen assets download at run time
       external_fetch: [pypi, github, huggingface, s3]
       notes: >-
-        Bakes Apache-2.0 RoboCasa (v1.0) and robosuite (pinned commit) plus the
+        Bakes MIT RoboCasa (v1.0), including its bundled Apache-2.0 notice
+        for partial DeepMind MuJoCo, and Apache-2.0 robosuite (pinned commit) plus the
         exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / PyTorch 2.13 cu129 closure.
         RoboCasa is rebuilt from its exact source as the packaging-only
         1.0.0+npa2 ACT derivative, binding its declared LeRobot requirement to the

@@ -428,9 +428,10 @@ historical evidence.
   only the SkyPilot worker bootstrap closure and must be built into the
   operator's own registry; it is deliberately excluded from the public catalog.
 - **`npa-robocasa`** is a validation candidate, not yet in the public publishing
-  plan. It is licence-eligible for public redistribution (Apache-2.0 RoboCasa and
-  robosuite), but its built-image payload scan and real GPU capability validation
-  have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
+  plan. It is licence-eligible for public redistribution (MIT RoboCasa, whose
+  license includes a separate Apache-2.0 notice for partial DeepMind MuJoCo, and
+  Apache-2.0 robosuite), but its built-image payload scan and real GPU
+  capability validation have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
   via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
   digest and GPU evidence are recorded.
   It is a non-root service image with no passwordless-sudo grant; workflow

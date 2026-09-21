@@ -5,9 +5,10 @@ description: Use to run RoboCasa kitchen-task simulation and held-out policy eva
 
 # RoboCasa (kitchen-task simulation)
 
-RoboCasa is an Apache-2.0 kitchen-task simulation framework built on robosuite
-and MuJoCo. This tool promotes the accepted RoboCasa BYOF candidate into a
-first-class workbench tool: a dedicated `npa-robocasa` container with a FastAPI
+RoboCasa is an MIT kitchen-task simulation framework built on Apache-2.0
+robosuite and MuJoCo. Its upstream license retains a separate Apache-2.0 notice
+for included partial DeepMind MuJoCo code. This tool promotes the accepted
+RoboCasa BYOF candidate into a first-class workbench tool: a dedicated `npa-robocasa` container with a FastAPI
 service, CLI, SDK, and workflow toolRefs that exercise the real upstream
 capabilities.
 

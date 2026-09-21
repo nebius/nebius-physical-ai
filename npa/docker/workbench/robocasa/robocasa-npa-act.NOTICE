@@ -1,7 +1,9 @@
 NPA RoboCasa ACT runtime derivative
 
 Upstream: RoboCasa commit 8f3c96ec8d1bfcd8126cad2bca887da98d30e997
-Upstream license: Apache-2.0
+Upstream license: MIT; its LICENSE includes a separate Apache-2.0 notice for
+partial DeepMind MuJoCo code.
+Upstream LICENSE SHA-256: 5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885
 Local version: 1.0.0+npa2
 
 The local patch changes setup.py packaging metadata only. It identifies the

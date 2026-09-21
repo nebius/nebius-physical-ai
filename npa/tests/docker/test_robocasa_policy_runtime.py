@@ -213,12 +213,22 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
 
     assert 'npa.robocasa.derivative="1.0.0+npa2"' in dockerfile
     assert (
+        'npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885"'
+        in dockerfile
+    )
+    assert (
         'npa.robocasa.patch.sha256="2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e"'
         in dockerfile
     )
     assert '-        "tianshou==0.4.10",' in robocasa_patch
     assert '+        "lerobot==0.6.1+npa1",' in robocasa_patch
     assert 'version="1.0.0+npa2"' in robocasa_patch
+    assert "Upstream license: MIT" in robocasa_notice
+    assert "partial DeepMind MuJoCo" in robocasa_notice
+    assert (
+        "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885"
+        in robocasa_notice
+    )
     assert "tianshou is imported only" in robocasa_notice
     assert "benchmark script is\nnot qualified" in robocasa_notice
     assert robocasa_patch.count("diff --git") == 1
@@ -234,6 +244,11 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     assert "--no-deps" not in robosuite_install
     assert "--no-deps" not in robocasa_install
     assert "version('robocasa') == '1.0.0+npa2'" in dockerfile
+    assert (
+        "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE"
+        in dockerfile
+    )
+    assert "/usr/share/doc/robocasa-npa-act/LICENSE.upstream" in dockerfile
 
 
 def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:

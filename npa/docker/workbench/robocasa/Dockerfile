@@ -2,12 +2,13 @@
 #
 # Built independently on the exact CUDA 12.4 base that the live-accepted
 # RoboCasa BYOF evidence used, NOT on the purpose-built SONIC MuJoCo application
-# image. RoboCasa and robosuite are Apache-2.0; their immutable revisions and
+# image. RoboCasa is MIT and robosuite is Apache-2.0; their immutable revisions and
 # the reviewed Python closure below match the accepted capability path.
 #
 # What IS baked, and is fine to redistribute:
 #   * CUDA 12.4 Ubuntu 22.04 base
-#   * RoboCasa source at the pinned commit (Apache-2.0)
+#   * RoboCasa source at the pinned commit (MIT, with its bundled Apache-2.0
+#     notice for partial DeepMind MuJoCo)
 #   * robosuite at the pinned commit (Apache-2.0)
 #   * MuJoCo 3.3.1, Gymnasium 0.29.1, and the OSS Python closure
 #
@@ -28,6 +29,7 @@ LABEL npa.tool="robocasa" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
       npa.robocasa.derivative="1.0.0+npa2" \
       npa.robocasa.patch.sha256="2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e" \
+      npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
       npa.lerobot.derivative="0.6.1+npa1" \
@@ -196,7 +198,12 @@ RUN git init /opt/robocasa/source \
       --index-url https://pypi.org/simple \
       --no-build-isolation -e /opt/robocasa/source \
     && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa2'" \
+    && echo \
+      "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE" \
+      | sha256sum --check --strict - \
     && python -m pip check \
+    && install -D -m 0644 /opt/robocasa/source/LICENSE \
+      /usr/share/doc/robocasa-npa-act/LICENSE.upstream \
     && install -D -m 0644 /opt/robocasa/derivative/robocasa-npa-act.NOTICE \
       /usr/share/doc/robocasa-npa-act/NOTICE \
     && rm -rf /opt/robocasa/source/.git /root/.cache/pip /tmp/pip-*
