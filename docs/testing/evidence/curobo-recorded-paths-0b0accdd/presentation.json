@@ -1,0 +1,42 @@
+{
+  "viewer_version": "0.31.4",
+  "blueprint_sha256": "c3d4c450bf74e18d9fd090702a97c830547dc5d72f6b028026c2bf06ff45c1f1",
+  "layout": {
+    "horizontal_shares": [
+      4,
+      1
+    ],
+    "main": "Spatial3D trajectory/tool_path + problems/goal",
+    "play_state": "paused",
+    "selection_panel": "hidden",
+    "side_tabs": [
+      "problems/status",
+      "provenance"
+    ],
+    "time_panel": "collapsed",
+    "timeline": "problem_index"
+  },
+  "recording_bytes_unchanged": true,
+  "recordings": [
+    {
+      "name": "b200-golden.rrd",
+      "sha256_after": "7e6a938d7e5d5c501782985a927068b0916d86dbdd245dfe914bd86889a73986",
+      "bytes": 164514
+    },
+    {
+      "name": "rtx-golden.rrd",
+      "sha256_after": "571f9b7cd22e06b6789b5512795c1cecb68012732f74f3008f4a384c23c725a7",
+      "bytes": 164294
+    },
+    {
+      "name": "b200-benchmark-selected.rrd",
+      "sha256_after": "c1136fea01d767c1e5790dd686d2b14d1193709d839a3bc30c3a976a955da76b",
+      "bytes": 636788
+    }
+  ],
+  "data_store_count_in_blueprint": 0,
+  "purpose": "Large tool-path and declared-goal view, with status and provenance tabs. Presentation only; no numerical data changed.",
+  "initial_cursor_limitation": "Standard Rerun raw-HTTP links may open at the last case. Select problem_index 0 to inspect the first successful case; failed cases remain available.",
+  "publication_browser_validation": "pending actual public blueprint fetch",
+  "qualification_receipt_sha256": "77b07e3b7965bfeaad4ec1d078d1b21b964844d324b3ea76143f5dab2fa929f4"
+}
