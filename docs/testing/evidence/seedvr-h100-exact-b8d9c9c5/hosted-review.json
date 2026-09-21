@@ -1,0 +1,71 @@
+{
+  "scope": "Exact-image outputs; task annotation failed and separate visual judgment remains inconclusive.",
+  "image_digest": "sha256:5b4258c7a3be29962c928237fa2d46bcc9667db02757349ad114033df21db7ca",
+  "annotation": {
+    "accepted": false,
+    "usefulness_outcome": "fail",
+    "model": "MiniMaxAI/MiniMax-M3",
+    "returned_models": [
+      "MiniMaxAI/MiniMax-M3"
+    ],
+    "gates": {
+      "all_responses_schema_valid": true,
+      "candidate_corrected_at_least_one_baseline_error": true,
+      "candidate_exact_tuple_not_below_baseline": true,
+      "candidate_introduced_no_new_critical_error": false,
+      "controls_passed": true
+    },
+    "corrected_anchors": [
+      32
+    ],
+    "new_candidate_critical_errors": [
+      {
+        "anchor_frame": 76,
+        "field": "bottle_motion",
+        "kind": "motion_state_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "bottle_visibility",
+        "kind": "visible_out_of_view_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "gripper_contact",
+        "kind": "grasp_state_contradiction"
+      }
+    ],
+    "candidate_video_sha256": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b",
+    "baseline_video_sha256": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+    "evaluation_plan_sha256": "ee67dd9b68a4af5f16b22d706ea9e4056b741131d539d890a39de376696e0f2a",
+    "rubric_sha256": "58c049de5a1f5acdf15e60726068f01ee545e4e2cd80b6517c9b6792f3865c0e",
+    "task_sha256": "61d8b1f2747144d1922fd808e85c64dc3febe486c829b6cacde2d9feaa9da21b",
+    "scorer_sha256": "618635b6c12c23114ab5988c92d522edca84e5eaea224eaa7b8e647016c33b8b"
+  },
+  "original_annotation_report_sha256": "29b1f12f5055fac2dc2b7e39a74923807eb55212aa2b89c48ecd74da957776d8",
+  "visual": {
+    "scoring_status": "inconclusive_frozen_scorer_rejected_runner_identity_transition_before_item_scoring",
+    "acceptance_authority": false,
+    "model": "moonshotai/Kimi-K2.6",
+    "preference_counts": {
+      "baseline": 1,
+      "candidate": 5,
+      "equivalent": 3
+    },
+    "critical_failure_count": 0,
+    "temporal_defect_counts": {
+      "B": 1,
+      "none": 8
+    },
+    "unsupported_detail_counts": {
+      "none": 9
+    },
+    "limitations": [
+      "All raw responses and exact submitted image hashes are retained, but the frozen visual scorer requires calibration and candidate run-plan runner hashes to match even though revision 15 predeclared a provenance-only v2 candidate wrapper around the v1 calibration behavior.",
+      "This post-response summary does not repair that frozen scorer mismatch and has no acceptance authority.",
+      "The selected model was already disqualified as an acceptance judge by calibration."
+    ],
+    "candidate_video_sha256": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b"
+  },
+  "original_visual_report_sha256": "70d7a8ed17ac92af0f6bda86930a61a951c87c3abb90268dcf0330ded604b872"
+}

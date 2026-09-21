@@ -1,0 +1,105 @@
+{
+  "schema": "npa.root.seedvr-exact-runtime-audit.v1",
+  "reviewed_at": "2026-09-21T03:35:11.540450+00:00",
+  "source_commit": "b8d9c9c56d8adc2ec76a5a41fd37e97e0069e2f4",
+  "image_digest": "sha256:5b4258c7a3be29962c928237fa2d46bcc9667db02757349ad114033df21db7ca",
+  "runs": {
+    "main": {
+      "status": "SUCCEEDED",
+      "stages": {
+        "probe": "SUCCEEDED",
+        "restore": "SUCCEEDED",
+        "review": "SUCCEEDED",
+        "verify": "SUCCEEDED"
+      },
+      "object_hashes_verified": 30,
+      "video_sha256": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b",
+      "ffprobe": {
+        "width": 640,
+        "height": 480,
+        "r_frame_rate": "50/1",
+        "duration": "2.000000",
+        "nb_read_frames": "100"
+      },
+      "runtime_receipt_sha256": "ec1c95993304e859925d34b813c555eaac236add2319ab9b6c8130e2da2004da",
+      "verification_receipt_sha256": "0c22d11d9ea6e3a9c2775ef0dd9911e10cfc32d339c35fa7796984060b5e0724",
+      "platform_status_sha256": "1c90ee83a2a0855be07219c9918032a303d5d6b9c033b1396ccab5dc02b2a473",
+      "artifact_bundle_sha256": "92d16715ace30f9674caa90b101f5707cdb55ccf5c409e25882ec5ac1405adc4",
+      "verifier_scope": "artifact_and_runtime_consistency_only",
+      "verifier_alone_attests_producer": false
+    },
+    "light": {
+      "status": "SUCCEEDED",
+      "stages": {
+        "probe": "SUCCEEDED",
+        "restore": "SUCCEEDED",
+        "review": "SUCCEEDED",
+        "verify": "SUCCEEDED"
+      },
+      "object_hashes_verified": 30,
+      "video_sha256": "538b93e9387c6f0633ecc6bc7b6456e625d63ffea2ff94a43e326b0814eb5e7d",
+      "ffprobe": {
+        "width": 640,
+        "height": 480,
+        "r_frame_rate": "50/1",
+        "duration": "0.500000",
+        "nb_read_frames": "25"
+      },
+      "runtime_receipt_sha256": "9b9589b7215ef6f3a603f98f842fd5dd2f71c743234243a22386fdadd939b2f9",
+      "verification_receipt_sha256": "667f1f311d01a25fa079438a0e9e4a6b8cd83ae867fb571cfb1d4015712ff874",
+      "platform_status_sha256": "8de47efbfa834bdf50874aed2d67e5b90e0f10f6abc6a1edae6b54ca13f8d3b4",
+      "artifact_bundle_sha256": "d3679c321d1af48edd5dafd11eb8cd7dad439c8de4f49b44e38b6113f8c294b6",
+      "verifier_scope": "artifact_and_runtime_consistency_only",
+      "verifier_alone_attests_producer": false
+    }
+  },
+  "quality": {
+    "objective_pass": false,
+    "objective_sha256": "83e2bf132f44745b402e77b6f313eb510f71164dbe3ec1c988feb914040654ae",
+    "main_gates": {
+      "lpips_aggregate": false,
+      "lpips_two_of_three_strata": true,
+      "mask_centroid": true,
+      "mask_iou": true,
+      "mask_segmentation": true,
+      "no_black_frame": true,
+      "no_critical_mask_outlier": true,
+      "no_critical_temporal_outlier": true,
+      "ssim": true,
+      "temporal": false
+    },
+    "recomputed_aggregate_medians": true,
+    "annotation_pass": false,
+    "annotation_sha256": "29b1f12f5055fac2dc2b7e39a74923807eb55212aa2b89c48ecd74da957776d8",
+    "annotation_gates": {
+      "all_responses_schema_valid": true,
+      "candidate_corrected_at_least_one_baseline_error": true,
+      "candidate_exact_tuple_not_below_baseline": true,
+      "candidate_introduced_no_new_critical_error": false,
+      "controls_passed": true
+    },
+    "critical_errors": [
+      {
+        "anchor_frame": 76,
+        "field": "bottle_motion",
+        "kind": "motion_state_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "bottle_visibility",
+        "kind": "visible_out_of_view_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "gripper_contact",
+        "kind": "grasp_state_contradiction"
+      }
+    ]
+  },
+  "conclusion": "Exact-image real H100 workflow execution accepted at stated evidence scope; objective and annotation quality acceptance FAILED; PR remains draft.",
+  "limitations": [
+    "The verifier explicitly attests artifact/runtime consistency only; workflow execution is evidenced separately by platform ledger and retained submission evidence.",
+    "This audit recomputes stored metric aggregates, not LPIPS model inference.",
+    "No improvement or physical sensor-truth claim follows from successful execution."
+  ]
+}
