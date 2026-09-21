@@ -337,6 +337,29 @@ and validation load the verified phase-local file. Workload hashing canonicalize
 its location while retaining its exact content hash. Nondefault optimizer modes
 require a separate fixed-input gradient, update and optimizer-state comparison
 against default AdamW before selection.
+
+`--memory-fill off` is an unqualified allocation candidate; the default is `on`.
+It retains strict deterministic algorithms and requires the original verified
+normalization input. Before execution, three isolated native DDP phases run the
+real first 96 anchors and the actual final 36 anchors: fill-on capture, fill-on
+replay, and fill-off candidate. Each phase preserves the full training schedule
+and checks exact inputs, component losses, gradients before/after clipping,
+updates, optimizer, scheduler, buffers and RNG state. Eight held-out anchors
+also check evaluation-mode total/component losses. Any difference rejects the
+candidate without widening tolerances. The same gates repeat from the verified
+checkpoint before ordinary fresh-process resume, whose workload identity remains
+strict. Diagnostic fixtures are excluded from epoch counts and throughput;
+their elapsed time and hash-only evidence are reported separately. Rejections
+retain a private receipt and attempt run-scoped publication with byte readback.
+
+The candidate changes PyTorch's process-wide allocation flag around model
+forward/backward and optimizer execution. Initialization, loader creation,
+loader workers, and diagnostic hashing keep fills enabled. The concurrent
+pin-memory thread shares the flag; its pinned PyTorch implementation fully
+copies each allocated payload before use. This is not thread-local isolation.
+No speedup or acceptance is claimed until target parity, repeated uncontended
+measurements, a complete epoch, full validation and final resume all pass.
+
 Cold preparation, initialization, checkpointing and validation are reported
 separately from update throughput. No throughput or training acceptance is
 claimed until the real target completes these gates.

@@ -752,6 +752,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.prefetch_factor}}",
             "--optimizer",
             "{{config.optimizer}}",
+            "--memory-fill",
+            "{{config.memory_fill}}",
             "--runtime-image",
             "{{config.runtime_image}}",
             "--run-id",

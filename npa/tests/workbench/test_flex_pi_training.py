@@ -21,7 +21,8 @@ from npa.workbench.flex_pi.training_worker import _workload_identity
 
 
 @pytest.mark.parametrize("mode", ["train", "profile-resume"])
-def test_cli_and_sdk_resolve_the_same_immutable_public_contract(mode):
+@pytest.mark.parametrize("memory_fill", ["on", "off"])
+def test_cli_and_sdk_resolve_the_same_immutable_public_contract(mode, memory_fill):
     result = CliRunner().invoke(
         app,
         [
@@ -30,6 +31,8 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(mode):
             "train",
             "--mode",
             mode,
+            "--memory-fill",
+            memory_fill,
             "--normalization-path",
             "s3://example-bucket/original/dataset_stats.json",
             "--normalization-sha256",
@@ -44,6 +47,7 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract(mode):
     assert cli == train(
         output_path="s3://example-bucket/run/train",
         mode=mode,
+        memory_fill=memory_fill,
         normalization_path="s3://example-bucket/original/dataset_stats.json",
         normalization_sha256="a" * 64,
         dry_run=True,

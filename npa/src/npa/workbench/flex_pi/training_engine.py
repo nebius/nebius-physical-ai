@@ -149,38 +149,63 @@ class VerifiedTrainer(Wan22Trainer):
             print(json.dumps(value, allow_nan=False), flush=True)
 
     def _backward(self, sample, divisor):
+        if self.cfg.get("npa_memory_fill", "on") == "off":
+            from npa.workbench.flex_pi.training_memory import (
+                execution_without_memory_fill,
+            )
+
+            with execution_without_memory_fill():
+                return self._backward_impl(sample, divisor)
+        return self._backward_impl(sample, divisor)
+
+    def _backward_impl(self, sample, divisor):
         with self.accelerator.accumulate(self.model):
             with self.accelerator.autocast():
-                loss, _ = self.model(sample)
+                loss, components = self.model(sample)
             if not torch.isfinite(loss):
                 raise RuntimeError("nonfinite training loss")
+            recorder = getattr(self, "_fixture_recorder", None)
+            if recorder is not None:
+                recorder._loss(loss, components)
             self.accelerator.backward(
                 loss * (self.gradient_accumulation_steps / divisor)
             )
             if not self.accelerator.sync_gradients:
                 return float(loss.detach())
-            norm = self.accelerator.clip_grad_norm_(
-                self.model.parameters(), self.max_grad_norm
-            )
-            if not torch.isfinite(norm):
-                raise RuntimeError("nonfinite training gradient")
-            if self.global_step == 0:
-                missing = [
-                    name
-                    for name, parameter in self.model.named_parameters()
-                    if parameter.requires_grad and parameter.grad is None
-                ]
-                if missing:
-                    raise RuntimeError(
-                        f"trainable parameters have no distributed gradient: {missing}"
-                    )
-            self.optimizer.step()
-            if self.accelerator.optimizer_step_was_skipped:
-                raise RuntimeError("optimizer update was skipped")
-            self.scheduler.step()
-            self.optimizer.zero_grad(set_to_none=True)
-            self.global_step += 1
+            self._optimizer_update(recorder)
             return float(loss.detach())
+
+    def _optimizer_update(self, recorder):
+        if recorder is not None:
+            recorder._gradients(self, "before_clip")
+        norm = self.accelerator.clip_grad_norm_(
+            self.model.parameters(), self.max_grad_norm
+        )
+        if not torch.isfinite(norm):
+            raise RuntimeError("nonfinite training gradient")
+        if recorder is not None:
+            recorder._gradients(self, "after_clip")
+        self._check_initial_gradients()
+        self.optimizer.step()
+        if self.accelerator.optimizer_step_was_skipped:
+            raise RuntimeError("optimizer update was skipped")
+        self.scheduler.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        self.global_step += 1
+        if recorder is not None:
+            recorder._update(self, norm)
+
+    def _check_initial_gradients(self):
+        if self.global_step == 0:
+            missing = [
+                name
+                for name, parameter in self.model.named_parameters()
+                if parameter.requires_grad and parameter.grad is None
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"trainable parameters have no distributed gradient: {missing}"
+                )
 
     def _train_updates(self, updates):
         indices = []
@@ -289,8 +314,7 @@ class VerifiedTrainer(Wan22Trainer):
                 index = int(sample.pop("npa_sample_index").item())
                 torch.manual_seed(1000000 + index)
                 torch.cuda.manual_seed(1000000 + index)
-                with self.accelerator.autocast():
-                    loss, _ = model(sample)
+                loss, _ = self._validation_forward(model, sample)
                 if not torch.isfinite(loss):
                     raise RuntimeError("nonfinite validation loss")
                 total[0] += loss.detach().double()
@@ -306,6 +330,17 @@ class VerifiedTrainer(Wan22Trainer):
             "samples": VALIDATION_FRAMES,
             "seconds": time.perf_counter() - start,
         }
+
+    def _validation_forward(self, model, sample):
+        from npa.workbench.flex_pi.training_memory import execution_without_memory_fill
+
+        if self.cfg.get("npa_memory_fill", "on") == "off":
+            with execution_without_memory_fill(), self.accelerator.autocast():
+                outputs = model(sample)
+        else:
+            with self.accelerator.autocast():
+                outputs = model(sample)
+        return outputs
 
     def _validation_loader(self):
         rank = self.accelerator.process_index
@@ -406,6 +441,11 @@ class VerifiedTrainer(Wan22Trainer):
             "world_size": 4,
             "initial_model_sha256": initial_digest,
         }
+        if mode == "qualify":
+            from npa.workbench.flex_pi.training_fixture import run_fixture_qualification
+
+            result["qualification"] = run_fixture_qualification(self)
+            return result
         if mode == "resume":
             return self._resume_result(result, profile=profile_resume)
         if mode == "train":

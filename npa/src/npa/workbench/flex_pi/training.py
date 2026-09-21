@@ -31,6 +31,7 @@ class TrainingRequest:
         num_workers: Data loader workers per rank.
         prefetch_factor: Queued batches per worker.
         optimizer: Default, foreach, or fused AdamW implementation.
+        memory_fill: Keep deterministic allocation fills on, or qualify them off.
         run_id: Caller-assigned provenance identifier.
         runtime_image: Exact runtime image reference for provenance.
         dry_run: Return the frozen plan without executing it.
@@ -47,6 +48,7 @@ class TrainingRequest:
     num_workers: int = 4
     prefetch_factor: int = 4
     optimizer: str = "default"
+    memory_fill: str = "on"
     run_id: str = ""
     runtime_image: str = ""
     dry_run: bool = False
@@ -60,6 +62,10 @@ def _validate(request):
         raise FlexPiError("mode must be profile, profile-resume or train")
     if request.optimizer not in {"default", "foreach", "fused"}:
         raise FlexPiError("optimizer must be default, foreach, or fused")
+    if request.memory_fill not in {"on", "off"}:
+        raise FlexPiError("memory-fill must be on or off")
+    if request.memory_fill == "off" and not request.normalization_path:
+        raise FlexPiError("memory-fill off requires verified original normalization")
     if request.num_workers < 0 or request.prefetch_factor < 1:
         raise FlexPiError("workers must be nonnegative and prefetch positive")
     parsed = urlparse(request.output_path)
@@ -134,7 +140,10 @@ def run_training(request: TrainingRequest) -> dict:
             work_directory=str(work), asset_directory=str(cache / "assets" / identity)
         )
         _prepare_normalization(request, plan, work)
+        qualification = _qualify_memory_fill(plan, root, work)
         result = _run_phase(plan, root)
+        if qualification:
+            result["memory_fill_qualification"] = [qualification]
         return _publish_result(request, plan, result, root, work)
 
 
@@ -143,6 +152,48 @@ def _prepare_normalization(request, plan, work):
 
     if request.normalization_path:
         plan["normalization_file"] = str(stage_normalization(request, work))
+
+
+def _qualify_memory_fill(plan, root, work, *, checkpoint=None):
+    from npa.workbench.flex_pi.training_qualification import qualify_memory_fill
+
+    if plan["execution"].get("memory_fill", "on") == "on":
+        return None
+    try:
+        return qualify_memory_fill(plan, root, work, _run_phase, checkpoint=checkpoint)
+    except (FlexPiError, OSError, ValueError, KeyError):
+        _publish_qualification_failure(plan, work, checkpoint=checkpoint)
+        raise
+
+
+def _publish_qualification_failure(plan, work, *, checkpoint):
+    from npa.clients.storage import StorageClient
+    from npa.workbench.flex_pi.training_artifacts import sha256_file
+
+    stage = "checkpoint" if checkpoint is not None else "initial"
+    path = work / f"fill-{stage}-rejection.json"
+    if not path.is_file():
+        return
+    destination = plan["execution"]["output_path"].rstrip("/") + "/" + path.name
+    try:
+        storage = StorageClient.from_environment()
+        storage.upload_file(str(path), destination)
+        readback = work / f"fill-{stage}-rejection-readback.json"
+        storage.download_file(destination, str(readback))
+        digest = sha256_file(path)
+        if digest != sha256_file(readback):
+            raise FlexPiError("qualification rejection readback differs")
+        proof = work / f"fill-{stage}-rejection-publication.json"
+        proof.write_text(
+            json.dumps({"sha256": digest, "read_after_write_verified": True})
+        )
+        proof.chmod(0o400)
+    except Exception as error:
+        # Retain the original numeric rejection and private local receipt.
+        print(
+            f"qualification evidence publication failed: {type(error).__name__}",
+            file=sys.stderr,
+        )
 
 
 def _run_phase(plan, root):
@@ -207,6 +258,9 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
     publish_json(
         manifest, root / "checkpoint-manifest.json", source + "/manifest.json", storage
     )
+    qualification = _qualify_memory_fill(plan, root, work, checkpoint=restore)
+    if qualification:
+        result["memory_fill_qualification"].append(qualification)
     resume_plan = {
         **plan,
         "work_directory": str(work / "resume"),

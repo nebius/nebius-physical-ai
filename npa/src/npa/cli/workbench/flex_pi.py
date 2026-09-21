@@ -34,6 +34,9 @@ def train_cmd(
     num_workers: int = typer.Option(4, "--num-workers", min=0),
     prefetch_factor: int = typer.Option(4, "--prefetch-factor", min=1),
     optimizer: str = typer.Option("default", "--optimizer"),
+    memory_fill: str = typer.Option(
+        "on", "--memory-fill", help="on or off; off requires exact qualification"
+    ),
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -49,6 +52,7 @@ def train_cmd(
         num_workers: Loader workers per participating GPU.
         prefetch_factor: Batches prefetched per loader worker.
         optimizer: Default, foreach, or fused AdamW execution.
+        memory_fill: Deterministic allocation fills; off runs exact parity gates.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve the immutable contract without downloads or execution.

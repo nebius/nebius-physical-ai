@@ -45,6 +45,8 @@ def _configuration(plan, root, assets):
     )
     if plan.get("resume_directory"):
         overrides.append("resume=" + plan["resume_directory"])
+    if plan["execution"].get("memory_fill", "on") == "off":
+        overrides.append('+npa_memory_fill="off"')
     return _compose_configuration(assets, overrides)
 
 
@@ -66,6 +68,7 @@ def _rank_main(request_path):
     from flexpi.runtime import build_datasets
     from flexpi.utils import misc
     from npa.workbench.flex_pi.training_engine import VerifiedTrainer
+    from npa.workbench.flex_pi.training_memory import memory_fill_receipt
 
     plan = json.loads(request_path.read_text())
     root = Path(plan["work_directory"])
@@ -89,6 +92,9 @@ def _rank_main(request_path):
     )
     result["initialization_seconds"] = initialized
     result["runtime"] = _runtime_receipt()
+    result["memory_fill"] = memory_fill_receipt(cfg)
+    if plan["execution"]["mode"] == "qualify":
+        result["qualification_seconds"] = trainer._qualification_seconds
     if torch.distributed.get_rank() == 0:
         (root / "phase-result.json").write_text(json.dumps(result, allow_nan=False))
     torch.distributed.barrier()
@@ -133,6 +139,7 @@ def _runtime_receipt():
 
 def _configure_determinism():
     import torch
+    import torch.utils.deterministic
 
     if os.environ.get("CUBLAS_WORKSPACE_CONFIG") != ":4096:8":
         raise RuntimeError(
@@ -141,6 +148,7 @@ def _configure_determinism():
     torch.use_deterministic_algorithms(True, warn_only=False)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
+    torch.utils.deterministic.fill_uninitialized_memory = True
 
 
 def _nccl_environment():
@@ -217,7 +225,7 @@ def _finalize_phase(plan, root, assets, receipt, capability, request_path):
     )
 
     result = json.loads((root / "phase-result.json").read_text())
-    if plan["execution"]["mode"] != "resume":
+    if plan["execution"]["mode"] not in {"resume", "qualify"}:
         rows = [
             json.loads(line)
             for line in (root / "measurements.jsonl").read_text().splitlines()

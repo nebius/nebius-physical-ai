@@ -68,6 +68,7 @@ def train(
     num_workers: int = 4,
     prefetch_factor: int = 4,
     optimizer: str = "default",
+    memory_fill: str = "on",
     run_id: str = "",
     runtime_image: str = "",
     dry_run: bool = False,
@@ -82,6 +83,7 @@ def train(
         num_workers: Data loader workers per GPU.
         prefetch_factor: Prefetched batches per worker.
         optimizer: Default, foreach or fused AdamW execution.
+        memory_fill: Deterministic allocation fills; off requires exact parity.
         run_id: Workflow provenance identifier.
         runtime_image: Exact runtime image provenance.
         dry_run: Resolve without fetching data or executing a model.

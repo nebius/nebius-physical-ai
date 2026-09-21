@@ -33,6 +33,7 @@ class TrainingBody(BaseModel):
     num_workers: int = Field(default=4, ge=0)
     prefetch_factor: int = Field(default=4, ge=1)
     optimizer: Literal["default", "foreach", "fused"] = "default"
+    memory_fill: Literal["on", "off"] = "on"
     dry_run: bool = False
 
 
