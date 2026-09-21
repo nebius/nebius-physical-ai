@@ -45,13 +45,14 @@ TAG="${TAG:-dev-${NPA_SOURCE_SHA}}"
 IMAGE="${REGISTRY}/npa-robocasa:${TAG}"
 
 echo "Building local ${IMAGE} from source ${NPA_SOURCE_SHA}"
-docker build \
-  --platform linux/amd64 \
-  --provenance=false \
-  --build-arg ROBOCASA_VERSION="${ROBOCASA_VERSION}" \
-  --build-arg NPA_SOURCE_SHA="${NPA_SOURCE_SHA}" \
-  -t "${IMAGE}" \
-  -f "${SCRIPT_DIR}/Dockerfile" \
-  "${NPA_ROOT}"
+git -C "${NPA_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa" \
+  | docker build \
+      --platform linux/amd64 \
+      --provenance=false \
+      --build-arg ROBOCASA_VERSION="${ROBOCASA_VERSION}" \
+      --build-arg NPA_SOURCE_SHA="${NPA_SOURCE_SHA}" \
+      -t "${IMAGE}" \
+      -f docker/workbench/robocasa/Dockerfile \
+      -
 
 echo "Built ${IMAGE}"

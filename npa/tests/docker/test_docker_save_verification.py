@@ -46,6 +46,7 @@ def _archive(
     oci_layout: bool = False,
     layer_entries: list[tuple[str, bytes]] | None = None,
     layer_payload: bytes | None = None,
+    repeat: int = 1,
 ) -> tuple[Path, str]:
     raw_layer = _tar(layer_entries or [("opt/result.txt", b"physical-ai")])
     stored_layer = (
@@ -58,7 +59,7 @@ def _archive(
     config = {
         "rootfs": {
             "type": "layers",
-            "diff_ids": ["sha256:" + hashlib.sha256(raw_layer).hexdigest()],
+            "diff_ids": ["sha256:" + hashlib.sha256(raw_layer).hexdigest()] * repeat,
         }
     }
     config_bytes = json.dumps(config, sort_keys=True).encode()
@@ -73,7 +74,7 @@ def _archive(
     manifest = [
         {
             "Config": config_name,
-            "Layers": [layer_name],
+            "Layers": [layer_name] * repeat,
             "RepoTags": ["npa-robocasa:test"],
         }
     ]
@@ -102,7 +103,8 @@ def _archive(
                     "digest": "sha256:" + stored_layer_digest,
                     "size": len(stored_layer),
                 }
-            ],
+            ]
+            * repeat,
         }
         manifest_bytes = json.dumps(manifest_document, sort_keys=True).encode()
         manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
@@ -165,6 +167,45 @@ def test_verifier_binds_complete_layer_and_config(
     assert len(layers) == 1
 
 
+def test_repeated_layer_member_is_physically_verified_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, image_id = _archive(tmp_path, oci_layout=True, repeat=3)
+    calls = []
+    original = VERIFIER._verify_layer
+
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(VERIFIER, "_verify_layer", counted)
+    report = VERIFIER.verify(archive, image_id)
+
+    assert report["layer_count"] == 3
+    assert report["regular_files_read"] == 3
+    assert calls == [True]
+
+
+def test_repeated_layer_member_limit_fails_before_layer_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, image_id = _archive(
+        tmp_path,
+        oci_layout=True,
+        repeat=core.DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT + 1,
+    )
+    calls = []
+    monkeypatch.setattr(
+        VERIFIER,
+        "_verify_layer",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(core.ScanError, match="docker_save_layer_member_repeat_limit"):
+        VERIFIER.verify(archive, image_id)
+    assert calls == []
+
+
 def test_verifier_opens_once_and_hashes_parses_rehashes_held_inode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -225,6 +266,45 @@ def test_verifier_uses_private_nofollow_archive_contract(
 
     with pytest.raises(core.ScanError, match=expected):
         VERIFIER.verify(candidate, image_id)
+
+
+def test_outer_extension_is_rejected_before_tarfile_can_allocate_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    member = tarfile.TarInfo("pax")
+    member.type = tarfile.XHDTYPE
+    member.size = 2**30
+    archive = tmp_path / "image.tar"
+    archive.write_bytes(member.tobuf(format=tarfile.USTAR_FORMAT) + b"\0" * 1024)
+    archive.chmod(0o600)
+
+    monkeypatch.setattr(
+        VERIFIER.tarfile,
+        "open",
+        lambda *args, **kwargs: pytest.fail("tarfile opened before outer preflight"),
+    )
+    with pytest.raises(core.ScanError, match="docker_save_outer_extension_unsupported"):
+        VERIFIER.verify(archive, "sha256:" + "f" * 64)
+    fd = os.open(archive, os.O_RDONLY)
+    try:
+        with pytest.raises(
+            core.ScanError, match="docker_save_outer_extension_unsupported"
+        ):
+            core.graph(fd, os.fstat(fd).st_size, {}, "sha256:" + "f" * 64)
+    finally:
+        os.close(fd)
+
+
+def test_outer_metadata_is_bounded_before_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, image_id = _archive(tmp_path)
+    monkeypatch.setattr(core, "DOCKER_SAVE_METADATA_LIMIT", 64)
+
+    with pytest.raises(
+        core.ScanError, match="docker_save_metadata_regular_or_too_large"
+    ):
+        VERIFIER.verify(archive, image_id)
 
 
 def test_verifier_rehash_detects_same_inode_byte_change(
@@ -292,7 +372,7 @@ def test_verifier_rejects_unsafe_inner_path(tmp_path: Path) -> None:
         tmp_path, layer_entries=[("../escape", b"not extracted")]
     )
 
-    with pytest.raises(core.ScanError, match="docker_save_safe_path"):
+    with pytest.raises(core.ScanError, match="tar_path_escape"):
         VERIFIER.verify(archive, image_id)
 
 
@@ -393,15 +473,15 @@ def test_cli_rejects_output_directory_replaced_before_held_fd_readback(
 ) -> None:
     archive, image_id = _archive(tmp_path, oci_layout=True)
     output = tmp_path / "cli-output"
-    original_write = core.write_private_json
+    original_publish = core.publish_staged_private_json
 
-    def replace_after_write(directory, name, result):
-        identity = original_write(directory, name, result)
-        directory.rename(tmp_path / "displaced-output")
-        directory.mkdir(mode=0o700)
+    def replace_after_publish(held_fd, name, result, staged):
+        identity = original_publish(held_fd, name, result, staged)
+        output.rename(tmp_path / "displaced-output")
+        output.mkdir(mode=0o700)
         return identity
 
-    monkeypatch.setattr(core, "write_private_json", replace_after_write)
+    monkeypatch.setattr(core, "publish_staged_private_json", replace_after_publish)
     result = VERIFIER.main(
         [
             "--analysis-root",
@@ -419,3 +499,35 @@ def test_cli_rejects_output_directory_replaced_before_held_fd_readback(
 
     assert result == 1
     assert capsys.readouterr().out == "Docker-save graph verification failed\n"
+
+
+def test_cli_does_not_publish_valid_report_before_archive_finalize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    archive, image_id = _archive(tmp_path, oci_layout=True)
+    output = tmp_path / "cli-output"
+
+    def reject_finalize(_self):
+        raise core.ScanError("synthetic_final_archive_change")
+
+    monkeypatch.setattr(VERIFIER._ArchiveVerification, "finalize", reject_finalize)
+    result = VERIFIER.main(
+        [
+            "--analysis-root",
+            str(tmp_path),
+            "--trusted-root",
+            str(ROOT),
+            "--archive",
+            str(archive),
+            "--expected-image-id",
+            image_id,
+            "--output-dir",
+            str(output),
+        ]
+    )
+
+    assert result == 1
+    assert capsys.readouterr().out == "Docker-save graph verification failed\n"
+    assert output.exists()
+    assert not (output / "verification.json").exists()
+    assert not (output / "verification.json.pending").exists()

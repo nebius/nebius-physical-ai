@@ -263,7 +263,9 @@ class ScanReport:
                 or type(self.archive_bytes) is not int
                 or self.archive_bytes <= 0
             ):
-                raise RuntimeError("Tarball scan report is missing its archive identity")
+                raise RuntimeError(
+                    "Tarball scan report is missing its archive identity"
+                )
             payload["archive_sha256"] = self.archive_sha256
             payload["archive_bytes"] = self.archive_bytes
         return payload

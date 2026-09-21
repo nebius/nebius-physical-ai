@@ -62,6 +62,19 @@ def pax_record(key, value):
         size = len(record)
 
 
+def raw_tar_entry(name, data=b"", *, kind=tarfile.REGTYPE):
+    item = tarfile.TarInfo(name)
+    item.type = kind
+    item.size = len(data)
+    return item.tobuf(format=tarfile.GNU_FORMAT) + data + b"\0" * ((-len(data)) % 512)
+
+
+def raw_pax_entry(records, *, global_header=False):
+    body = b"".join(pax_record(key, value) for key, value in records)
+    kind = tarfile.XGLTYPE if global_header else tarfile.XHDTYPE
+    return raw_tar_entry("pax-header", body, kind=kind), len(body)
+
+
 def tar_with_binary_pax(key, value):
     placeholder = b"x" * len(value)
     raw = tar_data([file("opt/metadata", b"neutral", pax={key: placeholder.decode()})])
@@ -551,6 +564,42 @@ def test_repeated_layer_occurrences_are_each_completely_scanned(tmp_path, codec)
     assert len([row for row in records if row.get("type") == "encoded_layer_blob"]) == 1
 
 
+def test_repeated_layer_occurrence_limit_fails_before_detector_start(tmp_path):
+    before = len(FakeDetector.instances)
+    report, _ = run(
+        tmp_path,
+        fixture(
+            tmp_path,
+            repeat=W.DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT + 1,
+        ),
+    )
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "docker_save_layer_member_repeat_limit"
+    assert len(FakeDetector.instances) == before
+
+
+def test_layer_reference_population_and_conflicts_are_bounded():
+    digest_a = "sha256:" + "a" * 64
+    digest_b = "sha256:" + "b" * 64
+    with pytest.raises(W.ScanError, match="docker_save_layer_reference_limit"):
+        W.validate_docker_save_layer_references(
+            [f"layer/{index}.tar" for index in range(W.DOCKER_SAVE_LAYER_LIMIT + 1)],
+            [digest_a] * (W.DOCKER_SAVE_LAYER_LIMIT + 1),
+        )
+    with pytest.raises(W.ScanError, match="docker_save_layer_member_conflict"):
+        W.validate_docker_save_layer_references(
+            ["layer/shared.tar", "layer/shared.tar"],
+            [digest_a, digest_b],
+        )
+    with pytest.raises(W.ScanError, match="docker_save_layer_member_repeat_limit"):
+        W.validate_docker_save_layer_references(
+            ["layer/shared.tar"] * W.DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT
+            + ["./layer/shared.tar"],
+            [digest_a] * (W.DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT + 1),
+        )
+
+
 def test_unknown_authorization_fields_are_rejected(tmp_path):
     authorization = fixture(tmp_path)
     authorization["skip_large_files"] = True
@@ -611,31 +660,74 @@ def test_zero_ranges_do_not_concatenate_across_distinct_layers(tmp_path):
     assert sink.findings == 0
 
 
-def test_large_logical_zero_run_uses_a_bounded_streaming_reader(tmp_path, monkeypatch):
+def test_zero_run_preserves_cross_chunk_scan_semantics(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "CHUNK", 8)
     detector = FakeDetector({}, tmp_path / "unused")
-    sink = W.Ledger(tmp_path, detector, [], "exact-substring-v1")
-    logical_size = 2**40
+    sink = W.Ledger(
+        tmp_path,
+        detector,
+        ["\x00" * 9],
+        "exact-substring-v1",
+        policy_config={
+            "customer_pattern": r"\x00{9}",
+            "infra_pattern": None,
+        },
+    )
     sink.zero_run = {
-        "bytes": logical_size,
+        "bytes": 16,
         "context": {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0},
     }
-    observed = {}
 
-    def inspect(reader, length, kind, context):
-        observed.update(reader=reader, length=length, kind=kind, context=context)
-        block = reader.read(length)
-        observed["block_size"] = len(block)
-        observed["remaining"] = reader.remaining
-
-    monkeypatch.setattr(sink, "send", inspect)
     sink.flush_zeros()
     sink.stream.close()
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "records.jsonl").read_text().splitlines()
+    ]
+    zero_records = [row for row in rows if row.get("kind") == "verified_zero_content"]
 
-    assert isinstance(observed["reader"], W.ZeroReader)
-    assert observed["length"] == logical_size
-    assert observed["kind"] == "verified_zero_content"
-    assert observed["block_size"] == W.CHUNK < logical_size
-    assert observed["remaining"] == logical_size - W.CHUNK
+    assert detector.records == [b"\x00" * 16]
+    assert len(zero_records) == 1
+    assert [
+        (row["byte_start"], row["byte_end"])
+        for row in findings(rows, "private_literal")
+    ] == [(0, 9)]
+    assert {finding["rule_id"] for finding in zero_records[0]["findings"]} == {
+        "customer-denylist"
+    }
+
+
+def test_oversized_zero_run_fails_before_detector_or_policy_allocation(
+    tmp_path, monkeypatch
+):
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(
+        tmp_path,
+        detector,
+        [],
+        "exact-substring-v1",
+        policy_config={
+            "customer_pattern": "absent-private-marker",
+            "infra_pattern": None,
+        },
+    )
+    sink.zero_run = {
+        "bytes": W.ZERO_RECORD_LIMIT + 1,
+        "context": {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0},
+    }
+    called = []
+    monkeypatch.setattr(
+        W.C.ConfidentialityPolicy,
+        "scan_record",
+        lambda *_args, **_kwargs: called.append(True),
+    )
+
+    with pytest.raises(W.ScanError, match="zero_record_complete_scan_limit"):
+        sink.flush_zeros()
+    sink.stream.close()
+
+    assert detector.records == []
+    assert called == []
 
 
 def test_body_and_padding_offsets_refer_to_actual_physical_ranges(tmp_path):
@@ -882,6 +974,95 @@ def test_oversized_tar_extension_is_rejected_before_body_allocation(
     assert not report["valid"] and not report["complete"]
     assert report["failure_code"] == "tar_extension_body_too_large"
     assert declared_size not in requested
+
+
+def test_pending_pax_chain_is_bounded_before_next_body_read(tmp_path, monkeypatch):
+    first, first_size = raw_pax_entry([("SCHILY.xattr.first", b"a")])
+    second, second_size = raw_pax_entry([("SCHILY.xattr.second", b"b" * 100)])
+    raw = first + second + raw_tar_entry("opt/body", b"neutral") + b"\0" * 1024
+    monkeypatch.setattr(W, "TAR_EXTENSION_CHAIN_LIMIT", first_size)
+    requested = []
+    original = W.read_exact
+
+    def record_request(reader, count, *, eof=False):
+        requested.append(count)
+        return original(reader, count, eof=eof)
+
+    monkeypatch.setattr(W, "read_exact", record_request)
+    report, _ = run(tmp_path, fixture(tmp_path, entries=[], raw=raw, codec="raw"))
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_extension_chain_too_large"
+    assert second_size not in requested
+
+
+def test_pending_pax_key_population_is_bounded(tmp_path, monkeypatch):
+    extension, _ = raw_pax_entry(
+        [
+            ("SCHILY.xattr.first", b"a"),
+            ("SCHILY.xattr.second", b"b"),
+            ("SCHILY.xattr.third", b"c"),
+        ]
+    )
+    raw = extension + raw_tar_entry("opt/body", b"neutral") + b"\0" * 1024
+    monkeypatch.setattr(W, "TAR_PAX_KEY_LIMIT", 2)
+
+    report, _ = run(tmp_path, fixture(tmp_path, entries=[], raw=raw, codec="raw"))
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_pax_key_limit"
+
+
+def test_pending_pax_bounds_reset_after_target_entry(tmp_path, monkeypatch):
+    first, size = raw_pax_entry([("SCHILY.xattr.first", b"a")])
+    second, second_size = raw_pax_entry([("SCHILY.xattr.second", b"b")])
+    raw = (
+        first
+        + raw_tar_entry("opt/first", b"one")
+        + second
+        + raw_tar_entry("opt/second", b"two")
+        + b"\0" * 1024
+    )
+    monkeypatch.setattr(W, "TAR_EXTENSION_CHAIN_LIMIT", max(size, second_size))
+    monkeypatch.setattr(W, "TAR_PAX_KEY_LIMIT", 1)
+
+    report, _ = run(
+        tmp_path,
+        fixture(
+            tmp_path,
+            entries=[file("opt/first", b"one"), file("opt/second", b"two")],
+            raw=raw,
+            codec="raw",
+        ),
+    )
+
+    assert report["valid"] and report["complete"], report.get("failure_code")
+    assert report["regular_files"] == 2
+
+
+def test_global_pax_xattrs_are_scanned_then_discarded(tmp_path, monkeypatch):
+    global_headers = b"".join(
+        raw_pax_entry(
+            [(f"SCHILY.xattr.global{index}", bytes([index]))],
+            global_header=True,
+        )[0]
+        for index in range(1, 5)
+    )
+    raw = global_headers + raw_tar_entry("opt/body", b"neutral") + b"\0" * 1024
+    monkeypatch.setattr(W, "TAR_PAX_KEY_LIMIT", 1)
+
+    report, _ = run(
+        tmp_path,
+        fixture(
+            tmp_path,
+            entries=[file("opt/body", b"neutral")],
+            raw=raw,
+            codec="raw",
+        ),
+    )
+
+    assert report["valid"] and report["complete"], report.get("failure_code")
+    assert report["regular_files"] == 1
 
 
 def test_empty_optional_fields_and_advisory_paths_are_never_extracted(tmp_path):

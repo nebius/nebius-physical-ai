@@ -14,8 +14,12 @@ config:
   prefix: "robocasa-smoke/{{run.id}}"
   source_overlay: true
   env_id: "robocasa/PickPlaceCounterToCabinet"
-  robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
+  robocasa_endpoint: http://npa-robocasa.default.svc.cluster.local:8791
   robocasa_token_env: ROBOCASA_TOKEN
+  # Quarantined service identity: override both with the exact deploy values.
+  # The all-zero placeholders are syntactically valid but cannot match a real image.
+  robocasa_expected_image_source_sha: "0000000000000000000000000000000000000000"
+  robocasa_expected_image_manifest_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   iterations: "1"
   num_envs: "1"
   poll_seconds: "30"

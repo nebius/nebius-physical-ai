@@ -9,6 +9,7 @@ import threading
 import types
 import json
 from pathlib import Path
+from zipfile import ZipFile
 
 import httpx
 import numpy as np
@@ -28,6 +29,29 @@ from npa.workbench.robocasa.capabilities import (
 from npa.workbench.robocasa.schemas import RoboCasaRunRequest
 from npa.workbench.robocasa.schemas import RoboCasaStatusResponse
 from npa.workbench.robocasa.service import RunRegistry, create_app
+
+
+def _install_deployed_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[str, str]:
+    source_sha = "a" * 40
+    manifest_digest = "sha256:" + "b" * 64
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", source_sha)
+    monkeypatch.setenv("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", "1")
+    monkeypatch.setenv("ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA", source_sha)
+    monkeypatch.setenv("ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST", manifest_digest)
+    return source_sha, manifest_digest
+
+
+def _service_run_payload(source_sha: str, manifest_digest: str) -> dict[str, object]:
+    return {
+        "capability": "kitchen_task_registration",
+        "env_id": "robocasa/PickPlaceCounterToCabinet",
+        "output_uri": "s3://bucket/out",
+        "download_assets": False,
+        "expected_image_source_sha": source_sha,
+        "expected_image_manifest_digest": manifest_digest,
+    }
 
 
 def _install_fake_robocasa(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,6 +167,37 @@ def test_kitchen_task_registration(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result["registered_env_count"] == 2
 
 
+def test_fresh_task_registration_imports_robocasa_before_checking_gym(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry: dict[str, object] = {}
+    gym = types.SimpleNamespace(envs=types.SimpleNamespace(registry=registry))
+    events: list[str] = []
+
+    def import_robocasa() -> object:
+        events.append("import-robocasa")
+        registry["robocasa/PickPlaceCounterToCabinet"] = types.SimpleNamespace(
+            entry_point="robocasa.envs:KitchenEnv"
+        )
+        return object()
+
+    def import_gymnasium() -> object:
+        events.append("import-gymnasium")
+        assert "import-robocasa" in events
+        return gym
+
+    monkeypatch.setattr(
+        capabilities, "_download_assets", lambda: events.append("assets")
+    )
+    monkeypatch.setattr(capabilities, "_import_robocasa", import_robocasa)
+    monkeypatch.setattr(capabilities, "_import_gymnasium", import_gymnasium)
+
+    result = kitchen_task_registration(download_assets=True)
+
+    assert result["registered_env_count"] == 1
+    assert events == ["assets", "import-robocasa", "import-gymnasium"]
+
+
 def test_kitchen_task_registration_missing_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_robocasa(monkeypatch)
     with pytest.raises(RoboCasaError):
@@ -226,6 +281,7 @@ def test_service_system_info_does_not_block_event_loop(
 
 def test_service_run_and_status(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_robocasa(monkeypatch)
+    source_sha, manifest_digest = _install_deployed_runtime_identity(monkeypatch)
     monkeypatch.setattr(
         "npa.workbench.robocasa.capabilities.upload_output", lambda *args: None
     )
@@ -233,17 +289,64 @@ def test_service_run_and_status(monkeypatch: pytest.MonkeyPatch) -> None:
     client = TestClient(app)
     response = client.post(
         "/run",
-        json={
-            "capability": "kitchen_task_registration",
-            "env_id": "robocasa/PickPlaceCounterToCabinet",
-            "output_uri": "s3://bucket/out",
-        },
+        json=_service_run_payload(source_sha, manifest_digest),
     )
     assert response.status_code == 200
     run_id = response.json()["run_id"]
     status_response = client.get("/status", params={"run_id": run_id})
     assert status_response.status_code == 200
     assert status_response.json()["status"] in {"running", "completed"}
+
+
+def test_service_rejects_identity_mismatch_before_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_sha, manifest_digest = _install_deployed_runtime_identity(monkeypatch)
+    executed = False
+
+    def unexpected_execution(*_args, **_kwargs):
+        nonlocal executed
+        executed = True
+
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.service.run_capability_with_output",
+        unexpected_execution,
+    )
+    runs = RunRegistry()
+    client = TestClient(create_app(auth_mode="none", runs=runs))
+    payload = _service_run_payload(source_sha, manifest_digest)
+    payload["expected_image_source_sha"] = "c" * 40
+
+    response = client.post("/run", json=payload)
+
+    assert response.status_code == 409
+    assert "does not match runtime" in response.json()["detail"]
+    assert executed is False
+    assert runs.values() == []
+
+
+def test_duplicate_active_run_is_enqueued_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_sha, manifest_digest = _install_deployed_runtime_identity(monkeypatch)
+    scheduled: list[tuple[object, tuple[object, ...]]] = []
+
+    def record_task(_self, function, *args, **_kwargs):
+        scheduled.append((function, args))
+
+    monkeypatch.setattr("starlette.background.BackgroundTasks.add_task", record_task)
+    runs = RunRegistry()
+    client = TestClient(create_app(auth_mode="none", runs=runs))
+    payload = _service_run_payload(source_sha, manifest_digest)
+
+    first = client.post("/run", json=payload)
+    second = client.post("/run", json=payload)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["run_id"] == second.json()["run_id"]
+    assert first.json()["status"] == second.json()["status"] == "queued"
+    assert len(scheduled) == 1
+    assert len(runs.values()) == 1
 
 
 def test_service_status_unknown_run() -> None:
@@ -362,6 +465,67 @@ def test_run_registry_concurrent_updates_are_safe() -> None:
     assert all(run.status == "completed" for run in runs.values())
 
 
+def test_gpu_runs_are_serialized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.robocasa import service
+
+    runs = RunRegistry()
+    runs["one"] = _status("one", "queued")
+    runs["two"] = _status("two", "queued")
+    execution_lock = threading.Lock()
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    invocation_count = 0
+    active = 0
+    maximum_active = 0
+    counter_lock = threading.Lock()
+
+    def fake_run(*_args, **_kwargs):
+        nonlocal invocation_count, active, maximum_active
+        with counter_lock:
+            invocation_count += 1
+            invocation = invocation_count
+            active += 1
+            maximum_active = max(maximum_active, active)
+        if invocation == 1:
+            first_entered.set()
+            assert release_first.wait(timeout=5)
+        else:
+            second_entered.set()
+        with counter_lock:
+            active -= 1
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "run_capability_with_output", fake_run)
+    request = RoboCasaRunRequest(
+        capability="kitchen_random_rollout",
+        output_uri="s3://example/output",
+    )
+    first = threading.Thread(
+        target=service._run_capability,
+        args=(request, "one", runs, execution_lock),
+    )
+    second = threading.Thread(
+        target=service._run_capability,
+        args=(request, "two", runs, execution_lock),
+    )
+
+    first.start()
+    assert first_entered.wait(timeout=2)
+    second.start()
+    assert not second_entered.wait(timeout=0.1)
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert second_entered.is_set()
+    assert maximum_active == 1
+    assert runs.get("one").status == "completed"
+    assert runs.get("two").status == "completed"
+
+
 class _FakeActionSpace:
     shape = (7,)
 
@@ -429,6 +593,7 @@ class _FakeEnv:
 def _install_fake_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Install a fake gymnasium whose make() returns a scripted RoboCasa env."""
     _install_fake_robocasa(monkeypatch)
+    monkeypatch.setattr(capabilities, "_download_assets", lambda: None)
 
     class FakeGym:
         envs = types.SimpleNamespace(registry={})
@@ -486,6 +651,72 @@ def test_assets_root_does_not_import_robocasa(monkeypatch: pytest.MonkeyPatch) -
 
     assert str(_assets_root()) == "/opt/robocasa/source/robocasa/models/assets"
     assert imported is False
+
+
+def test_asset_catalog_uses_immutable_revisions() -> None:
+    archives = capabilities._asset_archives()
+
+    assert archives
+    assert {(archive.repo_id, archive.revision) for archive in archives} == {
+        (
+            "robocasa/robocasa-assets",
+            "1b92c3d02ca4354984fec961357db0bff7b32166",
+        ),
+        (
+            "nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF",
+            "420a04af939c34873e6839a586b70844baf28aab",
+        ),
+    }
+
+
+def test_asset_partial_fetch_retries_without_completion_receipt(tmp_path: Path) -> None:
+    assets_root = tmp_path / "assets"
+    state_root = assets_root / ".npa_asset_fetch"
+    partial = assets_root / "textures"
+    partial.mkdir(parents=True)
+    (partial / "partial.txt").write_text("partial", encoding="utf-8")
+    invalid_zip = tmp_path / "invalid.zip"
+    invalid_zip.write_bytes(b"not-a-zip")
+    valid_zip = tmp_path / "valid.zip"
+    with ZipFile(valid_zip, "w") as archive_zip:
+        archive_zip.writestr("textures/complete.txt", "complete")
+    archive = capabilities._AssetArchive(
+        capabilities.ROBOCASA_ASSET_REPOSITORY,
+        capabilities.ROBOCASA_ASSET_REVISION,
+        "textures.zip",
+        ".",
+        "textures",
+        "textures",
+    )
+    downloads = iter((invalid_zip, valid_zip))
+
+    def downloader(**kwargs):
+        assert kwargs["revision"] == capabilities.ROBOCASA_ASSET_REVISION
+        return str(next(downloads))
+
+    with pytest.raises(RoboCasaError, match="not a valid zip"):
+        capabilities._fetch_asset_archive(
+            archive,
+            assets_root=assets_root,
+            state_root=state_root,
+            downloader=downloader,
+        )
+    receipt = capabilities._asset_receipt_path(state_root, archive)
+    assert not receipt.exists()
+    assert (partial / "partial.txt").exists()
+
+    capabilities._fetch_asset_archive(
+        archive,
+        assets_root=assets_root,
+        state_root=state_root,
+        downloader=downloader,
+    )
+
+    assert (partial / "complete.txt").read_text(encoding="utf-8") == "complete"
+    assert not (partial / "partial.txt").exists()
+    receipt_payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert receipt_payload["revision"] == capabilities.ROBOCASA_ASSET_REVISION
+    assert receipt_payload["file_count"] == 1
 
 
 def test_kitchen_trajectory_export(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -843,6 +1074,25 @@ def test_required_video_fails_closed(
         )
 
 
+def test_random_rollout_fails_when_mp4_is_empty_or_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(capabilities, "_make_env", lambda *_args, **_kwargs: _FakeEnv())
+
+    def write_empty_video(_frames, path):
+        path.touch()
+        return path
+
+    monkeypatch.setattr(capabilities, "_write_video", write_empty_video)
+
+    with pytest.raises(RoboCasaError, match="video was not written"):
+        capabilities.kitchen_random_rollout(
+            iterations=1,
+            output_dir=tmp_path,
+            download_assets=False,
+        )
+
+
 def test_rollout_output_has_machine_readable_execution_provenance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -954,6 +1204,20 @@ def test_checkpoint_identity_hashes_exact_pretrained_model_separately(tmp_path) 
     assert first_tree_sha != second_tree_sha
 
 
+def test_checkpoint_tree_hash_length_frames_path_and_content(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "a").write_bytes(b"bc")
+    (second / "ab").write_bytes(b"c")
+
+    old_first = b"a" + b"bc"
+    old_second = b"ab" + b"c"
+    assert old_first == old_second
+    assert capabilities._sha256_tree(first) != capabilities._sha256_tree(second)
+
+
 def test_checkpoint_identity_rejects_ambiguous_numbered_checkpoints(tmp_path) -> None:
     from npa.workbench.robocasa.capabilities import _checkpoint_identity
 
@@ -965,6 +1229,62 @@ def test_checkpoint_identity_rejects_ambiguous_numbered_checkpoints(tmp_path) ->
 
     with pytest.raises(RoboCasaError, match="multiple loadable pretrained_model"):
         _checkpoint_identity(tmp_path)
+
+
+def test_training_dataset_provenance_binds_content_and_exact_tasks(
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.lerobot.policy_container import (
+        build_training_dataset_provenance,
+        write_training_dataset_provenance,
+    )
+
+    dataset = tmp_path / "dataset"
+    (dataset / "meta").mkdir(parents=True)
+    (dataset / "data").mkdir()
+    task_rows = [
+        {"task_index": 0, "task": "TrainA"},
+        {"task_index": 1, "task": "TrainB"},
+    ]
+    (dataset / "meta" / "tasks.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in task_rows),
+        encoding="utf-8",
+    )
+    data_path = dataset / "data" / "episode.bin"
+    data_path.write_bytes(b"first-dataset")
+    declared = "robocasa/TrainA,robocasa/TrainB"
+
+    provenance = build_training_dataset_provenance(
+        dataset,
+        dataset_source="s3://example/dataset/",
+        declared_training_env_ids=declared,
+    )
+    run_root = tmp_path / "training-run"
+    write_training_dataset_provenance(run_root, provenance)
+    verified = capabilities._verify_training_provenance(run_root, declared.split(","))
+
+    assert verified["declared_training_tasks_verified"] is True
+    assert verified["normalized_dataset_training_env_ids"] == declared.split(",")
+    first_digest = provenance["dataset_tree_sha256"]
+    data_path.write_bytes(b"changed-dataset")
+    changed = build_training_dataset_provenance(
+        dataset,
+        dataset_source="s3://example/dataset/",
+        declared_training_env_ids=declared,
+    )
+    assert changed["dataset_tree_sha256"] != first_digest
+    with pytest.raises(RoboCasaError, match="do not exactly match"):
+        capabilities._verify_training_provenance(
+            run_root, ["robocasa/TrainB", "robocasa/TrainA"]
+        )
+    from npa.workbench.lerobot.policy_container import PolicyContainerError
+
+    with pytest.raises(PolicyContainerError, match="undeclared RoboCasa tasks"):
+        build_training_dataset_provenance(
+            dataset,
+            dataset_source="s3://example/dataset/",
+            declared_training_env_ids="robocasa/TrainA",
+        )
 
 
 def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
@@ -996,6 +1316,14 @@ def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
     monkeypatch.setattr(
         "npa.workbench.robocasa.capabilities._checkpoint_identity",
         lambda root: (root, "a" * 64, "b" * 64),
+    )
+    monkeypatch.setattr(
+        "npa.workbench.robocasa.capabilities._verify_training_provenance",
+        lambda _root, _ids: {
+            "dataset_tree_sha256": "c" * 64,
+            "artifact_sha256": "d" * 64,
+            "artifact_path": "training_dataset_provenance.json",
+        },
     )
     monkeypatch.setattr(
         "npa.workbench.robocasa.capabilities._load_act_policy",
@@ -1049,7 +1377,8 @@ def test_kitchen_policy_eval_compares_matched_seed_random_baseline(
         for episode in (pair["policy"], pair["random_baseline"])
     )
     assert result["split_proof"]["configured_task_sets_disjoint"] is True
-    assert result["split_proof"]["checkpoint_training_tasks_verified"] is False
+    assert result["split_proof"]["checkpoint_training_tasks_verified"] is True
+    assert result["split_proof"]["training_dataset_tree_sha256"] == "c" * 64
     assert all(
         episode["success_sources"] == ["binary_reward", "environment._check_success"]
         for episode in result["episodes"]

@@ -34,6 +34,16 @@ CHUNK = 1024 * 1024
 # PAX/GNU extension bodies are metadata, not file payloads. One MiB is well
 # above practical path/xattr limits while bounding attacker-directed allocation.
 TAR_EXTENSION_LIMIT = 1024 * 1024
+TAR_EXTENSION_CHAIN_LIMIT = 4 * 1024 * 1024
+TAR_PAX_KEY_LIMIT = 4096
+ZERO_RECORD_LIMIT = 1024 * 1024
+# Docker-save's outer archive contains only short, regular metadata/blob paths.
+# Bound the population and every JSON document before handing the archive to
+# tarfile, whose PAX/GNU handlers otherwise consume extension bodies eagerly.
+DOCKER_SAVE_OUTER_ENTRY_LIMIT = 100_000
+DOCKER_SAVE_METADATA_LIMIT = 16 * 1024 * 1024
+DOCKER_SAVE_LAYER_LIMIT = 1024
+DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT = 8
 _CANCEL_REQUESTED = False
 _SPAWNING = False
 POLICY = "exact-or-short-ascii-token-v1"
@@ -417,6 +427,68 @@ def read_exact(reader, count, *, eof=False):
             return b""
         data.extend(part)
     return bytes(data)
+
+
+def preflight_docker_save_outer_tar(fd, length):
+    """Bound outer Docker-save parsing before tarfile sees attacker metadata.
+
+    Docker/OCI save paths fit in one ustar header. PAX and GNU name extensions
+    are therefore unnecessary in the outer transport and are rejected before
+    tarfile can eagerly allocate their bodies. Layer tar streams retain bounded
+    extension support in :func:`walk_tar`.
+    """
+    require(type(length) is int and length >= 1024, "docker_save_outer_size")
+    allowed = {
+        tarfile.REGTYPE,
+        tarfile.AREGTYPE,
+        tarfile.DIRTYPE,
+        tarfile.SYMTYPE,
+        tarfile.LNKTYPE,
+    }
+    offset = entries = zero_headers = 0
+    while offset + 512 <= length:
+        raw = os.pread(fd, 512, offset)
+        require(len(raw) == 512, "docker_save_outer_truncated")
+        offset += 512
+        if not any(raw):
+            zero_headers += 1
+            if zero_headers < 2:
+                continue
+            while offset < length:
+                data = os.pread(fd, min(CHUNK, length - offset), offset)
+                require(bool(data), "docker_save_outer_truncated")
+                require(not any(data), "docker_save_outer_nonzero_trailer")
+                offset += len(data)
+            return entries
+        require(zero_headers == 0, "docker_save_outer_incomplete_end_markers")
+        info = tarfile.TarInfo.frombuf(raw, encoding="utf-8", errors="strict")
+        require(
+            info.type
+            not in {
+                tarfile.XHDTYPE,
+                tarfile.XGLTYPE,
+                tarfile.GNUTYPE_LONGNAME,
+                tarfile.GNUTYPE_LONGLINK,
+            },
+            "docker_save_outer_extension_unsupported",
+        )
+        require(
+            info.type in allowed and info.size >= 0,
+            "docker_save_outer_entry_type",
+        )
+        entries += 1
+        require(
+            entries <= DOCKER_SAVE_OUTER_ENTRY_LIMIT,
+            "docker_save_outer_entry_limit",
+        )
+        body_end = offset + info.size
+        next_header = body_end + (-info.size) % 512
+        require(
+            body_end <= next_header <= length,
+            "docker_save_outer_member_range",
+        )
+        offset = next_header
+    raise ScanError("docker_save_outer_missing_end_markers")
 
 
 def gzip_header(reader):
@@ -1024,7 +1096,12 @@ class Ledger:
 
     def flush_zeros(self):
         if self.zero_run is not None:
-            run, self.zero_run = self.zero_run, None
+            run = self.zero_run
+            require(
+                run["bytes"] <= ZERO_RECORD_LIMIT,
+                "zero_record_complete_scan_limit",
+            )
+            self.zero_run = None
             self.send(
                 ZeroReader(run["bytes"]),
                 run["bytes"],
@@ -1098,7 +1175,8 @@ def walk_tar(reader, sink, scope, file_handler):
     """Read every physical tar byte, including extension records and EOF padding."""
     index, zero_headers = 0, 0
     seen = set()
-    pending, global_pax = {}, {}
+    pending, pending_keys = {}, set()
+    extension_chain_bytes = 0
     long_name = long_link = None
     while True:
         offset = reader.tell()
@@ -1106,7 +1184,7 @@ def walk_tar(reader, sink, scope, file_handler):
         if not raw:
             require(zero_headers >= 2, "tar_missing_end_markers")
             require(
-                not pending and long_name is None and long_link is None,
+                not pending_keys and long_name is None and long_link is None,
                 "orphan_tar_extension",
             )
             break
@@ -1161,20 +1239,40 @@ def walk_tar(reader, sink, scope, file_handler):
                 info.size <= TAR_EXTENSION_LIMIT,
                 "tar_extension_body_too_large",
             )
+            if info.type != tarfile.XGLTYPE:
+                require(
+                    extension_chain_bytes + info.size <= TAR_EXTENSION_CHAIN_LIMIT,
+                    "tar_extension_chain_too_large",
+                )
+                extension_chain_bytes += info.size
             extension_context = {**context, "tar_offset": reader.tell()}
             data = read_exact(reader, info.size)
             sink.data(data, "raw_tar_extension", extension_context)
             if info.type in {tarfile.XHDTYPE, tarfile.XGLTYPE}:
                 parsed = parse_pax(data)
+                require(len(parsed) <= TAR_PAX_KEY_LIMIT, "tar_pax_key_limit")
                 if info.type == tarfile.XGLTYPE:
                     require(
-                        not set(parsed) & {"path", "linkpath"},
+                        not pending_keys
+                        and long_name is None
+                        and long_link is None
+                        and not set(parsed) & {"path", "linkpath"},
                         "global_pax_name_override",
                     )
-                    global_pax.update(parsed)
                 else:
-                    require(not set(parsed) & set(pending), "ambiguous_pax_override")
-                    pending.update(parsed)
+                    parsed_keys = set(parsed)
+                    require(
+                        not parsed_keys & pending_keys,
+                        "ambiguous_pax_override",
+                    )
+                    pending_keys.update(parsed_keys)
+                    require(
+                        len(pending_keys) <= TAR_PAX_KEY_LIMIT,
+                        "tar_pax_key_limit",
+                    )
+                    for key in ("path", "linkpath"):
+                        if key in parsed:
+                            pending[key] = parsed[key]
             else:
                 require(
                     data.endswith(b"\x00") and b"\x00" not in data[:-1],
@@ -1207,7 +1305,9 @@ def walk_tar(reader, sink, scope, file_handler):
                 sink.data(link.encode("utf-8"), "logical_tar_link", context)
             if PKCS12.search(name):
                 sink.issue("pkcs12-file", context)
-            pending, long_name, long_link = {}, None, None
+            pending, pending_keys = {}, set()
+            extension_chain_bytes = 0
+            long_name = long_link = None
             if info.isreg():
                 file_handler(
                     reader, info.size, name, {**context, "tar_offset": reader.tell()}
@@ -1232,6 +1332,34 @@ def walk_tar(reader, sink, scope, file_handler):
     }
 
 
+def validate_docker_save_layer_references(names, diff_ids):
+    """Bound logical layer reuse before any physical layer bytes are read."""
+    require(
+        isinstance(names, list)
+        and isinstance(diff_ids, list)
+        and len(names) == len(diff_ids)
+        and 0 < len(names) <= DOCKER_SAVE_LAYER_LIMIT,
+        "docker_save_layer_reference_limit",
+    )
+    counts = {}
+    bindings = {}
+    for name, diff_id in zip(names, diff_ids, strict=True):
+        require(
+            isinstance(name, str)
+            and isinstance(diff_id, str)
+            and DIGEST.fullmatch(diff_id) is not None,
+            "docker_save_layer_reference",
+        )
+        normalized = safe_name(name)
+        counts[normalized] = counts.get(normalized, 0) + 1
+        require(
+            counts[normalized] <= DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT,
+            "docker_save_layer_member_repeat_limit",
+        )
+        previous = bindings.setdefault(normalized, diff_id)
+        require(previous == diff_id, "docker_save_layer_member_conflict")
+
+
 def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
     if verification.get("schema_version") == "npa.ncore.oci-verification.v1":
@@ -1240,6 +1368,7 @@ def graph(fd, length, verification, expected_id):
         result = N.inspect(fd, length, expected_id)
         N.bind(result, verification, expected_id)
         return result["layers"]
+    preflight_docker_save_outer_tar(fd, length)
     os.lseek(fd, 0, os.SEEK_SET)
     with (
         os.fdopen(os.dup(fd), "rb") as file,
@@ -1250,11 +1379,25 @@ def graph(fd, length, verification, expected_id):
             name = safe_name(item.name)
             require(name not in members, "duplicate_outer_path")
             members[name] = item
+        require(
+            len(members) <= DOCKER_SAVE_OUTER_ENTRY_LIMIT,
+            "docker_save_outer_entry_limit",
+        )
 
         def payload(name):
             info = members[name]
-            require(info.isfile(), "graph_metadata_not_regular")
-            return archive.extractfile(info).read()
+            require(
+                info.isfile() and info.size <= DOCKER_SAVE_METADATA_LIMIT,
+                "graph_metadata_not_regular_or_too_large",
+            )
+            stream = archive.extractfile(info)
+            require(stream is not None, "graph_metadata_not_regular_or_too_large")
+            data = stream.read(DOCKER_SAVE_METADATA_LIMIT + 1)
+            require(
+                len(data) == info.size <= DOCKER_SAVE_METADATA_LIMIT,
+                "graph_metadata_not_regular_or_too_large",
+            )
+            return data
 
         saved = json_object(payload("manifest.json"))
         require(
@@ -1275,11 +1418,8 @@ def graph(fd, length, verification, expected_id):
             "graph_layer_binding",
         )
         names = saved[0]["Layers"]
-        require(
-            isinstance(names, list)
-            and len(names) == len(diff_ids) == verification["layer_count"],
-            "graph_layer_population",
-        )
+        validate_docker_save_layer_references(names, diff_ids)
+        require(len(names) == verification["layer_count"], "graph_layer_population")
         manifest_digest = verification.get("image_manifest_digest")
         descriptors = None
         if manifest_digest is not None:
@@ -1320,6 +1460,7 @@ def graph(fd, length, verification, expected_id):
             "graph_expected_identity",
         )
         result = []
+        member_descriptors = {}
         for ordinal, name in enumerate(names):
             name = safe_name(name)
             item = members[name]
@@ -1329,6 +1470,13 @@ def graph(fd, length, verification, expected_id):
             )
             descriptor = descriptors[ordinal] if descriptors is not None else None
             if descriptor is not None:
+                binding = (
+                    descriptor["mediaType"],
+                    descriptor["digest"],
+                    descriptor["size"],
+                )
+                previous = member_descriptors.setdefault(name, binding)
+                require(previous == binding, "docker_save_layer_member_conflict")
                 require(
                     name == "blobs/sha256/" + descriptor["digest"][7:]
                     and item.size == descriptor["size"],
@@ -1918,41 +2066,115 @@ def verify_private_json(directory, held_fd, name, result, identity):
         os.close(fd)
 
 
+def _private_json_payload(result):
+    return (json.dumps(result, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+
+def stage_private_json(held_fd, name, result):
+    """Write and fsync a private pending receipt through a held directory FD."""
+    require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
+    temporary = name + ".pending"
+    output = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=held_fd,
+    )
+    try:
+        payload = _private_json_payload(result)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(output, remaining)
+            require(written > 0, "output_short_write")
+            remaining = remaining[written:]
+        os.fsync(output)
+        identity = stat_fingerprint(os.fstat(output))
+    except BaseException:
+        try:
+            os.unlink(temporary, dir_fd=held_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    finally:
+        os.close(output)
+    return identity
+
+
+def publish_staged_private_json(held_fd, name, result, identity):
+    """Link a verified pending receipt into place through the held directory FD."""
+    require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
+    temporary = name + ".pending"
+    pending = os.open(
+        temporary,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        dir_fd=held_fd,
+    )
+    try:
+        before = os.fstat(pending)
+        require(
+            stat.S_ISREG(before.st_mode)
+            and before.st_uid == os.geteuid()
+            and stat.S_IMODE(before.st_mode) == 0o600
+            and before.st_nlink == 1
+            and stat_fingerprint(before) == identity
+            and descriptor_bytes(pending) == _private_json_payload(result)
+            and stat_fingerprint(os.fstat(pending)) == identity,
+            "staged_output_changed",
+        )
+        os.link(
+            temporary,
+            name,
+            src_dir_fd=held_fd,
+            dst_dir_fd=held_fd,
+            follow_symlinks=False,
+        )
+        os.unlink(temporary, dir_fd=held_fd)
+        os.fsync(held_fd)
+        published = os.stat(name, dir_fd=held_fd, follow_symlinks=False)
+        final = os.fstat(pending)
+        require(
+            final.st_nlink == published.st_nlink == 1
+            and (final.st_dev, final.st_ino) == (published.st_dev, published.st_ino)
+            and stat_fingerprint(final) == stat_fingerprint(published),
+            "published_output_changed",
+        )
+        return stat_fingerprint(final)
+    except BaseException:
+        try:
+            os.unlink(name, dir_fd=held_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    finally:
+        os.close(pending)
+
+
+def discard_private_json(held_fd, name):
+    """Remove pending or published output from the originally held directory."""
+    require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
+    for candidate in (name + ".pending", name):
+        try:
+            os.unlink(candidate, dir_fd=held_fd)
+        except FileNotFoundError:
+            pass
+    os.fsync(held_fd)
+
+
 def write_private_json(directory, name, result):
     """Publish once and return the original file's final identity for readback."""
     require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
     fd = directory_fd(directory)
-    created = False
-    output = None
-    temporary = name + ".pending"
     try:
-        output = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-            dir_fd=fd,
-        )
-        created = True
-        with os.fdopen(output, "w", encoding="utf-8", closefd=False) as stream:
-            json.dump(result, stream, sort_keys=True, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.link(temporary, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
-        os.unlink(temporary, dir_fd=fd)
-        created = False
-        os.fsync(fd)
-        return stat_fingerprint(os.fstat(output))
+        identity = stage_private_json(fd, name, result)
+        return publish_staged_private_json(fd, name, result, identity)
     finally:
         try:
-            if created:
-                os.unlink(temporary, dir_fd=fd)
-        finally:
             try:
-                if output is not None:
-                    os.close(output)
-            finally:
-                os.close(fd)
+                os.unlink(name + ".pending", dir_fd=fd)
+            except FileNotFoundError:
+                pass
+        finally:
+            os.close(fd)
 
 
 def main(argv=None):

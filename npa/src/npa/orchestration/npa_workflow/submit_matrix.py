@@ -1056,6 +1056,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "robocasa-data-policy.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
+        plan_only=True,
+        plan_only_justification="the workflow requires a separately deployed RoboCasa service plus its accepted exact source SHA and manifest digest; the generic rotation cannot safely synthesize either identity",
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(

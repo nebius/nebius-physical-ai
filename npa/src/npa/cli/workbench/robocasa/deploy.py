@@ -6,26 +6,26 @@ import base64
 import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import typer
 
-from npa.clients.config import resolve_container_registry
 from npa.clients.credentials import apply_shared_credential_env, load_credentials
 from npa.clients.project_credentials import storage_env_for_project
-from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
 from npa.workbench.robocasa.schemas import DEFAULT_PORT, DEFAULT_TOKEN_ENV
 
 from npa.cli.workbench.robocasa.helpers import OutputFormat, emit, fail
 
-DEFAULT_IMAGE = container_image_for_tool(
-    "robocasa", registry=DEFAULT_CONTAINER_REGISTRY
-)
 DEFAULT_NAME = "npa-robocasa"
-DEFAULT_NAMESPACE = "workbench"
+DEFAULT_NAMESPACE = "default"
 DEFAULT_GPU_TYPE = "l40s"
+_SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_IMMUTABLE_IMAGE_PATTERN = re.compile(
+    r"^(?P<name>\S+)@(?P<digest>sha256:[0-9a-f]{64})$"
+)
 
 GPU_NODE_SELECTORS = {
     "h100": "gpu-h100-sxm",
@@ -48,13 +48,25 @@ def deploy_cmd(
         "", "--kubeconfig", help="Kubeconfig path override."
     ),
     image: str = typer.Option(
-        "", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."
+        "",
+        "--image",
+        help="Explicit immutable container image ending in @sha256:<64 hex>.",
+    ),
+    expected_image_source_sha: str = typer.Option(
+        "",
+        "--expected-image-source-sha",
+        help="Exact 40-hex NPA source SHA baked into the selected image.",
     ),
     name: str = typer.Option(
         DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."
     ),
     namespace: str = typer.Option(
         DEFAULT_NAMESPACE, "--namespace", help="Kubernetes namespace."
+    ),
+    create_namespace: bool = typer.Option(
+        False,
+        "--create-namespace",
+        help="Create --namespace explicitly; otherwise it must already exist.",
     ),
     port: int = typer.Option(DEFAULT_PORT, "--port", help="Service port."),
     output_path: str = typer.Option("", "--output-path", help="Default S3 output URI."),
@@ -149,15 +161,17 @@ def deploy_cmd(
             + ", ".join(sorted(GPU_NODE_SELECTORS))
             + " unless --node-selector-value is provided"
         )
-    resolved_image = image.strip() or container_image_for_tool(
-        "robocasa",
-        registry=resolve_container_registry(project or None),
+    resolved_image, source_sha, manifest_digest = _validated_image_identity(
+        image, expected_image_source_sha
     )
     manifest = _kubernetes_manifest(
         project=project,
         image=resolved_image,
+        image_source_sha=source_sha,
+        image_manifest_digest=manifest_digest,
         name=name,
         namespace=namespace,
+        create_namespace=create_namespace,
         port=port,
         output_path=output_path,
         node_selector_key=node_selector_key,
@@ -190,6 +204,8 @@ def deploy_cmd(
             "name": name,
             "namespace": namespace,
             "image": resolved_image,
+            "image_source_sha": source_sha,
+            "image_manifest_digest": manifest_digest,
             "endpoint": endpoint,
             "node_selector": {node_selector_key: selector_value},
         },
@@ -198,12 +214,31 @@ def deploy_cmd(
     )
 
 
+def _validated_image_identity(image: str, source_sha: str) -> tuple[str, str, str]:
+    resolved_image = image.strip()
+    match = _IMMUTABLE_IMAGE_PATTERN.fullmatch(resolved_image)
+    if match is None:
+        fail(
+            "--image must be an explicit immutable reference ending in @sha256:<digest>"
+        )
+    resolved_source_sha = source_sha.strip().lower()
+    if not _SOURCE_SHA_PATTERN.fullmatch(resolved_source_sha):
+        fail("--expected-image-source-sha must be exactly 40 lowercase hex characters")
+    manifest_digest = match.group("digest")
+    if set(resolved_source_sha) == {"0"} or set(manifest_digest[7:]) == {"0"}:
+        fail("placeholder image identities cannot be deployed; provide resolved values")
+    return resolved_image, resolved_source_sha, manifest_digest
+
+
 def _kubernetes_manifest(
     *,
     project: str,
     image: str,
+    image_source_sha: str,
+    image_manifest_digest: str,
     name: str,
     namespace: str,
+    create_namespace: bool,
     port: int,
     output_path: str,
     node_selector_key: str,
@@ -218,109 +253,167 @@ def _kubernetes_manifest(
         auth_mode=auth_mode,
         token_env=token_env,
         port=port,
+        image_source_sha=image_source_sha,
+        image_manifest_digest=image_manifest_digest,
     )
     env_checksum = hashlib.sha256(
         json.dumps(env, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+    items = []
+    if create_namespace:
+        items.append(_namespace_manifest(namespace))
+    items.extend(
+        [
+            _secret_manifest(name, namespace, env),
+            _deployment_manifest(
+                name=name,
+                namespace=namespace,
+                image=image,
+                port=port,
+                node_selector_key=node_selector_key,
+                node_selector_value=node_selector_value,
+                image_pull_secret=image_pull_secret,
+                env_checksum=env_checksum,
+            ),
+            _service_manifest(name, namespace, port),
+        ]
+    )
+    return {"apiVersion": "v1", "kind": "List", "items": items}
+
+
+def _namespace_manifest(namespace: str) -> dict[str, Any]:
     return {
         "apiVersion": "v1",
-        "kind": "List",
-        "items": [
-            {
-                "apiVersion": "v1",
-                "kind": "Namespace",
-                "metadata": {"name": namespace},
-            },
-            {
-                "apiVersion": "v1",
-                "kind": "Secret",
-                "metadata": {"name": f"{name}-env", "namespace": namespace},
-                "type": "Opaque",
-                "data": {
-                    key: base64.b64encode(value.encode("utf-8")).decode("ascii")
-                    for key, value in env.items()
-                },
-            },
-            {
-                "apiVersion": "apps/v1",
-                "kind": "Deployment",
+        "kind": "Namespace",
+        "metadata": {"name": namespace},
+    }
+
+
+def _secret_manifest(name: str, namespace: str, env: dict[str, str]) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": f"{name}-env", "namespace": namespace},
+        "type": "Opaque",
+        "data": {
+            key: base64.b64encode(value.encode("utf-8")).decode("ascii")
+            for key, value in env.items()
+        },
+    }
+
+
+def _deployment_manifest(
+    *,
+    name: str,
+    namespace: str,
+    image: str,
+    port: int,
+    node_selector_key: str,
+    node_selector_value: str,
+    image_pull_secret: str,
+    env_checksum: str,
+) -> dict[str, Any]:
+    labels = _deployment_labels(name)
+    pod_spec = _pod_spec(
+        name=name,
+        image=image,
+        port=port,
+        node_selector_key=node_selector_key,
+        node_selector_value=node_selector_value,
+        image_pull_secret=image_pull_secret,
+    )
+    return {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": name, "namespace": namespace, "labels": labels},
+        "spec": {
+            "replicas": 1,
+            "strategy": {"type": "Recreate"},
+            "selector": {"matchLabels": {"app.kubernetes.io/instance": name}},
+            "template": {
                 "metadata": {
-                    "name": name,
-                    "namespace": namespace,
-                    "labels": {
-                        "app.kubernetes.io/name": "npa-robocasa",
-                        "app.kubernetes.io/instance": name,
-                    },
+                    "labels": labels,
+                    "annotations": {"npa.nebius.ai/env-checksum": env_checksum},
                 },
-                "spec": {
-                    "replicas": 1,
-                    "strategy": {"type": "Recreate"},
-                    "selector": {"matchLabels": {"app.kubernetes.io/instance": name}},
-                    "template": {
-                        "metadata": {
-                            "labels": {
-                                "app.kubernetes.io/name": "npa-robocasa",
-                                "app.kubernetes.io/instance": name,
-                            },
-                            "annotations": {
-                                "npa.nebius.ai/env-checksum": env_checksum,
-                            },
-                        },
-                        "spec": {
-                            "nodeSelector": {node_selector_key: node_selector_value},
-                            **(
-                                {"imagePullSecrets": [{"name": image_pull_secret}]}
-                                if image_pull_secret
-                                else {}
-                            ),
-                            "tolerations": [
-                                {
-                                    "key": "nvidia.com/gpu",
-                                    "operator": "Exists",
-                                    "effect": "NoSchedule",
-                                }
-                            ],
-                            "securityContext": {
-                                "fsGroup": 1000,
-                                "fsGroupChangePolicy": "OnRootMismatch",
-                            },
-                            "containers": [
-                                {
-                                    "name": "service",
-                                    "image": image,
-                                    "imagePullPolicy": "Always",
-                                    "ports": [{"containerPort": port, "name": "http"}],
-                                    "envFrom": [{"secretRef": {"name": f"{name}-env"}}],
-                                    "resources": {
-                                        "limits": {"nvidia.com/gpu": "1"},
-                                        "requests": {"nvidia.com/gpu": "1"},
-                                    },
-                                    "readinessProbe": {
-                                        "httpGet": {"path": "/health", "port": "http"},
-                                        "initialDelaySeconds": 10,
-                                        "periodSeconds": 10,
-                                    },
-                                    "securityContext": {
-                                        "allowPrivilegeEscalation": False,
-                                        "capabilities": {"drop": ["ALL"]},
-                                        "seccompProfile": {"type": "RuntimeDefault"},
-                                    },
-                                }
-                            ],
-                        },
-                    },
-                },
+                "spec": pod_spec,
             },
+        },
+    }
+
+
+def _deployment_labels(name: str) -> dict[str, str]:
+    return {
+        "app.kubernetes.io/name": "npa-robocasa",
+        "app.kubernetes.io/instance": name,
+    }
+
+
+def _pod_spec(
+    *,
+    name: str,
+    image: str,
+    port: int,
+    node_selector_key: str,
+    node_selector_value: str,
+    image_pull_secret: str,
+) -> dict[str, Any]:
+    spec: dict[str, Any] = {
+        "nodeSelector": {node_selector_key: node_selector_value},
+        "tolerations": [
             {
-                "apiVersion": "v1",
-                "kind": "Service",
-                "metadata": {"name": name, "namespace": namespace},
-                "spec": {
-                    "selector": {"app.kubernetes.io/instance": name},
-                    "ports": [{"name": "http", "port": port, "targetPort": "http"}],
-                },
-            },
+                "key": "nvidia.com/gpu",
+                "operator": "Exists",
+                "effect": "NoSchedule",
+            }
         ],
+        "securityContext": {
+            "fsGroup": 1000,
+            "fsGroupChangePolicy": "OnRootMismatch",
+            "runAsNonRoot": True,
+            "runAsUser": 1000,
+            "runAsGroup": 1000,
+        },
+        "containers": [_service_container(name, image, port)],
+    }
+    if image_pull_secret:
+        spec["imagePullSecrets"] = [{"name": image_pull_secret}]
+    return spec
+
+
+def _service_container(name: str, image: str, port: int) -> dict[str, Any]:
+    return {
+        "name": "service",
+        "image": image,
+        "imagePullPolicy": "Always",
+        "ports": [{"containerPort": port, "name": "http"}],
+        "envFrom": [{"secretRef": {"name": f"{name}-env"}}],
+        "resources": {
+            "limits": {"nvidia.com/gpu": "1"},
+            "requests": {"nvidia.com/gpu": "1"},
+        },
+        "readinessProbe": {
+            "httpGet": {"path": "/health", "port": "http"},
+            "initialDelaySeconds": 10,
+            "periodSeconds": 10,
+        },
+        "securityContext": {
+            "allowPrivilegeEscalation": False,
+            "capabilities": {"drop": ["ALL"]},
+            "runAsNonRoot": True,
+            "seccompProfile": {"type": "RuntimeDefault"},
+        },
+    }
+
+
+def _service_manifest(name: str, namespace: str, port: int) -> dict[str, Any]:
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "selector": {"app.kubernetes.io/instance": name},
+            "ports": [{"name": "http", "port": port, "targetPort": "http"}],
+        },
     }
 
 
@@ -331,6 +424,8 @@ def _service_env(
     auth_mode: str,
     token_env: str,
     port: int,
+    image_source_sha: str,
+    image_manifest_digest: str,
 ) -> dict[str, str]:
     creds = load_credentials()
     env = {
@@ -339,6 +434,8 @@ def _service_env(
         "NPA_OUTPUT_PATH": output_path,
         "AWS_REGION": os.environ.get("AWS_REGION", "auto"),
         "NUMBA_CACHE_DIR": "/tmp/numba_cache",
+        "ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA": image_source_sha,
+        "ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST": image_manifest_digest,
     }
     apply_shared_credential_env(env, creds)
     if project.strip():

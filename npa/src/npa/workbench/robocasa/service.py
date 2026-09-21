@@ -21,6 +21,7 @@ from npa.workbench.robocasa.capabilities import (
     make_run_id,
     run_capability_with_output,
     system_info,
+    verify_runtime_identity,
 )
 from npa.workbench.robocasa.schemas import (
     RoboCasaRunListResponse,
@@ -32,6 +33,8 @@ from npa.workbench.robocasa.schemas import (
 
 LOGGER = logging.getLogger(__name__)
 _TERMINAL_STATUSES = frozenset({"completed", "failed"})
+_ACTIVE_STATUSES = frozenset({"queued", "running"})
+_GPU_EXECUTION_LOCK = threading.Lock()
 
 
 class RunRegistry:
@@ -82,6 +85,24 @@ class RunRegistry:
         with self._lock:
             self._evict_locked()
             return [entry[0] for entry in self._entries.values()]
+
+    def enqueue(
+        self, run_id: str, status: RoboCasaStatusResponse
+    ) -> tuple[bool, RoboCasaStatusResponse]:
+        """Register work unless the same deterministic run is already active."""
+        with self._lock:
+            self._evict_locked()
+            current = self._entries.get(run_id)
+            if current is not None and current[0].status in _ACTIVE_STATUSES:
+                if current[0].manifest_sha256 != status.manifest_sha256:
+                    raise RoboCasaError(
+                        f"active deterministic run id collision: {run_id}"
+                    )
+                return False, current[0]
+            self._sequence += 1
+            self._entries[run_id] = (status, self._clock(), self._sequence)
+            self._evict_locked()
+            return True, status
 
     def update(
         self,
@@ -138,6 +159,7 @@ def create_app(
     auth_mode: str | None = None,
     token: str | None = None,
     runs: RunRegistry | None = None,
+    execution_lock: Any = None,
 ) -> FastAPI:
     """Create the RoboCasa FastAPI application."""
     resolved_auth_mode = auth_mode or os.environ.get("ROBOCASA_AUTH_MODE", "none")
@@ -145,6 +167,7 @@ def create_app(
         token if token is not None else os.environ.get("ROBOCASA_TOKEN", "")
     )
     registry = runs if runs is not None else RUNS
+    gpu_lock = execution_lock if execution_lock is not None else _GPU_EXECUTION_LOCK
     app = FastAPI(title="NPA RoboCasa")
     if resolved_auth_mode == "none":
         LOGGER.warning(
@@ -192,25 +215,30 @@ def create_app(
         authorization: str = Header(default=""),
     ) -> RoboCasaRunResponse:
         await require_auth(request, authorization)
+        try:
+            verify_runtime_identity(
+                body.expected_image_source_sha,
+                body.expected_image_manifest_digest,
+            )
+        except RoboCasaError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         manifest = compute_manifest_sha256("run", body.model_dump(mode="json"))
         run_id = make_run_id(body.capability, manifest)
-        response = RoboCasaRunResponse(
+        queued = RoboCasaStatusResponse(
             run_id=run_id,
-            status="running",
-            env_id=body.env_id,
+            status="queued",
             capability=body.capability,
+            env_id=body.env_id,
             output_uri=body.output_uri,
             manifest_sha256=manifest,
         )
-        registry[run_id] = RoboCasaStatusResponse(
-            run_id=run_id,
-            status="running",
-            capability=body.capability,
-            env_id=body.env_id,
-            output_uri=body.output_uri,
-        )
-        background_tasks.add_task(_run_capability, body, run_id, registry)
-        return response
+        try:
+            accepted, current = registry.enqueue(run_id, queued)
+        except RoboCasaError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if accepted:
+            background_tasks.add_task(_run_capability, body, run_id, registry, gpu_lock)
+        return _run_response(current, manifest)
 
     @app.get("/status", response_model=RoboCasaStatusResponse)
     async def status(
@@ -234,23 +262,42 @@ def status_for_run(
     return status
 
 
+def _run_response(
+    status: RoboCasaStatusResponse, manifest_sha256: str
+) -> RoboCasaRunResponse:
+    return RoboCasaRunResponse(
+        run_id=status.run_id,
+        status=status.status,
+        env_id=status.env_id,
+        capability=status.capability,
+        output_uri=status.output_uri,
+        manifest_sha256=manifest_sha256,
+    )
+
+
 def _run_capability(
-    body: RoboCasaRunRequest, run_id: str, runs: RunRegistry | None = None
+    body: RoboCasaRunRequest,
+    run_id: str,
+    runs: RunRegistry | None = None,
+    execution_lock: Any = None,
 ) -> None:
     registry = runs if runs is not None else RUNS
+    gpu_lock = execution_lock if execution_lock is not None else _GPU_EXECUTION_LOCK
 
     def update(status: str, result: dict[str, Any] | None, error: str | None) -> None:
         registry.update(run_id, status=status, result=result, error=error)
 
     try:
-        LOGGER.info(
-            "starting robocasa run_id=%s capability=%s env_id=%s",
-            run_id,
-            body.capability,
-            body.env_id,
-        )
-        with tempfile.TemporaryDirectory(prefix="robocasa_") as tmp:
-            result = run_capability_with_output(body, output_dir=Path(tmp))
+        with gpu_lock:
+            update("running", None, None)
+            LOGGER.info(
+                "starting robocasa run_id=%s capability=%s env_id=%s",
+                run_id,
+                body.capability,
+                body.env_id,
+            )
+            with tempfile.TemporaryDirectory(prefix="robocasa_") as tmp:
+                result = run_capability_with_output(body, output_dir=Path(tmp))
         update("completed", result, None)
     except RoboCasaError as exc:
         update("failed", None, str(exc))

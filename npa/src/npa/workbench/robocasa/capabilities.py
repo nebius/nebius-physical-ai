@@ -13,18 +13,23 @@ never fails.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import logging
 import os
 import platform
 import re
+import shutil
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
-from pathlib import Path
 from typing import Any, Callable
 
 from npa.clients.storage import safe_s3_download_target
@@ -58,10 +63,43 @@ ROBOCASA_STATE_LAYOUT = (
 ROBOCASA_STATE_KEYS = tuple(key for key, _width in ROBOCASA_STATE_LAYOUT)
 ROBOCASA_STATE_DIM = sum(width for _key, width in ROBOCASA_STATE_LAYOUT)
 _SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_MANIFEST_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
+_TREE_HASH_DOMAIN = b"npa.canonical-tree-sha256.v1\0"
+
+ROBOCASA_ASSET_REPOSITORY = "robocasa/robocasa-assets"
+ROBOCASA_ASSET_REVISION = "1b92c3d02ca4354984fec961357db0bff7b32166"
+NVIDIA_KITCHEN_ASSET_REPOSITORY = (
+    "nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF"
+)
+NVIDIA_KITCHEN_ASSET_REVISION = "420a04af939c34873e6839a586b70844baf28aab"
+DEPLOYED_SOURCE_SHA_ENV = "ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA"
+DEPLOYED_MANIFEST_DIGEST_ENV = "ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST"
+TRAINING_PROVENANCE_FILENAME = "training_dataset_provenance.json"
 
 
 class RoboCasaError(RuntimeError):
     """Raised when a RoboCasa capability operation fails."""
+
+
+@dataclass(frozen=True)
+class _RuntimeIdentity:
+    """Immutable source and image identity visible inside the service."""
+
+    source_identity: str
+    image_source_sha: str
+    image_manifest_digest: str
+
+
+@dataclass(frozen=True)
+class _AssetArchive:
+    """One immutable archive and its validated publication location."""
+
+    repo_id: str
+    revision: str
+    filename: str
+    extract_to: str
+    publish_path: str
+    required_path: str
 
 
 @dataclass(frozen=True)
@@ -157,23 +195,69 @@ def _package_version(name: str) -> str:
         return ""
 
 
-def _runtime_source_identity() -> tuple[str, str]:
-    """Return the immutable NPA source identity carried by the runtime image."""
+def _runtime_identity(*, require_deployment: bool = False) -> _RuntimeIdentity:
+    """Return and validate the immutable identity carried by this runtime."""
     source_sha = os.environ.get("NPA_IMAGE_SOURCE_SHA", "").strip().lower()
     required = os.environ.get("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA", "").strip().lower()
+    deployed_source_sha = os.environ.get(DEPLOYED_SOURCE_SHA_ENV, "").strip().lower()
+    manifest_digest = os.environ.get(DEPLOYED_MANIFEST_DIGEST_ENV, "").strip().lower()
     if required not in {"", "0", "false", "1", "true"}:
         raise RoboCasaError("ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA must be boolean")
     if source_sha and not _SOURCE_SHA_PATTERN.fullmatch(source_sha):
         raise RoboCasaError("NPA_IMAGE_SOURCE_SHA must be a 40-character git SHA")
     if required in {"1", "true"} and not source_sha:
         raise RoboCasaError("RoboCasa image is missing required NPA_IMAGE_SOURCE_SHA")
-    identity = "container_image" if source_sha else "local_unbound"
-    return identity, source_sha
+    if deployed_source_sha and not _SOURCE_SHA_PATTERN.fullmatch(deployed_source_sha):
+        raise RoboCasaError(f"{DEPLOYED_SOURCE_SHA_ENV} must be a 40-character git SHA")
+    if manifest_digest and not _MANIFEST_DIGEST_PATTERN.fullmatch(manifest_digest):
+        raise RoboCasaError(
+            f"{DEPLOYED_MANIFEST_DIGEST_ENV} must be an exact sha256 manifest digest"
+        )
+    if require_deployment or deployed_source_sha or manifest_digest:
+        _require_deployed_identity(source_sha, deployed_source_sha, manifest_digest)
+    return _RuntimeIdentity(
+        source_identity="container_image" if source_sha else "local_unbound",
+        image_source_sha=source_sha,
+        image_manifest_digest=manifest_digest,
+    )
+
+
+def _require_deployed_identity(
+    source_sha: str, deployed_source_sha: str, manifest_digest: str
+) -> None:
+    if not deployed_source_sha or not manifest_digest:
+        raise RoboCasaError("RoboCasa deployment runtime identity is incomplete")
+    if not source_sha:
+        raise RoboCasaError("RoboCasa deployed image has no baked source identity")
+    if source_sha != deployed_source_sha:
+        raise RoboCasaError(
+            "RoboCasa baked source identity does not match its deployment identity"
+        )
+
+
+def verify_runtime_identity(
+    expected_source_sha: str, expected_manifest_digest: str
+) -> _RuntimeIdentity:
+    """Fail unless a request names the exact deployed runtime identity."""
+    identity = _runtime_identity(require_deployment=True)
+    if not _SOURCE_SHA_PATTERN.fullmatch(expected_source_sha):
+        raise RoboCasaError("request expected image source SHA is missing or malformed")
+    if not _MANIFEST_DIGEST_PATTERN.fullmatch(expected_manifest_digest):
+        raise RoboCasaError(
+            "request expected image manifest digest is missing or malformed"
+        )
+    if identity.image_source_sha != expected_source_sha:
+        raise RoboCasaError("request expected image source SHA does not match runtime")
+    if identity.image_manifest_digest != expected_manifest_digest:
+        raise RoboCasaError(
+            "request expected image manifest digest does not match runtime"
+        )
+    return identity
 
 
 def system_info() -> RoboCasaSystemInfo:
     """Collect system and RoboCasa stack information."""
-    source_identity, image_source_sha = _runtime_source_identity()
+    runtime_identity = _runtime_identity()
     info = RoboCasaSystemInfo(
         status="ok",
         python=platform.python_version(),
@@ -185,8 +269,9 @@ def system_info() -> RoboCasaSystemInfo:
         lerobot_version=_package_version("lerobot"),
         torch_version=_package_version("torch"),
         torchvision_version=_package_version("torchvision"),
-        source_identity=source_identity,
-        image_source_sha=image_source_sha,
+        source_identity=runtime_identity.source_identity,
+        image_source_sha=runtime_identity.image_source_sha,
+        image_manifest_digest=runtime_identity.image_manifest_digest,
     )
     try:
         import torch
@@ -214,203 +299,351 @@ def system_info() -> RoboCasaSystemInfo:
     return info
 
 
+_LIGHTWHEEL_FIXTURES = (
+    "blenders",
+    "cabinets",
+    "coffee_machines",
+    "dishwashers",
+    "electric_kettles",
+    "fridges",
+    "handles",
+    "hoods",
+    "microwaves",
+    "ovens",
+    "sinks",
+    "stand_mixers",
+    "stoves",
+    "stovetops",
+    "toaster_ovens",
+    "toasters",
+    "windows",
+)
+_LIGHTWHEEL_OBJECTS = (
+    "aluminum_foil",
+    "basket",
+    "blender_jug",
+    "cheese_grater",
+    "chicken_drumstick",
+    "cinnamon",
+    "colander",
+    "cookie_dough_ball",
+    "cream_cheese_stick",
+    "digital_scale",
+    "dish_brush",
+    "dish_rack",
+    "flour_bag",
+    "flower_vase",
+    "fruit_bowl",
+    "glass_cup",
+    "honey_bottle",
+    "hotdog_bun",
+    "ice_cube",
+    "ice_cube_tray",
+    "jar",
+    "juice",
+    "kebab_skewer",
+    "kettle",
+    "knife_block",
+    "lemon_wedge",
+    "lettuce",
+    "marshmallow",
+    "mayonnaise",
+    "measuring_cup",
+    "mug_tree",
+    "mustard",
+    "oil_and_vinegar_bottle",
+    "oven_tray",
+    "pancake",
+    "paper_towel_holder",
+    "paprika",
+    "peeler",
+    "pickle_slice",
+    "pitcher",
+    "pizza",
+    "pizza_cutter",
+    "placemat",
+    "plant",
+    "pot",
+    "reamer",
+    "salt_and_pepper_shaker",
+    "sandwich_bread",
+    "saucepan",
+    "shrimp",
+    "soap_dispenser",
+    "spray",
+    "stool",
+    "strainer",
+    "straw",
+    "sugar_cube",
+    "syrup_bottle",
+    "tiered_basket",
+    "tiered_shelf",
+    "tomato_slice",
+    "tongs",
+    "tray",
+    "tupperware",
+    "turkey_slice",
+    "turmeric",
+    "utensil_rack",
+    "utensil_set",
+    "whisk",
+    "wooden_spoon",
+)
+
+
+def _asset_archives() -> tuple[_AssetArchive, ...]:
+    standard = (
+        _robocasa_asset("textures.zip", ".", "textures", "textures"),
+        _robocasa_asset(
+            "generative_textures.zip",
+            ".",
+            "generative_textures",
+            "generative_textures",
+        ),
+        _robocasa_asset("fixtures.zip", ".", "fixtures", "fixtures/accessories"),
+        _robocasa_asset(
+            "objaverse.zip", "objects", "objects/objaverse", "objects/objaverse"
+        ),
+        _robocasa_asset(
+            "aigen_objs.zip", "objects", "objects/aigen_objs", "objects/aigen_objs"
+        ),
+    )
+    fixtures = tuple(
+        _nvidia_asset(
+            f"fixtures_lightwheel/{name}.zip",
+            "fixtures",
+            f"fixtures/{name}",
+        )
+        for name in _LIGHTWHEEL_FIXTURES
+    )
+    objects = tuple(
+        _nvidia_asset(
+            f"objects_lightwheel/{name}.zip",
+            "objects/lightwheel",
+            f"objects/lightwheel/{name}",
+        )
+        for name in _LIGHTWHEEL_OBJECTS
+    )
+    return standard + fixtures + objects
+
+
+def _robocasa_asset(
+    filename: str, extract_to: str, publish_path: str, required_path: str
+) -> _AssetArchive:
+    return _AssetArchive(
+        ROBOCASA_ASSET_REPOSITORY,
+        ROBOCASA_ASSET_REVISION,
+        filename,
+        extract_to,
+        publish_path,
+        required_path,
+    )
+
+
+def _nvidia_asset(filename: str, extract_to: str, publish_path: str) -> _AssetArchive:
+    return _AssetArchive(
+        NVIDIA_KITCHEN_ASSET_REPOSITORY,
+        NVIDIA_KITCHEN_ASSET_REVISION,
+        filename,
+        extract_to,
+        publish_path,
+        publish_path,
+    )
+
+
+@contextlib.contextmanager
+def _asset_fetch_lock(assets_root: Path) -> Any:
+    state_root = assets_root / ".npa_asset_fetch"
+    state_root.mkdir(parents=True, exist_ok=True)
+    with (state_root / "fetch.lock").open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield state_root
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def _download_assets() -> None:
-    """Download the RoboCasa kitchen assets (textures, fixtures, objects).
-
-    Assets are NOT baked into the image and download at runtime from the
-    operator's entitled Hugging Face identity. This mirrors the upstream
-    ``download_kitchen_assets.py`` registry but skips its interactive prompt so
-    it can run inside the service. Missing assets are the usual cause of a
-    ``model.xml`` FileNotFoundError on the first real rollout.
-
-    The standard fixtures (stoves, windows, sinks, ...) live in
-    ``robocasa/robocasa-assets/fixtures.zip``; the lightwheel variants are
-    published as individual ``fixtures_lightwheel/<name>.zip`` files in
-    ``nvidia/PhysicalAI-Kitchen-Assets``.
-    """
+    """Fetch every asset archive under one lock and fail on any partial fetch."""
     try:
         from huggingface_hub import hf_hub_download
-        from zipfile import ZipFile
-        from pathlib import Path as _Path
+    except ImportError as exc:  # pragma: no cover - container dependency.
+        raise RoboCasaError(
+            "huggingface_hub is required to fetch RoboCasa assets"
+        ) from exc
 
-        # Locate the package WITHOUT importing its eager object catalog.
-        assets_root = _Path(_assets_root())
-        # Standard (non-additive) assets: skip when the target directory already
-        # has content. (repo_id, filename, extract_to, marker_dir)
-        standard = [
-            ("robocasa/robocasa-assets", "textures.zip", ".", "textures"),
-            (
-                "robocasa/robocasa-assets",
-                "generative_textures.zip",
-                ".",
-                "generative_textures",
-            ),
-            ("robocasa/robocasa-assets", "fixtures.zip", ".", "fixtures/accessories"),
-            (
-                "robocasa/robocasa-assets",
-                "objaverse.zip",
-                "objects",
-                "objects/objaverse",
-            ),
-            (
-                "robocasa/robocasa-assets",
-                "aigen_objs.zip",
-                "objects",
-                "objects/aigen_objs",
-            ),
-        ]
-        # Lightwheel fixtures are one zip per fixture family, each extracting a
-        # top-level folder (e.g. stoves/) that must land under fixtures/. They are
-        # additive on top of baked directories, so track completion with a marker.
-        lightwheel_fixtures = [
-            "blenders",
-            "cabinets",
-            "coffee_machines",
-            "dishwashers",
-            "electric_kettles",
-            "fridges",
-            "handles",
-            "hoods",
-            "microwaves",
-            "ovens",
-            "sinks",
-            "stand_mixers",
-            "stoves",
-            "stovetops",
-            "toaster_ovens",
-            "toasters",
-            "windows",
-        ]
-        # Lightwheel objects are one zip per object family, each extracting a
-        # top-level folder (e.g. stool/) that must land under objects/lightwheel/.
-        lightwheel_objects = [
-            "aluminum_foil",
-            "basket",
-            "blender_jug",
-            "cheese_grater",
-            "chicken_drumstick",
-            "cinnamon",
-            "colander",
-            "cookie_dough_ball",
-            "cream_cheese_stick",
-            "digital_scale",
-            "dish_brush",
-            "dish_rack",
-            "flour_bag",
-            "flower_vase",
-            "fruit_bowl",
-            "glass_cup",
-            "honey_bottle",
-            "hotdog_bun",
-            "ice_cube",
-            "ice_cube_tray",
-            "jar",
-            "juice",
-            "kebab_skewer",
-            "kettle",
-            "knife_block",
-            "lemon_wedge",
-            "lettuce",
-            "marshmallow",
-            "mayonnaise",
-            "measuring_cup",
-            "mug_tree",
-            "mustard",
-            "oil_and_vinegar_bottle",
-            "oven_tray",
-            "pancake",
-            "paper_towel_holder",
-            "paprika",
-            "peeler",
-            "pickle_slice",
-            "pitcher",
-            "pizza",
-            "pizza_cutter",
-            "placemat",
-            "plant",
-            "pot",
-            "reamer",
-            "salt_and_pepper_shaker",
-            "sandwich_bread",
-            "saucepan",
-            "shrimp",
-            "soap_dispenser",
-            "spray",
-            "stool",
-            "strainer",
-            "straw",
-            "sugar_cube",
-            "syrup_bottle",
-            "tiered_basket",
-            "tiered_shelf",
-            "tomato_slice",
-            "tongs",
-            "tray",
-            "tupperware",
-            "turkey_slice",
-            "turmeric",
-            "utensil_rack",
-            "utensil_set",
-            "whisk",
-            "wooden_spoon",
-        ]
-        lightwheel = [
-            (
-                "nvidia/PhysicalAI-Kitchen-Assets",
-                f"fixtures_lightwheel/{name}.zip",
-                "fixtures",
-                f"fixtures/{name}",
+    assets_root = _assets_root()
+    assets_root.mkdir(parents=True, exist_ok=True)
+    with _asset_fetch_lock(assets_root) as state_root:
+        for archive in _asset_archives():
+            _fetch_asset_archive(
+                archive,
+                assets_root=assets_root,
+                state_root=state_root,
+                downloader=hf_hub_download,
             )
-            for name in lightwheel_fixtures
-        ] + [
-            (
-                "nvidia/PhysicalAI-Kitchen-Assets",
-                f"objects_lightwheel/{name}.zip",
-                "objects/lightwheel",
-                f"objects/lightwheel/{name}",
-            )
-            for name in lightwheel_objects
-        ]
 
-        def _extract(repo_id: str, filename: str, extract_to: str) -> None:
-            zip_path = hf_hub_download(
-                repo_id=repo_id,
+
+def _fetch_asset_archive(
+    archive: _AssetArchive,
+    *,
+    assets_root: Path,
+    state_root: Path,
+    downloader: Callable[..., str],
+) -> None:
+    receipt_path = _asset_receipt_path(state_root, archive)
+    if _asset_receipt_is_valid(receipt_path, archive, assets_root):
+        return
+    try:
+        zip_path = Path(
+            downloader(
+                repo_id=archive.repo_id,
                 repo_type="dataset",
-                filename=filename,
-                revision="main",
+                filename=archive.filename,
+                revision=archive.revision,
             )
-            dest = assets_root if extract_to == "." else assets_root / extract_to
-            dest.mkdir(parents=True, exist_ok=True)
-            with ZipFile(zip_path, "r") as zf:
-                zf.extractall(path=dest)
+        )
+        _stage_publish_and_receipt(archive, zip_path, assets_root, receipt_path)
+    except RoboCasaError:
+        raise
+    except Exception as exc:
+        raise RoboCasaError(
+            f"failed to fetch RoboCasa asset {archive.repo_id}@{archive.revision}:"
+            f"{archive.filename}: {exc}"
+        ) from exc
+    LOGGER.info(
+        "downloaded RoboCasa asset %s from %s@%s",
+        archive.filename,
+        archive.repo_id,
+        archive.revision,
+    )
 
-        for repo_id, filename, extract_to, marker_dir in standard:
-            marker_path = assets_root / marker_dir
-            if marker_path.exists() and any(marker_path.iterdir()):
-                continue
-            try:
-                _extract(repo_id, filename, extract_to)
-                LOGGER.info("downloaded robocasa assets %s from %s", filename, repo_id)
-            except Exception as exc:  # pragma: no cover - network/entitlement.
-                LOGGER.warning(
-                    "failed to download robocasa assets %s: %s", filename, exc
-                )
-        for repo_id, filename, extract_to, marker_dir in lightwheel:
-            marker_path = assets_root / marker_dir
-            done_marker = marker_path / ".npa_lightwheel_done"
-            if done_marker.exists():
-                continue
-            try:
-                _extract(repo_id, filename, extract_to)
-                marker_path.mkdir(parents=True, exist_ok=True)
-                done_marker.write_text("done\n")
-                LOGGER.info("downloaded robocasa assets %s from %s", filename, repo_id)
-            except Exception as exc:  # pragma: no cover - network/entitlement.
-                LOGGER.warning(
-                    "failed to download robocasa assets %s: %s", filename, exc
-                )
-    except Exception as exc:  # pragma: no cover - client without the stack.
-        LOGGER.warning("robocasa asset download unavailable: %s", exc)
+
+def _stage_publish_and_receipt(
+    archive: _AssetArchive,
+    zip_path: Path,
+    assets_root: Path,
+    receipt_path: Path,
+) -> None:
+    with tempfile.TemporaryDirectory(
+        prefix="asset-", dir=receipt_path.parent
+    ) as temporary:
+        staging_root = Path(temporary)
+        extract_root = (
+            staging_root
+            if archive.extract_to == "."
+            else staging_root / archive.extract_to
+        )
+        extract_root.mkdir(parents=True, exist_ok=True)
+        _extract_validated_zip(zip_path, extract_root)
+        _validate_asset_tree(staging_root / archive.required_path, archive)
+        staged_publish = staging_root / archive.publish_path
+        staged_digest = _sha256_tree(staged_publish)
+        file_count = sum(path.is_file() for path in staged_publish.rglob("*"))
+        _replace_asset_tree(staged_publish, assets_root / archive.publish_path)
+    receipt = _asset_receipt(archive, zip_path, staged_digest, file_count)
+    _write_json_atomic(receipt_path, receipt)
+
+
+def _extract_validated_zip(zip_path: Path, destination: Path) -> None:
+    try:
+        with ZipFile(zip_path) as archive:
+            members = archive.infolist()
+            if not members:
+                raise RoboCasaError(f"RoboCasa asset archive is empty: {zip_path}")
+            for member in members:
+                _validate_zip_member(member.filename, member.external_attr)
+            archive.extractall(destination)
+    except BadZipFile as exc:
+        raise RoboCasaError(
+            f"RoboCasa asset archive is not a valid zip: {zip_path}"
+        ) from exc
+
+
+def _validate_zip_member(name: str, external_attr: int) -> None:
+    path = PurePosixPath(name)
+    mode = external_attr >> 16
+    if path.is_absolute() or ".." in path.parts:
+        raise RoboCasaError(f"RoboCasa asset archive has unsafe path: {name}")
+    if stat.S_ISLNK(mode):
+        raise RoboCasaError(f"RoboCasa asset archive has unsafe symlink: {name}")
+
+
+def _validate_asset_tree(path: Path, archive: _AssetArchive) -> None:
+    if not path.is_dir() or not any(item.is_file() for item in path.rglob("*")):
+        raise RoboCasaError(
+            f"RoboCasa asset {archive.filename} lacks {archive.required_path}"
+        )
+
+
+def _replace_asset_tree(staged: Path, target: Path) -> None:
+    if not staged.is_dir():
+        raise RoboCasaError(f"staged RoboCasa asset tree does not exist: {staged}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_dir():
+        shutil.rmtree(target)
+    elif target.exists():
+        target.unlink()
+    os.replace(staged, target)
+
+
+def _asset_receipt_path(state_root: Path, archive: _AssetArchive) -> Path:
+    identity = "\0".join(
+        (archive.repo_id, archive.revision, archive.filename, archive.publish_path)
+    )
+    name = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    receipts = state_root / "receipts"
+    receipts.mkdir(parents=True, exist_ok=True)
+    return receipts / f"{name}.json"
+
+
+def _asset_receipt(
+    archive: _AssetArchive, zip_path: Path, tree_sha256: str, file_count: int
+) -> dict[str, Any]:
+    return {
+        "schema": "npa.robocasa.asset_receipt.v1",
+        "repo_id": archive.repo_id,
+        "revision": archive.revision,
+        "filename": archive.filename,
+        "publish_path": archive.publish_path,
+        "required_path": archive.required_path,
+        "archive_sha256": _sha256_file(zip_path),
+        "tree_sha256": tree_sha256,
+        "file_count": file_count,
+    }
+
+
+def _asset_receipt_is_valid(
+    receipt_path: Path, archive: _AssetArchive, assets_root: Path
+) -> bool:
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    expected = {
+        "schema": "npa.robocasa.asset_receipt.v1",
+        "repo_id": archive.repo_id,
+        "revision": archive.revision,
+        "filename": archive.filename,
+        "publish_path": archive.publish_path,
+        "required_path": archive.required_path,
+    }
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("archive_sha256", ""))):
+        return False
+    if not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("tree_sha256", ""))):
+        return False
+    required = assets_root / archive.required_path
+    return required.is_dir() and any(item.is_file() for item in required.rglob("*"))
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    os.replace(temporary, path)
 
 
 def _make_env(env_id: str, *, download_assets: bool = True) -> Any:
@@ -438,8 +671,13 @@ def _make_env(env_id: str, *, download_assets: bool = True) -> Any:
         raise RoboCasaError(f"failed to create RoboCasa env {env_id}: {exc}") from exc
 
 
-def kitchen_task_registration(*, env_id: str = DEFAULT_ENV_ID) -> dict[str, Any]:
+def kitchen_task_registration(
+    *, env_id: str = DEFAULT_ENV_ID, download_assets: bool = False
+) -> dict[str, Any]:
     """Verify Gymnasium task registration for a RoboCasa env id."""
+    if download_assets:
+        _download_assets()
+    _import_robocasa()
     gym = _import_gymnasium()
     if env_id not in gym.envs.registry:
         raise RoboCasaError(f"RoboCasa env id not registered: {env_id}")
@@ -503,8 +741,9 @@ def kitchen_random_rollout(
     download_assets: bool = True,
 ) -> dict[str, Any]:
     """Run a real random rollout and write a video artifact."""
+    if output_dir is None:
+        raise RoboCasaError("random rollout requires an output directory for its MP4")
     env = _make_env(env_id, download_assets=download_assets)
-    video_path: Path | None = None
     try:
         obs, _ = env.reset(seed=seed)
         frames: list[Any] = []
@@ -526,13 +765,11 @@ def kitchen_random_rollout(
             "truncated": bool(truncated),
             "observation_keys": sorted(obs.keys()) if isinstance(obs, dict) else [],
         }
-        if output_dir is not None:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            video_path = _write_video(frames, output_dir / "rollout.mp4")
-            if video_path is not None:
-                result["video_exists"] = True
-                result["video_bytes"] = video_path.stat().st_size
-                result["video_sha256"] = _sha256_file(video_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        video_path = _write_required_video(frames, output_dir / "rollout.mp4")
+        result["video_exists"] = True
+        result["video_bytes"] = video_path.stat().st_size
+        result["video_sha256"] = _sha256_file(video_path)
         return result
     except Exception as exc:  # pragma: no cover - depends on the container.
         raise RoboCasaError(f"failed to run RoboCasa rollout {env_id}: {exc}") from exc
@@ -880,13 +1117,27 @@ def _parse_env_ids(value: str) -> list[str]:
 
 
 def _sha256_tree(root: Path) -> str:
+    """Hash a tree with canonical path/content length framing."""
     digest = hashlib.sha256()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
-        digest.update(path.relative_to(root).as_posix().encode())
+    digest.update(_TREE_HASH_DOMAIN)
+    files = sorted(
+        (item.relative_to(root).as_posix(), item)
+        for item in root.rglob("*")
+        if item.is_file()
+    )
+    digest.update(len(files).to_bytes(8, "big"))
+    for relative_path, path in files:
+        _update_length_frame(digest, relative_path.encode("utf-8"))
+        digest.update(path.stat().st_size.to_bytes(8, "big"))
         with path.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
     return digest.hexdigest()
+
+
+def _update_length_frame(digest: Any, value: bytes) -> None:
+    digest.update(len(value).to_bytes(8, "big"))
+    digest.update(value)
 
 
 def _download_s3_tree(uri: str, destination: Path) -> Path:
@@ -952,6 +1203,64 @@ def _checkpoint_identity(checkpoint_root: Path) -> tuple[Path, str, str]:
     """Resolve and hash the exact loadable policy separately from run artifacts."""
     pretrained = _resolve_pretrained_dir(checkpoint_root)
     return pretrained, _sha256_tree(pretrained), _sha256_tree(checkpoint_root)
+
+
+def _verify_training_provenance(
+    checkpoint_root: Path, declared_train_ids: list[str]
+) -> dict[str, Any]:
+    matches = sorted(checkpoint_root.rglob(TRAINING_PROVENANCE_FILENAME))
+    if len(matches) != 1:
+        raise RoboCasaError(
+            "training artifact must contain exactly one "
+            f"{TRAINING_PROVENANCE_FILENAME}; found {len(matches)}"
+        )
+    path = matches[0]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RoboCasaError("training dataset provenance is unreadable") from exc
+    _require_training_provenance_fields(payload)
+    artifact_ids = payload.get("declared_training_env_ids")
+    if artifact_ids != declared_train_ids:
+        raise RoboCasaError(
+            "checkpoint training tasks do not exactly match declared training tasks"
+        )
+    if payload.get("normalized_dataset_training_env_ids") != declared_train_ids:
+        raise RoboCasaError(
+            "checkpoint dataset tasks do not exactly match declared training tasks"
+        )
+    expected_task_digest = _task_set_sha256(declared_train_ids)
+    if payload.get("declared_task_set_sha256") != expected_task_digest:
+        raise RoboCasaError("training task provenance digest does not match its tasks")
+    dataset_tasks = payload.get("dataset_tasks")
+    if not isinstance(dataset_tasks, list) or not all(
+        isinstance(item, str) and item for item in dataset_tasks
+    ):
+        raise RoboCasaError("training dataset task metadata is missing")
+    if payload.get("dataset_task_metadata_sha256") != _task_set_sha256(dataset_tasks):
+        raise RoboCasaError("training dataset task metadata digest does not match")
+    return {
+        **payload,
+        "artifact_path": path.relative_to(checkpoint_root).as_posix(),
+        "artifact_sha256": _sha256_file(path),
+    }
+
+
+def _require_training_provenance_fields(payload: Any) -> None:
+    if not isinstance(payload, dict):
+        raise RoboCasaError("training dataset provenance must be a JSON object")
+    if payload.get("schema") != "npa.lerobot.training_dataset_provenance.v1":
+        raise RoboCasaError("training dataset provenance schema is unsupported")
+    if payload.get("declared_training_tasks_verified") is not True:
+        raise RoboCasaError("training artifact did not verify its declared tasks")
+    digest = str(payload.get("dataset_tree_sha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise RoboCasaError("training dataset provenance lacks a content digest")
+
+
+def _task_set_sha256(task_ids: list[str]) -> str:
+    encoded = json.dumps(task_ids, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _policy_observation(obs: dict[str, Any], device: Any) -> dict[str, Any]:
@@ -1284,6 +1593,7 @@ def kitchen_policy_eval(
     )
     execution = _evaluate_policy_checkpoint(
         checkpoint_uri,
+        declared_train_ids=train_ids,
         episode_manifest=episode_manifest,
         iterations=iterations,
         output_dir=output_dir,
@@ -1304,6 +1614,7 @@ def kitchen_policy_eval(
 def _evaluate_policy_checkpoint(
     checkpoint_uri: str,
     *,
+    declared_train_ids: list[str],
     episode_manifest: list[dict[str, Any]],
     iterations: int,
     output_dir: Path,
@@ -1313,6 +1624,9 @@ def _evaluate_policy_checkpoint(
         checkpoint_root = _download_s3_tree(checkpoint_uri, Path(tmp))
         pretrained, checkpoint_sha256, artifact_tree_sha256 = _checkpoint_identity(
             checkpoint_root
+        )
+        training_provenance = _verify_training_provenance(
+            checkpoint_root, declared_train_ids
         )
         checkpoint_selection = pretrained.relative_to(checkpoint_root).as_posix()
         runtime = _load_act_policy(pretrained)
@@ -1330,26 +1644,32 @@ def _evaluate_policy_checkpoint(
         "checkpoint_sha256": checkpoint_sha256,
         "checkpoint_selection": checkpoint_selection,
         "artifact_tree_sha256": artifact_tree_sha256,
+        "training_provenance": training_provenance,
         "pairs": pairs,
     }
 
 
 def _policy_eval_split_proof(
-    train_ids: list[str], heldout_ids: list[str], manifest_sha256: str
+    train_ids: list[str],
+    heldout_ids: list[str],
+    manifest_sha256: str,
+    training_provenance: dict[str, Any],
 ) -> dict[str, Any]:
     task_sets_disjoint = set(train_ids).isdisjoint(heldout_ids)
     return {
         "train_env_ids": train_ids,
         "heldout_env_ids": heldout_ids,
         "configured_task_sets_disjoint": task_sets_disjoint,
-        "basis": "caller-declared task ids plus held-out evaluation manifest",
-        "checkpoint_training_tasks_verified": False,
-        "declared_train_task_set_sha256": hashlib.sha256(
-            json.dumps(sorted(train_ids), separators=(",", ":")).encode()
-        ).hexdigest(),
-        "heldout_task_set_sha256": hashlib.sha256(
-            json.dumps(sorted(heldout_ids), separators=(",", ":")).encode()
-        ).hexdigest(),
+        "basis": (
+            "content-bound training dataset provenance plus held-out "
+            "evaluation manifest"
+        ),
+        "checkpoint_training_tasks_verified": True,
+        "training_dataset_tree_sha256": training_provenance["dataset_tree_sha256"],
+        "training_provenance_artifact_sha256": training_provenance["artifact_sha256"],
+        "training_provenance_artifact_path": training_provenance["artifact_path"],
+        "declared_train_task_set_sha256": _task_set_sha256(train_ids),
+        "heldout_task_set_sha256": _task_set_sha256(heldout_ids),
         "heldout_episode_manifest_sha256": manifest_sha256,
     }
 
@@ -1377,7 +1697,10 @@ def _policy_eval_result(
         "training_artifact_tree_sha256": execution["artifact_tree_sha256"],
         "checkpoint_loadable": True,
         "split_proof": _policy_eval_split_proof(
-            train_ids, heldout_ids, manifest_sha256
+            train_ids,
+            heldout_ids,
+            manifest_sha256,
+            execution["training_provenance"],
         ),
         "num_episodes": len(episodes),
         "base_seed": base_seed,
@@ -1508,7 +1831,10 @@ def run_capability(
 ) -> dict[str, Any]:
     """Dispatch a RoboCasa capability request to the real implementation."""
     if request.capability == "kitchen_task_registration":
-        return kitchen_task_registration(env_id=request.env_id)
+        return kitchen_task_registration(
+            env_id=request.env_id,
+            download_assets=request.download_assets,
+        )
     if request.capability == "kitchen_asset_availability":
         return kitchen_asset_availability()
     if request.capability == "kitchen_egl_env_reset":
@@ -1614,14 +1940,15 @@ def _execution_provenance(
         "kitchen_trajectory_export",
         "kitchen_policy_eval",
     }
-    source_identity, image_source_sha = _runtime_source_identity()
+    runtime_identity = _runtime_identity()
     mp4_artifacts = _provenance_mp4_artifacts(output_dir)
     return {
         "schema": "npa.robocasa.execution_provenance.v2",
         "generator": "robocasa",
         "simulator": "mujoco",
-        "source_identity": source_identity,
-        "image_source_sha": image_source_sha,
+        "source_identity": runtime_identity.source_identity,
+        "image_source_sha": runtime_identity.image_source_sha,
+        "image_manifest_digest": runtime_identity.image_manifest_digest,
         "capability": request.capability,
         "environment_ids": _provenance_environment_ids(request, result),
         "execution_path": (
@@ -1705,4 +2032,5 @@ __all__ = [
     "run_capability_with_output",
     "system_info",
     "upload_output",
+    "verify_runtime_identity",
 ]

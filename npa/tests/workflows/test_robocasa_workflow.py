@@ -64,6 +64,8 @@ def test_robocasa_toolrefs_render() -> None:
         assert "--endpoint" in argv
         assert "--token-env" in argv
         assert "{{config.robocasa_token_env}}" in argv
+        assert "--expected-image-source-sha" in argv
+        assert "--expected-image-manifest-digest" in argv
 
 
 def test_random_rollout_toolref_includes_iterations() -> None:
@@ -125,11 +127,35 @@ def test_robocasa_workflows_forward_the_service_token() -> None:
         assert secret_env_hints_for_plan(plan.steps) == ("ROBOCASA_TOKEN",)
 
 
+def test_all_robocasa_toolrefs_bind_exact_service_identity() -> None:
+    for tool_ref in (
+        "workbench.robocasa.task_registration",
+        "workbench.robocasa.asset_availability",
+        "workbench.robocasa.egl_env_reset",
+        "workbench.robocasa.random_rollout",
+        "workbench.robocasa.trajectory_export",
+        "workbench.robocasa.policy_eval",
+    ):
+        argv = argv_for_tool(tool_ref)
+        assert argv[argv.index("--expected-image-source-sha") + 1] == (
+            "{{config.robocasa_expected_image_source_sha}}"
+        )
+        assert argv[argv.index("--expected-image-manifest-digest") + 1] == (
+            "{{config.robocasa_expected_image_manifest_digest}}"
+        )
+    for workflow in (WORKFLOW, DATA_POLICY):
+        config = load_spec(workflow).config
+        assert config["robocasa_expected_image_source_sha"] == "0" * 40
+        assert config["robocasa_expected_image_manifest_digest"] == (
+            "sha256:" + "0" * 64
+        )
+
+
 def test_workflow_endpoint_matches_default_service_deployment() -> None:
     expected = (
         f"http://{DEFAULT_NAME}.{DEFAULT_NAMESPACE}.svc.cluster.local:{DEFAULT_PORT}"
     )
-    assert DEFAULT_NAMESPACE == "workbench"
+    assert DEFAULT_NAMESPACE == "default"
     for workflow in (WORKFLOW, DATA_POLICY):
         assert load_spec(workflow).config["robocasa_endpoint"] == expected
 
@@ -139,6 +165,8 @@ def test_service_accelerator_and_policy_training_use_compatible_l40s() -> None:
     assert GPU_NODE_SELECTORS[DEFAULT_GPU_TYPE] == "gpu-l40s-d"
     spec = load_spec(DATA_POLICY)
     assert spec.resources["train-gpu"]["accelerators"] == "L40S:1"
+    assert spec.resources["train-gpu"]["cpus"] == 12
+    assert spec.resources["train-gpu"]["image"] == "tool://lerobot"
     assert {
         name
         for name, resource in spec.resources.items()
@@ -209,3 +237,26 @@ def test_data_policy_uses_one_uri_per_artifact_edge() -> None:
     assert spec.states["lerobot-convert"].inputs[0].uri == "{{config.output_uri}}"
     assert spec.states["lerobot-convert"].outputs[0].uri == "{{config.lerobot_dataset}}"
     assert spec.states["insights"].inputs[0].uri == "{{config.run_prefix_uri}}"
+
+
+def test_policy_train_declares_dataset_input_and_task_provenance() -> None:
+    spec = load_spec(DATA_POLICY)
+    train = spec.states["policy-train"]
+    policy_eval = spec.states["policy-eval"]
+    assert [(item.uri, item.schema) for item in train.inputs] == [
+        ("{{config.lerobot_dataset}}", "npa.lerobot.dataset.v3")
+    ]
+    assert any(
+        item.uri == "{{config.training_provenance_uri}}"
+        and item.schema == "npa.lerobot.training_dataset_provenance.v1"
+        for item in train.outputs
+    )
+    assert any(
+        item.uri == "{{config.training_provenance_uri}}" for item in policy_eval.inputs
+    )
+    plan = build_plan(spec, run_id="test")
+    train_step = next(step for step in plan.steps if step.state == "policy-train")
+    assert (
+        train_step.argv[train_step.argv.index("--training-env-ids") + 1]
+        == (spec.config["train_env_ids"])
+    )

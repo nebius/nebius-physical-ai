@@ -22,9 +22,7 @@ PINNED_CUDA_BASE_NAME = "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
 PINNED_CUDA_BASE_DIGEST = (
     "sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4"
 )
-PINNED_CUDA_BASE = (
-    f"{PINNED_CUDA_BASE_NAME}@{PINNED_CUDA_BASE_DIGEST}"
-)
+PINNED_CUDA_BASE = f"{PINNED_CUDA_BASE_NAME}@{PINNED_CUDA_BASE_DIGEST}"
 OPENCV_PROVIDERS = {
     "opencv-python",
     "opencv-python-headless",
@@ -52,8 +50,7 @@ def _requirement_blocks(path: Path) -> list[str]:
 
 def _from_refs(text: str) -> list[str]:
     return [
-        match.group(1)
-        for match in re.finditer(r"(?m)^FROM\s+(?:--\S+\s+)*(\S+)", text)
+        match.group(1) for match in re.finditer(r"(?m)^FROM\s+(?:--\S+\s+)*(\S+)", text)
     ]
 
 
@@ -102,7 +99,9 @@ def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
 
     assert runtime_lock.count("torch==2.9.0+cu128") == 1
     assert runtime_lock.count("torchvision==0.24.0+cu128") == 1
-    assert any(name.startswith("nvidia-") and name.endswith("-cu12") for name in locked_names)
+    assert any(
+        name.startswith("nvidia-") and name.endswith("-cu12") for name in locked_names
+    )
     assert not any(name.endswith("-cu13") for name in locked_names)
     assert not {"cuda-bindings", "cuda-pathfinder", "cuda-toolkit"} & locked_names
     assert "--extra-index-url https://download.pytorch.org/whl/cu128" in dockerfile
@@ -207,13 +206,23 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert "ARG NPA_SOURCE_SHA" in dockerfile
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
     assert f'org.opencontainers.image.base.name="{PINNED_CUDA_BASE_NAME}"' in dockerfile
-    assert f'org.opencontainers.image.base.digest="{PINNED_CUDA_BASE_DIGEST}"' in dockerfile
+    assert (
+        f'org.opencontainers.image.base.digest="{PINNED_CUDA_BASE_DIGEST}"'
+        in dockerfile
+    )
     assert f'npa.base_image="{PINNED_CUDA_BASE}"' in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1" in dockerfile
     assert "FROM --platform=" not in dockerfile
-    assert "docker build \\\n  --platform linux/amd64 \\" in build_script
-    assert "\n  --provenance=false \\" in build_script
+    assert (
+        'git -C "${NPA_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa"'
+        in build_script
+    )
+    assert "| docker build \\\n      --platform linux/amd64 \\" in build_script
+    assert "\n      --provenance=false \\" in build_script
+    assert "-f docker/workbench/robocasa/Dockerfile \\" in build_script
+    assert build_script.rstrip().endswith('echo "Built ${IMAGE}"')
+    assert '"${NPA_ROOT}"\n\necho "Built ${IMAGE}"' not in build_script
     assert "grep -Eq '^[0-9a-f]{40}$'" in dockerfile
     assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in dockerfile
     assert (

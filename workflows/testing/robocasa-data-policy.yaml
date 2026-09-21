@@ -19,8 +19,12 @@ config:
   prefix: "robocasa-data-policy/{{run.id}}"
   source_overlay: true
 
-  robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
+  robocasa_endpoint: http://npa-robocasa.default.svc.cluster.local:8791
   robocasa_token_env: ROBOCASA_TOKEN
+  # Quarantined service identity: override both with the exact deploy values.
+  # The all-zero placeholders are syntactically valid but cannot match a real image.
+  robocasa_expected_image_source_sha: "0000000000000000000000000000000000000000"
+  robocasa_expected_image_manifest_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   train_env_ids: >-
     robocasa/PickPlaceCounterToCabinet,robocasa/PickPlaceCabinetToCounter,robocasa/PickPlaceCounterToSink
   heldout_env_ids: >-
@@ -49,6 +53,7 @@ config:
 
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/trajectories/"
   artifacts_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
+  training_provenance_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/training_dataset_provenance.json"
   rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/eval/"
   run_prefix_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   workflow_name: robocasa-data-policy
@@ -73,8 +78,9 @@ resources:
   train-gpu:
     cloud: kubernetes
     accelerators: L40S:1
-    cpus: 16
+    cpus: 12
     memory: 64Gi
+    image: tool://lerobot
 
 initial: trajectory-export
 
@@ -121,9 +127,14 @@ states:
     toolRef: workbench.lerobot.policy_train
     resources: train-gpu
     needs: [lerobot-convert]
+    inputs:
+      - uri: "{{config.lerobot_dataset}}"
+        schema: npa.lerobot.dataset.v3
     outputs:
       - uri: "{{config.artifacts_uri}}"
         schema: npa.lerobot.training_run.v1
+      - uri: "{{config.training_provenance_uri}}"
+        schema: npa.lerobot.training_dataset_provenance.v1
     next: policy-eval
 
   policy-eval:
@@ -134,6 +145,8 @@ states:
     inputs:
       - uri: "{{config.artifacts_uri}}"
         schema: npa.lerobot.training_run.v1
+      - uri: "{{config.training_provenance_uri}}"
+        schema: npa.lerobot.training_dataset_provenance.v1
     outputs:
       - uri: "{{config.rollouts_uri}}"
         schema: npa.robocasa.policy_eval.v1

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import math
@@ -41,6 +42,7 @@ DEFAULT_TRAIN_LOG_FREQ = 10
 DEFAULT_TRAIN_TIMEOUT_SECONDS = 43200
 DEFAULT_EVAL_TIMEOUT_SECONDS = 7200
 REAL_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
+TRAINING_DATASET_PROVENANCE_FILENAME = "training_dataset_provenance.json"
 
 # Request-supplied output directories are confined under this root so an
 # unauthenticated /feedback/train-step caller cannot write adapter checkpoints to
@@ -1198,6 +1200,141 @@ def _tail_training_log(log: Path | str, *, lines: int = 60) -> str:
     return f"--- last {len(captured)} lines of {log} ---\n" + "".join(captured)
 
 
+def build_training_dataset_provenance(
+    dataset_root: Path,
+    *,
+    dataset_source: str,
+    declared_training_env_ids: str,
+) -> dict[str, Any]:
+    """Bind training to exact dataset bytes and verified RoboCasa tasks."""
+    tasks = _read_dataset_tasks(dataset_root)
+    declared = _parse_declared_training_env_ids(declared_training_env_ids)
+    normalized_tasks = _normalize_dataset_tasks(tasks, declared)
+    if declared and normalized_tasks != declared:
+        raise PolicyContainerError(
+            "dataset tasks do not exactly match --training-env-ids: "
+            f"dataset={normalized_tasks}, declared={declared}"
+        )
+    tree_sha256, file_count, total_bytes = _dataset_tree_identity(dataset_root)
+    return {
+        "schema": "npa.lerobot.training_dataset_provenance.v1",
+        "dataset_source": dataset_source,
+        "dataset_tree_sha256": tree_sha256,
+        "dataset_file_count": file_count,
+        "dataset_bytes": total_bytes,
+        "dataset_tasks": tasks,
+        "normalized_dataset_training_env_ids": normalized_tasks,
+        "declared_training_env_ids": declared,
+        "declared_training_tasks_verified": bool(declared),
+        "declared_task_set_sha256": _ordered_values_sha256(declared),
+        "dataset_task_metadata_sha256": _ordered_values_sha256(tasks),
+    }
+
+
+def write_training_dataset_provenance(
+    output_dir: Path, payload: dict[str, Any]
+) -> Path:
+    """Write the content-bound dataset/task artifact into the training run."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / TRAINING_DATASET_PROVENANCE_FILENAME
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def _read_dataset_tasks(dataset_root: Path) -> list[str]:
+    jsonl_path = dataset_root / "meta" / "tasks.jsonl"
+    parquet_path = dataset_root / "meta" / "tasks.parquet"
+    if jsonl_path.is_file():
+        rows = [
+            json.loads(line)
+            for line in jsonl_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    elif parquet_path.is_file():
+        try:
+            import pyarrow.parquet as parquet
+        except ImportError as exc:
+            raise PolicyContainerError(
+                "pyarrow is required to read LeRobot task metadata"
+            ) from exc
+        rows = parquet.read_table(parquet_path).to_pylist()
+    else:
+        raise PolicyContainerError(
+            f"LeRobot dataset has no meta/tasks.jsonl or meta/tasks.parquet: {dataset_root}"
+        )
+    return _ordered_task_rows(rows)
+
+
+def _ordered_task_rows(rows: list[Any]) -> list[str]:
+    if not rows or any(not isinstance(row, dict) for row in rows):
+        raise PolicyContainerError("LeRobot task metadata contains no task records")
+    ordered = sorted(rows, key=lambda row: int(row.get("task_index", 0)))
+    tasks = [str(row.get("task") or "").strip() for row in ordered]
+    if any(not task for task in tasks) or len(set(tasks)) != len(tasks):
+        raise PolicyContainerError("LeRobot task metadata must name unique tasks")
+    return tasks
+
+
+def _parse_declared_training_env_ids(value: str) -> list[str]:
+    if not value.strip():
+        return []
+    task_ids = [item.strip() for item in value.split(",") if item.strip()]
+    if any(not item.startswith("robocasa/") for item in task_ids):
+        raise PolicyContainerError(
+            "--training-env-ids must contain only robocasa/ environment ids"
+        )
+    if len(set(task_ids)) != len(task_ids):
+        raise PolicyContainerError("--training-env-ids must be unique")
+    return task_ids
+
+
+def _normalize_dataset_tasks(tasks: list[str], declared: list[str]) -> list[str]:
+    if not declared:
+        return tasks
+    normalized = [
+        task if task.startswith("robocasa/") else f"robocasa/{task}" for task in tasks
+    ]
+    if any(task not in set(declared) for task in normalized):
+        raise PolicyContainerError(
+            f"dataset task metadata contains undeclared RoboCasa tasks: {normalized}"
+        )
+    return normalized
+
+
+def _dataset_tree_identity(root: Path) -> tuple[str, int, int]:
+    records = []
+    total_bytes = 0
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        size = path.stat().st_size
+        records.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "bytes": size,
+                "sha256": _sha256_path(path),
+            }
+        )
+        total_bytes += size
+    if not records:
+        raise PolicyContainerError(f"LeRobot dataset contains no files: {root}")
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest(), len(records), total_bytes
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _ordered_values_sha256(values: list[str]) -> str:
+    encoded = json.dumps(values, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def _materialize_train_dataset(args: argparse.Namespace) -> Path:
     """Fetch the training dataset into this stage's own filesystem.
 
@@ -1320,6 +1457,11 @@ def build_parser() -> argparse.ArgumentParser:
     # or a bare Hugging Face repo id; empty falls back to --dataset-repo-id.
     train_cmd.add_argument("--dataset-source", default="")
     train_cmd.add_argument(
+        "--training-env-ids",
+        default="",
+        help="Comma-separated RoboCasa env ids that dataset task metadata must match.",
+    )
+    train_cmd.add_argument(
         "--dataset-revision", default=DEFAULT_PUBLIC_LEROBOT_REVISION
     )
     train_cmd.add_argument(
@@ -1431,6 +1573,20 @@ def main(argv: list[str] | None = None) -> int:
         dataset_path = training_config.data_path or args.dataset_path
         if not dataset_path:
             dataset_path = _materialize_train_dataset(args)
+        dataset_path = Path(dataset_path)
+        dataset_source = (args.dataset_source or "").strip()
+        if not dataset_source:
+            has_local_source = args.dataset_path or training_config.data_path
+            dataset_source = (
+                str(dataset_path)
+                if has_local_source
+                else (args.dataset_repo_id or "").strip()
+            )
+        training_provenance = build_training_dataset_provenance(
+            dataset_path,
+            dataset_source=dataset_source,
+            declared_training_env_ids=args.training_env_ids,
+        )
         train_result = run_lerobot_training(
             dataset_path=dataset_path,
             dataset_repo_id=args.dataset_repo_id,
@@ -1445,7 +1601,14 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=args.timeout_seconds,
             training_config=training_config,
         )
+        provenance_path = write_training_dataset_provenance(
+            Path(train_result.output_dir), training_provenance
+        )
         payload = train_result.to_dict()
+        payload["training_dataset_provenance"] = {
+            **training_provenance,
+            "artifact_path": str(provenance_path),
+        }
         if args.artifacts_s3_uri.strip():
             payload["artifacts_uri"] = upload_run_artifacts(
                 train_result.output_dir, args.artifacts_s3_uri
