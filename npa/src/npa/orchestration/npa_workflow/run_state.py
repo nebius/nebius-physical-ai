@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import re
+import shlex
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
@@ -984,6 +985,7 @@ def build_actionable_run_status(
     job_observations: Mapping[str, Mapping[str, Any]] | None = None,
     controller_output: str = "",
     project: str = "",
+    isolated_config_dir: str = "",
     failure_threshold: int = 3,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -1162,6 +1164,11 @@ def build_actionable_run_status(
         log_command = (
             f"npa workbench workflow logs {manifest.run_id} --stage {name}"
             + (f" --project {project}" if project else "")
+            + (
+                f" --isolated-config-dir {shlex.quote(isolated_config_dir)}"
+                if isolated_config_dir
+                else ""
+            )
         )
         profile = step.get("resources_profile") or {}
         stage_payload: dict[str, Any] = {

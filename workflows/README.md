@@ -72,6 +72,13 @@ false; `NPA_SRC_OVERLAY=1` is an operator override. Keep the checkout available
 during submission. The [authoring guide](../docs/workbench/npa-workflow-guide.md)
 explains the full source and image contract.
 
+### Isolated controller diagnostics
+
+Pass the run's `--isolated-config-dir` to workflow status, logs, and cancellation.
+Status uses that controller's Kubernetes configuration for pod, event, and node
+diagnostics, and retains the same controller in suggested log commands. It does
+not require the operator's ambient Kubernetes configuration to match the run.
+
 ### Failed-attempt diagnostics
 
 Python stages that create useful local evidence before failing can publish an

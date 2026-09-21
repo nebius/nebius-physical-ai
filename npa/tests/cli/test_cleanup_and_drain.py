@@ -662,6 +662,46 @@ def test_status_explains_a_pending_job_whose_pod_cannot_start(
     assert "retries this forever" in blockers[0]["remedy"]
 
 
+def test_status_blocker_probe_uses_exact_isolated_controller_kubeconfig(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_resolve_sky_bin",
+        lambda sky_bin="": "/tmp/sky",
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        lambda job_id, **kwargs: [{"cluster_name": "sky-abc"}],
+    )
+    captured: dict[str, object] = {}
+
+    def inspect(**kwargs):  # noqa: ANN003, ANN202 - focused test double
+        captured.update(kwargs)
+        return JobBlockerReport(
+            job_id="2", cluster_name="sky-abc", error="synthetic unavailable"
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers", inspect
+    )
+    controller = tmp_path / "controller"
+
+    blockers = workflow_cli._stalled_job_blockers(
+        "2", "PENDING", isolated_config_dir=controller
+    )
+
+    expected = controller.resolve() / "home" / ".kube" / "config"
+    assert captured["kubeconfig"] == expected
+    assert captured["environment"]["HOME"] == str(controller.resolve() / "home")
+    assert captured["environment"]["KUBECONFIG"] == str(expected)
+    assert blockers[0]["remedy"].count("--isolated-config-dir") == 2
+    assert str(controller) in blockers[0]["remedy"]
+
+
 def test_a_running_job_is_not_probed(monkeypatch: pytest.MonkeyPatch) -> None:
     from npa.cli.workbench import workflow as workflow_cli
 

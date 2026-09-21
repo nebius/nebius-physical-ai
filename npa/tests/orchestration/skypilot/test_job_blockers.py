@@ -95,6 +95,29 @@ def test_the_pods_are_found_by_skypilots_own_cluster_label() -> None:
     assert "--context" in cmd and "npa-cluster" in cmd
 
 
+def test_explicit_controller_kubeconfig_and_environment_reach_kubectl(
+    tmp_path,
+) -> None:
+    kubeconfig = tmp_path / "controller" / "home" / ".kube" / "config"
+    environment = {"HOME": str(kubeconfig.parents[2]), "KUBECONFIG": str(kubeconfig)}
+    calls = []
+
+    def runner(cmd, **kwargs):  # noqa: ANN001, ANN202 - subprocess test double
+        calls.append((list(cmd), kwargs.get("env")))
+        return subprocess.CompletedProcess(cmd, 0, stdout=_pods(), stderr="")
+
+    inspect_job_blockers(
+        cluster_name="sky-abc",
+        kubeconfig=kubeconfig,
+        environment=environment,
+        runner=runner,
+    )
+
+    command, actual_environment = calls[0]
+    assert command[:3] == ["kubectl", "--kubeconfig", str(kubeconfig)]
+    assert actual_environment == environment
+
+
 def test_an_unschedulable_pod_points_at_the_accelerator_request() -> None:
     runner = _runner(
         _pods(

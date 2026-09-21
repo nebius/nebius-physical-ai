@@ -15,8 +15,11 @@ kubectl call away.
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
+import os
+from pathlib import Path
 import subprocess
 from typing import Any
 
@@ -143,6 +146,8 @@ def inspect_job_blockers(
     cluster_name: str = "",
     namespace: str = "",
     context: str = "",
+    kubeconfig: str | os.PathLike[str] | None = None,
+    environment: Mapping[str, str] | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     runner: Runner | None = None,
 ) -> JobBlockerReport:
@@ -164,14 +169,18 @@ def inspect_job_blockers(
         report.error = "no cluster name or job id to look up"
         return report
 
-    cmd = ["kubectl", "get", "pods", "-o", "json"]
+    cmd = ["kubectl"]
+    if kubeconfig is not None and os.fspath(kubeconfig).strip():
+        cmd.extend(["--kubeconfig", str(Path(kubeconfig).expanduser())])
+    if context.strip():
+        cmd.extend(["--context", context.strip()])
+    cmd.extend(["get", "pods"])
     if by_job_id:
         # Every SkyPilot pod carries the label; the value is filtered below.
-        cmd[3:3] = ["-l", CLUSTER_LABEL]
+        cmd.extend(["-l", CLUSTER_LABEL])
     else:
-        cmd[3:3] = ["-l", f"{CLUSTER_LABEL}={cluster_name.strip()}"]
-    if context.strip():
-        cmd[1:1] = ["--context", context.strip()]
+        cmd.extend(["-l", f"{CLUSTER_LABEL}={cluster_name.strip()}"])
+    cmd.extend(["-o", "json"])
     if namespace.strip():
         cmd.extend(["-n", namespace.strip()])
     else:
@@ -181,6 +190,7 @@ def inspect_job_blockers(
     try:
         result = execute(
             cmd,
+            env=dict(environment) if environment is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -226,6 +236,8 @@ def inspect_job_blockers(
             pod_names=pod_names,
             namespace=namespace,
             context=context,
+            kubeconfig=kubeconfig,
+            environment=environment,
             timeout=timeout,
             runner=execute,
         )
@@ -246,6 +258,8 @@ def inspect_job_blockers(
         }
         report.unready_nodes = _unready_nodes(
             context=context,
+            kubeconfig=kubeconfig,
+            environment=environment,
             timeout=timeout,
             runner=execute,
             assigned_nodes=assigned_nodes,
@@ -256,6 +270,8 @@ def inspect_job_blockers(
 def _unready_nodes(
     *,
     context: str,
+    kubeconfig: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None,
     timeout: int,
     runner: Runner,
     assigned_nodes: set[str],
@@ -266,11 +282,14 @@ def _unready_nodes(
         return []
 
     cmd = ["kubectl", "get", "nodes", "-o", "json"]
+    if kubeconfig is not None and os.fspath(kubeconfig).strip():
+        cmd[1:1] = ["--kubeconfig", str(Path(kubeconfig).expanduser())]
     if context.strip():
         cmd[1:1] = ["--context", context.strip()]
     try:
         result = runner(
             cmd,
+            env=dict(environment) if environment is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -388,6 +407,8 @@ def _event_blockers(
     pod_names: set[str],
     namespace: str,
     context: str,
+    kubeconfig: str | os.PathLike[str] | None,
+    environment: Mapping[str, str] | None,
     timeout: int,
     runner: Runner,
 ) -> list[PodBlocker]:
@@ -396,6 +417,8 @@ def _event_blockers(
     if not pod_names:
         return []
     cmd = ["kubectl", "get", "events", "-o", "json"]
+    if kubeconfig is not None and os.fspath(kubeconfig).strip():
+        cmd[1:1] = ["--kubeconfig", str(Path(kubeconfig).expanduser())]
     if context.strip():
         cmd[1:1] = ["--context", context.strip()]
     if namespace.strip():
@@ -405,6 +428,7 @@ def _event_blockers(
     try:
         result = runner(
             cmd,
+            env=dict(environment) if environment is not None else None,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

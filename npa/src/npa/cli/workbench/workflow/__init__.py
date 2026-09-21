@@ -4904,6 +4904,7 @@ def _durable_workflow_status(
             job_observations=job_observations,
             controller_output=controller_output,
             project=project or state.project,
+            isolated_config_dir=str(isolated_config_dir or ""),
             failure_threshold=startup_failure_threshold,
         )
         if runtime_waves and run_payload.get("status") == "SUCCEEDED":
@@ -4973,6 +4974,7 @@ def _durable_workflow_status(
                 managed_job_id,
                 str(observation.get("status") or ""),
                 sky_bin=sky_bin,
+                isolated_config_dir=isolated_config_dir,
             )
         ]
         if blockers:
@@ -5082,7 +5084,12 @@ def _durable_workflow_status(
         "verification": "found",
         "stages": stages,
     }
-    blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
+    blockers = _stalled_job_blockers(
+        job_id,
+        live_status,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+    )
     if blockers:
         legacy_payload["blockers"] = blockers
     last_known = str(status or manifest.get("status") or "UNKNOWN")
@@ -5321,6 +5328,7 @@ def _manifest_pending_status(
         ),
         controller_output=controller_output,
         project=project,
+        isolated_config_dir=str(isolated_config_dir or ""),
         failure_threshold=startup_failure_threshold,
     )
     launch_raw = resolution.receipt.get("launch")
@@ -5447,6 +5455,15 @@ def _stalled_job_blockers(
     from npa.orchestration.skypilot.job_blockers import inspect_job_blockers
     from npa.orchestration.skypilot.workflow import workflow_task_statuses
 
+    diagnostic_environment = None
+    diagnostic_kubeconfig = None
+    if isolated_config_dir is not None:
+        controller_root = Path(isolated_config_dir).expanduser().resolve()
+        diagnostic_kubeconfig = controller_root / "home" / ".kube" / "config"
+        diagnostic_environment = dict(os.environ)
+        diagnostic_environment["HOME"] = str(controller_root / "home")
+        diagnostic_environment["KUBECONFIG"] = str(diagnostic_kubeconfig)
+
     try:
         rows = workflow_task_statuses(
             job_id,
@@ -5462,11 +5479,22 @@ def _stalled_job_blockers(
     # exactly the case worth diagnosing -- so fall back to the job id.
     reports = (
         [
-            inspect_job_blockers(job_id=job_id, cluster_name=cluster)
+            inspect_job_blockers(
+                job_id=job_id,
+                cluster_name=cluster,
+                kubeconfig=diagnostic_kubeconfig,
+                environment=diagnostic_environment,
+            )
             for cluster in clusters
         ]
         if clusters
-        else [inspect_job_blockers(job_id=job_id)]
+        else [
+            inspect_job_blockers(
+                job_id=job_id,
+                kubeconfig=diagnostic_kubeconfig,
+                environment=diagnostic_environment,
+            )
+        ]
     )
     reported: list[dict[str, object]] = []
     for report in reports:
@@ -5482,8 +5510,10 @@ def _stalled_job_blockers(
                     "observed_at": report.observed_at,
                     "live": False,
                     "remedy": (
-                        f"npa workbench workflow status {job_id}; then retry "
-                        f"npa workbench workflow logs {job_id} --cached"
+                        f"npa workbench workflow status {job_id}"
+                        f"{_isolated_controller_option(isolated_config_dir)}; "
+                        f"then retry npa workbench workflow logs {job_id} --cached"
+                        f"{_isolated_controller_option(isolated_config_dir)}"
                     ),
                 }
             )
