@@ -52,11 +52,23 @@ and failures. Development and reporting episodes remain evaluation evidence;
 they cannot be repurposed as training data for this comparison.
 
 NVIDIA also publishes a
-[GR00T-N1.6 BEHAVIOR checkpoint](https://huggingface.co/nvidia/GR00T-N1.6-BEHAVIOR1k).
-It is an additional released-baseline candidate to audit for exact task coverage,
-runtime compatibility, dependency access, and license scope. It has not been
-loaded or evaluated by this integration. Its existence does not establish a
-2026 Q score or change the identities of the already frozen RLC and Comet panels.
+[GR00T-N1.6 BEHAVIOR checkpoint](https://huggingface.co/nvidia/GR00T-N1.6-BEHAVIOR1k)
+and an [associated 50-task benchmark](https://github.com/NVIDIA/Isaac-GR00T/blob/ead52833afbbf4243f8cd5e7664f48a94de03b19/examples/BEHAVIOR/README.md).
+That benchmark reports 44.87% Task Progress for trash collection, not the 2026
+challenge Q metric. This integration has neither fetched the weights nor
+evaluated the checkpoint, so it establishes no 2026 score.
+
+The released N1.6
+[embodiment processor](https://github.com/NVIDIA/Isaac-GR00T/blob/ead52833afbbf4243f8cd5e7664f48a94de03b19/gr00t/configs/data/embodiment_configs.py)
+expects 82 state values, including global base position and orientation. The
+current official [R1 Pro evaluator configuration](https://github.com/StanfordVL/BEHAVIOR-1K/blob/b1979916ec1549b10a4e65e630bc6504a9af1b00/OmniGibson/omnigibson/eval/r1pro.yaml)
+exposes 61 permitted proprioceptive values, while the
+[2026 rules](https://behavior.stanford.edu/challenge/evaluation.html) prohibit
+global pose. The Workbench GR00T source pin does not contain the released N1.6
+BEHAVIOR processor paths. An exact, permitted observation adapter and a
+compatible reviewed source pin are therefore prerequisites; the checkpoint is
+not a ready-to-run baseline. Its exact model and source terms must be reviewed
+for the intended use and distribution before onboarding.
 
 ## First candidate: improve camera use during training
 
