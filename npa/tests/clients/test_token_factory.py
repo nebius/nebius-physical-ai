@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import inspect
 import json
 from pathlib import Path
+import textwrap
 
 import httpx
 import pytest
@@ -574,17 +576,16 @@ def test_chat_profile_preserves_literal_request_field_order(model, suffix) -> No
     assert requests == [prefix + suffix]
 
 
-def test_model_discrimination_is_centralized_in_chat_profile() -> None:
-    from npa.clients import token_factory
-    from npa.workbench import vlm_eval
+def _ast_sha256(source: str) -> str:
+    tree = ast.parse(textwrap.dedent(source))
+    return hashlib.sha256(ast.dump(tree, include_attributes=False).encode()).hexdigest()
 
-    canonical_ids = {
-        "nvidia/Nemotron-3_5-Lightning",
-        "MiniMaxAI/MiniMax-M3",
-        "moonshotai/Kimi-K3",
-    }
+
+def _profile_assignment_sha256() -> str:
+    from npa.clients import token_factory
+
     client_tree = ast.parse(inspect.getsource(token_factory))
-    profile_assignment = next(
+    assignment = next(
         node
         for node in ast.walk(client_tree)
         if isinstance(node, ast.Assign)
@@ -593,52 +594,71 @@ def test_model_discrimination_is_centralized_in_chat_profile() -> None:
             for target in node.targets
         )
     )
-    profile_literals = {
-        node.value
-        for node in ast.walk(profile_assignment)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    }
-    allowed_assignments = [
-        node
-        for node in ast.walk(client_tree)
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(target, ast.Name)
-            and (target.id.startswith("DEFAULT_") or target.id == "_CHAT_PROFILES")
-            for target in node.targets
-        )
-    ]
-    allowed_literals = {
-        id(node)
-        for assignment in allowed_assignments
-        for node in ast.walk(assignment)
-        if isinstance(node, ast.Constant) and node.value in canonical_ids
-    }
-    all_canonical_literals = {
-        id(node)
-        for node in ast.walk(client_tree)
-        if isinstance(node, ast.Constant) and node.value in canonical_ids
-    }
-    assert profile_literals.issuperset(canonical_ids)
-    assert all_canonical_literals == allowed_literals
+    return hashlib.sha256(
+        ast.dump(assignment, include_attributes=False).encode()
+    ).hexdigest()
 
-    for builder in (
-        token_factory.token_factory_chat_profile,
-        token_factory.default_chat_extra,
-        token_factory._chat_completion_payload,
-        vlm_eval._openai_request,
-    ):
-        tree = ast.parse(inspect.getsource(builder))
-        model_comparisons = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.Compare, ast.Match))
-            and any(
-                isinstance(child, ast.Name) and child.id == "model"
-                for child in ast.walk(node)
-            )
-        ]
-        assert model_comparisons == []
+
+_EXPECTED_POLICY_AST_HASHES = {
+    "profile-assignment": "b8c3be781fc70f3425e7a835fc52dee5f92219581e558803d01b5f2e4390df69",
+    "profile-lookup": "818c81d6b67fe43c07f4d22af3f4a8d145fb8aed0ecabafeb66360841eb799e0",
+    "profile-default-extra": "170e7c306fe82bfd85843d668ada47ad6eb35d215fefa18fcede2f6ca6ab4f75",
+    "default-chat-extra": "99846d1e4a684f3df3f7bd8ed337b2e18cf84b9d38ca0a1a0d97463340d9f8a8",
+    "client-payload": "d31038f5401e7c9dc0eb5817614f797e7804723c5b0b74baba961a4ce13e6bc6",
+    "client-entrypoint": "d39c925dca9e2965b710645b2b1dd6b6d0ecc7f0cc3ec8d2be5ad1f310657165",
+    "hosted-request": "101e924cc81415fbd9d8997c3c182cee2f0909cb89789ab40a24239b307ecadc",
+    "hosted-response": "82cccfbd894542709b0e9af5b9f746cc061115f8d77533a91929e59d50f6dfda",
+    "hosted-call": "87e073b95f7493681755b46e8cadaa289da2d3777827cb1cbb39fdfd55a8a05d",
+}
+
+
+def _policy_ast_hashes() -> dict[str, str]:
+    from npa.clients import token_factory
+    from npa.workbench import vlm_eval
+
+    functions = {
+        "profile-lookup": token_factory.token_factory_chat_profile,
+        "profile-default-extra": token_factory.TokenFactoryChatProfile.default_extra,
+        "default-chat-extra": token_factory.default_chat_extra,
+        "client-payload": token_factory._chat_completion_payload,
+        "client-entrypoint": token_factory.TokenFactoryClient.chat_completion,
+        "hosted-request": vlm_eval._openai_request,
+        "hosted-response": vlm_eval._hosted_structured_response,
+        "hosted-call": vlm_eval._call_openai_compatible,
+    }
+    hashes = {
+        name: _ast_sha256(inspect.getsource(function))
+        for name, function in functions.items()
+    }
+    return {"profile-assignment": _profile_assignment_sha256(), **hashes}
+
+
+def test_model_discrimination_is_centralized_in_chat_profile() -> None:
+    assert _policy_ast_hashes() == _EXPECTED_POLICY_AST_HASHES
+
+
+@pytest.mark.parametrize("target", ["client-payload", "hosted-request"])
+@pytest.mark.parametrize("mutation", ["alias-default-switch", "helper-switch"])
+def test_policy_fingerprint_kills_indirect_switch_mutants(target, mutation) -> None:
+    from npa.clients import token_factory
+    from npa.workbench import vlm_eval
+
+    function = {
+        "client-payload": token_factory._chat_completion_payload,
+        "hosted-request": vlm_eval._openai_request,
+    }[target]
+    source = textwrap.dedent(inspect.getsource(function))
+    anchor = "profile = token_factory_chat_profile(model)"
+    injected = (
+        "selected_model = model\n"
+        "    if selected_model == DEFAULT_VISION_MODEL:\n"
+        "        pass\n"
+        f"    {anchor}"
+        if mutation == "alias-default-switch"
+        else f"_legacy_model_switch(model)\n    {anchor}"
+    )
+    mutated = source.replace(anchor, injected, 1)
+    assert _ast_sha256(mutated) != _EXPECTED_POLICY_AST_HASHES[target]
 
 
 def test_explicit_kimi_extra_wins_over_direct_output_profile() -> None:

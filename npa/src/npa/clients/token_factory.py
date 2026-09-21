@@ -451,6 +451,15 @@ class TokenFactoryClient:
         Strips any inline ``<think>`` reasoning trace. Raises when the model
         returned no visible answer (reasoning-only response) instead of
         returning the literal string ``"None"``.
+
+        Args:
+            **kwargs: Arguments forwarded to :meth:`chat_completion_message`.
+
+        Returns:
+            The nonempty visible assistant text.
+
+        Raises:
+            TokenFactoryError: If the response has no visible assistant text.
         """
 
         visible, reasoning = self.chat_completion_message(**kwargs)
