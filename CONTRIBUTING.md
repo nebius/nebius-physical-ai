@@ -677,9 +677,24 @@ CI jobs, and helper scripts such as `npa/scripts/start_golden_evals_tmux.sh` and
 you must then point the tooling at it — `make test PYTHON=...`,
 `NPA_BIN=.../bin/npa`, `GOLDEN_EVAL_PYTHON=.../bin/python`.
 
+If you keep multiple checkouts of this repo (for example `git worktree add`, or
+several agent sandboxes on one machine) and share one `npa/.venv` across them —
+by symlinking it, rather than running its own `pip install -e` in each — the
+venv's editable install still resolves `npa` from whichever checkout last ran
+that install. `pytest` then collects test files from the checkout you are
+standing in but imports production code from a *different* checkout, silently,
+with no error or non-zero exit. `make test`/`test-smoke`/`test-guardrails`/
+`test-e2e` all run `make check-env` first specifically to catch this: it fails
+fast with the exact `export PYTHONPATH=...` fix (or the option to give the
+checkout its own venv) instead of letting you spend minutes on a run whose
+result is meaningless. Run it standalone any time you are unsure which
+checkout your interpreter is really resolving `npa` from: `make check-env`.
+
 Then use the `make` targets from the repo root:
 
 ```bash
+make check-env        # fails fast if $PYTHON would import npa from another checkout
+make test-prereqs     # non-blocking: reports missing optional tools and temp-disk observations
 make check            # local subset: lint, docs-check, unit tests
 make test             # full unit suite, live/GPU markers deselected
 make test-smoke       # quickest: onboarding CLI smoke tests only
@@ -689,6 +704,27 @@ make docs             # regenerate docs/cli/ after any CLI change
 make docs-check       # the docs/cli/ drift gate
 make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
 ```
+
+Run `make test-prereqs` once per environment before trusting `make test`'s
+result: it distinguishes two different consequences of a missing optional
+tool, verified against the specific test files that check for each, not
+assumed. The `adapter` extra's `pyarrow` is not optional in the usual sense —
+without it, files that import it unconditionally (for example
+`npa/tests/test_lerobot_shared_video_offsets.py`) fail to collect at all, so
+`make test` exits non-zero outright rather than passing with less coverage.
+Missing ffmpeg/ffprobe, a CPU checkpoint runtime, tmux, or Node
+instead let the specific tests that check for them self-skip, so `make test`
+can still exit 0 while covering less than CI. The same command also reports
+free space and any retained `pytest-of-<user>/pytest-N` directories under the
+temp root pytest will use, purely for awareness — it recommends no deletion.
+That root (`$TMPDIR/pytest-of-<user>` by default) is shared by every process
+you run, not scoped to one checkout, so concurrent work across worktrees on
+one machine competes for the same disk. Point a large or parallel run at a
+directory you own instead — `pytest --basetemp=<owned-dir> ...` — and clean
+up only that directory yourself. A directory not currently the
+`pytest-current` target is not thereby proven idle: another process may hold
+a different `--basetemp` entirely, or a live lock file under this same root.
+Do not delete another process's temp directory based on age alone.
 
 `docs/cli/` is generated from live `npa --help` and drift-gated in CI, so
 `make docs` and a commit of its output are part of any change to a command, flag,
