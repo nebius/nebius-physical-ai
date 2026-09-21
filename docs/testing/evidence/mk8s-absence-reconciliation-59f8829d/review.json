@@ -1,0 +1,55 @@
+{
+  "schema": "npa.public.mk8s-absence-proof.v1",
+  "recorded_at": "2026-09-21T19:04:47.147671+00:00",
+  "reviewed_source": "59f8829d23e16a553da310f26d7cc85f398a775f",
+  "source_tree": "a2fc3a3660bc545aec383946aec1c5180850425e",
+  "base": "9505f1ff0184cbf39a4c5845d4ddcc07b5e938c8",
+  "live_execution_source": "742cfda0d72bf272806054d32469f531a508fb16",
+  "production_tree_identical_at_live_and_reviewed_source": "7fce553eb509a65c1c377aacd63c39ab4fac1f7e",
+  "live_proof": {
+    "retained_actual_provider_responses": 8,
+    "exact_original_resources": 4,
+    "typed_absence_and_complete_scoped_inventories": true,
+    "journal_and_matching_lease_durably_terminal": true,
+    "original_journal_and_lease_audit_bound": true,
+    "fresh_actual_cli_retry_already_reconciled": true,
+    "new_provider_mutations": 0,
+    "independent_receipt_files_rehashed": 25,
+    "root_review_sha256": "7aace76f6cee717d9e2a2494aad69a532225110962a39ba9f77f2695c71decf8"
+  },
+  "full_local_suite": {
+    "passed": 25561,
+    "skipped": 155,
+    "xpassed": 1,
+    "failed": 0,
+    "errors": 0,
+    "seconds": 777.81,
+    "source_clean_unchanged": true,
+    "log_sha256": "db2d4b35869dcefa77308d059db9cd478b6f9f9218314af145619b7278bf1b0c"
+  },
+  "scoped_gates": {
+    "smoke_passed": 114,
+    "guardrails_passed": 4163,
+    "security_tests_passed": 799,
+    "native_baseline_findings": 607,
+    "native_candidate_findings": 607,
+    "native_new_regressions": 0,
+    "native_blocking_findings": 0,
+    "docs_lint_privacy_gitleaks": "PASS"
+  },
+  "adversarial_controls": [
+    "Actual process exit after terminal journal write; a fresh CLI process completes exact lease release.",
+    "Missing, live, ambiguous or unreadable provider state refuses reconciliation.",
+    "Symlinked or permissive audit paths refuse; negative fixtures verified under umask077 and022."
+  ],
+  "retained_failures": [
+    "Earlier actual provider response-shape mismatches refused before journal mutation.",
+    "The742 full-suite run failed one deliberately permissive directory fixture under umask077; corrected59f has a separate complete passing run."
+  ],
+  "limits": [
+    "This verifies the owned MK8s absence and durable local reconciliation path.",
+    "No new GPU workload, workload recovery, general cloud-capacity or robot capability acceptance.",
+    "Raw authority, resource identifiers and operational logs remain access-controlled.",
+    "Hosted CI and required merge-queue integration are separate."
+  ]
+}
