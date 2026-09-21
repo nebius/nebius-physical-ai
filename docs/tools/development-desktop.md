@@ -218,7 +218,8 @@ An existing signed mobile login cookie continues to work on its new chat route.
 
 The Mac opens an outbound SSH connection using the selected alias and your
 existing SSH authentication. Both ends of the forwarded listener bind to
-loopback. Phones use the public HTTPS URL and need no VPN or SSH client. A
+loopback. Setup removes the tunnel if gateway verification fails, including
+when the SSH server forces a public listener; correct the gateway and rerun setup. Phones use the public HTTPS URL and need no VPN or SSH client. A
 desktop gateway retains its Linux chat at `/chat/` and adds the Mac at
 `/local-chat/`; the standalone mobile gateway adds `/chat/` and keeps its original
 root interface. `status --local` reports the selected URL. `--local-port` and

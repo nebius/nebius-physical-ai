@@ -306,3 +306,40 @@ def test_launchd_bootstrap_does_not_retry_permission_failure(monkeypatch, tmp_pa
     with pytest.raises(subprocess.CalledProcessError):
         local_service._bootstrap(tmp_path / "service.plist")
     assert run.call_count == 1
+
+
+def test_gateway_failure_removes_unverified_tunnel(monkeypatch, tmp_path):
+    password = tmp_path / "password"
+    password.write_text("unit-test-password")
+    monkeypatch.setattr(local_runtime, "install_service", Mock())
+    remove = Mock()
+    monkeypatch.setattr(local_runtime, "remove_service", remove)
+    monkeypatch.setattr(
+        local_runtime,
+        "gateway_operation",
+        Mock(side_effect=RuntimeError("verification failed")),
+    )
+    config = {
+        "gateway_host": "gateway.example.test",
+        "port": 7001,
+        "gateway_port": 7002,
+        "origin": "https://example.test",
+        "installation_id": "unit-installation",
+        "username": "unit-user",
+        "password_file": str(password),
+    }
+    with pytest.raises(RuntimeError, match="verification failed"):
+        local_runtime._connect_gateway(config, tmp_path)
+    remove.assert_called_once_with("com.nebius.codex-chat.tunnel")
+
+
+def test_unverified_tunnel_does_not_restart_after_login(monkeypatch, tmp_path):
+    monkeypatch.setattr(local_service.Path, "home", lambda: tmp_path)
+    path = tmp_path / "Library/LaunchAgents/com.nebius.codex-chat.tunnel.plist"
+    path.parent.mkdir(parents=True)
+    path.write_text("owned service")
+    run = Mock(return_value=subprocess.CompletedProcess(["launchctl"], 0))
+    monkeypatch.setattr(local_service.subprocess, "run", run)
+    local_service.remove_service("com.nebius.codex-chat.tunnel")
+    assert not path.exists()
+    assert run.call_args.args[0][1] == "bootout"

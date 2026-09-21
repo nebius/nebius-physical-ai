@@ -18,7 +18,12 @@ import fcntl
 from urllib.request import Request, urlopen
 
 from .local_gateway import gateway_operation
-from .local_service import install_service, service_running, tunnel_command
+from .local_service import (
+    install_service,
+    remove_service,
+    service_running,
+    tunnel_command,
+)
 from . import _validate_host
 
 _LABEL = "com.nebius.codex-chat"
@@ -328,15 +333,19 @@ def _connect_gateway(config, root):
         return
     command = tunnel_command(host, config["port"], config["gateway_port"])
     install_service(_LABEL + ".tunnel", command, root)
-    gateway_operation(
-        host,
-        "configure",
-        origin=config["origin"],
-        port=config["gateway_port"],
-        installation_id=config["installation_id"],
-        username=config["username"],
-        password=Path(config["password_file"]).read_text().strip(),
-    )
+    try:
+        gateway_operation(
+            host,
+            "configure",
+            origin=config["origin"],
+            port=config["gateway_port"],
+            installation_id=config["installation_id"],
+            username=config["username"],
+            password=Path(config["password_file"]).read_text().strip(),
+        )
+    except (OSError, ValueError, RuntimeError):
+        remove_service(_LABEL + ".tunnel")
+        raise
 
 
 def local_status():

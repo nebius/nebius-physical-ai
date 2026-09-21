@@ -84,6 +84,27 @@ def service_running(label):
     return result.returncode == 0 and "state = running" in result.stdout
 
 
+def remove_service(label):
+    """Remove an owned LaunchAgent after its connection fails verification.
+
+    Args:
+        label: Owned service label.
+    Returns:
+        None.
+    Raises:
+        OSError: The service definition cannot be removed.
+        subprocess.CalledProcessError: launchd cannot stop the service.
+    """
+    path = Path.home() / "Library/LaunchAgents" / (label + ".plist")
+    path.unlink(missing_ok=True)
+    target = f"gui/{os.getuid()}/{label}"
+    loaded = subprocess.run(["launchctl", "print", target], capture_output=True)
+    if loaded.returncode == 0:
+        subprocess.run(
+            ["launchctl", "bootout", target], check=True, capture_output=True
+        )
+
+
 def tunnel_command(host, local_port, gateway_port):
     """Build an outbound SSH tunnel exposing only the remote loopback listener.
 
