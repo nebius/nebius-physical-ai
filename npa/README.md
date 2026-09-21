@@ -263,13 +263,14 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests receive smoke, affected subsystem tests, and security feedback.
-Agent/browser changes also run Cypress before queue admission; unknown and
-shared changes receive full Python 3.12 validation. The merge queue runs the
-combined latest-main candidate through one dedicated browser job and focused
-Python 3.10/3.14 checks alongside five duration-balanced Python 3.12 coverage
-shards, then enforces the merged floor. Recognized prose-only edits retain smoke,
-documentation, lint, guardrail, and security checks while skipping runtime suites.
+Pull requests and merge candidates run the same full Python 3.12 suite,
+dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
+Five duration-balanced coverage shards run with xdist and cached constrained
+installs, then enforce the merged coverage floor. Full suites include smoke
+and CLI install checks without a duplicate subsystem job. The queue reruns
+these checks against the combined latest-main candidate. Recognized prose-only
+edits retain smoke, documentation, lint, guardrail, and security checks while
+skipping runtime suites.
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
 on all three supported versions. Every full Python 3.12 run publishes module
