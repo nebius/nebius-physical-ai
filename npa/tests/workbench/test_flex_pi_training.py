@@ -49,7 +49,7 @@ def test_cli_and_sdk_resolve_the_same_immutable_public_contract():
     [
         "",
         "s3://example-bucket",
-        "/tmp/train",
+        "/workspace/train",
         "s3://example-bucket/run?token=hidden",
         "s3://user:secret@example-bucket/run",
     ],

@@ -6,7 +6,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import urllib.request
+
+import urllib3
 
 
 def _sha256(path):
@@ -73,8 +74,11 @@ def _source(entry, root):
         if path.is_file() and _sha256(path) == row["sha256"]:
             continue
         url = f"https://raw.githubusercontent.com/{entry['repository']}/{entry['revision']}/{row['path']}"
-        with urllib.request.urlopen(url) as response:
-            path.write_bytes(response.read())
+        with urllib3.PoolManager() as connection:
+            response = connection.request("GET", url, redirect=False)
+            if response.status != 200:
+                raise RuntimeError("pinned upstream source fetch failed")
+            path.write_bytes(response.data)
     _verify(root, entry["files"])
 
 
