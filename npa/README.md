@@ -287,6 +287,11 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
+Mocked browser checks require Google Chrome and run with
+`bash npa/scripts/run_agent_cypress.sh --mock` from the repository root.
+They use Chrome's software WebGL renderer for real canvas capture coverage;
+Cypress 16's deprecated Electron browser cannot provide that context in CI.
+
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
 --update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
