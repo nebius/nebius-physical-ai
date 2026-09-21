@@ -1,0 +1,44 @@
+{
+  "schema": "npa.independent-exact-head-review/v1",
+  "reviewed_at": "2026-09-21T01:49:22.537880+00:00",
+  "pr": 640,
+  "head": "ca6a515d2562008d96570029ed5cbcc7b447fd71",
+  "tree": "83fcfb50053fe22b51bcf8208c997aa1a7bbd6f9",
+  "prior_accepted_head": "1f2434e2e8f18be44af97c13fdc25f6ba14f45b2",
+  "verdict": "ACCEPTED_EXACT_HEAD",
+  "findings": [],
+  "source_files_changed_by_review": 0,
+  "provider_calls": 0,
+  "gpu_or_vlm_applicability": "none; nonvisual CPU filesystem/documentation or deterministic selector validation",
+  "delta_paths": [
+    "docs/workbench/npa-workflow-guide.md"
+  ],
+  "worktree_clean_after_review": true,
+  "ci": {
+    "state": "all applicable current-head checks green",
+    "required_contexts": [
+      "gitleaks",
+      "scan",
+      "security-regression"
+    ],
+    "success": 14,
+    "skipped": 4
+  },
+  "scope": "The complete current-head delta from prior independently accepted implementation is one documentation paragraph; no production or test change.",
+  "independent_results": [
+    "151 scoped workflow tests passed in1.03s using exact detached candidate and repository npa/.venv interpreter.",
+    "Default and explicit synthetic kubeconfig symlinks resolve to selected source; writes reach source and preserve0600. The Nebius configuration directory link behaves the same.",
+    "A dedicated task-owned KUBECONFIG receives writes without changing the shared default; absence of operator kubeconfig creates no spurious link.",
+    "Installed Kubernetes new_client_from_config exposes persist_config=True by default; documentation accurately warns of potential provider-file writes without claiming every Nebius exec-auth invocation rewrites files."
+  ],
+  "limitations": [
+    "Local macOS runtime boundary correctly rejects isolated API execution. This was not bypassed; file-link checks apply to actual linking performed before that boundary.",
+    "No cloud credential, provider request, SkyPilot deployment or live authentication refresh was used. The delta documents prior accepted behavior and does not require a fresh GPU/provider run."
+  ],
+  "readiness": "Main-targeted non-draft CLEAN current head with required checks green: qualifies as a main merge-queue candidate. Queue/integration checks still apply; no merge performed.",
+  "base_branch": "main",
+  "stack_parent_prs": [],
+  "reviewer": "Independent Codex reviewer; no authorship of the candidate",
+  "retained_source_verdict_sha256": "141fcca511247a4000d2ea6fa5e47bc64876130c1c7164b7c46eed9c5aefb8a5",
+  "sanitization": "Allowlisted review fields. Private execution locations and reviewer session identifiers are omitted."
+}

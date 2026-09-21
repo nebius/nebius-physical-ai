@@ -1,0 +1,45 @@
+{
+  "head": "ca6a515d2562008d96570029ed5cbcc7b447fd71",
+  "source": "npa/src/npa/orchestration/skypilot/cleanup.py",
+  "doc_sha256": "31aa400bdb5b74aad7b0125ce4e1c85aed748f44b82e66c508200b5d9ea26a70",
+  "observations": [
+    {
+      "mode": "default",
+      "isolated_home_created": true,
+      "environment_returned": false,
+      "linux_runtime_boundary": "refused_as_expected_on_macos",
+      "kube_link_target_verified": true,
+      "kube_write_reaches_source": true,
+      "provider_link_target_verified": true,
+      "provider_write_reaches_source": true,
+      "source_permissions_preserved": "0600"
+    },
+    {
+      "mode": "explicit",
+      "isolated_home_created": true,
+      "environment_returned": false,
+      "linux_runtime_boundary": "refused_as_expected_on_macos",
+      "kube_link_target_verified": true,
+      "kube_write_reaches_source": true,
+      "provider_link_target_verified": true,
+      "provider_write_reaches_source": true,
+      "source_permissions_preserved": "0600",
+      "dedicated_task_kubeconfig_preserves_shared_default": true
+    },
+    {
+      "mode": "missing",
+      "isolated_home_created": true,
+      "environment_returned": false,
+      "linux_runtime_boundary": "refused_as_expected_on_macos",
+      "no_spurious_kubeconfig": true
+    }
+  ],
+  "installed_kubernetes_client_persist_config_default": true,
+  "provider_calls": 0,
+  "provider_credentials_used": false,
+  "limitations": [
+    "Synthetic local file semantics, not an observed live credential refresh.",
+    "Actual Linux-only API boundary remains enabled and rejects this macOS process after creating links; no runtime-start claim.",
+    "No SkyPilot package is installed in this local validation venv; no live submission was attempted."
+  ]
+}

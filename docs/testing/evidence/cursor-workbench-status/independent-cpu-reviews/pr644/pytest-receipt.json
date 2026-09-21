@@ -1,0 +1,17 @@
+{
+  "head": "204e126aefe63d0a363bda9d6be9e1c35b0d919a",
+  "source_selection": "Exact detached candidate source imported for this recorded test run.",
+  "command_without_private_cache_paths": [
+    "npa/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "npa/tests/orchestration/npa_workflow/test_skypilot_render.py",
+    "-o",
+    "addopts="
+  ],
+  "returncode": 0,
+  "original_receipt_sha256": "cca0f32e0b4790f338cdf79cbaa5bb2717987d5e342eff0fcccf3d37079df189",
+  "pytest_log_sha256": "49b2dde7faf4c6bb7b9407682ed8299145174faae3cf6f39583391e6e638e4fa",
+  "command_note": "The recorded invocation additionally set a private pytest cache directory; that location is omitted."
+}

@@ -1,18 +1,22 @@
 # Cursor workbench PR readiness
 
-Snapshot: **2026-09-21T01:38:28.292191+00:00**. **49 tracked PRs; 12 ready to enter the required merge queue.**
+GitHub snapshot: **2026-09-21T02:07:59.226812+00:00**; targeted state refresh: **2026-09-21T02:13:01.884549+00:00**.
 
-This is a snapshot of the exact commits below. New commits require renewed checks and review. No PR has been merged as part of this audit. The repository’s merge queue must still run its integration checks.
+**49 historically tracked PRs; 48 open; 13 candidates for the required merge queue.** Closed [#611](https://github.com/nebius/nebius-physical-ai/pull/611#issuecomment-5754494671) is wholly superseded by #614 and adds no delivered improvement. This audit performed no merge.
 
-GPU acceptance remains incomplete for SeedVR2, RoboCasa and cuRobo. Open3D still needs the standard workflow runtime; AprilTag has failed visual calibration. CPU workflow and test-isolation changes use relevant fault-injection, storage and regression evidence; a GPU is not applicable to those changes.
+Queue candidates: #581, #584, #594, #596, #607, #609, #613, #614, #616, #621, #628, #629, #640. They have accepted exact-source records and applicable checks green. The required merge queue still runs integration checks; new commits need renewed checks and review.
 
-Three drafts were promoted after verification: [#596](https://github.com/nebius/nebius-physical-ai/pull/596), [#607](https://github.com/nebius/nebius-physical-ai/pull/607), and [#616](https://github.com/nebius/nebius-physical-ai/pull/616).
+Fresh independent proof: [#640 filesystem-link behavior and 151 passing tests](independent-cpu-reviews/pr640/README.md), and [#644 selector mutation controls and 71 passing tests](independent-cpu-reviews/pr644/README.md). #640 joins the queue candidates. #644 remains dependent on #643 and is not directly ready for main.
 
-The [machine-readable record](readiness.json) includes complete source hashes, dependency PRs and available public proof/review links. Evidence that failed remains failed. The inventory reconciles retained independent reviews; it does not claim that all earlier experiments were repeated during this audit.
+#579 at `dcc530d9adea4fbec2f656af6f64bddcc57d507c` and #615 at `eea74da2e0e084293e3facb4f2ed735b8c35b6d7` have exact independent acceptance and no observed conflict; current CI remains incomplete. #615 acceptance now matches its published successor, rather than its older conflicting head.
+
+GPU acceptance remains incomplete for SeedVR2, RoboCasa and cuRobo. Open3D still needs the standard workflow runtime; AprilTag has failed visual calibration. CPU workflow and test-isolation changes use relevant fault-injection, storage and regression evidence. These CPU results make no new GPU, visual-quality or robot-safety claim.
+
+The [machine-readable record](readiness.json) includes full source hashes, dependency PRs and available public proof/review links. Failed evidence remains failed. This inventory reconciles retained independent reviews; it does not claim every earlier experiment was repeated.
 
 | PR | Exact source | Status | Depends on |
 | --- | --- | --- | --- |
-| [#579 — Bound Workbench I/O concurrency and preserve downloads on failure](https://github.com/nebius/nebius-physical-ai/pull/579) | `dcc530d9a` | Current review/CI closure | — |
+| [#579 — Bound Workbench I/O concurrency and preserve downloads on failure](https://github.com/nebius/nebius-physical-ai/pull/579) | `dcc530d9a` | Exact review accepted; current CI incomplete | — |
 | [#581 — Report a group-writable checkout once instead of 428 scan failures](https://github.com/nebius/nebius-physical-ai/pull/581) | `f0e2ccfe8` | Ready for required merge queue | — |
 | [#584 — Add evo trajectory evaluation BYOF workflow](https://github.com/nebius/nebius-physical-ai/pull/584) | `8c6bb6b41` | Ready for required merge queue | — |
 | [#593 — feat(workbench): add SeedVR2 video restoration](https://github.com/nebius/nebius-physical-ai/pull/593) | `b8d9c9c56` | Full workload evidence incomplete | — |
@@ -22,14 +26,14 @@ The [machine-readable record](readiness.json) includes complete source hashes, d
 | [#597 — Expose VLM provider and score-gate contradictions](https://github.com/nebius/nebius-physical-ai/pull/597) | `2995156d4` | Accepted; dependency must land first | #596 |
 | [#602 — Add Open3D registration and reject reconstructed surface the scan never supported](https://github.com/nebius/nebius-physical-ai/pull/602) | `aa3c9e602` | Full workload evidence incomplete | — |
 | [#607 — Let build provenance through the payload scan instead of refusing the image](https://github.com/nebius/nebius-physical-ai/pull/607) | `c0a125720` | Ready for required merge queue | — |
-| [#608 — Guard against module-level GPU imports in tests](https://github.com/nebius/nebius-physical-ai/pull/608) | `0b8cf161e` | Current review/CI closure | — |
+| [#608 — Guard against module-level GPU imports in tests](https://github.com/nebius/nebius-physical-ai/pull/608) | `0d6b5bb08` | Current review/CI closure | — |
 | [#609 — Recover stage log attribution from durable waves](https://github.com/nebius/nebius-physical-ai/pull/609) | `e962e6fbd` | Ready for required merge queue | — |
 | [#610 — Add AprilTag fiducial detection BYOF workflow](https://github.com/nebius/nebius-physical-ai/pull/610) | `c725a44af` | Full workload evidence incomplete | — |
-| [#611 — Preserve active SkyPilot jobs during cleanup](https://github.com/nebius/nebius-physical-ai/pull/611) | `87df770d1` | Superseded; do not merge twice | — |
+| [#611 — Preserve active SkyPilot jobs during cleanup](https://github.com/nebius/nebius-physical-ai/pull/611) | `87df770d1` | Closed; superseded by #614; not counted as delivered | — |
 | [#612 — Retain source-frame sampling provenance for VLM requests](https://github.com/nebius/nebius-physical-ai/pull/612) | `d116cbbcb` | Accepted; dependency must land first | #597 |
 | [#613 — Keep declarative workflow outputs visible](https://github.com/nebius/nebius-physical-ai/pull/613) | `54d61f256` | Ready for required merge queue | — |
 | [#614 — Fail closed on contradictory cancellation state](https://github.com/nebius/nebius-physical-ai/pull/614) | `b1123f912` | Ready for required merge queue | — |
-| [#615 — Fail closed on corrupt submission receipts](https://github.com/nebius/nebius-physical-ai/pull/615) | `7317da20a` | Resolve merge conflict | — |
+| [#615 — Fail closed on corrupt submission receipts](https://github.com/nebius/nebius-physical-ai/pull/615) | `eea74da2e` | Exact review accepted; current CI incomplete | — |
 | [#616 — test: stop the unit suite writing into the operator's real ~/.npa](https://github.com/nebius/nebius-physical-ai/pull/616) | `d5798ab09` | Ready for required merge queue | — |
 | [#617 — Use backend-neutral VLM result artifact names](https://github.com/nebius/nebius-physical-ai/pull/617) | `e232f713f` | Accepted; dependency must land first | #612 |
 | [#619 — Unify managed-job terminality checks](https://github.com/nebius/nebius-physical-ai/pull/619) | `2e1805c5a` | Accepted; dependency must land first | #614 |
@@ -52,10 +56,10 @@ The [machine-readable record](readiness.json) includes complete source hashes, d
 | [#637 — fix(workflow): resume verified output reuse after crash](https://github.com/nebius/nebius-physical-ai/pull/637) | `c3e91b816` | Accepted; dependency must land first | #635 |
 | [#638 — fix(skypilot): contain listener exit race](https://github.com/nebius/nebius-physical-ai/pull/638) | `f6fbad609` | Accepted; dependency must land first | #635 |
 | [#639 — fix(workflow): fence completed replay identity](https://github.com/nebius/nebius-physical-ai/pull/639) | `abbe30736` | Accepted; dependency must land first | #637 |
-| [#640 — fix(skypilot): link default ~/.kube/config into isolated HOME when KUBECONFIG is unset](https://github.com/nebius/nebius-physical-ai/pull/640) | `ca6a515d2` | Verify final review record | — |
+| [#640 — fix(skypilot): link default ~/.kube/config into isolated HOME when KUBECONFIG is unset](https://github.com/nebius/nebius-physical-ai/pull/640) | `ca6a515d2` | Ready for required merge queue | — |
 | [#641 — fix(workflow): bind image identity to references](https://github.com/nebius/nebius-physical-ai/pull/641) | `d28b270d4` | Accepted; dependency must land first | #639 |
 | [#643 — fix(workflow): bind image selection identity](https://github.com/nebius/nebius-physical-ai/pull/643) | `7a6454add` | Accepted; dependency must land first | #641 |
-| [#644 — fix(workflow): reject unmatched image overrides](https://github.com/nebius/nebius-physical-ai/pull/644) | `204e126ae` | Verify final review record | #643 |
+| [#644 — fix(workflow): reject unmatched image overrides](https://github.com/nebius/nebius-physical-ai/pull/644) | `204e126ae` | Accepted; dependency must land first | #643 |
 | [#646 — feat(ncore): qualify full COLMAP conversion for NRE](https://github.com/nebius/nebius-physical-ai/pull/646) | `fe85f6d75` | Changes and validation required | — |
 | [#647 — Add audit-only rich visual VLM reviews](https://github.com/nebius/nebius-physical-ai/pull/647) | `c958ac2a2` | Accepted; dependency must land first | #634 |
 | [#649 — Studio: expose illustrative film-review cues](https://github.com/nebius/nebius-physical-ai/pull/649) | `788b4e632` | Accepted; dependency must land first | #558 |

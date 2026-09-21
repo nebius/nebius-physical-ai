@@ -1,0 +1,46 @@
+{
+  "schema": "npa.independent-exact-head-review/v1",
+  "reviewed_at": "2026-09-21T01:49:22.537880+00:00",
+  "pr": 644,
+  "head": "204e126aefe63d0a363bda9d6be9e1c35b0d919a",
+  "tree": "e38ad92561fb92c110f876f875687b39eb7dfcd4",
+  "prior_accepted_head": "c3a0bde5ddf722ca2a7289160915ae71ec9062ca",
+  "verdict": "ACCEPTED_EXACT_HEAD",
+  "findings": [],
+  "source_files_changed_by_review": 0,
+  "provider_calls": 0,
+  "gpu_or_vlm_applicability": "none; nonvisual CPU filesystem/documentation or deterministic selector validation",
+  "delta_paths": [
+    "npa/tests/orchestration/npa_workflow/test_skypilot_render.py"
+  ],
+  "worktree_clean_after_review": true,
+  "ci": {
+    "state": "all applicable current-head checks green",
+    "required_contexts": [
+      "gitleaks",
+      "scan",
+      "security-regression"
+    ],
+    "success": 20,
+    "skipped": 2
+  },
+  "scope": "The complete current-head delta from prior accepted implementation changes only the parameterized test: it adds the truncated selector workbench.vlm_eval.ru at all three existing boundaries. Production code is byte-identical.",
+  "independent_results": [
+    "71 full render-module tests passed in5.31s using exact detached candidate and repository npa/.venv interpreter.",
+    "Validated in-memory-only mutation removes the delimiter from tool_ref.startswith(str(raw_selector)+\".\"). Exactly the three newly added truncated-prefix cases fail with DID NOT RAISE at plan-images, pull-secrets, and render.",
+    "All three older transposed-selector controls still pass under the mutation, proving the new cases cover a distinct missing property.",
+    "The full baseline suite preserves legitimate exact/family/wildcard selection and alternate-state matching. No source files were mutated."
+  ],
+  "limitations": [
+    "This is current-head delta acceptance layered on the prior accepted implementation; it is not a repeat of every earlier workflow workload.",
+    "CLEAN describes the current #643 feature base. An ancestor squash/rebase/retarget needs renewed exact-head checks and delta review."
+  ],
+  "readiness": "Accepted and review-ready against current #643 base; remains blocked from main by stack order. No promotion, retarget or merge performed.",
+  "base_branch": "cursor/physicalai-workflows-image-selection-binding-20260920",
+  "stack_parent_prs": [
+    643
+  ],
+  "reviewer": "Independent Codex reviewer; no authorship of the candidate",
+  "retained_source_verdict_sha256": "ea7fbf3222aac157f72634024ee1fe4290ef73fa5c1d21c664cb50262afa2e14",
+  "sanitization": "Allowlisted review fields. Private execution locations and reviewer session identifiers are omitted."
+}

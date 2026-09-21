@@ -1,6 +1,6 @@
 {
   "schema": "npa.public-pr-readiness/v1",
-  "snapshot_utc": "2026-09-21T01:38:28.292191+00:00",
+  "snapshot_utc": "2026-09-21T02:07:59.226812+00:00",
   "tracked_pr_count": 49,
   "queue_candidates": [
     581,
@@ -14,15 +14,15 @@
     616,
     621,
     628,
-    629
+    629,
+    640
   ],
   "limitations": [
-    "Point-in-time review of exact commits; new commits invalidate this status.",
-    "Ready for queue means accepted scoped proof and current checks, with the repository merge queue and integration checks still required.",
-    "No PR was merged for this report.",
-    "No GPU acceptance is claimed for pending GPU capabilities.",
-    "Failed visual-model calibration remains failed.",
-    "This inventory reconciles retained reviews; it does not claim every earlier workload was independently repeated during this audit."
+    "Snapshot of exact source commits; any changed head requires renewed review and CI.",
+    "49 historically tracked PRs include closed superseded #611; 48 remain open. #611 adds no delivered improvement.",
+    "Queue candidates still require the repository merge queue and integration checks. No PR was merged by this audit.",
+    "The audit reconciles retained reviews and did not repeat every earlier experiment.",
+    "GPU workload acceptance remains incomplete; CPU reviews do not establish physical correctness or visual quality."
   ],
   "prs": [
     {
@@ -30,13 +30,20 @@
       "url": "https://github.com/nebius/nebius-physical-ai/pull/579",
       "title": "Bound Workbench I/O concurrency and preserve downloads on failure",
       "source_commit": "dcc530d9adea4fbec2f656af6f64bddcc57d507c",
-      "status": "Current review/CI closure",
+      "status": "Exact review accepted; current CI incomplete",
       "draft": false,
       "required_checks_pass": false,
       "applicable_ci_passes": false,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 15,
+        "SKIPPED": 3,
+        "IN_PROGRESS": 1
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 581,
@@ -51,7 +58,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/581#issuecomment-5747157850"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 584,
@@ -68,7 +81,13 @@
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/synthetic-errors.json"
       ],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 593,
@@ -77,11 +96,17 @@
       "source_commit": "b8d9c9c56d8adc2ec76a5a41fd37e97e0069e2f4",
       "status": "Full workload evidence incomplete",
       "draft": true,
-      "required_checks_pass": false,
-      "applicable_ci_passes": false,
+      "required_checks_pass": true,
+      "applicable_ci_passes": true,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 19,
+        "SKIPPED": 3
+      },
+      "exact_review_status": "scope_not_fully_qualified"
     },
     {
       "number": 594,
@@ -100,7 +125,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/594#issuecomment-5747050271",
         "https://github.com/nebius/nebius-physical-ai/pull/594#issuecomment-5748738332"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 595,
@@ -113,7 +144,14 @@
       "applicable_ci_passes": false,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 10,
+        "PENDING": 6,
+        "SKIPPED": 3
+      },
+      "exact_review_status": "scope_not_fully_qualified"
     },
     {
       "number": 596,
@@ -131,7 +169,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/596#issuecomment-5748487769",
         "https://github.com/nebius/nebius-physical-ai/pull/596#issuecomment-5748929562"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 597,
@@ -151,7 +195,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/597#issuecomment-5748507753",
         "https://github.com/nebius/nebius-physical-ai/pull/597#issuecomment-5748929624"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 602,
@@ -173,7 +223,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/602#issuecomment-5748701073",
         "https://github.com/nebius/nebius-physical-ai/pull/602#issuecomment-5748953745"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "scope_not_fully_qualified"
     },
     {
       "number": 607,
@@ -190,22 +246,36 @@
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5747890546",
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5749283483",
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5751864095"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 608,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/608",
       "title": "Guard against module-level GPU imports in tests",
-      "source_commit": "0b8cf161e80c642fcf1e7c3a248ffea537198c0a",
+      "source_commit": "0d6b5bb08f67bc0912eba47a2c975e4f201acd69",
       "status": "Current review/CI closure",
       "draft": true,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
+      "required_checks_pass": false,
+      "applicable_ci_passes": false,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/608#issuecomment-5748475166"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 3,
+        "PENDING": 12,
+        "SKIPPED": 3,
+        "QUEUED": 1
+      },
+      "exact_review_status": "new_head_review_pending"
     },
     {
       "number": 609,
@@ -220,7 +290,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/609#issuecomment-5748522986"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 610,
@@ -242,14 +318,20 @@
         "https://github.com/nebius/nebius-physical-ai/pull/610#issuecomment-5748121482",
         "https://github.com/nebius/nebius-physical-ai/pull/610#issuecomment-5748710907",
         "https://github.com/nebius/nebius-physical-ai/pull/610#issuecomment-5749938180"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "scope_not_fully_qualified"
     },
     {
       "number": 611,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/611",
       "title": "Preserve active SkyPilot jobs during cleanup",
       "source_commit": "87df770d1cf74533bcc92643700eb15ca60be643",
-      "status": "Superseded; do not merge twice",
+      "status": "Closed; superseded by #614; not counted as delivered",
       "draft": false,
       "required_checks_pass": true,
       "applicable_ci_passes": true,
@@ -257,7 +339,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/611#issuecomment-5748062599"
-      ]
+      ],
+      "state": "CLOSED",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "correct_but_superseded",
+      "closure_url": "https://github.com/nebius/nebius-physical-ai/pull/611#issuecomment-5754494671"
     },
     {
       "number": 612,
@@ -278,7 +367,13 @@
         "https://github.com/nebius/nebius-physical-ai/pull/612#issuecomment-5748034323",
         "https://github.com/nebius/nebius-physical-ai/pull/612#issuecomment-5748038060",
         "https://github.com/nebius/nebius-physical-ai/pull/612#issuecomment-5749283574"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 613,
@@ -293,7 +388,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/613#issuecomment-5748516084"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 614,
@@ -309,17 +410,23 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/614#issuecomment-5747683344",
         "https://github.com/nebius/nebius-physical-ai/pull/614#issuecomment-5747723618"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 615,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/615",
       "title": "Fail closed on corrupt submission receipts",
-      "source_commit": "7317da20a9b3d67aee11fde3a6d4ac22b1d0279e",
-      "status": "Resolve merge conflict",
+      "source_commit": "eea74da2e0e084293e3facb4f2ed735b8c35b6d7",
+      "status": "Exact review accepted; current CI incomplete",
       "draft": false,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
+      "required_checks_pass": false,
+      "applicable_ci_passes": false,
       "depends_on": [],
       "public_proof_links": [],
       "review_links": [
@@ -329,7 +436,14 @@
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749498033",
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749606072",
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749967699"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 4,
+        "PENDING": 12,
+        "SKIPPED": 3
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 616,
@@ -345,7 +459,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/616#issuecomment-5748231108",
         "https://github.com/nebius/nebius-physical-ai/pull/616#issuecomment-5751833498"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 617,
@@ -365,7 +485,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/617#issuecomment-5748113625",
         "https://github.com/nebius/nebius-physical-ai/pull/617#issuecomment-5749294415"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 619,
@@ -383,7 +509,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/619#issuecomment-5748622249",
         "https://github.com/nebius/nebius-physical-ai/pull/619#issuecomment-5748687378"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 620,
@@ -400,7 +532,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/620#issuecomment-5748687442"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 621,
@@ -415,7 +553,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/621#issuecomment-5748967847"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 622,
@@ -435,7 +579,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/622#issuecomment-5749774685",
         "https://github.com/nebius/nebius-physical-ai/pull/622#issuecomment-5749839846"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 623,
@@ -454,7 +604,13 @@
         "https://github.com/nebius/nebius-physical-ai/pull/623#issuecomment-5749783144",
         "https://github.com/nebius/nebius-physical-ai/pull/623#issuecomment-5749810359",
         "https://github.com/nebius/nebius-physical-ai/pull/623#issuecomment-5749967769"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 624,
@@ -475,7 +631,13 @@
         "https://github.com/nebius/nebius-physical-ai/pull/624#issuecomment-5749804561",
         "https://github.com/nebius/nebius-physical-ai/pull/624#issuecomment-5749853343",
         "https://github.com/nebius/nebius-physical-ai/pull/624#issuecomment-5749906014"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 625,
@@ -488,7 +650,13 @@
       "applicable_ci_passes": true,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "scope_not_fully_qualified"
     },
     {
       "number": 626,
@@ -508,7 +676,13 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/626#issuecomment-5749977719",
         "https://github.com/nebius/nebius-physical-ai/pull/626#issuecomment-5750120879"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 627,
@@ -527,7 +701,13 @@
       ],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/627#issuecomment-5750424491"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 628,
@@ -542,7 +722,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/628#issuecomment-5751458874"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 629,
@@ -557,7 +743,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/629#issuecomment-5751458813"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 630,
@@ -574,7 +766,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/630#issuecomment-5751458744"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 631,
@@ -591,7 +789,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/631#issuecomment-5751458678"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 632,
@@ -608,7 +812,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/632#issuecomment-5751458598"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 633,
@@ -625,7 +835,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/633#issuecomment-5751458455"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 634,
@@ -640,7 +856,13 @@
         627
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 635,
@@ -657,7 +879,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/635#issuecomment-5751458519"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 637,
@@ -674,7 +902,13 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/637#issuecomment-5751854319"
-      ]
+      ],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 638,
@@ -689,7 +923,13 @@
         635
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 639,
@@ -704,20 +944,33 @@
         637
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 640,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/640",
       "title": "fix(skypilot): link default ~/.kube/config into isolated HOME when KUBECONFIG is unset",
       "source_commit": "ca6a515d2562008d96570029ed5cbcc7b447fd71",
-      "status": "Verify final review record",
+      "status": "Ready for required merge queue",
       "draft": false,
       "required_checks_pass": true,
       "applicable_ci_passes": true,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head",
+      "independent_review_path": "independent-cpu-reviews/pr640/README.md"
     },
     {
       "number": 641,
@@ -732,7 +985,13 @@
         639
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 643,
@@ -747,14 +1006,20 @@
         641
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 644,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/644",
       "title": "fix(workflow): reject unmatched image overrides",
       "source_commit": "204e126aefe63d0a363bda9d6be9e1c35b0d919a",
-      "status": "Verify final review record",
+      "status": "Accepted; dependency must land first",
       "draft": false,
       "required_checks_pass": true,
       "applicable_ci_passes": true,
@@ -762,7 +1027,14 @@
         643
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head",
+      "independent_review_path": "independent-cpu-reviews/pr644/README.md"
     },
     {
       "number": 646,
@@ -775,7 +1047,15 @@
       "applicable_ci_passes": false,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 11,
+        "FAILURE": 5,
+        "CANCELLED": 4,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "changes_required"
     },
     {
       "number": 647,
@@ -790,7 +1070,13 @@
         634
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 649,
@@ -805,7 +1091,13 @@
         558
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SKIPPED": 4,
+        "SUCCESS": 11
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 653,
@@ -820,7 +1112,13 @@
         623
       ],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 20,
+        "SKIPPED": 2
+      },
+      "exact_review_status": "accepted_exact_head"
     },
     {
       "number": 654,
@@ -833,7 +1131,19 @@
       "applicable_ci_passes": false,
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "state": "OPEN",
+      "ci_counts": {
+        "SUCCESS": 10,
+        "PENDING": 3,
+        "SKIPPED": 3
+      },
+      "exact_review_status": "scope_not_fully_qualified"
     }
+  ],
+  "targeted_refresh_utc": "2026-09-21T02:13:01.884549+00:00",
+  "open_pr_count": 48,
+  "closed_superseded_prs": [
+    611
   ]
 }

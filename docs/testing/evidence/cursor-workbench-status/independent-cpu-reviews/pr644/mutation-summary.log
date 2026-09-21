@@ -1,0 +1,13 @@
+Sanitized summary derived from the retained in-memory mutation report.
+Production source files modified: 0.
+Expected pytest exit: 1.
+
+PASSED tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[plan-images-workbench.vlm_eval.rnu]
+FAILED tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[plan-images-workbench.vlm_eval.ru] — DID NOT RAISE (expected mutation detection)
+PASSED tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[pull-secrets-workbench.vlm_eval.rnu]
+FAILED tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[pull-secrets-workbench.vlm_eval.ru] — DID NOT RAISE (expected mutation detection)
+PASSED tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[render-workbench.vlm_eval.rnu]
+FAILED tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[render-workbench.vlm_eval.ru] — DID NOT RAISE (expected mutation detection)
+
+3 expected failures, 3 passed. The three new truncated-prefix controls detect this mutation.
+This is an intentionally broken in-memory function, not a failure of the unmodified candidate.

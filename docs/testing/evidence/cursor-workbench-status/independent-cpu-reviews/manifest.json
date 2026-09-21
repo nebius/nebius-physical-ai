@@ -1,0 +1,55 @@
+{
+  "schema": "npa.public-independent-cpu-proof/v1",
+  "reviewed_at": "2026-09-21T01:49:22.537880+00:00",
+  "source_heads": {
+    "640": "ca6a515d2562008d96570029ed5cbcc7b447fd71",
+    "644": "204e126aefe63d0a363bda9d6be9e1c35b0d919a"
+  },
+  "scope": "Sanitized exact-head CPU review evidence. No GPU, provider, workload or VLM acceptance is implied.",
+  "files": {
+    "pr640/README.md": {
+      "bytes": 2069,
+      "sha256": "d302b8c3c8fc57c1ed826eda7a171f890900b2353dfcab8a16b0fab857ce3bbf"
+    },
+    "pr640/pytest-receipt.json": {
+      "bytes": 672,
+      "sha256": "6b3ad9afecba19dec6b42acf9755816aa9be85a51bc3c98c05e95d6c0f7b9f31"
+    },
+    "pr640/pytest.log": {
+      "bytes": 260,
+      "sha256": "a49ca22f62febc28646dc17f49d3e021137d2ba71141e7375168d12cbafe255a"
+    },
+    "pr640/review.json": {
+      "bytes": 2636,
+      "sha256": "6377672162cc3fa136222bb68f5c06527b0d909cde5f286adcdf2c66694085b9"
+    },
+    "pr640/synthetic-file-probe.json": {
+      "bytes": 1754,
+      "sha256": "064331a3f43f656981df2bccef2870397dc862ac5bbbf135d7ed84495a6e5548"
+    },
+    "pr644/README.md": {
+      "bytes": 2002,
+      "sha256": "c4b2dcef0d78cb088d661225c76989cd988c62a986bd9de7e508f36537f076dd"
+    },
+    "pr644/mutation-summary.log": {
+      "bytes": 1416,
+      "sha256": "d711621011cc236b3f9db7ea1bd004d4e2ec832d0c41b17b11d3a6d3ed993875"
+    },
+    "pr644/mutation.json": {
+      "bytes": 2302,
+      "sha256": "15b9b69c6ac65d6e459e35baf66d7c2e5e84dead90993f128f9089a11df8ab31"
+    },
+    "pr644/pytest-receipt.json": {
+      "bytes": 683,
+      "sha256": "d96d6650553f98ac78b80fbd5b123fc5f7c9f7e98d191f4e3de8f48c68916367"
+    },
+    "pr644/pytest.log": {
+      "bytes": 99,
+      "sha256": "49b2dde7faf4c6bb7b9407682ed8299145174faae3cf6f39583391e6e638e4fa"
+    },
+    "pr644/review.json": {
+      "bytes": 2652,
+      "sha256": "26c0852427947137c9b2f7ed49cceaf7661253e33a609046681743129428244f"
+    }
+  }
+}

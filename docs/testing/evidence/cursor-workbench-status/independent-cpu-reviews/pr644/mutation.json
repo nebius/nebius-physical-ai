@@ -1,0 +1,47 @@
+{
+  "head": "204e126aefe63d0a363bda9d6be9e1c35b0d919a",
+  "source_path": "npa/src/npa/orchestration/npa_workflow/skypilot_render.py",
+  "mutation": {
+    "before": "tool_ref.startswith(str(raw_selector) + \".\")",
+    "after": "tool_ref.startswith(str(raw_selector))",
+    "applied_only_in_memory": true,
+    "original_function_sha256": "2f33a969bb4199019ae89540009b075ff20c02ac4d72642e47ad408a60b2091d",
+    "mutated_function_sha256": "6903e587ede0c235af7627688342011bbaa6066597a0d3e71141375956ec2883"
+  },
+  "outcomes": [
+    {
+      "nodeid": "tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[plan-images-workbench.vlm_eval.rnu]",
+      "outcome": "passed",
+      "expected_missing_raise": false
+    },
+    {
+      "nodeid": "tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[plan-images-workbench.vlm_eval.ru]",
+      "outcome": "failed",
+      "expected_missing_raise": true
+    },
+    {
+      "nodeid": "tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[pull-secrets-workbench.vlm_eval.rnu]",
+      "outcome": "passed",
+      "expected_missing_raise": false
+    },
+    {
+      "nodeid": "tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[pull-secrets-workbench.vlm_eval.ru]",
+      "outcome": "failed",
+      "expected_missing_raise": true
+    },
+    {
+      "nodeid": "tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[render-workbench.vlm_eval.rnu]",
+      "outcome": "passed",
+      "expected_missing_raise": false
+    },
+    {
+      "nodeid": "tests/orchestration/npa_workflow/test_skypilot_render.py::test_unmatched_image_override_selector_fails_before_output[render-workbench.vlm_eval.ru]",
+      "outcome": "failed",
+      "expected_missing_raise": true
+    }
+  ],
+  "expected_pytest_exit": 1,
+  "interpretation": "Exactly the three newly added truncated-prefix cases kill removal of the delimiter at plan-images, pull-secrets and render. The three older transposed-selector cases remain passing.",
+  "provider_calls": 0,
+  "source_files_modified": 0
+}
