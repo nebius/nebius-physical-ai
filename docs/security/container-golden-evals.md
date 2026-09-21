@@ -23,7 +23,7 @@ and enforced by `npa/docker/workbench/packaging-contract.yaml`.
   not an active GitHub Actions workflow. It defines scheduled CPU checks and
   an optional GPU job. Its presence does not establish nightly GPU validation.
 - **Image CVE / config scanning:** handled separately by the weekly
-  `image-security-scan.yml` (Trivy config scan + base-image CVE matrix).
+  `image-security-scan.yml` (Trivy config scan + complete base-image CVE inventory).
 
 The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
 and checks shell syntax. It does not execute GPU workloads.

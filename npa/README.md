@@ -351,10 +351,12 @@ scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. All seven bases run inside one job with two
-bounded local workers. One Trivy database download is hard-linked into isolated
-worker caches, rather than using seven queued runners or a lock-contended shared
-cache. This baseline check does not replace the
+on fixable CRITICAL OS findings. All inventory entries run serially inside one
+disposable GitHub-hosted job. One Trivy database download is hard-linked into
+temporary per-image caches; unused build cache and images are released between
+entries. The cleanup mode rejects shared or remote Docker environments, and
+ordinary local scans retain their existing parallel caches without pruning.
+This baseline check does not replace the
 complete image scans required before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before

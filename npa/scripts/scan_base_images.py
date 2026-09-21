@@ -148,15 +148,89 @@ def scan_entry(
     """
 
     target = prepare_target(entry)
+    return _scan_target(target, str(entry["name"]), cache, sarif_directory)
+
+
+def _scan_target(
+    target: str, name: str, cache: Path, sarif_directory: Path | None
+) -> int:
+    """Apply the unchanged blocking scan and optional report to one target."""
+
     blocking = subprocess.run(_trivy_command(target, cache, sarif=None), check=False)
     if sarif_directory is not None:
-        report = sarif_directory / f"trivy-{entry['name']}.sarif"
+        report = sarif_directory / f"trivy-{name}.sarif"
         subprocess.run(_trivy_command(target, cache, sarif=report), check=True)
     return blocking.returncode
 
 
+def _require_disposable_runner(workers: int) -> None:
+    """Refuse destructive cache cleanup outside one local hosted-runner worker."""
+
+    hosted = (
+        os.environ.get("GITHUB_ACTIONS") == "true"
+        and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
+        and os.environ.get("RUNNER_OS") == "Linux"
+    )
+    local = os.environ.get("DOCKER_HOST", "") in {
+        "",
+        "unix:///var/run/docker.sock",
+    } and os.environ.get("DOCKER_CONTEXT", "") in {"", "default"}
+    local = (
+        local
+        and os.environ.get("BUILDX_BUILDER", "") in {"", "default"}
+        and not os.environ.get("BUILDKIT_HOST")
+    )
+    if not hosted or not local or workers != 1:
+        raise ValueError(
+            "disposable Docker cleanup requires one local GitHub-hosted worker"
+        )
+    context = subprocess.run(
+        ["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    if context.stdout.strip() != "unix:///var/run/docker.sock":
+        raise ValueError("disposable Docker cleanup requires the local default daemon")
+
+
+def _prune_build_cache() -> None:
+    """Release disposable build cache while retaining the exact loaded image."""
+
+    subprocess.run(
+        ["docker", "buildx", "--builder", "default", "prune", "--all", "--force"],
+        check=True,
+    )
+
+
+def _scan_disposable_entry(
+    entry: dict[str, object], cache: Path, sarif_directory: Path | None
+) -> int:
+    """Bound hosted-runner storage to one image and one temporary artifact cache."""
+
+    _require_disposable_runner(1)
+    with tempfile.TemporaryDirectory(prefix="entry-", dir=cache) as temp:
+        entry_cache = _create_worker_cache(cache / "db", Path(temp), 0)
+        try:
+            target = prepare_target(entry)
+            _prune_build_cache()
+            return _scan_target(
+                target, str(entry["name"]), entry_cache, sarif_directory
+            )
+        finally:
+            try:
+                _prune_build_cache()
+            finally:
+                subprocess.run(
+                    ["docker", "image", "prune", "--all", "--force"], check=True
+                )
+
+
 def _scan_worker(
-    entries: Queue[dict[str, object]], cache: Path, sarif_directory: Path | None
+    entries: Queue[dict[str, object]],
+    cache: Path,
+    sarif_directory: Path | None,
+    disposable_docker: bool = False,
 ) -> list[int]:
     """Drain shared work with one worker-private Trivy cache.
 
@@ -164,6 +238,7 @@ def _scan_worker(
         entries: Shared queue of unclaimed inventory entries.
         cache: Worker-private Trivy cache.
         sarif_directory: Optional SARIF output directory.
+        disposable_docker: Reclaim each image on an isolated hosted runner.
     Returns:
         Blocking scan exit statuses.
     Raises:
@@ -177,7 +252,8 @@ def _scan_worker(
         except Empty:
             return results
         try:
-            results.append(scan_entry(entry, cache, sarif_directory))
+            scan = _scan_disposable_entry if disposable_docker else scan_entry
+            results.append(scan(entry, cache, sarif_directory))
         finally:
             entries.task_done()
 
@@ -206,6 +282,8 @@ def scan_inventory(
     cache: Path,
     workers: int,
     sarif_directory: Path | None,
+    *,
+    disposable_docker: bool = False,
 ) -> None:
     """Scan all entries with bounded parallelism and fail on any finding.
 
@@ -214,12 +292,15 @@ def scan_inventory(
         cache: Trivy database and temporary worker-cache root.
         workers: Maximum concurrent image scans.
         sarif_directory: Optional SARIF output directory.
+        disposable_docker: Reclaim scan images on one GitHub-hosted worker only.
     Returns:
         None.
     Raises:
         RuntimeError: A blocking scan reports a finding or execution error.
     """
 
+    if disposable_docker:
+        _require_disposable_runner(workers)
     cache.mkdir(parents=True, exist_ok=True)
     if sarif_directory is not None:
         sarif_directory.mkdir(parents=True, exist_ok=True)
@@ -239,7 +320,13 @@ def scan_inventory(
             queue.put(entry)
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = [
-                executor.submit(_scan_worker, queue, worker_cache, sarif_directory)
+                executor.submit(
+                    _scan_worker,
+                    queue,
+                    worker_cache,
+                    sarif_directory,
+                    disposable_docker,
+                )
                 for worker_cache in worker_caches
             ]
             results = [result for future in futures for result in future.result()]
@@ -264,12 +351,21 @@ def main() -> int:
     parser.add_argument("--cache-dir", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=3)
     parser.add_argument("--sarif-directory", type=Path)
+    parser.add_argument(
+        "--disposable-docker",
+        action="store_true",
+        help="Reclaim scan images and build cache on a GitHub-hosted runner; requires --workers 1.",
+    )
     arguments = parser.parse_args()
     if arguments.workers < 1:
         raise ValueError("workers must be positive")
     entries = load_inventory(arguments.inventory)
     scan_inventory(
-        entries, arguments.cache_dir, arguments.workers, arguments.sarif_directory
+        entries,
+        arguments.cache_dir,
+        arguments.workers,
+        arguments.sarif_directory,
+        disposable_docker=arguments.disposable_docker,
     )
     return 0
 

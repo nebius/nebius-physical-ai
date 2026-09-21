@@ -176,10 +176,16 @@ jobs:
           bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
           echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
 
-      - name: Scan all pinned bases with three local workers
+      - name: Prepare temporary storage for base-image scans
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" /mnt/npa-base-scans
+
+      - name: Scan all pinned bases with disposable storage
         if: steps.scope.outputs.deep == 'true'
         env:
           EVENT_NAME: ${{ github.event_name }}
+          TMPDIR: /mnt/npa-base-scans
         run: |
           set -euo pipefail
           report_args=()
@@ -188,7 +194,7 @@ jobs:
           fi
           npa/.venv/bin/python npa/scripts/scan_base_images.py \
             --inventory npa/docker/workbench/base-image-security.json \
-            --cache-dir "$RUNNER_TEMP/trivy-cache" --workers 3 \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" --workers 1 --disposable-docker \
             "${report_args[@]}"
 
       - name: Upload CUDA 12.4 SARIF

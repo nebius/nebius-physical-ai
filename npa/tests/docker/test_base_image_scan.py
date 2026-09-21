@@ -291,3 +291,180 @@ def test_parallel_scans_dynamically_claim_the_next_entry(
 
     assert entry_caches["base-1"] == entry_caches["base-2"]
     assert entry_caches["base-0"] != entry_caches["base-2"]
+
+
+def _hosted_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("RUNNER_ENVIRONMENT", "github-hosted")
+    monkeypatch.setenv("RUNNER_OS", "Linux")
+    for name in ("DOCKER_HOST", "DOCKER_CONTEXT", "BUILDX_BUILDER", "BUILDKIT_HOST"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "workers", "endpoint"),
+    [
+        ("GITHUB_ACTIONS", "false", 1, "unix:///var/run/docker.sock"),
+        ("RUNNER_ENVIRONMENT", "self-hosted", 1, "unix:///var/run/docker.sock"),
+        ("RUNNER_OS", "Windows", 1, "unix:///var/run/docker.sock"),
+        ("DOCKER_HOST", "ssh://example.invalid", 1, "unix:///var/run/docker.sock"),
+        ("DOCKER_CONTEXT", "remote", 1, "unix:///var/run/docker.sock"),
+        ("BUILDX_BUILDER", "remote", 1, "unix:///var/run/docker.sock"),
+        (
+            "BUILDKIT_HOST",
+            "tcp://example.invalid:1234",
+            1,
+            "unix:///var/run/docker.sock",
+        ),
+        (None, None, 2, "unix:///var/run/docker.sock"),
+        (None, None, 1, "ssh://example.invalid"),
+    ],
+)
+def test_disposable_mode_rejects_shared_or_remote_docker_before_mutation(
+    monkeypatch, tmp_path, variable, value, workers, endpoint
+) -> None:
+    """Only a serial, local Docker daemon on a hosted VM may be reclaimed."""
+
+    _hosted_environment(monkeypatch)
+    if variable:
+        monkeypatch.setenv(variable, value)
+    calls = []
+
+    def record(command, **arguments):
+        calls.append(command)
+        assert command[:3] == ["docker", "context", "inspect"]
+        return subprocess.CompletedProcess(command, 0, stdout=endpoint + "\n")
+
+    monkeypatch.setattr(scanner.subprocess, "run", record)
+    cache = tmp_path / "uncreated-cache"
+    with pytest.raises(ValueError, match="disposable Docker cleanup"):
+        scanner.scan_inventory(_entries(), cache, workers, None, disposable_docker=True)
+    assert not cache.exists()
+    assert len(calls) == (1 if endpoint.startswith("ssh:") else 0)
+
+
+def _disposable_scan_recorder(cache, events, artifact_caches):
+    """Model a critical finding while observing storage boundaries and reports."""
+
+    def record(command, **arguments):
+        if command[:3] == ["docker", "context", "inspect"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="unix:///var/run/docker.sock\n"
+            )
+        if "--download-db-only" in command:
+            (cache / "db").mkdir()
+            (cache / "db/trivy.db").write_text("verified database")
+        elif command[:2] == ["docker", "buildx"]:
+            assert command == [
+                "docker",
+                "buildx",
+                "--builder",
+                "default",
+                "prune",
+                "--all",
+                "--force",
+            ]
+            events.append(("build-cache", None))
+        elif command[:3] == ["docker", "image", "prune"]:
+            events.append(("image-cleanup", None))
+        else:
+            assert command[:2] == ["trivy", "image"]
+            entry_cache = Path(command[command.index("--cache-dir") + 1])
+            assert (entry_cache / "db/trivy.db").read_text() == "verified database"
+            assert all(
+                not old.exists() or old == entry_cache for old in artifact_caches
+            )
+            artifact_caches.add(entry_cache)
+            (entry_cache / "artifact").write_text("temporary image analysis")
+            report = "--format" in command
+            events.append(("report" if report else "scan", command[-1]))
+            assert command[command.index("--severity") + 1] == "CRITICAL"
+            assert command[command.index("--exit-code") + 1] == ("0" if report else "1")
+            return subprocess.CompletedProcess(command, 0 if report else 1)
+        assert arguments["check"] is True
+        return subprocess.CompletedProcess(command, 0)
+
+    return record
+
+
+def test_disposable_scans_preserve_every_target_report_and_blocking_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reclaim each scan only after its gate and report, including failed gates."""
+
+    _hosted_environment(monkeypatch)
+    cache, reports = tmp_path / "cache", tmp_path / "sarif"
+    events, artifact_caches = [], set()
+    monkeypatch.setattr(scanner, "prepare_target", lambda entry: str(entry["image"]))
+    monkeypatch.setattr(
+        scanner.subprocess,
+        "run",
+        _disposable_scan_recorder(cache, events, artifact_caches),
+    )
+    with pytest.raises(RuntimeError, match="security scans failed"):
+        scanner.scan_inventory(_entries(), cache, 1, reports, disposable_docker=True)
+    expected = []
+    for entry in _entries():
+        expected.extend(
+            [
+                ("build-cache", None),
+                ("scan", entry["image"]),
+                ("report", entry["image"]),
+                ("build-cache", None),
+                ("image-cleanup", None),
+            ]
+        )
+    assert events == expected
+    assert len(artifact_caches) == len(_entries())
+    assert all(not item.exists() for item in artifact_caches)
+
+
+def _disposable_failure_recorder(failure, calls):
+    """Fail at a chosen build, scan, report, or cleanup boundary."""
+
+    build_prunes = 0
+
+    def record(command, **arguments):
+        nonlocal build_prunes
+        calls.append(command)
+        if command[:3] == ["docker", "context", "inspect"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="unix:///var/run/docker.sock\n"
+            )
+        operation = "preparation" if command[:2] == ["docker", "build"] else None
+        if command[:2] == ["docker", "buildx"]:
+            build_prunes += 1
+            operation = "pre-build-cache" if build_prunes == 1 else "post-build-cache"
+        if command[:2] == ["trivy", "image"]:
+            operation = "report" if "--format" in command else "scan"
+        if command[:3] == ["docker", "image", "prune"]:
+            operation = "cleanup"
+        if operation == failure:
+            raise subprocess.CalledProcessError(23, command)
+        return subprocess.CompletedProcess(command, 0)
+
+    return record
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["preparation", "pre-build-cache", "scan", "report", "post-build-cache", "cleanup"],
+)
+def test_disposable_scan_errors_remain_failures_and_release_temporary_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: str
+) -> None:
+    """Never convert a scan, build, report, or cleanup error into a passing gate."""
+
+    _hosted_environment(monkeypatch)
+    cache = tmp_path / "cache"
+    (cache / "db").mkdir(parents=True)
+    (cache / "db/trivy.db").write_text("verified database")
+    calls = []
+    monkeypatch.setattr(
+        scanner.subprocess, "run", _disposable_failure_recorder(failure, calls)
+    )
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        scanner._scan_disposable_entry(_entries()[0], cache, tmp_path / "reports")
+    assert error.value.returncode == 23
+    assert calls[-1] == ["docker", "image", "prune", "--all", "--force"]
+    assert list(cache.iterdir()) == [cache / "db"]

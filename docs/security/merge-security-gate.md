@@ -28,8 +28,10 @@ The image workflow has no top-level path filter. Its two automatic jobs always
 report an internal, fail-closed scope decision. Image, packaging, workflow, and
 security-policy changes run complete-byte, configuration, and base-image checks;
 unrelated source changes take the verified fast path. Main, scheduled, and manual
-audits always run the deep checks. Seven pinned bases use one Trivy database
-download and three isolated worker caches inside one runner. Deep candidates block
+audits always run the deep checks. All pinned bases use one Trivy database
+download and run serially inside one disposable hosted runner. Each image's
+build cache, loaded images, and temporary scan cache are released before the
+next image so large CUDA exports do not accumulate. Deep candidates block
 on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their
 [patched base targets and regression tests](image-reproducibility.md#cve-scanning)

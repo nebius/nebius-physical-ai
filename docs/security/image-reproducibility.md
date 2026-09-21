@@ -98,11 +98,21 @@ preserves that identity across direct and reusable invocation. No additional
 branch-protection context is needed when `security-regression` is already required.
 
 The workflow scans Dockerfile/config issues and the digest-pinned public base
-image lineages. Seven bases are dynamically distributed inside one runner across
-three bounded workers. One Trivy database download is hard-linked into
-worker-private caches, so parallel scans cannot contend on mutable cache state,
-slow images do not strand work in a static lane, and the inventory does not
-create seven queued jobs. Dockerfile/config misconfigurations fail on HIGH
+image lineages. All inventory entries run serially inside one disposable
+GitHub-hosted runner. One Trivy database download is hard-linked into temporary
+per-image caches. Before each scan, unused BuildKit cache is reclaimed while
+the exact loaded image is retained. After the gate and optional SARIF report,
+the runner releases unused images and the per-image scan cache, including on
+failure. Trivy exports use `/mnt/npa-base-scans`, following the full-image
+publication scan's temporary-storage convention. The inventory still creates
+only one job.
+
+The `--disposable-docker` mode requires `--workers 1`, a Linux GitHub-hosted
+runner, and the local default Docker daemon; it rejects self-hosted runners
+and remote Docker/BuildKit settings. Ordinary local scans retain the existing
+worker-private parallel caches and do not prune Docker resources. GitHub
+provides a [fresh VM for each hosted job](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+Dockerfile/config misconfigurations fail on HIGH
 and CRITICAL findings. Base-image CVE jobs are intentionally OS-package only,
 use `--ignore-unfixed`, and fail on fixed CRITICAL vulnerabilities. When a pinned
 CUDA base contains a fixable CRITICAL in a build-only OS package that consuming

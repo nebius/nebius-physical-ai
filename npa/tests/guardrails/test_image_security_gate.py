@@ -115,8 +115,8 @@ def test_reusable_scan_has_two_automatic_jobs_and_internal_scope() -> None:
         assert all("steps.scope.outputs.deep" in step["if"] for step in heavy_steps)
 
 
-def test_base_inventory_uses_bounded_parallelism_without_a_matrix() -> None:
-    """Prevent seven base images from consuming seven hosted runners.
+def test_base_inventory_bounds_storage_without_a_matrix() -> None:
+    """Keep all inventory entries on one runner with per-image reclamation.
 
     Args:
         None.
@@ -128,10 +128,14 @@ def test_base_inventory_uses_bounded_parallelism_without_a_matrix() -> None:
 
     job = _workflow("image-security-scan.yml")["jobs"]["base-image-cve-scan"]
     assert "strategy" not in job
-    scan = _step(job, "Scan all pinned bases with three local workers")
+    scan = _step(job, "Scan all pinned bases with disposable storage")
     assert "scan_base_images.py" in scan["run"]
-    assert "--workers 3" in scan["run"]
+    assert "--workers 1 --disposable-docker" in scan["run"]
     assert "base-image-security.json" in scan["run"]
+    assert scan["env"]["TMPDIR"] == "/mnt/npa-base-scans"
+    storage = _step(job, "Prepare temporary storage for base-image scans")
+    assert "steps.scope.outputs.deep" in storage["if"]
+    assert "install -d -m 0700" in storage["run"]
 
 
 def test_sarif_uploads_preserve_existing_alert_categories() -> None:
