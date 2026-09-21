@@ -252,7 +252,7 @@ The interpreter must provide `os.memfd_create`; some Conda builds omit it.
 Install CI's CPU checkpoint/export dependencies in this same environment:
 
 ```bash
-npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
 npa/.venv/bin/python -m pip install -e "npa[sonic]"
 umask 077  # Private files are required by publication handoff tests.
 PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \

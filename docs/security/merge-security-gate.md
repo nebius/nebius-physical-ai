@@ -48,7 +48,7 @@ Those boundaries motivate three complementary maintained scanners:
 | Scanner | Blocking coverage |
 |---|---|
 | Bandit 1.9.4 | All tracked Python, including scripts and tests; medium/high severity and confidence, including unsafe deserialization, injection, weak transport and unsafe APIs. |
-| zizmor 1.30.0 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
+| zizmor 1.30.1 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
 | Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
 
 The gate materializes regular files from the actual target commit and the

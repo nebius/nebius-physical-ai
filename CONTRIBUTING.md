@@ -652,7 +652,7 @@ Use an interpreter with `os.memfd_create`; some Conda builds omit it.
 Install `ffmpeg`/`ffprobe` and the same CPU checkpoint/export runtime as CI:
 
 ```bash
-npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
 npa/.venv/bin/python -m pip install -e "npa[sonic]"
 export PATH="$PWD/npa/.venv/bin:$PATH"
 export NPA_REQUIRE_FFMPEG=1
