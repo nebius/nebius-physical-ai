@@ -7,11 +7,11 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 
+jax = pytest.importorskip("jax")
+jnp = pytest.importorskip("jax.numpy")
 flax = pytest.importorskip("flax")
 from flax import nnx  # noqa: E402
 
