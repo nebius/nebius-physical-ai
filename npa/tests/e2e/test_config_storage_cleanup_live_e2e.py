@@ -1112,7 +1112,11 @@ def test_live_mode_rejects_a_group_writable_config_dir(tmp_path: Path) -> None:
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir(mode=0o700)
     config_dir = tmp_path / "config"
-    config_dir.mkdir(mode=0o750)
+    # mkdir's mode is masked by the caller's umask (e.g. a stricter ambient
+    # umask silently drops the group bits and defeats this fixture), so set
+    # the exact permission with chmod instead of relying on mkdir(mode=...).
+    config_dir.mkdir()
+    config_dir.chmod(0o750)
     env = {
         "NPA_INTEGRATION_E2E": "1",
         _MUTATION_OPT_IN_VAR: "1",
