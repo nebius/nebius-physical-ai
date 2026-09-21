@@ -391,34 +391,51 @@ def _sample_distances(o3d, cloud, vertices):
     )
 
 
-#: Below this share of the pre-crop unsupported area lying past three voxels, what the
-#: crop removed is near-threshold surface rather than an extrapolated shell.
+#: Below this share of the pre-crop unsupported area lying past three voxels, what the crop
+#: removed sat near the support threshold rather than far from any observation.
 #:
 #: This is a detector with a sensitivity floor, not a threshold between two clean
-#: populations, and both of its error directions have now been measured.
+#: populations, and **it errs in both directions**.
 #:
-#: **It never over-calls fabrication.** A sweep of sample spacing from 0.50 to 5.45 voxels
-#: against a fixed voxel, on a watertight mesh so fabrication could be checked against
-#: ground truth, produced no case where a correct surface read as a shell. Over that range
-#: the share tracked the area genuinely further than one voxel from the true surface to
-#: within 0.06 absolute.
+#: **It over-calls fabrication when the observations are spatially uneven.** This measures
+#: distance from the nearest *observation*, which conflates two different things: surface
+#: far from the true object, and surface the scanner simply covered sparsely. A closed
+#: triangulated unit cube that is exactly its own ground truth -- every vertex on the true
+#: cube, nothing invented anywhere -- sampled densely on five faces and sparsely on the
+#: sixth, at the recommended voxel of twice the global median sample spacing, measured an
+#: unsupported area fraction of 0.3157 with 0.1316 past three voxels: a far share of 0.4169,
+#: which reads as `far from any observation`. The same cube sampled evenly reads 0.0 past three
+#: voxels. Evenness is the whole difference. This was found by an independent audit and
+#: reproduced here with these functions and real Open3D; see
+#: `evidence/open3d/irregular-density-counterexample.json`.
 #:
-#: **It does under-call small fabrications, and below the floor it is confidently wrong
+#: So a *high* reading does not establish that anything was invented. It says the removed
+#: area sat far from any observation, and sparse coverage of correct geometry produces that
+#: too. Distinguishing the two needs a reference surface, which a scan does not have.
+#:
+#: **It also under-calls small fabrications, and below the floor it is confidently wrong
 #: rather than undecided.** Measured by scoring a mesh against samples drawn from itself
 #: and deleting the observations inside a polar cap, so the invented fraction is known by
 #: area: the share is monotone in that fraction in every case tried, but there is a floor
 #: below which genuine fabrication reads as `near-threshold surface`.
 #:
-#: So a *low* reading does not mean the surface is clean. Read it as a lower bound on
-#: invented surface, never as a clean bill of health. The one-sidedness is the useful
-#: property: the reading errs only towards saying less was invented than truly was.
+#: So a *low* reading does not mean the surface is clean either. Neither branch is a verdict
+#: about ground truth. Both are statements about distance from observations.
+#:
+#: **Superseded conclusion, kept so it is not re-derived:** earlier revisions of this
+#: constant claimed the error was one-sided and that an area called invented here is
+#: invented, on the strength of twelve zero-error reconstructions that read near-threshold.
+#: Those measurements stand and are unaltered; the conclusion drawn from them does not. Every
+#: one of them sampled convex geometry evenly -- uniform or Poisson-disk over the whole
+#: surface -- so the sweep varied sample *spacing* and never sample *evenness*, which is the
+#: variable that breaks it.
 #:
 #: **Do not quote the floor as a number.** It moves with geometry, sampling and resolution
 #: — 0.011 to 0.037 invented area across two geometries and two sampling schemes here,
 #: against 0.09 in the review lane's independent setup at a different resolution ratio.
-#: That is nearly an order of magnitude. What held in every case, and is what to rely on,
-#: is monotonicity in the invented fraction and no false shell reading on a perfect
-#: reconstruction.
+#: That is nearly an order of magnitude. What held in every case is monotonicity in the
+#: invented fraction at fixed sampling, and that is all it is safe to rely on: the ordering
+#: is informative, the absolute level is not comparable across scans.
 #:
 #: **`unsupported_area_fraction` fails for a reason that is fixable at capture time.** On a
 #: reconstruction with *zero* error, scored against the samples it was drawn from, it
@@ -426,9 +443,14 @@ def _sample_distances(o3d, cloud, vertices):
 #: 0.0 under Poisson-disk sampling, in both geometries. Its failure is not inherent: it is
 #: what uneven sampling does to a nearest-sample distance, because uniform random sampling
 #: leaves gaps well above the median nearest-neighbour spacing and the per-triangle maximum
-#: lands in them. Evenly sampled, the headline fraction is meaningful again. Unevenly
-#: sampled, only the distance bands carry information, and the 0.2055 figure recorded
-#: elsewhere in this module is specific to its sampling and does not transfer.
+#: lands in them. Evenly sampled, the headline fraction is meaningful again. The 0.2055 figure
+#: recorded elsewhere in this module is specific to its sampling and does not transfer.
+#:
+#: The bands are *less* sensitive to this than the headline fraction, which is why they were
+#: added, but the cube counterexample above shows they are not immune to it: they survive
+#: uneven spacing at a roughly even *density*, and fail when the density itself is uneven
+#: across the surface. Read either number as a property of the capture as much as of the
+#: reconstruction.
 #:
 #: The real scan measured at 0.1012 is therefore not an anomaly sitting awkwardly on a
 #: boundary: it is a scan of a solid object with modest real holes sitting near where the
@@ -451,7 +473,7 @@ def _sample_distances(o3d, cloud, vertices):
 #: `evidence/open3d/floor-vs-voxel-multiple.json`,
 #: `evidence/open3d/floor-vs-resolution.json`, and the review lane's
 #: `program/review/evidence/verify_602_boundary.py`.
-FABRICATION_AREA_SHARE = 0.1
+FAR_BAND_AREA_SHARE = 0.1
 
 #: One known leniency in how the supporting measurements were validated, recorded here so
 #: it is not rediscovered: fabrication was checked as unsigned distance to the whole
@@ -462,10 +484,15 @@ FABRICATION_AREA_SHARE = 0.1
 
 
 def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str, Any]:
-    """Say whether the crop removed an extrapolated shell or near-threshold surface.
+    """Say how far past the support threshold the removed surface actually lay.
 
-    The coverage pair cannot answer this. Coverage asks whether the observations are
-    still explained, and surface removed from a *correct* reconstruction leaves coverage
+    This does not decide whether the removed surface was invented, and an earlier version
+    of this function said it did. It reports which side of `FAR_BAND_AREA_SHARE` the removed
+    area fell on, in distance from the nearest observation. Sparse coverage of correct
+    geometry lands on the far side too; see that constant for the reproduced counterexample.
+
+    The coverage pair cannot answer even this much. Coverage asks whether the observations
+    are still explained, and surface removed from a *correct* reconstruction leaves coverage
     almost untouched because the remaining surface still passes under every sample. That
     is measured, not hypothetical: on a watertight mesh sampled at roughly one voxel
     spacing, cropping at factor 1.0 discarded 8.45 percent of vertices that were within
@@ -479,15 +506,19 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
     unsupported = float(before.get("unsupported_area_fraction") or 0.0)
     far = float(before.get("unsupported_area_beyond_3_voxels") or 0.0)
     share = (far / unsupported) if unsupported > 0 else 0.0
-    if share >= FABRICATION_AREA_SHARE:
-        reads_as = "extrapolated shell"
+    if share >= FAR_BAND_AREA_SHARE:
+        reads_as = "far from any observation"
         note = (
-            "Most of the unsupported area lay more than three voxels from any sample, "
-            "which sample spacing cannot explain, so the crop removed invented surface. "
-            "This direction has no measured false positive: across twelve zero-error "
-            "reconstructions spanning two geometries, two sampling schemes and voxel-to-"
-            "spacing ratios from 1 to 3, none read as a shell. The reading's error is "
-            "one-sided, so an area called invented here is invented."
+            f"{share:.1%} of the unsupported area lay more than three voxels from any "
+            "sample, above the 10% mark that separates these two readings. Sample "
+            "spacing alone does not put area that far out, so the crop removed surface "
+            "the scan does not speak for. Whether that surface is wrong is a separate "
+            "question this cannot answer: a correct surface over a sparsely covered "
+            "region reads the same way. Measured, on a cube that was exactly its own "
+            "ground truth, sampled densely on five faces and sparsely on the sixth: "
+            "0.4169 of its unsupported area sat past three voxels with nothing invented "
+            "anywhere. Deciding fabrication needs a reference surface. Check whether "
+            "coverage of the removed region was thin before concluding anything."
         )
     else:
         reads_as = "near-threshold surface"
@@ -497,8 +528,8 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
             "spacing also falls. The crop may have removed correct geometry, and "
             "coverage cannot rule that out. Raise --support-distance-factor to 1.5 "
             "or 2.0, or pass 0, unless the tighter crop is wanted deliberately. "
-            "This reading is a lower bound and not a clean bill of health: it cannot "
-            "see fabrication below the sensitivity floor, which is setup-dependent, so "
+            "This reading is not a clean bill of health either: it cannot see "
+            "fabrication below the sensitivity floor, which is setup-dependent, so "
             "a small invented region reads exactly like none at all."
         )
     return {

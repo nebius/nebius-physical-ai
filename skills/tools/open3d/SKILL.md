@@ -120,15 +120,19 @@ be able to open the thing being asserted.
   **0.0000** on the complete capture. `reconstruct` reports those bands as
   `unsupported_area_beyond_1_5_voxels` and `unsupported_area_beyond_3_voxels`, and
   summarizes them as `crop_justification.removed_surface_reads_as`: either
-  `extrapolated shell` or `near-threshold surface`. **The reading's error is one-sided.**
-  Above the threshold it can be trusted — no zero-error reconstruction has ever read as a
-  shell across twelve measured cells spanning two geometries, two sampling schemes and
-  voxel-to-spacing ratios from 1 to 3, so an area called invented is invented. Below it,
-  a genuine fabrication smaller than the sensitivity floor reads as `near-threshold
-  surface`, which is *confidently wrong* rather than undecided. So a low reading is a
-  lower bound, not a clean bill of health. Nothing gates on either. Measurements:
-  `evidence/open3d/band-profile-across-scenes.json`,
+  `far from any observation` or `near-threshold surface`. **Neither reading is a verdict
+  about ground truth, and the error runs both ways.** A high reading does not establish
+  fabrication: a closed cube that is exactly its own ground truth, sampled densely on five
+  faces and sparsely on the sixth, put 0.4169 of its unsupported area past three voxels with
+  nothing invented anywhere. A low reading does not establish cleanliness either, because
+  fabrication below the sensitivity floor reads as `near-threshold surface`. Nothing gates on
+  either. Measurements: `evidence/open3d/band-profile-across-scenes.json`,
+  `evidence/open3d/irregular-density-counterexample.json`,
   `evidence/open3d/poisson-procedure-and-overcall-audit.json`.
+- **Superseded:** this skill previously said the error was one-sided and that an area called
+  invented is invented, on twelve zero-error cells that all read near-threshold. Those cells
+  are real and unchanged, but every one of them sampled convex geometry *evenly*; uneven
+  density across a surface is the case that breaks the inference.
 - **`unsupported_area_fraction` is mostly a sampling measurement, not a quality one.**
   On a reconstruction with *zero* error, uniform-random sampling reports 0.855 of area
   unsupported at a voxel equal to the median point spacing; Open3D's Poisson-disk sampler
@@ -158,18 +162,17 @@ be able to open the thing being asserted.
   reported **0.5659** unsupported where only **0.0027** of area was actually
   fabricated, overstating by roughly 200-fold. Measurements:
   `evidence/open3d/band-validity-sweep.json`.
-- **A low reading is a lower bound, not a clean bill of health.** The reading is a
-  detector with a sensitivity floor, and below that floor it is *confidently wrong*
-  rather than undecided — genuine fabrication reads as `near-threshold surface`.
-  The error is one-sided: the reading only ever under-calls fabrication, never
-  over-calls it, which is the good direction for an advisory field but means a low
-  value tells you fabrication is *below the floor* and nothing more.
+- **Neither reading is a clean bill of health or a finding of fabrication.** Below a
+  sensitivity floor the reading is *confidently wrong* rather than undecided — genuine
+  fabrication reads as `near-threshold surface`. Above the threshold it says only that the
+  area sat far from any observation, which sparse coverage of correct geometry also produces.
+  Separating the two needs a reference surface, which a scan does not have.
   **Don't quote the floor as a number.** It moves with geometry, sampling and
   resolution: 0.011 to 0.037 invented area across two geometries × two sampling
   schemes, against 0.09 in an independent setup at a different resolution ratio —
   nearly an order of magnitude. What held in every case, and what to rely on, is
-  monotonicity in the invented fraction and no false shell reading on a perfect
-  reconstruction. The 0.1012 real scan sits near where the floor falls rather than
+  monotonicity in the invented fraction at fixed sampling; the absolute level is not
+  comparable across scans. The 0.1012 real scan sits near where the floor falls rather than
   awkwardly on a line. Nothing gates on the reading while the floor is this
   setup-dependent. Measurements:
   `evidence/open3d/floor-across-geometry-and-sampling.json`.

@@ -117,6 +117,23 @@ Open3D capability executing on a cluster node, and a six-state plan that renders
 `npa.workflow` runtime itself is not. A pod is not a substitute for the runtime, and the file says so
 rather than letting four cleared gates imply a fifth.
 
+## A claim this evidence set got wrong, and the control that catches it
+
+`irregular-density-counterexample.json` and `capability-record-support-claim-correction.json` record a
+retraction. Earlier heads read the zero-error cells in
+`poisson-procedure-and-overcall-audit.json` as proof that the support reading could not over-call, and
+had the operator-facing note assert that an area it flagged was invented. An independent audit broke
+that by varying the one thing the sweep never varied: how *evenly* the observations cover the surface.
+A closed cube that is exactly its own ground truth, sampled densely on five faces and sparsely on the
+sixth, puts 0.4169 of its unsupported area past three voxels — a full-strength far reading with
+nothing invented anywhere in it.
+
+The counterexample file is this lane's own reproduction through the shipped functions and real Open3D,
+so it does not depend on the audit's nearest-neighbour adapter. The zero-error cells are unaltered;
+what changed is the conclusion drawn from them, the classification's name, and the note's wording. The
+cube now runs as a ground-truth control in the functional smoke, on the over-call side that a sweep of
+even sampling cannot reach.
+
 ## Results that are retained but do not support anything
 
 `band-false-negative-sweep.json` is marked inconclusive and is kept for that reason. Occluding a

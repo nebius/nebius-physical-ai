@@ -135,16 +135,17 @@ def _assert_support_crop_kept_the_observations(report) -> None:
         f"only {coverage['fraction_within_voxel']:.4f} of samples lie within a "
         "voxel of the cropped surface; the crop took observed structure"
     )
-    # The crop being justified on this scene is the reason the smoke can assert
+    # The crop removing distant surface on this scene is the reason the smoke can assert
     # `before > after` at all. On a complete capture the same arithmetic holds while
     # the crop destroys correct geometry, so the assertion above is only meaningful
-    # alongside this one: these scans really do carry an extrapolated shell.
-    # Demanding a verdict here is legitimate because the reading cannot over-call: no
-    # zero-error reconstruction has been measured reading as a shell, so above the threshold
-    # the assertion is sound. This scene reads 0.985 of its unsupported area past three
-    # voxels, which is the far pole rather than a marginal call.
+    # alongside this one.
+    #
+    # This asserts where the removed area sat, not that it was invented -- uneven coverage of
+    # correct geometry reads the same way, which is measured in the unit tests. It is safe to
+    # demand here because these scans are a known partial capture reading 0.985 of their
+    # unsupported area past three voxels, the far pole rather than a marginal call.
     justification = report["crop_justification"]
-    assert justification["removed_surface_reads_as"] == "extrapolated shell", (
+    assert justification["removed_surface_reads_as"] == "far from any observation", (
         "these demo scans are a partial capture, so the unsupported area should sit "
         "well past three voxels; a near-threshold reading here means the scene or the "
         f"voxel changed ({justification['unsupported_area_share_beyond_3_voxels']:.4f} "
@@ -176,6 +177,120 @@ def _assert_recovered(o3d, measured, source_pose, target_pose) -> None:
     offset = float(np.linalg.norm(residual[:3, 3]))
     assert angle <= MAX_ROTATION_DEGREES, f"rotation error {angle:.3f} deg"
     assert offset <= MAX_TRANSLATION, f"translation error {offset:.4f}"
+
+
+def _unit_cube(o3d, per_face: int = 40):
+    """A closed cube whose every vertex lies exactly on the analytic cube it samples."""
+
+    import numpy as np
+
+    verts: list = []
+    tris: list = []
+
+    def face(origin, u, v) -> None:
+        base = len(verts)
+        for i in range(per_face + 1):
+            for j in range(per_face + 1):
+                verts.append(
+                    np.asarray(origin, dtype=float)
+                    + u * (i / per_face)
+                    + v * (j / per_face)
+                )
+        for i in range(per_face):
+            for j in range(per_face):
+                a = base + i * (per_face + 1) + j
+                across = a + per_face + 1
+                tris.extend([[a, across, a + 1], [a + 1, across, across + 1]])
+
+    x, y, z = np.eye(3)
+    for origin, u, v in _CUBE_FACES:
+        face(origin, [x, y, z][u], [x, y, z][v])
+    mesh = o3d.geometry.TriangleMesh(
+        o3d.utility.Vector3dVector(np.asarray(verts)),
+        o3d.utility.Vector3iVector(np.asarray(tris)),
+    )
+    mesh.remove_duplicated_vertices()
+    mesh.remove_duplicated_triangles()
+    return mesh
+
+
+#: (origin, u-axis, v-axis) for the six faces of the unit cube.
+_CUBE_FACES = (
+    ([0, 0, 0], 0, 1),
+    ([0, 0, 1], 0, 1),
+    ([0, 0, 0], 0, 2),
+    ([0, 1, 0], 0, 2),
+    ([0, 0, 0], 1, 2),
+    ([1, 0, 0], 1, 2),
+)
+
+
+def _assert_uneven_coverage_is_not_called_fabrication(o3d) -> None:
+    """A correct surface, unevenly observed, must not be reported as invented.
+
+    The cube here *is* its own ground truth: every vertex lies on the analytic cube, and
+    every observation is drawn on that same cube, so there is nothing anywhere for the
+    reading to be right about if it says something was invented. Sampling five faces densely
+    and the sixth sparsely still pushes a large share of the unsupported area past three
+    voxels, because that distance is measured from the nearest observation and the sixth face
+    has few. The reading may report where the area sat; it may not call it fabrication.
+
+    This is the control for the over-call direction, which a sweep of even sampling cannot
+    reach. It runs with real Open3D rather than a nearest-neighbour stand-in.
+    """
+
+    import numpy as np
+
+    from npa.workbench.open3d.runner import _crop_justification, _support
+
+    rng = np.random.default_rng(7)
+    mesh = _unit_cube(o3d)
+    axes = np.eye(3)
+
+    def observe(dense: int, sparse: int):
+        points = []
+        for index, (origin, u, v) in enumerate(_CUBE_FACES):
+            count = sparse if index == len(_CUBE_FACES) - 1 else dense
+            st = rng.random((count, 2))
+            points.append(
+                np.asarray(origin, dtype=float)
+                + np.outer(st[:, 0], axes[u])
+                + np.outer(st[:, 1], axes[v])
+            )
+        return np.vstack(points)
+
+    def read(points):
+        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+        tree = o3d.geometry.KDTreeFlann(cloud)
+        spacing = float(
+            np.median([np.sqrt(tree.search_knn_vector_3d(p, 2)[2][1]) for p in points])
+        )
+        # The voxel rule the module recommends: twice the median sample spacing.
+        return _crop_justification(_support(o3d, mesh, cloud, 2.0 * spacing), 0, mesh)
+
+    # Nothing is invented in either case, so neither note may assert that anything was.
+    # Both notes do mention invented surface while describing what they cannot see, which
+    # is a caveat rather than a claim; what is forbidden is the claim.
+    asserts_fabrication = ("removed invented surface", "is invented", "was invented")
+    for label, points in (
+        ("even", observe(4000, 4000)),
+        ("uneven", observe(4000, 40)),
+    ):
+        note = read(points)["note"]
+        for phrase in asserts_fabrication:
+            assert phrase not in note, (
+                f"{label} coverage of a cube that is exactly its own ground truth was "
+                f"reported as invented surface ({phrase!r}): {note!r}"
+            )
+
+    # And the far reading really is reachable with zero error, which is why it cannot assert.
+    uneven = read(observe(4000, 40))
+    assert uneven["removed_surface_reads_as"] == "far from any observation", (
+        "uneven coverage of a correct cube no longer reaches the far band "
+        f"({uneven['unsupported_area_share_beyond_3_voxels']:.4f} share); the "
+        "over-call control has stopped exercising the case it exists for"
+    )
+    assert "separate question this cannot answer" in uneven["note"]
 
 
 def main() -> None:
@@ -256,6 +371,7 @@ def main() -> None:
             RUN_ID,
         )
         verify_rerun_recording(recording / "point_cloud.rrd")
+        _assert_uneven_coverage_is_not_called_fabrication(o3d)
 
         print(
             "Open3D registration recovered the ground-truth pose "

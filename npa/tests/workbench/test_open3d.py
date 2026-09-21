@@ -1038,7 +1038,7 @@ def test_a_band_that_is_not_a_fraction_is_rejected() -> None:
             validate_distance_bands(block)
 
 
-def test_an_extrapolated_shell_and_near_threshold_surface_read_differently() -> None:
+def test_far_and_near_threshold_surface_read_differently() -> None:
     """The distinction coverage cannot make, from the numbers that can.
 
     Both profiles below are measured. The demo scans leave 0.3848 of all surface area
@@ -1047,9 +1047,12 @@ def test_an_extrapolated_shell_and_near_threshold_surface_read_differently() -> 
     no vertex further than one voxel from ground truth — yet still reports 0.2055
     unsupported, a fifth of its area, from discretization alone.
 
-    A headline fraction of 0.2055 on correct geometry against 0.5273 on an invented
-    shell is a difference of degree that a threshold could not safely split. The share
-    past three voxels, 0.0 against 0.7297, is the separation this reads instead.
+    A headline fraction of 0.2055 on correct geometry against 0.5273 on the demo scans
+    is a difference of degree that a threshold could not safely split. The share past
+    three voxels, 0.0 against 0.7297, is the separation this reads instead.
+
+    Which side a reading falls on is a statement about distance from observations, not
+    about ground truth; the far branch must not claim otherwise.
     """
 
     from npa.workbench.open3d.runner import _crop_justification
@@ -1057,13 +1060,14 @@ def test_an_extrapolated_shell_and_near_threshold_surface_read_differently() -> 
     class _Mesh:
         vertices = range(14736)
 
-    shell = _crop_justification(
+    far = _crop_justification(
         _support_block(unsupported=0.527324, beyond_1_5=0.484153, beyond_3=0.384809),
         3677,
         _Mesh(),
     )
-    assert shell["removed_surface_reads_as"] == "extrapolated shell"
-    assert "invented surface" in shell["note"]
+    assert far["removed_surface_reads_as"] == "far from any observation"
+    assert "separate question this cannot answer" in far["note"]
+    assert "invented surface" not in far["note"]
 
     discretization = _crop_justification(
         _support_block(unsupported=0.205530, beyond_1_5=0.007524, beyond_3=0.0),
@@ -1102,7 +1106,7 @@ def test_a_real_scan_sits_at_the_sensitivity_floor_not_on_an_arbitrary_line() ->
     """
 
     from npa.workbench.open3d.runner import (
-        FABRICATION_AREA_SHARE,
+        FAR_BAND_AREA_SHARE,
         _crop_justification,
     )
 
@@ -1116,9 +1120,8 @@ def test_a_real_scan_sits_at_the_sensitivity_floor_not_on_an_arbitrary_line() ->
     )
     share = eagle["unsupported_area_share_beyond_3_voxels"]
     assert abs(share - 0.1009) < 0.001
-    assert abs(share - FABRICATION_AREA_SHARE) / FABRICATION_AREA_SHARE < 0.02
-    # Above the threshold the reading may assert plainly, because it cannot over-call.
-    assert eagle["removed_surface_reads_as"] == "extrapolated shell"
+    assert abs(share - FAR_BAND_AREA_SHARE) / FAR_BAND_AREA_SHARE < 0.02
+    assert eagle["removed_surface_reads_as"] == "far from any observation"
 
 
 def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() -> None:
@@ -1147,25 +1150,23 @@ def test_the_case_where_the_headline_metric_overstates_fabrication_200_fold() ->
     assert reading["unsupported_area_share_beyond_3_voxels"] < 0.001
 
 
-def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> None:
-    """The error is one-sided, and that is what lets the field speak plainly.
+def test_the_reading_rises_with_invented_area_but_has_a_floor_beneath_it() -> None:
+    """Monotone in invented area at fixed sampling, with a floor it cannot see beneath.
 
-    An undecided-band ruling was issued against this field and then withdrawn, on grounds
-    worth recording because they are the reason the two-state reading is correct. The concern
-    was that asserting "the crop removed invented surface" as flat fact is overconfident at a
-    share sitting near the threshold. It would be, if the reading could over-call. It cannot:
-    every zero-error reconstruction measured in this tree reads near-threshold, so an area
-    called invented is invented, and hedging there would discard a true finding.
-
-    The error runs the other way only. Below a floor, a genuine fabrication reads as
+    This is one of the two error directions. Below a floor, a genuine fabrication reads as
     near-threshold -- not undecided but confidently wrong -- which is why that branch's note
-    calls itself a lower bound rather than a clean bill of health. Hedging the shell branch
-    would have obscured that asymmetry by making both branches look equally uncertain.
+    refuses to call itself a clean bill of health.
+
+    An earlier revision of this test asserted the *other* direction could not happen, and
+    concluded the error was one-sided and so the far branch could assert fabrication as flat
+    fact. That conclusion was wrong and the far branch no longer makes it; see
+    `test_uneven_coverage_of_correct_geometry_reads_as_far_from_observations`. The curve
+    below is unaltered -- it is a real measurement and still shows what it showed.
 
     The curve is the review lane's, from `program/review/evidence/verify_602_boundary.py`, so
     this test pins their measurement rather than independently confirming it. That is a
-    circularity they raised themselves. What is worth pinning is the *shape* -- monotone, one-
-    sided, floored -- not the floor's value, which moves with the voxel-to-spacing ratio.
+    circularity they raised themselves. What is worth pinning is the *shape* -- monotone and
+    floored -- not the floor's value, which moves with the voxel-to-spacing ratio.
     """
 
     from npa.workbench.open3d.runner import _crop_justification
@@ -1187,9 +1188,9 @@ def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> No
         (0.000, 0.75126, 0.00973, "near-threshold surface"),
         (0.030, 0.76106, 0.03149, "near-threshold surface"),
         (0.067, 0.77010, 0.06375, "near-threshold surface"),
-        (0.090, 0.77602, 0.08187, "extrapolated shell"),
-        (0.250, 0.81944, 0.23530, "extrapolated shell"),
-        (0.500, 0.87790, 0.48395, "extrapolated shell"),
+        (0.090, 0.77602, 0.08187, "far from any observation"),
+        (0.250, 0.81944, 0.23530, "far from any observation"),
+        (0.500, 0.87790, 0.48395, "far from any observation"),
     ]
     for invented, unsupported, beyond_3, expected in curve:
         result = reads(unsupported, beyond_3)
@@ -1205,20 +1206,23 @@ def test_the_reading_under_calls_small_fabrications_and_never_over_calls() -> No
     assert shares == sorted(shares)
 
     # Each branch must carry its own basis, since a docstring does not travel with the JSON.
-    assert "no measured false positive" in reads(0.87790, 0.48395)["note"]
-    assert (
-        "lower bound and not a clean bill of health" in reads(0.76106, 0.03149)["note"]
-    )
+    assert "separate question this cannot answer" in reads(0.87790, 0.48395)["note"]
+    assert "not a clean bill of health" in reads(0.76106, 0.03149)["note"]
 
 
-def test_a_correct_reconstruction_is_never_called_an_invented_shell() -> None:
-    """The one-sidedness, measured directly rather than inferred from a curve.
+def test_evenly_sampled_correct_reconstructions_read_near_threshold() -> None:
+    """Zero-error reconstructions that are sampled *evenly* stay on the near side.
 
-    Twelve zero-error reconstructions -- the surface scored is the surface sampled, so there is
-    nothing to invent -- across two geometries, two sampling schemes, and voxel-to-spacing
-    ratios from 1 to 3. None may read as a shell. This is the property the shell branch's
-    plain assertion rests on, and unlike the curve above it is not the review lane's
-    measurement coming back around.
+    Twelve of them -- the surface scored is the surface sampled, so there is nothing to
+    invent -- across two geometries, two sampling schemes, and voxel-to-spacing ratios from
+    1 to 3. The measurements are unaltered and still hold.
+
+    What has changed is what they are taken to mean. They were read as proof the far branch
+    could not fire on correct geometry; they are not, because every one of them samples
+    convex geometry evenly over the whole surface. Vary the *density* across the surface
+    instead and the far branch does fire on correct geometry, which is the test below this
+    one. The name of this test used to claim the general property; it now states the
+    condition under which it was measured.
 
     Figures: `evidence/open3d/poisson-procedure-and-overcall-audit.json`.
     """
@@ -1252,6 +1256,54 @@ def test_a_correct_reconstruction_is_never_called_an_invented_shell() -> None:
             f"{case} at voxel {multiple}x median spacing invented nothing but read as "
             f"{result['removed_surface_reads_as']!r}"
         )
+
+
+def test_uneven_coverage_of_correct_geometry_reads_as_far_from_observations() -> None:
+    """The over-call direction, on geometry that is exactly its own ground truth.
+
+    A closed unit cube, 9602 vertices over 19200 triangles, every vertex lying on the true
+    cube to the bit. Observations are drawn on that same cube, so there is no error anywhere
+    to find -- ground-truth distance is identically zero for every vertex and every triangle.
+    The only thing that varies is how evenly those observations cover the six faces, and the
+    voxel follows the rule the module recommends, twice the global median sample spacing.
+
+    Sampled evenly the reading is near-threshold, as it should be. Sampled densely on five
+    faces and sparsely on the sixth it goes to the far side: 0.4169 of the unsupported area
+    past three voxels, on a surface with nothing invented in it. So the far reading cannot
+    mean fabrication, and the note must not say it does.
+
+    This came from an independent audit that reproduced the same effect on a cKDTree
+    adapter, and is reproduced here through the shipped functions and real Open3D. Figures
+    and the generator: `evidence/open3d/irregular-density-counterexample.json`.
+
+    The numbers below are that reproduction, pinned so the semantics cannot quietly revert
+    to asserting fabrication. The geometry itself is rebuilt in the functional smoke, where
+    Open3D is available.
+    """
+
+    from npa.workbench.open3d.runner import _crop_justification
+
+    class _Mesh:
+        vertices = range(9602)
+
+    even = _crop_justification(
+        _support_block(unsupported=0.192187, beyond_1_5=0.0, beyond_3=0.0), 0, _Mesh()
+    )
+    assert even["removed_surface_reads_as"] == "near-threshold surface"
+
+    uneven = _crop_justification(
+        _support_block(unsupported=0.315729, beyond_1_5=0.185, beyond_3=0.131615),
+        0,
+        _Mesh(),
+    )
+    assert uneven["removed_surface_reads_as"] == "far from any observation"
+    assert abs(uneven["unsupported_area_share_beyond_3_voxels"] - 0.4169) < 0.001
+
+    # The note may not assert fabrication, and must name the confound that caused this.
+    note = uneven["note"]
+    assert "invented surface" not in note
+    assert "separate question this cannot answer" in note
+    assert "sparsely covered" in note
 
 
 def test_a_tight_voxel_costs_both_ways_at_once() -> None:
