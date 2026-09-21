@@ -196,9 +196,15 @@ images:
     notes: >-
       Bakes immutable Apache-2.0 RoboCasa source at
       8f3c96ec8d1bfcd8126cad2bca887da98d30e997 and robosuite at its pinned
-      commit plus a uv-generated, hash-verified Python 3.12 linux/amd64 closure
-      on one digest-pinned CUDA 12.4 cuDNN development base. Ubuntu's system
-      FFmpeg replaces the imageio-ffmpeg wheel-bundled static executable, and
+      commit plus exact Apache-2.0 LeRobot v0.6.1 source at
+      7e241bd630a3719a56157a497ce5d08f244784f1. LeRobot is rebuilt as the
+      locally versioned 0.6.1+npa1 NPA ACT derivative; its reviewed patch changes
+      packaging metadata only so normal dependency resolution accepts the fixed
+      Torch 2.13, RoboCasa Gymnasium, and OpenCV closure. Other LeRobot policy
+      and training paths remain unqualified. The image uses a uv-generated,
+      hash-verified Python 3.12 linux/amd64 closure on one digest-pinned CUDA
+      12.4 cuDNN development base. Ubuntu's system FFmpeg replaces the
+      imageio-ffmpeg wheel-bundled static executable, and
       the unused Robosuite Omniverse rendering helper is excluded in the same
       dependency layer. Kitchen assets (textures, fixtures, objects) are NOT
       baked and download at run time under the operator's own network access.
