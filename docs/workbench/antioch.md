@@ -387,6 +387,19 @@ the reference's radian units before authoring; effective PhysX properties are
 read back after reset and saved in `policy_robot_dynamics`. Incorrect units or
 solver settings stop inference. Gravity compensation is scoped to the robot;
 the cube retains normal gravity and the same measured grasp/lift acceptance.
+The reference asset's master gripper drive is matched separately: 100 Nm/degree
+stiffness, 0.0002 Nm·s/degree damping, and a 16.5 Nm effort limit. Its effective
+radian-unit properties are checked alongside all seven arm drives.
+
+The installed Robotiq accessory also requires a physical mount correction:
+45 degrees of yaw and an 18.174 mm spacer relative to the native Panda hand.
+The reference and native arm chains are identical, but their default gripper
+attachments are not. Both the fixed joint and initial assembly transform are
+configured together. Physical flange-to-gripper poses are verified after reset
+and persisted in `policy_robot_dynamics.gripper_mount`; an incorrect mount stops
+inference. The pregrasp joint reset preserves the same physical starting pose.
+The `droid_reference` wrist calibration preserves the reference camera's side
+and optical axes when converting between the two gripper coordinate systems.
 
 ## Policy data contract
 

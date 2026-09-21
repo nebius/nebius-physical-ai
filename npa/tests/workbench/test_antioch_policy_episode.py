@@ -159,6 +159,65 @@ def test_droid_binds_observed_joints_by_name_and_excludes_passive_joints(modules
         robot.get_joint_positions()
 
 
+@pytest.mark.parametrize("offset,yaw", [((0, 0, 0.125174), 0),
+    ((0, 0, 0.107), 0), ((0, 0, 0.125174), -np.pi / 4),
+    ((0.01, 0, 0.125174), 0), ((0, np.nan, 0.125174), 0)])
+def test_droid_mount_readback_detects_spacer_and_yaw_mismatches(modules, offset, yaw):
+    from droid_scene import _verify_mount_poses
+
+    flange = (np.zeros(3), np.array([1, 0, 0, 0]))
+    gripper = (np.array(offset), np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]))
+    if offset == (0, 0, 0.125174) and yaw == 0:
+        result = _verify_mount_poses(flange, gripper)
+        assert result["verified"]
+        assert result["profile"] == "droid_native_mount_v1"
+    else:
+        with pytest.raises(RuntimeError, match="physical gripper mount"):
+            _verify_mount_poses(flange, gripper)
+
+
+def test_droid_mount_readback_uses_flange_coordinates_and_rejects_invalid_rotations(modules):
+    from droid_scene import _verify_mount_poses
+
+    # A 90-degree world Y rotation puts the flange's local Z along world X.
+    q = np.array([2**-0.5, 0, 2**-0.5, 0])
+    flange = (np.array([1, 2, 3]), q)
+    gripper = (np.array([1.125174, 2, 3]), -q)
+    result = _verify_mount_poses(flange, gripper)
+    np.testing.assert_allclose(result["base_in_flange_m"], [0, 0, .125174], atol=1e-12)
+    for invalid in (np.zeros(4), np.full(4, np.nan), np.ones(3)):
+        with pytest.raises(RuntimeError, match="invalid quaternion"):
+            _verify_mount_poses(flange, (gripper[0], invalid))
+
+
+@pytest.mark.parametrize("body0,body1", [([], []),
+    (["/World/OtherRobot/hand"], ["/World/OtherRobot/gripper"]),
+    (["/World/Franka/panda_hand"], ["/World/Cube"])])
+def test_droid_mount_authoring_rejects_unexpected_attachment(modules, monkeypatch, body0, body1):
+    from droid_scene import _configure_native_mount
+
+    joint = SimpleNamespace(GetBody0Rel=lambda: SimpleNamespace(GetTargets=lambda: body0),
+                            GetBody1Rel=lambda: SimpleNamespace(GetTargets=lambda: body1))
+    monkeypatch.setitem(sys.modules, "pxr", SimpleNamespace(Gf=None, Usd=None, UsdGeom=None,
+        UsdPhysics=SimpleNamespace(FixedJoint=lambda _prim: joint)))
+    with pytest.raises(RuntimeError, match="hand-to-Robotiq fixed joint"):
+        _configure_native_mount(SimpleNamespace(GetPrimAtPath=lambda _path: None))
+
+
+def test_reference_wrist_mount_preserves_reference_camera_side_and_axes(modules):
+    from droid_scene import camera_calibration
+
+    camera = camera_calibration("droid_reference")["wrist"]
+    # The actual CAD geometry maps reference (+X,+Y,+Z) to native (+Z,-Y,+X).
+    basis = np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]])
+    np.testing.assert_allclose(camera["position"], basis @ [.011, -.031, -.074])
+    w, x, y, z = np.array([-.420, .570, .576, -.409]) / np.linalg.norm([-.420, .570, .576, -.409])
+    reference_forward = np.array([-2*(x*z+y*w), -2*(y*z-x*w), -(1-2*(x*x+y*y))])
+    w, x, y, z = camera["quaternion_wxyz"]
+    native_forward = np.array([-2*(x*z+y*w), -2*(y*z-x*w), -(1-2*(x*x+y*y))])
+    np.testing.assert_allclose(native_forward, basis @ reference_forward, atol=1e-8)
+
+
 def test_droid_physics_converts_angular_units_and_scopes_gravity_to_robot(modules, monkeypatch):
     from droid_scene import MODEL_JOINT_NAMES, _configure_native_dynamics
 
@@ -193,16 +252,20 @@ def test_droid_physics_converts_angular_units_and_scopes_gravity_to_robot(module
     root = Prim("/World/Franka/root_joint", "root")
     bodies = [Prim(f"/World/Franka/link_{i}", "body") for i in range(9)]
     joints = [Prim(f"/World/Franka/joints/{name}", "joint") for name in MODEL_JOINT_NAMES]
+    passive = Prim("/World/Franka/joints/passive_finger", "joint", stiffness=0)
     cube = Prim("/World/Cube", "body", gravity_enabled=True)
     other = Prim("/World/FrankaOther/link", "body", gravity_enabled=True)
-    report = _configure_native_dynamics(SimpleNamespace(Traverse=lambda: [root, *bodies, *joints, cube, other]))
+    report = _configure_native_dynamics(SimpleNamespace(Traverse=lambda: [root, *bodies, *joints, passive, cube, other]))
     assert all(body.attributes["CreateDisableGravityAttr"] is True for body in bodies)
     assert cube.attributes == other.attributes == {"gravity_enabled": True}
+    assert passive.attributes == {"stiffness": 0}
     # Independently convert authored per-degree gains back to effective per-radian gains.
     for joint in joints[:7]:
         assert joint.attributes["CreateStiffnessAttr"] * 57.29577951308232 == pytest.approx(400)
         assert joint.attributes["CreateDampingAttr"] * 57.29577951308232 == pytest.approx(80)
-    assert "CreateStiffnessAttr" not in joints[-1].attributes
+    assert joints[-1].attributes["CreateStiffnessAttr"] == pytest.approx(100)
+    assert joints[-1].attributes["CreateDampingAttr"] == pytest.approx(.0002)
+    assert joints[-1].attributes["CreateMaxForceAttr"] == pytest.approx(16.5)
     assert joints[-1].attributes["CreateMaxJointVelocityAttr"] / 57.29577951308232 == pytest.approx(5)
     assert root.attributes["CreateSolverPositionIterationCountAttr"] == 64
     assert root.attributes["CreateSolverVelocityIterationCountAttr"] == 0
@@ -221,7 +284,7 @@ def test_droid_verifies_effective_controller_units_after_reset(modules, bad_fiel
     for index, name in enumerate(MODEL_JOINT_NAMES):
         properties[names.index(name)] = (400, 80, 2.175 if index < 4 else 2.61,
                                         87 if index < 4 else 12)
-    properties[names.index("finger_joint")] = (171.887, 0.01146, 5, 26)
+    properties[names.index("finger_joint")] = (100 * 57.29577951308232, .0002 * 57.29577951308232, 5, 16.5)
     if bad_field:
         properties[names.index("panda_joint3")][bad_field] = bad_value
     articulation = SimpleNamespace(dof_names=names, dof_properties=properties,
@@ -235,7 +298,18 @@ def test_droid_verifies_effective_controller_units_after_reset(modules, bad_fiel
     else:
         result = robot.verify_dynamics()
         assert result["verified"]
-        assert result["effective_joint_properties"]["stiffness"] == [400] * 7
+        assert result["effective_joint_properties"]["stiffness"][:7] == [400] * 7
+        assert result["effective_joint_properties"]["stiffness"][7] == pytest.approx(5729.577951)
+        properties[names.index("finger_joint")]["stiffness"] = 171.887
+        with pytest.raises(RuntimeError, match="stiffness"):
+            robot.verify_dynamics()
+        properties[names.index("finger_joint")]["stiffness"] = 100 * 57.29577951308232
+        robot.dynamics["gripper_mount"] = {"profile": "droid_native_mount_v1"}
+        with pytest.raises(RuntimeError, match="physical flange readback"):
+            robot.verify_dynamics()
+        robot.flange = SimpleNamespace(get_world_pose=lambda: (np.zeros(3), [1, 0, 0, 0]))
+        robot.end_effector = SimpleNamespace(get_world_pose=lambda: ([0, 0, .125174], [1, 0, 0, 0]))
+        assert robot.verify_dynamics()["gripper_mount"]["verified"]
         articulation.get_solver_position_iteration_count = lambda: 32
         with pytest.raises(RuntimeError, match="solver"):
             robot.verify_dynamics()

@@ -102,9 +102,20 @@ limits. Angular gains are converted when authored in USD because USD uses degree
 the effective PhysX gains and limits are independently read back after reset and
 persisted as `policy_robot_dynamics`. A mismatch stops execution before inference.
 Gravity compensation applies only to the robot links. The cube retains normal
-gravity, and native gripper drive gains, contact checks, and lift thresholds remain
-unchanged. Replaying saved targets diagnoses mechanics but never counts as a new
+gravity, and contact checks and lift thresholds remain unchanged. The master
+gripper drive uses the reference asset's 100 Nm/degree stiffness, 0.0002
+Nm·s/degree damping, and 16.5 Nm effort limit, also checked in effective radian
+units after reset. Replaying saved targets diagnoses mechanics but never counts as a new
 policy pickup.
+The native Robotiq fixed attachment is rotated 45 degrees and extended by
+18.174 mm to match the reference finger geometry relative to arm joint 7.
+The assembly's initial pose and fixed joint agree, and physical body readback
+rejects a wrong flange-to-gripper offset or orientation before policy inference.
+This proof is retained in `policy_robot_dynamics.gripper_mount`. The pregrasp
+joint reset is recalibrated to preserve the original physical starting pose;
+it does not move the fingers closer to the cube. The reference wrist camera
+converts the CAD axes as `(+X,+Y,+Z) → (+Z,-Y,+X)`, preserving its physical side
+of the fingers as well as its viewing direction.
 Both cameras must initially contain the target and grasp region geometrically,
 and both must visibly resolve the red target before inference.
 

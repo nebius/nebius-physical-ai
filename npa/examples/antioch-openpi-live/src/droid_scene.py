@@ -18,17 +18,23 @@ GRIPPER_CLOSED_ANGLE = math.pi / 4
 # It defines a controlled pickup initial condition, not a controller or trajectory.
 # The open fingers remain approximately 18 cm above the cube center.
 PREGRASP_RESET_JOINTS = (
-    -0.05077540868198145, -0.05783148862296681, 0.05077240484677532,
-    -2.4232019767783046, 0.004187295087195224, 2.3654402068531453,
-    0.7823222921618791,
+    -0.05095593945063183, -0.0895889309568556, 0.05077240484677532,
+    -2.4059685385594194, 0.006180800038750362, 2.3164848021835893,
+    -0.004580619403992225,
 )
 GRIPPER_ROOT = "/World/Franka/Robotiq_2F_85_edit/Robotiq_2F_85"
 GRIPPER_BASE = f"{GRIPPER_ROOT}/base_link"
+GRIPPER_FLANGE = "/World/Franka/panda_link7"
+GRIPPER_MOUNT_OFFSET_METERS = 0.018174
+GRIPPER_BASE_IN_FLANGE_METERS = (0.0, 0.0, 0.125174)
 CONTACT_BODIES = tuple(f"{GRIPPER_ROOT}/{side}_inner_finger" for side in ("left", "right"))
 CAMERA_PATHS = {"exterior": "/World/ExteriorDroid", "wrist": f"{GRIPPER_BASE}/wrist_cam"}
 NATIVE_POLICY_RESOLUTION = (180, 320)
 ARM_STIFFNESS_NM_PER_RAD = 400.0
 ARM_DAMPING_NM_S_PER_RAD = 80.0
+GRIPPER_STIFFNESS_NM_PER_RAD = math.degrees(100.0)
+GRIPPER_DAMPING_NM_S_PER_RAD = math.degrees(0.0002)
+GRIPPER_EFFORT_LIMIT_NM = 16.5
 ARM_EFFORT_LIMITS_NM = (87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0)
 JOINT_VELOCITY_LIMITS_RAD_S = (2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61, 5.0)
 CAMERA_CALIBRATION = {
@@ -57,10 +63,11 @@ DROID_REFERENCE_CALIBRATION = {
         "focal_length": 2.1,
     },
     "wrist": {
-        # Convert the reference mount into the native accessory's +Z tool basis.
-        # This is the previously rendered reference mount, not object tracking.
-        "position": (0.074, -0.031, 0.011),
-        "quaternion_wxyz": (0.110288973, 0.692134004, 0.704152674, 0.113823876),
+        # Reference +X is native +Z, reference +Y is native -Y, and reference
+        # +Z is native +X. Preserve the camera's physical side of the fingers.
+        "position": (-0.074, 0.031, 0.011),
+        "quaternion_wxyz": (-0.113823876022183, -0.7041526740254301,
+                             0.6921340038864418, 0.11028897304012761),
         "focal_length": 2.8,
     },
 }
@@ -107,10 +114,11 @@ def joint_indices(names):
 class DroidRobot:
     """Expose measured policy joints while PhysX owns the passive finger joints."""
 
-    def __init__(self, articulation, end_effector, dynamics=None):
+    def __init__(self, articulation, end_effector, dynamics=None, flange=None):
         self.articulation = articulation
         self.end_effector = end_effector
         self.dynamics = dynamics
+        self.flange = flange
 
     def verify_dynamics(self):
         """Read effective PhysX units after reset and reject incompatible drives."""
@@ -121,9 +129,9 @@ class DroidRobot:
         indices = np.asarray(joint_indices(self.articulation.dof_names))
         properties = self.articulation.dof_properties[indices]
         expected = {
-            "stiffness": np.full(7, ARM_STIFFNESS_NM_PER_RAD),
-            "damping": np.full(7, ARM_DAMPING_NM_S_PER_RAD),
-            "maxEffort": np.asarray(ARM_EFFORT_LIMITS_NM),
+            "stiffness": np.asarray([ARM_STIFFNESS_NM_PER_RAD] * 7 + [GRIPPER_STIFFNESS_NM_PER_RAD]),
+            "damping": np.asarray([ARM_DAMPING_NM_S_PER_RAD] * 7 + [GRIPPER_DAMPING_NM_S_PER_RAD]),
+            "maxEffort": np.asarray([*ARM_EFFORT_LIMITS_NM, GRIPPER_EFFORT_LIMIT_NM]),
             "maxVelocity": np.asarray(JOINT_VELOCITY_LIMITS_RAD_S),
         }
         actual = {}
@@ -136,7 +144,13 @@ class DroidRobot:
                 or self.articulation.get_solver_velocity_iteration_count() != 0
                 or self.articulation.get_enabled_self_collisions()):
             raise RuntimeError("DROID effective solver settings differ from reference physics")
-        return {**self.dynamics, "effective_joint_properties": actual, "verified": True}
+        mount = {}
+        if "gripper_mount" in self.dynamics:
+            if self.flange is None:
+                raise RuntimeError("DROID gripper mount requires physical flange readback")
+            mount = {"gripper_mount": _verify_mount_poses(
+                self.flange.get_world_pose(), self.end_effector.get_world_pose())}
+        return {**self.dynamics, **mount, "effective_joint_properties": actual, "verified": True}
 
     def get_joint_positions(self):
         import numpy as np
@@ -185,10 +199,77 @@ def create_robot(world):
         raise RuntimeError("Installed Franka asset lacks the DROID gripper variant")
     if not variants.SetVariantSelection("Robotiq_2F_85"):
         raise RuntimeError("Could not select the DROID gripper variant")
+    mount = _configure_native_mount(world.stage)
     dynamics = _configure_native_dynamics(world.stage)
+    dynamics["gripper_mount"] = mount
     articulation = world.scene.add(SingleArticulation(prim_path="/World/Franka", name="franka"))
     end_effector = world.scene.add(SingleRigidPrim(prim_path=GRIPPER_BASE, name="droid_end_effector"))
-    return DroidRobot(articulation, end_effector, dynamics)
+    flange = world.scene.add(SingleRigidPrim(prim_path=GRIPPER_FLANGE, name="droid_flange"))
+    return DroidRobot(articulation, end_effector, dynamics, flange)
+
+
+def _configure_native_mount(stage):
+    """Match reference finger geometry without redistributing its robot asset.
+
+    The installed accessory inherits the Panda hand's -45 degree yaw and has
+    no spacer. DROID's equivalent native gripper basis aligns with link7 and
+    includes an 18.174 mm spacer. Correct the fixed joint and initial assembly
+    transform together so the physics reset starts from a consistent pose.
+    """
+    from pxr import Gf, Usd, UsdGeom, UsdPhysics
+
+    joint = UsdPhysics.FixedJoint(stage.GetPrimAtPath(f"{GRIPPER_BASE}/AssemblerFixedJoint"))
+    if (not joint or list(map(str, joint.GetBody0Rel().GetTargets())) != ["/World/Franka/panda_hand"]
+            or list(map(str, joint.GetBody1Rel().GetTargets())) != [GRIPPER_BASE]):
+        raise RuntimeError("DROID requires the native hand-to-Robotiq fixed joint")
+    def transform(path):
+        return UsdGeom.Xformable(stage.GetPrimAtPath(path)).ComputeLocalToWorldTransform(
+            Usd.TimeCode.Default())
+
+    hand = transform("/World/Franka/panda_hand")
+    base = transform(GRIPPER_BASE)
+    assembly = stage.GetPrimAtPath(GRIPPER_ROOT)
+    rotation = Gf.Quatd(math.cos(math.pi / 8), Gf.Vec3d(0, 0, math.sin(math.pi / 8)))
+    delta = Gf.Matrix4d().SetRotate(rotation)
+    delta.SetTranslateOnly(Gf.Vec3d(0, 0, GRIPPER_MOUNT_OFFSET_METERS))
+    wanted = delta * hand
+    local = transform(GRIPPER_ROOT) * base.GetInverse() * wanted * transform(
+        str(assembly.GetParent().GetPath())).GetInverse()
+    xform = UsdGeom.Xformable(assembly)
+    xform.ClearXformOpOrder()
+    xform.AddTransformOp().Set(local)
+    joint.CreateLocalPos0Attr(Gf.Vec3f(0, 0, GRIPPER_MOUNT_OFFSET_METERS))
+    joint.CreateLocalRot0Attr(Gf.Quatf(rotation))
+    joint.CreateLocalPos1Attr(Gf.Vec3f(0, 0, 0))
+    joint.CreateLocalRot1Attr(Gf.Quatf(1, 0, 0, 0))
+    return {"profile": "droid_native_mount_v1", "assembly_yaw_degrees": 45.0,
+            "assembly_spacer_m": GRIPPER_MOUNT_OFFSET_METERS}
+
+
+def _verify_mount_poses(flange_pose, gripper_pose):
+    """Reject a model embodiment mismatch using the two physical body poses."""
+    import numpy as np
+
+    def rotation(q):
+        q = np.asarray(q, dtype=float)
+        if q.shape != (4,) or not np.isfinite(q).all() or np.linalg.norm(q) < 1e-9:
+            raise RuntimeError("DROID mount readback has an invalid quaternion")
+        w, x, y, z = q / np.linalg.norm(q)
+        return np.array([[1 - 2 * (y*y + z*z), 2 * (x*y - z*w), 2 * (x*z + y*w)],
+                         [2 * (x*y + z*w), 1 - 2 * (x*x + z*z), 2 * (y*z - x*w)],
+                         [2 * (x*z - y*w), 2 * (y*z + x*w), 1 - 2 * (x*x + y*y)]])
+
+    flange_position, flange_q = flange_pose
+    gripper_position, gripper_q = gripper_pose
+    frame = rotation(flange_q)
+    offset = frame.T @ (np.asarray(gripper_position) - np.asarray(flange_position))
+    orientation = frame.T @ rotation(gripper_q)
+    if (offset.shape != (3,) or not np.isfinite(offset).all()
+            or not np.allclose(offset, GRIPPER_BASE_IN_FLANGE_METERS, atol=1e-4, rtol=0)
+            or not np.allclose(orientation, np.eye(3), atol=1e-4, rtol=0)):
+        raise RuntimeError("DROID physical gripper mount differs from reference embodiment")
+    return {"profile": "droid_native_mount_v1", "verified": True,
+            "base_in_flange_m": offset.tolist(), "axes_in_flange": orientation.tolist()}
 
 
 def _configure_native_dynamics(stage):
@@ -220,17 +301,19 @@ def _configure_native_dynamics(stage):
         prim = matches[0]
         PhysxSchema.PhysxJointAPI.Apply(prim).CreateMaxJointVelocityAttr(
             math.degrees(JOINT_VELOCITY_LIMITS_RAD_S[index]))
-        if index < len(ARM_JOINT_NAMES):
-            drive = UsdPhysics.DriveAPI.Apply(prim, "angular")
-            drive.CreateStiffnessAttr(math.radians(ARM_STIFFNESS_NM_PER_RAD))
-            drive.CreateDampingAttr(math.radians(ARM_DAMPING_NM_S_PER_RAD))
-            drive.CreateMaxForceAttr(ARM_EFFORT_LIMITS_NM[index])
-            drive.CreateTypeAttr("force")
+        arm = index < len(ARM_JOINT_NAMES)
+        drive = UsdPhysics.DriveAPI.Apply(prim, "angular")
+        drive.CreateStiffnessAttr(math.radians(
+            ARM_STIFFNESS_NM_PER_RAD if arm else GRIPPER_STIFFNESS_NM_PER_RAD))
+        drive.CreateDampingAttr(math.radians(
+            ARM_DAMPING_NM_S_PER_RAD if arm else GRIPPER_DAMPING_NM_S_PER_RAD))
+        drive.CreateMaxForceAttr(ARM_EFFORT_LIMITS_NM[index] if arm else GRIPPER_EFFORT_LIMIT_NM)
+        drive.CreateTypeAttr("force")
     return {"profile": "robolab_droid_jointpos_v1", "robot_gravity_compensation": True,
             "gravity_compensated_robot_links": len(bodies),
             "solver_position_iterations": 64, "solver_velocity_iterations": 0,
             "self_collisions": False, "angular_drive_authoring_units": "degrees",
-            "effective_joint_units": "radians", "gripper_drive_gains": "native_asset"}
+            "effective_joint_units": "radians", "gripper_drive_gains": "reference_asset"}
 
 
 def optical_config(view, mounts="native_wide"):
