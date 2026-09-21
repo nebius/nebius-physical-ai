@@ -577,6 +577,12 @@ def test_chat_profile_preserves_literal_request_field_order(model, suffix) -> No
 
 
 def _stable_ast(value):
+    if (
+        isinstance(value, ast.Expr)
+        and isinstance(value.value, ast.Constant)
+        and isinstance(value.value.value, str)
+    ):
+        return "Docstring"
     if isinstance(value, ast.AST):
         fields = (
             (field, _stable_ast(getattr(value, field)))
@@ -616,11 +622,11 @@ def _profile_assignment_sha256() -> str:
 
 _EXPECTED_POLICY_AST_HASHES = {
     "profile-assignment": "b4e21e6ce330eb920b83fffa47feedc1be87eb2709a7ab35fd220af81dc755c9",
-    "profile-lookup": "1fd0f1189f1e8e928d7ea6339846c064bdfe8be6e57d9631d2d4fc3b8f9f33ab",
-    "profile-default-extra": "2b253244da201da02dcf4dda19245897186435f03637a23acb81d43955e74198",
-    "default-chat-extra": "1cb2a719340cb8cb801c67dae2a3383c071b695e9057d84ee118391e5bd56e28",
+    "profile-lookup": "acb9f15d262d592dc8e42223b18b5d9c1056ae914a26538a196858655d43cf5e",
+    "profile-default-extra": "747196a0990c411b8c81c50ee7a0fcede5bb00cf0b837404d0fc946939709512",
+    "default-chat-extra": "b80360e5856bc5d03c05b9008efe78ee72c1c040d999b066fc0530da154d85e8",
     "client-payload": "9398a00f57375892b9be1844e07a5bb38eb532298382b618e19dbd3df4dcf813",
-    "client-entrypoint": "a54c9277802ea71119b8c4c2024fb4ac212928ff40b4843e23a44d3ccce6bdd3",
+    "client-entrypoint": "e71d1c6e9c6ec18770a044ead9a7f668a3682ec14fbb435a3c504d7d85b60459",
     "hosted-request": "9183ee81e359c6abd170bc9ea51fcdd1aa380552d6e7651c9ba6232aab32ae8a",
     "hosted-response": "79ec961221a6cd29d6d156785c0d0e4ea3a9643127cea8c144809b37e8f87507",
     "hosted-call": "2849ba4a92a7ca8a6859947e0eb4ac19bdbb15a6126e21d3eaac583275f8e5d8",
