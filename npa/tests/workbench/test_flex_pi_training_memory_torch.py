@@ -6,7 +6,9 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-fixture_indices = import_module("npa.workbench.flex_pi.training_fixture").fixture_indices
+fixture_indices = import_module(
+    "npa.workbench.flex_pi.training_fixture"
+).fixture_indices
 memory = import_module("npa.workbench.flex_pi.training_memory")
 execution_without_memory_fill = memory.execution_without_memory_fill
 memory_fill_receipt = memory.memory_fill_receipt
