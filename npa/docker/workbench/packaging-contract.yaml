@@ -318,12 +318,15 @@ images:
       its own component-specific license rather than any single family: the
       Python dependency closure includes MPL-2.0 distributions, certifi among
       them, and the Debian base carries the ordinary distribution package set,
-      which includes GPL, LGPL, and Artistic licensed packages. Each component
-      ships its own notice in the image, Python distributions through their
-      dist-info license files and OS packages at
-      /usr/share/doc/<package>/copyright, and the exact per-component inventory
-      is retained with the image scan. That records what is present and where
-      its notices are; it is not an exhaustive license certification. No model
+      which includes GPL, LGPL, and Artistic licensed packages. Notices reach
+      the image from more than one place: Python distributions that carry a
+      dist-info license file provide their own, OS packages provide theirs at
+      /usr/share/doc/<package>/copyright, and where an upstream ships no notice
+      the grant is supplied explicitly, as mcap's MIT grant is at
+      /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt. The exact
+      per-component inventory is retained with the image scan. That records what
+      is present and where its notices are; it is not an exhaustive license
+      certification. No model
       weights, datasets, credentials, or accepted terms are present. The upstream
       open3d.data demo scans are a run-time download into the runtime user's
       cache, not a baked payload. plotly and dash (and dash's Flask/Werkzeug
