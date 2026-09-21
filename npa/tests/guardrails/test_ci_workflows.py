@@ -11,6 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -113,7 +114,8 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
 
     smoke = workflow["jobs"]["pr-smoke"]
     assert smoke["if"] == (
-        "github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'"
+        "needs.scope.outputs.prose_only == 'true' && "
+        "needs.scope.outputs.full_suite == 'false'"
     )
     commands = "\n".join(step.get("run", "") for step in smoke["steps"])
     assert "npa/tests/smoke" in commands
@@ -176,13 +178,46 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
     coverage = workflow["jobs"]["coverage"]
     assert coverage["needs"] == ["scope", "test"]
     assert coverage["if"] == (
-        "${{ always() && needs.scope.outputs.full_suite != 'false' }}"
+        "${{ !cancelled() && needs.scope.outputs.full_suite != 'false' "
+        "&& needs.test.result == 'success' }}"
     )
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
     assert "--fail-under=60" in report
     profile = _step("test.yml", "coverage", "Merge Python 3.12 duration")["run"]
     assert "merge_ci_test_timings.py" in profile
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_required_gate_rejects_unsuccessful_children(result: str) -> None:
+    """Execute the aggregate check with each unsuccessful child result.
+
+    Args:
+        result: Unsuccessful or missing dependency conclusion.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A required dependency can fail without rejecting the merge.
+    """
+    gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
+    assert gate["if"] == "${{ always() }}"
+    step = gate["steps"][0]
+    for event in ("pull_request", "merge_group"):
+        environment = {name: "success" for name in step["env"]}
+        environment["EVENT_NAME"] = event
+        for name in environment.keys() - {"EVENT_NAME"}:
+            rejected = subprocess.run(
+                ["bash", "-c", step["run"]],
+                env={**os.environ, **environment, name: result},
+                capture_output=True,
+            )
+            assert rejected.returncode != 0, (event, name, result)
+        accepted = subprocess.run(
+            ["bash", "-c", step["run"]],
+            env={**os.environ, **environment},
+            capture_output=True,
+        )
+        assert accepted.returncode == 0
 
 
 def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> None:
@@ -196,7 +231,7 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
         AssertionError: A test environment loses dependency pins or CPU routing.
     """
     jobs = _load_workflow("test.yml")["jobs"]
-    for name in ("test", "affected-tests", "pr-smoke", "browser-mocked"):
+    for name in ("test", "pr-smoke", "browser-mocked"):
         setup = next(
             step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", "")
         )
@@ -211,12 +246,9 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
         assert installs and all(
             "-c npa/ci/requirements.txt" in command for command in installs
         )
-    for name in ("test", "affected-tests"):
-        command = _step(
-            "test.yml", name, "CPU checkpoint" if name == "test" else "Install affected"
-        )["run"]
-        assert "--torch-backend cpu" in command
-        assert "assert torch.version.cuda is None" in command
+    command = _step("test.yml", "test", "CPU checkpoint")["run"]
+    assert "--torch-backend cpu" in command
+    assert "assert torch.version.cuda is None" in command
     assert (
         "ci_requirements.py --check"
         in _step("test.yml", "scope", "dependency pins")["run"]
@@ -311,28 +343,27 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
         assert "if" not in parent["jobs"][job]
 
 
-def test_affected_tests_fail_the_candidate_and_use_json_arguments() -> None:
-    """Require selected PR tests without treating repository paths as shell code.
+def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:
+    """Require the same interpreter checks on PRs and merge candidates.
 
     Args:
         None.
     Returns:
         None.
     Raises:
-        AssertionError: Affected tests become optional or bypass subprocess checking.
+        AssertionError: Compatibility setup or tests bypass PR admission.
     """
-    job = _load_workflow("test.yml")["jobs"]["affected-tests"]
-    assert job["needs"] == "scope"
-    assert job["if"] == (
-        "github.event_name == 'pull_request' && needs.scope.outputs.full_suite == 'false' "
-        "&& needs.scope.outputs.test_paths != '[]'"
-    )
-    assert "continue-on-error" not in job
-    step = job["steps"][-1]
-    assert step["env"]["TEST_PATHS"] == "${{ needs.scope.outputs.test_paths }}"
-    assert "${{" not in step["run"]
-    assert "check=True" in step["run"]
-    assert '"-n", "auto"' in step["run"]
+    jobs = _load_workflow("test.yml")["jobs"]
+    assert "affected-tests" not in jobs
+    steps = jobs["browser-mocked"]["steps"]
+    for version in ("3.10", "3.14"):
+        compatibility = [
+            step for step in steps if f"Python {version} compatibility" in step["name"]
+        ]
+        assert len(compatibility) == 3
+        for step in compatibility:
+            assert "if" not in step
+            assert "continue-on-error" not in step
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -416,6 +447,7 @@ def test_guardrail_gate_matches_the_make_target() -> None:
 
     assert "tests/guardrails" in ci_guardrails
     assert "tests/guardrails" in make_guardrails
+    assert "-n auto --dist worksteal" in ci_guardrails
 
 
 def _npa_bin_chosen_by_docs_target(python: str) -> str:

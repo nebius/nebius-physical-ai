@@ -134,6 +134,31 @@ def test_default_selection_is_pinned_real_starter() -> None:
     assert result.config_overrides()["seed_fixture"] == "false"
 
 
+def test_nvidia_vda_plan_uses_its_workflow_specific_artifact_prefix() -> None:
+    result = dfi.plan_paidf_input(
+        run_id="paidf-one",
+        bucket="bucket",
+        artifact_prefix="nvidia-paidf-vda-cosmos-transfer25/paidf-one",
+        conditioning_policy=dfi.SOURCE_FIDELITY_CONDITIONING_POLICY,
+    )
+
+    assert result.provenance["staged_canonical_s3_uri"] == (
+        "s3://bucket/nvidia-paidf-vda-cosmos-transfer25/paidf-one/input/"
+    )
+    assert result.provenance["provenance_uri"].endswith("/input/provenance.json")
+    assert result.provenance["derivation"]["policy"] == "source-fidelity-v3"
+
+
+@pytest.mark.parametrize(
+    "prefix", ["../escape", "nested//empty", "s3://bucket/key", "nested\\escape"]
+)
+def test_custom_artifact_prefix_rejects_unsafe_object_keys(prefix: str) -> None:
+    with pytest.raises(dfi.PaidfInputError, match="safe relative"):
+        dfi.plan_paidf_input(
+            run_id="paidf-one", bucket="bucket", artifact_prefix=prefix
+        )
+
+
 @pytest.mark.parametrize(
     ("video", "uri", "fixture"),
     [
@@ -833,6 +858,10 @@ def _ffprobe_payload(**stream_overrides) -> str:
         "pix_fmt": "yuv420p",
         "avg_frame_rate": "16/1",
         "nb_frames": "93",
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
     }
     stream.update(stream_overrides)
     return json.dumps(
@@ -858,6 +887,241 @@ def test_real_probe_parser_derives_missing_frame_count_from_valid_bounded_fields
 
     assert media["frame_count"] == 93
     assert media["frame_rate"] == "16/1"
+    assert media["color_range"] == "tv"
+    assert media["color_space"] == "bt709"
+    assert media["color_transfer"] == "bt709"
+    assert media["color_primaries"] == "bt709"
+
+
+def test_source_fidelity_conditioning_preserves_channels_timeline_and_shape(
+    tmp_path: Path,
+) -> None:
+    if dfi.shutil.which("ffmpeg") is None or dfi.shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg and ffprobe are required for media regression coverage")
+
+    import av
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    frames = tmp_path / "source-frames"
+    frames.mkdir()
+    source_count = 169
+    for index in range(source_count):
+        image = Image.new("RGB", (320, 240))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 105, 239), fill=(230, 10, 10))
+        draw.rectangle((106, 0, 212, 239), fill=(10, 230, 10))
+        draw.rectangle((213, 0, 319, 239), fill=(10, 10, 230))
+        marker_x = round(index * 319 / (source_count - 1))
+        draw.rectangle((marker_x - 2, 96, marker_x + 2, 144), fill=(255, 255, 255))
+        image.save(frames / f"frame-{index:04d}.png")
+
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-framerate",
+            "50",
+            "-i",
+            str(frames / "frame-%04d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuvj420p",
+            "-color_range",
+            "pc",
+            "-colorspace",
+            "smpte170m",
+            "-color_primaries",
+            "smpte170m",
+            "-color_trc",
+            "smpte170m",
+            str(source),
+        ],
+        check=True,
+    )
+    source_media = dfi.probe_video(source)
+    source_timestamps = dfi._decoded_video_timestamps(source, source_media)
+    output = tmp_path / "conditioning.mp4"
+    contract = dfi._derive_source_fidelity_conditioning(
+        source, output, source_media, source_timestamps
+    )
+    output_media = dfi.probe_video(output)
+
+    assert "-stream_loop" not in contract["arguments"]
+    assert output_media["frame_count"] == dfi.CONDITIONING_FRAME_COUNT
+    assert output_media["frame_rate"] == "16/1"
+    assert output_media["duration_seconds"] == pytest.approx(93 / 16, abs=0.002)
+    assert output_media["width"] == 1280 and output_media["height"] == 720
+    assert output_media["pixel_format"] == "yuv420p"
+    assert {
+        key: output_media[key]
+        for key in ("color_range", "color_space", "color_transfer", "color_primaries")
+    } == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
+
+    with av.open(str(output)) as container:
+        decoded = list(container.decode(video=0))
+    assert [float(frame.time) for frame in decoded] == pytest.approx(
+        [index / 16 for index in range(93)], abs=1e-9
+    )
+    arrays = [frame.to_ndarray(format="rgb24") for frame in decoded]
+
+    # 4:3 content is letterboxed into 16:9 without cropping either source edge.
+    middle = arrays[46]
+    assert np.asarray(middle[:, :140]).mean() < 5
+    assert np.asarray(middle[:, 1140:]).mean() < 5
+    assert middle[360, 180, 0] > 150
+    assert middle[360, 1100, 2] > 150
+
+    # Primary channels remain in RGB order after full-range SD -> limited BT.709.
+    mean_frame = np.mean(np.stack(arrays), axis=0)
+    red = mean_frame[200:300, 250:350].mean(axis=(0, 1))
+    green = mean_frame[200:300, 590:690].mean(axis=(0, 1))
+    blue = mean_frame[200:300, 930:1030].mean(axis=(0, 1))
+    assert red[0] > max(red[1], red[2]) * 4
+    assert green[1] > max(green[0], green[2]) * 4
+    assert blue[2] > max(blue[0], blue[1]) * 4
+
+    # The moving marker traverses the source exactly once; it never wraps/repeats.
+    marker_positions = []
+    for frame in arrays:
+        row = frame[360]
+        white = np.flatnonzero(np.min(row, axis=1) > 210)
+        marker_positions.append(float(np.median(white)))
+    assert marker_positions[0] == pytest.approx(160, abs=12)
+    assert marker_positions[46] == pytest.approx(640, abs=12)
+    assert marker_positions[-1] == pytest.approx(1119, abs=12)
+    assert all(
+        right >= left - 4 for left, right in zip(marker_positions, marker_positions[1:])
+    )
+
+    aligned = tmp_path / "aligned"
+    aligned.mkdir()
+    extracted = dfi._extract_aligned_conditioning_frames(output, aligned)
+    assert len(extracted) == dfi.CONDITIONING_FRAMES
+    assert dfi._aligned_conditioning_frame_indices() == [0, 13, 26, 39, 53, 66, 79, 92]
+    alignment = dfi._source_fidelity_alignment(source_media, source_timestamps)
+    assert alignment["loop_count"] == 0
+    assert alignment["frame_map"][0]["source_index"] == 0
+    assert alignment["frame_map"][-1]["source_index"] == 168
+    inferred_source_indices = [
+        round((position - 160) * (source_count - 1) / 959)
+        for position in marker_positions
+    ]
+    expected_source_indices = [item["source_index"] for item in alignment["frame_map"]]
+    assert (
+        max(
+            abs(observed - expected)
+            for observed, expected in zip(
+                inferred_source_indices, expected_source_indices
+            )
+        )
+        <= 1
+    )
+
+
+def test_source_fidelity_alignment_uses_decoded_vfr_timestamps() -> None:
+    media = {"frame_count": 5, "frame_rate": "30/1"}
+    timestamps = [0.0, 0.02, 0.05, 0.4, 1.0]
+
+    alignment = dfi._source_fidelity_alignment(media, timestamps)
+
+    assert alignment["method"] == (
+        "single-pass-endpoint-aligned-fps-round-near-decoded-pts"
+    )
+    assert alignment["frame_map"][0]["source_index"] == 0
+    assert alignment["frame_map"][46]["source_index"] == 3
+    assert alignment["frame_map"][-1]["source_index"] == 4
+    assert dfi._source_fidelity_time_scale(timestamps) == pytest.approx(5.75)
+
+
+def test_source_fidelity_v2_contract_remains_resume_compatible() -> None:
+    media = {
+        "frame_count": 169,
+        "frame_rate": "50/1",
+        "color_range": "pc",
+        "color_space": "bt470bg",
+    }
+
+    arguments = dfi._source_fidelity_v2_conditioning_arguments(media)
+    alignment = dfi._source_fidelity_v2_alignment(media)
+
+    assert arguments[3] == (
+        "setpts=(PTS-STARTPTS)*1.71130952380952,"
+        "fps=16:round=near:start_time=0,"
+        "scale=1280:720:force_original_aspect_ratio=decrease:"
+        "in_range=pc:in_color_matrix=bt470bg:out_range=tv:out_color_matrix=bt709,"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black"
+    )
+    assert alignment["method"] == "single-pass-endpoint-aligned-nearest-frame"
+    assert [alignment["frame_map"][index]["source_index"] for index in (0, 46, 92)] == [
+        0,
+        84,
+        168,
+    ]
+    assert dfi._conditioning_policy("source-fidelity-v2") == "source-fidelity-v2"
+    assert dfi._conditioning_policy("source-fidelity-v3") == "source-fidelity-v3"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "color_space": "bt2020nc",
+            "color_transfer": "smpte2084",
+            "color_primaries": "bt2020",
+        },
+        {
+            "color_space": "bt2020nc",
+            "color_transfer": "arib-std-b67",
+            "color_primaries": "bt2020",
+        },
+    ],
+)
+def test_source_fidelity_rejects_hdr_instead_of_retagging(overrides: dict) -> None:
+    media = {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        **overrides,
+    }
+
+    with pytest.raises(dfi.PaidfInputError, match="does not silently retag HDR"):
+        dfi._source_color_filter(media)
+
+
+def test_source_fidelity_records_bounded_sdr_color_tag_inference() -> None:
+    conversion = dfi._source_color_conversion(
+        {
+            "color_range": "pc",
+            "color_space": "bt470bg",
+            "color_transfer": "unknown",
+            "color_primaries": "unknown",
+        }
+    )
+
+    assert conversion["inferred_fields"] == ["color_transfer", "color_primaries"]
+    assert conversion["resolved_input"] == {
+        "color_range": "pc",
+        "color_space": "bt470bg",
+        "color_transfer": "bt470bg",
+        "color_primaries": "bt470bg",
+    }
+    assert conversion["output"] == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
 
 
 @pytest.mark.parametrize(
