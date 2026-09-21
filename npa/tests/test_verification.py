@@ -279,7 +279,7 @@ def test_display_failure_redactor_handles_dense_same_line_assignments() -> None:
 
 
 def test_assignment_redactor_never_scans_back_to_line_start_per_match() -> None:
-    from npa.verification import _redact_secret_assignments
+    from npa.diagnostic_redaction import _redact_secret_assignments
 
     class NoBackwardScan(str):
         def rfind(self, *_args: object, **_kwargs: object) -> int:
@@ -428,3 +428,186 @@ def test_display_failure_redactor_does_not_treat_next_line_as_secret_value() -> 
     message = "missing token:\n  run npa workbench health preflight"
 
     assert redact_failure_text(message, secrets=()) == message
+
+
+@pytest.mark.parametrize(
+    ("message", "secret"),
+    [
+        ("Bearer SYNTHETIC-OPAQUE-CREDENTIAL", "SYNTHETIC-OPAQUE-CREDENTIAL"),
+        (
+            "https://synthetic-user:synthetic-password@provider.invalid/path",
+            "synthetic-password",
+        ),
+        (
+            "s3://bucket/key?X-Amz-Signature=synthetic-signature",
+            "synthetic-signature",
+        ),
+        (
+            "-----BEGIN PRIVATE KEY-----\nsynthetic-key\n-----END PRIVATE KEY-----",
+            "synthetic-key",
+        ),
+        ("AKIAABCDEFGHIJKLMNOP", "AKIAABCDEFGHIJKLMNOP"),
+    ],
+)
+def test_workflow_state_redactor_covers_unstructured_credential_formats(
+    message: str,
+    secret: str,
+) -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    assert secret not in redact_text(message)
+
+
+@pytest.mark.parametrize(
+    ("key", "separator"),
+    [
+        ("X-Amz-Signature", "="),
+        ("x_amz_signature", "="),
+        ('"X-Amz-Signature"', ": "),
+        ("'x_amz_signature'", ":"),
+    ],
+)
+def test_workflow_state_redactor_covers_standalone_aws_signatures(
+    key: str,
+    separator: str,
+) -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    secret = "synthetic-aws-signature"
+    message = f'provider {key}{separator}"{secret}" retry safely'
+    sanitized = redact_text(message)
+
+    assert secret not in sanitized
+    assert sanitized == f'provider {key}{separator}"<redacted>" retry safely'
+
+
+def test_workflow_state_redactor_preserves_noncredential_signatures() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = "request_signature=sha256:synthetic-digest retry safely"
+
+    assert redact_text(message) == message
+
+
+def test_workflow_state_redactor_preserves_nonsecret_diagnostics() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = (
+        "retry: npa workbench workflow status synthetic-run\n"
+        "endpoint=https://provider.invalid/path\n"
+        "state score-rollouts: unknown config token: config.does_not_exist"
+    )
+
+    assert redact_text(message) == message
+
+
+def test_workflow_state_redactor_is_idempotent_and_preserves_lines() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    opaque = "synthetic-exact-opaque-secret"
+    message = (
+        "provider rejected Bearer SYNTHETIC-BEARER\n"
+        "-----BEGIN PRIVATE KEY-----\n"
+        "synthetic-key\n"
+        "-----END PRIVATE KEY-----\n"
+        "retry: npa workbench health preflight\n"
+        f"opaque={opaque}"
+    )
+
+    sanitized = redact_text(message, secrets=(opaque,))
+
+    assert sanitized.count("\n") == message.count("\n")
+    assert "retry: npa workbench health preflight" in sanitized
+    assert redact_text(sanitized, secrets=(opaque,)) == sanitized
+    assert all(
+        secret not in sanitized
+        for secret in ("SYNTHETIC-BEARER", "synthetic-key", opaque)
+    )
+
+
+def test_workflow_state_redactor_preserves_same_line_recovery_context() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = 'ERROR auth failed: token="synthetic-secret" (http 401) retry in 30s'
+
+    assert redact_text(message) == (
+        'ERROR auth failed: token="<redacted>" (http 401) retry in 30s'
+    )
+
+
+def test_workflow_state_redactor_preserves_token_counters() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = (
+        "prompt_tokens=812 completion_tokens=133 total_tokens=945 "
+        "tokens=4096 tokens_available=true tokenizer=synthetic"
+    )
+
+    assert redact_text(message) == message
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "SecretAccessKey",
+        "secretKey",
+        "secretValue",
+        "tokenValue",
+        "token1",
+        "cookies",
+        "password1",
+        "passwd1",
+        "secret1",
+        "apikey1",
+        "secrets",
+        "AccessKeyId",
+        "privateKey",
+    ],
+)
+def test_workflow_state_redactor_covers_compound_credential_keys(key: str) -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    credential = "SYNTHETIC-COMPOUND-CREDENTIAL"
+    sanitized = redact_text(f"{key}={credential}")
+
+    assert credential not in sanitized
+    assert sanitized == f"{key}=<redacted>"
+
+
+def test_workflow_state_redactor_covers_unencoded_at_in_url_userinfo() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    sanitized = redact_text(
+        "https://synthetic-user:p@ssword-synthetic@provider.invalid/path"
+    )
+
+    assert "synthetic-user" not in sanitized
+    assert "ssword-synthetic" not in sanitized
+    assert sanitized == "https://<redacted>@provider.invalid/path"
+
+
+def test_private_key_redactor_fails_closed_linearly_for_truncated_blocks(
+    monkeypatch,
+) -> None:
+    import npa.diagnostic_redaction as redaction
+
+    original = redaction._PRIVATE_KEY_END
+
+    class CountingPattern:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def search(self, text: str, start: int = 0):
+            self.calls += 1
+            return original.search(text, start)
+
+    end_pattern = CountingPattern()
+    monkeypatch.setattr(redaction, "_PRIVATE_KEY_END", end_pattern)
+    message = ("-----BEGIN PRIVATE KEY-----\nsynthetic-key\n" * 5_000).rstrip()
+
+    sanitized = redaction.redact_diagnostic_text(message)
+
+    assert end_pattern.calls == 1
+    assert "synthetic-key" not in sanitized
+    assert "BEGIN PRIVATE KEY" not in sanitized
+    assert sanitized.count("\n") == message.count("\n")

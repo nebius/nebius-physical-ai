@@ -883,17 +883,36 @@ def test_workflow_status_maps_distillation_error(mocker) -> None:
 
 def test_workflow_logs_prints_stage_logs(mocker) -> None:
     synthetic_secret = "legacy-secret-value"
+    log_text = (
+        f"stage log text AWS_SECRET_ACCESS_KEY={synthetic_secret}\n"
+        "Bearer SYNTHETIC-LOG-BEARER "
+        "https://synthetic-user:synthetic-password@provider.invalid/path?"
+        "X-Amz-Signature=synthetic-signature\n"
+        "-----BEGIN PRIVATE KEY-----\n"
+        "synthetic-key\n"
+        "-----END PRIVATE KEY-----"
+    )
     mocker.patch(
         "npa.workflows.distill.get_stage_logs",
-        return_value=f"stage log text AWS_SECRET_ACCESS_KEY={synthetic_secret}",
+        return_value=log_text,
     )
 
     result = runner.invoke(app, ["workbench", "workflow", "logs", "run-1", "convert"])
 
     assert result.exit_code == 0
     assert "stage log text" in result.output
-    assert synthetic_secret not in result.output
     assert "AWS_SECRET_ACCESS_KEY=<redacted>" in result.output
+    assert all(
+        secret not in result.output
+        for secret in (
+            synthetic_secret,
+            "SYNTHETIC-LOG-BEARER",
+            "synthetic-user",
+            "synthetic-password",
+            "synthetic-signature",
+            "synthetic-key",
+        )
+    )
 
 
 def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None:
