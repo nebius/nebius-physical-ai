@@ -315,7 +315,12 @@ representation and I/O layout differ. Its results always retain
 `--mode profile` performs 30 optimizer updates. The first six startup/profiler
 updates are excluded; three subsequent eight-update windows report sustained
 throughput. `--num-workers`, `--prefetch-factor`, and `--optimizer` expose
-execution choices for controlled comparisons. `--microbatch-per-rank 3` uses
+execution choices for controlled comparisons. CPU/CUDA and memory profiling
+remain enabled, but tensor-shape recording is disabled because PyTorch 2.7.1
+overflows while recording deterministic FlashAttention allocations
+([upstream issue](https://github.com/pytorch/pytorch/issues/150601)). This changes
+profiling metadata only; deterministic algorithms and attention math stay fixed.
+`--microbatch-per-rank 3` uses
 eight accumulation steps and automatically qualifies the decomposition before
 timing. It captures the stochastic inputs for 96 real anchors and the 36-anchor
 tail, requires exact microbatch-one replay, then compares every gradient,

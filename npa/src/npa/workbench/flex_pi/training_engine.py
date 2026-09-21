@@ -258,7 +258,9 @@ class VerifiedTrainer(Wan22Trainer):
                 torch.profiler.ProfilerActivity.CUDA,
             ],
             schedule=torch.profiler.schedule(wait=3, warmup=1, active=1, repeat=1),
-            record_shapes=True,
+            # PyTorch 2.7.1 shape capture overflows on deterministic uint64 fills
+            # in FlashAttention (pytorch/pytorch#150601). Keep its math unchanged.
+            record_shapes=False,
             profile_memory=True,
             on_trace_ready=lambda trace: trace.export_chrome_trace(
                 str(Path(self.output_dir) / "profile.json")
