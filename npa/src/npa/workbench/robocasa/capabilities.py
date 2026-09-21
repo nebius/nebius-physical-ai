@@ -89,6 +89,7 @@ _ASSET_ARCHIVE_PATH_LIMIT = 4096
 _ASSET_ARCHIVE_DEPTH_LIMIT = 64
 _ASSET_EXTRACT_CHUNK = 1024 * 1024
 _ASSET_RECEIPT_SIZE_LIMIT = 64 * 1024
+_SAFE_ZIP_COMPRESSION = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED})
 
 
 class RoboCasaError(RuntimeError):
@@ -658,6 +659,11 @@ def _extract_validated_zip_file(
                     raise RoboCasaError(
                         f"RoboCasa asset archive has encrypted member: {member.filename}"
                     )
+                if member.compress_type not in _SAFE_ZIP_COMPRESSION:
+                    raise RoboCasaError(
+                        "RoboCasa asset archive uses unsupported compression: "
+                        f"{member.filename}"
+                    )
                 if member.file_size > _ASSET_ARCHIVE_MEMBER_SIZE_LIMIT:
                     raise RoboCasaError(
                         "RoboCasa asset archive member exceeds the size limit: "
@@ -834,10 +840,15 @@ def _replace_asset_tree(staged: Path, target: Path) -> None:
     if not staged.is_dir():
         raise RoboCasaError(f"staged RoboCasa asset tree does not exist: {staged}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_dir():
-        shutil.rmtree(target)
-    elif target.exists():
-        target.unlink()
+    try:
+        target_mode = target.lstat().st_mode
+    except FileNotFoundError:
+        pass
+    else:
+        if stat.S_ISDIR(target_mode):
+            shutil.rmtree(target)
+        else:
+            target.unlink()
     os.replace(staged, target)
 
 
@@ -905,7 +916,9 @@ def _asset_receipt_is_valid(
         ):
             return False
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
+        return False
+    if not isinstance(receipt, dict):
         return False
     expected = {
         "schema": "npa.robocasa.asset_receipt.v1",

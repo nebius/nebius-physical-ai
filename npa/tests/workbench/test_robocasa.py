@@ -15,7 +15,7 @@ import threading
 import time
 import types
 from pathlib import Path
-from zipfile import ZipFile, ZipInfo
+from zipfile import ZIP_BZIP2, ZIP_LZMA, ZipFile, ZipInfo
 
 import httpx
 import numpy as np
@@ -1224,6 +1224,28 @@ def test_asset_receipt_rejects_installed_tree_mutation_and_symlink(
     assert not capabilities._asset_receipt_is_valid(receipt, archive, assets_root)
 
 
+@pytest.mark.parametrize("payload", ["[]", "null", "1", '"receipt"'])
+def test_non_object_asset_receipt_is_invalid(tmp_path: Path, payload: str) -> None:
+    assets_root = tmp_path / "assets"
+    state_root = assets_root / ".npa_asset_fetch"
+    archive = capabilities._AssetArchive(
+        "example/assets",
+        "a" * 40,
+        "assets.zip",
+        ".",
+        "assets",
+        "assets",
+    )
+    receipt = capabilities._asset_receipt_path(state_root, archive)
+    receipt.write_text(payload, encoding="utf-8")
+
+    assert not capabilities._asset_receipt_is_valid(
+        receipt,
+        archive,
+        assets_root,
+    )
+
+
 def test_parent_asset_receipt_ignores_separately_receipted_nested_mounts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1321,6 +1343,22 @@ def test_asset_zip_rejects_traversal_symlinks_and_declared_limits(
     monkeypatch.setattr(capabilities, "_ASSET_ARCHIVE_MEMBER_SIZE_LIMIT", 3)
     with pytest.raises(RoboCasaError, match="member exceeds the size limit"):
         capabilities._extract_validated_zip(oversized, destination)
+
+
+@pytest.mark.parametrize("compression", [ZIP_LZMA, ZIP_BZIP2])
+def test_asset_zip_rejects_unbounded_decoder_methods(
+    tmp_path: Path, compression: int
+) -> None:
+    source_zip = tmp_path / "archive.zip"
+    with ZipFile(source_zip, "w", compression=compression) as archive:
+        archive.writestr("file.bin", b"payload")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+
+    with pytest.raises(RoboCasaError, match="unsupported compression"):
+        capabilities._extract_validated_zip(source_zip, destination)
+
+    assert list(destination.iterdir()) == []
 
 
 def test_asset_zip_bounds_central_directory_before_member_allocation(
@@ -1433,6 +1471,25 @@ def test_asset_archive_path_replacement_cannot_change_opened_bytes(
         json.loads(receipt.read_text(encoding="utf-8"))["archive_sha256"]
         == expected_archive_sha
     )
+
+
+def test_replace_asset_tree_repairs_symlinked_root(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+    target = tmp_path / "assets"
+    target.symlink_to(outside, target_is_directory=True)
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "safe.txt").write_text("safe", encoding="utf-8")
+
+    capabilities._replace_asset_tree(staged, target)
+
+    assert target.is_dir()
+    assert not target.is_symlink()
+    assert (target / "safe.txt").read_text(encoding="utf-8") == "safe"
+    assert marker.read_text(encoding="utf-8") == "keep"
 
 
 def test_kitchen_trajectory_export(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
