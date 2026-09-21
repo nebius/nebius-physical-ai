@@ -74,8 +74,10 @@ The AnyIO floor is 4.14.2 for ordinary installs and the application lock, coveri
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
 `.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
-dependencies daily and proposes updates for review. After changing Python
-dependency declarations, regenerate the CI pins with
+dependencies daily and proposes version updates in one cross-ecosystem
+`dependencies` PR, so overlapping manifests and generated locks are reviewed
+and tested together. After changing Python dependency declarations, regenerate
+the CI pins with
 `npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
 Dependabot security-update enablement is a separate repository setting; the
 version-update configuration does not enable it or merge its PRs automatically.
