@@ -1,22 +1,18 @@
 {
   "schema": "npa.public-pr-readiness/v4",
-  "snapshot_utc": "2026-09-21T12:42:15.579428+00:00",
-  "mergeability_verified_at": "2026-09-21T12:42:09.430179+00:00",
-  "prepared_at": "2026-09-21T12:51:02.500181+00:00",
-  "required_checks_verified_at": "2026-09-21T12:44:04.079178+00:00",
-  "tracked_open_count": 61,
+  "snapshot_utc": "2026-09-21T14:28:25.726701+00:00",
+  "mergeability_verified_at": "2026-09-21T14:28:44.492079+00:00",
+  "prepared_at": "2026-09-21T14:42:06.128024+00:00",
+  "required_checks_verified_at": "2026-09-21T14:41:06.933417+00:00",
+  "tracked_open_count": 60,
   "tracked_historical_count": 63,
   "queue_candidates": [
-    579,
-    581,
     594,
     596,
     607,
-    608,
     609,
     613,
     614,
-    615,
     616,
     621,
     628,
@@ -44,33 +40,51 @@
     "mergeStateStatus": "DIRTY"
   },
   "main_rules": {
-    "merge_queue_required": true,
-    "required_checks": [
-      "gitleaks",
-      "scan",
-      "security-regression"
+    "required_check_contexts": [
+      {
+        "context": "gitleaks",
+        "app_id": 15368
+      },
+      {
+        "context": "scan",
+        "app_id": 15368
+      },
+      {
+        "context": "security-regression",
+        "app_id": 15368
+      }
     ],
-    "required_check_app_id": 15368
+    "merge_queue": {
+      "merge_method": "SQUASH",
+      "max_entries_to_build": 2,
+      "min_entries_to_merge": 1,
+      "max_entries_to_merge": 1,
+      "min_entries_to_merge_wait_minutes": 0,
+      "grouping_strategy": "ALLGREEN",
+      "check_response_timeout_minutes": 45
+    },
+    "required_signatures": true,
+    "ahead_base_chain_audit_at": "2026-09-21T14:34:00.074602+00:00"
   },
   "check_selection": "Latest run ID and then start time for each workflow/name; earlier cancelled/failed checks retained in raw snapshot, not counted as current.",
   "limitations": [
-    "Point-in-time snapshot. Changed commits or checks invalidate readiness; workload receipt updates have their own recorded time.",
-    "The target is roughly 100 substantial improvements. Tracked PRs include adopted work and are not accepted-feature, delivered-improvement or GPU-tested-result counts.",
-    "Closed #611/#656 are retained history and excluded from open/delivery counts. Closed duplicate #685 is separately recorded and excluded from the 63 tracked records and all delivery/readiness counts.",
-    "All 19 candidates retain unchanged accepted source, non-draft main targets and CLEAN mergeability. Applicable checks pass; required checks match app15368 and exact source. Merge-queue integration remains.",
-    "Accepted stacks still require ancestor landing, actual integration/retargeting and refreshed checks; scoped parent-delta acceptance is not main readiness.",
-    "Source tests, image security, execution, numeric controls, visual review and physical usefulness are separate scopes.",
-    "Both repaired cuRobo benchmark matrices pass their frozen numeric cell gates, but both workflows fail visualization. Exact cleanup receipts and original output hashes are verified; image-byte/visualization/current CI acceptance remains pending, with no robot-safety claim.",
-    "Open3D public native and browser evidence is inspectable, with anonymous CORS/hash/decode checks. Local CLI success is not SkyPilot workflow acceptance; topology defects and uncalibrated prompt-sensitive VLM findings remain.",
-    "Evo841 is published and full-tested; its complete image-byte qualification and new-head hosted CI remain separate. Generic686 source acceptance does not qualify AprilTag capability or bytes.",
-    "Policy2ed3's blocked full run remains nonterminal and later source mutation prevents unchanged-source acceptance from that run. SeedVR r7 pre-execution GO is followed by a retained failed Job; prior quality failures remain failures."
+    "Point-in-time source/check/mergeability/signature snapshot; changed commits or rules invalidate readiness.",
+    "The target remains roughly 100 substantial improvements; tracked PRs are not accepted features or GPU-tested results.",
+    "Accepted stacks require ancestor landing, integration/retargeting and fresh checks; they are not main queue candidates.",
+    "Source, image security, execution, numeric controls, visual review and physical usefulness are separate acceptance scopes.",
+    "Evo/AprilTag complete scans retain raw confidentiality/policy failures; semantic explanations do not turn raw valid=false into PASS.",
+    "cuRobo's old managed workflows failed visualization. Repaired CPU consumer/full tests do not qualify an updated image or reverse the retained VLM failure.",
+    "Open3D inspectable local CPU execution is not supported SkyPilot lifecycle acceptance, calibrated geometry accuracy or robot usefulness.",
+    "SeedVR r7 failed and r8 provisioning failed after accepted startup controls; exact recovery is pending; earlier quality failures remain failures. Policy's older blocked/source-mutated full run is not a pass.",
+    "Cursor monthly usage limits blocked further turns; Codex recovery is attributed separately. No publication or PR metadata mutation was performed by this audit."
   ],
   "workloads": [
     {
       "workload": "evo trajectory evaluation",
-      "current_result": "Reviewed source 841ceb59e is now published on the draft PR, with its commit signature verified. Its uninterrupted full suite passed 24,060 tests, 154 skips and one non-strict xpass; final lint/format/confidentiality/security gates passed. The private replacement image has scoped ancestor-layer host-key absence and fresh startup-key evidence. CPU attempt 5 succeeded: 67 artifacts, 10 native result archives and 690 recomputed synthetic values. The original postprocessing KeyError and two failed read-only reconciliations remain retained; final reconciliation passed cleanup and six byte-identical review captures without another workload or VLM call. Complete archive-byte image qualification and new-head hosted CI remain pending; the predecessor image remains rejected.",
-      "remaining_acceptance": "Finish exact private image complete-byte qualification and new-head hosted CI. No GPU applies; navigation, physical safety and public-image promotion are not established.",
+      "current_result": "Published 841ceb59e retains the uninterrupted 24,060-test full pass and accepted CPU attempt 5: 67 artifacts, 10 native result archives and 690 recomputed synthetic values. The replacement-image scan now completed with 24 coverage checks passing, 88,097 records and 887,103,079 scanned record bytes. Raw exit 1/valid=false remains: 57 native findings and 11 exact private-literal matches, including confidential provenance/export metadata. Semantic review did not identify an operator credential in reviewed matches, but confidentiality-clean and public-image acceptance remain false. Original image and postprocessing failures remain retained; CI is separate.",
+      "remaining_acceptance": "Confidentiality/image policy resolution and current hosted CI; private CPU success does not authorize public-image promotion.",
       "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/861bbb9b75b9cb008b3b6ce8c6004b0efcca6b2f/docs/testing/evidence/byof-complete-byte-scans/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/899caeab007bd2d55221ff3bc7b195f02a828c11/docs/testing/evidence/evo-proof/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/9631fc2d60edc6ec2f80e5fc935902c7838fd4fd/docs/testing/evidence/evo-ssh-key-repair-841ceb59/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/README.md",
@@ -80,8 +94,8 @@
     },
     {
       "workload": "SeedVR2",
-      "current_result": "Prior exact 3B H100 workflows, controlled 7B diagnostic and v2 retention failures remain retained as failed quality evidence. The r7 paired VAE-decode diagnostic passed its exact no-output audit at 12:19:18 UTC: 71 hash-bound focused tests and frozen identity/media controls were verified, preserving earlier r1-r6 NO-GO findings. The retained execution envelope then records the Job Failed at 12:43:05 UTC and its container exiting 1 at 12:43:02 UTC. Failure diagnosis and candidate-output review remain pending. A pre-execution GO does not establish completed inference, quality improvement, held-out acceptance or a qualified visual judge.",
-      "remaining_acceptance": "Reconcile the failed r7 execution and its retained outputs before any further diagnostic decision; prior objective, temporal and annotation failures remain failed. No held-out or quality acceptance follows from the pre-execution audit.",
+      "current_result": "The r7 experiment failed before candidate inference; its mounted-helper identity failure is retained. Frozen r8 passed independent source review, 72 focused tests and four exact-image CPU startup controls, including rejection of a mismatched mounted helper. Fresh operator access, exact model payload access and output-prefix absence checks passed. Dedicated H100 provisioning exited 2 after provider node-group create requests timed out. Later authoritative inventory showed both owned groups running, but device-plugin and mandatory GPU/CUDA/Sky validation were incomplete. Supported reconciliation or scoped cleanup is in progress; the failed operation remains retained. No r8 candidate Job or quality acceptance is claimed. Earlier 3B/7B objective, temporal and annotation failures remain failed.",
+      "remaining_acceptance": "Reconcile or clean up the exact failed provisioning operation before any retry. Only after accepted readiness may the unchanged paired VAE-decode experiment run; earlier quality failures and untouched held-out data remain unchanged.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/0db7db260bbc526061a26c3a16999f94e92b705f/docs/testing/evidence/seedvr-h100-exact-b8d9c9c5/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/6a4815bcdccff143168b4853a3d2cdb822d4d3a8/docs/testing/evidence/seedvr-7b-h100-diagnostic/README.md"
@@ -89,14 +103,14 @@
     },
     {
       "workload": "RoboCasa",
-      "current_result": "The earlier image failed its fixable-CRITICAL gate and its superseded 7a full suite never started. Runtime successor 2ed3 removed the vulnerable headers, but its original full suite blocked in kernel filesystem I/O and remains HOST_RUNTIME_INCONCLUSIVE, not a terminal pass. The checkout subsequently changed during source repair, so an eventual exit cannot establish unchanged-source acceptance. Independent review found output upload could precede confirmed descendant cleanup; that functional repair needs an accepted frozen successor before the next full suite. Authorized exact-source private image work may proceed independently of the separate public-publication route review. No matched GPU policy workflow or accepted replacement image is claimed.",
-      "remaining_acceptance": "Freeze and review the output/cleanup repair, complete a healthy exact-source full suite, qualify the replacement image and run the matched five-state policy/random episodes with objective and calibrated visual review.",
+      "current_result": "Current published bab1ad918 has a failing security-scanners check; this inventory does not transfer old source acceptance to it. The older 2ed3 full run remains host-runtime inconclusive, with later source mutation preventing unchanged-source acceptance. Earlier image critical-CVE and descendant-cleanup findings remain historical records. No accepted matched GPU policy workflow or replacement-image qualification is claimed.",
+      "remaining_acceptance": "Accepted frozen runtime/source, complete applicable local and hosted gates, exact image qualification and matched GPU policy proof.",
       "proof_links": []
     },
     {
       "workload": "cuRobo",
-      "current_result": "On the repaired c85e8718 image from 49fed65d, the B200 and RTX 5,200-row matrices passed all four frozen benchmark-cell gates. B200 has 5,162 successful and 38 failed/invalid rows; RTX has 5,166 successful and 34 failed/invalid rows. Both overall workflows failed at visualization; CPU-only reproduction is underway and no repeated GPU run is claimed. Cleanup receipts for both exact runs report terminal jobs, successful cleanup, absent owned controllers, stopped local APIs and no active owned workload resources; original cleanup and queue output hashes were independently matched. Preliminary controls on both GPU families passed; the rebuilt RTX control needed no manual package repair. Published 662f04c3a is an independently accepted AST-equivalent formatting successor to the full-tested image source, whose full suite passed 24,237 tests. Complete image-byte, visualization and current CI acceptance remain pending. Prior b387 full-matrix failures before the first row and the separate predecessor RTX control's manual bootstrap repair remain historical failures and scopes; no robot-safety claim follows.",
-      "remaining_acceptance": "Repair and review the visualization failure, complete image-byte qualification and current CI. Cleanup is accepted in the exact retained-run scope; the numeric benchmark pass remains independent of the failed end-to-end workflow.",
+      "current_result": "The 49fed65d/c85e8718 image passed all four numeric cells in both 5,200-row matrices: B200 5,162 successful/38 failed or invalid; RTX 5,166/34. Both managed workflows failed at visualization; those failures and verified cleanup remain retained. Cursor's repaired consumer486 passed independent 111-test, 5,200-row and actual retained B200/RTX journal CPU checks. Published 0b0accdd is the AST-equivalent Codex formatting successor and passed one uninterrupted 24,243-test full suite, with 154 skips and 1 non-strict xpass. Current CI, exact updated-image qualification and visual acceptance remain open; the retained VLM result is FAIL. No new GPU rerun or robot-safety claim follows.",
+      "remaining_acceptance": "Current hosted CI, exact repaired-image qualification and truthful visual acceptance; historical workflow visualization failures remain failures.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/32ed2941f5252933fe33250eef5acd4d52f3c4af/docs/testing/evidence/curobo-b200-controls-d738db0d/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/3d63acfc0dd2ee2e496e2fe2994269b5696f6a11/docs/testing/evidence/curobo-rtx-controls-b3876436/README.md",
@@ -119,17 +133,18 @@
     },
     {
       "workload": "AprilTag / Kimi-K3",
-      "current_result": "Real CPU workload reproduced all 47 upstream-recorded labels across three images and rejected blank/noise controls. Four disclosed controls, four precommitted holdout cases and the three-sheet production census passed; each production sheet scored 0.95. Exact submitted PNGs, visible answers, attribution and hashes are public and anonymously verified.",
-      "remaining_acceptance": "The predecessor image contains three SSH host private keys in an ancestor layer. The generic source repair and separate Evo evidence do not qualify AprilTag replacement bytes. Fresh exact image/security/runtime-key qualification, CPU detector replay, artifact equivalence, cleanup and current source/CI closure remain. Retained presentation and 47-label controls do not establish geometry, pose or robot safety. Evaluator #678 targets main; its hosted CI and draft closure remain pending.",
+      "current_result": "Real CPU workload reproduced all 47 upstream-recorded labels across three images and rejected blank/noise controls. Four disclosed controls, four precommitted holdout cases and the three-sheet production census passed; each production sheet scored 0.95. Exact submitted PNGs, visible answers, attribution and hashes are public and anonymously verified. The replacement AprilTag image complete scan has 24 coverage checks passing across 75,054 records/932,994,180 record bytes, but raw exit 1/valid=false remains: 32 native findings, 11 private-literal matches and 1 PKCS12 file finding. The latter is an exact public CMake packaging certificate; the frozen rule remains failed. Confidential provenance/export metadata is not a clean publication result. Healthy-host credentials/storage are bound, but exact target context, image cache and replay configuration remain incomplete; no replacement AprilTag run occurred in this audit.",
+      "remaining_acceptance": "Resolve image confidentiality/policy findings and exact target/runtime bindings, then complete accepted replacement-image capability proof. Existing Kimi census is separate.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/4c017e2db23b270e2ef114b698f43dc9cd98b716/docs/testing/evidence/kimi-k3-disclosed-controls-a26a868e/README.md",
+        "https://github.com/nebius/nebius-physical-ai/blob/861bbb9b75b9cb008b3b6ce8c6004b0efcca6b2f/docs/testing/evidence/byof-complete-byte-scans/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e5f4210090dac2d1a1880bdffdc33a9e042c102b/docs/testing/evidence/apriltag-kimi-k3-production-census/README.md"
       ]
     },
     {
       "workload": "Agent metadata",
-      "current_result": "Live CPU deployment proof accepted; the current test-only repair preserves the reviewed production bytes.",
-      "remaining_acceptance": "Current CI and lifecycle closure; existing evidence limits remain explicit.",
+      "current_result": "Exact09d0fa9 retains scoped source and CPU proof, but hosted shard2 fails test_audit_script_renders_and_reports_a_healthy_surface: credential-context discovery yields503/502 instead of a healthy audit surface. The shard reports1 failed,5,060 passed,131 skipped; four sibling shards cancelled and the required aggregate fails. This is not an all-green result or a reason to supply real cloud credentials to hermetic tests.",
+      "remaining_acceptance": "Repair/review the hermetic capability-audit failure and pass all current hosted checks.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/b83b862e1469d0bfa22ae7c8bffae11db6b1c9b3/docs/testing/evidence/agent-metadata-test-repair-09d0fa9f/README.md"
       ]
@@ -168,16 +183,17 @@
     },
     {
       "workload": "Payload credential scanners",
-      "current_result": "The GitHub snapshot captures a412f5140; no exact-source acceptance is recorded for it. Retained independent a7da review required changes for ordinary OpenSSH parser-binary false positives and an inherited Alpamayo application branch that skipped shared credential rules. A later exact 9a0f34abe review closes the parser-binary issue using unchanged real binaries and matched embedded-key positives, but still requires changes for the application branch: identical EC/encrypted-key and assignment payloads are accepted there and rejected outside it. That later review has 173 passing focused tests and 36 native invocations; it is not transferred to the captured published head. Earlier content-boundary/path-alias cases remain closed, with failed candidates retained. No accepted source is ready for a full suite.",
-      "remaining_acceptance": "Independent current-source coverage/semantics review, applicable full/static gates and hosted CI. Earlier failed source candidates remain retained.",
+      "current_result": "Current 942311832 is independently bound to the fully tested bbf4d340 tree through 0e7f11ee plus one explanatory-comment change; the detector AST is identical and the new commit signature is GitHub-verified. The accepted proof covers 193 focused tests, 36 native invocations, 30 boundary outcomes and two scoped revert mutants across 9 native invocations. The uninterrupted full suite passed 25,433 tests, 155 skips and 1 non-strict xpass. The prior 0e7 Gitleaks failure is retained: its private-key rule spanned parser-header prose and detector pattern text, not an identified key. Root corrected that single comment and reports the exact CI-range Gitleaks 8.28.0 check passing; fresh current-head hosted CI remains pending. No broad scanner exception or complete-image qualification is claimed.",
+      "remaining_acceptance": "Fresh exact-head hosted checks after the narrow parser-prose correction; retain explicitly bound functional/full proof.",
       "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/800495d5726afb62c6f0920bdfeb55f91fe99f88/docs/testing/evidence/payload-scanner-bbf4d340/README.md",
         "https://github.com/nebius/nebius-physical-ai/pull/688"
       ]
     },
     {
       "workload": "Workflow recovery, config and cleanup",
       "current_result": "Exact source reviews and fresh uninterrupted full suites now pass for #679 (25,280 tests), #682 (25,283) and #684 (25,281), each with 155 skips and one non-strict xpass. Source, environment, original logs and exit codes are independently bound. Earlier failed or interrupted attempts remain retained.",
-      "remaining_acceptance": "Current hosted checks remain pending on all three; full local passes do not bypass the required merge queue. Rejected #683 is a separate authority-boundary repair.",
+      "remaining_acceptance": "Current hosted CI and merge-queue integration remain separate for679/682/684. Published683 and private f895 authority candidates remain rejected; the successor is under review.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/679",
         "https://github.com/nebius/nebius-physical-ai/pull/682",
@@ -191,46 +207,18 @@
       "url": "https://github.com/nebius/nebius-physical-ai/pull/579",
       "title": "Bound Workbench I/O concurrency and preserve downloads on failure",
       "source_commit": "dcc530d9adea4fbec2f656af6f64bddcc57d507c",
-      "state": "OPEN",
+      "state": "MERGED",
       "draft": false,
       "base": "main",
       "base_commit": "99be7d39f4481aa2c29f72204175698da1a7a258",
-      "mergeable": "MERGEABLE",
-      "merge_state": "CLEAN",
-      "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
-      "check_counts": {
-        "SUCCESS": 19,
-        "SKIPPED": 3
-      },
-      "applicable_ci_passes": true,
-      "required_checks_app_and_source_verified": true,
-      "required_checks": [
-        {
-          "name": "gitleaks",
-          "app_id": 15368,
-          "source_commit": "dcc530d9adea4fbec2f656af6f64bddcc57d507c",
-          "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35551003968/job/106185620715",
-          "passes_required_identity": true
-        },
-        {
-          "name": "scan",
-          "app_id": 15368,
-          "source_commit": "dcc530d9adea4fbec2f656af6f64bddcc57d507c",
-          "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35551003968/job/106185620419",
-          "passes_required_identity": true
-        },
-        {
-          "name": "security-regression",
-          "app_id": 15368,
-          "source_commit": "dcc530d9adea4fbec2f656af6f64bddcc57d507c",
-          "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35551003968/job/106193307422",
-          "passes_required_identity": true
-        }
-      ],
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
+      "status": "Merged; excluded from open queue candidates",
+      "note": "GitHub reports this tracked PR merged. This audit did not merge it. Its record remains historical and is not counted as an open queue candidate.",
+      "check_counts": {},
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
+      "required_checks": [],
       "depends_on": [],
       "public_proof_links": [],
       "review_links": []
@@ -246,8 +234,8 @@
       "base_commit": "95c4eb685122d590d7e03f3da2d9583a16e74e6e",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
-      "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "status": "Checks pass; required-signature resolution remains",
+      "note": "Accepted source and all applicable exact-head checks remain valid. The complete ahead-base commit chain includes signatures GitHub does not verify. This audit excludes the PR from confirmed queue candidates pending resolution under the effective signature rule; it made no history or account changes.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -284,7 +272,19 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/581#issuecomment-5747157850"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "95c4eb685122d590d7e03f3da2d9583a16e74e6e",
+        "ahead_commit_count": 4,
+        "all_ahead_commits_captured": true,
+        "all_verified": false,
+        "unverified_commits": [
+          {
+            "source_commit": "f0e2ccfe8fa6fded22dcafb06260e8597959d59c",
+            "reason": "unknown_key"
+          }
+        ]
+      }
     },
     {
       "number": 584,
@@ -297,11 +297,11 @@
       "base_commit": "95c4eb685122d590d7e03f3da2d9583a16e74e6e",
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
-      "status": "Integrated source and full local suite pass; image-byte gate and CI pending",
-      "note": "Reviewed source 841ceb59e is now published on the draft PR, with its commit signature verified. Its uninterrupted full suite passed 24,060 tests, 154 skips and one non-strict xpass; final lint/format/confidentiality/security gates passed. The private replacement image has scoped ancestor-layer host-key absence and fresh startup-key evidence. CPU attempt 5 succeeded: 67 artifacts, 10 native result archives and 690 recomputed synthetic values. The original postprocessing KeyError and two failed read-only reconciliations remain retained; final reconciliation passed cleanup and six byte-identical review captures without another workload or VLM call. Complete archive-byte image qualification and new-head hosted CI remain pending; the predecessor image remains rejected.",
+      "status": "CPU execution and source gates pass; complete image scan retains failures",
+      "note": "Published 841ceb59e retains the uninterrupted 24,060-test full pass and accepted CPU attempt 5: 67 artifacts, 10 native result archives and 690 recomputed synthetic values. The replacement-image scan now completed with 24 coverage checks passing, 88,097 records and 887,103,079 scanned record bytes. Raw exit 1/valid=false remains: 57 native findings and 11 exact private-literal matches, including confidential provenance/export metadata. Semantic review did not identify an operator credential in reviewed matches, but confidentiality-clean and public-image acceptance remain false. Original image and postprocessing failures remain retained; CI is separate.",
       "check_counts": {
-        "SUCCESS": 8,
-        "PENDING": 8,
+        "SUCCESS": 10,
+        "PENDING": 6,
         "SKIPPED": 2
       },
       "applicable_ci_passes": false,
@@ -326,6 +326,7 @@
       ],
       "depends_on": [],
       "public_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/861bbb9b75b9cb008b3b6ce8c6004b0efcca6b2f/docs/testing/evidence/byof-complete-byte-scans/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/899caeab007bd2d55221ff3bc7b195f02a828c11/docs/testing/evidence/evo-proof/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/9631fc2d60edc6ec2f80e5fc935902c7838fd4fd/docs/testing/evidence/evo-ssh-key-repair-841ceb59/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/README.md",
@@ -359,10 +360,10 @@
       "draft": true,
       "base": "main",
       "base_commit": "3e2ffdda360ab777d80dc9de685bd06060919a22",
-      "mergeable": "MERGEABLE",
-      "merge_state": "CLEAN",
-      "status": "Frozen r7 diagnostic failed; failure review pending",
-      "note": "Prior exact 3B H100 workflows, controlled 7B diagnostic and v2 retention failures remain retained as failed quality evidence. The r7 paired VAE-decode diagnostic passed its exact no-output audit at 12:19:18 UTC: 71 hash-bound focused tests and frozen identity/media controls were verified, preserving earlier r1-r6 NO-GO findings. The retained execution envelope then records the Job Failed at 12:43:05 UTC and its container exiting 1 at 12:43:02 UTC. Failure diagnosis and candidate-output review remain pending. A pre-execution GO does not establish completed inference, quality improvement, held-out acceptance or a qualified visual judge.",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
+      "status": "H100 provisioning failed; exact operation recovery in progress",
+      "note": "The r7 experiment failed before candidate inference; its mounted-helper identity failure is retained. Frozen r8 passed independent source review, 72 focused tests and four exact-image CPU startup controls, including rejection of a mismatched mounted helper. Fresh operator access, exact model payload access and output-prefix absence checks passed. Dedicated H100 provisioning exited 2 after provider node-group create requests timed out. Later authoritative inventory showed both owned groups running, but device-plugin and mandatory GPU/CUDA/Sky validation were incomplete. Supported reconciliation or scoped cleanup is in progress; the failed operation remains retained. No r8 candidate Job or quality acceptance is claimed. Earlier 3B/7B objective, temporal and annotation failures remain failed.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -423,7 +424,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -464,56 +465,60 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/594#issuecomment-5747050271",
         "https://github.com/nebius/nebius-physical-ai/pull/594#issuecomment-5748738332"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 3,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 595,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/595",
       "title": "Fix RoboCasa policy evidence alignment",
-      "source_commit": "2a79cbd6eaa1ec10dec00485a35076ed34ff07e9",
+      "source_commit": "bab1ad918125f1b2357ab4872c59f69ac77b4792",
       "state": "OPEN",
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "CLEAN",
-      "status": "Runtime repair and private image work pending; prior full run inconclusive",
-      "note": "The earlier image failed its fixable-CRITICAL gate and its superseded 7a full suite never started. Runtime successor 2ed3 removed the vulnerable headers, but its original full suite blocked in kernel filesystem I/O and remains HOST_RUNTIME_INCONCLUSIVE, not a terminal pass. The checkout subsequently changed during source repair, so an eventual exit cannot establish unchanged-source acceptance. Independent review found output upload could precede confirmed descendant cleanup; that functional repair needs an accepted frozen successor before the next full suite. Authorized exact-source private image work may proceed independently of the separate public-publication route review. No matched GPU policy workflow or accepted replacement image is claimed.",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
+      "status": "Changed runtime source; hosted security gate fails; GPU proof absent",
+      "note": "Current published bab1ad918 has a failing security-scanners check; this inventory does not transfer old source acceptance to it. The older 2ed3 full run remains host-runtime inconclusive, with later source mutation preventing unchanged-source acceptance. Earlier image critical-CVE and descendant-cleanup findings remain historical records. No accepted matched GPU policy workflow or replacement-image qualification is claimed.",
       "check_counts": {
-        "SUCCESS": 19,
-        "SKIPPED": 3
+        "SUCCESS": 9,
+        "PENDING": 6,
+        "SKIPPED": 2,
+        "FAILURE": 1
       },
-      "applicable_ci_passes": true,
-      "required_checks_app_and_source_verified": true,
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
       "required_checks": [
         {
           "name": "gitleaks",
           "app_id": 15368,
-          "source_commit": "2a79cbd6eaa1ec10dec00485a35076ed34ff07e9",
+          "source_commit": "bab1ad918125f1b2357ab4872c59f69ac77b4792",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35551331602/job/106186514887",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35601160123/job/106337335088",
           "passes_required_identity": true
         },
         {
           "name": "scan",
           "app_id": 15368,
-          "source_commit": "2a79cbd6eaa1ec10dec00485a35076ed34ff07e9",
+          "source_commit": "bab1ad918125f1b2357ab4872c59f69ac77b4792",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35551331602/job/106186514878",
-          "passes_required_identity": true
-        },
-        {
-          "name": "security-regression",
-          "app_id": 15368,
-          "source_commit": "2a79cbd6eaa1ec10dec00485a35076ed34ff07e9",
-          "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35551331602/job/106202693520",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35601160123/job/106337334325",
           "passes_required_identity": true
         }
       ],
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "current_failed_checks": [
+        "security-scanners"
+      ]
     },
     {
       "number": 596,
@@ -527,7 +532,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -567,7 +572,14 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/596#issuecomment-5748487769",
         "https://github.com/nebius/nebius-physical-ai/pull/596#issuecomment-5748929562"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 597,
@@ -636,15 +648,15 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Inspectable local execution and image qualification pass; Sky workflow and CI pending",
-      "note": "The exact e62/a6 private image complete-byte reconciliation is accepted: raw scanner exit 1 and all 269 findings remain retained, with 19 reconciliation gates passing. Six shipped local CLI stages exited zero; 24 independent numeric/hash/geometry checks passed. The public native capture and sanitized recording preserve all 17 geometry arrays. A fresh anonymous browser fetched the exact 8,105,428-byte recording across CORS, verified its hash, decoded it, and rendered both inspected panes. Fused points: 6,341; mesh: 14,736 vertices/28,206 triangles. The scene remains nonwatertight and nonmanifold. Four hosted visual calls include an empty-geometry control and identity prompts that expose prompt sensitivity; a thinking-setting protocol deviation remains disclosed. This is inspection evidence, not calibrated geometry accuracy or robot usefulness. Published source 487a8c6da is independently bound to the accepted image and the f916 full suite: 24,307 passed, 154 skipped, one non-strict xpass. Supported SkyPilot lifecycle acceptance and current hosted CI remain separate.",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
+      "status": "Inspectable local execution and image qualification pass; Sky workflow and CI failing",
+      "note": "The exact e62/a6 private image complete-byte reconciliation is accepted: raw scanner exit 1 and all 269 findings remain retained, with 19 reconciliation gates passing. Six shipped local CLI stages exited zero; 24 independent numeric/hash/geometry checks passed. The public native capture and sanitized recording preserve all 17 geometry arrays. A fresh anonymous browser fetched the exact 8,105,428-byte recording across CORS, verified its hash, decoded it, and rendered both inspected panes. Fused points: 6,341; mesh: 14,736 vertices/28,206 triangles. The scene remains nonwatertight and nonmanifold. Four hosted visual calls include an empty-geometry control and identity prompts that expose prompt sensitivity; a thinking-setting protocol deviation remains disclosed. This is inspection evidence, not calibrated geometry accuracy or robot usefulness. Published source 487a8c6da is independently bound to the accepted image and the f916 full suite: 24,307 passed, 154 skipped, one non-strict xpass. Supported SkyPilot lifecycle acceptance and current hosted CI remain separate. Current hosted failures: image-security / Base image CVE inventory.",
       "check_counts": {
         "SUCCESS": 9,
         "PENDING": 6,
         "SKIPPED": 2,
-        "IN_PROGRESS": 1
+        "FAILURE": 1
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -693,7 +705,10 @@
         "log_sha256": "eb34686dd67dd3f4c507ab5ac768d21d5b715cd08517f454fc25d34f566e9df5",
         "successor_binding": "487a8c6da403d1a7fef63e8d26979d136004219d independently accepted: three test files preserve ASTs and the remaining change is nonshipped documentation."
       },
-      "source_checked_at": "2026-09-21T11:34:47.983001+00:00"
+      "source_checked_at": "2026-09-21T11:34:47.983001+00:00",
+      "current_failed_checks": [
+        "image-security / Base image CVE inventory"
+      ]
     },
     {
       "number": 607,
@@ -707,7 +722,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -746,7 +761,14 @@
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5747890546",
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5749283483",
         "https://github.com/nebius/nebius-physical-ai/pull/607#issuecomment-5751864095"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 608,
@@ -759,8 +781,8 @@
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
-      "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "status": "Checks pass; required-signature resolution remains",
+      "note": "Accepted source and all applicable exact-head checks remain valid. The complete ahead-base commit chain includes signatures GitHub does not verify. This audit excludes the PR from confirmed queue candidates pending resolution under the effective signature rule; it made no history or account changes.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -797,7 +819,19 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/608#issuecomment-5748475166"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": false,
+        "unverified_commits": [
+          {
+            "source_commit": "0b8cf161e80c642fcf1e7c3a248ffea537198c0a",
+            "reason": "unknown_key"
+          }
+        ]
+      }
     },
     {
       "number": 609,
@@ -811,7 +845,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -848,7 +882,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/609#issuecomment-5748522986"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 610,
@@ -859,8 +900,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "CLEAN",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Readiness withdrawn; AprilTag replacement qualification pending",
       "note": "The predecessor image contains three SSH host private keys in an ancestor layer. The generic source repair and separate Evo evidence do not qualify AprilTag replacement bytes. Fresh exact image/security/runtime-key qualification, CPU detector replay, artifact equivalence, cleanup and current source/CI closure remain. Retained presentation and 47-label controls do not establish geometry, pose or robot safety.",
       "check_counts": {
@@ -1005,7 +1046,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -1042,7 +1083,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/613#issuecomment-5748516084"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 614,
@@ -1056,7 +1104,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1094,7 +1142,14 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/614#issuecomment-5747683344",
         "https://github.com/nebius/nebius-physical-ai/pull/614#issuecomment-5747723618"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 4,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 615,
@@ -1107,8 +1162,8 @@
       "base_commit": "99be7d39f4481aa2c29f72204175698da1a7a258",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
-      "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "status": "Checks pass; required-signature resolution remains",
+      "note": "Accepted source and all applicable exact-head checks remain valid. The complete ahead-base commit chain includes signatures GitHub does not verify. This audit excludes the PR from confirmed queue candidates pending resolution under the effective signature rule; it made no history or account changes.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -1150,7 +1205,27 @@
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749498033",
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749606072",
         "https://github.com/nebius/nebius-physical-ai/pull/615#issuecomment-5749967699"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "99be7d39f4481aa2c29f72204175698da1a7a258",
+        "ahead_commit_count": 7,
+        "all_ahead_commits_captured": true,
+        "all_verified": false,
+        "unverified_commits": [
+          {
+            "source_commit": "8691395874b74a918b755bd8c084304841b15a82",
+            "reason": "unsigned"
+          },
+          {
+            "source_commit": "fb9e038f618d03d8bca7348ce768fcd6e7adc8e0",
+            "reason": "unsigned"
+          },
+          {
+            "source_commit": "d0e6fef9b84a0a6e04acc8bc113db085298e10a1",
+            "reason": "unsigned"
+          }
+        ]
+      }
     },
     {
       "number": 616,
@@ -1164,7 +1239,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1202,7 +1277,14 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/616#issuecomment-5748231108",
         "https://github.com/nebius/nebius-physical-ai/pull/616#issuecomment-5751833498"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 1,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 617,
@@ -1385,7 +1467,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1422,7 +1504,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/621#issuecomment-5748967847"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 1,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 622,
@@ -1603,18 +1692,18 @@
       "number": 625,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/625",
       "title": "feat(curobo): qualify auditable motion-planning image",
-      "source_commit": "662f04c3a98e395f4f0f37a19475806a553ffe06",
+      "source_commit": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
       "state": "OPEN",
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Both GPU benchmark matrices pass numeric gates; visualization fails",
-      "note": "On the repaired c85e8718 image from 49fed65d, the B200 and RTX 5,200-row matrices passed all four frozen benchmark-cell gates. B200 has 5,162 successful and 38 failed/invalid rows; RTX has 5,166 successful and 34 failed/invalid rows. Both overall workflows failed at visualization; CPU-only reproduction is underway and no repeated GPU run is claimed. Cleanup receipts for both exact runs report terminal jobs, successful cleanup, absent owned controllers, stopped local APIs and no active owned workload resources; original cleanup and queue output hashes were independently matched. Preliminary controls on both GPU families passed; the rebuilt RTX control needed no manual package repair. Published 662f04c3a is an independently accepted AST-equivalent formatting successor to the full-tested image source, whose full suite passed 24,237 tests. Complete image-byte, visualization and current CI acceptance remain pending. Prior b387 full-matrix failures before the first row and the separate predecessor RTX control's manual bootstrap repair remain historical failures and scopes; no robot-safety claim follows.",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
+      "status": "Both numeric GPU matrices and repaired CPU consumer pass; final gates remain",
+      "note": "The 49fed65d/c85e8718 image passed all four numeric cells in both 5,200-row matrices: B200 5,162 successful/38 failed or invalid; RTX 5,166/34. Both managed workflows failed at visualization; those failures and verified cleanup remain retained. Cursor's repaired consumer486 passed independent 111-test, 5,200-row and actual retained B200/RTX journal CPU checks. Published 0b0accdd is the AST-equivalent Codex formatting successor and passed one uninterrupted 24,243-test full suite, with 154 skips and 1 non-strict xpass. Current CI, exact updated-image qualification and visual acceptance remain open; the retained VLM result is FAIL. No new GPU rerun or robot-safety claim follows.",
       "check_counts": {
-        "SUCCESS": 10,
-        "PENDING": 6,
+        "SUCCESS": 4,
+        "PENDING": 12,
         "SKIPPED": 2
       },
       "applicable_ci_passes": false,
@@ -1623,17 +1712,17 @@
         {
           "name": "gitleaks",
           "app_id": 15368,
-          "source_commit": "662f04c3a98e395f4f0f37a19475806a553ffe06",
+          "source_commit": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35593062407/job/106311604763",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35610776007/job/106369149207",
           "passes_required_identity": true
         },
         {
           "name": "scan",
           "app_id": 15368,
-          "source_commit": "662f04c3a98e395f4f0f37a19475806a553ffe06",
+          "source_commit": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35593062407/job/106311605409",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35610776007/job/106369149817",
           "passes_required_identity": true
         }
       ],
@@ -1649,12 +1738,6 @@
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/625#issuecomment-5758605849"
       ],
-      "full_suite_successor_binding": {
-        "full_source": "49fed65d0d1a315ce08addab533c56c48180d419",
-        "current_source": "662f04c3a98e395f4f0f37a19475806a553ffe06",
-        "verdict": "PASS_AST_EQUIVALENT_SUCCESSOR_BINDING",
-        "receipt_sha256": "0602d0f7c22cb1591891116c7b54eef2e006b2e99d960f6b6cf653495895ae43"
-      },
       "cleanup_evidence": [
         {
           "hardware": "b200",
@@ -1674,7 +1757,34 @@
           "active_owned_workload_resources": false,
           "original_output_hashes_verified": true
         }
-      ]
+      ],
+      "historical_full_suite_successor_binding": {
+        "full_source": "49fed65d0d1a315ce08addab533c56c48180d419",
+        "current_source": "662f04c3a98e395f4f0f37a19475806a553ffe06",
+        "verdict": "PASS_AST_EQUIVALENT_SUCCESSOR_BINDING",
+        "receipt_sha256": "0602d0f7c22cb1591891116c7b54eef2e006b2e99d960f6b6cf653495895ae43"
+      },
+      "full_local_suite": {
+        "source_commit": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
+        "tree": "2a90a092c4d1fdd9c867812879833a42f38e491d",
+        "pass": true,
+        "passed": 24243,
+        "skipped": 154,
+        "xpassed": 1,
+        "failures": 0,
+        "errors": 0,
+        "summary": "=== 24243 passed, 154 skipped, 1 xpassed, 480 warnings in 487.54s (0:08:07) ====",
+        "pytest_seconds": 487.54,
+        "wrapper_seconds": 490.01884894797695,
+        "started_at": "2026-09-21T13:54:13.701137+00:00",
+        "finished_at": "2026-09-21T14:02:23.719978+00:00",
+        "workers": 43,
+        "source_clean_unchanged": true,
+        "producer_five_hash_bindings_verified": true,
+        "result_sha256": "1146547a75d1d720b1f3913bd2fe57f8b8e0aa64ea5508098d77e7279e9b5833",
+        "log_sha256": "cce91d057317f326e9fc70322a21221ce550b9c758465faa0b9f094701ab3f47"
+      },
+      "independent_full_review_sha256": "41535bae9aa6e65c45bac47a9551416b25329550d27bfdba0d58a99969da230e"
     },
     {
       "number": 626,
@@ -1803,7 +1913,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1840,7 +1950,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/628#issuecomment-5751458874"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 629,
@@ -1854,7 +1971,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -1891,7 +2008,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/629#issuecomment-5751458813"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 630,
@@ -2395,7 +2519,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -2432,7 +2556,14 @@
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/640#issuecomment-5754558534"
       ],
-      "review_links": []
+      "review_links": [],
+      "ahead_base_signature_audit": {
+        "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 641,
@@ -2604,10 +2735,10 @@
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Acceptance incomplete",
-      "note": "Relevant source/image/runtime, objective or visual-review gates remain outstanding; see the workload summary and scoped proof.",
+      "note": "Relevant source/image/runtime, objective or visual-review gates remain outstanding; see the workload summary and scoped proof. Current hosted failures: test-gate / pytest-3.12-shard-1, test-gate / coverage, lint-gate / ruff, security-scanners, security-regression.",
       "check_counts": {
         "SUCCESS": 11,
         "FAILURE": 5,
@@ -2644,7 +2775,14 @@
       ],
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "current_failed_checks": [
+        "test-gate / pytest-3.12-shard-1",
+        "test-gate / coverage",
+        "lint-gate / ruff",
+        "security-scanners",
+        "security-regression"
+      ]
     },
     {
       "number": 647,
@@ -2764,7 +2902,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -2799,7 +2937,14 @@
       ],
       "depends_on": [],
       "public_proof_links": [],
-      "review_links": []
+      "review_links": [],
+      "ahead_base_signature_audit": {
+        "base_commit": "8c63ea7f54656001b070fa546e3b5d92507c6ace",
+        "ahead_commit_count": 1,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 651,
@@ -2813,7 +2958,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -2850,7 +2995,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/651#issuecomment-5757570901"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "8c63ea7f54656001b070fa546e3b5d92507c6ace",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 652,
@@ -2864,7 +3016,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -2901,7 +3053,14 @@
       "public_proof_links": [],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/652#issuecomment-5757272919"
-      ]
+      ],
+      "ahead_base_signature_audit": {
+        "base_commit": "8c63ea7f54656001b070fa546e3b5d92507c6ace",
+        "ahead_commit_count": 2,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
+      }
     },
     {
       "number": 653,
@@ -2965,14 +3124,15 @@
       "draft": true,
       "base": "main",
       "base_commit": "99be7d39f4481aa2c29f72204175698da1a7a258",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Scoped source review retained; current CI incomplete",
-      "note": "Current-source review acceptance does not replace pending CI, draft promotion, merge-queue integration or any separate workload gate.",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
+      "status": "Scoped review retained; current hosted test gate fails",
+      "note": "Exact09d0fa9 retains scoped source and CPU proof, but hosted shard2 fails test_audit_script_renders_and_reports_a_healthy_surface: credential-context discovery yields503/502 instead of a healthy audit surface. The shard reports1 failed,5,060 passed,131 skipped; four sibling shards cancelled and the required aggregate fails. This is not an all-green result or a reason to supply real cloud credentials to hermetic tests.",
       "check_counts": {
-        "SUCCESS": 10,
-        "PENDING": 6,
-        "SKIPPED": 3
+        "SUCCESS": 12,
+        "SKIPPED": 4,
+        "CANCELLED": 4,
+        "FAILURE": 2
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -2992,13 +3152,25 @@
           "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35559927405/job/106210738614",
           "passes_required_identity": true
+        },
+        {
+          "name": "security-regression",
+          "app_id": 15368,
+          "source_commit": "09d0fa9f3693db57142b82d7d7caf192b72257e0",
+          "conclusion": "FAILURE",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35559927405/job/106361112904",
+          "passes_required_identity": false
         }
       ],
       "depends_on": [],
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/b83b862e1469d0bfa22ae7c8bffae11db6b1c9b3/docs/testing/evidence/agent-metadata-test-repair-09d0fa9f/README.md"
       ],
-      "review_links": []
+      "review_links": [],
+      "current_failed_checks": [
+        "test-gate / pytest-3.12-shard-2",
+        "security-regression"
+      ]
     },
     {
       "number": 656,
@@ -3033,7 +3205,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted exact-source review and scoped proof retained; all applicable and required GitHub Actions checks match this source and application identity. Required merge-queue integration remains.",
+      "note": "Unchanged accepted source, all applicable checks and app-bound required checks pass. Every captured ahead-base commit is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge it.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -3082,6 +3254,13 @@
         "errors": 0,
         "seconds": 703.81,
         "log_sha256": "5e23898a99266e1597d10fba8903006ad15a875f30b47d64bb1cd4f1e2774e1b"
+      },
+      "ahead_base_signature_audit": {
+        "base_commit": "77d7c1a7fde4500123cd4b441921caadef5a7f8c",
+        "ahead_commit_count": 1,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
       }
     },
     {
@@ -3093,17 +3272,16 @@
       "draft": true,
       "base": "main",
       "base_commit": "eb75a05d1dda3d391d75b8cdad0754460ab3b5f8",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Scoped source review retained; current CI incomplete",
       "note": "Current-source review acceptance does not replace pending CI, draft promotion, merge-queue integration or any separate workload gate.",
       "check_counts": {
-        "SUCCESS": 10,
-        "PENDING": 6,
+        "SUCCESS": 19,
         "SKIPPED": 3
       },
-      "applicable_ci_passes": false,
-      "required_checks_app_and_source_verified": false,
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -3119,6 +3297,14 @@
           "source_commit": "a26a868e3bed68d48eb6fd91638e1e1d3d048474",
           "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35558967634/job/106208019671",
+          "passes_required_identity": true
+        },
+        {
+          "name": "security-regression",
+          "app_id": 15368,
+          "source_commit": "a26a868e3bed68d48eb6fd91638e1e1d3d048474",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35558967634/job/106364231518",
           "passes_required_identity": true
         }
       ],
@@ -3138,14 +3324,15 @@
       "draft": false,
       "base": "main",
       "base_commit": "eb75a05d1dda3d391d75b8cdad0754460ab3b5f8",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Exact source and uninterrupted full suite pass; hosted CI pending",
       "note": "Independent exact-source functional review is accepted. A fresh isolated uninterrupted full suite passed 25,280 tests, with 155 skips, one non-strict xpass and zero failures/errors. Exact source/tree remained clean and unchanged; original log, environment, runner and exit bindings were independently verified. Historical prerequisite failures or interrupted attempts remain retained separately. Hosted CI remains pending; no queue readiness or GPU claim follows.",
       "check_counts": {
         "SUCCESS": 10,
-        "PENDING": 6,
-        "SKIPPED": 3
+        "IN_PROGRESS": 1,
+        "SKIPPED": 3,
+        "PENDING": 5
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -3194,8 +3381,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Exact source and full local suite pass; hosted CI pending",
       "note": "Current 3e6 closes the README accuracy findings. Only README and two test files differ from accepted f93 production bytes. The uninterrupted exact-source full suite passed 25,139 tests, with 155 skips and 1 non-strict xpass. Hosted checks remain pending, so this PR is not a queue candidate. The 2.3806x figure remains limited to the generated 16 MiB native OCI comparison; no general real-image speedup or memory bound is claimed.",
       "check_counts": {
@@ -3252,8 +3439,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Exact source and uninterrupted full suite pass; hosted CI pending",
       "note": "Independent exact-source functional review is accepted. A fresh isolated uninterrupted full suite passed 25,283 tests, with 155 skips, one non-strict xpass and zero failures/errors. Exact source/tree remained clean and unchanged; original log, environment, runner and exit bindings were independently verified. Historical prerequisite failures or interrupted attempts remain retained separately. Hosted CI remains pending; no queue readiness or GPU claim follows.",
       "check_counts": {
@@ -3308,10 +3495,10 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Changes required: reproduced authority and credential-boundary gaps",
-      "note": "Independent review of exact 1b441faac reproduced context/namespace mismatch, per-stage credential-set conflation, missing target-pull proof, ambiguous-create cleanup, and raw diagnostic delivery gaps. Some are inherited adjacent paths, not all newly introduced. Existing 110 focused tests pass but do not refute these controls. The earlier no-objection phrase meant file-ownership coordination; it was not source acceptance. Later private candidates are not substituted for this published head.",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
+      "status": "Published source rejected; private authority repair remains under review",
+      "note": "Published1b441faac remains bound to the original reproduced authority, context, delivery and cleanup findings. Private f8955b47 fixed several paths but independently reproduced false verification after admitted ServiceAccount, pull Secret or placement changes. That candidate is rejected; a later private repair is under review. No full suite or source acceptance is transferred to the published PR.",
       "check_counts": {
         "SUCCESS": 10,
         "PENDING": 6,
@@ -3350,8 +3537,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Exact source and uninterrupted full suite pass; hosted CI pending",
       "note": "Independent exact-source functional review is accepted. A fresh isolated uninterrupted full suite passed 25,281 tests, with 155 skips, one non-strict xpass and zero failures/errors. Exact source/tree remained clean and unchanged; original log, environment, runner and exit bindings were independently verified. Historical prerequisite failures or interrupted attempts remain retained separately. Hosted CI remains pending; no queue readiness or GPU claim follows.",
       "check_counts": {
@@ -3406,8 +3593,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Generic source and full local suite accepted; hosted CI pending",
       "note": "Exact 73d5bb7e0 is independently accepted for the generic SSH host-key layer repair. The final uninterrupted suite passed 25,280 tests, 155 skips and one non-strict xpass; the original Cursor terminal exit 0, exact command/source and byte-identical log are independently verified. Both earlier prerequisite-failure runs remain retained. The source-equivalent private Evo image supplies 12 verified ancestor layers with zero host-key entries and two disjoint startup-key sets. This scoped generic fix can close independently of Evo/AprilTag capability qualification. Current CI, draft closure and required merge queue remain.",
       "check_counts": {
@@ -3459,8 +3646,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Exact source and full local suite pass; hosted CI pending",
       "note": "Exact 2f9032465 source is accepted and retains production helper bytes from the ed24 proof producer. Published same-image controls demonstrate HIGH private-key detection previously hidden by CRITICAL filtering; the fixable-CRITICAL vulnerability policy is retained. The uninterrupted full local suite finished at 10:11 UTC with 25,299 passed, 155 skipped, one non-strict xpass and zero failures/errors in 747.71 seconds. The independently retrieved log matches its retained SHA256 and exact source remained clean and unchanged. Hosted CI remains pending; deterministic copy refusal is not actual public-image publication.",
       "check_counts": {
@@ -3508,21 +3695,23 @@
       "number": 688,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/688",
       "depends_on": [],
-      "public_proof_links": [],
+      "public_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/800495d5726afb62c6f0920bdfeb55f91fe99f88/docs/testing/evidence/payload-scanner-bbf4d340/README.md"
+      ],
       "review_links": [],
-      "status": "Captured a412 source review pending; later repair still has a caller gap",
-      "note": "The GitHub snapshot captures a412f5140; no exact-source acceptance is recorded for it. Retained independent a7da review required changes for ordinary OpenSSH parser-binary false positives and an inherited Alpamayo application branch that skipped shared credential rules. A later exact 9a0f34abe review closes the parser-binary issue using unchanged real binaries and matched embedded-key positives, but still requires changes for the application branch: identical EC/encrypted-key and assignment payloads are accepted there and rejected outside it. That later review has 173 passing focused tests and 36 native invocations; it is not transferred to the captured published head. Earlier content-boundary/path-alias cases remain closed, with failed candidates retained. No accepted source is ready for a full suite.",
+      "status": "Functional source and full suite pass; parser-prose correction awaits CI",
+      "note": "Current 942311832 is independently bound to the fully tested bbf4d340 tree through 0e7f11ee plus one explanatory-comment change; the detector AST is identical and the new commit signature is GitHub-verified. The accepted proof covers 193 focused tests, 36 native invocations, 30 boundary outcomes and two scoped revert mutants across 9 native invocations. The uninterrupted full suite passed 25,433 tests, 155 skips and 1 non-strict xpass. The prior 0e7 Gitleaks failure is retained: its private-key rule spanned parser-header prose and detector pattern text, not an identified key. Root corrected that single comment and reports the exact CI-range Gitleaks 8.28.0 check passing; fresh current-head hosted CI remains pending. No broad scanner exception or complete-image qualification is claimed.",
       "title": "fix(scan): detect private keys in the payload scanners that claim to",
-      "source_commit": "a412f5140a61906e1ae7afdfe9ff2b57ddf630ba",
+      "source_commit": "942311832819b0d649f52bcf93b4df5e3a5356e8",
       "state": "OPEN",
       "draft": true,
       "base": "main",
-      "base_commit": "aaa2afabbb55cdce4f978a4e8e1954a67984a877",
+      "base_commit": "24141e67c8127be1036c431eab06e33d44314045",
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "check_counts": {
-        "SUCCESS": 4,
-        "PENDING": 11,
+        "SUCCESS": 2,
+        "PENDING": 13,
         "SKIPPED": 2,
         "IN_PROGRESS": 1
       },
@@ -3532,46 +3721,83 @@
         {
           "name": "gitleaks",
           "app_id": 15368,
-          "source_commit": "a412f5140a61906e1ae7afdfe9ff2b57ddf630ba",
-          "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35600491471/job/106335209875",
-          "passes_required_identity": true
+          "source_commit": "942311832819b0d649f52bcf93b4df5e3a5356e8",
+          "conclusion": "IN_PROGRESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35613637758/job/106378762699",
+          "passes_required_identity": false
         },
         {
           "name": "scan",
           "app_id": 15368,
-          "source_commit": "a412f5140a61906e1ae7afdfe9ff2b57ddf630ba",
+          "source_commit": "942311832819b0d649f52bcf93b4df5e3a5356e8",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35600491471/job/106335210199",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35613637758/job/106378761826",
           "passes_required_identity": true
         }
       ],
-      "retained_predecessor_review": {
-        "source_commit": "a7da8a720d0869830c6aef798b11d75206249a4a",
-        "verdict": "CHANGES_REQUIRED",
-        "receipt_sha256": "73ebbadb0e52f929063f4ec07e5ba36a0955c43c5bbfeed7ac34c269412b933f",
-        "not_transferred_to_current_head": true
+      "accepted_tree_binding": {
+        "tested_source": "bbf4d340d7db9463bb55ad9988bde5a370e96877",
+        "current_source": "942311832819b0d649f52bcf93b4df5e3a5356e8",
+        "tested_tree": "fc6f1de5c317536fa14c9650fdbf17c7f3e7e60f",
+        "current_tree": "dbcd471fdadf78643648036f1bec62031a75cb5e",
+        "same_tree": false,
+        "single_comment_change": true,
+        "detector_ast_equal": true,
+        "receipt_sha256": "6be8990a7ed809e544853010c1046654f5dd0b5d4cce64223ab7c30793b9cd52"
       },
-      "later_scoped_review": {
+      "full_local_suite": {
+        "source_commit": "bbf4d340d7db9463bb55ad9988bde5a370e96877",
+        "tree": "fc6f1de5c317536fa14c9650fdbf17c7f3e7e60f",
+        "passed": 25433,
+        "skipped": 155,
+        "xpassed": 1,
+        "failed": 0,
+        "errors": 0,
+        "log_sha256": "628ffb9827d617a4b45ce9a176f6a1aad520b3056e49cf3269ac78d7dc8a1ba9"
+      },
+      "historical_later_scoped_review": {
         "source_commit": "9a0f34abe4ca5b6ba6cfa6d2342b3c4189bdd708",
         "verdict": "CHANGES_REQUIRED",
         "receipt_sha256": "6c5ccff11843122565bdbb1fda135fdb96413cc2f0544b83ed42509a3cb05fa2",
         "open_finding": "Alpamayo application branch skips shared rules",
         "closed_finding": "OpenSSH parser-marker false positive",
         "not_transferred_to_captured_pr_head": true
+      },
+      "historical_retained_predecessor_review": {
+        "source_commit": "a7da8a720d0869830c6aef798b11d75206249a4a",
+        "verdict": "CHANGES_REQUIRED",
+        "receipt_sha256": "73ebbadb0e52f929063f4ec07e5ba36a0955c43c5bbfeed7ac34c269412b933f",
+        "not_transferred_to_current_head": true
       }
     }
   ],
-  "workload_update_recorded_at": "2026-09-21T12:51:02.500302+00:00",
+  "workload_update_recorded_at": "2026-09-21T14:42:06.128199+00:00",
   "count_definition": {
-    "tracked_historical": "63 PR records: 61 open and two retained closed records (#611 and #656). This is a tracking count, not accepted or delivered improvements.",
-    "excluded_duplicate": {
-      "number": 685,
-      "state": "CLOSED",
-      "reason": "Abandoned duplicate; excluded from the 63 tracked records and all open, delivered-improvement and readiness counts.",
-      "url": "https://github.com/nebius/nebius-physical-ai/pull/685"
-    },
-    "readiness": "19 exact-source, non-draft main candidates with applicable and app-bound required checks passing; not merged or enqueued by this audit.",
+    "tracked_historical": "63 tracked records:60 open,1 merged (#579),2 closed (#611/#656). Not a delivered-improvement count.",
+    "excluded": "Closed abandoned duplicate 685 and unowned 689 are excluded from all program totals.",
+    "queue_candidates": "15 unchanged accepted main candidates have applicable/app-bound checks, CLEAN state and every ahead-base signature verified; not enqueued or merged by this audit.",
+    "signature_pending": "581/608/615 retain accepted source and green checks but are excluded until effective signature-rule resolution.",
     "delivered_improvement_count": null
-  }
+  },
+  "signature_resolution_pending": [
+    581,
+    608,
+    615
+  ],
+  "tracked_merged_prs": [
+    579
+  ],
+  "supplemental_pr_updates": [
+    {
+      "pr": 688,
+      "at": "2026-09-21T14:40:59.142130+00:00",
+      "reason": "Root published parser-prose correction after the all-PR capture."
+    }
+  ],
+  "program_execution": {
+    "cursor": "New/resumed Cursor turns are blocked by its reported monthly usage cap.",
+    "recovery": "Scoped Codex recovery and validation continue with explicit attribution; completed Cursor work and failed attempts remain retained.",
+    "no_blanket_worker_liveness_claim": true
+  },
+  "root_operational_update_at": "2026-09-21T14:46:38.030983+00:00"
 }
