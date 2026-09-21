@@ -16,6 +16,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
+  # Independent validation jobs use available runners without shared job locks.
+  # The workflow-level group above owns cancellation of superseded PR work.
   test-gate:
     if: github.event_name != 'push'
     uses: ./.github/workflows/test.yml

@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -185,11 +186,203 @@ def _set_frame(rr: Any, rec: Any, idx: int) -> None:
         rr.set_time_sequence("frame", idx, recording=rec)
 
 
+def _log_video_asset(
+    rr: Any,
+    rec: Any,
+    entity: str,
+    path: Path,
+    *,
+    temporal_alignment: dict[str, Any] | None = None,
+) -> int:
+    """Log one video and its real decoded timestamps on the duration timeline."""
+
+    asset = rr.AssetVideo(path=path)
+    rr.log(entity, asset, static=True, recording=rec)
+    timestamps = asset.read_frame_timestamps_nanos()
+    if not len(timestamps):
+        raise DataFactoryVizError(f"video has no decoded frame timestamps: {path.name}")
+    timeline_timestamps = timestamps
+    reference_timestamps = timestamps
+    if temporal_alignment is not None:
+        frame_map = temporal_alignment.get("frame_map")
+        if not isinstance(frame_map, list) or not frame_map:
+            raise DataFactoryVizError(
+                "source video temporal alignment has no frame-reference map"
+            )
+        try:
+            source_indices = [int(item["source_index"]) for item in frame_map]
+            timeline_timestamps = [
+                round(float(item["output_timestamp_seconds"]) * 1_000_000_000)
+                for item in frame_map
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DataFactoryVizError(
+                "source video temporal alignment is malformed"
+            ) from exc
+        if any(index < 0 or index >= len(timestamps) for index in source_indices):
+            raise DataFactoryVizError(
+                "source video temporal alignment references an absent frame"
+            )
+        if any(
+            right <= left
+            for left, right in zip(timeline_timestamps, timeline_timestamps[1:])
+        ):
+            raise DataFactoryVizError(
+                "source video temporal alignment is not strictly increasing"
+            )
+        reference_timestamps = [timestamps[index] for index in source_indices]
+    references = rr.VideoFrameReference.columns_nanos(reference_timestamps)
+    rr.send_columns(
+        entity,
+        indexes=[
+            rr.TimeColumn(
+                "video_time",
+                duration=[1e-9 * value for value in timeline_timestamps],
+            )
+        ],
+        columns=references,
+        recording=rec,
+    )
+    # Keep ordinal navigation as an explicitly secondary timeline. The default
+    # viewer uses ``video_time`` and therefore never invents playback speed.
+    rr.send_columns(
+        entity,
+        indexes=[rr.TimeColumn("frame", sequence=range(len(reference_timestamps)))],
+        columns=references,
+        recording=rec,
+    )
+    return len(reference_timestamps)
+
+
+def _source_video_temporal_alignment(
+    media_evidence: dict[str, Any], entity: str
+) -> dict[str, Any] | None:
+    """Use only the decoded-PTS v3 map for exact source-frame remapping."""
+
+    if (
+        media_evidence.get("conditioning_policy") == "source-fidelity-v3"
+        and entity == "source/original"
+    ):
+        value = media_evidence.get("temporal_alignment")
+        return value if isinstance(value, dict) else None
+    return None
+
+
 def _image(rr: Any, arr: Any):
     try:
         return rr.Image(arr, color_model="RGB")
     except TypeError:
         return rr.Image(arr)
+
+
+def _build_data_factory_blueprint(
+    rrb: Any,
+    *,
+    source_entities: list[str],
+    candidate_entities: list[str],
+    has_controls: bool,
+    has_captions: bool,
+    has_pipeline_evidence: bool,
+    default_timeline: str,
+    foreground_controls: bool = False,
+) -> Any:
+    """Foreground media comparison while keeping factual evidence in another tab."""
+
+    def media_group(entities: list[str], name: str) -> Any:
+        views = [
+            rrb.Spatial2DView(
+                origin=entity,
+                contents=f"{entity}/**",
+                name=entity.rsplit("/", 1)[-1].replace("_", " "),
+            )
+            for entity in entities
+        ]
+        if len(views) == 1:
+            return views[0]
+        return rrb.Tabs(*views, active_tab=0, name=name)
+
+    media_columns: list[Any] = []
+    if source_entities:
+        media_columns.append(media_group(source_entities, "Original source"))
+    if has_controls and foreground_controls:
+        media_columns.append(
+            rrb.Spatial2DView(
+                origin="control",
+                contents="control/**",
+                name="Conditioning controls",
+            )
+        )
+    if candidate_entities:
+        media_columns.append(media_group(candidate_entities, "Generated candidates"))
+    media_tab: Any = (
+        media_columns[0]
+        if len(media_columns) == 1
+        else rrb.Horizontal(
+            *media_columns,
+            column_shares=[1.0] * len(media_columns),
+            name="Original versus generated",
+        )
+    )
+
+    context_views: list[Any] = []
+    if has_controls and not foreground_controls:
+        context_views.append(
+            rrb.Spatial2DView(
+                origin="control",
+                contents="control/**",
+                name="Conditioning controls and masks",
+            )
+        )
+    if has_captions:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="captions", contents="captions/**", name="Prompt and captions"
+            )
+        )
+    if has_pipeline_evidence:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="pipeline",
+                contents="pipeline/**",
+                name="Evaluator scores and disposition",
+            )
+        )
+    if candidate_entities:
+        context_views.append(
+            rrb.TextDocumentView(
+                origin="augmented",
+                contents="augmented/**/disposition",
+                name="Per-candidate accept/reject disposition",
+            )
+        )
+    foreground_rows: list[Any] = [media_tab]
+    if context_views:
+        foreground_rows.append(
+            context_views[0]
+            if len(context_views) == 1
+            else rrb.Horizontal(
+                *context_views,
+                column_shares=[1.0] * len(context_views),
+                name="Conditioning, evaluator scores, and disposition",
+            )
+        )
+    layout: Any = (
+        foreground_rows[0]
+        if len(foreground_rows) == 1
+        else rrb.Vertical(
+            *foreground_rows,
+            row_shares=[3.0, 1.0],
+            name="Media-first quality review",
+        )
+    )
+    return rrb.Blueprint(
+        layout,
+        rrb.BlueprintPanel(state=rrb.PanelState.Hidden),
+        rrb.SelectionPanel(state=rrb.PanelState.Hidden),
+        rrb.TimePanel(state=rrb.PanelState.Expanded, timeline=default_timeline),
+        auto_layout=False,
+        collapse_panels=True,
+    )
 
 
 def build_run_rrd(
@@ -213,6 +406,7 @@ def build_run_rrd(
 
     try:
         import rerun as rr
+        import rerun.blueprint as rrb
     except ImportError as exc:  # pragma: no cover - rerun is a repo dependency
         raise DataFactoryVizError(
             f"rerun-sdk is required to build the recording: {exc}"
@@ -252,24 +446,125 @@ def build_run_rrd(
         )
         review = _PaidfReview(local, input_uri)
         captions = _load_captions(local, review=review)
-
-        out_path = Path(tmp) / "sim2real.rrd"
-        rec = rr.RecordingStream(app_id, recording_id=run_id)
-        # A file sink must be attached before the first log call. Attaching it
-        # afterwards happens to replay buffered rows, but leaves a streaming RRD
-        # without its footer/manifest when the temporary directory is published.
-        # Rerun can often read that stream, while `rerun rrd verify` correctly
-        # rejects it as incomplete.
-        rec.save(str(out_path))
-        logged = 0
-
         input_root = local / "input"
+        raw_input_provenance = _read_json(input_root / "provenance.json")
         input_provenance = review.read(input_root / "provenance.json", "input")
         source_kind = (
             str(input_provenance.get("source_kind") or "")
             if isinstance(input_provenance, dict)
             else ""
         )
+        source_entities: set[str] = set()
+        for frame in _image_files(input_root):
+            if frame.name.startswith("conditioning-frame-"):
+                source_entities.add("conditioning/derived")
+            elif source_kind == "synthetic_fixture":
+                source_entities.add("fixture/synthetic_seeded")
+            else:
+                source_entities.add(f"source/{_input_entity(frame, input_root)}")
+        source_video_records: list[dict[str, Any]] = []
+        for name, entity in (
+            ("source.mp4", "source/original"),
+            ("conditioning.mp4", "conditioning/derived"),
+        ):
+            video = input_root / name
+            if video.is_file():
+                source_entities.add(entity)
+                source_video_records.append({"entity": entity, "video": video})
+        variant_records = _committed_variant_records(local)
+        # ``workbench.nurec.visualize`` is intentionally shared by NuRec and
+        # PAIDF workflow stages. Its CLI default is the NuRec application id,
+        # but committed PAIDF candidates are authoritative run-shape evidence:
+        # they must always receive the media-first PAIDF blueprint and
+        # presentation metadata, regardless of that shared entrypoint default.
+        effective_app_id = APPLICATION_ID if variant_records else app_id
+        candidate_entities = [
+            f"augmented/{record['candidate_id']}" for record in variant_records
+        ]
+        stage_docs = _load_stage_docs(local, review=review)
+        media_evidence = _source_fidelity_media_evidence(
+            local,
+            # Internal synchronization checks need the source-derived policy and
+            # temporal map. The portable review projection intentionally omits
+            # those nested runtime details, so using it here silently disabled
+            # the evidence panel for real source-fidelity runs.
+            input_provenance=raw_input_provenance,
+            variant_records=variant_records,
+        )
+        if media_evidence:
+            stage_docs["pipeline/2_media_metadata"] = _json_block(
+                "Synchronized source, conditioning, control, and generated media",
+                media_evidence,
+            )
+        has_controls = bool(_image_files(local / "cosmos_control")) or bool(
+            media_evidence.get("controls") if media_evidence else False
+        )
+        if (
+            effective_app_id == APPLICATION_ID
+            and variant_records
+            and not source_entities
+        ):
+            raise DataFactoryVizError(
+                "committed augmented candidates require source media for comparison"
+            )
+        has_video_timing = bool(source_video_records) and any(
+            isinstance(record.get("video"), Path) and record["video"].is_file()
+            for record in variant_records
+        )
+        default_timeline = "video_time" if has_video_timing else "frame"
+        blueprint_source_entities = sorted(source_entities)
+        if media_evidence:
+            source_priority = {
+                "source/original": 0,
+                "conditioning/derived": 1,
+            }
+            blueprint_source_entities.sort(
+                key=lambda entity: (source_priority.get(entity, 2), entity)
+            )
+
+        out_path = Path(tmp) / "sim2real.rrd"
+        rec = rr.RecordingStream(effective_app_id, recording_id=run_id)
+        # A file sink must be attached before the first log call. Attaching it
+        # afterwards happens to replay buffered rows, but leaves a streaming RRD
+        # without its footer/manifest when the temporary directory is published.
+        # Rerun can often read that stream, while `rerun rrd verify` correctly
+        # rejects it as incomplete.
+        if effective_app_id == APPLICATION_ID and (
+            source_entities or candidate_entities
+        ):
+            rec.save(
+                str(out_path),
+                default_blueprint=_build_data_factory_blueprint(
+                    rrb,
+                    source_entities=blueprint_source_entities,
+                    candidate_entities=candidate_entities,
+                    has_controls=has_controls,
+                    has_captions=bool(captions),
+                    has_pipeline_evidence=bool(stage_docs),
+                    default_timeline=default_timeline,
+                    foreground_controls=bool(media_evidence),
+                ),
+            )
+        else:
+            rec.save(str(out_path))
+        logged = 0
+
+        source_video_count = 0
+        for source_video in source_video_records:
+            temporal_alignment = (
+                _source_video_temporal_alignment(media_evidence, source_video["entity"])
+                if media_evidence
+                else None
+            )
+            _log_video_asset(
+                rr,
+                rec,
+                f"{source_video['entity']}/video",
+                source_video["video"],
+                temporal_alignment=temporal_alignment,
+            )
+            source_video_count += 1
+
         for frame in _subsample(_image_files(input_root), RRD_MAX_FRAMES_PER_ENTITY):
             _set_frame(rr, rec, _frame_index(frame.stem))
             if frame.name.startswith("conditioning-frame-"):
@@ -298,7 +593,6 @@ def build_run_rrd(
         augmented_entities: set[str] = set()
         augmented_frame_count = 0
         augmented_video_count = 0
-        variant_records = _committed_variant_records(local)
         if variant_records:
             disposition = review.read(
                 local / "grade" / "quality_disposition.json", "quality"
@@ -323,29 +617,13 @@ def build_run_rrd(
                     augmented_frame_count += 1
                 video = record.get("video")
                 if isinstance(video, Path) and video.is_file():
-                    asset = rr.AssetVideo(path=video)
-                    rr.log(f"{entity}/video", asset, static=True, recording=rec)
                     try:
-                        timestamps = asset.read_frame_timestamps_nanos()
-                        if len(timestamps):
-                            rr.send_columns(
-                                f"{entity}/video",
-                                indexes=[
-                                    rr.TimeColumn(
-                                        "video_time", duration=1e-9 * timestamps
-                                    )
-                                ],
-                                columns=rr.VideoFrameReference.columns_nanos(
-                                    timestamps
-                                ),
-                                recording=rec,
-                            )
+                        _log_video_asset(rr, rec, f"{entity}/video", video)
                     except Exception as exc:  # noqa: BLE001 - asset remains reviewable
-                        _log.debug(
-                            "could not attach video frame references for %s: %s",
-                            video,
-                            exc,
-                        )
+                        rec.disconnect()
+                        raise DataFactoryVizError(
+                            "generated video timing could not be decoded"
+                        ) from exc
                     augmented_video_count += 1
                 if label:
                     rr.log(
@@ -414,7 +692,7 @@ def build_run_rrd(
         # curation report, the finalize aggregate, and a stage log/timeline — is
         # inspectable inside the embedded Rerun viewer alongside the input/output
         # images, not just the frames.
-        for entity, body in _load_stage_docs(local, review=review).items():
+        for entity, body in stage_docs.items():
             rr.log(
                 entity,
                 rr.TextDocument(body, media_type="text/markdown"),
@@ -440,6 +718,7 @@ def build_run_rrd(
                 existing_path,
                 variant_records=variant_records,
                 quality_status=quality_status if variant_records else "UNKNOWN",
+                source_video_records=source_video_records,
             )
             written_uri = output_uri
         else:
@@ -468,6 +747,27 @@ def build_run_rrd(
         "augmented_media_entities": len(augmented_entities),
         "augmented_frame_components": augmented_frame_count,
         "augmented_video_components": augmented_video_count,
+        "source_video_components": source_video_count,
+        "presentation": {
+            "default_timeline": default_timeline,
+            "default_view": (
+                "source-control-generated"
+                if media_evidence
+                else "original-versus-generated"
+            ),
+            "source_entities": sorted(source_entities),
+            "source_video_entities": [
+                str(record["entity"]) for record in source_video_records
+            ],
+            "candidate_entities": candidate_entities,
+            "conditioning_context": has_controls,
+            "evaluator_disposition_context": bool(stage_docs),
+            "timing_basis": (
+                "decoded-video-timestamps" if has_video_timing else "frame-sequence"
+            ),
+        }
+        if effective_app_id == APPLICATION_ID
+        else {},
         **inventory_proof,
     }
 
@@ -565,6 +865,7 @@ def _verify_terminal_rrd_media(
     *,
     variant_records: list[dict[str, Any]],
     quality_status: str,
+    source_video_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     """Prove a preserved RRD contains each candidate's exact video and disposition."""
 
@@ -583,6 +884,29 @@ def _verify_terminal_rrd_media(
 
     verified_videos = 0
     verified_dispositions = 0
+    verified_source_videos = 0
+    for record in source_video_records or []:
+        entity = str(record.get("entity") or "")
+        video_path = record.get("video")
+        if not entity or not isinstance(video_path, Path) or not video_path.is_file():
+            raise DataFactoryVizError(
+                "existing RRD verification requires every source video"
+            )
+        embedded: list[bytes] = []
+        for chunk in by_entity.get(f"/{entity}/video", []):
+            batch = chunk.to_record_batch()
+            if "AssetVideo:blob" not in batch.schema.names:
+                continue
+            for row in batch.column("AssetVideo:blob").to_pylist():
+                if row:
+                    embedded.append(bytes(row[0]))
+        if len(embedded) != 1 or hashlib.sha256(
+            embedded[0]
+        ).hexdigest() != _sha256_path(video_path):
+            raise DataFactoryVizError(
+                "existing RRD source video differs from its canonical input"
+            )
+        verified_source_videos += 1
     expected_status = str(quality_status or "UNKNOWN").upper()
     for record in variant_records:
         candidate = str(record.get("candidate_id") or "")
@@ -632,6 +956,7 @@ def _verify_terminal_rrd_media(
     if not variant_records:
         raise DataFactoryVizError("existing RRD has no committed candidates to verify")
     return {
+        "source_video_entities": verified_source_videos,
         "augmented_video_entities": verified_videos,
         "augmented_disposition_entities": verified_dispositions,
     }
@@ -643,6 +968,167 @@ def _sha256_path(path: Path) -> str:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _source_fidelity_media_evidence(
+    local: Path,
+    *,
+    input_provenance: Any,
+    variant_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Probe the exact VDA media bytes that the synchronized RRD embeds.
+
+    This is intentionally opt-in to the NVIDIA VDA source-fidelity policy so
+    existing DIG/IAA/EVG recordings and their defaults remain byte-for-byte
+    behaviorally unchanged.
+    """
+
+    if not isinstance(input_provenance, dict):
+        return {}
+    derivation = input_provenance.get("derivation")
+    if not isinstance(derivation, dict) or derivation.get("policy") not in {
+        "source-fidelity-v2",
+        "source-fidelity-v3",
+    }:
+        return {}
+    conditioning_policy = str(derivation["policy"])
+
+    from npa.workflows.data_factory_input import PaidfInputError, probe_video
+
+    def probe(path: Path) -> dict[str, Any]:
+        try:
+            return {
+                **probe_video(path),
+                "sha256": _sha256_path(path),
+                "byte_size": path.stat().st_size,
+            }
+        except PaidfInputError as exc:
+            raise DataFactoryVizError(
+                f"source-fidelity RRD media probe failed for {path.name}"
+            ) from exc
+
+    source = local / "input" / "source.mp4"
+    conditioning = local / "input" / "conditioning.mp4"
+    if not source.is_file() or not conditioning.is_file():
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires source.mp4 and conditioning.mp4"
+        )
+    source_media = probe(source)
+    conditioning_media = probe(conditioning)
+    candidates = [
+        {
+            "candidate_id": str(record["candidate_id"]),
+            "media": probe(record["video"]),
+        }
+        for record in variant_records
+        if isinstance(record.get("video"), Path)
+    ]
+    if len(candidates) != len(variant_records):
+        raise DataFactoryVizError(
+            "source-fidelity RRD could not probe every committed candidate"
+        )
+    candidate_ids = {str(record["candidate_id"]) for record in variant_records}
+    control_root = local / "cosmos_control"
+    selected_control_videos: dict[Path, str] = {}
+    controls_by_candidate = {candidate_id: 0 for candidate_id in candidate_ids}
+    for iteration, augment_root in _augment_roots(local):
+        manifest = _read_json(augment_root / "manifest.json")
+        if not isinstance(manifest, dict):
+            continue
+        for variant in _validated_viz_manifest(manifest):
+            clip = str(variant.get("clip") or "").strip()
+            candidate_id = f"iteration-{iteration}/{clip}" if iteration else clip
+            if candidate_id not in candidate_ids:
+                continue
+            control_uris = variant.get("control_uris") or {}
+            if not isinstance(control_uris, dict) or not control_uris:
+                raise DataFactoryVizError(
+                    f"source-fidelity RRD candidate {candidate_id} has no committed control video"
+                )
+            for uri in control_uris.values():
+                value = str(uri or "")
+                marker = "/cosmos_control/"
+                if marker not in value or not value.lower().endswith(".mp4"):
+                    raise DataFactoryVizError(
+                        f"source-fidelity RRD candidate {candidate_id} has an invalid control URI"
+                    )
+                path = control_root / value.split(marker, 1)[1]
+                selected_control_videos[path] = candidate_id
+                controls_by_candidate[candidate_id] += 1
+    missing_candidate_controls = sorted(
+        candidate_id
+        for candidate_id, count in controls_by_candidate.items()
+        if count == 0
+    )
+    if missing_candidate_controls:
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires a committed control video for every candidate"
+        )
+    missing_controls = [
+        path for path in sorted(selected_control_videos) if not path.is_file()
+    ]
+    if missing_controls:
+        raise DataFactoryVizError(
+            "source-fidelity RRD is missing a manifest-referenced control video"
+        )
+    controls = [
+        {
+            "candidate_id": selected_control_videos[path],
+            "signal": path.relative_to(control_root).as_posix(),
+            "media": probe(path),
+        }
+        for path in sorted(selected_control_videos)
+    ]
+    return {
+        "schema": "npa.paidf.vda.media-evidence.v1",
+        "conditioning_policy": conditioning_policy,
+        "synchronization_timeline": "video_time",
+        "source": source_media,
+        "conditioning": conditioning_media,
+        "controls": controls,
+        "generated_candidates": candidates,
+        "temporal_alignment": _validated_source_fidelity_alignment(
+            derivation.get("temporal_alignment"),
+            source_frame_count=int(source_media["frame_count"]),
+            conditioning_frame_count=int(conditioning_media["frame_count"]),
+        ),
+    }
+
+
+def _validated_source_fidelity_alignment(
+    value: Any,
+    *,
+    source_frame_count: int,
+    conditioning_frame_count: int,
+) -> dict[str, Any]:
+    """Validate the exact source-reference map before using it as RRD timing."""
+
+    if not isinstance(value, dict) or not isinstance(value.get("frame_map"), list):
+        raise DataFactoryVizError(
+            "source-fidelity RRD requires a complete temporal-alignment map"
+        )
+    frame_map = value["frame_map"]
+    if len(frame_map) != conditioning_frame_count:
+        raise DataFactoryVizError(
+            "source-fidelity temporal alignment does not match conditioning frames"
+        )
+    for expected_index, item in enumerate(frame_map):
+        if not isinstance(item, dict):
+            raise DataFactoryVizError("source-fidelity temporal alignment is malformed")
+        source_index = item.get("source_index")
+        output_index = item.get("output_index")
+        output_timestamp = item.get("output_timestamp_seconds")
+        if (
+            output_index != expected_index
+            or not isinstance(source_index, int)
+            or not 0 <= source_index < source_frame_count
+            or not isinstance(output_timestamp, (int, float))
+            or not math.isclose(
+                float(output_timestamp), expected_index / 16, rel_tol=0, abs_tol=1e-9
+            )
+        ):
+            raise DataFactoryVizError("source-fidelity temporal alignment is malformed")
+    return value
 
 
 def _image_files(root: Path) -> list[Path]:
@@ -755,11 +1241,14 @@ def _log_control_entities(rr: Any, rec: Any, local: Path) -> int:
                 for signal_dir in sorted(p for p in clip_dir.iterdir() if p.is_dir())
             ]
     for clip, signal_dir in selected:
-        if signal_dir.is_dir():
+        control_video = signal_dir.with_suffix(".mp4")
+        if signal_dir.is_dir() or control_video.is_file():
             frames = _subsample(
                 sorted(_image_files(signal_dir)), RRD_MAX_FRAMES_PER_ENTITY
             )
             entity = f"control/{clip}/{signal_dir.name}"
+            if control_video.is_file():
+                _log_video_asset(rr, rec, f"{entity}/video", control_video)
             for frame in frames:
                 _set_frame(rr, rec, _frame_index(frame.stem))
                 _log_frame(rr, rec, entity, _load_rgb(frame))
@@ -902,6 +1391,11 @@ def _candidate_disposition_document(
 ) -> str:
     """Truthful per-candidate disposition shown beside its actual media."""
     evaluation = _candidate_evaluation(local, iteration, clip, review)
+    candidate_status = (
+        "ACCEPTED"
+        if quality_status == "ACCEPTED" and evaluation.get("passed") is True
+        else "REJECTED"
+    )
     summary = review.payload(
         {
             "candidate_id": candidate_id,
@@ -910,6 +1404,7 @@ def _candidate_disposition_document(
             "run_disposition": quality_status,
             "promotion_eligible": quality_status == "ACCEPTED"
             and evaluation.get("passed") is True,
+            "candidate_disposition": candidate_status.lower(),
             **_candidate_quality_fields(evaluation),
             "source_comparison_entity": "source/* or conditioning/derived",
             "output_media_entity": f"augmented/{candidate_id}",
@@ -923,7 +1418,7 @@ def _candidate_disposition_document(
         if isinstance(source, dict) and "source_report" in source
     ]
     return (
-        f"# {quality_status} — candidate `{review.identity(candidate_id)}`\n\n"
+        f"# {candidate_status} — candidate `{review.identity(candidate_id)}`\n\n"
         + "This panel is review evidence only. Rejected media is never relabeled, "
         "curated, finalized, or promoted. Compare it directly with the source or "
         "conditioning entities on the shared timeline.\n\n"

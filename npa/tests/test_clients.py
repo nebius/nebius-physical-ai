@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Callable
 
 import httpx
 import pytest
@@ -13,6 +16,7 @@ from npa.clients.http import HTTPClient, ServerError
 from npa.clients import nebius
 from npa.clients.nebius import NebiusError
 from npa.clients.ssh import SSHClient, SSHError, SSHTimeoutError, format_remote_failure
+from npa.clients import storage
 from npa.clients.storage import StorageClient, StorageError, _parse_bucket_uri
 
 
@@ -128,7 +132,7 @@ def test_storage_client_uploads_and_downloads_directories(
     (local / "nested" / "file.txt").write_text("data")
     paginator = mock_s3.get_paginator.return_value
     paginator.paginate.return_value = [
-        {"Contents": [{"Key": "prefix/nested/file.txt"}]},
+        {"Contents": [{"Key": "prefix/nested/file.txt"}]}
     ]
     client = StorageClient(
         endpoint_url="https://storage",
@@ -142,6 +146,7 @@ def test_storage_client_uploads_and_downloads_directories(
     download_dir = tmp_path / "download"
     downloaded = client.download_directory("s3://bucket/prefix", str(download_dir))
 
+    # A single-file directory takes the unpooled fast path: no Config kwarg.
     assert uploaded == "s3://bucket/base/run/"
     mock_s3.upload_file.assert_called_once_with(
         str(local / "nested" / "file.txt"),
@@ -209,10 +214,13 @@ def test_storage_client_downloads_object_via_head_object_when_list_is_empty(
 
 
 def test_storage_client_downloads_exact_object_without_list_or_head(
-    tmp_path: Path, mock_s3
+    tmp_path: Path, mock_s3, mocker
 ) -> None:
-    body = mock_s3.get_object.return_value["Body"]
+    body = mocker.MagicMock()
     body.iter_chunks.return_value = [b"checkpoint", b"-bytes"]
+    # A real provider response is a dict; ContentLength (16 bytes here) is what
+    # download_file cross-checks against the bytes actually written.
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
     client = StorageClient(
         endpoint_url="https://storage",
         aws_access_key_id="key",
@@ -230,6 +238,329 @@ def test_storage_client_downloads_exact_object_without_list_or_head(
     body.close.assert_called_once_with()
     mock_s3.head_object.assert_not_called()
     mock_s3.get_paginator.assert_not_called()
+
+
+def test_download_file_preserves_prior_complete_file_on_interrupted_transport(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    """A transport failure mid-stream must not truncate an existing checkpoint."""
+
+    local = tmp_path / "model.pt"
+    local.write_bytes(b"previously-complete-checkpoint")
+
+    def _iter_chunks(chunk_size):
+        yield b"partial-"
+        raise ConnectionError("connection reset")
+
+    body = mocker.MagicMock()
+    body.iter_chunks.side_effect = _iter_chunks
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 999}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(ConnectionError):
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert local.read_bytes() == b"previously-complete-checkpoint"
+    assert list(local.parent.iterdir()) == [local]  # no leftover staging file
+    body.close.assert_called_once_with()
+
+
+def test_download_file_leaves_no_file_on_new_file_failure(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "new-model.pt"
+
+    def _iter_chunks(chunk_size):
+        raise ConnectionError("connection reset")
+
+    body = mocker.MagicMock()
+    body.iter_chunks.side_effect = _iter_chunks
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 10}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(ConnectionError):
+        client.download_file("s3://bucket/checkpoints/new-model.pt", str(local))
+
+    assert not local.exists()
+    assert list(local.parent.iterdir()) == []
+
+
+def test_download_file_rejects_short_read_and_leaves_no_file(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "model.pt"
+    body = mocker.MagicMock()
+    body.iter_chunks.return_value = [b"too-short"]
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 999}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    with pytest.raises(StorageError, match="Short read"):
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert not local.exists()
+    assert list(local.parent.iterdir()) == []
+
+
+def test_download_file_replaces_prior_file_atomically_on_success(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "model.pt"
+    local.write_bytes(b"stale")
+    body = mocker.MagicMock()
+    body.iter_chunks.return_value = [b"fresh-checkpoint"]
+    mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert local.read_bytes() == b"fresh-checkpoint"
+    assert list(local.parent.iterdir()) == [local]
+
+
+def test_download_file_preserves_restrictive_permissions_on_replace(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    """Replacing a mode-0600 checkpoint must not widen it to the umask default."""
+
+    import os
+
+    local = tmp_path / "model.pt"
+    local.write_bytes(b"stale")
+    os.chmod(local, 0o600)
+    old_umask = os.umask(0o022)
+    try:
+        body = mocker.MagicMock()
+        body.iter_chunks.return_value = [b"fresh-checkpoint"]
+        mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
+        client = StorageClient(
+            endpoint_url="https://storage",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        )
+
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+    finally:
+        os.umask(old_umask)
+
+    assert local.read_bytes() == b"fresh-checkpoint"
+    assert (local.stat().st_mode & 0o777) == 0o600
+
+
+def test_download_file_new_file_gets_umask_default_permissions(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    """A brand-new file (no prior mode to preserve) gets the normal umask default."""
+
+    import os
+
+    local = tmp_path / "model.pt"
+    old_umask = os.umask(0o022)
+    try:
+        body = mocker.MagicMock()
+        body.iter_chunks.return_value = [b"fresh-checkpoint"]
+        mock_s3.get_object.return_value = {"Body": body, "ContentLength": 16}
+        client = StorageClient(
+            endpoint_url="https://storage",
+            aws_access_key_id="key",
+            aws_secret_access_key="secret",
+        )
+
+        client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+    finally:
+        os.umask(old_umask)
+
+    assert (local.stat().st_mode & 0o777) == 0o644
+
+
+def test_download_file_skips_length_check_when_provider_omits_it(
+    tmp_path: Path, mock_s3, mocker
+) -> None:
+    local = tmp_path / "model.pt"
+    body = mocker.MagicMock()
+    body.iter_chunks.return_value = [b"unknown-length-body"]
+    mock_s3.get_object.return_value = {"Body": body}
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.download_file("s3://bucket/checkpoints/model.pt", str(local))
+
+    assert local.read_bytes() == b"unknown-length-body"
+
+
+def test_directory_transfers_run_concurrently_not_serially(
+    tmp_path: Path, mock_s3
+) -> None:
+    """All 8 uploads must be in flight at once, proven deterministically.
+
+    A ``threading.Barrier(8)`` only releases once all 8 parties have called
+    ``wait()``. If uploads ran serially, the first call would block at the
+    barrier forever (no other party ever arrives) and this test would fail
+    with a deterministic ``BrokenBarrierError`` on timeout rather than a
+    flaky wall-clock measurement.
+    """
+
+    local = tmp_path / "local"
+    local.mkdir()
+    for index in range(8):
+        (local / f"file{index}.bin").write_bytes(b"x")
+
+    barrier = threading.Barrier(8, timeout=5)
+
+    def _rendezvous_upload_file(*_args, **_kwargs):
+        barrier.wait()
+
+    mock_s3.upload_file.side_effect = _rendezvous_upload_file
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.upload_directory(str(local), "s3://bucket/base")
+
+    assert mock_s3.upload_file.call_count == 8
+
+
+def test_adaptive_transfer_config_gives_one_file_near_boto_default() -> None:
+    """A directory with a single (large) file should not be throttled below
+    boto3's own default multipart concurrency, since nothing else competes
+    for the outer directory pool's slots.
+    """
+
+    config = storage._adaptive_transfer_config(1)
+    assert config.max_concurrency == storage._MAX_PER_FILE_TRANSFER_CONCURRENCY
+
+
+def test_adaptive_transfer_config_shrinks_as_file_count_grows() -> None:
+    one = storage._adaptive_transfer_config(1).max_concurrency
+    few = storage._adaptive_transfer_config(2).max_concurrency
+    many = storage._adaptive_transfer_config(
+        storage._DIRECTORY_TRANSFER_WORKERS
+    ).max_concurrency
+    beyond_pool = storage._adaptive_transfer_config(
+        storage._DIRECTORY_TRANSFER_WORKERS * 10
+    ).max_concurrency
+
+    assert one >= few >= many >= 1
+    # File counts already saturating the outer pool must not shrink further.
+    assert many == beyond_pool
+    # The worst case (every outer slot busy) must stay within the documented
+    # total thread budget.
+    assert (
+        storage._DIRECTORY_TRANSFER_WORKERS * many
+        <= storage._TOTAL_TRANSFER_THREAD_BUDGET
+    )
+
+
+def test_directory_download_bounds_in_flight_work(tmp_path: Path, mock_s3) -> None:
+    """No more than the configured worker count may be mid-transfer at once."""
+
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [
+        {"Contents": [{"Key": f"prefix/file{i}.bin"} for i in range(40)]}
+    ]
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def _tracking_download_file(*_args, **_kwargs):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        try:
+            time.sleep(0.01)
+        finally:
+            with lock:
+                active -= 1
+
+    mock_s3.download_file.side_effect = _tracking_download_file
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+
+    client.download_directory("s3://bucket/prefix", str(tmp_path / "download"))
+
+    assert mock_s3.download_file.call_count == 40
+    assert max_active <= storage._DIRECTORY_TRANSFER_WORKERS
+
+
+def _barrier_gated_download(barrier, completed: list[str], lock) -> Callable:
+    """A ``download_file`` fake: rendezvous at ``barrier``, then fail or
+    write+record. Proves true concurrency (a serial caller would deadlock
+    here, failing with ``BrokenBarrierError`` on timeout) and, combined with
+    the bounded executor always joining in-flight work before propagating
+    an exception, that no sibling keeps running in the background after the
+    public method raises.
+    """
+
+    def _download_file(bucket, key, path, **_kwargs):
+        barrier.wait()
+        if key.endswith("fail.bin"):
+            raise RuntimeError("simulated transport failure")
+        Path(path).write_bytes(b"data-" + key.encode())
+        with lock:
+            completed.append(key)
+
+    return _download_file
+
+
+def test_download_directory_joins_concurrent_siblings_before_raising(
+    tmp_path: Path, mock_s3
+) -> None:
+    """A failing file must not leave concurrent siblings still writing in the
+    background once ``download_directory`` has raised to the caller.
+    """
+
+    barrier = threading.Barrier(3, timeout=5)
+    completed: list[str] = []
+    mock_s3.download_file.side_effect = _barrier_gated_download(
+        barrier, completed, threading.Lock()
+    )
+    paginator = mock_s3.get_paginator.return_value
+    paginator.paginate.return_value = [
+        {
+            "Contents": [
+                {"Key": k}
+                for k in ("prefix/fail.bin", "prefix/ok1.bin", "prefix/ok2.bin")
+            ]
+        }
+    ]
+    client = StorageClient(
+        endpoint_url="https://storage",
+        aws_access_key_id="key",
+        aws_secret_access_key="secret",
+    )
+    download_dir = tmp_path / "download"
+
+    with pytest.raises(RuntimeError, match="simulated transport failure"):
+        client.download_directory("s3://bucket/prefix", str(download_dir))
+
+    assert sorted(completed) == ["prefix/ok1.bin", "prefix/ok2.bin"]
+    assert (download_dir / "ok1.bin").read_bytes() == b"data-prefix/ok1.bin"
+    assert (download_dir / "ok2.bin").read_bytes() == b"data-prefix/ok2.bin"
 
 
 def test_storage_client_uploads_and_downloads_files(tmp_path: Path, mock_s3) -> None:

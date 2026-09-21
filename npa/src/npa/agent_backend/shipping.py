@@ -14,6 +14,7 @@ SHIPPED_BACKEND_MODULES = (
     "memory",
     "actions",
     "semantic_router",
+    "model_router",
     "sim2real_loop",
     "retrieval",
     "trace",
