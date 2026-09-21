@@ -26,6 +26,7 @@ BUILD_LOCK = IMAGE_DIR / "build-requirements.lock"
 LEROBOT_PATCH = IMAGE_DIR / "lerobot-npa-act.patch.b64"
 LEROBOT_NOTICE = IMAGE_DIR / "lerobot-npa-act.NOTICE"
 LEROBOT_VERIFY = IMAGE_DIR / "verify_lerobot_act_derivative.py"
+ROBOCASA_ADAPTER_VERIFY = IMAGE_DIR / "verify_robocasa_act_adapter.py"
 ROBOCASA_PATCH = IMAGE_DIR / "robocasa-npa-act.patch.b64"
 ROBOCASA_NOTICE = IMAGE_DIR / "robocasa-npa-act.NOTICE"
 DEADSNAKES_KEY = IMAGE_DIR / "deadsnakes-ppa.gpg.b64"
@@ -245,6 +246,22 @@ def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:
     assert "torchvision.__version__ == '0.28.0+cu129'" in dockerfile
 
 
+def test_robocasa_image_exercises_real_act_adapter_after_source_copy() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    verifier = ROBOCASA_ADAPTER_VERIFY.read_text(encoding="utf-8")
+
+    source_copy = dockerfile.index("COPY src/npa/workbench/robocasa")
+    adapter_run = dockerfile.index("verify_robocasa_act_adapter.py", source_copy)
+    assert source_copy < adapter_run
+    assert "from npa.workbench.robocasa.capabilities import (" in verifier
+    assert "_load_act_policy" in verifier
+    assert "_act_action_selector" in verifier
+    assert "from lerobot.datasets.lerobot_dataset import LeRobotDataset" in verifier
+    assert "preprocessor.save_pretrained(path)" in verifier
+    assert "postprocessor.save_pretrained(path)" in verifier
+    assert 'missing.pop("video.robot0_agentview_left")' in verifier
+
+
 def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     runtime_lock = RUNTIME_LOCK.read_text(encoding="utf-8")
@@ -273,7 +290,7 @@ def test_robocasa_policy_runtime_has_one_cuda_wheel_family() -> None:
 
 def test_robocasa_public_runtime_excludes_restricted_optional_payloads() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
-    dependency_install = text.split("# Install RoboCasa source", maxsplit=1)[0]
+    dependency_install = text.split("# Install exact RoboCasa source", maxsplit=1)[0]
     runtime_lock = RUNTIME_LOCK.read_text(encoding="utf-8")
 
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
@@ -360,7 +377,7 @@ def test_robocasa_python_repository_uses_pinned_scoped_signing_key() -> None:
 def test_robocasa_runtime_purges_vulnerable_builder_headers_before_smoke() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
-    source_install = text.index("# Install RoboCasa source")
+    source_install = text.index("# Install exact RoboCasa source")
     purge = text.index("apt-get purge -y --auto-remove linux-libc-dev")
     absence = text.index("! dpkg-query --show linux-libc-dev")
     final_import = text.index("# Fail the image build")

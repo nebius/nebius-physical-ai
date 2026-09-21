@@ -101,6 +101,7 @@ COPY --chmod=0644 \
     docker/workbench/robocasa/robocasa-npa-act.patch.b64 \
     docker/workbench/robocasa/robocasa-npa-act.NOTICE \
     docker/workbench/robocasa/verify_lerobot_act_derivative.py \
+    docker/workbench/robocasa/verify_robocasa_act_adapter.py \
     /opt/robocasa/derivative/
 
 RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
@@ -226,7 +227,8 @@ COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
 
 RUN chmod -R u=rwX,go=rX /app/npa /app/smoke_functional.py
 
-RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None"
+RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None" \
+    && python /opt/robocasa/derivative/verify_robocasa_act_adapter.py
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /opt/robocasa/source/robocasa/models/assets
