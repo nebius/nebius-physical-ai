@@ -194,6 +194,26 @@ def test_cli_compatibility_error_is_surfaced_not_masked_as_identity(
     assert not provider.s3.calls
 
 
+def test_bucket_cli_compatibility_error_is_surfaced_not_masked_as_ownership(
+    provider, monkeypatch
+):
+    from npa.clients.nebius import NebiusCliCompatibilityError
+
+    diagnostic = "Unsupported Nebius CLI 0.12.211; NPA has tested 0.12.227, 0.12.254."
+
+    def incompatible(*args, **kwargs):
+        raise NebiusCliCompatibilityError(diagnostic)
+
+    monkeypatch.setattr("npa.clients.nebius.get_bucket_by_name", incompatible)
+    with pytest.raises(ExecutionPreflightError) as caught:
+        verify_execution_target(target())
+    assert caught.value.check == "nebius_cli"
+    assert caught.value.status == "unknown"
+    assert diagnostic in str(caught.value)
+    assert "exact output bucket ownership" not in str(caught.value)
+    assert not provider.s3.calls
+
+
 @pytest.mark.parametrize(
     "identity",
     [

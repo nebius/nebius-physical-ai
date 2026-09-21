@@ -168,9 +168,7 @@ def verify_execution_scope(
         # A local CLI version mismatch is not an identity fact; its diagnostic is
         # generated without provider output, so surface it verbatim instead of
         # masking a fixable tooling problem as an identity/ownership failure.
-        raise ExecutionPreflightError(
-            "nebius_cli", str(exc), status="unknown"
-        ) from exc
+        raise ExecutionPreflightError("nebius_cli", str(exc), status="unknown") from exc
     except Exception as exc:
         raise ExecutionPreflightError(
             "scope",
