@@ -37,7 +37,13 @@ if [[ "$(git -C "${NPA_ROOT}" rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]]; then
   echo "ERROR: NPA_SOURCE_SHA must equal the build-context checkout HEAD" >&2
   exit 2
 fi
-if [[ -n "$(git -C "${NPA_ROOT}" status --porcelain=v1 --untracked-files=all -- .)" ]]; then
+if ! WORKTREE_STATUS="$(
+  git -C "${NPA_ROOT}" status --porcelain=v1 --untracked-files=all -- .
+)"; then
+  echo "ERROR: cannot verify the build-context checkout is clean" >&2
+  exit 2
+fi
+if [[ -n "${WORKTREE_STATUS}" ]]; then
   echo "ERROR: commit all NPA build-context changes before building" >&2
   exit 2
 fi

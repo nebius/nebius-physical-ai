@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import hashlib
 import json
 import multiprocessing
@@ -149,6 +150,47 @@ def _robocasa_worker_whose_leader_exits(sender, _request_payload) -> None:
                 }
             ).encode("utf-8")
         )
+    finally:
+        sender.close()
+
+
+def _run_subreaper_cleanup_harness(sender) -> None:
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+            error_number = ctypes.get_errno()
+            raise OSError(error_number, os.strerror(error_number))
+        from npa.workbench.robocasa import service
+
+        request = RoboCasaRunRequest(
+            capability="kitchen_task_registration",
+            output_uri="s3://example/output",
+            timeout_seconds=5,
+            download_assets=False,
+        )
+        outcome = service._execute_capability_in_worker(
+            request,
+            worker_target=_robocasa_worker_with_term_ignoring_descendant,
+            process_context=multiprocessing.get_context("spawn"),
+        )
+        descendant_pid = (
+            int(outcome.result["descendant_pid"]) if outcome.result is not None else -1
+        )
+        try:
+            os.kill(descendant_pid, 0)
+        except ProcessLookupError:
+            descendant_absent = True
+        else:
+            descendant_absent = False
+        sender.send(
+            {
+                "stopped": outcome.stopped,
+                "error": outcome.error,
+                "descendant_absent": descendant_absent,
+            }
+        )
+    except BaseException as exc:
+        sender.send({"harness_error": f"{type(exc).__name__}: {exc}"})
     finally:
         sender.close()
 
@@ -898,6 +940,33 @@ def test_capability_worker_kills_term_ignoring_descendants() -> None:
     descendant_pid = int(outcome.result["descendant_pid"])
     with pytest.raises(ProcessLookupError):
         os.kill(descendant_pid, 0)
+
+
+def test_capability_worker_reaps_subreaper_adopted_descendant() -> None:
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    harness = context.Process(target=_run_subreaper_cleanup_harness, args=(sender,))
+    try:
+        harness.start()
+        sender.close()
+        assert receiver.poll(15), "subreaper cleanup harness did not report"
+        result = receiver.recv()
+        harness.join(5)
+
+        assert harness.exitcode == 0
+        assert "harness_error" not in result, result
+        assert result == {
+            "stopped": True,
+            "error": None,
+            "descendant_absent": True,
+        }
+    finally:
+        receiver.close()
+        if harness.is_alive():
+            harness.kill()
+            harness.join()
+        if hasattr(harness, "close"):
+            harness.close()
 
 
 def test_worker_cleanup_uses_acknowledged_group_after_leader_exits() -> None:

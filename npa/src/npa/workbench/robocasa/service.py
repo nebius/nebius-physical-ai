@@ -694,14 +694,22 @@ def _stop_worker(
     if terminate and (process.is_alive() or group_alive):
         _signal_worker(process, signal.SIGTERM, process_group=process_group)
         process.join(_WORKER_TERMINATE_GRACE_SECONDS)
+    leader_stopped = not process.is_alive()
+    if leader_stopped and process_group is not None:
+        _reap_exited_group_children(process_group)
     group_alive = process_group is not None and _process_group_exists(process_group)
-    if process.is_alive() or group_alive:
+    if not leader_stopped or group_alive:
         _signal_worker(process, signal.SIGKILL, process_group=process_group)
         process.join(_WORKER_TERMINATE_GRACE_SECONDS)
+    leader_stopped = not process.is_alive()
+    if not leader_stopped:
+        return False
+    if process_group is not None:
+        _reap_exited_group_children(process_group)
     group_stopped = process_group is None or _wait_for_process_group_exit(
         process_group, _WORKER_TERMINATE_GRACE_SECONDS
     )
-    return not process.is_alive() and group_stopped
+    return group_stopped
 
 
 def _signal_worker(
@@ -734,13 +742,29 @@ def _process_group_exists(process_group: int) -> bool:
     return True
 
 
+def _reap_exited_group_children(process_group: int) -> None:
+    """Reap only exited descendants adopted from this worker process group."""
+
+    while True:
+        try:
+            pid, _status = os.waitpid(-process_group, os.WNOHANG)
+        except ChildProcessError:
+            return
+        except InterruptedError:
+            continue
+        if pid == 0:
+            return
+
+
 def _wait_for_process_group_exit(process_group: int, timeout: float) -> bool:
     deadline = time.monotonic() + max(timeout, 0.0)
-    while _process_group_exists(process_group):
+    while True:
+        _reap_exited_group_children(process_group)
+        if not _process_group_exists(process_group):
+            return True
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.01)
-    return True
 
 
 def _reap_worker_async(

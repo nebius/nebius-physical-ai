@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -43,6 +44,34 @@ def _locked_names(path: Path) -> set[str]:
         match.group(1).lower().replace("_", "-")
         for match in re.finditer(r"(?m)^([A-Za-z0-9_.-]+)(?:==| @ )", text)
     }
+
+
+def _committed_builder_fixture(tmp_path: Path) -> tuple[Path, Path, str]:
+    repo = tmp_path / "repo"
+    image_dir = repo / "npa/docker/workbench/robocasa"
+    image_dir.mkdir(parents=True)
+    script = image_dir / "build.sh"
+    script.write_bytes(BUILD_SCRIPT.read_bytes())
+    script.chmod(0o755)
+    (image_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    (repo / "npa/tracked.txt").write_text("committed context\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "robocasa-build-test@example.invalid"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "RoboCasa Build Test"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "add", "npa"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+    return repo, script, source_sha
 
 
 def _requirement_blocks(path: Path) -> list[str]:
@@ -253,31 +282,7 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
 def test_robocasa_builder_streams_the_committed_npa_subtree(
     tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    image_dir = repo / "npa/docker/workbench/robocasa"
-    image_dir.mkdir(parents=True)
-    script = image_dir / "build.sh"
-    script.write_bytes(BUILD_SCRIPT.read_bytes())
-    script.chmod(0o755)
-    (image_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
-    tracked = repo / "npa/tracked.txt"
-    tracked.write_text("committed context\n", encoding="utf-8")
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(
-        ["git", "config", "user.email", "robocasa-build-test@example.invalid"],
-        cwd=repo,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "RoboCasa Build Test"],
-        cwd=repo,
-        check=True,
-    )
-    subprocess.run(["git", "add", "npa"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
-    source_sha = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
-    ).strip()
+    repo, script, source_sha = _committed_builder_fixture(tmp_path)
     # Untracked data outside npa must never enter the committed subtree archive.
     (repo / "private-input").write_text("not build input\n", encoding="utf-8")
 
@@ -327,6 +332,61 @@ def test_robocasa_builder_streams_the_committed_npa_subtree(
     assert docker_argv[docker_argv.index("-f") + 1] == (
         "docker/workbench/robocasa/Dockerfile"
     )
+
+
+def test_robocasa_builder_fails_closed_when_git_status_fails(
+    tmp_path: Path,
+) -> None:
+    repo, script, source_sha = _committed_builder_fixture(tmp_path)
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    real_git = shutil.which("git")
+    assert real_git is not None
+    git = binary / "git"
+    git.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "if 'status' in sys.argv[1:]:\n"
+        "    raise SystemExit(17)\n"
+        "real = os.environ['REAL_GIT']\n"
+        "os.execv(real, [real, *sys.argv[1:]])\n",
+        encoding="utf-8",
+    )
+    git.chmod(0o755)
+    marker = tmp_path / "docker-ran"
+    docker = binary / "docker"
+    docker.write_text(
+        f"#!{sys.executable}\n"
+        "import os, pathlib\n"
+        "pathlib.Path(os.environ['DOCKER_MARKER']).touch()\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            str(script),
+            "--registry",
+            "registry.example.invalid/npa",
+            "--tag",
+            f"dev-{source_sha}",
+        ],
+        cwd=repo / "npa",
+        env={
+            **os.environ,
+            "PATH": f"{binary}{os.pathsep}{os.environ['PATH']}",
+            "REAL_GIT": real_git,
+            "NPA_SOURCE_SHA": source_sha,
+            "DOCKER_MARKER": str(marker),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "cannot verify the build-context checkout is clean" in result.stderr
+    assert not marker.exists()
 
 
 def test_robocasa_upstreams_use_verified_immutable_commits() -> None:
