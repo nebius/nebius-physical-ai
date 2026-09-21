@@ -186,24 +186,33 @@ def test_legacy_partial_canonical_prefix_is_a_found_run(
 
 
 def test_managed_job_evidence_finds_run_while_manifest_is_pending(
-    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
-        lambda *args, **kwargs: ManagedJobEvidence(
+    lookup_dirs = []
+
+    def lookup(*args, **kwargs):
+        lookup_dirs.append(kwargs.get("isolated_config_dir"))
+        return ManagedJobEvidence(
             "found",
             job_id="91",
             status="RUNNING",
             task_rows=({"task_id": 0, "task_name": "annotate", "status": "RUNNING"},),
-        ),
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lookup,
     )
 
-    resolved = resolve_run("managed-only", project="paidf")
+    resolved = resolve_run(
+        "managed-only", project="paidf", isolated_config_dir=tmp_path
+    )
 
     assert resolved.found is True
     assert resolved.source == "managed_job"
     assert resolved.job_id == "91"
     assert resolved.manifest_pending is True
+    assert lookup_dirs == [tmp_path]
 
 
 def test_runtime_ledger_recovers_exact_active_wave_identity(

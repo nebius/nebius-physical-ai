@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import tempfile
 import time
 import sys
@@ -121,6 +122,14 @@ def _live_log_contract(stdout: str, stderr: str) -> dict[str, str]:
             "records whether the query returned log bytes."
         ),
     }
+
+
+def _isolated_controller_option(path: Path | None) -> str:
+    """Render the controller binding for a machine-actionable retry command."""
+
+    if path is None:
+        return ""
+    return f" --isolated-config-dir {shlex.quote(str(path))}"
 
 
 def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
@@ -4558,6 +4567,7 @@ def _durable_workflow_status(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    isolated_config_dir: Path | None = None,
     startup_failure_threshold: int = 3,
     cached: bool = False,
 ) -> dict[str, object]:
@@ -4580,6 +4590,7 @@ def _durable_workflow_status(
         s3_bucket=s3_bucket,
         s3_endpoint=s3_endpoint,
         sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
         allow_local_not_submitted=True,
     )
     from npa.verification import (
@@ -4592,8 +4603,10 @@ def _durable_workflow_status(
     )
 
     attempted_at = verification_now()
-    retry_command = f"npa workbench workflow status {_display_run_id(run_id)}" + (
-        f" --project {project}" if project else ""
+    retry_command = (
+        f"npa workbench workflow status {_display_run_id(run_id)}"
+        + (f" --project {project}" if project else "")
+        + _isolated_controller_option(isolated_config_dir)
     )
     if resolution.not_submitted:
         payload = {
@@ -4713,6 +4726,7 @@ def _durable_workflow_status(
             resolution,
             project=project,
             sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
             startup_failure_threshold=startup_failure_threshold,
             cached=cached,
         )
@@ -4787,7 +4801,11 @@ def _durable_workflow_status(
             job_ids.append(run_manifest.sky_job_id)
         for managed_job_id in [] if cached else job_ids:
             try:
-                live = workflow_status(managed_job_id, sky_bin=sky_bin or None)
+                live = workflow_status(
+                    managed_job_id,
+                    sky_bin=sky_bin or None,
+                    isolated_config_dir=isolated_config_dir,
+                )
                 if live.error:
                     safe_error = sanitize_reason(live.error)
                     diagnostics.append(
@@ -4804,7 +4822,10 @@ def _durable_workflow_status(
                 else:
                     observed_status = live.status
                 observed_rows = workflow_task_statuses(
-                    managed_job_id, sky_bin=sky_bin or None, raise_on_error=True
+                    managed_job_id,
+                    sky_bin=sky_bin or None,
+                    isolated_config_dir=isolated_config_dir,
+                    raise_on_error=True,
                 )
                 job_observations[managed_job_id] = {
                     "status": observed_status,
@@ -4824,6 +4845,7 @@ def _durable_workflow_status(
                     controller_logs = workflow_controller_logs(
                         managed_job_id,
                         sky_bin=sky_bin or None,
+                        isolated_config_dir=isolated_config_dir,
                     )
                     output = "\n".join(
                         sanitize_reason(line)
@@ -5028,7 +5050,11 @@ def _durable_workflow_status(
     legacy_verification_errors: list[str] = []
     if job_id and not cached:
         try:
-            live = workflow_status(job_id, sky_bin=sky_bin or None)
+            live = workflow_status(
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+            )
             if live.error:
                 legacy_verification_errors.append(str(live.error))
             elif str(live.status or "").upper() in {"", "UNKNOWN"}:
@@ -5088,6 +5114,7 @@ def _manifest_pending_status(
     project: str,
     sky_bin: str,
     startup_failure_threshold: int,
+    isolated_config_dir: Path | None = None,
     cached: bool = False,
 ) -> dict[str, object]:
     """Project receipt/S3/Sky evidence through the shared actionable model."""
@@ -5174,7 +5201,11 @@ def _manifest_pending_status(
         task_rows = [dict(item) for item in resolution.managed_job.task_rows]
     elif job_id and not cached:
         try:
-            live = workflow_status(job_id, sky_bin=sky_bin or None)
+            live = workflow_status(
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+            )
             if live.error:
                 safe_error = sanitize_reason(live.error)
                 diagnostics.append(
@@ -5189,7 +5220,10 @@ def _manifest_pending_status(
             else:
                 live_status = live.status
             task_rows = workflow_task_statuses(
-                job_id, sky_bin=sky_bin or None, raise_on_error=True
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+                raise_on_error=True,
             )
         except Exception as exc:  # noqa: BLE001 - durable evidence still proves the run
             safe_error = sanitize_reason(f"{type(exc).__name__}: {exc}")
@@ -5243,7 +5277,11 @@ def _manifest_pending_status(
         and not str(live_status).upper().startswith("FAILED")
     ):
         try:
-            controller_logs = workflow_controller_logs(job_id, sky_bin=sky_bin or None)
+            controller_logs = workflow_controller_logs(
+                job_id,
+                sky_bin=sky_bin or None,
+                isolated_config_dir=isolated_config_dir,
+            )
             controller_output = "\n".join(
                 sanitize_reason(line)
                 for line in "\n".join(
@@ -5334,7 +5372,12 @@ def _manifest_pending_status(
             ],
         }
     )
-    blockers = _stalled_job_blockers(job_id, live_status, sky_bin=sky_bin)
+    blockers = _stalled_job_blockers(
+        job_id,
+        live_status,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+    )
     if blockers:
         payload["blockers"] = blockers
     from npa.verification import (
@@ -5345,8 +5388,10 @@ def _manifest_pending_status(
         utc_now as verification_now,
     )
 
-    retry_command = f"npa workbench workflow status {resolution.run_id}" + (
-        f" --project {project}" if project else ""
+    retry_command = (
+        f"npa workbench workflow status {resolution.run_id}"
+        + (f" --project {project}" if project else "")
+        + _isolated_controller_option(isolated_config_dir)
     )
     if cached:
         verification_status = CACHED
@@ -5384,7 +5429,11 @@ def _manifest_pending_status(
 
 
 def _stalled_job_blockers(
-    job_id: str, live_status: str, *, sky_bin: str = ""
+    job_id: str,
+    live_status: str,
+    *,
+    sky_bin: str = "",
+    isolated_config_dir: Path | None = None,
 ) -> list[dict[str, object]]:
     """Explain a managed job that is not progressing, from its own pods.
 
@@ -5399,7 +5448,11 @@ def _stalled_job_blockers(
     from npa.orchestration.skypilot.workflow import workflow_task_statuses
 
     try:
-        rows = workflow_task_statuses(job_id, sky_bin=_resolve_sky_bin(sky_bin))
+        rows = workflow_task_statuses(
+            job_id,
+            sky_bin=_resolve_sky_bin(sky_bin),
+            isolated_config_dir=isolated_config_dir,
+        )
     except Exception:
         rows = []
     clusters = sorted(
@@ -5783,6 +5836,11 @@ def status_cmd(
         "--sky-bin",
         help="SkyPilot executable path for live status.",
     ),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
+    ),
     watch: bool = typer.Option(
         False,
         "--watch/--no-watch",
@@ -5873,6 +5931,7 @@ def status_cmd(
                     s3_bucket=s3_bucket,
                     s3_endpoint=s3_endpoint,
                     sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
                     startup_failure_threshold=startup_failure_threshold,
                     cached=cached,
                 )
@@ -5993,6 +6052,11 @@ def logs_cmd(
         "--sky-bin",
         help="SkyPilot executable path for live --follow logs.",
     ),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
+    ),
     follow: bool = typer.Option(
         False,
         "--follow/--no-follow",
@@ -6050,6 +6114,7 @@ def logs_cmd(
                     s3_bucket=s3_bucket,
                     s3_endpoint=s3_endpoint,
                     sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
                 )
             )
             state = resolution.state
@@ -6066,6 +6131,7 @@ def logs_cmd(
                     project=project,
                     sky_bin=sky_bin,
                     startup_failure_threshold=3,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 if not selected_stage:
                     selected_stage = str(pending.get("active_stage_name") or "")
@@ -6082,6 +6148,7 @@ def logs_cmd(
                     stage=selected_stage,
                     follow=follow,
                     timeout=86400 if follow else 300,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
@@ -6265,6 +6332,7 @@ def logs_cmd(
                     f"npa workbench workflow logs {resolution.run_id} "
                     f"--stage {selected_stage}"
                     + (f" --project {project}" if project else "")
+                    + _isolated_controller_option(isolated_config_dir)
                 )
                 if cached:
                     cached_text = ""
@@ -6318,7 +6386,8 @@ def logs_cmd(
                         last_known_source="stage_ledger_or_manifest",
                         reason=reason,
                         retry_command=f"npa workbench workflow status {resolution.run_id}"
-                        + (f" --project {project}" if project else ""),
+                        + (f" --project {project}" if project else "")
+                        + _isolated_controller_option(isolated_config_dir),
                     )
                     source_payload["live_log_state"] = "unavailable"
                     source_payload["error_code"] = "STAGE_JOB_ID_UNAVAILABLE"
@@ -6355,6 +6424,7 @@ def logs_cmd(
                     stage=live_stage,
                     follow=follow,
                     timeout=86400 if follow else 300,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
@@ -6437,6 +6507,7 @@ def logs_cmd(
                     stage=selected_stage,
                     follow=True,
                     timeout=86400,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 safe_stdout = redact_text(live.stdout)
                 safe_stderr = redact_text(live.stderr)
@@ -6743,6 +6814,11 @@ def cancel_cmd(
         "", "--s3-endpoint", help="S3-compatible endpoint."
     ),
     sky_bin: str = typer.Option("", "--sky-bin", help="SkyPilot executable path."),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Exact SkyPilot state root that owns the recorded managed-job IDs.",
+    ),
     cluster: str = typer.Option(
         "", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."
     ),
@@ -6800,6 +6876,7 @@ def cancel_cmd(
                 s3_bucket=s3_bucket,
                 s3_endpoint=s3_endpoint,
                 sky_bin=sky_bin,
+                isolated_config_dir=isolated_config_dir,
                 # An explicit exact ID is a live operator observation and must
                 # outrank a stale receipt after controller database recovery.
                 exact_job_id=resolved_exact_job_id,
@@ -6868,6 +6945,7 @@ def cancel_cmd(
                 resolution,
                 sky_bin=sky_bin,
                 exact_job_id=str(job_id or identity.get("sky_job_id") or ""),
+                isolated_config_dir=isolated_config_dir,
             )
             jobs_payload = [item.to_dict() for item in assessment.jobs]
             job_ids = [item.job_id for item in assessment.jobs]
@@ -6912,7 +6990,9 @@ def cancel_cmd(
                 )
 
                 reverify_errors = reverify_active_cancellation(
-                    assessment, sky_bin=sky_bin
+                    assessment,
+                    sky_bin=sky_bin,
+                    isolated_config_dir=isolated_config_dir,
                 )
                 if reverify_errors:
                     result = {
@@ -6938,6 +7018,7 @@ def cancel_cmd(
                         resolved_run_id,
                         cluster=cluster,
                         sky_bin=sky_bin or None,
+                        isolated_config_dir=isolated_config_dir,
                     )
                     errors = [*assessment.errors, *cleanup.errors]
                     result = {

@@ -1295,7 +1295,9 @@ def test_workflow_logs_after_driver_crash_without_task_timeline(
     assert payload["live_verification_scope"] == "query_transport_only"
 
 
-def test_workflow_logs_json_reports_successful_empty_runtime_tail(monkeypatch) -> None:
+def test_workflow_logs_json_reports_successful_empty_runtime_tail(
+    monkeypatch, tmp_path: Path
+) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
     uri = _put_workflow_log_waves(
@@ -1312,9 +1314,14 @@ def test_workflow_logs_json_reports_successful_empty_runtime_tail(monkeypatch) -
             }
         ],
     )
+    log_calls = []
+
+    def empty_logs(**kwargs):
+        log_calls.append(kwargs)
+        return subprocess.CompletedProcess([], 0, "", "")
+
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
-        lambda **kwargs: subprocess.CompletedProcess([], 0, "", ""),
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", empty_logs
     )
     monkeypatch.setattr(
         "npa.cli.workbench.workflow._resolve_sky_bin",
@@ -1323,7 +1330,17 @@ def test_workflow_logs_json_reports_successful_empty_runtime_tail(monkeypatch) -
 
     result = runner.invoke(
         app,
-        ["workbench", "workflow", "logs", uri, "--stage", "rollout", "--json"],
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            uri,
+            "--stage",
+            "rollout",
+            "--isolated-config-dir",
+            str(tmp_path),
+            "--json",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -1334,6 +1351,75 @@ def test_workflow_logs_json_reports_successful_empty_runtime_tail(monkeypatch) -
     assert payload["live_verification_scope"] == "query_transport_only"
     assert "transport only" in payload["live_verification_note"]
     assert payload["log"] == payload["stderr"] == ""
+    assert log_calls[0]["isolated_config_dir"] == tmp_path
+
+
+def test_workflow_status_binds_every_live_query_to_isolated_controller(
+    monkeypatch, tmp_path: Path
+) -> None:
+    controller_root = tmp_path / "isolated controller"
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_workflow_log_waves(
+        fake_s3,
+        [
+            {
+                "key": "wave-1",
+                "kind": "serial",
+                "states": ["rollout"],
+                "attempt": 1,
+                "status": "running",
+                "job_id": "42",
+                "tasks": [{"task_id": 0, "status": "RUNNING"}],
+            }
+        ],
+    )
+    calls: list[tuple[str, Path | None]] = []
+
+    def status(*args, **kwargs):
+        calls.append(("status", kwargs.get("isolated_config_dir")))
+        return WorkflowResult(status="RUNNING", job_id="42", returncode=0)
+
+    def tasks(*args, **kwargs):
+        calls.append(("tasks", kwargs.get("isolated_config_dir")))
+        return [{"task_id": 0, "task_name": "rollout", "status": "RUNNING"}]
+
+    def controller_logs(*args, **kwargs):
+        calls.append(("controller_logs", kwargs.get("isolated_config_dir")))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr("npa.orchestration.skypilot.workflow.workflow_status", status)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses", tasks
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        controller_logs,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "status",
+            uri,
+            "--isolated-config-dir",
+            str(controller_root),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert {name for name, _path in calls} == {
+        "status",
+        "tasks",
+        "controller_logs",
+    }
+    assert all(path == controller_root for _name, path in calls)
+    payload = json.loads(result.output)
+    retry_command = payload["live_verification"]["retry_command"]
+    assert f"--isolated-config-dir '{controller_root}'" in retry_command
 
 
 def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
@@ -2095,16 +2181,26 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
             {"task_id": 0, "task_name": "augment", "status": "RUNNING"}
         ],
     )
-    monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
-        lambda *args, **kwargs: ManagedJobEvidence(
-            "found", job_id="55", status="RUNNING"
-        ),
-    )
-    calls: list[tuple[list[tuple[str, str]], str, str, object]] = []
+    lookup_dirs = []
 
-    def fake_cleanup(jobs, actual_run_id, *, cluster="", sky_bin=None):
-        calls.append((jobs, actual_run_id, cluster, sky_bin))
+    def lookup(*args, **kwargs):
+        lookup_dirs.append(kwargs.get("isolated_config_dir"))
+        return ManagedJobEvidence("found", job_id="55", status="RUNNING")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.cancellation.lookup_managed_job", lookup
+    )
+    calls: list[tuple[list[tuple[str, str]], str, str, object, object]] = []
+
+    def fake_cleanup(
+        jobs,
+        actual_run_id,
+        *,
+        cluster="",
+        sky_bin=None,
+        isolated_config_dir=None,
+    ):
+        calls.append((jobs, actual_run_id, cluster, sky_bin, isolated_config_dir))
         return SimpleNamespace(
             ok=True,
             resources_removed=[actual_run_id],
@@ -2125,6 +2221,8 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
             f"s3://bucket/{key}",
             "--sky-bin",
             "/npa/pinned/sky",
+            "--isolated-config-dir",
+            "/npa/controllers/run-55",
             "--json",
         ],
     )
@@ -2134,7 +2232,17 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
     assert payload["outcome"] == "cancelled"
     assert payload["cloud_calls"] is True
     assert payload["errors"] == []
-    assert calls == [([("55", run_id)], run_id, "", "/npa/pinned/sky")]
+    assert calls == [
+        (
+            [("55", run_id)],
+            run_id,
+            "",
+            "/npa/pinned/sky",
+            Path("/npa/controllers/run-55"),
+        )
+    ]
+    assert lookup_dirs
+    assert all(path == Path("/npa/controllers/run-55") for path in lookup_dirs)
 
 
 def test_ordinary_missing_workflow_cancel_is_verification_failure(monkeypatch) -> None:
@@ -2311,6 +2419,7 @@ def test_paidf_partial_prefix_preserves_exact_workflow_s3_uri(monkeypatch) -> No
 
 def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
     monkeypatch,
+    tmp_path,
 ) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
@@ -2361,14 +2470,20 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
         "npa.orchestration.npa_workflow.cancellation.lookup_managed_job",
         lambda *args, **kwargs: evidence,
     )
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
-        lambda *args, **kwargs: __import__("subprocess").CompletedProcess(
+    controller_dirs = []
+
+    def controller_logs(*args, **kwargs):
+        controller_dirs.append(kwargs.get("isolated_config_dir"))
+        return __import__("subprocess").CompletedProcess(
             [],
             0,
             stdout='container not found ("ray-node")\ncontainer not found ("ray-node")\n',
             stderr="",
-        ),
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_controller_logs",
+        controller_logs,
     )
     log_calls: list[tuple[str, str]] = []
 
@@ -2399,19 +2514,20 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
         "npa.orchestration.skypilot.cleanup.cleanup_launched_workflows", cleanup
     )
     common = [run_id, "--project", "paidf"]
+    bound = [*common, "--isolated-config-dir", str(tmp_path)]
 
     status_result = runner.invoke(
-        app, ["workbench", "workflow", "status", *common, "--json"]
+        app, ["workbench", "workflow", "status", *bound, "--json"]
     )
     artifacts_result = runner.invoke(
         app, ["workbench", "workflow", "artifacts", *common, "--json"]
     )
     logs_result = runner.invoke(
-        app, ["workbench", "workflow", "logs", *common, "--stage", "curate"]
+        app, ["workbench", "workflow", "logs", *bound, "--stage", "curate"]
     )
     logs_json_result = runner.invoke(
         app,
-        ["workbench", "workflow", "logs", *common, "--stage", "curate", "--json"],
+        ["workbench", "workflow", "logs", *bound, "--stage", "curate", "--json"],
     )
     cancel_result = runner.invoke(
         app, ["workbench", "workflow", "cancel", *common, "--json"]
@@ -2450,6 +2566,7 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
     assert live_logs["live_verification_scope"] == "query_transport_only"
     assert live_logs["log"] == "live curate log\n"
     assert log_calls == [("81", "curate"), ("81", "curate")]
+    assert controller_dirs == [tmp_path, tmp_path, tmp_path]
     assert cancelled["outcome"] == "cancelled"
     assert cancelled["sky_job_id"] == "81"
     assert cleanup_calls == ["81"]

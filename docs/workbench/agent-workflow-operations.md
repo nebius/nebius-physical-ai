@@ -108,6 +108,12 @@ output. For JSON output, live-query verification covers transport only:
 `live_log_state: available` means the query returned stdout or stderr bytes, while
 `live_log_state: empty` means the query succeeded without returning log bytes.
 
+SkyPilot managed-job IDs are local to their controller state. If submission used
+an isolated SkyPilot state root, pass that same absolute path as
+`--isolated-config-dir` to `status`, `logs`, and `cancel`. This binds every queue,
+log, pre-cancel verification, and cancellation call to the controller that owns
+the recorded IDs; an unrelated controller can reuse the same numeric job ID.
+
 Diagnose a failed run from the status result first, then request the named failed
 stage's bounded log tail and artifact inventory. Preserve the run ID for resume;
 do not guess backend job identities or inspect backend state.

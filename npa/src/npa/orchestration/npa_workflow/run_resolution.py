@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import re
 from typing import Any, Literal, Mapping, cast
 from urllib.parse import urlparse
@@ -335,6 +336,7 @@ def resolve_run(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    isolated_config_dir: Path | None = None,
     exact_job_id: str = "",
     allow_local_not_submitted: bool = False,
 ) -> RunResolution:
@@ -585,6 +587,7 @@ def resolve_run(
         result.job_name or resolved_id,
         job_id=result.job_id,
         sky_bin=sky_bin or None,
+        isolated_config_dir=isolated_config_dir,
     )
     result.managed_job = managed
     managed_outcome: ResolutionOutcome = (
