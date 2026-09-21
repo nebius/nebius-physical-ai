@@ -48,6 +48,13 @@ def _registration_worker(sender: Any, _request_payload: dict[str, Any]) -> None:
     """Exercise production spawn and process-group cleanup without S3."""
     try:
         os.setsid()
+        sender.send_bytes(
+            json.dumps(
+                {"kind": "ready", "process_group": os.getpgrp()},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
         from npa.workbench.robocasa.capabilities import kitchen_task_registration
         from npa.workbench.robocasa.service import _send_worker_message
 

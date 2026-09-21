@@ -7,6 +7,7 @@ import hashlib
 import json
 import multiprocessing
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -37,9 +38,20 @@ from npa.workbench.robocasa.schemas import RoboCasaStatusResponse
 from npa.workbench.robocasa.service import RunRegistry, create_app
 
 
+def _acknowledge_worker_process_group(sender) -> None:
+    sender.send_bytes(
+        json.dumps(
+            {"kind": "ready", "process_group": os.getpgrp()},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+
+
 def _blocking_robocasa_worker(sender, request_payload) -> None:
     try:
         os.setsid()
+        _acknowledge_worker_process_group(sender)
         output_dir = Path(str(request_payload["_worker_output_dir"]))
         (output_dir / "partial.bin").write_bytes(b"x" * 1024 * 1024)
         asset_temp_root = str(request_payload.get("_worker_asset_temp_root") or "")
@@ -55,6 +67,17 @@ def _blocking_robocasa_worker(sender, request_payload) -> None:
 def _successful_robocasa_worker(sender, _request_payload) -> None:
     try:
         os.setsid()
+        _acknowledge_worker_process_group(sender)
+        sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
+        sender.recv_bytes(1)
+    except (EOFError, OSError):
+        pass
+    finally:
+        sender.close()
+
+
+def _robocasa_worker_without_isolation_ack(sender, _request_payload) -> None:
+    try:
         sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
         sender.recv_bytes(1)
     except (EOFError, OSError):
@@ -66,6 +89,7 @@ def _successful_robocasa_worker(sender, _request_payload) -> None:
 def _robocasa_worker_with_term_ignoring_descendant(sender, _request_payload) -> None:
     try:
         os.setsid()
+        _acknowledge_worker_process_group(sender)
         descendant = subprocess.Popen(
             [
                 sys.executable,
@@ -93,6 +117,38 @@ def _robocasa_worker_with_term_ignoring_descendant(sender, _request_payload) -> 
         sender.recv_bytes(1)
     except (EOFError, OSError):
         pass
+    finally:
+        sender.close()
+
+
+def _robocasa_worker_whose_leader_exits(sender, _request_payload) -> None:
+    try:
+        os.setsid()
+        _acknowledge_worker_process_group(sender)
+        descendant = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import signal,time;"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+                    "print('ready', flush=True);"
+                    "time.sleep(30)"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        assert descendant.stdout is not None
+        assert descendant.stdout.readline().strip() == "ready"
+        sender.send_bytes(
+            json.dumps(
+                {
+                    "kind": "result",
+                    "result": {"descendant_pid": descendant.pid},
+                }
+            ).encode("utf-8")
+        )
     finally:
         sender.close()
 
@@ -759,7 +815,7 @@ def test_capability_worker_timeout_stops_child_process(
     request = RoboCasaRunRequest(
         capability="kitchen_task_registration",
         output_uri="s3://example/output",
-        timeout_seconds=1,
+        timeout_seconds=5,
     )
     started = time.monotonic()
 
@@ -770,11 +826,11 @@ def test_capability_worker_timeout_stops_child_process(
         output_root=output_root,
     )
 
-    assert time.monotonic() - started < 6
+    assert time.monotonic() - started < 10
     assert outcome.timed_out is True
     assert outcome.stopped is True
     assert outcome.result is None
-    assert "timeout_seconds=1" in str(outcome.error)
+    assert "timeout_seconds=5" in str(outcome.error)
     assert list(output_root.iterdir()) == []
     workers_root = assets_root / ".npa_asset_fetch" / "workers"
     assert list(workers_root.iterdir()) == []
@@ -797,6 +853,27 @@ def test_capability_worker_retains_result_before_group_cleanup() -> None:
     )
 
     assert outcome == service._WorkerOutcome(result={"ok": True})
+
+
+def test_capability_worker_fails_closed_without_isolation_ack() -> None:
+    from npa.workbench.robocasa import service
+
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=5,
+        download_assets=False,
+    )
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_robocasa_worker_without_isolation_ack,
+        process_context=multiprocessing.get_context("spawn"),
+    )
+
+    assert outcome.stopped is False
+    assert outcome.result is None
+    assert "did not acknowledge" in str(outcome.error)
 
 
 def test_capability_worker_kills_term_ignoring_descendants() -> None:
@@ -823,6 +900,47 @@ def test_capability_worker_kills_term_ignoring_descendants() -> None:
         os.kill(descendant_pid, 0)
 
 
+def test_worker_cleanup_uses_acknowledged_group_after_leader_exits() -> None:
+    from npa.workbench.robocasa import service
+
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=True)
+    process = context.Process(
+        target=_robocasa_worker_whose_leader_exits,
+        args=(sender, {}),
+    )
+    descendant_pid: int | None = None
+    try:
+        process.start()
+        sender.close()
+        ready = json.loads(receiver.recv_bytes().decode("utf-8"))
+        result = json.loads(receiver.recv_bytes().decode("utf-8"))
+        process.join(5)
+        assert process.is_alive() is False
+        assert ready == {"kind": "ready", "process_group": process.pid}
+        descendant_pid = int(result["result"]["descendant_pid"])
+
+        assert service._stop_worker(
+            process,
+            terminate=True,
+            process_group=int(ready["process_group"]),
+        )
+        with pytest.raises(ProcessLookupError):
+            os.kill(descendant_pid, 0)
+    finally:
+        receiver.close()
+        if process.is_alive():
+            process.kill()
+            process.join()
+        if descendant_pid is not None:
+            try:
+                os.kill(descendant_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if hasattr(process, "close"):
+            process.close()
+
+
 def test_worker_cleanup_exception_returns_fail_closed_outcome(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -830,8 +948,12 @@ def test_worker_cleanup_exception_returns_fail_closed_outcome(
 
     real_stop_worker = service._stop_worker
 
-    def stop_then_raise(process, *, terminate):
-        assert real_stop_worker(process, terminate=terminate)
+    def stop_then_raise(process, *, terminate, process_group=None):
+        assert real_stop_worker(
+            process,
+            terminate=terminate,
+            process_group=process_group,
+        )
         raise OSError("injected cleanup failure")
 
     monkeypatch.setattr(service, "_stop_worker", stop_then_raise)

@@ -445,6 +445,10 @@ def _capability_worker_entry(sender: Any, request_payload: dict[str, Any]) -> No
     """Execute one capability in its own killable process group."""
     try:
         os.setsid()
+        _send_worker_message(
+            sender,
+            {"kind": "ready", "process_group": os.getpgrp()},
+        )
         payload = dict(request_payload)
         output_dir = Path(str(payload.pop("_worker_output_dir")))
         asset_temp_root = str(payload.pop("_worker_asset_temp_root", "")).strip()
@@ -558,46 +562,57 @@ def _execute_capability_in_worker(
     message: dict[str, Any] | None = None
     timed_out = False
     cleanup_error: str | None = None
+    protocol_error: str | None = None
+    process_group: int | None = None
+    deadline = time.monotonic() + body.timeout_seconds
     try:
-        if receiver.poll(body.timeout_seconds):
-            try:
-                raw = receiver.recv_bytes(_WORKER_MESSAGE_LIMIT)
-                parsed = json.loads(raw.decode("utf-8"))
-                if isinstance(parsed, dict):
-                    message = parsed
+        remaining = max(0.0, deadline - time.monotonic())
+        if receiver.poll(remaining):
+            ready = _receive_worker_message(receiver)
+            reported_group = ready.get("process_group")
+            if (
+                ready.get("kind") == "ready"
+                and isinstance(process.pid, int)
+                and reported_group == process.pid
+            ):
+                process_group = reported_group
+                remaining = max(0.0, deadline - time.monotonic())
+                if receiver.poll(remaining):
+                    message = _receive_worker_message(receiver)
                 else:
-                    message = {
-                        "kind": "error",
-                        "error": "RoboCasa worker returned a non-object message",
-                    }
-            except (EOFError, OSError, UnicodeDecodeError, ValueError) as exc:
-                message = {
-                    "kind": "error",
-                    "error": f"RoboCasa worker IPC failed: {type(exc).__name__}: {exc}",
-                }
+                    timed_out = True
+            else:
+                protocol_error = (
+                    "RoboCasa worker did not acknowledge its isolated process group"
+                )
         else:
             timed_out = True
     except (EOFError, OSError, ValueError) as exc:
-        message = {
-            "kind": "error",
-            "error": f"RoboCasa worker IPC failed: {type(exc).__name__}: {exc}",
-        }
+        protocol_error = f"RoboCasa worker IPC failed: {type(exc).__name__}: {exc}"
     finally:
         # The child waits after reporting its result so the parent can terminate
         # the complete process group, including simulator descendants, on every
         # path. Keep this endpoint open until the group has been signalled.
         try:
-            stopped = _stop_worker(process, terminate=True)
+            stopped = _stop_worker(
+                process,
+                terminate=True,
+                process_group=process_group,
+            )
         except Exception as exc:  # pragma: no cover - defensive cleanup boundary.
             stopped = False
             cleanup_error = (
                 f"RoboCasa worker cleanup failed: {type(exc).__name__}: {exc}"
             )
             try:
-                process_group = _worker_process_group(process)
                 _signal_worker(process, signal.SIGKILL, process_group=process_group)
             except Exception:
                 pass
+        if process_group is None:
+            stopped = False
+            protocol_error = protocol_error or (
+                "RoboCasa worker isolation was not acknowledged"
+            )
         try:
             receiver.close()
         except OSError:
@@ -624,6 +639,12 @@ def _execute_capability_in_worker(
 
     if cleanup_error is not None:
         return _WorkerOutcome(error=cleanup_error, stopped=False)
+    if protocol_error is not None:
+        return _WorkerOutcome(
+            error=protocol_error,
+            timed_out=timed_out,
+            stopped=False,
+        )
     if timed_out:
         return _WorkerOutcome(
             error=(
@@ -649,12 +670,25 @@ def _execute_capability_in_worker(
     return _WorkerOutcome(result=result, stopped=stopped)
 
 
-def _stop_worker(process: Any, *, terminate: bool) -> bool:
-    process_group = _worker_process_group(process)
+def _receive_worker_message(receiver: Any) -> dict[str, Any]:
+    raw = receiver.recv_bytes(_WORKER_MESSAGE_LIMIT)
+    parsed = json.loads(raw.decode("utf-8"))
+    if not isinstance(parsed, dict):
+        raise ValueError("RoboCasa worker returned a non-object message")
+    return parsed
+
+
+def _stop_worker(
+    process: Any,
+    *,
+    terminate: bool,
+    process_group: int | None = None,
+) -> bool:
     if not terminate:
         process.join(_WORKER_TERMINATE_GRACE_SECONDS)
         terminate = process.is_alive()
-    if terminate and process.is_alive():
+    group_alive = process_group is not None and _process_group_exists(process_group)
+    if terminate and (process.is_alive() or group_alive):
         _signal_worker(process, signal.SIGTERM, process_group=process_group)
         process.join(_WORKER_TERMINATE_GRACE_SECONDS)
     group_alive = process_group is not None and _process_group_exists(process_group)
@@ -667,20 +701,6 @@ def _stop_worker(process: Any, *, terminate: bool) -> bool:
     return not process.is_alive() and group_stopped
 
 
-def _worker_process_group(process: Any) -> int | None:
-    pid = process.pid
-    if not isinstance(pid, int) or pid <= 0:
-        return None
-    try:
-        if os.getpgid(pid) == pid:
-            return pid
-    except ProcessLookupError:
-        pass
-    except OSError:
-        pass
-    return None
-
-
 def _signal_worker(
     process: Any, signal_number: int, *, process_group: int | None
 ) -> None:
@@ -689,7 +709,7 @@ def _signal_worker(
             os.killpg(process_group, signal_number)
             return
         except ProcessLookupError:
-            return
+            pass
         except OSError:
             pass
     pid = process.pid
