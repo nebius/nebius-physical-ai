@@ -117,7 +117,7 @@ fetch. Acceptance covers only the two named Gemma policies.
 
 ## Antioch Runtime Reference
 
-The proprietary `antioch-sim==0.4.236` CLI and use of the Antioch Service are
+The proprietary `antioch-sim==0.4.265` CLI and use of the Antioch Service are
 governed by the [Antioch Terms of Service](https://antioch.com/terms), version
 dated 2026-02-28, or the operator's controlling MSA/order form. The product
 policy is explicit opt-in: require the exact run-scoped

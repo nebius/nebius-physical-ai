@@ -259,7 +259,7 @@ def build_public_manifests(config: ClusterLiveConfig) -> dict[str, dict[str, Any
             f"{state_root}/stop",
         ],
         "env": [
-            # Antioch 0.4.236 persists session-local state below the user's
+            # Antioch persists session-local state below the user's
             # home. Keep it in the controller-only writable tmpfs instead of
             # the image's read-only home directory.
             {"name": "HOME", "value": f"{private_root}/home"},

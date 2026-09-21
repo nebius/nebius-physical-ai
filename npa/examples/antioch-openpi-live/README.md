@@ -192,7 +192,8 @@ fails closed for either finite evaluation identity. Ambiguous ownership fails cl
 Mission Control's livestream state is independent of policy-camera readiness.
 The scenario waits in safe hold for both RTX render products to return distinct,
 advancing RGB frames; it never treats a viewer connection or the control-loop
-counter as a camera producer clock. The supported lifecycle follows the reviewed
+counter as a camera producer clock. The adapter uses the current `antioch-sim==0.4.265` control-plane CLI to freeze
+project revisions. The supported sensor lifecycle remains on the reviewed in-engine
 `antioch-sim==0.4.236` and `isaac-sim-6.0.1` runtime identity: timeline play is
 committed once, then every sensor read follows a completed rendered world step. See the
 [compatibility matrix](../../../docs/workbench/antioch.md#live-camera-compatibility-contract)

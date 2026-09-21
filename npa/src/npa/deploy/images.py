@@ -227,7 +227,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
-    "antioch": "0.1.0-cli0.4.236",
+    "antioch": "0.1.0-cli0.4.265",
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.

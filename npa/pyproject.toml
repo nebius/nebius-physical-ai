@@ -167,7 +167,7 @@ npa = "npa.cli.entry:main"
 npa-openpi-live-deploy = "npa.workflows.byof.openpi_live:main"
 
 [tool.npa.supported-tools]
-antioch = "0.1.0-cli0.4.236"
+antioch = "0.1.0-cli0.4.265"
 openpi = "pi05-full-droid-rlds-cu128-unbuilt"
 # Default LeRobot image release. Selectable package versions and their image tags
 # live in npa/src/npa/deploy/lerobot_version_manifest.json (0.5.1 + 0.6.0).

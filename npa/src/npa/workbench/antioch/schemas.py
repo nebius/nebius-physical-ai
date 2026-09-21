@@ -51,7 +51,7 @@ class SubmitRequest(BaseModel):
     scenario: str = ""
     scenario_case: str = ""
     parameters: dict[str, str | int | float | bool] = Field(default_factory=dict)
-    expected_cli_version: str = "0.4.236"
+    expected_cli_version: str = "0.4.265"
 
     @field_validator("input_path", "output_path")
     @classmethod
