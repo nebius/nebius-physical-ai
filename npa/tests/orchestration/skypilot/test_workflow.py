@@ -1340,7 +1340,8 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
         ).read_text(encoding="utf-8")
     )
     assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
-    assert rendered["allowed_clouds"] == ["kubernetes"]
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+    assert rendered["nebius"]["capabilities"] == ["storage"]
 
 
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
@@ -1357,7 +1358,9 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
         "  pod_config:\n"
         "    spec:\n"
         "      imagePullSecrets:\n"
-        "        - name: customer-registry-auth\n",
+        "        - name: customer-registry-auth\n"
+        "nebius:\n"
+        "  capabilities: [compute]\n",
         encoding="utf-8",
     )
     sky_bin = _fake_sky(tmp_path)
@@ -1381,10 +1384,50 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
 
     rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
     assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
-    assert rendered["allowed_clouds"] == ["kubernetes"]
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+    assert rendered["nebius"]["capabilities"] == ["storage"]
     assert rendered["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
         {"name": "customer-registry-auth"}
     ]
+
+
+def test_submit_workflow_allows_declared_nebius_storage_on_kubernetes(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: durable-demo\n"
+        "resources:\n"
+        "  cloud: kubernetes\n"
+        "file_mounts:\n"
+        "  /mnt/state:\n"
+        "    source: nebius://example-bucket/run\n"
+        "    store: NEBIUS\n"
+        "    mode: MOUNT\n",
+        encoding="utf-8",
+    )
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 13\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-nebius-storage",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/run-owned-context",
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+    assert rendered["nebius"]["capabilities"] == ["storage"]
 
 
 def test_submit_workflow_honors_isolated_config_dir(monkeypatch, tmp_path) -> None:
