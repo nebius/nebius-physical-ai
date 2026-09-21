@@ -398,6 +398,28 @@ def _run_capability(
 
     release_lock = True
     retained_output: Path | None = None
+
+    def cleanup_retained_output() -> bool:
+        nonlocal release_lock, retained_output
+        if retained_output is None:
+            return True
+        path = retained_output
+        retained_output = None
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            release_lock = False
+            poison = getattr(gpu_lock, "poison", None)
+            if callable(poison):
+                poison()
+            error = (
+                f"RoboCasa retained output cleanup failed: {type(exc).__name__}: {exc}"
+            )
+            LOGGER.critical("%s; poisoning execution gate for run_id=%s", error, run_id)
+            update("failed", None, error)
+            return False
+        return True
+
     if gpu_lock.acquire() is False:
         update(
             "failed",
@@ -451,21 +473,15 @@ def _run_capability(
                         "RoboCasa worker output was not retained for publication"
                     )
                 upload_output(retained_output, body.output_uri, outcome.result)
+            if not cleanup_retained_output():
+                return
             update("completed", outcome.result, None)
     except RoboCasaError as exc:
         update("failed", None, str(exc))
     except Exception as exc:  # pragma: no cover - defensive service boundary.
         update("failed", None, str(exc))
     finally:
-        if retained_output is not None:
-            try:
-                shutil.rmtree(retained_output)
-            except OSError as exc:
-                LOGGER.warning(
-                    "failed to remove retained RoboCasa output for run_id=%s: %s",
-                    run_id,
-                    exc,
-                )
+        cleanup_retained_output()
         if release_lock:
             gpu_lock.release()
 
@@ -480,6 +496,7 @@ def _capability_worker_entry(sender: Any, request_payload: dict[str, Any]) -> No
     try:
         payload = dict(request_payload)
         output_dir = Path(str(payload.pop("_worker_output_dir")))
+        defer_output_upload = bool(payload.pop("_worker_defer_output_upload", False))
         asset_temp_root = str(payload.pop("_worker_asset_temp_root", "")).strip()
         worker_temp_root = output_dir / "scratch"
         worker_temp_root.mkdir(parents=True, exist_ok=True)
@@ -489,7 +506,11 @@ def _capability_worker_entry(sender: Any, request_payload: dict[str, Any]) -> No
         else:
             os.environ.pop(WORKER_ASSET_TEMP_ROOT_ENV, None)
         body = RoboCasaRunRequest.model_validate(payload)
-        result = run_capability_with_output(body, output_dir=output_dir)
+        result = run_capability_with_output(
+            body,
+            output_dir=output_dir,
+            upload=not defer_output_upload,
+        )
         message = {"kind": "result", "result": result}
     except RoboCasaError as exc:
         message = {"kind": "error", "error": str(exc)}
@@ -814,8 +835,10 @@ def _execute_capability_in_worker(
     request_payload = body.model_dump(mode="json")
     if retain_output:
         # Publication is a parent-owned commit step after the containment
-        # supervisor proves that every simulator descendant has stopped.
-        request_payload["output_uri"] = None
+        # supervisor proves that every simulator descendant has stopped. Keep
+        # the validated request unchanged so output-required capabilities still
+        # execute with their caller-bound destination identity.
+        request_payload["_worker_defer_output_upload"] = True
     request_payload["_worker_output_dir"] = str(worker_output)
     request_payload["_worker_asset_temp_root"] = (
         str(worker_asset_output) if worker_asset_output is not None else ""
@@ -897,6 +920,7 @@ def _execute_capability_in_worker(
             if worker_asset_output is not None:
                 shutil.rmtree(worker_asset_output)
         except OSError as exc:
+            stopped = False
             cleanup_error = cleanup_error or (
                 f"RoboCasa worker asset cleanup failed: {type(exc).__name__}: {exc}"
             )
@@ -957,7 +981,7 @@ def _execute_capability_in_worker(
                     "RoboCasa worker output cleanup failed: "
                     f"{type(exc).__name__}: {exc}"
                 ),
-                stopped=True,
+                stopped=False,
             )
     return outcome
 

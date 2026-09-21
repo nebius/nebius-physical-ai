@@ -2313,6 +2313,7 @@ def run_capability_with_output(
     request: RoboCasaRunRequest,
     *,
     output_dir: Path | None = None,
+    upload: bool = True,
 ) -> dict[str, Any]:
     """Run a capability and persist/upload its output truthfully.
 
@@ -2326,7 +2327,11 @@ def run_capability_with_output(
     """
     if output_dir is None:
         with tempfile.TemporaryDirectory(prefix="robocasa_") as tmp:
-            return run_capability_with_output(request, output_dir=Path(tmp))
+            return run_capability_with_output(
+                request,
+                output_dir=Path(tmp),
+                upload=upload,
+            )
     result = run_capability(request, output_dir=output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     provenance = _execution_provenance(request, output_dir, result)
@@ -2337,7 +2342,7 @@ def run_capability_with_output(
     (output_dir / "provenance.json").write_text(
         json.dumps(provenance, indent=2, sort_keys=True), encoding="utf-8"
     )
-    if request.output_uri:
+    if upload and request.output_uri:
         upload_output(output_dir, request.output_uri, result)
     return result
 
@@ -2408,13 +2413,275 @@ def _execution_provenance(
     }
 
 
+_OUTPUT_CLAIM_NAME = "_NPA_CLAIM.json"
+_OUTPUT_COMPLETE_NAME = "_NPA_COMPLETE.json"
+
+
+def _output_tree(root: Path) -> tuple[tuple[int, int], list[Path]]:
+    try:
+        root_info = root.lstat()
+    except FileNotFoundError as exc:
+        raise RoboCasaError("RoboCasa output root does not exist") from exc
+    if not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode):
+        raise RoboCasaError("RoboCasa output root must be a real directory")
+    paths: list[Path] = []
+    for path in sorted(root.rglob("*")):
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            raise RoboCasaError("RoboCasa output tree contains a symbolic link")
+        if stat.S_ISDIR(metadata.st_mode):
+            continue
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_nlink != 1
+        ):
+            raise RoboCasaError(
+                "RoboCasa output tree contains an unsafe non-regular file"
+            )
+        relative = path.relative_to(root).as_posix()
+        if relative in {_OUTPUT_CLAIM_NAME, _OUTPUT_COMPLETE_NAME}:
+            raise RoboCasaError("RoboCasa output tree contains a reserved marker")
+        paths.append(path)
+    return (root_info.st_dev, root_info.st_ino), paths
+
+
+def _rewrite_result_file(root: Path, payload: bytes) -> None:
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            result_fd = os.open(
+                "result.json",
+                os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW,
+                dir_fd=root_fd,
+            )
+        except FileNotFoundError:
+            return
+        try:
+            info = os.fstat(result_fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_nlink != 1
+            ):
+                raise RoboCasaError("RoboCasa result.json identity is unsafe")
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(result_fd, remaining)
+                if written <= 0:
+                    raise RoboCasaError("RoboCasa result.json write was incomplete")
+                remaining = remaining[written:]
+            os.fsync(result_fd)
+        finally:
+            os.close(result_fd)
+    finally:
+        os.close(root_fd)
+
+
+def _s3_error_code(exc: BaseException) -> tuple[str, int]:
+    response = getattr(exc, "response", {})
+    if not isinstance(response, dict):
+        return "", 0
+    error = response.get("Error", {})
+    metadata = response.get("ResponseMetadata", {})
+    code = str(error.get("Code", "")) if isinstance(error, dict) else ""
+    status = int(metadata.get("HTTPStatusCode", 0)) if isinstance(metadata, dict) else 0
+    return code, status
+
+
+def _s3_head_object(s3: Any, bucket: str, key: str) -> dict[str, Any] | None:
+    try:
+        response = s3.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        code, status = _s3_error_code(exc)
+        if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
+            return None
+        raise
+    if not isinstance(response, dict):
+        raise RoboCasaError("RoboCasa S3 object metadata response is invalid")
+    return response
+
+
+def _require_s3_object(
+    s3: Any,
+    bucket: str,
+    key: str,
+    *,
+    digest_key: str,
+    digest: str,
+    byte_count: int,
+) -> None:
+    head = _s3_head_object(s3, bucket, key)
+    metadata = head.get("Metadata", {}) if head is not None else {}
+    if (
+        head is None
+        or not isinstance(metadata, dict)
+        or metadata.get(digest_key) != digest
+        or int(head.get("ContentLength", -1)) != byte_count
+    ):
+        raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
+
+
+def _s3_prefix_keys(
+    s3: Any,
+    bucket: str,
+    prefix: str,
+    *,
+    limit: int,
+) -> set[str]:
+    response = s3.list_objects_v2(
+        Bucket=bucket,
+        Prefix=prefix,
+        MaxKeys=limit,
+    )
+    contents = response.get("Contents", [])
+    if (
+        not isinstance(contents, list)
+        or response.get("IsTruncated")
+        or len(contents) > limit
+    ):
+        raise RoboCasaError("RoboCasa output_uri object population is unbounded")
+    keys = {
+        str(item.get("Key"))
+        for item in contents
+        if isinstance(item, dict) and isinstance(item.get("Key"), str)
+    }
+    if len(keys) != len(contents):
+        raise RoboCasaError("RoboCasa output_uri object population is invalid")
+    return keys
+
+
+def _require_committed_s3_tree(
+    s3: Any,
+    bucket: str,
+    complete_key: str,
+    *,
+    commit_sha256: str,
+    commit_bytes: int,
+    final_keys: dict[str, dict[str, Any]],
+) -> None:
+    _require_s3_object(
+        s3,
+        bucket,
+        complete_key,
+        digest_key="commit-sha256",
+        digest=commit_sha256,
+        byte_count=commit_bytes,
+    )
+    for key, item in final_keys.items():
+        _require_s3_object(
+            s3,
+            bucket,
+            key,
+            digest_key="content-sha256",
+            digest=str(item["sha256"]),
+            byte_count=int(item["bytes"]),
+        )
+
+
+def _put_s3_once(
+    s3: Any,
+    *,
+    bucket: str,
+    key: str,
+    body: bytes,
+    content_type: str,
+    digest_key: str,
+    digest: str,
+) -> bool:
+    try:
+        s3.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=body,
+            ContentType=content_type,
+            Metadata={digest_key: digest},
+            IfNoneMatch="*",
+        )
+        return True
+    except Exception as exc:
+        code, status = _s3_error_code(exc)
+        if code not in {"412", "PreconditionFailed"} and status != 412:
+            raise
+    _require_s3_object(
+        s3,
+        bucket,
+        key,
+        digest_key=digest_key,
+        digest=digest,
+        byte_count=len(body),
+    )
+    return False
+
+
 def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> None:
-    """Commit a complete immutable output tree to an empty S3 run prefix."""
+    """Commit one immutable, resumable output tree to an S3 run prefix."""
     if not output_uri:
         return
     root = Path(local_dir)
-    if not root.exists() or not any(root.iterdir()):
+    root_identity, initial_paths = _output_tree(root)
+    if not initial_paths:
         return
+    bucket, prefix = parse_s3_uri(output_uri)
+    if not prefix:
+        raise RoboCasaError("RoboCasa output_uri must include a run-specific prefix")
+    final_prefix = prefix + "/"
+
+    result["output_uri"] = output_uri
+    result["output_commit"] = {
+        "schema": "npa.robocasa.output-commit.v1",
+        "marker": _OUTPUT_COMPLETE_NAME,
+    }
+    result_path = root / "result.json"
+    if result_path in initial_paths:
+        _rewrite_result_file(
+            root,
+            json.dumps(result, indent=2, sort_keys=True).encode("utf-8"),
+        )
+    final_root_identity, output_paths = _output_tree(root)
+    if final_root_identity != root_identity:
+        raise RoboCasaError("RoboCasa output root identity changed")
+    files = []
+    for path in output_paths:
+        metadata = path.lstat()
+        relative = path.relative_to(root).as_posix()
+        files.append(
+            {
+                "path": relative,
+                "bytes": metadata.st_size,
+                "sha256": _sha256_file(path),
+                "source": path,
+            }
+        )
+    commit = {
+        "schema": "npa.robocasa.output-commit.v1",
+        "output_uri": output_uri,
+        "result_sha256": hashlib.sha256(
+            json.dumps(
+                result, sort_keys=True, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+        ).hexdigest(),
+        "files": [
+            {key: item[key] for key in ("path", "bytes", "sha256")} for item in files
+        ],
+    }
+    commit_body = (
+        json.dumps(commit, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    commit_sha256 = hashlib.sha256(commit_body).hexdigest()
+    claim = {
+        "schema": "npa.robocasa.output-claim.v1",
+        "commit_sha256": commit_sha256,
+        "output_uri": output_uri,
+    }
+    claim_body = (
+        json.dumps(claim, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    claim_key = final_prefix + _OUTPUT_CLAIM_NAME
+    complete_key = final_prefix + _OUTPUT_COMPLETE_NAME
+    final_keys = {final_prefix + str(item["path"]): item for item in files}
+    allowed_keys = {claim_key, complete_key, *final_keys}
+
     import boto3
 
     endpoint = os.environ.get("AWS_ENDPOINT_URL") or os.environ.get(
@@ -2426,75 +2693,92 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
         aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID") or None,
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY") or None,
     )
-    bucket, prefix = parse_s3_uri(output_uri)
-    if not prefix:
-        raise RoboCasaError("RoboCasa output_uri must include a run-specific prefix")
-    final_prefix = prefix + "/"
-    existing = s3.list_objects_v2(Bucket=bucket, Prefix=final_prefix, MaxKeys=1)
-    if existing.get("Contents") or int(existing.get("KeyCount", 0)):
-        raise RoboCasaError("RoboCasa output_uri must be empty before publication")
+    population_limit = len(allowed_keys) + 1
+    existing_keys = _s3_prefix_keys(
+        s3,
+        bucket,
+        final_prefix,
+        limit=population_limit,
+    )
+    if complete_key in existing_keys:
+        _require_committed_s3_tree(
+            s3,
+            bucket,
+            complete_key,
+            commit_sha256=commit_sha256,
+            commit_bytes=len(commit_body),
+            final_keys=final_keys,
+        )
+        return
+    if existing_keys and claim_key not in existing_keys:
+        raise RoboCasaError("RoboCasa output_uri is not an owned resumable prefix")
+    _put_s3_once(
+        s3,
+        bucket=bucket,
+        key=claim_key,
+        body=claim_body,
+        content_type="application/json",
+        digest_key="commit-sha256",
+        digest=commit_sha256,
+    )
+    existing_keys = _s3_prefix_keys(
+        s3,
+        bucket,
+        final_prefix,
+        limit=population_limit,
+    )
+    if claim_key not in existing_keys or not existing_keys <= allowed_keys:
+        raise RoboCasaError("RoboCasa output_uri contains foreign objects")
+    if complete_key in existing_keys:
+        _require_committed_s3_tree(
+            s3,
+            bucket,
+            complete_key,
+            commit_sha256=commit_sha256,
+            commit_bytes=len(commit_body),
+            final_keys=final_keys,
+        )
+        return
 
-    result["output_uri"] = output_uri
-    result["output_commit"] = {
-        "schema": "npa.robocasa.output-commit.v1",
-        "marker": "_NPA_COMPLETE.json",
-    }
-    result_path = root / "result.json"
-    if result_path.is_file():
-        result_path.write_text(
-            json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
-        )
-    files = []
-    for path in sorted(root.rglob("*")):
-        metadata = path.lstat()
-        if stat.S_ISLNK(metadata.st_mode):
-            raise RoboCasaError("RoboCasa output tree contains a symbolic link")
-        if stat.S_ISDIR(metadata.st_mode):
-            continue
-        if not stat.S_ISREG(metadata.st_mode):
-            raise RoboCasaError("RoboCasa output tree contains a non-regular file")
-        files.append(
-            {
-                "path": path.relative_to(root).as_posix(),
-                "bytes": metadata.st_size,
-                "sha256": _sha256_file(path),
-                "source": path,
-            }
-        )
-    token = hashlib.sha256(output_uri.encode("utf-8") + os.urandom(32)).hexdigest()
-    staging_prefix = f".npa-staging/robocasa/{token}/"
+    staging_prefix = f".npa-staging/robocasa/{commit_sha256}/"
     staged_keys: list[str] = []
     try:
         for item in files:
             staging_key = staging_prefix + str(item["path"])
-            s3.upload_file(str(item["source"]), bucket, staging_key)
+            s3.upload_file(
+                str(item["source"]),
+                bucket,
+                staging_key,
+                ExtraArgs={
+                    "Metadata": {"content-sha256": str(item["sha256"])},
+                },
+            )
             staged_keys.append(staging_key)
         for item, staging_key in zip(files, staged_keys, strict=True):
+            final_key = final_prefix + str(item["path"])
             s3.copy_object(
                 Bucket=bucket,
-                Key=final_prefix + str(item["path"]),
+                Key=final_key,
                 CopySource={"Bucket": bucket, "Key": staging_key},
+                Metadata={"content-sha256": str(item["sha256"])},
+                MetadataDirective="REPLACE",
             )
-        commit = {
-            "schema": "npa.robocasa.output-commit.v1",
-            "output_uri": output_uri,
-            "result_sha256": hashlib.sha256(
-                json.dumps(
-                    result, sort_keys=True, separators=(",", ":"), allow_nan=False
-                ).encode("utf-8")
-            ).hexdigest(),
-            "files": [
-                {key: item[key] for key in ("path", "bytes", "sha256")}
-                for item in files
-            ],
-        }
-        s3.put_object(
-            Bucket=bucket,
-            Key=final_prefix + "_NPA_COMPLETE.json",
-            Body=(
-                json.dumps(commit, sort_keys=True, separators=(",", ":")) + "\n"
-            ).encode("utf-8"),
-            ContentType="application/json",
+            _require_s3_object(
+                s3,
+                bucket,
+                final_key,
+                digest_key="content-sha256",
+                digest=str(item["sha256"]),
+                byte_count=int(item["bytes"]),
+            )
+        _put_s3_once(
+            s3,
+            bucket=bucket,
+            key=complete_key,
+            body=commit_body,
+            content_type="application/json",
+            digest_key="commit-sha256",
+            digest=commit_sha256,
         )
     finally:
         for offset in range(0, len(staged_keys), 1000):
