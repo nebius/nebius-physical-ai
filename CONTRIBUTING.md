@@ -10,6 +10,7 @@ Workbench tool; small fixes can go directly to the relevant section.
 | Add a tool and container | [End-to-end contribution skill](skills/workflows/add-workbench-tool/SKILL.md) |
 | Add or adapt a workflow | [Workflow authoring](skills/workflows/author-npa-workflow/SKILL.md) |
 | Prepare a pull request | [Validation gates](skills/atomic/pre-pr-validation/SKILL.md) and [PR conventions](#commit-and-pr-conventions) |
+| Merge a pull request from mobile | [Auto-merge and the merge queue](#auto-merge-and-the-merge-queue) |
 
 ## Contribution quality
 
@@ -480,7 +481,7 @@ cancels the complete superseded gate instead of six independent fragments:
 
 | Workflow | What it runs | Reproduce locally |
 | --- | --- | --- |
-| `.github/workflows/test.yml` | PR smoke and affected subsystem tests; full candidate coverage when needed; scheduled compatibility audit | `make test` |
+| `.github/workflows/test.yml` | Identical PR/queue coverage; prose smoke; scheduled compatibility audit | `make test` |
 | `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
 | `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
 | `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
@@ -504,22 +505,19 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-Pull requests with a selected test scope run smoke feedback and the affected
-subsystem's Python tests alongside security, lint, documentation drift, and
-repository guardrails. Agent
-and browser changes also run the dedicated Cypress job before queue admission.
-CI, dependency, shared configuration, deleted files, and unknown paths trigger
-the full Python 3.12 suite on the PR. Selection is conservative: a source change
-runs its subsystem's tests, not just tests named after the modified module.
-Full-suite PRs collect the smoke tests in the coverage shards and run the CLI
-install check there, avoiding a duplicate smoke job. Repository guardrails use
-xdist workers within their existing runner.
+Pull requests and merge candidates run the same checks before they can pass:
+five duration-balanced Python 3.12 coverage shards, the dedicated Cypress job,
+and focused Python 3.10/3.14 compatibility tests, alongside security, lint,
+documentation drift, and repository guardrails. Source and test changes always
+receive the full suite, including tests outside the changed subsystem. Coverage
+is combined before enforcing the 60% floor on both events.
 
-The merge queue validates the combined candidate against its current base with
-five Python 3.12 coverage shards, the dedicated browser job, and focused Python
-3.10/3.14 compatibility checks. Coverage is combined before enforcing the 60%
-floor. Cypress runs once in its own job, never inside a pytest shard. Scheduled
-and manual audits retain four shards on each of Python 3.10, 3.12, and 3.14.
+Full suites collect smoke tests and run the CLI install check in the shards,
+avoiding duplicate smoke and subsystem jobs. Cypress runs once in its own job,
+never inside a pytest shard. Cached constrained installs, xdist workers, and the
+existing merge-priority runner pools retain fast feedback without deferring
+coverage until queue admission. Scheduled and manual audits retain four shards
+on each of Python 3.10, 3.12, and 3.14.
 
 A narrow prose-only exception skips the full Python and browser suites on PRs
 and merge candidates while retaining smoke, lint, documentation drift, guardrail,
@@ -531,7 +529,9 @@ frontmatter, or templates keep full validation. Mixed merge groups use the full
 combined diff, so a prose PR cannot hide a preceding code change.
 
 The scope job executes `npa/scripts/ci_test_scope.py` from the trusted base
-commit. A candidate cannot install its own shortcut. Missing base policy keeps
+commit, requesting its merge-candidate policy for both PR and queue events. This
+also prevents the installing PR from inheriting an older base's narrower PR
+policy. A candidate cannot install its own shortcut. Missing base policy keeps
 the full suite; an invalid comparison fails the job. To inspect a selection
 locally with the candidate checked out, pass full commit SHAs:
 
@@ -541,8 +541,8 @@ npa/.venv/bin/python npa/scripts/ci_test_scope.py \
   --event pull_request
 ```
 
-The command prints the prose/full-suite/browser decisions and selected pytest
-paths as JSON. Use `--event merge_group` to inspect queue eligibility instead.
+The command prints the prose/full-suite/browser decisions as JSON. For the same
+base and head, `--event merge_group` must produce the identical decision.
 
 The internal sharder activates only when `NPA_CI_SHARD_INDEX` and
 `NPA_CI_TOTAL_SHARDS` are both set. The index is one-based and must not exceed
@@ -590,15 +590,17 @@ jobs. The pools are independent:
 
 | Pool | Maximum active runner jobs | Shared slots |
 |---|---:|---|
-| PR checks | 7 | metadata, docs/guardrails, policy, runtime, two test slots, completion |
-| Merge candidates | 9 | metadata/docs/guardrails, policy, runtime, five test slots, completion |
+| PR checks | 7 | metadata, docs/guardrails, policy, runtime, two test slots, scope/completion |
+| Merge candidates | 9 | metadata/docs/guardrails, policy, runtime, five test slots, scope/completion |
 | Main, scheduled, and manual audits | 3 | metadata, security, tests |
 
 These are shared totals for each pool, not per-PR or per-candidate allowances.
 PR shards 1/3/5 share one test slot; shards 2/4 and browser checks share the
 other. Merge shards keep five slots, with browser checks sharing shard 5's slot.
-Each candidate pool has a completion slot for coverage and the final required
-check, so they cannot wait behind another candidate's long tests or docs checks.
+Each candidate pool has a completion slot for the short test-scope selector,
+coverage, and the final required check. Test selection can start the shards
+without waiting behind long docs or guardrail jobs, and completed suites can
+report their result promptly.
 This also lets a superseded PR report its unsuccessful final check promptly
 and release its workflow lock for the replacement commit.
 Optional timing reports use the audit metadata slot even for candidate runs.
@@ -622,8 +624,9 @@ checks and the merge queue timeout remain unchanged.
 
 ### Merge readiness and queue rejections
 
-The queue tests a new commit combining the PR with the current base and preceding
-queued changes. A green PR check applies to its tested commit; a queue rejection
+PR admission includes every test category required by the queue. The queue still
+tests a new commit combining the PR with the current base and preceding queued
+changes. A green PR check applies to its tested commit; a queue rejection
 can expose a newer dependency policy, an interaction, or a flaky test. Open the
 failed **Security regression** run whose event is **merge_group**, then inspect
 the first failed component job. Cancelled sibling shards usually follow a failed
@@ -886,6 +889,52 @@ runs use scope-specific commit lock directories under `/tmp/npa-commit-lock/`;
 remove the lock after commit and push.
 
 Run Claude Code reviews only when explicitly requested by the operator.
+
+## Auto-merge and the merge queue
+
+Keep **Settings → General → Pull Requests → Allow auto-merge** enabled for this
+repository. This repository setting is separate from the merge-queue rule on
+`main`; committing workflow YAML does not enable it. Maintainers can inspect and
+restore it with GitHub CLI:
+
+```bash
+gh api repos/nebius/nebius-physical-ai --jq '.allow_auto_merge'
+gh api --method PATCH repos/nebius/nebius-physical-ai -F allow_auto_merge=true \
+  --jq '.allow_auto_merge'
+```
+
+The readback should be `true`. Enabling the repository setting lets contributors
+request auto-merge for individual PRs; it preserves required checks, signatures,
+and the merge queue. See [GitHub's repository auto-merge settings](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-auto-merge-for-pull-requests-in-your-repository).
+
+On a phone, use the PR's auto-merge control when available. If the app does not
+offer it or fails to save the request, open the PR on GitHub.com in the phone's
+browser, select **Merge when ready**, and confirm. GitHub adds the PR to the
+queue after its requirements pass, then validates the combined candidate before
+merging. The queue controls the merge method. See [GitHub's merge-queue guide](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request-with-a-merge-queue).
+
+To diagnose a request from a terminal, set `pr_number` to the affected PR:
+
+```bash
+: "${pr_number:?Set pr_number to the affected pull request number}"
+gh pr view "$pr_number" --repo nebius/nebius-physical-ai \
+  --json autoMergeRequest,mergeStateStatus,statusCheckRollup
+gh pr checks "$pr_number" --repo nebius/nebius-physical-ai --required
+```
+
+A non-null `autoMergeRequest` means GitHub saved the request. Pending checks can
+still leave the PR `BLOCKED` and outside the queue; inspect the linked Actions
+run for waiting runners or failures. A green component job does not mean the
+aggregate required `security-regression` check has finished. Resolve failed
+checks or merge conflicts before requesting queue entry again. If no request
+was saved, the [CLI fallback](https://cli.github.com/manual/gh_pr_merge) is:
+
+```bash
+gh pr merge "$pr_number" --repo nebius/nebius-physical-ai --auto
+```
+
+Use this only for a PR you intend to merge. It waits for requirements or queues
+an already eligible PR. Do not use `--admin` to work around a waiting check.
 
 ## Design Principles
 The core promise is to remove glue code. Contributions should avoid bespoke
