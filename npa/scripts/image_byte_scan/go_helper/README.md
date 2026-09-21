@@ -15,14 +15,14 @@ alone rather than refused, so coverage never depends on a size threshold.
 
 That budget bounds admitted payload bytes, not resident memory: the detector
 holds the raw bytes, a string copy, a lowercased copy and the regexp engine's
-working set. Measured peak RSS for a single record, Linux x86_64, Go toolchain
-1.27.1, one record in flight:
+working set. Peak RSS for a single record, read from the helper's `VmHWM` in
+KiB, Linux x86_64, Go toolchain 1.27.1, one record in flight:
 
-| record | peak RSS | multiple of record size |
+| record | peak `VmHWM` | multiple of record size |
 | --- | --- | --- |
-| 16 MiB | 161 MB | 9.85x |
-| 64 MiB | 543 MB | 8.29x |
-| 128 MiB | 1,053 MB | 8.04x |
+| 16 MiB | 161,440 KiB | 9.85x |
+| 64 MiB | 543,252 KiB | 8.29x |
+| 128 MiB | 1,053,452 KiB | 8.04x |
 
 These are single-record measurements at those three sizes, and the multiple is
 not constant across them. Sizing above 128 MiB by extrapolating it is an
