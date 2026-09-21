@@ -13,7 +13,7 @@ from typing import Any
 
 import typer
 
-from npa.clients.credentials import apply_shared_credential_env, load_credentials
+from npa.clients.credentials import load_credentials
 from npa.clients.project_credentials import storage_env_for_project
 from npa.workbench.robocasa.schemas import DEFAULT_PORT, DEFAULT_TOKEN_ENV
 
@@ -358,6 +358,7 @@ def _pod_spec(
     image_pull_secret: str,
 ) -> dict[str, Any]:
     spec: dict[str, Any] = {
+        "automountServiceAccountToken": False,
         "nodeSelector": {node_selector_key: node_selector_value},
         "tolerations": [
             {
@@ -437,7 +438,14 @@ def _service_env(
         "ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA": image_source_sha,
         "ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST": image_manifest_digest,
     }
-    apply_shared_credential_env(env, creds)
+    hf_token = (
+        os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        or getattr(creds, "hf_token", "")
+    )
+    if hf_token:
+        env["HF_TOKEN"] = hf_token
+        env["HUGGING_FACE_HUB_TOKEN"] = hf_token
     if project.strip():
         project_storage = storage_env_for_project(project.strip())
         env.update(project_storage)

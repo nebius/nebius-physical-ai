@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 import typer
@@ -51,16 +52,18 @@ def test_deploy_help() -> None:
 def test_deploy_service_env_prefers_project_scoped_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(deploy_module, "load_credentials", object)
     monkeypatch.setattr(
         deploy_module,
-        "apply_shared_credential_env",
-        lambda env, _creds: env.update(
-            {
-                "AWS_ACCESS_KEY_ID": "host-ak",
-                "AWS_SECRET_ACCESS_KEY": "host-sk",
-                "AWS_ENDPOINT_URL": "https://host.invalid",
-            }
+        "load_credentials",
+        lambda: SimpleNamespace(
+            hf_token="hf-required",
+            s3_access_key_id="host-ak",
+            s3_secret_access_key="host-sk",
+            s3_endpoint="https://host.invalid",
+            tokens={
+                "NGC_API_KEY": "forbidden-ngc",
+                "NEBIUS_TOKEN_FACTORY_API_KEY": "forbidden-token-factory",
+            },
         ),
     )
     monkeypatch.setattr(
@@ -88,6 +91,10 @@ def test_deploy_service_env_prefers_project_scoped_storage(
     assert env["AWS_SECRET_ACCESS_KEY"] == "fleet-test-sk"
     assert env["AWS_ENDPOINT_URL"] == "https://project.invalid"
     assert env["AWS_ENDPOINT_URL_S3"] == "https://project.invalid"
+    assert env["HF_TOKEN"] == "hf-required"
+    assert env["HUGGING_FACE_HUB_TOKEN"] == "hf-required"
+    assert "NGC_API_KEY" not in env
+    assert "NEBIUS_TOKEN_FACTORY_API_KEY" not in env
     assert env["ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA"] == "1" * 40
     assert env["ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST"] == "sha256:" + "2" * 64
 
@@ -200,6 +207,7 @@ def test_deploy_manifest_preserves_namespace_and_enforces_non_root(
         item for item in manifest["items"] if item["kind"] == "Deployment"
     )
     pod_spec = deployment["spec"]["template"]["spec"]
+    assert pod_spec["automountServiceAccountToken"] is False
     assert pod_spec["securityContext"]["runAsNonRoot"] is True
     assert pod_spec["containers"][0]["securityContext"]["runAsNonRoot"] is True
 

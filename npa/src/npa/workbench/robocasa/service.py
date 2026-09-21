@@ -32,6 +32,7 @@ from npa.workbench.robocasa.capabilities import (
     make_run_id,
     run_capability_with_output,
     system_info,
+    upload_output,
     verify_runtime_identity,
 )
 from npa.workbench.robocasa.schemas import (
@@ -47,6 +48,10 @@ _TERMINAL_STATUSES = frozenset({"completed", "failed"})
 _ACTIVE_STATUSES = frozenset({"queued", "running"})
 _WORKER_MESSAGE_LIMIT = 16 * 1024 * 1024
 _WORKER_TERMINATE_GRACE_SECONDS = 2.0
+_WORKER_KILL_REAP_GRACE_SECONDS = 10.0
+_WORKER_STOP_ACK_GRACE_SECONDS = (
+    _WORKER_TERMINATE_GRACE_SECONDS + _WORKER_KILL_REAP_GRACE_SECONDS + 4.0
+)
 
 
 class RunCapacityError(RoboCasaError):
@@ -59,6 +64,7 @@ class _WorkerOutcome:
     error: str | None = None
     timed_out: bool = False
     stopped: bool = True
+    output_dir: Path | None = None
 
 
 class GpuExecutionGate:
@@ -391,6 +397,7 @@ def _run_capability(
         registry.update(run_id, status=status, result=result, error=error)
 
     release_lock = True
+    retained_output: Path | None = None
     if gpu_lock.acquire() is False:
         update(
             "failed",
@@ -407,12 +414,15 @@ def _run_capability(
             body.env_id,
         )
         if capability_executor is None:
-            outcome = _execute_capability_in_worker(body)
+            outcome = _execute_capability_in_worker(body, retain_output=True)
+            publish_after_cleanup = True
         else:
             with tempfile.TemporaryDirectory(prefix="robocasa_") as tmp:
                 outcome = _WorkerOutcome(
                     result=capability_executor(body, output_dir=Path(tmp))
                 )
+            publish_after_cleanup = False
+        retained_output = outcome.output_dir
         if not outcome.stopped:
             release_lock = False
             poison = getattr(gpu_lock, "poison", None)
@@ -435,12 +445,27 @@ def _run_capability(
         elif outcome.result is None:
             update("failed", None, "RoboCasa worker returned no result")
         else:
+            if publish_after_cleanup and body.output_uri:
+                if retained_output is None or not retained_output.is_dir():
+                    raise RoboCasaError(
+                        "RoboCasa worker output was not retained for publication"
+                    )
+                upload_output(retained_output, body.output_uri, outcome.result)
             update("completed", outcome.result, None)
     except RoboCasaError as exc:
         update("failed", None, str(exc))
     except Exception as exc:  # pragma: no cover - defensive service boundary.
         update("failed", None, str(exc))
     finally:
+        if retained_output is not None:
+            try:
+                shutil.rmtree(retained_output)
+            except OSError as exc:
+                LOGGER.warning(
+                    "failed to remove retained RoboCasa output for run_id=%s: %s",
+                    run_id,
+                    exc,
+                )
         if release_lock:
             gpu_lock.release()
 
@@ -722,8 +747,11 @@ def _signal_process_identity(identity: _ProcessIdentity, signal_number: int) -> 
 def _stop_supervised_children(primary: Any = None) -> bool:
     """Drain only children of this dedicated subreaper, including escaped sessions."""
     try:
-        for signal_number in (signal.SIGTERM, signal.SIGKILL):
-            deadline = time.monotonic() + _WORKER_TERMINATE_GRACE_SECONDS
+        for signal_number, grace_seconds in (
+            (signal.SIGTERM, _WORKER_TERMINATE_GRACE_SECONDS),
+            (signal.SIGKILL, _WORKER_KILL_REAP_GRACE_SECONDS),
+        ):
+            deadline = time.monotonic() + grace_seconds
             while True:
                 _reap_supervised_children(primary)
                 children = _direct_child_identities()
@@ -756,6 +784,7 @@ def _execute_capability_in_worker(
     supervisor_target: Any = _supervisor_worker_entry,
     process_context: Any = None,
     output_root: Path | None = None,
+    retain_output: bool = False,
 ) -> _WorkerOutcome:
     """Run one request with a hard deadline in an independently killable child."""
     context = process_context or multiprocessing.get_context("spawn")
@@ -783,6 +812,10 @@ def _execute_capability_in_worker(
             "cannot create parent-owned RoboCasa asset staging directory"
         )
     request_payload = body.model_dump(mode="json")
+    if retain_output:
+        # Publication is a parent-owned commit step after the containment
+        # supervisor proves that every simulator descendant has stopped.
+        request_payload["output_uri"] = None
     request_payload["_worker_output_dir"] = str(worker_output)
     request_payload["_worker_asset_temp_root"] = (
         str(worker_asset_output) if worker_asset_output is not None else ""
@@ -857,56 +890,76 @@ def _execute_capability_in_worker(
         except OSError:
             stopped = False
             cleanup_error = cleanup_error or "RoboCasa worker IPC cleanup failed"
-    if not stopped:
+    if stopped:
+        if hasattr(process, "close"):
+            process.close()
+        try:
+            if worker_asset_output is not None:
+                shutil.rmtree(worker_asset_output)
+        except OSError as exc:
+            cleanup_error = cleanup_error or (
+                f"RoboCasa worker asset cleanup failed: {type(exc).__name__}: {exc}"
+            )
+    else:
         try:
             _reap_worker_async(process, worker_output, worker_asset_output)
         except Exception as exc:  # pragma: no cover - defensive cleanup boundary.
             cleanup_error = cleanup_error or (
                 f"RoboCasa worker reaper failed: {type(exc).__name__}: {exc}"
             )
-    elif hasattr(process, "close"):
-        process.close()
-        try:
-            shutil.rmtree(worker_output)
-            if worker_asset_output is not None:
-                shutil.rmtree(worker_asset_output)
-        except OSError as exc:
-            stopped = False
-            cleanup_error = cleanup_error or (
-                f"RoboCasa worker output cleanup failed: {type(exc).__name__}: {exc}"
-            )
 
     if cleanup_error is not None:
-        return _WorkerOutcome(error=cleanup_error, stopped=False)
-    if protocol_error is not None:
-        return _WorkerOutcome(
+        outcome = _WorkerOutcome(error=cleanup_error, stopped=stopped)
+    elif protocol_error is not None:
+        outcome = _WorkerOutcome(
             error=protocol_error,
             timed_out=timed_out,
-            stopped=False,
+            stopped=stopped,
         )
-    if timed_out:
-        return _WorkerOutcome(
+    elif timed_out:
+        outcome = _WorkerOutcome(
             error=(
                 f"RoboCasa capability exceeded timeout_seconds={body.timeout_seconds}"
             ),
             timed_out=True,
             stopped=stopped,
         )
-    if message is None:
-        return _WorkerOutcome(
+    elif message is None:
+        outcome = _WorkerOutcome(
             error="RoboCasa worker exited without a result", stopped=stopped
         )
-    if message.get("kind") != "result":
-        return _WorkerOutcome(
+    elif message.get("kind") != "result":
+        outcome = _WorkerOutcome(
             error=str(message.get("error") or "RoboCasa worker failed"),
             stopped=stopped,
         )
-    result = message.get("result")
-    if not isinstance(result, dict):
+    else:
+        result = message.get("result")
+        if not isinstance(result, dict):
+            outcome = _WorkerOutcome(
+                error="RoboCasa worker result must be an object", stopped=stopped
+            )
+        else:
+            outcome = _WorkerOutcome(result=result, stopped=stopped)
+
+    if stopped and outcome.result is not None and retain_output:
         return _WorkerOutcome(
-            error="RoboCasa worker result must be an object", stopped=stopped
+            result=outcome.result,
+            stopped=True,
+            output_dir=worker_output,
         )
-    return _WorkerOutcome(result=result, stopped=stopped)
+    if stopped:
+        try:
+            shutil.rmtree(worker_output)
+        except OSError as exc:
+            return _WorkerOutcome(
+                error=(
+                    "RoboCasa worker output cleanup failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+                stopped=True,
+            )
+    return outcome
 
 
 def _receive_worker_message(receiver: Any) -> dict[str, Any]:
@@ -938,7 +991,7 @@ def _stop_worker(
         control.send_bytes(b"\0")
     except (BrokenPipeError, EOFError, OSError):
         return False
-    deadline = time.monotonic() + 4 * _WORKER_TERMINATE_GRACE_SECONDS
+    deadline = time.monotonic() + _WORKER_STOP_ACK_GRACE_SECONDS
     stopped = False
     while time.monotonic() < deadline:
         if not control.poll(max(0.0, deadline - time.monotonic())):
@@ -949,7 +1002,7 @@ def _stop_worker(
             break
     if not stopped:
         return False
-    process.join(4 * _WORKER_TERMINATE_GRACE_SECONDS)
+    process.join(_WORKER_KILL_REAP_GRACE_SECONDS)
     return not process.is_alive() and process.exitcode == 0
 
 

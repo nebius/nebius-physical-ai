@@ -7,6 +7,7 @@ import hashlib
 import json
 import multiprocessing
 import os
+import shutil
 import signal
 import struct
 import subprocess
@@ -54,6 +55,19 @@ def _blocking_robocasa_worker(sender, request_payload) -> None:
 
 def _successful_robocasa_worker(sender, _request_payload) -> None:
     try:
+        sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
+        sender.recv_bytes(1)
+    except (EOFError, OSError):
+        pass
+    finally:
+        sender.close()
+
+
+def _artifact_robocasa_worker(sender, request_payload) -> None:
+    try:
+        assert request_payload["output_uri"] is None
+        output_dir = Path(str(request_payload["_worker_output_dir"]))
+        (output_dir / "artifact.bin").write_bytes(b"complete")
         sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
         sender.recv_bytes(1)
     except (EOFError, OSError):
@@ -404,6 +418,53 @@ def test_kitchen_asset_availability_missing_root(
     _install_fake_robocasa(monkeypatch)
     with pytest.raises(RoboCasaError):
         kitchen_asset_availability()
+
+
+def test_kitchen_asset_availability_rejects_empty_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_root = tmp_path / "assets"
+    assets_root.mkdir()
+    archive = capabilities._AssetArchive(
+        "example/assets",
+        "a" * 40,
+        "assets.zip",
+        ".",
+        "assets",
+        "assets",
+    )
+    monkeypatch.setattr(capabilities, "_assets_root", lambda: assets_root)
+    monkeypatch.setattr(capabilities, "_asset_archives", lambda: (archive,))
+
+    with pytest.raises(RoboCasaError, match="population is incomplete"):
+        kitchen_asset_availability()
+
+
+def test_kitchen_asset_availability_requires_valid_receipts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = capabilities._AssetArchive(
+        "example/assets",
+        "a" * 40,
+        "assets.zip",
+        ".",
+        "assets",
+        "assets",
+    )
+    source_zip = tmp_path / "assets.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("assets/complete.txt", "complete")
+    assets_root = tmp_path / "published"
+    state_root = assets_root / ".npa_asset_fetch"
+    receipt = capabilities._asset_receipt_path(state_root, archive)
+    capabilities._stage_publish_and_receipt(archive, source_zip, assets_root, receipt)
+    monkeypatch.setattr(capabilities, "_assets_root", lambda: assets_root)
+    monkeypatch.setattr(capabilities, "_asset_archives", lambda: (archive,))
+
+    result = kitchen_asset_availability()
+
+    assert result["archive_receipts_valid"] == 1
+    assert result["subdirs"] == [".npa_asset_fetch", "assets"]
 
 
 def test_run_capability_unsupported() -> None:
@@ -927,6 +988,33 @@ def test_capability_worker_retains_result_before_group_cleanup() -> None:
     assert outcome == service._WorkerOutcome(result={"ok": True})
 
 
+def test_capability_worker_retains_local_output_only_after_cleanup(
+    tmp_path: Path,
+) -> None:
+    from npa.workbench.robocasa import service
+
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=15,
+        download_assets=False,
+    )
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_artifact_robocasa_worker,
+        process_context=multiprocessing.get_context("spawn"),
+        output_root=tmp_path,
+        retain_output=True,
+    )
+
+    assert outcome.stopped is True
+    assert outcome.result == {"ok": True}
+    assert outcome.output_dir is not None
+    assert (outcome.output_dir / "artifact.bin").read_bytes() == b"complete"
+    shutil.rmtree(outcome.output_dir)
+
+
 def test_capability_worker_fails_closed_without_isolation_ack() -> None:
     from npa.workbench.robocasa import service
 
@@ -1168,7 +1256,9 @@ def test_unstopped_worker_poisons_execution_gate(
     monkeypatch.setattr(
         service,
         "_execute_capability_in_worker",
-        lambda _body: service._WorkerOutcome(error="cleanup failed", stopped=False),
+        lambda _body, **_kwargs: service._WorkerOutcome(
+            error="cleanup failed", stopped=False
+        ),
     )
     request = RoboCasaRunRequest(
         capability="kitchen_task_registration",
@@ -1190,10 +1280,14 @@ def test_unstopped_worker_discards_successful_result(
     runs = RunRegistry()
     runs["run"] = _status("run", "queued")
     gate = service.GpuExecutionGate()
+    published: list[bool] = []
+    monkeypatch.setattr(
+        service, "upload_output", lambda *_args, **_kwargs: published.append(True)
+    )
     monkeypatch.setattr(
         service,
         "_execute_capability_in_worker",
-        lambda _body: service._WorkerOutcome(
+        lambda _body, **_kwargs: service._WorkerOutcome(
             result={"ok": True},
             stopped=False,
         ),
@@ -1209,9 +1303,84 @@ def test_unstopped_worker_discards_successful_result(
     assert gate.available is False
     assert status.status == "failed"
     assert status.result is None
+    assert published == []
     assert status.error == (
         "RoboCasa worker cleanup could not prove all descendants stopped"
     )
+
+
+def test_service_publishes_retained_output_after_worker_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workbench.robocasa import service
+
+    output_dir = tmp_path / "retained"
+    output_dir.mkdir()
+    (output_dir / "result.json").write_text("{}\n", encoding="utf-8")
+    runs = RunRegistry()
+    runs["run"] = _status("run", "queued")
+    published: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        service,
+        "_execute_capability_in_worker",
+        lambda _body, **_kwargs: service._WorkerOutcome(
+            result={"ok": True},
+            stopped=True,
+            output_dir=output_dir,
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "upload_output",
+        lambda path, uri, _result: published.append((path, uri)),
+    )
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/runs/exact",
+    )
+
+    service._run_capability(request, "run", runs, service.GpuExecutionGate())
+
+    assert published == [(output_dir, "s3://example/runs/exact")]
+    assert runs.get("run").status == "completed"
+    assert not output_dir.exists()
+
+
+def test_service_upload_failure_never_marks_run_completed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from npa.workbench.robocasa import service
+
+    output_dir = tmp_path / "retained"
+    output_dir.mkdir()
+    runs = RunRegistry()
+    runs["run"] = _status("run", "queued")
+    monkeypatch.setattr(
+        service,
+        "_execute_capability_in_worker",
+        lambda _body, **_kwargs: service._WorkerOutcome(
+            result={"ok": True},
+            stopped=True,
+            output_dir=output_dir,
+        ),
+    )
+
+    def fail_upload(*_args, **_kwargs):
+        raise OSError("injected upload failure")
+
+    monkeypatch.setattr(service, "upload_output", fail_upload)
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/runs/failure",
+    )
+
+    service._run_capability(request, "run", runs, service.GpuExecutionGate())
+
+    status = runs.get("run")
+    assert status.status == "failed"
+    assert status.result is None
+    assert "injected upload failure" in str(status.error)
+    assert not output_dir.exists()
 
 
 class _FakeActionSpace:
@@ -2424,6 +2593,130 @@ def test_kitchen_trajectory_export_missing_image_key(
         )
 
 
+def test_upload_output_publishes_commit_marker_last(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "a.bin").write_bytes(b"a")
+    (tmp_path / "b.bin").write_bytes(b"bb")
+    events: list[tuple[str, str]] = []
+    marker: dict[str, object] = {}
+
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"KeyCount": 0}
+
+        def upload_file(self, _local_path, _bucket, key):
+            events.append(("stage", key))
+
+        def copy_object(self, *, Key, **_kwargs):
+            events.append(("copy", Key))
+
+        def put_object(self, *, Key, Body, **_kwargs):
+            events.append(("commit", Key))
+            marker.update(json.loads(Body))
+
+        def delete_objects(self, **_kwargs):
+            events.append(("delete", "staging"))
+
+    monkeypatch.setattr("boto3.client", lambda *a, **k: FakeS3())
+    result = {"ok": True}
+
+    capabilities.upload_output(tmp_path, "s3://bucket/runs/exact", result)
+
+    assert result["output_uri"] == "s3://bucket/runs/exact"
+    assert events[-2] == ("commit", "runs/exact/_NPA_COMPLETE.json")
+    assert events[-1] == ("delete", "staging")
+    assert all(
+        event[0] != "commit"
+        for event in events[
+            : next(i for i, event in enumerate(events) if event[0] == "commit")
+        ]
+    )
+    assert marker["schema"] == "npa.robocasa.output-commit.v1"
+    assert [item["path"] for item in marker["files"]] == ["a.bin", "b.bin"]
+
+
+def test_upload_output_copy_failure_never_publishes_commit_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "a.bin").write_bytes(b"a")
+    (tmp_path / "b.bin").write_bytes(b"b")
+    committed: list[str] = []
+    deleted: list[bool] = []
+
+    class FakeS3:
+        copies = 0
+
+        def list_objects_v2(self, **_kwargs):
+            return {"KeyCount": 0}
+
+        def upload_file(self, *_args, **_kwargs):
+            return None
+
+        def copy_object(self, **_kwargs):
+            self.copies += 1
+            if self.copies == 2:
+                raise OSError("injected copy failure")
+
+        def put_object(self, *, Key, **_kwargs):
+            committed.append(Key)
+
+        def delete_objects(self, **_kwargs):
+            deleted.append(True)
+
+    monkeypatch.setattr("boto3.client", lambda *a, **k: FakeS3())
+
+    with pytest.raises(OSError, match="injected copy failure"):
+        capabilities.upload_output(tmp_path, "s3://bucket/runs/failure", {"ok": True})
+
+    assert committed == []
+    assert deleted == [True]
+
+
+def test_upload_output_rejects_nonempty_destination_before_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / "result.json").write_text("{}\n", encoding="utf-8")
+    staged: list[bool] = []
+
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"KeyCount": 1, "Contents": [{"Key": "runs/existing/result.json"}]}
+
+        def upload_file(self, *_args, **_kwargs):
+            staged.append(True)
+
+    monkeypatch.setattr("boto3.client", lambda *a, **k: FakeS3())
+
+    with pytest.raises(RoboCasaError, match="must be empty"):
+        capabilities.upload_output(tmp_path, "s3://bucket/runs/existing", {"ok": True})
+
+    assert staged == []
+
+
+def test_upload_output_rejects_symlink_before_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    outside = tmp_path.parent / "outside.bin"
+    outside.write_bytes(b"outside")
+    (tmp_path / "linked.bin").symlink_to(outside)
+    staged: list[bool] = []
+
+    class FakeS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"KeyCount": 0}
+
+        def upload_file(self, *_args, **_kwargs):
+            staged.append(True)
+
+    monkeypatch.setattr("boto3.client", lambda *a, **k: FakeS3())
+
+    with pytest.raises(RoboCasaError, match="symbolic link"):
+        capabilities.upload_output(tmp_path, "s3://bucket/runs/symlink", {"ok": True})
+
+    assert staged == []
+
+
 # --------------------------------------------------------------------------- SDK local run output persistence
 #
 # The SDK local `run()` must persist and upload output exactly like a service
@@ -2439,10 +2732,24 @@ def test_sdk_local_run_uploads_produced_output(
     _install_fake_env(monkeypatch)
 
     uploaded: list[tuple[str, str, str]] = []
+    copied: list[str] = []
+    committed: list[str] = []
 
     class FakeS3:
+        def list_objects_v2(self, **_kwargs):
+            return {"KeyCount": 0}
+
         def upload_file(self, local_path, bucket, key):
             uploaded.append((str(local_path), bucket, key))
+
+        def copy_object(self, *, Key, **_kwargs):
+            copied.append(Key)
+
+        def put_object(self, *, Key, **_kwargs):
+            committed.append(Key)
+
+        def delete_objects(self, **_kwargs):
+            return {}
 
     monkeypatch.setattr("boto3.client", lambda *a, **k: FakeS3())
 
@@ -2472,7 +2779,10 @@ def test_sdk_local_run_uploads_produced_output(
     # The rollout produced a video artifact that was uploaded to S3.
     assert uploaded, "expected at least one uploaded artifact"
     assert all(bucket == "bucket" for _, bucket, _ in uploaded)
-    assert all(key.startswith("out/") for _, _, key in uploaded)
+    assert all(key.startswith(".npa-staging/robocasa/") for _, _, key in uploaded)
+    assert copied
+    assert all(key.startswith("out/") for key in copied)
+    assert committed == ["out/_NPA_COMPLETE.json"]
 
 
 def test_sdk_local_run_passes_output_dir_to_capability(

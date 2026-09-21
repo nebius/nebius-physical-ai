@@ -852,14 +852,17 @@ def _replace_asset_tree(staged: Path, target: Path) -> None:
     os.replace(staged, target)
 
 
-def _asset_receipt_path(state_root: Path, archive: _AssetArchive) -> Path:
+def _asset_receipt_name(archive: _AssetArchive) -> str:
     identity = "\0".join(
         (archive.repo_id, archive.revision, archive.filename, archive.publish_path)
     )
-    name = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".json"
+
+
+def _asset_receipt_path(state_root: Path, archive: _AssetArchive) -> Path:
     receipts = state_root / "receipts"
     receipts.mkdir(parents=True, exist_ok=True)
-    return receipts / f"{name}.json"
+    return receipts / _asset_receipt_name(archive)
 
 
 def _asset_receipt(
@@ -1003,15 +1006,35 @@ def kitchen_task_registration(
     }
 
 
-def kitchen_asset_availability() -> dict[str, Any]:
-    """Verify the kitchen assets root exists and is populated."""
+def kitchen_asset_availability(*, download_assets: bool = False) -> dict[str, Any]:
+    """Verify every pinned kitchen asset receipt and published tree."""
+    if download_assets:
+        _download_assets()
     assets_root = _assets_root()
-    if not assets_root.exists():
+    if not assets_root.is_dir() or assets_root.is_symlink():
         raise RoboCasaError(f"RoboCasa assets root does not exist: {assets_root}")
+    state_root = assets_root / ".npa_asset_fetch"
+    archives = _asset_archives()
+    invalid = [
+        archive.filename
+        for archive in archives
+        if not _asset_receipt_is_valid(
+            state_root / "receipts" / _asset_receipt_name(archive),
+            archive,
+            assets_root,
+        )
+    ]
+    if invalid:
+        sample = ", ".join(invalid[:5])
+        raise RoboCasaError(
+            f"RoboCasa asset population is incomplete ({len(invalid)} invalid "
+            f"receipt(s)): {sample}"
+        )
     subdirs = sorted(p.name for p in assets_root.iterdir() if p.is_dir())
     return {
         "assets_root": str(assets_root),
         "assets_root_exists": True,
+        "archive_receipts_valid": len(archives),
         "subdirs": subdirs,
     }
 
@@ -2246,7 +2269,7 @@ def run_capability(
             download_assets=request.download_assets,
         )
     if request.capability == "kitchen_asset_availability":
-        return kitchen_asset_availability()
+        return kitchen_asset_availability(download_assets=request.download_assets)
     if request.capability == "kitchen_egl_env_reset":
         return kitchen_egl_env_reset(
             env_id=request.env_id,
@@ -2386,13 +2409,7 @@ def _execution_provenance(
 
 
 def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> None:
-    """Upload a capability's local output tree to S3 when the run produced one.
-
-    Capabilities that write artifacts (rollouts, trajectory exports, policy
-    evaluation) publish their output directory to ``output_uri`` so downstream
-    workflow stages can read it from S3. Capabilities that only return a result
-    dict (task registration, asset availability) have nothing to upload.
-    """
+    """Commit a complete immutable output tree to an empty S3 run prefix."""
     if not output_uri:
         return
     root = Path(local_dir)
@@ -2410,11 +2427,89 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY") or None,
     )
     bucket, prefix = parse_s3_uri(output_uri)
-    for file_path in sorted(root.rglob("*")):
-        if file_path.is_file():
-            rel = file_path.relative_to(root)
-            s3.upload_file(str(file_path), bucket, f"{prefix}/{rel}")
+    if not prefix:
+        raise RoboCasaError("RoboCasa output_uri must include a run-specific prefix")
+    final_prefix = prefix + "/"
+    existing = s3.list_objects_v2(Bucket=bucket, Prefix=final_prefix, MaxKeys=1)
+    if existing.get("Contents") or int(existing.get("KeyCount", 0)):
+        raise RoboCasaError("RoboCasa output_uri must be empty before publication")
+
     result["output_uri"] = output_uri
+    result["output_commit"] = {
+        "schema": "npa.robocasa.output-commit.v1",
+        "marker": "_NPA_COMPLETE.json",
+    }
+    result_path = root / "result.json"
+    if result_path.is_file():
+        result_path.write_text(
+            json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    files = []
+    for path in sorted(root.rglob("*")):
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            raise RoboCasaError("RoboCasa output tree contains a symbolic link")
+        if stat.S_ISDIR(metadata.st_mode):
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RoboCasaError("RoboCasa output tree contains a non-regular file")
+        files.append(
+            {
+                "path": path.relative_to(root).as_posix(),
+                "bytes": metadata.st_size,
+                "sha256": _sha256_file(path),
+                "source": path,
+            }
+        )
+    token = hashlib.sha256(output_uri.encode("utf-8") + os.urandom(32)).hexdigest()
+    staging_prefix = f".npa-staging/robocasa/{token}/"
+    staged_keys: list[str] = []
+    try:
+        for item in files:
+            staging_key = staging_prefix + str(item["path"])
+            s3.upload_file(str(item["source"]), bucket, staging_key)
+            staged_keys.append(staging_key)
+        for item, staging_key in zip(files, staged_keys, strict=True):
+            s3.copy_object(
+                Bucket=bucket,
+                Key=final_prefix + str(item["path"]),
+                CopySource={"Bucket": bucket, "Key": staging_key},
+            )
+        commit = {
+            "schema": "npa.robocasa.output-commit.v1",
+            "output_uri": output_uri,
+            "result_sha256": hashlib.sha256(
+                json.dumps(
+                    result, sort_keys=True, separators=(",", ":"), allow_nan=False
+                ).encode("utf-8")
+            ).hexdigest(),
+            "files": [
+                {key: item[key] for key in ("path", "bytes", "sha256")}
+                for item in files
+            ],
+        }
+        s3.put_object(
+            Bucket=bucket,
+            Key=final_prefix + "_NPA_COMPLETE.json",
+            Body=(
+                json.dumps(commit, sort_keys=True, separators=(",", ":")) + "\n"
+            ).encode("utf-8"),
+            ContentType="application/json",
+        )
+    finally:
+        for offset in range(0, len(staged_keys), 1000):
+            try:
+                s3.delete_objects(
+                    Bucket=bucket,
+                    Delete={
+                        "Objects": [
+                            {"Key": key} for key in staged_keys[offset : offset + 1000]
+                        ],
+                        "Quiet": True,
+                    },
+                )
+            except Exception as exc:  # pragma: no cover - best-effort staging cleanup.
+                LOGGER.warning("failed to remove RoboCasa S3 staging objects: %s", exc)
 
 
 def parse_s3_uri(uri: str) -> tuple[str, str]:
