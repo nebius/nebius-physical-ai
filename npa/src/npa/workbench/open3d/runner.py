@@ -16,7 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .artifacts import (
     PAIRS_JOURNAL,
@@ -841,23 +841,37 @@ SCAN_VIEW = "Observed scan only"
 SURFACE_VIEW = "Supported surface only"
 REMOVED_VIEW = "Removed: unsupported surface"
 
-#: Which geometry each view draws, and therefore which geometry its camera has to
-#: frame. One table drives both so they cannot drift apart. They did drift: every
-#: view shared a camera fitted to the fused cloud, which frames three of these
-#: four, and the one it clipped was the audit view -- the view whose entire
-#: purpose is showing the surface the crop removed, which lies outside the cloud
-#: by construction. A clipped audit view is worse than a missing one, because it
+
+class _View(NamedTuple):
+    """What a view draws, and which geometry its camera therefore has to frame."""
+
+    geometry: tuple[str, ...]
+    contents: tuple[str, ...]
+
+
+#: One table for every view: the geometry its camera frames and the entities it
+#: draws. Both come from here so they cannot drift apart, and they did drift --
+#: every view shared a camera fitted to the fused cloud, which frames three of
+#: these four. The one it clipped was the audit view, whose entire purpose is
+#: showing the surface the crop removed, which lies outside the cloud by
+#: construction. A clipped audit view is worse than a missing one, because it
 #: looks like the audit happened.
 #:
-#: The first key defines the view and the view is dropped without it: no removed
-#: surface means no audit view, and a cloud-only run has no surface view. Later
-#: keys are context, framed when present so the defining geometry is never shown
-#: floating free of the scan it came from.
-VIEW_GEOMETRY: dict[str, tuple[str, ...]] = {
-    SCENE_VIEW: ("fused", "mesh"),
-    SCAN_VIEW: ("fused",),
-    SURFACE_VIEW: ("mesh",),
-    REMOVED_VIEW: ("unsupported", "mesh", "fused"),
+#: The first geometry key defines the view, and a view whose defining geometry is
+#: absent is left out of the blueprint entirely rather than rendered as an empty
+#: tab: no removed surface means no audit view, and a cloud-only run has no
+#: surface view. Later keys are context, framed when present so the defining
+#: geometry is never shown floating free of the scan it came from.
+VIEW_GEOMETRY: dict[str, _View] = {
+    SCENE_VIEW: _View(
+        ("fused", "mesh"), ("/world/fused", "/world/mesh", "/world/fragments/**")
+    ),
+    SCAN_VIEW: _View(("fused",), ("/world/fused", "/world/fragments/**")),
+    SURFACE_VIEW: _View(("mesh",), ("/world/mesh",)),
+    REMOVED_VIEW: _View(
+        ("unsupported", "mesh", "fused"),
+        ("/world/mesh", "/world/mesh_unsupported", "/world/fused"),
+    ),
 }
 
 
@@ -870,19 +884,46 @@ def _view_cameras(geometry: dict[str, Any], up: list[float]) -> dict[str, Any]:
         return geometry.get(key) is not None and len(geometry[key]) > 0
 
     cameras: dict[str, Any] = {}
-    for view_name, keys in VIEW_GEOMETRY.items():
-        if not present(keys[0]):
+    for view_name, spec in VIEW_GEOMETRY.items():
+        if not present(spec.geometry[0]):
             continue
         cameras[view_name] = _camera(
             np.vstack(
-                [np.asarray(geometry[key], float) for key in keys if present(key)]
+                [
+                    np.asarray(geometry[key], float)
+                    for key in spec.geometry
+                    if present(key)
+                ]
             ),
             up,
         )
     return cameras
 
 
-def _blueprint(rr, rrb, cameras: dict[str, Any], has_removed: bool):
+def _mesh_colors(np, mesh, vertex_count: int):
+    """Carry the mesh's own per-vertex colour through, or None to leave shading alone.
+
+    Reconstruction inherits colour from the scans, and the offscreen renders of
+    these same PLY bytes show it. The viewer was logging positions, triangles and
+    normals only, so the surface arrived untinted there while the audit overlay
+    that sits beside it is deliberately red -- which reads as a colour that means
+    something rather than an absence of one.
+
+    Nothing is invented. Without usable per-vertex colour this returns None and
+    Rerun shades the surface as before, because a made-up tint on a reconstruction
+    would imply measurement that did not happen.
+    """
+
+    if not mesh.has_vertex_colors():
+        return None
+    colors = np.asarray(mesh.vertex_colors)
+    if colors.shape != (vertex_count, 3):
+        return None
+    # Open3D holds colour as float in 0..1; Rerun wants 8-bit channels.
+    return (np.clip(colors, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+
+
+def _blueprint(rr, rrb, cameras: dict[str, Any]):
     """A first view that shows the result, with the evidence a click away.
 
     The default Rerun layout gave every entity one auto view, so the closed
@@ -893,18 +934,22 @@ def _blueprint(rr, rrb, cameras: dict[str, Any], has_removed: bool):
 
     Each view carries its own fitted camera. Sharing one costs nothing on the
     three views whose geometry sits inside the fused cloud, and clips the fourth.
+
+    A view is built only when `cameras` has an entry for it, which happens only
+    when its defining geometry was logged. That is what keeps a cloud-only run
+    from offering an empty "supported surface" tab.
     """
 
     scene_camera = cameras[SCENE_VIEW]
     # A metre grid on the floor plane, so the view carries a readable scale.
     grid = rrb.LineGrid3D(visible=True, plane=rr.components.Plane3D(scene_camera["up"]))
 
-    def view(name: str, contents: list[str], **kwargs):
-        camera = cameras.get(name, scene_camera)
+    def view(name: str, **kwargs):
+        camera = cameras[name]
         return rrb.Spatial3DView(
             name=name,
             origin="/world",
-            contents=contents,
+            contents=list(VIEW_GEOMETRY[name].contents),
             eye_controls=rrb.EyeControls3D(
                 kind=rrb.Eye3DKind.Orbital,
                 position=camera["eye"],
@@ -916,25 +961,15 @@ def _blueprint(rr, rrb, cameras: dict[str, Any], has_removed: bool):
         )
 
     tabs = [
-        view(
-            SCAN_VIEW,
-            ["/world/fused", "/world/fragments/**"],
-        ),
-        view(SURFACE_VIEW, ["/world/mesh"]),
+        view(name)
+        for name in (SCAN_VIEW, SURFACE_VIEW, REMOVED_VIEW)
+        if name in cameras
     ]
-    if has_removed:
-        tabs.append(
-            view(
-                REMOVED_VIEW,
-                ["/world/mesh", "/world/mesh_unsupported", "/world/fused"],
-            )
-        )
     tabs.append(rrb.TextDocumentView(name="Provenance", origin="/provenance"))
     return rrb.Blueprint(
         rrb.Horizontal(
             view(
                 SCENE_VIEW,
-                ["/world/fused", "/world/mesh", "/world/fragments/**"],
                 overrides={
                     # Per-fragment clouds duplicate the fused cloud in space. Keep
                     # them in the recording and one click away, not stacked on top
@@ -1030,6 +1065,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                     vertex_positions=mesh_vertices,
                     triangle_indices=np.asarray(mesh.triangles),
                     vertex_normals=np.asarray(mesh.vertex_normals),
+                    vertex_colors=_mesh_colors(np, mesh, len(mesh_vertices)),
                 ),
                 static=True,
             )
@@ -1089,7 +1125,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
             ),
             static=True,
         )
-        recording.send_blueprint(_blueprint(rr, rrb, cameras, removed_triangles > 0))
+        recording.send_blueprint(_blueprint(rr, rrb, cameras))
     finally:
         recording.flush()
         del recording

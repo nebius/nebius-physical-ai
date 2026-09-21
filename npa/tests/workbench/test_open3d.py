@@ -1418,8 +1418,8 @@ def test_every_view_frames_the_geometry_that_view_actually_shows():
     cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
 
     assert set(cameras) == set(VIEW_GEOMETRY), "every view needs its own camera"
-    for view_name, keys in VIEW_GEOMETRY.items():
-        for key in keys:
+    for view_name, spec in VIEW_GEOMETRY.items():
+        for key in spec.geometry:
             reach = _inside_frame(geometry[key], cameras[view_name], CAMERA_ASPECT)
             assert reach <= 1.0, (
                 f"{view_name!r} clips its own {key} geometry at {reach:.3f} of the "
@@ -1446,8 +1446,8 @@ def test_a_view_is_framed_snugly_rather_than_stranded_in_an_empty_frame():
 
     geometry = _sprawling_scene()
     cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
-    for view_name, keys in VIEW_GEOMETRY.items():
-        shown = np.vstack([geometry[key] for key in keys])
+    for view_name, spec in VIEW_GEOMETRY.items():
+        shown = np.vstack([geometry[key] for key in spec.geometry])
         reach = _inside_frame(shown, cameras[view_name], CAMERA_ASPECT)
         assert reach >= 1.0 / CAMERA_FRAME_MARGIN - 0.05, (
             f"{view_name!r} strands its geometry at {reach:.3f}; the frame is "
@@ -1495,3 +1495,137 @@ def test_a_cloud_only_run_still_gets_a_scene_camera():
 
     assert SCENE_VIEW in cameras and SCAN_VIEW in cameras
     assert SURFACE_VIEW not in cameras
+
+
+def _built_views(blueprint) -> dict[str, set[str]]:
+    """Every named view in the built blueprint, mapped to the entities it draws.
+
+    Walks the real Rerun object graph -- `Blueprint.root_container` down through
+    each container's `contents` -- so the assertions are about what the viewer
+    would be handed rather than about the arguments passed in.
+    """
+
+    found: dict[str, set[str]] = {}
+
+    def walk(node) -> None:
+        contents = getattr(node, "contents", None)
+        name = getattr(node, "name", None)
+        paths = (
+            {str(item) for item in contents if isinstance(item, str)}
+            if isinstance(contents, (list, tuple))
+            else set()
+        )
+        if isinstance(name, str) and name and paths:
+            found[name] = paths
+        for child in (getattr(node, "root_container", None), contents):
+            if isinstance(child, (list, tuple)):
+                for item in child:
+                    if not isinstance(item, str):
+                        walk(item)
+            elif child is not None and not isinstance(child, str):
+                walk(child)
+
+    walk(blueprint)
+    return found
+
+
+def test_a_cloud_only_run_offers_no_empty_surface_tab():
+    """The absent view has to be absent from the layout, not just from the cameras.
+
+    Testing the camera dictionary was not enough, and that gap was real: the
+    blueprint appended the surface view unconditionally and fell back to the scene
+    camera when its own was missing, so a cloud-only run opened a "supported
+    surface" tab with nothing in it. An empty tab is a worse failure than a missing
+    one -- it tells the reader the surface was computed and is empty.
+    """
+
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    from npa.workbench.open3d.runner import (
+        REMOVED_VIEW,
+        SCAN_VIEW,
+        SCENE_VIEW,
+        SURFACE_VIEW,
+        _blueprint,
+        _view_cameras,
+    )
+
+    geometry = _sprawling_scene()
+    cameras = _view_cameras(
+        {"fused": geometry["fused"], "mesh": None, "unsupported": None},
+        [0.0, 1.0, 0.0],
+    )
+    names = _built_views(_blueprint(rr, rrb, cameras))
+
+    assert SURFACE_VIEW not in names, "a cloud-only run must not offer an empty tab"
+    assert REMOVED_VIEW not in names, (
+        "nothing was cropped, so there is nothing to audit"
+    )
+    assert SCENE_VIEW in names and SCAN_VIEW in names
+
+
+def test_the_blueprint_draws_the_entities_the_table_says_each_view_draws():
+    """The table has to drive the layout, not merely sit beside it.
+
+    The camera and the contents were declared in two places, so a view's camera
+    could be fitted to geometry the view does not draw -- which is the class of bug
+    the per-view cameras were added to fix, reintroduced one level up.
+    """
+
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    from npa.workbench.open3d.runner import VIEW_GEOMETRY, _blueprint, _view_cameras
+
+    cameras = _view_cameras(_sprawling_scene(), [0.0, 1.0, 0.0])
+    blueprint = _blueprint(rr, rrb, cameras)
+
+    declared = {
+        name: set(spec.contents)
+        for name, spec in VIEW_GEOMETRY.items()
+        if name in cameras
+    }
+    built = _built_views(blueprint)
+
+    assert built == declared, (
+        "the blueprint draws entities the table does not declare, so the camera "
+        "and the contents can drift apart again"
+    )
+
+
+def test_a_reconstruction_that_carries_colour_keeps_it_and_one_that_does_not_is_left_alone():
+    """Colour is carried through from the scans, never invented.
+
+    The viewer logged positions, triangles and normals only, so the kept surface
+    arrived untinted beside a deliberately red audit overlay -- which reads as a
+    colour that means something rather than an absence of one. The offscreen
+    renders of the same PLY bytes did show colour, so they must not imply the
+    viewer did.
+    """
+
+    import numpy as np
+
+    from npa.workbench.open3d.runner import _mesh_colors
+
+    class _Mesh:
+        def __init__(self, colors):
+            self.vertex_colors = colors
+
+        def has_vertex_colors(self):
+            return self.vertex_colors is not None
+
+    # Open3D holds colour as float 0..1; Rerun wants 8-bit channels.
+    carried = _mesh_colors(np, _Mesh(np.array([[1.0, 0.0, 0.5], [0.0, 1.0, 0.0]])), 2)
+    assert carried.dtype == np.uint8
+    assert carried.tolist() == [[255, 0, 128], [0, 255, 0]]
+
+    # No colour, and a shape that does not match, both leave shading alone rather
+    # than inventing a tint that would imply measurement that did not happen.
+    assert _mesh_colors(np, _Mesh(None), 2) is None
+    assert _mesh_colors(np, _Mesh(np.array([[1.0, 0.0, 0.0]])), 2) is None
+
+    # Values outside the documented range are clamped, not wrapped into a
+    # different colour by the cast.
+    clamped = _mesh_colors(np, _Mesh(np.array([[1.4, -0.2, 0.5]])), 1)
+    assert clamped.tolist() == [[255, 0, 128]]

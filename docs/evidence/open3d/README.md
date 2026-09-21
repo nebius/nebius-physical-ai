@@ -52,6 +52,28 @@ chooses the page by measuring contrast against the content's own luminance; it a
 expected a trade there and the measurement found none, and separates the controlled comparison from
 the confounded one.
 
+## Viewer reconciliation
+
+`capability-record-viewer-reconciliation.json` covers two narrow findings from root's review of the
+runner diff. Both were correct, and both were defects in that change rather than in the code it
+replaced.
+
+The first is the more embarrassing: a comment claimed one table drove both the cameras and the
+displayed entities, and it did not — the blueprint hard-coded its contents separately and appended the
+surface tab unconditionally, so a cloud-only run opened a "supported surface" tab with nothing in it.
+An empty tab is worse than a missing one, because it tells the reader the surface was computed and came
+out empty. The earlier test could not catch this because it asserted the camera dictionary and never
+built the blueprint.
+
+The second is that the viewer was discarding colour the reconstruction already had. The completed run's
+own `mesh.ply` carries 5432 distinct per-vertex colours inherited from the scans, and none of them
+reached `rr.Mesh3D`, so the kept surface arrived untinted beside an audit overlay that is deliberately
+red. Nothing is invented: absent or malformed colour falls back to neutral shading.
+
+The record also notes where the regression test was checked against the defect rather than assumed to
+cover it, and keeps the provenance boundary explicit — these fixes are a successor to the commit that
+produced the runtime run, and that run's artifacts are not relabelled as theirs.
+
 ## The standard workflow runtime
 
 `capability-record-standard-runtime.json` closes the gate the earlier
