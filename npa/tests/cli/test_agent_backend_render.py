@@ -5762,6 +5762,81 @@ def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) 
         sys.modules.pop(module_name, None)
 
 
+class _ExistingAgentScript:
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+    def __str__(self) -> str:
+        return self.path
+
+    def is_file(self) -> bool:
+        return True
+
+
+def _submit_sim2real_timeout(module, monkeypatch):
+    state = {
+        "selection": {"robot_preset": "franka", "sim_backend": "isaac"},
+        "sim_viz": {"camera": "workspace"},
+    }
+    saved: list[dict[str, object]] = []
+    monkeypatch.setattr(module, "Path", _ExistingAgentScript)
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(
+        module, "_save_state", lambda value: saved.append(copy.deepcopy(value))
+    )
+    monkeypatch.setattr(
+        module,
+        "_wire_sim2real_run_preview",
+        lambda _state, *, run_id, camera: {
+            "run_id": run_id,
+            "camera": camera,
+            "rerun_ready": False,
+        },
+    )
+    response = module.submit_sim2real({"run_id": "timeout-run"})
+    return response, json.loads(response.body), saved
+
+
+def test_rendered_backend_surfaces_bounded_command_timeouts(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_command_timeouts"
+    )
+    timeout_calls: list[tuple[list[str], float | None]] = []
+
+    def timed_out(command, *, timeout_s, **_kwargs):
+        timeout_calls.append((list(command), timeout_s))
+        raise TimeoutError("agent command timed out")
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"},
+    )
+    monkeypatch.setattr(module, "run_bounded_agent_command", timed_out)
+    with pytest.raises(module.HTTPException) as error:
+        module._run_agent_npa_json(["workflow", "run"], timeout_s=17)
+    assert error.value.status_code == 502
+    assert error.value.detail == (
+        "NPA command timed out after 17s: ['workflow', 'run']"
+    )
+
+    response, payload, saved = _submit_sim2real_timeout(module, monkeypatch)
+    assert response.status_code == 502
+    assert payload["error"] == (
+        "live sim2real submit timed out after 30s: agent command timed out"
+    )
+    assert payload["submit_mode"] == "live-k8s-timeout"
+    assert payload["run_id"] == "timeout-run"
+    assert saved[-1]["latest_submit"]["live_submit"]["ok"] is False
+    assert timeout_calls == [
+        ([str(module.NPA_CLI), "workflow", "run"], 17),
+        (["/opt/npa-agent/run-live-sim2real.sh", "timeout-run"], 30),
+    ]
+
+
 def test_rendered_backend_preserves_metadata_profile_home(
     monkeypatch, tmp_path
 ) -> None:
