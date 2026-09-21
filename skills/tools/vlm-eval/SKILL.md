@@ -18,6 +18,9 @@ npa workbench vlm-eval loop  --input-path <prefix>       --output-path <prefix>
 npa workbench vlm-eval benchmark --dataset <manifest> --output <report.json>
 npa workbench vlm-eval compare-judges --input-path <one-rollout> \
   --output-path <prefix> --primary-model <model-a> --secondary-model <model-b>
+npa workbench vlm-eval compare-preference \
+  --baseline-path <image-a> --candidate-path <image-b> \
+  --output-path <private-prefix> --task <task> --rubric <rubric>
 npa workbench vlm-eval status
 npa workbench vlm-eval list
 npa workbench vlm-eval workflow
@@ -109,6 +112,20 @@ null rather than presenting an inferred value as provider output. Legacy
 non-boolean values such as `"true"` also stay null in those provenance fields.
 Never substitute the provider boolean for the score-derived gate.
 
+`compare-preference` is an API-only, audit-only matched-image primitive. It
+normalizes each input exactly once, hides source semantics behind neutral A/B
+labels, and sends the pair in both orders with identical prompting and
+generation settings. The private `vlm_preference_comparison.json` retains both
+exact requests and complete provider outcomes. Errors, unresolved output,
+confidence below `high`, or different mapped preferences produce escalation;
+the latter is named `order_disagreement_or_nondeterminism` because one request
+per order cannot isolate an order effect from provider nondeterminism. The
+command never retries or averages preferences, and refuses an existing output.
+Task and rubric text containing `baseline` or `candidate` is rejected before
+transport. Telling the model not to follow image text is not a defense against
+in-image instructions. Its CLI summary omits paths, prompts, visible support,
+uncertainty, request IDs, and raw responses.
+
 ## Scoring controls that actually change the verdict
 
 ```bash
@@ -179,7 +196,8 @@ fields must not be presented as if the producer emitted them.
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
 The reusable audit-only paired primitive is
-`workbench.vlm_eval.compare_judges`.
+`workbench.vlm_eval.compare_judges`. The reusable audit-only blinded primitive
+is `workbench.vlm_eval.compare_preference`.
 Specs under `workflows/testing/`: `vlm-eval-single.yaml`,
 `vlm-eval-loop.yaml`, `vlm-eval-benchmark.yaml`, `vlm-eval-token-factory.yaml`
 (the zero-GPU judge), plus the rollout-judge combinations listed in

@@ -37,6 +37,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     # Paired judging is hosted API-only and must not inherit the self-hosted
     # VLM family's heavy Cosmos image.
     "workbench.vlm_eval.compare_judges": None,
+    "workbench.vlm_eval.compare_preference": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -91,6 +92,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval.compare_judges": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workbench.vlm_eval.compare_preference": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
@@ -1738,9 +1740,11 @@ def render_setup_for_tool(
         parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
     if tool_ref.startswith("workbench.sonic"):
         parts.append(_sonic_deps_setup())
-    if tool_ref.startswith("workbench.token_factory") or tool_ref == (
-        "workbench.vlm_eval.compare_judges"
-    ):
+    hosted_vlm_tools = {
+        "workbench.vlm_eval.compare_judges",
+        "workbench.vlm_eval.compare_preference",
+    }
+    if tool_ref.startswith("workbench.token_factory") or tool_ref in hosted_vlm_tools:
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(
             'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'
