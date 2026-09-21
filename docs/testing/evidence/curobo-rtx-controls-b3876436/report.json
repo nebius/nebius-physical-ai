@@ -1,0 +1,82 @@
+{
+  "hardware_family": "RTX_PRO_6000",
+  "compute_capability": [
+    12,
+    0
+  ],
+  "image_manifest_digest": "sha256:73d4ba23af61b3762200ee29fb2cdd153d6df6b75b4ada481ccb75b6c8ed2955",
+  "image_config_digest": "sha256:12d1f82d0f04d0d0a55324d2cfbf906e786750921ab7cbab48d52a33e1888ab3",
+  "image_source_sha": "b387643682271d867c816fba1a598295ffe57f37",
+  "pr_head_sha": "1479d3716311cc0543028973acd00ff534bc5691",
+  "stock_product_passed": true,
+  "statuses": {
+    "feasible": "success",
+    "goal-blocked": "failed"
+  },
+  "malformed_robot_rejected": true,
+  "malformed_outputs_absent": true,
+  "validation_valid": true,
+  "fk_replay_max_error_m": 0.0,
+  "max_fk_quaternion_replay_error_rad": 0.0,
+  "max_fk_quaternion_component_replay_error": 0.0,
+  "position_error_m": 1.3719009928081505e-07,
+  "rotation_error_rad": 1.622694725256224e-07,
+  "rrd_semantic_compare": "passed",
+  "rrd_trajectory_samples": 61,
+  "rrd_verified": true,
+  "artifact_count": 25,
+  "artifact_readback_sha256": "1a3f710f65fd6fddfb0fee467d382af02ebf38bc1c3c7af011c48fb8c1dedb69",
+  "acceptance_sha256": "2db3180fc011fc051d1b2ad1687392db6f07fb6fa18074acf691abae2940f12d",
+  "validation_sha256": "486b3eb4ff00b6baf10b8a236e7b1d97ac7bf96bd65a51b7cf7da9238f5012f6",
+  "journal_sha256": "af71a8e84e9872323fe3bf8271ddd7a98743458b6f72ac1d2fc871f8f4dab733",
+  "rrd_sha256": "faa6f36dbc01dcf8e4522cf54969329158492d2ecf0183bd64b996129d37e31d",
+  "readback_verify_sha256": "e3ededa558f9eb8e55ea5dbc352a37efc95553ff1332d5d6ebecfd9f866b75f3",
+  "readback_print_sha256": "fe7b1deed715ace53bee0470ca90fae10baa91bd11ca977a8b15ec227538e338",
+  "terminal_status": "SUCCEEDED",
+  "verdict": "PASS_RTX_EXACT_IMAGE_CONTROLS_AFTER_DISCLOSED_BOOTSTRAP_REPAIR",
+  "schema": "npa.public-curobo-controls.v1",
+  "scope": "Preliminary RTX PRO6000 positive and failure controls after a disclosed bootstrap repair; not a full benchmark or release acceptance.",
+  "artifact_bytes_hash_checked": 969692,
+  "root_originals_hash_checked": 25,
+  "fresh_object_store_query_by_root": false,
+  "source_mapping": "Image produced from b3876436; PR head1479 changes three test files and formatting in the host image verifier. Runtime/build inputs are unchanged.",
+  "recomputed_from_unchanged_public_journal": {
+    "samples": 61,
+    "joint_columns": 9,
+    "planned_dt_seconds": 0.02500000037252903,
+    "planned_duration_seconds": 1.5000000223517418,
+    "terminal_goal_distance_m": 1.427736610998321e-07,
+    "tool_path_length_m": 0.6550320880671613
+  },
+  "limitations": [
+    "One positive case, one expected blocked-goal failure, and malformed-input rejection; no operational success-rate estimate.",
+    "Kinematics replay and goal agreement do not independently certify collision freedom or robot hardware execution.",
+    "This control contains no inverse-dynamics benchmark results.",
+    "No VLM quality gate is claimed for the data plot.",
+    "Complete image-byte qualification, full benchmark matrices, broad tests and current CI remain separate gates.",
+    "The original workflow RRD and operational records remain private; the linked B200 plot depicts exactly equal trajectory arrays from its independent run."
+  ],
+  "independent_acceptance_receipt_sha256": "3eaefe9e8e658369a769e2046c2e612acd4ce6f960b30e0426dece7a8610b9ef",
+  "bootstrap_repair": {
+    "reason": "Interrupted SkyPilot package setup left patch absent before the workload command started.",
+    "actions": "Completed pending dpkg configuration and installed patch in the existing owned ephemeral pod.",
+    "private_receipt_sha256": "7a566c2d59ebbc9f9cc208a8db5696819aa3444247230cdafb36acea5eaa8843",
+    "runtime_setup_completed": true,
+    "image_digest_unchanged": true,
+    "installed_curobo_source_files_matching_image_source": 9,
+    "before_full_package_manifest_available": false,
+    "limitation": "Pre-repair package/runtime logs and post-repair package state were retained; a complete before/after package diff is unavailable. This is application validation after the disclosed bootstrap repair, not validation of an unmodified bootstrap."
+  },
+  "cross_hardware_trajectory_comparison": {
+    "b200_journal_sha256": "1094910262ac983c1e6a1db6cb0c5678400da5e2568b2ecb58c14161927f8918",
+    "rtx_journal_sha256": "af71a8e84e9872323fe3bf8271ddd7a98743458b6f72ac1d2fc871f8f4dab733",
+    "fields_compared": [
+      "problem_id",
+      "status",
+      "trajectory"
+    ],
+    "all_retained_arrays_exactly_equal": true,
+    "whole_journals_identical": false,
+    "limitation": "Runtime timing and other architecture-dependent fields are not asserted equal."
+  }
+}
