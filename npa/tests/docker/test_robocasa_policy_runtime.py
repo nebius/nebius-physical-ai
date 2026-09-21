@@ -1,8 +1,13 @@
 """Static contract for the combined RoboCasa + LeRobot ACT evaluation runtime."""
 
+import io
 import json
+import os
 import re
 import shlex
+import subprocess
+import sys
+import tarfile
 from pathlib import Path
 
 
@@ -224,7 +229,10 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert "ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1" in dockerfile
     assert "FROM --platform=" not in dockerfile
     assert (
-        'git -C "${NPA_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa"'
+        'REPO_ROOT="$(git -C "${NPA_ROOT}" rev-parse --show-toplevel)"' in build_script
+    )
+    assert (
+        'git -C "${REPO_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa"'
         in build_script
     )
     assert "| docker build \\\n      --platform linux/amd64 \\" in build_script
@@ -240,6 +248,85 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert "from npa.workbench.robocasa.service import app" in dockerfile
     assert 'rev-parse HEAD)" != "${NPA_SOURCE_SHA}"' in build_script
     assert "status --porcelain=v1 --untracked-files=all -- ." in build_script
+
+
+def test_robocasa_builder_streams_the_committed_npa_subtree(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    image_dir = repo / "npa/docker/workbench/robocasa"
+    image_dir.mkdir(parents=True)
+    script = image_dir / "build.sh"
+    script.write_bytes(BUILD_SCRIPT.read_bytes())
+    script.chmod(0o755)
+    (image_dir / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+    tracked = repo / "npa/tracked.txt"
+    tracked.write_text("committed context\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "robocasa-build-test@example.invalid"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "RoboCasa Build Test"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "add", "npa"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+    # Untracked data outside npa must never enter the committed subtree archive.
+    (repo / "private-input").write_text("not build input\n", encoding="utf-8")
+
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    docker = binary / "docker"
+    docker.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['DOCKER_STDIN']).write_bytes(sys.stdin.buffer.read())\n"
+        "pathlib.Path(os.environ['DOCKER_ARGV']).write_text(json.dumps(sys.argv[1:]))\n",
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    archive = tmp_path / "context.tar"
+    argv = tmp_path / "docker-argv.json"
+    result = subprocess.run(
+        [
+            str(script),
+            "--registry",
+            "registry.example.invalid/npa",
+            "--tag",
+            f"dev-{source_sha}",
+        ],
+        cwd=repo / "npa",
+        env={
+            **os.environ,
+            "PATH": f"{binary}{os.pathsep}{os.environ['PATH']}",
+            "NPA_SOURCE_SHA": source_sha,
+            "DOCKER_STDIN": str(archive),
+            "DOCKER_ARGV": str(argv),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    with tarfile.open(fileobj=io.BytesIO(archive.read_bytes())) as context:
+        names = set(context.getnames())
+    assert "docker/workbench/robocasa/Dockerfile" in names
+    assert "tracked.txt" in names
+    assert "private-input" not in names
+    docker_argv = json.loads(argv.read_text(encoding="utf-8"))
+    assert docker_argv[0] == "build"
+    assert docker_argv[-1] == "-"
+    assert docker_argv[docker_argv.index("-f") + 1] == (
+        "docker/workbench/robocasa/Dockerfile"
+    )
 
 
 def test_robocasa_upstreams_use_verified_immutable_commits() -> None:

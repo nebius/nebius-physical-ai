@@ -6,6 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NPA_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+REPO_ROOT="$(git -C "${NPA_ROOT}" rev-parse --show-toplevel)"
 REGISTRY="${REGISTRY:-}"
 ROBOCASA_VERSION="${ROBOCASA_VERSION:-0.1.1}"
 NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}" rev-parse HEAD)}"
@@ -45,7 +46,7 @@ TAG="${TAG:-dev-${NPA_SOURCE_SHA}}"
 IMAGE="${REGISTRY}/npa-robocasa:${TAG}"
 
 echo "Building local ${IMAGE} from source ${NPA_SOURCE_SHA}"
-git -C "${NPA_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa" \
+git -C "${REPO_ROOT}" archive --format=tar "${NPA_SOURCE_SHA}:npa" \
   | docker build \
       --platform linux/amd64 \
       --provenance=false \
