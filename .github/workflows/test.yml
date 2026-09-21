@@ -360,7 +360,7 @@ jobs:
             --cov=src/npa --cov-report=
 
       - name: Upload coverage shard
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-${{ matrix.shard }}
           path: npa/.coverage.${{ matrix.python-version }}.${{ matrix.shard }}
@@ -368,7 +368,7 @@ jobs:
 
       - name: Upload Python 3.12 timing shard
         if: always() && matrix.python-version == '3.12' && hashFiles('npa/ci-timings-*.json') != ''
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-timings-${{ matrix.shard }}
           path: npa/ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
@@ -519,7 +519,7 @@ jobs:
             --output npa/ci-test-durations.json
 
       - name: Upload Python 3.12 duration profile
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-test-durations-${{ github.sha }}
           path: npa/ci-test-durations.json
