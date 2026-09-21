@@ -51,6 +51,13 @@ on:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
         default: ""
+  push:
+    branches: [main]
+    paths:
+      - "npa/docker/workbench/**"
+  schedule:
+    # Weekly dev image refresh so dev-<sha> tags track HEAD automatically
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -95,6 +102,8 @@ jobs:
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
           CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
           LEROBOT_VERSION: ${{ inputs.lerobot_version }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -105,7 +114,11 @@ jobs:
 
           import yaml
 
-          from npa.deploy.images import development_image_for_tool, development_tag
+          from npa.deploy.images import (
+              CONTAINER_IMAGE_NAMES,
+              development_image_for_tool,
+              development_tag,
+          )
 
           target = os.environ["TARGET"].strip().rstrip("/")
           sha = os.environ["DEVELOPMENT_SHA"].strip().lower()
@@ -118,9 +131,64 @@ jobs:
                   raise SystemExit(f"duplicate tool in {name}")
               return values
 
+          def _tool_name_for_key(key: str) -> str:
+              # The contract key is the tool name: development_image_for_tool
+              # resolves image names from it (e.g. `sim2real-control`).
+              return key
+
+          def _automatic_build_tools(event_name: str, entries: dict, sha: str) -> list[str]:
+              public_keys = [
+                  key
+                  for key, entry in entries.items()
+                  if isinstance(entry, dict)
+                  and entry.get("redistribution") == "public"
+                  and key in CONTAINER_IMAGE_NAMES
+              ]
+              if event_name == "schedule":
+                  # Weekly refresh: rebuild every public development image.
+                  return sorted(_tool_name_for_key(key) for key in public_keys)
+              if event_name != "push":
+                  return []
+              # Push: rebuild the public tools whose workbench inputs changed.
+              # Anything unmappable (shared files, new branch with no `before`
+              # SHA) falls back to the full public set.
+              before = os.environ.get("EVENT_BEFORE", "").strip()
+              if not before or set(before) == {"0"}:
+                  changed: list[str] = []
+              else:
+                  changed = subprocess.check_output(
+                      ["git", "diff", "--name-only", before, sha,
+                       "--", "npa/docker/workbench/"],
+                      text=True,
+                  ).splitlines()
+              dir_to_keys: dict[str, list[str]] = {}
+              for key in public_keys:
+                  top = str(entries[key].get("dockerfile", "")).split("/", 1)[0]
+                  dir_to_keys.setdefault(top, []).append(key)
+              keys: set[str] = set()
+              unmapped = not changed
+              for path in changed:
+                  parts = path.split("/")
+                  if len(parts) >= 4 and parts[2] == "workbench":
+                      mapped = dir_to_keys.get(parts[3], [])
+                      if mapped:
+                          keys.update(mapped)
+                          continue
+                  unmapped = True
+              if unmapped or not keys:
+                  keys = set(public_keys)
+              return sorted(_tool_name_for_key(key) for key in keys)
+
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
+          # #504: automatic triggers (push/schedule) must build dev images so
+          # dev-<sha> tags track HEAD; `inputs.*` is undefined on those events,
+          # so derive the tool list instead of resolving an empty matrix.
+          if not build_tools:
+              build_tools = _automatic_build_tools(
+                  os.environ.get("EVENT_NAME", ""), entries, sha
+              )
           lerobot_version = os.environ.get("LEROBOT_VERSION", "").strip()
           if lerobot_version:
               manifest = json.loads(Path("npa/src/npa/deploy/lerobot_version_manifest.json").read_text())
@@ -948,7 +1016,9 @@ jobs:
           fi
 
       - name: Promote exact validated digests and verify public parity
-        if: ${{ inputs.dry_run == false }}
+        # Manual dispatch only: inputs.* is undefined on push/schedule events,
+        # so automatic runs can never satisfy this condition.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then

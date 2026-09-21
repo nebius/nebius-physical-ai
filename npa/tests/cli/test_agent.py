@@ -2510,6 +2510,12 @@ def test_bootstrap_embeds_run_switching_controls() -> None:
     )[0]
     assert '"run_id": "franka-demo"' in franka_src
     assert '"artifact_render": "rerun"' in franka_src
+    selection_src = source.split('@app.post("/sim-assets/selection")')[1].split(
+        '@app.get("/sim-assets/selection")'
+    )[0]
+    assert selection_src.index("viz = _wire_franka_demo") < selection_src.index(
+        "_save_state(state)"
+    )
     submit_source = source.split("def submit_sim2real(payload: dict | None = None):")[
         1
     ].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
@@ -2573,11 +2579,22 @@ def test_bootstrap_embeds_artifact_browser_and_endpoints() -> None:
     assert "Artifact summary only — FiftyOne did not run" in source
     assert 'id="voxelReview"' in source
     assert "data_role_label" in source
-    # Loading by run-relative key resolves a discovered object. An unscoped exact
-    # S3 URI receives the structured v2 migration error instead of guessing a run.
+    # Loading requires the inventory key and its complete server-issued source
+    # tuple. A raw S3 URI is provenance only and receives a stable migration error.
     assert "resolve_run_artifacts(" in source
-    assert '"contract_version": "npa.agent.load-artifact.v2"' in source
-    assert '"code": "run_id_required_for_s3_uri"' in source
+    assert '"contract_version": "npa.agent.load-artifact.v3"' in source
+    assert '"code": "raw_artifact_uri_not_supported"' in source
+    for field in (
+        "run_id",
+        "run_ref",
+        "key",
+        "project_id",
+        "resource_bucket",
+        "resolved_prefix",
+        "source_selected",
+    ):
+        assert f'"{field}"' in source
+    assert "s3_uri is provenance only" in source
     assert 'may_use_default_recording = payload_run in {"", "franka-demo"}' in source
     # Regression: #panelVoxel must be a SIBLING of #panelRerun, not nested inside
     # it. If nested, panelRerun.is-inactive (opacity:0) makes the whole Voxel tab
@@ -2852,8 +2869,15 @@ def test_bootstrap_visualize_run_selector_lists_discovered_runs() -> None:
     # Generic discovery feeds the discovered-runs set (server-search unions in).
     assert "discoveredArtifactRuns = [...runs];" in source
     assert '(cursor ? " · loading more…" : "")' in source
-    # The run selector is a UNION of known + discovered runs (does not clobber).
-    assert "mergeRunsLatestFirst(knownAvailableRuns, discoveredArtifactRuns)" in source
+    # The run selector is a UNION of known + discovered runs (does not clobber),
+    # but a forced access refresh quarantines persisted source tuples until the
+    # same exact tuple is rediscovered in the current UI generation.
+    assert "artifactSourceHistoryQuarantined = true;" in source
+    assert "const currentSourceHistory = knownAvailableRuns.filter" in source
+    assert "hasExactRunSource(discovered) && sameRunSource(run, discovered)" in source
+    assert (
+        "mergeRunsLatestFirst(currentSourceHistory, discoveredArtifactRuns)" in source
+    )
     assert 'fillRunSelectOptionsRich(document.getElementById("runIdSelect")' in source
 
 
@@ -3067,6 +3091,10 @@ def test_agent_status_json(monkeypatch) -> None:
     assert payload["sim_assets_url"].endswith("8.8.8.8/assets/")
     assert payload["cameras_api_url"].endswith("/assets/api/sim-assets/cameras")
     assert payload["direct_url"] == ""
+    assert payload["artifact_credentials"] == {
+        "mode": "unconfigured",
+        "status": "blocked",
+    }
 
 
 def test_agent_status_withholds_endpoint_when_basic_auth_is_not_enforced(
@@ -3280,6 +3308,12 @@ def test_verify_live_runs_pytests(monkeypatch) -> None:
                     "capabilities": {},
                     "projects": [],
                     "errors": [],
+                    "artifact_credentials": {
+                        "mode": "unconfigured",
+                        "status": "blocked",
+                        "reason": "artifact_read_identity_absent",
+                        "source_scope": "none",
+                    },
                     "refreshed_at": "2026-08-06T23:30:00+00:00",
                 }
             )
@@ -6448,6 +6482,11 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     agent_module._write_agent_artifact_sources_env(
         FakeSSH(),
         artifact_sources=loaded,
+        bucket="bucket-exact",
+        endpoint="https://objects.example",
+        access_key="synthetic-artifact-access",
+        secret_key="synthetic-artifact-secret",
+        region="test-region",
     )
 
     env_line = next(
@@ -6457,9 +6496,70 @@ def test_artifact_source_file_round_trip_survives_service_environment_reload(
     )
     assert "project-exact" not in env_line
     assert "bucket-exact" not in env_line
+    assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-exact" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE=isolated-read" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_PREFIX=" not in staged["content"]
+    assert (
+        "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID=synthetic-artifact-access"
+        in staged["content"]
+    )
+    assert (
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY=synthetic-artifact-secret"
+        in staged["content"]
+    )
+    assert "AWS_ACCESS_KEY_ID=" not in staged["content"]
+    assert "AWS_SECRET_ACCESS_KEY=" not in staged["content"]
     monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", env_line.split("=", 1)[1])
     assert runtime._configured_agent_artifact_sources() == (source,)
     assert str(staged["remote_path"]).startswith("/tmp/.npa-private-")
+
+
+def test_shared_reader_stages_multiple_exact_source_buckets(monkeypatch) -> None:
+    from npa.cli import agent_access_runtime as runtime
+
+    sources = (
+        {
+            "project_id": "project-one",
+            "bucket": "bucket-one",
+            "resolved_prefix": "preserved/one",
+        },
+        {
+            "project_id": "project-two",
+            "bucket": "bucket-two",
+            "resolved_prefix": "preserved/two",
+        },
+    )
+    staged: dict[str, str] = {}
+
+    class FakeSSH:
+        def upload_private_text(self, content, remote_path):
+            staged.update(content=content, remote_path=remote_path)
+
+        def run_or_raise(self, _command, *, label):
+            assert label == "stage private /opt/npa-agent/artifact-sources.env"
+
+        def run(self, _command):
+            return None
+
+    agent_module._write_agent_artifact_sources_env(
+        FakeSSH(),
+        artifact_sources=sources,
+        bucket="bucket-one",
+        endpoint="https://objects.example",
+        access_key="shared-read-access",
+        secret_key="shared-read-secret",
+        region="test-region",
+    )
+
+    encoded = next(
+        line.split("=", 1)[1]
+        for line in staged["content"].splitlines()
+        if line.startswith("NPA_AGENT_ARTIFACT_SOURCES_B64=")
+    )
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_SOURCES_B64", encoded)
+    assert runtime._configured_agent_artifact_sources() == sources
+    assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-one" in staged["content"]
+    assert "NPA_AGENT_ARTIFACT_S3_BUCKET=bucket-two" not in staged["content"]
 
 
 def test_artifact_source_file_rejects_non_private_permissions(tmp_path) -> None:
@@ -6576,14 +6676,24 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
 
     monkeypatch.setattr(
         agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
         "project_credential_record",
         lambda project_id, **_kwargs: {
             "project_id": project_id,
-            "storage": {
+            "artifact_read_storage": {
                 "bucket": "bucket-exact",
                 "endpoint_url": "https://objects.example",
                 "aws_access_key_id": "synthetic-access",
                 "aws_secret_access_key": "synthetic-secret",
+                "project_id": "project-exact",
+                "resolved_prefixes": ["preserved/runs"],
+                "iam_role": "storage.viewer",
+                "service_account_id": "artifact-read-service-account",
             },
         },
     )
@@ -6593,7 +6703,7 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
         "https://deployment.example",
         "deployment-access",
         "deployment-secret",
-        "service-account",
+        "deployment-service-account",
     )
 
     assert agent_module._resolve_configured_artifact_storage_credentials(
@@ -6612,8 +6722,120 @@ def test_cross_project_artifact_source_uses_exact_private_credential_record(
         "https://objects.example",
         "synthetic-access",
         "synthetic-secret",
-        "service-account",
+        "artifact-read-service-account",
     )
+
+
+def test_multiple_artifact_projects_require_one_shared_exact_reader(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
+
+    records = {
+        "project-one": {
+            "bucket": "bucket-one",
+            "prefix": "preserved/one",
+        },
+        "project-two": {
+            "bucket": "bucket-two",
+            "prefix": "preserved/two",
+        },
+    }
+
+    def record(project_id, **_kwargs):
+        scope = records[project_id]
+        return {
+            "artifact_read_storage": {
+                "bucket": scope["bucket"],
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "shared-read-access",
+                "aws_secret_access_key": "shared-read-secret",
+                "source_project_id": project_id,
+                "resolved_prefixes": [scope["prefix"]],
+                "iam_role": "storage.viewer",
+                "service_account_id": "shared-artifact-reader",
+            }
+        }
+
+    monkeypatch.setattr(agent_artifact_sources, "project_credential_record", record)
+    sources = [
+        {
+            "project_id": project_id,
+            "bucket": scope["bucket"],
+            "resolved_prefix": scope["prefix"],
+        }
+        for project_id, scope in records.items()
+    ]
+
+    resolution = agent_artifact_sources.resolve_configured_artifact_storage_identity(
+        sources,
+        deployment_project_id="deployment-project",
+        current=("", "", "", "", "", ""),
+    )
+
+    assert resolution.mode == "isolated-read"
+    assert resolution.credentials == (
+        "bucket-one",
+        "",
+        "https://objects.example",
+        "shared-read-access",
+        "shared-read-secret",
+        "shared-artifact-reader",
+    )
+
+
+def test_multiple_artifact_projects_reject_mixed_reader_identities(monkeypatch) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
+
+    def record(project_id, **_kwargs):
+        suffix = project_id.rsplit("-", 1)[-1]
+        return {
+            "artifact_read_storage": {
+                "bucket": f"bucket-{suffix}",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": f"read-access-{suffix}",
+                "aws_secret_access_key": f"read-secret-{suffix}",
+                "source_project_id": project_id,
+                "resolved_prefixes": [f"preserved/{suffix}"],
+                "iam_role": "storage.viewer",
+                "service_account_id": f"reader-{suffix}",
+            }
+        }
+
+    monkeypatch.setattr(agent_artifact_sources, "project_credential_record", record)
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="do not share one read-only identity",
+    ):
+        agent_artifact_sources.resolve_configured_artifact_storage_identity(
+            [
+                {
+                    "project_id": "project-one",
+                    "bucket": "bucket-one",
+                    "resolved_prefix": "preserved/one",
+                },
+                {
+                    "project_id": "project-two",
+                    "bucket": "bucket-two",
+                    "resolved_prefix": "preserved/two",
+                },
+            ],
+            deployment_project_id="deployment-project",
+            current=("", "", "", "", "", ""),
+        )
 
 
 def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
@@ -6625,18 +6847,21 @@ def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
         agent_artifact_sources,
         "project_credential_record",
         lambda _project_id, **_kwargs: {
-            "storage": {
+            "artifact_read_storage": {
                 "bucket": "other-bucket",
                 "endpoint_url": "https://objects.example",
                 "aws_access_key_id": "synthetic-access",
                 "aws_secret_access_key": "synthetic-secret",
+                "project_id": "project-exact",
+                "resolved_prefixes": ["preserved/runs"],
+                "iam_role": "storage.viewer",
             }
         },
     )
 
     with pytest.raises(
         agent_module.AgentStorageCredentialError,
-        match="no exact matching artifact source credentials",
+        match="scope does not match",
     ):
         agent_module._resolve_configured_artifact_storage_credentials(
             [
@@ -6651,6 +6876,269 @@ def test_cross_project_artifact_source_rejects_mismatched_private_bucket(
         )
 
 
+def test_artifact_reader_requires_service_account_and_live_identity_proof(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+    storage = {
+        "bucket": "bucket-exact",
+        "endpoint_url": "https://objects.example",
+        "aws_access_key_id": "synthetic-access",
+        "aws_secret_access_key": "synthetic-secret",
+        "project_id": "project-exact",
+        "resolved_prefixes": ["preserved/runs"],
+        "iam_role": "storage.viewer",
+        "iam_group_id": "reader-group",
+    }
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda _project_id, **_kwargs: {"artifact_read_storage": dict(storage)},
+    )
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="scope does not match",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [source],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", ""),
+        )
+
+    storage["service_account_id"] = "reader-service-account"
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: False,
+    )
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="identity or storage.viewer binding could not be verified",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [source],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", ""),
+        )
+
+
+def test_artifact_reader_provider_proof_binds_key_account_and_exact_policy(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+    from npa.clients import nebius
+
+    monkeypatch.setattr(nebius, "_group_has_member", lambda group, account: True)
+    monkeypatch.setattr(
+        nebius,
+        "list_access_keys_for_service_account",
+        lambda project, account, strict: [
+            {"id": "key-resource", "service_account_id": account}
+        ],
+    )
+    monkeypatch.setattr(
+        nebius,
+        "_run_json",
+        lambda _args: {"status": {"aws_access_key_id": "read-access"}},
+    )
+    monkeypatch.setattr(
+        nebius,
+        "get_bucket_by_name",
+        lambda project, bucket: {
+            "spec": {
+                "bucket_policy": {
+                    "rules": [
+                        {
+                            "group_id": "reader-group",
+                            "paths": ["preserved/runs/*"],
+                            "roles": ["storage.viewer"],
+                        }
+                    ]
+                }
+            }
+        },
+    )
+    storage = {
+        "credential_project_id": "credential-project",
+        "iam_group_id": "reader-group",
+    }
+    source = {
+        "project_id": "source-project",
+        "bucket": "source-bucket",
+        "resolved_prefix": "preserved/runs",
+    }
+
+    assert agent_artifact_sources._provider_verified_artifact_read_identity(
+        storage=storage,
+        source_project_id="source-project",
+        project_sources=[source],
+        access_key="read-access",
+        service_account_id="reader-account",
+    )
+    assert not agent_artifact_sources._provider_verified_artifact_read_identity(
+        storage=storage,
+        source_project_id="source-project",
+        project_sources=[{**source, "resolved_prefix": "other/runs"}],
+        access_key="read-access",
+        service_account_id="reader-account",
+    )
+
+
+def test_absent_artifact_read_identity_never_falls_back_to_deployment_write() -> None:
+    current = (
+        "deployment-bucket",
+        "deployment/runs",
+        "https://storage.example",
+        "deployment-access",
+        "deployment-secret",
+        "deployment-service-account",
+    )
+
+    assert agent_module._resolve_configured_artifact_storage_credentials(
+        [], deployment_project_id="project-deployment", current=current
+    ) == ("", "", "", "", "", "")
+
+
+def test_same_project_write_identity_requires_explicit_exact_source_migration() -> None:
+    source = {
+        "project_id": "project-deployment",
+        "bucket": "deployment-bucket",
+        "resolved_prefix": "preserved/runs",
+    }
+    current = (
+        "deployment-bucket",
+        "deployment/runs",
+        "https://storage.example",
+        "deployment-access",
+        "deployment-secret",
+        "deployment-service-account",
+    )
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="deployment-write fallback is disabled",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [source], deployment_project_id="project-deployment", current=current
+        )
+    assert agent_module._resolve_configured_artifact_storage_credentials(
+        [source],
+        deployment_project_id="project-deployment",
+        current=current,
+        allow_deployment_write_migration=True,
+    ) == (
+        "deployment-bucket",
+        "preserved/runs",
+        "https://storage.example",
+        "deployment-access",
+        "deployment-secret",
+        "deployment-service-account",
+    )
+
+
+def test_same_project_prefers_independent_read_identity_over_write_migration(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "_provider_verified_artifact_read_identity",
+        lambda **_kwargs: True,
+    )
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda project_id, **_kwargs: {
+            "artifact_read_storage": {
+                "bucket": "deployment-bucket",
+                "endpoint_url": "https://read.example",
+                "aws_access_key_id": "read-access",
+                "aws_secret_access_key": "read-secret",
+                "project_id": project_id,
+                "resolved_prefixes": ["preserved/runs"],
+                "iam_role": "storage.viewer",
+                "service_account_id": "artifact-read-service-account",
+            }
+        },
+    )
+    source = {
+        "project_id": "project-deployment",
+        "bucket": "deployment-bucket",
+        "resolved_prefix": "preserved/runs",
+    }
+    current = (
+        "deployment-bucket",
+        "deployment/runs",
+        "https://write.example",
+        "write-access",
+        "write-secret",
+        "deployment-service-account",
+    )
+
+    resolution = agent_artifact_sources.resolve_configured_artifact_storage_identity(
+        [source],
+        deployment_project_id="project-deployment",
+        current=current,
+        allow_deployment_write_migration=True,
+    )
+
+    assert resolution.mode == "isolated-read"
+    assert resolution.credentials == (
+        "deployment-bucket",
+        "preserved/runs",
+        "https://read.example",
+        "read-access",
+        "read-secret",
+        "artifact-read-service-account",
+    )
+
+
+def test_artifact_read_identity_rejects_source_prefix_scope_mismatch(
+    monkeypatch,
+) -> None:
+    from npa.cli import agent_artifact_sources
+
+    monkeypatch.setattr(
+        agent_artifact_sources,
+        "project_credential_record",
+        lambda project_id, **_kwargs: {
+            "artifact_read_storage": {
+                "bucket": "bucket-exact",
+                "endpoint_url": "https://objects.example",
+                "aws_access_key_id": "synthetic-access",
+                "aws_secret_access_key": "synthetic-secret",
+                "project_id": project_id,
+                "resolved_prefixes": ["different/prefix"],
+                "iam_role": "storage.viewer",
+            }
+        },
+    )
+
+    with pytest.raises(
+        agent_module.AgentStorageCredentialError,
+        match="scope does not match",
+    ):
+        agent_module._resolve_configured_artifact_storage_credentials(
+            [
+                {
+                    "project_id": "project-exact",
+                    "bucket": "bucket-exact",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ],
+            deployment_project_id="project-deployment",
+            current=("", "", "", "", "", ""),
+        )
+
+
 def test_bootstrap_reuses_persisted_artifact_sources_without_source_file() -> None:
     source = {
         "project_id": "project-exact",
@@ -6661,6 +7149,210 @@ def test_bootstrap_reuses_persisted_artifact_sources_without_source_file() -> No
     assert agent_module._resolve_agent_artifact_sources(
         {"artifact_sources": [source]}
     ) == (source,)
+
+
+def test_bootstrap_refresh_stages_artifact_reads_without_replacing_deployment_writes(
+    monkeypatch, tmp_path
+) -> None:
+    import inspect
+
+    from npa.clients import nebius
+
+    source = {
+        "project_id": "project-exact",
+        "bucket": "bucket-exact",
+        "resolved_prefix": "preserved/runs",
+    }
+    ssh_key = tmp_path / "id_ed25519"
+    ssh_key.write_text("synthetic private key", encoding="utf-8")
+    record = {
+        "project_id": "project-deployment",
+        "tenant_id": "tenant-test",
+        "region": "test-region",
+        "public_ip": "agent.example.invalid",
+        "ssh_key_path": str(ssh_key),
+        "auth_secret_path": str(tmp_path / "auth.env"),
+        "service_account_id": "serviceaccount-stable",
+        "artifact_sources": [source],
+    }
+    refreshed = {
+        "service_account_id": "serviceaccount-stable",
+        "s3_bucket": "bucket-refreshed",
+        "s3_prefix": "deployment/runs",
+        "s3_endpoint": "https://storage.deployment.example",
+        "nebius_api_key": "synthetic-refreshed-access",
+        "nebius_secret_key": "synthetic-refreshed-secret",
+    }
+    refreshed_tuple = (
+        "bucket-refreshed",
+        "deployment/runs",
+        "https://storage.deployment.example",
+        "synthetic-refreshed-access",
+        "synthetic-refreshed-secret",
+        "serviceaccount-stable",
+    )
+    exact_tuple = (
+        "bucket-exact",
+        "preserved/runs",
+        "https://storage.exact.example",
+        "synthetic-exact-access",
+        "synthetic-exact-secret",
+        "serviceaccount-stable",
+    )
+    events: list[str] = []
+    staged: dict[str, object] = {}
+
+    monkeypatch.setattr(agent_module, "_agent_record", lambda *_args: record)
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_record_public_ip",
+        lambda _record: "agent.example.invalid",
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_load_auth_secret",
+        lambda _path: ("synthetic-user", "synthetic-password"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_deploy_llm_credentials",
+        lambda: ("synthetic-model-key", "synthetic-model"),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_agent_storage_credentials",
+        lambda *_args: (
+            "bucket-before-refresh",
+            "old/runs",
+            "https://storage.old.example",
+            "synthetic-old-access",
+            "synthetic-old-secret",
+            "serviceaccount-stable",
+        ),
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_deploy_storage_credentials",
+        lambda **_kwargs: refreshed,
+    )
+
+    def refresh_environment(*_args, **_kwargs):
+        events.append("refresh")
+        return refreshed
+
+    monkeypatch.setattr(nebius, "bootstrap_agent_environment", refresh_environment)
+
+    def resolve_exact(
+        sources,
+        *,
+        deployment_project_id,
+        current,
+        persisted_mode,
+        migration_requested,
+    ):
+        events.append("exact_source")
+        assert sources == (source,)
+        assert deployment_project_id == "project-deployment"
+        assert current == refreshed_tuple
+        assert persisted_mode == ""
+        assert migration_requested is False
+        from npa.cli.agent_artifact_sources import ArtifactStorageCredentialResolution
+
+        return ArtifactStorageCredentialResolution(exact_tuple, "isolated-read")
+
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_bootstrap_artifact_storage_identity",
+        resolve_exact,
+    )
+
+    def converge(**kwargs):
+        events.append("stage")
+        staged.update(kwargs["bootstrap_kwargs"])
+        return SimpleNamespace(
+            evidence={
+                "state": "healthy",
+                "service_fingerprint": "service-fingerprint",
+                "credential_fingerprint": "credential-fingerprint",
+                "models_healthy": True,
+                "remote_phase": "remote_health_ready",
+            },
+            primary_error=None,
+        )
+
+    monkeypatch.setattr(agent_module, "converge_remote_agent_setup", converge)
+    monkeypatch.setattr(agent_module, "current_operation", lambda: None)
+    monkeypatch.setattr(
+        agent_module,
+        "persist_agent_terraform_credentials",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(agent_module, "write_config", lambda _payload: None)
+    monkeypatch.setattr(agent_module, "_store_agent_record", lambda *_args: None)
+    monkeypatch.setattr(
+        agent_module, "_persist_agent_service_account_id", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "remove_npa_ingress_for_instance_ports",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "_resolve_foxglove_settings_or_fail",
+        lambda **_kwargs: {
+            "embed_src": "",
+            "viewer_backend": "self-hosted",
+            "org_slug": "",
+            "live_url": "",
+            "cloud_import_timeout_seconds": 120.0,
+        },
+    )
+
+    inspect.unwrap(agent_module.bootstrap_cmd)(
+        project="test-project",
+        name="test-agent",
+        ssh_user="ubuntu",
+        ssh_key=str(ssh_key),
+        ssh_cidr_block="",
+        application_cidr_block="",
+        allow_world_open_ssh=False,
+        allow_world_open_application=False,
+        adopt_remote_identity=False,
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model="",
+        llm_models=[],
+        refresh_credentials=True,
+        artifact_source_file="",
+        allow_artifact_write_identity_migration=False,
+        llm_config_file="",
+        foxglove_embed_src="",
+        foxglove_viewer_backend="",
+        foxglove_org_slug="",
+        foxglove_live_url="",
+        no_public_https=False,
+    )
+
+    assert events == ["refresh", "exact_source", "stage"]
+    assert (
+        tuple(
+            staged[key]
+            for key in (
+                "s3_bucket",
+                "s3_prefix",
+                "s3_endpoint",
+                "s3_access_key",
+                "s3_secret_key",
+                "service_account_id",
+            )
+        )
+        == refreshed_tuple
+    )
+    assert staged["artifact_sources"] == (source,)
+    assert staged["artifact_storage"].credentials == exact_tuple
+    assert staged["artifact_storage"].mode == "isolated-read"
 
 
 def test_bootstrap_recovery_preserves_owner_artifact_source_file(

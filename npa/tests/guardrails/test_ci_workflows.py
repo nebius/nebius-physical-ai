@@ -11,6 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -113,7 +114,8 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
 
     smoke = workflow["jobs"]["pr-smoke"]
     assert smoke["if"] == (
-        "github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'"
+        "needs.scope.outputs.full_suite == 'false' && "
+        "(github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true')"
     )
     commands = "\n".join(step.get("run", "") for step in smoke["steps"])
     assert "npa/tests/smoke" in commands
@@ -176,13 +178,46 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
     coverage = workflow["jobs"]["coverage"]
     assert coverage["needs"] == ["scope", "test"]
     assert coverage["if"] == (
-        "${{ always() && needs.scope.outputs.full_suite != 'false' }}"
+        "${{ !cancelled() && needs.scope.outputs.full_suite != 'false' "
+        "&& needs.test.result == 'success' }}"
     )
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
     assert "--fail-under=60" in report
     profile = _step("test.yml", "coverage", "Merge Python 3.12 duration")["run"]
     assert "merge_ci_test_timings.py" in profile
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_required_gate_rejects_unsuccessful_children(result: str) -> None:
+    """Execute the aggregate check with each unsuccessful child result.
+
+    Args:
+        result: Unsuccessful or missing dependency conclusion.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A required dependency can fail without rejecting the merge.
+    """
+    gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
+    assert gate["if"] == "${{ always() }}"
+    step = gate["steps"][0]
+    for event in ("pull_request", "merge_group"):
+        environment = {name: "success" for name in step["env"]}
+        environment["EVENT_NAME"] = event
+        for name in environment.keys() - {"EVENT_NAME"}:
+            rejected = subprocess.run(
+                ["bash", "-c", step["run"]],
+                env={**os.environ, **environment, name: result},
+                capture_output=True,
+            )
+            assert rejected.returncode != 0, (event, name, result)
+        accepted = subprocess.run(
+            ["bash", "-c", step["run"]],
+            env={**os.environ, **environment},
+            capture_output=True,
+        )
+        assert accepted.returncode == 0
 
 
 def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> None:
@@ -416,6 +451,7 @@ def test_guardrail_gate_matches_the_make_target() -> None:
 
     assert "tests/guardrails" in ci_guardrails
     assert "tests/guardrails" in make_guardrails
+    assert "-n auto --dist worksteal" in ci_guardrails
 
 
 def _npa_bin_chosen_by_docs_target(python: str) -> str:
