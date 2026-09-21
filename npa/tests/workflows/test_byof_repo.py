@@ -1096,8 +1096,9 @@ def test_libero_live_environment_never_loads_saved_project_storage(
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
     monkeypatch.setenv("NPA_S3_BUCKET", "manager-bucket")
     monkeypatch.setenv(
-        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", "/owner/customer-key"
+        "NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE", "/owner/caller-key"
     )
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE", "/owner/customer-registration.b64")
     monkeypatch.setenv(
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE",
         "/owner/storage-key",
@@ -1196,8 +1197,9 @@ def test_main_forces_libero_solution_smoke_through_managed_scheduler(
     monkeypatch.setenv("AWS_SESSION_TOKEN", "manager-session")
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
     monkeypatch.setenv(
-        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE", "/owner/customer-key"
+        "NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE", "/owner/caller-key"
     )
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE", "/owner/customer-registration.b64")
     monkeypatch.setenv(
         "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE",
         "/owner/storage-key",

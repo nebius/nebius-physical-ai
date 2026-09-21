@@ -50,8 +50,8 @@ PUBLIC_RELEASE_MANIFEST_RESOURCE = "public_release_manifest.json"
 
 LIBERO_CUSTOMER_AUTHORIZATION_SCHEMA = "npa.libero.customer-runtime-authorization.v2"
 LIBERO_AUTHENTICATED_CALLER_SCHEMA = "npa.libero.authenticated-caller.v1"
-LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV = (
-    "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE"
+LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE_ENV = (
+    "NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE"
 )
 LIBERO_OUTPUT_STORAGE_AUTHORIZATION_SCHEMA = (
     "npa.libero.output-storage-authorization.v3"
@@ -137,6 +137,10 @@ LIBERO_PUBLICATION_ENFORCEMENT_CRITICAL_TEST_REFERENCES = (
 LIBERO_REQUIRED_PUBLICATION_REFERRERS = (
     "https://slsa.dev/provenance/v1",
     "https://spdx.dev/Document",
+)
+LIBERO_SIGSTORE_PUBLICATION_REFERRERS = (
+    "https://slsa.dev/provenance/v1",
+    "https://spdx.dev/Document/v2.3",
 )
 
 CONTAINER_IMAGE_NAMES = {
@@ -673,7 +677,12 @@ def libero_publication_enforcement_bundle_sha256(repository_root: Path) -> str:
                 if not isinstance(qualification, dict):
                     raise TypeError("qualification is not an object")
                 qualification = dict(qualification)
-                qualification["publication_enforcement_bundle_sha256"] = ""
+                enforcement_field = (
+                    "operator_enforcement_bundle_sha256"
+                    if qualification.get("schema") == "npa.libero.image-qualification.v2"
+                    else "publication_enforcement_bundle_sha256"
+                )
+                qualification[enforcement_field] = ""
                 qualification["publication_bundle_sha256"] = ""
                 manifest = dict(manifest)
                 manifest["qualification"] = qualification
@@ -775,7 +784,12 @@ def libero_publication_lineage_values(
     if observed != qualification.get("build_input_bundle_sha256"):
         raise RuntimeError("LIBERO neutral build inputs differ from qualification")
     enforcement = libero_publication_enforcement_bundle_sha256(repository_root)
-    if enforcement != qualification.get("publication_enforcement_bundle_sha256"):
+    enforcement_field = (
+        "operator_enforcement_bundle_sha256"
+        if qualification.get("schema") == "npa.libero.image-qualification.v2"
+        else "publication_enforcement_bundle_sha256"
+    )
+    if enforcement != qualification.get(enforcement_field):
         raise RuntimeError("LIBERO publication enforcement differs from qualification")
     fields = (
         "candidate_image",
@@ -794,6 +808,13 @@ def libero_publication_lineage_values(
         "package_writer_repository",
         "output_storage_authorization_public_key_sha256",
     )
+    if qualification.get("schema") == "npa.libero.image-qualification.v2":
+        fields = tuple(
+            field for field in fields
+            if field not in {
+                "attestation_manifest_digest", "attestation_config_digest", "attestation_layers"
+            }
+        ) + ("attestations", "operator_enforcement_bundle_sha256")
     return {field: qualification[field] for field in fields}
 
 
@@ -942,9 +963,17 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "output_storage_authorization_public_key_sha256",
         "runtime_manifest_sha256",
     }
+    sigstore_format = qualification.get("schema") == "npa.libero.image-qualification.v2"
+    if sigstore_format:
+        expected_keys -= {
+            "attestation_manifest_digest", "attestation_config_digest", "attestation_layers"
+        }
+        expected_keys |= {"attestations", "operator_enforcement_bundle_sha256"}
     require(set(qualification) == expected_keys, "closed qualification schema")
     require(
-        qualification.get("schema") == "npa.libero.image-qualification.v1",
+        qualification.get("schema") in {
+            "npa.libero.image-qualification.v1", "npa.libero.image-qualification.v2"
+        },
         "qualification schema",
     )
     require(qualification.get("status") == "qualified", "qualified status")
@@ -969,13 +998,10 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         candidate.rsplit("@", 1)[1] == qualification.get("oci_digest"),
         "candidate digest",
     )
-    for field in (
-        "oci_digest",
-        "platform_manifest_digest",
-        "config_digest",
-        "attestation_manifest_digest",
-        "attestation_config_digest",
-    ):
+    digest_fields = ("oci_digest", "platform_manifest_digest", "config_digest")
+    if not sigstore_format:
+        digest_fields += ("attestation_manifest_digest", "attestation_config_digest")
+    for field in digest_fields:
         require(
             re.fullmatch(r"sha256:[0-9a-f]{64}", str(qualification.get(field) or ""))
             is not None,
@@ -1009,38 +1035,122 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "package writer repository",
     )
     attestation_layers = qualification.get("attestation_layers")
-    require(
-        isinstance(attestation_layers, list)
-        and len(attestation_layers) == len(LIBERO_REQUIRED_PUBLICATION_REFERRERS),
-        "complete attestation layer set",
-    )
-    for layer, predicate_type in zip(
-        attestation_layers or [], LIBERO_REQUIRED_PUBLICATION_REFERRERS, strict=True
-    ):
-        require(
-            isinstance(layer, dict)
-            and set(layer) == {"predicate_type", "digest", "size_bytes"}
-            and layer.get("predicate_type") == predicate_type
-            and re.fullmatch(r"sha256:[0-9a-f]{64}", str(layer.get("digest") or ""))
-            is not None
-            and isinstance(layer.get("size_bytes"), int)
-            and 0 < layer["size_bytes"] <= 64 * 1024 * 1024,
-            f"attestation layer {predicate_type}",
-        )
     package_version_digests = qualification.get("package_version_digests")
-    require(
-        isinstance(package_version_digests, list)
-        and all(
-            isinstance(digest, str)
-            and re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is not None
-            for digest in package_version_digests
+    if sigstore_format:
+        require(
+            qualification["platform_manifest_digest"] == qualification["oci_digest"],
+            "single published runtime manifest",
         )
-        and package_version_digests == sorted(set(package_version_digests))
-        and qualification.get("oci_digest") in package_version_digests
-        and qualification.get("platform_manifest_digest") in package_version_digests
-        and qualification.get("attestation_manifest_digest") in package_version_digests,
-        "closed package version digest set",
-    )
+        require(
+            re.fullmatch(
+                r"[0-9a-f]{64}", str(qualification.get("operator_enforcement_bundle_sha256") or "")
+            ) is not None,
+            "operator enforcement bundle",
+        )
+        attestations = qualification.get("attestations")
+        require(isinstance(attestations, list) and len(attestations) == 2,
+                "complete Sigstore attestation set")
+        manifest_digests = {qualification["oci_digest"]}
+        invocations = set()
+        identities = set()
+        bundle_digests = set()
+        for attestation, predicate_type in zip(
+            attestations, LIBERO_SIGSTORE_PUBLICATION_REFERRERS, strict=True
+        ):
+            require(
+                isinstance(attestation, dict) and set(attestation) == {
+                    "predicate_type", "manifest_digest", "manifest_size_bytes",
+                    "config_digest", "bundle_digest", "bundle_size_bytes",
+                    "subject_digest", "workflow_identity", "source_revision",
+                    "run_invocation_uri", "verification_result_sha256",
+                    "manifest_media_type", "artifact_type", "config_media_type",
+                    "config_size_bytes", "bundle_media_type", "subject_media_type",
+                    "subject_size_bytes", "certificate_issuer", "runner_environment",
+                },
+                "closed Sigstore attestation record",
+            )
+            require(attestation["predicate_type"] == predicate_type,
+                    "Sigstore predicate type")
+            for field in ("manifest_digest", "config_digest", "bundle_digest", "subject_digest"):
+                require(re.fullmatch(r"sha256:[0-9a-f]{64}", str(attestation[field])) is not None,
+                        f"Sigstore {field}")
+            for field in ("manifest_size_bytes", "bundle_size_bytes", "subject_size_bytes"):
+                require(type(attestation[field]) is int and 0 < attestation[field] <= 64 * 1024 * 1024,
+                        f"Sigstore {field}")
+            require(
+                attestation["config_digest"] == "sha256:" + hashlib.sha256(b"{}").hexdigest()
+                and attestation["subject_digest"] == qualification["oci_digest"]
+                and attestation["source_revision"] == qualification["development_sha"],
+                "Sigstore subject/source binding",
+            )
+            require(
+                attestation["manifest_media_type"] == "application/vnd.oci.image.manifest.v1+json"
+                and attestation["artifact_type"] == "application/vnd.dev.sigstore.bundle.v0.3+json"
+                and attestation["bundle_media_type"] == attestation["artifact_type"]
+                and attestation["config_media_type"] == "application/vnd.oci.empty.v1+json"
+                and type(attestation["config_size_bytes"]) is int
+                and attestation["config_size_bytes"] == 2
+                and attestation["subject_media_type"] == "application/vnd.docker.distribution.manifest.v2+json"
+                and attestation["certificate_issuer"] == "https://token.actions.githubusercontent.com"
+                and attestation["runner_environment"] == "github-hosted",
+                "Sigstore media and signer contract",
+            )
+            require(
+                re.fullmatch(
+                    r"https://github\.com/nebius/nebius-physical-ai/\.github/workflows/"
+                    r"publish-public-images\.yml@refs/heads/[A-Za-z0-9_./-]+",
+                    str(attestation["workflow_identity"]),
+                ) is not None
+                and re.fullmatch(
+                    r"https://github\.com/nebius/nebius-physical-ai/actions/runs/"
+                    r"[1-9][0-9]*/attempts/[1-9][0-9]*",
+                    str(attestation["run_invocation_uri"]),
+                ) is not None
+                and re.fullmatch(r"[0-9a-f]{64}", str(attestation["verification_result_sha256"])) is not None,
+                "verified Sigstore workflow evidence",
+            )
+            manifest_digests.add(attestation["manifest_digest"])
+            invocations.add(attestation["run_invocation_uri"])
+            identities.add(attestation["workflow_identity"])
+            bundle_digests.add(attestation["bundle_digest"])
+        require(
+            len(manifest_digests) == 3 and len(bundle_digests) == 2
+            and len(invocations) == 1 and len(identities) == 1
+            and package_version_digests == sorted(manifest_digests),
+            "closed published runtime and Sigstore digest set",
+        )
+    else:
+        require(
+            isinstance(attestation_layers, list)
+            and len(attestation_layers) == len(LIBERO_REQUIRED_PUBLICATION_REFERRERS),
+            "complete attestation layer set",
+        )
+        for layer, predicate_type in zip(
+            attestation_layers or [], LIBERO_REQUIRED_PUBLICATION_REFERRERS, strict=True
+        ):
+            require(
+                isinstance(layer, dict)
+                and set(layer) == {"predicate_type", "digest", "size_bytes"}
+                and layer.get("predicate_type") == predicate_type
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", str(layer.get("digest") or ""))
+                is not None
+                and isinstance(layer.get("size_bytes"), int)
+                and 0 < layer["size_bytes"] <= 64 * 1024 * 1024,
+                f"attestation layer {predicate_type}",
+            )
+        require(
+            isinstance(package_version_digests, list)
+            and all(
+                isinstance(digest, str)
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is not None
+                for digest in package_version_digests
+            )
+            and package_version_digests == sorted(set(package_version_digests))
+            and qualification.get("oci_digest") in package_version_digests
+            and qualification.get("platform_manifest_digest") in package_version_digests
+            and qualification.get("attestation_manifest_digest") in package_version_digests,
+            "closed package version digest set",
+        )
     require(
         re.fullmatch(r"[0-9a-f]{40}", str(qualification.get("development_sha") or ""))
         is not None,
@@ -1085,6 +1195,14 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
             "output_storage_authorization_public_key_sha256"
         ),
     }
+    if sigstore_format:
+        publication_bundle["schema"] = "npa.libero.publication-lineage-bundle.v4"
+        for field in ("attestation_manifest_digest", "attestation_config_digest", "attestation_layers"):
+            publication_bundle.pop(field)
+        publication_bundle["attestations"] = qualification["attestations"]
+        publication_bundle["operator_enforcement_bundle_sha256"] = qualification[
+            "operator_enforcement_bundle_sha256"
+        ]
     require(
         _canonical_sha256(publication_bundle)
         == qualification.get("publication_bundle_sha256"),
@@ -1414,7 +1532,7 @@ def validate_libero_authenticated_caller_assertion(
         )
     key_path = (
         public_key_file.strip()
-        or os.environ.get(LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, "").strip()
+        or os.environ.get(LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE_ENV, "").strip()
     )
     public_key = _libero_trust_root_bytes(key_path, label="authenticated-caller")
     fingerprint = hashlib.sha256(public_key).hexdigest()
@@ -1560,18 +1678,11 @@ def validate_libero_output_storage_authorization(
     )
     if not valid:
         raise RuntimeError("LIBERO output storage authorization is invalid or expired")
-    customer_key_path = (
-        customer_public_key_file.strip()
-        or os.environ.get(LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, "").strip()
-    )
     storage_key_path = (
         storage_public_key_file.strip()
         or os.environ.get(
             LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
         ).strip()
-    )
-    transported_customer_key = _libero_trust_root_bytes(
-        customer_key_path, label="customer-authorization"
     )
     storage_key = _libero_trust_root_bytes(
         storage_key_path, label="output-storage-authorization"
@@ -1588,7 +1699,6 @@ def validate_libero_output_storage_authorization(
     storage_fingerprint = hashlib.sha256(storage_key).hexdigest()
     if (
         len(authorization_customer_key) != 32
-        or not hmac.compare_digest(transported_customer_key, authorization_customer_key)
         or not isinstance(customer_signature, dict)
         or customer_signature.get("public_key_sha256") != customer_fingerprint
         or storage_fingerprint
@@ -1599,6 +1709,14 @@ def validate_libero_output_storage_authorization(
         raise RuntimeError(
             "LIBERO output storage trust root differs or is not independent"
         )
+    # The caller already validated this customer's signature and registered signer.
+    # Verify it again here; a transported file, when supplied, is only an extra
+    # equality check, never the authenticated-caller control-plane trust root.
+    _verify_libero_customer_authorization_signature(
+        customer_authorization,
+        expected_public_key_sha256=customer_fingerprint,
+        public_key_file=customer_public_key_file,
+    )
     try:
         signature_bytes = base64.b64decode(
             str(signature.get("signature_b64") or ""), validate=True

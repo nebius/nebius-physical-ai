@@ -1040,7 +1040,7 @@ def _libero_submission_authorization(
     """Validate customer acceptance against an independently qualified image."""
 
     from npa.deploy.images import (
-        LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
+        LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE_ENV,
         LiberoCustomerAuthorizationDenied,
         validate_libero_authenticated_caller_assertion,
         validate_libero_customer_runtime_authorization,
@@ -1054,7 +1054,7 @@ def _libero_submission_authorization(
             caller_bytes,
             run_id=run_id,
             public_key_file=process_env.get(
-                LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV, ""
+                LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE_ENV, ""
             ),
         )
     except (binascii.Error, UnicodeDecodeError, ValueError, RuntimeError) as exc:

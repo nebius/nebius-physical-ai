@@ -21,7 +21,7 @@ from typing import Any
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
 from npa.deploy.images import (
-    LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
+    LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE_ENV,
     LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
     LiberoCustomerAuthorizationDenied,
     container_image_for_tool,
@@ -552,7 +552,8 @@ def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "AWS_SESSION_TOKEN",
-            LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
+            LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE_ENV,
+            "NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE",
             LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
         )
         exact_values = {name: str(os.environ.get(name) or "") for name in exact_names}

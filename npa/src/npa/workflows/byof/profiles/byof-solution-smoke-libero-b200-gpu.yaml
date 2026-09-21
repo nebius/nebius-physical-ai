@@ -37,6 +37,14 @@ resources:
                 mountPath: /opt/npa/libero/output-storage-authorization-public-key.b64
                 subPath: output-storage-authorization-public-key.b64
                 readOnly: true
+              - name: libero-caller-verification
+                mountPath: /run/npa/libero/authenticated-caller-public-key.b64
+                subPath: authenticated-caller-public-key.b64
+                readOnly: true
+              - name: libero-customer-registration
+                mountPath: /run/npa/libero/customer-signer-roots/<customer-identity-sha256>.b64
+                subPath: <customer-identity-sha256>.b64
+                readOnly: true
               - name: libero-workspace
                 mountPath: /workspace
               - name: libero-tmp
@@ -49,6 +57,14 @@ resources:
           - name: libero-storage-verification
             configMap:
               name: npa-byof-libero-storage-verification
+              defaultMode: 0444
+          - name: libero-caller-verification
+            configMap:
+              name: npa-byof-libero-caller-verification
+              defaultMode: 0444
+          - name: libero-customer-registration
+            configMap:
+              name: npa-byof-libero-customer-registration
               defaultMode: 0444
           - name: libero-workspace
             emptyDir: {}

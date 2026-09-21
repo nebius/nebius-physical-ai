@@ -1561,7 +1561,8 @@ def test_libero_submission_authorization_binds_customer_run_and_image(
         "NPA_LIBERO_CUSTOMER_IDENTITY_SHA256": customer_identity_sha256,
         "NPA_LIBERO_AUTHENTICATED_CALLER_B64": base64.b64encode(caller_bytes).decode(),
         "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256": caller_sha256,
-        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": "/owner/trust-root",
+        "NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE": "/owner/trust-root",
+        "NPA_LIBERO_CUSTOMER_AUTHORIZATION_PUBLIC_KEY_FILE": "/other/customer-root",
     }
 
     _validate_libero_runtime_authorization(

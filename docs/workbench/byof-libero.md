@@ -26,13 +26,54 @@ evidence, and validate it, but neither the manager nor control plane accepts,
 acknowledges, issues, or signs the customer's terms assertion. The verifier
 uses only the public key embedded in that signed evidence and the caller-bound
 fingerprint, and requires that key to match an immutable customer-signer
-registration provisioned outside the NPA control plane; there is no second
-transported public-key file or alternate trust source. A missing or mutable
+registration provisioned outside the NPA control plane. Transport of that
+existing registration cannot establish a new signer or alternate trust source. A missing or mutable
 registration refuses before cache or network effects. Private signing material,
 customer identity,
 credentials, acceptance records, terms payloads, and runtime payloads are never
 baked into the neutral image. Image qualification carries no customer signer
 fingerprint; signer trust is supplied owner-private and checked only at runtime.
+
+Published runtime manifests carry two separate Sigstore OCI artifacts: GitHub
+SLSA v1 provenance and an SPDX 2.3 SBOM. Image qualification v2 records each
+artifact's manifest, config, bundle and subject descriptors, plus the digest of
+its independently verified signature result. Review the exact GitHub workflow,
+OIDC issuer, hosted runner, source revision and invocation for both artifacts;
+unsigned JSON claims do not establish this evidence. Qualification v1 remains
+supported for previously reviewed combined BuildKit attestation records.
+
+The qualification's `development_sha`, build-input bundle and
+`publication_enforcement_bundle_sha256` describe the image producer's source.
+The separate v2 `operator_enforcement_bundle_sha256` describes the reviewed
+current launcher and validators. Verify both source closures independently
+before installing the qualification; later operator fixes must not be recorded
+as the source that produced an older image. The launcher also requires current
+image inputs to remain byte-identical to the producer's build-input bundle.
+No qualified record, review validity window or signer identity is inferred from
+a successful public push.
+
+The host reads the caller control-plane verification key from
+`NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE`. This owner-private key file is
+separate from the customer key embedded in the signed authorization and its
+independent runtime registration. Storage signature validation uses that
+already verified customer key, plus the independently qualified storage signer;
+it does not reuse the caller control-plane key as the customer key. Runtime
+mounting of the provided caller root and customer registration remains required
+before the image can fetch any runtime payload. Supply the independent customer
+registration as `NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE`, an owner-private
+Base64 key file named `<customer-identity-sha256>.b64`. The launcher compares it
+with the verified customer signer; it never derives or creates registration
+from the authorization.
+
+The run namespace must already contain immutable
+`npa-byof-libero-caller-verification` and
+`npa-byof-libero-customer-registration` ConfigMaps. Their sole data keys are,
+respectively, `authenticated-caller-public-key.b64` and the customer's
+`<customer-identity-sha256>.b64`; values must match the independently supplied
+key files exactly. The profile mounts them as root-owned, read-only 0444 files.
+Render the customer registration destination before the customer signs the
+complete profile. The launcher verifies these existing objects after signed
+authorization, without creating a caller root or customer registration.
 
 The customer-run runtime supplies these inputs through its authenticated
 handoff; they are not generic BYOF workflow/config inputs, customer acceptance

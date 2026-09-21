@@ -559,6 +559,7 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     )
 
     def runtime_documents(envs, *, bound=False):
+        volumes, mounts = module._libero_reviewed_mount_contract("7" * 64)
         resources = {"cloud": "kubernetes"}
         if bound:
             resources["region"] = "execution-context"
@@ -568,6 +569,9 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
                 "name": "byof-solution-smoke-libero-b200-gpu",
                 "resources": resources,
                 "envs": envs,
+                "config": {"kubernetes": {"pod_config": {"spec": {
+                    "volumes": volumes, "containers": [{"volumeMounts": mounts}],
+                }}}},
             },
         ]
 
@@ -648,6 +652,14 @@ def test_libero_runtime_binding_requires_managed_exact_node_and_separate_context
     documents = runtime_documents(
         {"S3_OUTPUT_PREFIX": output_prefix, "AWS_ENDPOINT_URL": endpoint}
     )
+    volumes, mounts = module._libero_reviewed_mount_contract("7" * 64)
+    documents[1]["config"] = {"kubernetes": {"pod_config": {"spec": {
+        "volumes": volumes, "containers": [{"volumeMounts": mounts}],
+    }}}}
+    registration = tmp_path / (("7" * 64) + ".b64")
+    registration.write_text(customer_authorization["customer_signer_public_key_b64"])
+    registration.chmod(0o600)
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE", str(registration))
     expected_envs.update(
         {
             "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256": "f" * 64,
@@ -1139,7 +1151,7 @@ def _libero_payload_pod_fixture(module, *, job_id: str = "73") -> dict[str, obje
     cluster_name = f"sky-cluster-{job_id}-fixture-user"
     pod_name = f"{cluster_name}-head"
     candidate = "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "9" * 64
-    return {
+    pod = {
         "metadata": {
             "name": pod_name,
             "namespace": "isolated-namespace",
@@ -1193,6 +1205,18 @@ def _libero_payload_pod_fixture(module, *, job_id: str = "73") -> dict[str, obje
         },
     }
 
+    # Exercise the actual checked-in volume/mount contract, not a stripped Pod.
+    document = list(module.yaml.safe_load_all(LIBERO_YAML_PATH.read_text()))[1]
+    spec = document["resources"]["kubernetes"]["pod_config"]["spec"]
+    pod["spec"]["volumes"] = spec["volumes"]
+    mounts = spec["containers"][0]["volumeMounts"]
+    for mount in mounts:
+        for field in ("mountPath", "subPath"):
+            if field in mount:
+                mount[field] = mount[field].replace("<customer-identity-sha256>", "8" * 64)
+    pod["spec"]["containers"][0]["volumeMounts"] = mounts
+    return pod
+
 
 def test_libero_managed_job_name_matches_pinned_skypilot_algorithm() -> None:
     module = _load_module()
@@ -1212,6 +1236,7 @@ def test_libero_payload_pod_record_is_exact_and_singleton(monkeypatch) -> None:
     pod = _libero_payload_pod_fixture(module)
     candidate = pod["spec"]["containers"][0]["image"]
     binding = module.LiberoRuntimeBinding(
+        customer_identity_sha256="8" * 64,
         evidence={},
         access_state=module.LiberoAccessState(
             kubeconfig=Path("/private/payload-kubeconfig"),
@@ -1258,9 +1283,14 @@ def test_libero_payload_pod_record_is_exact_and_singleton(monkeypatch) -> None:
         ("host-path", "forbidden volume"),
         ("host-port", "security context"),
         ("capability", "security context"),
-        ("writable-root", "broad writable mount"),
+        ("writable-root", "shadows a reviewed mount"),
         ("runtime-class", "host or runtime boundary"),
         ("release-token", "release token contract"),
+        ("foreign-configmap", "forbidden volume"),
+        ("missing-root", "missing its exact reviewed mounts"),
+        ("root-writable", "unreviewed required mount"),
+        ("wrong-registration", "unreviewed required mount"),
+        ("extra-writable-run", "broad writable mount"),
     ],
 )
 def test_libero_payload_pod_rejects_every_confinement_bypass(
@@ -1286,9 +1316,21 @@ def test_libero_payload_pod_rejects_every_confinement_bypass(
         container["volumeMounts"] = [{"name": "data", "mountPath": "/etc"}]
     elif mutation == "runtime-class":
         pod["spec"]["runtimeClassName"] = "unreviewed"
+    elif mutation == "foreign-configmap":
+        pod["spec"]["volumes"].append({"name": "foreign", "configMap": {"name": "foreign"}})
+    elif mutation == "missing-root":
+        container["volumeMounts"] = [mount for mount in container["volumeMounts"] if mount["name"] != "libero-caller-verification"]
+    elif mutation == "root-writable":
+        next(m for m in container["volumeMounts"] if m["name"] == "libero-caller-verification")["readOnly"] = False
+    elif mutation == "wrong-registration":
+        next(m for m in container["volumeMounts"] if m["name"] == "libero-customer-registration")["subPath"] = "9" * 64 + ".b64"
+    elif mutation == "extra-writable-run":
+        pod["spec"]["volumes"].append({"name": "foreign", "emptyDir": {}})
+        container["volumeMounts"].append({"name": "foreign", "mountPath": "/run/foreign"})
     else:
         pod["spec"]["automountServiceAccountToken"] = False
     binding = module.LiberoRuntimeBinding(
+        customer_identity_sha256="8" * 64,
         evidence={},
         access_state=module.LiberoAccessState(
             kubeconfig=Path("/private/payload-kubeconfig"),
@@ -1331,6 +1373,7 @@ def test_libero_manager_live_evidence_is_independent_and_exact(
         run_id="libero-manager-evidence",
     )
     binding = module.LiberoRuntimeBinding(
+        customer_identity_sha256="8" * 64,
         evidence={"allowed_node_sha256": module.hashlib.sha256(b"worker").hexdigest()},
         access_state=state,
         candidate_image=candidate,
@@ -1412,6 +1455,7 @@ def test_libero_payload_role_binds_uid_atomically_to_observed_pod(
         "namespace_uid_sha256": "6" * 64,
     }
     binding = module.LiberoRuntimeBinding(
+        customer_identity_sha256="8" * 64,
         evidence=base_evidence,
         access_state=state,
         candidate_image=candidate,
@@ -1476,7 +1520,7 @@ def test_libero_payload_role_binds_uid_atomically_to_observed_pod(
 
 
 def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
-    monkeypatch,
+    monkeypatch, tmp_path,
 ) -> None:
     module = _load_module()
     namespace = "isolated-namespace"
@@ -1496,10 +1540,29 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
             "skypilot-service-account-role-binding",
         ],
         "secrets": [],
-        "configmaps": ["kube-root-ca.crt", module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP],
+        "configmaps": sorted(["kube-root-ca.crt", module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP,
+                              module.LIBERO_CALLER_VERIFICATION_CONFIGMAP, module.LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP]),
         "services": [],
     }
 
+    caller_key = module.base64.b64encode(bytes(range(32, 64))).decode()
+    registration_key = module.base64.b64encode(bytes(range(64, 96))).decode()
+    identity = "8" * 64
+    caller_path = tmp_path / "caller.b64"
+    caller_path.write_text(caller_key)
+    caller_path.chmod(0o600)
+    registration_path = tmp_path / (identity + ".b64")
+    registration_path.write_text(registration_key)
+    registration_path.chmod(0o600)
+    monkeypatch.setenv("NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE", str(caller_path))
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE", str(registration_path))
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", identity)
+    runtime_roots = [
+        {"metadata": {"name": module.LIBERO_CALLER_VERIFICATION_CONFIGMAP, "namespace": namespace, "uid": "caller-uid"},
+         "immutable": True, "data": {"authenticated-caller-public-key.b64": caller_key}},
+        {"metadata": {"name": module.LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP, "namespace": namespace, "uid": "registration-uid"},
+         "immutable": True, "data": {identity + ".b64": registration_key}},
+    ]
     storage_key = bytes(range(32))
     monkeypatch.setattr(module, "libero_image_manifest", lambda: {})
     monkeypatch.setattr(module, "validate_libero_qualified_image_manifest", lambda _manifest: {
@@ -1509,6 +1572,7 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
     def kubectl_json(arguments, **_kwargs):
         if arguments[-1] == "configmaps":
             return {"items": [
+                *runtime_roots,
                 {"metadata": {"name": "kube-root-ca.crt", "namespace": namespace, "uid": "root-ca-uid"},
                  "data": {"ca.crt": "synthetic public certificate"}},
                 {"metadata": {"name": module.LIBERO_STORAGE_VERIFICATION_CONFIGMAP, "namespace": namespace, "uid": "storage-key-uid"},
@@ -1522,7 +1586,7 @@ def test_libero_inventory_refuses_cluster_role_binding_for_namespace(
     inventory = module._libero_namespaced_inventory(
         Path("/private/payload-kubeconfig"), "payload-context", namespace
     )
-    assert len(inventory.pop("configmap_records")) == 2
+    assert len(inventory.pop("configmap_records")) == 4
     assert inventory == expected
 
     expected["services"] = ["selector-trap"]
@@ -1931,6 +1995,7 @@ def test_libero_pre_submit_failure_always_runs_no_scheduler_access_cleanup(
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
     binding = module.LiberoRuntimeBinding(
+        customer_identity_sha256="8" * 64,
         customer_authorization_b64="signed-customer-authorization",
         evidence={},
         access_state=module.LiberoAccessState(
@@ -2124,6 +2189,7 @@ def test_libero_payload_grant_recheck_refuses_hash_and_identity_drift(
         run_id="libero-payload-recheck",
     )
     binding = module.LiberoRuntimeBinding(
+        customer_identity_sha256="8" * 64,
         evidence={
             "role_uid_sha256": "a" * 64,
             "namespace_inventory_sha256": "b" * 64,
@@ -2603,6 +2669,7 @@ def test_libero_signal_callback_completes_every_cleanup_layer(
     isolated.mkdir(mode=0o700)
     args.isolated_config_dir = str(isolated)
     binding = module.LiberoRuntimeBinding(
+        customer_identity_sha256="8" * 64,
         customer_authorization_b64="signed-customer-authorization",
         evidence={},
         access_state=module.LiberoAccessState(
@@ -4590,3 +4657,48 @@ def test_libero_storage_configmap_refuses_unqualified_mount(monkeypatch, mutatio
         item['data']['output-storage-authorization-public-key.b64'] = '!'
     with pytest.raises(RuntimeError, match='storage verification ConfigMap'):
         module._verify_libero_storage_configmap(item)
+
+
+@pytest.mark.parametrize("kind", ["caller", "customer"])
+@pytest.mark.parametrize("mutation", ["none", "mutable", "extra", "wrong-key", "missing-file"])
+def test_libero_provided_runtime_key_configmaps_are_exact(monkeypatch, tmp_path, kind, mutation):
+    module = _load_module()
+    identity = "8" * 64
+    key_name = "authenticated-caller-public-key.b64" if kind == "caller" else identity + ".b64"
+    name = module.LIBERO_CALLER_VERIFICATION_CONFIGMAP if kind == "caller" else module.LIBERO_CUSTOMER_REGISTRATION_CONFIGMAP
+    encoded = module.base64.b64encode(bytes(range(32))).decode()
+    path = tmp_path / key_name
+    path.write_text(encoded)
+    path.chmod(0o600)
+    env_name = "NPA_LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE" if kind == "caller" else "NPA_LIBERO_CUSTOMER_SIGNER_REGISTRATION_FILE"
+    monkeypatch.setenv(env_name, str(path))
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", identity)
+    item = {"metadata": {"name": name}, "immutable": True, "data": {key_name: encoded}}
+    if mutation == "mutable":
+        item["immutable"] = False
+    elif mutation == "extra":
+        item["data"]["foreign.b64"] = encoded
+    elif mutation == "wrong-key":
+        item["data"][key_name] = module.base64.b64encode(bytes(32)).decode()
+    elif mutation == "missing-file":
+        path.unlink()
+    if mutation == "none":
+        module._verify_libero_runtime_key_configmap(item)
+    else:
+        with pytest.raises((RuntimeError, ValueError)):
+            module._verify_libero_runtime_key_configmap(item)
+
+
+def test_libero_render_binds_customer_registration_before_signing(monkeypatch):
+    module = _load_module()
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "8" * 64)
+    monkeypatch.setattr(module, "_resolved_storage_env", lambda: {})
+    arguments = {"run_id": "libero-render-signing", "solution_name": "libero"}
+    first = module.render_workflow(LIBERO_YAML_PATH, **arguments)
+    rendered = json.dumps(first)
+    assert "<customer-identity-sha256>" not in rendered
+    assert "/run/npa/libero/customer-signer-roots/" + "8" * 64 + ".b64" in rendered
+    first_sha256 = module.hashlib.sha256(module.libero_executable_profile_bytes(first)).hexdigest()
+    monkeypatch.setenv("NPA_LIBERO_CUSTOMER_IDENTITY_SHA256", "9" * 64)
+    second = module.render_workflow(LIBERO_YAML_PATH, **arguments)
+    assert module.hashlib.sha256(module.libero_executable_profile_bytes(second)).hexdigest() != first_sha256
