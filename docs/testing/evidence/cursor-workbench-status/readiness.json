@@ -1,9 +1,9 @@
 {
-  "schema": "npa.public-pr-readiness/v3",
-  "snapshot_utc": "2026-09-21T05:28:23.775791+00:00",
-  "mergeability_verified_at": "2026-09-21T05:36:53.306425+00:00",
-  "prepared_at": "2026-09-21T05:40:08.872533+00:00",
-  "required_checks_verified_at": "2026-09-21T05:31:24.489819+00:00",
+  "schema": "npa.public-pr-readiness/v4",
+  "snapshot_utc": "2026-09-21T06:04:37.614153+00:00",
+  "mergeability_verified_at": "2026-09-21T06:04:37.614153+00:00",
+  "prepared_at": "2026-09-21T06:11:02.264036+00:00",
+  "required_checks_verified_at": "2026-09-21T06:06:15.561386+00:00",
   "tracked_open_count": 55,
   "tracked_historical_count": 57,
   "queue_candidates": [
@@ -13,6 +13,7 @@
     594,
     596,
     607,
+    608,
     609,
     613,
     614,
@@ -34,8 +35,8 @@
     "headRefName": "codex/studio-smoother-edit-20260917",
     "headRefOid": "ef15281845e11faa4fb0a931eafd65a6dbecc318",
     "isDraft": false,
-    "mergeStateStatus": "UNKNOWN",
-    "mergeable": "UNKNOWN",
+    "mergeStateStatus": "DIRTY",
+    "mergeable": "CONFLICTING",
     "number": 558,
     "state": "OPEN"
   },
@@ -55,16 +56,18 @@
     "Queue candidates still require repository merge-queue integration; no merge performed.",
     "Accepted stacks target a feature base and require ancestor landing, retargeting/rebase and renewed checks.",
     "Runtime execution, numerical controls, image qualification, visual review and usefulness remain separate gates.",
-    "Historical proof retains its original source scope; no blanket GPU or VLM acceptance is claimed."
+    "Historical proof retains its original source scope; no blanket GPU or VLM acceptance is claimed.",
+    "An independent review reports four Kimi held-out expectations passed; root byte verification and broader evaluation census remain pending.",
+    "Scanner current test-only delta is verified; published performance remains bound to the executed original production bytes."
   ],
   "workloads": [
     {
       "workload": "SeedVR2",
-      "current_result": "Exact 3B H100 image completed both four-stage workflows. The subsequent official 7B H100 overlay diagnostic also completed inference, but frozen objective and downstream annotation gates failed.",
-      "remaining_acceptance": "Temporal quality and annotation contradictions remain unresolved. The 7B diagnostic does not qualify a shipped 7B image or workflow.",
+      "current_result": "Exact 3B H100 image completed both four-stage workflows. The subsequent controlled official 7B H100 overlay diagnostic completed inference and passed the LPIPS improvement and SSIM regression gates, but frozen temporal and downstream annotation gates failed.",
+      "remaining_acceptance": "The 7B temporal error was 1.5595\u00d7 bicubic against a 1.15\u00d7 limit; task annotation also failed. The overlay diagnostic does not qualify a shipped 7B image or workflow. The earlier uncontrolled 7B comparison is superseded; 3B failure remains retained.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/0db7db260bbc526061a26c3a16999f94e92b705f/docs/testing/evidence/seedvr-h100-exact-b8d9c9c5/README.md",
-        "https://github.com/nebius/nebius-physical-ai/blob/a80d8cd9475729f531d0fc3334fc0070da51087a/docs/testing/evidence/seedvr-7b-h100-diagnostic/README.md"
+        "https://github.com/nebius/nebius-physical-ai/blob/6a4815bcdccff143168b4853a3d2cdb822d4d3a8/docs/testing/evidence/seedvr-7b-h100-diagnostic/README.md"
       ]
     },
     {
@@ -75,14 +78,16 @@
     },
     {
       "workload": "cuRobo",
-      "current_result": "Real B200 stock planning and independent numeric replay passed with the d738db0d source overlay. Both diagnostic wrapper jobs failed before the explicit controls: stale result parsing, then an inherited CLI import setting. The next corrected composite job has since reached terminal SUCCEEDED; independent verification of its full control artifacts is still in progress.",
-      "remaining_acceptance": "Successful positive/blocked/malformed controls, accepted exact rebuilt image, full required B200/RTX coverage and visual review. These predecessor-image overlay diagnostics are not exact-image acceptance.",
-      "proof_links": []
+      "current_result": "Real B200 stock planning and independent numeric replay passed with the d738db0d source overlay. The corrected diagnostic wrapper completed the positive/blocked/malformed controls. The full B200 benchmark then failed during Pinocchio import because libgomp.so.1 was missing, before any benchmark row.",
+      "remaining_acceptance": "Cursor must repair/freeze the image dependency, prove offline benchmark imports and dataset bindings, then rebuild/qualify exact image bytes and complete required B200/RTX coverage and visual review. Diagnostic controls do not qualify the final image.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/32ed2941f5252933fe33250eef5acd4d52f3c4af/docs/testing/evidence/curobo-b200-controls-d738db0d/README.md"
+      ]
     },
     {
       "workload": "Open3D",
-      "current_result": "Current b18d7aef source/fresh image passed the native uneven-sampling counterexample. The new six-stage standard workflow job is submitted/pending; this is not accepted workload execution.",
-      "remaining_acceptance": "All stage/artifact/source bindings and ordinary native viewer proof; outstanding image qualification receipts. Earlier CPU workflow proof retains its original scope; no durable-resume claim for the current no-durable-mount attempt.",
+      "current_result": "Current b18d7aef source/fresh image passed the native uneven-sampling counterexample. All six current standard workflow stages now report SUCCEEDED at that exact source and image.",
+      "remaining_acceptance": "Complete current artifact/source review, ordinary native viewer capture and exact-image byte/security qualification remain pending. Successful stage execution does not establish geometry usefulness. No durable-resume claim for the no-durable-mount attempt.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/602#issuecomment-5754870500"
       ]
@@ -90,7 +95,7 @@
     {
       "workload": "AprilTag / Kimi-K3",
       "current_result": "CPU detection remains accepted. Four new disclosed hosted controls met their frozen expectations; 32 retained files and four frozen request bodies were hash-verified, and raw scores 0.95/0.20/0.05/0.25 matched product results.",
-      "remaining_acceptance": "Holdout harness defects and a visual-truth labeling issue are under repair/review. No held-out pass or final judge qualification is claimed; retained-envelope verification did not independently rescore image correctness.",
+      "remaining_acceptance": "Independent review and root retained-byte verification confirm all four held-out expectations passed. Root checked 32 hashes, frozen request bodies, model/status/visible scores, four physical sends, and the exact 674\u00d7768 submitted PNG normalization. The broader production-output census remains pending. This qualifies presentation/reviewability of the supplied sheets, not detector accuracy, physical correctness, robot safety or general judge reliability.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/4c017e2db23b270e2ef114b698f43dc9cd98b716/docs/testing/evidence/kimi-k3-disclosed-controls-a26a868e/README.md"
       ]
@@ -113,8 +118,8 @@
     },
     {
       "workload": "Complete-image scanner",
-      "current_result": "PR #681 exact source is independently accepted for isolated next scans. Native baseline-vs-final testing measured 2.3806\u00d7 on a generated 16 MiB OCI fixture with byte-identical ledgers and targeted failure/cancellation/duplex controls.",
-      "remaining_acceptance": "Current CI and lifecycle closure. The owner's 64 MiB same-source serial-depth comparison is a separate 2.14\u00d7 experiment. Neither establishes arbitrary full-image production speedup; the old cancelled scan remains unaccepted.",
+      "current_result": "PR #681 original f93ddc316 production bytes are independently accepted for isolated next scans; current 500169848 adds tests only, verified by exact GitHub comparison. Native baseline-vs-final testing measured 2.3806\u00d7 on a generated 16 MiB OCI fixture with byte-identical ledgers and targeted failure/cancellation/duplex controls.",
+      "remaining_acceptance": "Current test-only delta review, CI and lifecycle closure. The owner's 64 MiB same-source serial-depth comparison is a separate 2.14\u00d7 experiment. Neither establishes arbitrary full-image production speedup; the old cancelled scan remains unaccepted.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/572b7fad2bd44a2e32bc38326c805ef21e625134/docs/testing/evidence/image-byte-scanner-f93ddc31/README.md"
       ]
@@ -322,7 +327,7 @@
       "depends_on": [],
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/0db7db260bbc526061a26c3a16999f94e92b705f/docs/testing/evidence/seedvr-h100-exact-b8d9c9c5/README.md",
-        "https://github.com/nebius/nebius-physical-ai/blob/a80d8cd9475729f531d0fc3334fc0070da51087a/docs/testing/evidence/seedvr-7b-h100-diagnostic/README.md"
+        "https://github.com/nebius/nebius-physical-ai/blob/6a4815bcdccff143168b4853a3d2cdb822d4d3a8/docs/testing/evidence/seedvr-7b-h100-diagnostic/README.md"
       ],
       "review_links": []
     },
@@ -556,8 +561,8 @@
       "status": "Acceptance incomplete",
       "note": "Relevant source/image/runtime, objective or visual-review gates remain outstanding; see the workload summary and scoped proof.",
       "check_counts": {
-        "SUCCESS": 4,
-        "PENDING": 12,
+        "SUCCESS": 6,
+        "PENDING": 10,
         "SKIPPED": 2
       },
       "applicable_ci_passes": false,
@@ -653,21 +658,19 @@
       "title": "Guard against module-level GPU imports in tests",
       "source_commit": "0d6b5bb08f67bc0912eba47a2c975e4f201acd69",
       "state": "OPEN",
-      "draft": true,
+      "draft": false,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Scoped review accepted; current CI pending",
-      "note": "Current-source review acceptance does not replace pending CI, draft promotion, merge-queue integration or any separate workload gate.",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Exact-source independent review and applicable proof accepted; current required GitHub Actions app/source identities and all applicable checks verified. Queue integration remains required.",
       "check_counts": {
-        "SUCCESS": 13,
-        "SKIPPED": 3,
-        "PENDING": 2,
-        "IN_PROGRESS": 1
+        "SUCCESS": 19,
+        "SKIPPED": 3
       },
-      "applicable_ci_passes": false,
-      "required_checks_app_and_source_verified": false,
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -683,6 +686,14 @@
           "source_commit": "0d6b5bb08f67bc0912eba47a2c975e4f201acd69",
           "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35553343877/job/106192082294",
+          "passes_required_identity": true
+        },
+        {
+          "name": "security-regression",
+          "app_id": 15368,
+          "source_commit": "0d6b5bb08f67bc0912eba47a2c975e4f201acd69",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35553343877/job/106228658047",
           "passes_required_identity": true
         }
       ],
@@ -755,7 +766,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Acceptance incomplete",
-      "note": "Four disclosed Kimi-K3 controls now passed; holdout harness repair/review and final qualification remain incomplete. The older failed calibration remains retained.",
+      "note": "Four disclosed Kimi-K3 controls independently passed. A retained independent review reports four held-out expectations passed; root byte verification and the broader production census remain pending. Reviewability of supplied sheets does not establish detector accuracy or physical correctness. Older failed calibration remains retained.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1503,8 +1514,8 @@
       "status": "Acceptance incomplete",
       "note": "Relevant source/image/runtime, objective or visual-review gates remain outstanding; see the workload summary and scoped proof.",
       "check_counts": {
-        "SUCCESS": 4,
-        "PENDING": 12,
+        "SUCCESS": 6,
+        "PENDING": 10,
         "SKIPPED": 2
       },
       "applicable_ci_passes": false,
@@ -2911,7 +2922,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "status": "Scoped review accepted; current CI pending",
-      "note": "Source contract accepted and four disclosed controls passed. Holdout harness defects/visual-truth correction, held-out evaluation, judge qualification and current CI remain outstanding.",
+      "note": "Source contract accepted and four disclosed controls independently passed. An independent retained review reports all four held-out expectations passed. Root byte verification, broader evaluation census, final qualification and current CI remain outstanding.",
       "check_counts": {
         "SUCCESS": 6,
         "PENDING": 10,
@@ -2955,7 +2966,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "status": "Scoped review accepted; current CI pending",
-      "note": "Exact-source recovery-argv review accepted. Local full suite completed with 25,135 passes and eight missing-prerequisite failures, retained as red; authoritative hosted CI is pending.",
+      "note": "Exact-source recovery-argv review accepted. Local full suite retained 25,135 passes and eight missing-prerequisite failures; the exact eight subsequently passed after environment repair. The original full run remains red and authoritative hosted CI is pending.",
       "check_counts": {
         "SUCCESS": 6,
         "PENDING": 10,
@@ -2989,18 +3000,18 @@
       "number": 681,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/681",
       "title": "Scan complete image bytes concurrently without changing the ledger",
-      "source_commit": "f93ddc316ede4951875776f6617a917407ad4408",
+      "source_commit": "50016984871cad73768e8452bae886c1d7638fd7",
       "state": "OPEN",
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
-      "status": "Scoped review accepted; current CI pending",
-      "note": "Exact-source scanner runtime accepted for isolated next scans; generated-fixture native baseline/final 2.3806\u00d7 with full ledger equivalence. Draft and current CI remain outstanding; no production-image speedup claim.",
+      "status": "Test-only delta review and CI pending",
+      "note": "Current 500169848 differs from accepted f93ddc316 by 58 added Go test lines only; independent mutation reproduction and actual Mac import receipts retained. Native benchmark remains bound to f93ddc316 production bytes: 2.3806\u00d7 fixture result with full ledger equivalence. Current-head delta review, draft lifecycle and CI remain pending; no arbitrary production-image speedup claim.",
       "check_counts": {
-        "SUCCESS": 4,
-        "PENDING": 12,
+        "SUCCESS": 6,
+        "PENDING": 10,
         "SKIPPED": 2
       },
       "applicable_ci_passes": false,
@@ -3009,17 +3020,17 @@
         {
           "name": "gitleaks",
           "app_id": 15368,
-          "source_commit": "f93ddc316ede4951875776f6617a917407ad4408",
+          "source_commit": "50016984871cad73768e8452bae886c1d7638fd7",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35563430943/job/106220511825",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35565600128/job/106226693349",
           "passes_required_identity": true
         },
         {
           "name": "scan",
           "app_id": 15368,
-          "source_commit": "f93ddc316ede4951875776f6617a917407ad4408",
+          "source_commit": "50016984871cad73768e8452bae886c1d7638fd7",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35563430943/job/106220511527",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35565600128/job/106226693805",
           "passes_required_identity": true
         }
       ],
@@ -3030,5 +3041,5 @@
       "review_links": []
     }
   ],
-  "workload_update_recorded_at": "2026-09-21T05:45:11.266702+00:00"
+  "workload_update_recorded_at": "2026-09-21T06:14:55.718111+00:00"
 }
