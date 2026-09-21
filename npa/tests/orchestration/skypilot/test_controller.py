@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from npa.orchestration.skypilot.controller import (
+    ControllerBackend,
     DEFAULT_CONTROLLER_INSTANCE_TYPE,
     apply_controller_override,
     controller_resources_kubernetes,
@@ -70,6 +75,114 @@ def test_apply_controller_override_preserves_explicitly_larger_kubernetes_contro
 
     expected = {**existing["jobs"]["controller"]["resources"], "autostop": False}
     assert config["jobs"]["controller"]["resources"] == expected
+
+
+@pytest.mark.parametrize(
+    ("controller_backend", "resources"),
+    [
+        (
+            "kubernetes",
+            {"cloud": "kubernetes", "cpus": "4+", "memory": "16+"},
+        ),
+        (
+            "kubernetes",
+            {"cloud": "kubernetes", "cpus": "2+", "memory": "8+"},
+        ),
+        (
+            "kubernetes",
+            {"cloud": "kubernetes", "cpus": "4+", "memory": 32},
+        ),
+        (
+            "kubernetes",
+            {"cloud": "kubernetes", "cpus": "2.5+", "memory": "8.5+"},
+        ),
+        (
+            "nebius",
+            {
+                "cloud": "nebius",
+                "region": "eu-north1",
+                "instance_type": "cpu-e2_4vcpu-16gb",
+                "cpus": "4+",
+                "memory": "16+",
+                "disk_size": 128,
+            },
+        ),
+    ],
+)
+def test_apply_controller_override_preserves_valid_minimum_strings(
+    controller_backend: ControllerBackend,
+    resources: dict[str, Any],
+) -> None:
+    config = apply_controller_override(
+        {"jobs": {"controller": {"resources": resources}}},
+        controller_backend=controller_backend,
+    )
+
+    expected = {**resources, "autostop": False}
+    assert config["jobs"]["controller"]["resources"] == expected
+    assert (
+        apply_controller_override(
+            config,
+            controller_backend=controller_backend,
+        )
+        == config
+    )
+
+
+@pytest.mark.parametrize(
+    ("cpus", "memory"),
+    [
+        ("1+", "8+"),
+        ("2+", "4+"),
+        ("nan", "16+"),
+        ("4+", "inf"),
+        ("", "16+"),
+        ("4 cores", "16+"),
+        ("4+ ", "16+"),
+        ("4+", "16+ "),
+    ],
+)
+def test_apply_controller_override_rejects_invalid_or_undersized_minimums(
+    cpus: str,
+    memory: str,
+) -> None:
+    config = apply_controller_override(
+        {
+            "jobs": {
+                "controller": {
+                    "resources": {
+                        "cloud": "kubernetes",
+                        "cpus": cpus,
+                        "memory": memory,
+                    }
+                }
+            }
+        }
+    )
+
+    assert (
+        config["jobs"]["controller"]["resources"] == controller_resources_kubernetes()
+    )
+
+
+def test_apply_controller_override_does_not_allow_minimum_disk_size() -> None:
+    config = apply_controller_override(
+        {
+            "jobs": {
+                "controller": {
+                    "resources": {
+                        "cloud": "nebius",
+                        "cpus": "4+",
+                        "memory": "16+",
+                        "disk_size": "64+",
+                    }
+                }
+            }
+        },
+        controller_backend="nebius",
+    )
+
+    assert config["jobs"]["controller"]["resources"] == controller_resources_nebius_vm()
 
 
 def test_apply_controller_override_drops_disk_and_preserves_larger_shape() -> None:

@@ -9,6 +9,7 @@ clusters that cannot schedule the controller pod.
 from __future__ import annotations
 
 from copy import deepcopy
+from math import isfinite
 from typing import Any, Literal
 
 from npa.cluster.config import DEFAULT_REGION
@@ -152,7 +153,10 @@ def _is_at_least_default(resources: dict[str, Any], default: dict[str, Any]) -> 
     for key in ("cpus", "memory", "disk_size"):
         if key not in default:
             continue
-        actual = _number(resources.get(key))
+        actual = _number(
+            resources.get(key),
+            allow_minimum=key in {"cpus", "memory"},
+        )
         minimum = _number(default.get(key))
         if actual is None or minimum is None or actual < minimum:
             return False
@@ -180,8 +184,14 @@ def _unsupported_override_keys(controller_backend: ControllerBackend) -> set[str
     return set()
 
 
-def _number(value: Any) -> float | None:
+def _number(value: Any, *, allow_minimum: bool = False) -> float | None:
+    candidate = value
+    if isinstance(candidate, str) and candidate.endswith("+"):
+        if not allow_minimum:
+            return None
+        candidate = candidate[:-1]
     try:
-        return float(value)
+        number = float(candidate)
     except (TypeError, ValueError):
         return None
+    return number if isfinite(number) else None
