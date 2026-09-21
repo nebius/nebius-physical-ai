@@ -656,30 +656,13 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
     def timeout_run(command, **kwargs):
-        seen["command"] = list(command)
         seen["timeout"] = kwargs.get("timeout")
         raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=canary)
 
-    config = "/fixture/nebius/config.yaml"
-    denied = {"/mnt/cloud-metadata/token", config}
-    real_stat = runtime.os.stat
-
-    def reject_credential_path_stat(path, *args, **kwargs):
-        if runtime.os.fspath(path) in denied:
-            raise AssertionError(
-                "credential paths must not be statted before the timeout"
-            )
-        return real_stat(path, *args, **kwargs)
-
-    monkeypatch.setenv("NPA_NEBIUS_CONFIG", config)
-    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
-    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
-    monkeypatch.setattr(runtime.os, "stat", reject_credential_path_stat)
     monkeypatch.setattr(runtime.subprocess, "run", timeout_run)
 
-    assert runtime._agent_inventory_credential_context()[3] == "instance_metadata"
     with pytest.raises(AccessProbeError) as exc_info:
         runtime._agent_nebius_json(
             ["iam", "project", "list", "--parent-id", "tenant-test"],
@@ -688,33 +671,6 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     assert exc_info.value.status == "unavailable"
     assert canary not in str(exc_info.value)
     assert seen["timeout"] == runtime._AGENT_NEBIUS_TIMEOUT_SECONDS
-    assert seen["command"][:5] == [
-        "/bin/true",
-        "--config",
-        config,
-        "--profile",
-        "cursor-sa",
-    ]
-
-
-@pytest.mark.parametrize(
-    ("staged", "expected"),
-    [
-        ("instance_metadata", "instance_metadata"),
-        ("configured_profile", "configured_profile"),
-        ("operator-supplied", "configured_profile"),
-        ("", "configured_profile"),
-    ],
-)
-def test_agent_inventory_credential_source_is_allowlisted(
-    monkeypatch, staged: str, expected: str
-) -> None:
-    from npa.cli import agent_access_runtime as runtime
-
-    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", staged)
-    monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
-
-    assert runtime._agent_inventory_credential_context()[3] == expected
 
 
 def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(

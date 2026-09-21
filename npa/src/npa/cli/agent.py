@@ -3294,13 +3294,6 @@ def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> 
     )
 
 
-def _agent_uses_metadata_credentials(environment: dict | None = None) -> bool:
-    # Bootstrap stages this marker only after binding the attached-identity profile.
-    values = environment if environment is not None else os.environ
-    source = str(values.get("NPA_NEBIUS_CREDENTIAL_SOURCE") or "").strip()
-    return source == "instance_metadata"
-
-
 def _agent_command_env() -> dict:
     env = dict(os.environ)
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
@@ -3350,7 +3343,7 @@ def _agent_command_env() -> dict:
     kubeconfig = _agent_exact_kubeconfig()
     if kubeconfig:
         env["KUBECONFIG"] = kubeconfig
-    if _agent_uses_metadata_credentials(env):
+    if Path("/mnt/cloud-metadata/token").is_file():
         env.setdefault("NEBIUS_PROFILE", "cursor-sa")
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
@@ -3469,7 +3462,7 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
         return []
     command_env = _agent_command_env()
     command: list[str] = [nebius_bin]
-    if _agent_uses_metadata_credentials(command_env):
+    if Path("/mnt/cloud-metadata/token").is_file():
         for key in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE"):
             command_env.pop(key, None)
         command.extend(["--profile", "cursor-sa"])
@@ -3515,7 +3508,7 @@ def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
         runner=lambda command: run_resource_discovery_command(
             command, command_env=_agent_command_env()
         ),
-        metadata_token_available=_agent_uses_metadata_credentials(),
+        metadata_token_available=Path("/mnt/cloud-metadata/token").is_file(),
         force_refresh=force_refresh,
     )
 
