@@ -243,7 +243,9 @@ def test_paused_profile_and_task_do_not_block_other_specialist(configuration):
     assert team.work_once("simulation")["status"] == "completed"
 
 
-@pytest.mark.parametrize("mutation", ["model", "length", "empty"])
+@pytest.mark.parametrize(
+    "mutation", ["model", "length", "empty", "invalid_arguments", "missing_choices"]
+)
 def test_unusable_model_response_never_executes_tools(configuration, mutation):
     model = configuration.profiles[0].model
     response = _response(model, tool="run_operation", arguments={"name": "check"})
@@ -251,12 +253,32 @@ def test_unusable_model_response_never_executes_tools(configuration, mutation):
         response["model"] = "different/model"
     elif mutation == "length":
         response["choices"][0]["finish_reason"] = "length"
-    else:
+    elif mutation == "empty":
         response = _response(model, text="")
+    elif mutation == "invalid_arguments":
+        response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = (
+            "{"
+        )
+    else:
+        del response["choices"]
+    response["usage"]["prompt_tokens_details"] = {"cached_tokens": 10}
     team = _team(configuration, [response])
     team.submit("Check", specialist="simulation", task_id="invalid")
     assert team.work_once("simulation")["status"] == "needs_attention"
     assert team.store._calls("invalid") == []
+    events = [
+        event for event in team.status("invalid")["events"] if event["type"] == "model"
+    ]
+    assert len(events) == 1
+    event = events[0]
+    assert event["accepted"] is False
+    assert event["tools"] == []
+    assert event["model"] == response["model"]
+    assert event["usage"]["total_tokens"] == 25
+    assert event["usage"]["cached_tokens"] == 10
+    assert event["finish_reason"] == response.get("choices", [{}])[0].get(
+        "finish_reason"
+    )
 
 
 @pytest.mark.parametrize(

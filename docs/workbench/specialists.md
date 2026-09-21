@@ -140,6 +140,9 @@ Inspect the external result, then supply the interrupted call ID and its verifie
 JSON result through the monitor or `reconcile --call-id ... --result ...`.
 Alternatively, `reconcile --retry` explicitly authorizes retry after inspection.
 Provider failures with no tool effect can be retried through the same control.
+Rejected model responses retain their reported usage and finish reason in the
+activity log, while none of their proposed tools execute. This makes failed
+generation costs visible; missing usage counters still mean unknown cost.
 Changed profile/model/tool policy blocks existing tasks until the original
 configuration is restored. File locks prevent two host-local workers from
 advancing the same specialist simultaneously.
@@ -185,3 +188,10 @@ The test checks that each repaired file exactly matches its healthy original.
 It pauses and restarts both workers before completion. It does not submit GPU
 workloads. Exact operational evidence stays outside the repository; publish only
 reviewed aggregate results.
+
+The [simulation fanout experiment](specialists-simulation-experiment.md) compares
+six real GLM/DeepSeek specialists against one Astra agent with matched tools and
+simulator concurrency. It includes all trials, measured token estimates, actual
+MuJoCo action replay and the observed reliability failures. The
+[reproducible example](../../npa/examples/specialists/simulation/README.md) is an
+optional paid workload, separate from the hermetic tests.

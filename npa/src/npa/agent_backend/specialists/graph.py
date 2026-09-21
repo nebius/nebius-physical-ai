@@ -102,22 +102,42 @@ def _model(state, profile, tools, client):
     response = client.chat_completion(
         model=profile.model, messages=state["messages"], extra=extra
     )
-    message, pending = _validate_response(response, profile.model)
-    tools.store._event(
-        tools.task_id,
-        {
-            "type": "model",
-            "model": response["model"],
-            "usage": usage_summary(response),
-            "response_id": response.get("id"),
-            "tools": [call["function"]["name"] for call in pending],
-        },
-    )
+    message, pending = _recorded_response(response, profile.model, tools)
     return {
         "messages": [*state["messages"], message],
         "pending": pending,
         "answer": "" if pending else redact(message["content"]),
     }
+
+
+def _recorded_response(response, model, tools):
+    pending, accepted = [], False
+    try:
+        message, pending = _validate_response(response, model)
+        accepted = True
+        return message, pending
+    finally:
+        # Invalid output still consumes tokens. Keep its usage without executing it.
+        _record_model(response, tools, accepted, pending)
+
+
+def _record_model(response, tools, accepted, pending):
+    data = response if isinstance(response, dict) else {}
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    finish = choice.get("finish_reason") if isinstance(choice, dict) else None
+    tools.store._event(
+        tools.task_id,
+        {
+            "type": "model",
+            "model": data.get("model"),
+            "usage": usage_summary(data),
+            "response_id": data.get("id"),
+            "accepted": accepted,
+            "finish_reason": finish,
+            "tools": [call["function"]["name"] for call in pending] if accepted else [],
+        },
+    )
 
 
 def _validate_response(response, model):

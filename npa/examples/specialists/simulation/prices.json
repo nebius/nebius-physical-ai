@@ -1,0 +1,21 @@
+{
+  "retrieved_at": "2026-09-21T20:16:24.415831+00:00",
+  "token_factory_source": "https://tokenfactory.nebius.com/api/public/models_info",
+  "models": {
+    "zai-org/GLM-5.3": {
+      "input_price_per_million_tokens": 1.4,
+      "output_price_per_million_tokens": 4.4
+    },
+    "deepseek-ai/DeepSeek-V4-Pro-0813": {
+      "input_price_per_million_tokens": 1.32,
+      "output_price_per_million_tokens": 3.96
+    },
+    "gpt-6-astra": {
+      "input_price_per_million_tokens": 10.0,
+      "cached_input_price_per_million_tokens": 1.0,
+      "cache_write_price_per_million_tokens": 12.5,
+      "output_price_per_million_tokens": 50.0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+    }
+  }
+}

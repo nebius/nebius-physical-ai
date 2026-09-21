@@ -7,7 +7,8 @@ describe('Workbench specialists', () => {
     result: 'Validation passed', route: {status: 'explicit'}, calls: [], events: [
       {type: 'model', model: 'synthetic/model', usage: {total_tokens: 700, cached_tokens: 0}},
       {type: 'model', model: 'synthetic/model', usage: {total_tokens: 750, cached_tokens: 512}},
-      {type: 'model', model: 'synthetic/model', usage: {total_tokens: 800}}
+      {type: 'model', model: 'synthetic/model', usage: {total_tokens: 800}},
+      {type: 'model', model: 'synthetic/model', accepted: false, finish_reason: 'length', usage: {total_tokens: 1200, cached_tokens: 512}}
     ]});
   beforeEach(() => {
     paused = false;
@@ -54,5 +55,6 @@ describe('Workbench specialists', () => {
     cy.get('.task').click();
     cy.get('#timeline').should('contain.text', '0 cached prompt tokens')
       .and('contain.text', '512 cached prompt tokens').and('contain.text', 'cache unreported');
+    cy.get('#timeline').should('contain.text', '1200 tokens · 512 cached prompt tokens · response rejected · length');
   });
 });

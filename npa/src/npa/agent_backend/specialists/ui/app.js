@@ -80,6 +80,7 @@ function activity(events) {
       const cached = event.usage.cached_tokens;
       const cache = cached === undefined ? 'cache unreported' : cached + ' cached prompt tokens';
       label = event.model + ' · ' + (event.usage.total_tokens ?? 'unreported') + ' tokens · ' + cache;
+      if (event.accepted === false) label += ' · response rejected · ' + (event.finish_reason || 'finish reason unreported');
     }
     if (event.type === 'tool') {
       const result = event.result;
