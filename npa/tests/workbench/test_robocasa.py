@@ -62,6 +62,43 @@ def _successful_robocasa_worker(sender, _request_payload) -> None:
         sender.close()
 
 
+def test_functional_registration_worker_emits_only_final_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.smoke.test_robocasa_functional import _registration_worker
+
+    class RecordingSender:
+        def __init__(self) -> None:
+            self.messages: list[bytes] = []
+            self.closed = False
+
+        def send_bytes(self, payload: bytes) -> None:
+            self.messages.append(payload)
+
+        def recv_bytes(self, _size: int) -> bytes:
+            return b"\0"
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(
+        capabilities,
+        "kitchen_task_registration",
+        lambda **_kwargs: {"registered_env_count": 1},
+    )
+    sender = RecordingSender()
+
+    _registration_worker(sender, {})
+
+    assert sender.closed is True
+    assert [json.loads(message) for message in sender.messages] == [
+        {
+            "kind": "result",
+            "result": {"registered_env_count": 1},
+        }
+    ]
+
+
 def _robocasa_worker_without_isolation_ack(sender, _request_payload) -> None:
     try:
         sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
