@@ -114,7 +114,10 @@ class AbsenceProvider:
         require(
             payload["metadata"]["id"] == self.authority["project_id"]
             and payload["metadata"]["parent_id"] == self.authority["tenant_id"]
-            and payload["status"]["state"] == "ACTIVE",
+            and isinstance(payload.get("status"), dict)
+            and payload["status"].get("container_state") == "ACTIVE"
+            and payload["status"].get("suspension_state") == "NONE"
+            and payload["status"].get("region") == self.authority["region"],
             "Wrong project authority",
         )
 

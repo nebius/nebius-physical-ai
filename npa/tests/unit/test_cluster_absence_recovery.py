@@ -69,7 +69,7 @@ if mode=="race":
  x=json.loads(path.read_text());x["concurrent_writer"]=True;path.write_text(json.dumps(x))
 if "project" in args:
  print(json.dumps({"metadata":{"id":"project-example","parent_id":"tenant-example"},
-                   "status":{"state":"ACTIVE"}}));sys.exit(0)
+                   "status":{"container_state":"ACTIVE","suspension_state":"NONE","region":"example-region"}}));sys.exit(0)
 if "get" in args:
  if mode=="live":print("{}");sys.exit(0)
  print("rpc error: code = " + ("PermissionDenied" if mode=="denied" else
@@ -533,3 +533,49 @@ def test_terminal_retry_refuses_active_lifecycle_lock(recovery, lock_name):
         assert _run(path).returncode != 0
     assert (project / "lease.json").read_bytes() == before
     assert _run(path).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        {},
+        {"state": "ACTIVE"},
+        {
+            "container_state": "DELETING",
+            "suspension_state": "NONE",
+            "region": "example-region",
+        },
+        {
+            "container_state": "ACTIVE",
+            "suspension_state": "SUSPENDED",
+            "region": "example-region",
+        },
+        {
+            "container_state": "ACTIVE",
+            "suspension_state": "NONE",
+            "region": "foreign-region",
+        },
+        {"container_state": "ACTIVE", "region": "example-region"},
+    ],
+)
+def test_actual_project_status_contract_rejects_unknown_or_wrong_scope(
+    recovery, monkeypatch, status
+):
+    from npa.cluster.absent_provider import AbsenceProvider
+
+    path, manifest, _operation = recovery
+    evidence = load_legacy_evidence(manifest)
+    provider = AbsenceProvider(evidence["authority"], path.parent)
+    response = {
+        "metadata": {"id": "project-example", "parent_id": "tenant-example"},
+        "status": status,
+    }
+    monkeypatch.setattr(
+        provider,
+        "query",
+        lambda args: subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(response), stderr=""
+        ),
+    )
+    with pytest.raises(AbsenceRecoveryError, match="Wrong project authority"):
+        provider.project()
