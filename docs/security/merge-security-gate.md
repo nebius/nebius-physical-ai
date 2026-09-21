@@ -33,13 +33,21 @@ Organization runner limits can still cause waiting. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
 for cancellation and rollout behavior, including refreshing older PR branches.
 
-The image workflow has no top-level path filter. On full PR validation and main audits its two automatic jobs
-report an internal, fail-closed scope decision. Image, packaging, workflow, and
+The image workflow has no top-level path filter. On full PR validation and main
+audits, its policy and base-inventory planning jobs always report an internal,
+fail-closed scope decision. Image, packaging, workflow, and
 security-policy changes run complete-byte, configuration, and base-image checks;
 unrelated source changes take the verified fast path. Main, scheduled, and manual
-audits always run the deep checks. Seven pinned bases use one Trivy database
-download and three isolated worker caches inside one runner. Deep candidates block
-on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
+audits always run the deep checks. A matrix derived from every validated
+inventory entry gives each base image its own standard runner. Matrix failure
+does not cancel sibling scans, and the required aggregate rejects failed,
+cancelled, skipped, or missing deep-scan results. Each entry has a private
+archive, mutable cache, and temporary layer directory that are removed after
+scanning. Patched bases use a dedicated Buildx builder;
+its container and cache volume are removed before Trivy reads the archive.
+Unmodified bases are scanned directly from their remote digest, without loading
+the shared Docker image store. Cleanup never prunes shared images or builders.
+Deep candidates block on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their
 [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
 are checked separately from the application-dependency scan.
