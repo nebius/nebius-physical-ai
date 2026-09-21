@@ -1,9 +1,9 @@
 {
   "schema": "npa.public-pr-readiness/v4",
-  "snapshot_utc": "2026-09-21T15:57:04.658599+00:00",
-  "mergeability_verified_at": "2026-09-21T14:28:44.492079+00:00",
-  "prepared_at": "2026-09-21T16:04:58.955113+00:00",
-  "required_checks_verified_at": "2026-09-21T16:02:07.758596+00:00",
+  "snapshot_utc": "2026-09-21T16:51:47.772650+00:00",
+  "mergeability_verified_at": "2026-09-21T16:51:47.772650+00:00",
+  "prepared_at": "2026-09-21T16:54:51.820441+00:00",
+  "required_checks_verified_at": "2026-09-21T16:52:25.302412+00:00",
   "tracked_open_count": 60,
   "tracked_historical_count": 63,
   "queue_candidates": [
@@ -21,8 +21,10 @@
     650,
     651,
     652,
+    654,
     659,
     679,
+    682,
     683
   ],
   "excluded_closed_prs": [
@@ -66,7 +68,7 @@
       "check_response_timeout_minutes": 45
     },
     "required_signatures": true,
-    "ahead_base_chain_audit_at": "2026-09-21T15:58:35.588524+00:00"
+    "ahead_base_chain_audit_at": "2026-09-21T16:52:25.302412+00:00"
   },
   "check_selection": "Latest run ID and then start time for each workflow/name; earlier cancelled/failed checks retained in raw snapshot, not counted as current.",
   "limitations": [
@@ -78,7 +80,7 @@
     "cuRobo VLM FAIL and earlier managed visualization failures remain; repaired CPU consumption is a separate result.",
     "Open3D local CPU scene inspection does not establish standard SkyPilot lifecycle, calibrated geometry accuracy or robot usefulness.",
     "SeedVR earlier quality/operation failures remain; no new quality acceptance is inferred.",
-    "Cursor monthly quota stopped further turns; Codex recovery is explicitly attributed. This audit made no public/PR metadata changes."
+    "Cursor monthly quota stopped further turns; Codex recovery is explicitly attributed. Root promoted654 and682 after separate exact-current-source audits; no merge or enqueue occurred."
   ],
   "workloads": [
     {
@@ -96,8 +98,8 @@
     },
     {
       "workload": "SeedVR2",
-      "current_result": "Frozen r8 passed independent source review, 72 focused tests and four exact-image CPU startup controls. The first H100 provisioning attempt failed with a provider create-request timeout (exit 2); its owned resources were removed. A second supported attempt reached a typed insufficient-H100-capacity failure, was cancelled through the owning NPA process (exit 130), and was fully cleaned up. Authoritative reads confirm both attempts' exact clusters and node groups are absent. No r8 candidate Job or quality acceptance is claimed. Earlier r7 startup and 3B/7B quality failures remain failed. A provider-timeout source repair is under independent review; native Terraform parsing found a single-line-provider regression in its first candidate, which remains blocked.",
-      "remaining_acceptance": "Review a supported alternative GPU placement prospectively; complete provider-repair source and live lifecycle gates before operational use. Run the frozen paired experiment only after GPU readiness passes. Original thresholds and untouched held-out data remain unchanged.",
+      "current_result": "Both failed H100 attempts were authoritatively cleaned up. The provider source and prospective H200 plan were reviewed; its first full run found two dependency-lock checks. The corrected exact source requires a fresh passing full run. The old operation lease still requires supported terminal reconciliation. No candidate GPU Job or new quality acceptance exists. Original 3B/7B numerical quality failures, r7 startup failure and first provider-parser regression remain failed.",
+      "remaining_acceptance": "Complete provider repair/full/security and supported lease reconciliation. Freeze actual accepted H200 provision source and fresh authority checks; after real GPU readiness, independently bind the H200 helper/evaluator before running the unchanged paired experiment.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/0db7db260bbc526061a26c3a16999f94e92b705f/docs/testing/evidence/seedvr-h100-exact-b8d9c9c5/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/6a4815bcdccff143168b4853a3d2cdb822d4d3a8/docs/testing/evidence/seedvr-7b-h100-diagnostic/README.md"
@@ -109,7 +111,7 @@
     },
     {
       "workload": "RoboCasa",
-      "current_result": "Published bab1ad918 retains its failed hosted security gate. The separately reviewed b5a4a4b3 private candidate reached a real image build: normal LeRobot derivative resolution and ACT behavior checks passed, but final pip check failed on unresolved RoboCasa and robosuite dependency contracts. No candidate image was produced and no new GPU run occurred. The failure is retained. A successor is being prepared with complete hash-locked dependencies and an explicitly disclosed packaging-only RoboCasa derivative; it requires new independent review before rebuilding.",
+      "current_result": "The b5a image build failed final dependency checks. Independent review accepted functional37d plus license correction9b07 for an authorized private build; no new image or GPU result is inferred. Required notices/corresponding source, image qualification, full suite and real policy evaluation remain. All28 mandatory dependency requirements match the lock; the real Dataset/checkpoint/NPA adapter gate was source-reviewed. Exact666 focused tests and zero-new-regression security receipts were independently verified. The new image still has to execute its build gates.",
       "remaining_acceptance": "Complete dependency closure and review; rebuild and qualify the exact image, then run matched real GPU policy evaluation and current-source full/hosted CI.",
       "proof_links": []
     },
@@ -130,7 +132,7 @@
     },
     {
       "workload": "Open3D",
-      "current_result": "The exact e62/a6 private image complete-byte reconciliation is accepted: raw scanner exit 1 and all 269 findings remain retained, with 19 reconciliation gates passing. Six shipped local CLI stages exited zero; 24 independent numeric/hash/geometry checks passed. The public native capture and sanitized recording preserve all 17 geometry arrays. A fresh anonymous browser fetched the exact 8,105,428-byte recording across CORS, verified its hash, decoded it, and rendered both inspected panes. Fused points: 6,341; mesh: 14,736 vertices/28,206 triangles. The scene remains nonwatertight and nonmanifold. Four hosted visual calls include an empty-geometry control and identity prompts that expose prompt sensitivity; a thinking-setting protocol deviation remains disclosed. This is inspection evidence, not calibrated geometry accuracy or robot usefulness. Published source 487a8c6da is independently bound to the accepted image and the f916 full suite: 24,307 passed, 154 skipped, one non-strict xpass. Supported SkyPilot lifecycle acceptance and current hosted CI remain separate.",
+      "current_result": "The exact e62/a6 private image complete-byte reconciliation is accepted: raw scanner exit 1 and all 269 findings remain retained, with 19 reconciliation gates passing. Six shipped local CLI stages exited zero; 24 independent numeric/hash/geometry checks passed. The public native capture and sanitized recording preserve all 17 geometry arrays. A fresh anonymous browser fetched the exact 8,105,428-byte recording across CORS, verified its hash, decoded it, and rendered both inspected panes. Fused points: 6,341; mesh: 14,736 vertices/28,206 triangles. The scene remains nonwatertight and nonmanifold. Four hosted visual calls include an empty-geometry control and identity prompts that expose prompt sensitivity; a thinking-setting protocol deviation remains disclosed. This is inspection evidence, not calibrated geometry accuracy or robot usefulness. Published source 487a8c6da is independently bound to the accepted image and the f916 full suite: 24,307 passed, 154 skipped, one non-strict xpass. Supported SkyPilot lifecycle acceptance and current hosted CI remain separate. The remaining hosted base-image inventory failure was disk exhaustion during scan preparation. A shared repair completed all8 native base scans on a dev host; its54.83GB combined peak motivates per-image CI isolation, which is not yet hosted-runner-qualified.",
       "remaining_acceptance": "Supported SkyPilot workflow/lifecycle proof and current hosted CI. Public native/browser captures and recording review are complete in their stated local-execution scope; geometry and VLM limitations remain.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/3fa3d6246971cba310a4eb6e62ac53763d16e5de/docs/testing/evidence/open3d-inspectable-scene-a6c05625/README.md",
@@ -150,8 +152,8 @@
     },
     {
       "workload": "Agent metadata",
-      "current_result": "Published52dfa35d repairs only the latest capability-audit fixture while retaining the real production credential-provenance guard. Independent positive/negative controls pass; one guard-bypass mutant is detected by both negative cases. One uninterrupted Linux full suite passed25,140 tests,155 skips and1 non-strict xpass. Native trusted-base scanners retain609 base/609 candidate findings and zero new regressions. The cumulative PR still changes production code; only this successor delta is test-only. The original hosted failure and Darwin reaper failure remain retained. Unconfigured audit paths still report credential errors; no real credentials were supplied to hermetic tests. Fresh current-head hosted CI remains pending.",
-      "remaining_acceptance": "Fresh exact-head hosted CI and required merge-queue integration; no GPU/VLM gate applies to this fixture repair.",
+      "current_result": "Published52dfa35d repairs only the latest capability-audit fixture while retaining the real production credential-provenance guard. Independent positive/negative controls pass; one guard-bypass mutant is detected by both negative cases. One uninterrupted Linux full suite passed25,140 tests,155 skips and1 non-strict xpass. Native trusted-base scanners retain609 base/609 candidate findings and zero new regressions. The cumulative PR still changes production code; only this successor delta is test-only. The original hosted failure and Darwin reaper failure remain retained. Unconfigured audit paths still report credential errors; no real credentials were supplied to hermetic tests. Root now marked654 ready: all21 current checks are terminal (19 successful,2 skipped), all5 ahead-base signatures verified and mergeability CLEAN.",
+      "remaining_acceptance": "Required merge-queue integration. GPU/VLM testing is not applicable to this nonvisual runtime change.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/b83b862e1469d0bfa22ae7c8bffae11db6b1c9b3/docs/testing/evidence/agent-metadata-test-repair-09d0fa9f/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/d218a386dc5fbedf2833477a5651f3cc3b4c0fe2/docs/testing/evidence/agent-provenance-audit-52dfa35d/README.md"
@@ -200,8 +202,8 @@
     },
     {
       "workload": "Workflow recovery, config and cleanup",
-      "current_result": "Exact accepted source and full suites:679(25,280),682(25,283),684(25,281), each155 skips and1 non-strict xpass. PR679 is now fully verified for the required merge queue. PR683 also closed its reproduced admission-authority/pull-policy findings, passed25,399 full tests and real local Kubernetes boundary/cleanup checks, and is root-promoted at the same accepted tree with verified signed history.",
-      "remaining_acceptance": "679/683 require merge-queue integration.682/684 still require terminal current-head hosted CI. Local public-fixture Pod proof is not authenticated private-registry or cloud/GPU validation.",
+      "current_result": "Exact accepted source and full suites:679(25,280),682(25,283),684(25,281), each155 skips and1 non-strict xpass. PR679 is now fully verified for the required merge queue. PR683 also closed its reproduced admission-authority/pull-policy findings, passed25,399 full tests and real local Kubernetes boundary/cleanup checks, and is root-promoted at the same accepted tree with verified signed history. PR682 is now ready with all21 current checks terminal (19 successful,2 skipped), valid signature and CLEAN mergeability.",
+      "remaining_acceptance": "679/682/683 require merge-queue integration;684 still awaits terminal current-head CI. Local public-fixture Pod proof does not establish authenticated private-registry or cloud/GPU validation.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/a2002707fd3255cac80e5323dceb36cc274c910d/docs/testing/evidence/kubernetes-pull-authority-33f670a5/README.md",
         "https://github.com/nebius/nebius-physical-ai/pull/679",
@@ -224,7 +226,10 @@
       "merge_state": "UNKNOWN",
       "status": "Merged; excluded from open queue candidates",
       "note": "GitHub reports this tracked PR merged. This audit did not merge it. Its record remains historical and is not counted as an open queue candidate.",
-      "check_counts": {},
+      "check_counts": {
+        "SUCCESS": 19,
+        "SKIPPED": 3
+      },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
       "required_checks": [],
@@ -246,8 +251,8 @@
       "status": "Signatures repaired; fresh CI pending",
       "note": "The current complete ahead-base chain is now GitHub-verified after the separately reviewed history repair. Fresh checks on the rewritten head remain incomplete; this PR is excluded from confirmed queue candidates.",
       "check_counts": {
-        "SUCCESS": 6,
-        "PENDING": 10,
+        "SUCCESS": 8,
+        "PENDING": 8,
         "SKIPPED": 2
       },
       "applicable_ci_passes": false,
@@ -359,8 +364,8 @@
       "base_commit": "3e2ffdda360ab777d80dc9de685bd06060919a22",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
-      "status": "H100 provisioning failed; exact operation recovery in progress",
-      "note": "Both failed provisioning attempts cleaned up; GPU placement and provider repair under review",
+      "status": "H200 plan reviewed; provider and lease recovery gates remain",
+      "note": "Both failed H100 attempts were authoritatively cleaned up. The provider source and prospective H200 plan were reviewed; its first full run found two dependency-lock checks. The corrected exact source requires a fresh passing full run. The old operation lease still requires supported terminal reconciliation. No candidate GPU Job or new quality acceptance exists.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -421,7 +426,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -482,8 +487,8 @@
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
-      "status": "Private derivative source accepted; new image build started",
-      "note": "Private candidate build failed final dependency check; successor repair in progress",
+      "status": "Dependency and license corrections accepted for private build; GPU proof pending",
+      "note": "The b5a image build failed final dependency checks. Independent review accepted functional37d plus license correction9b07 for an authorized private build; no new image or GPU result is inferred. Required notices/corresponding source, image qualification, full suite and real policy evaluation remain.",
       "check_counts": {
         "SUCCESS": 9,
         "PENDING": 6,
@@ -529,7 +534,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -719,7 +724,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -781,8 +786,8 @@
       "status": "Signatures repaired; fresh CI pending",
       "note": "The current complete ahead-base chain is now GitHub-verified after the separately reviewed history repair. Fresh checks on the rewritten head remain incomplete; this PR is excluded from confirmed queue candidates.",
       "check_counts": {
-        "SUCCESS": 6,
-        "PENDING": 10,
+        "SUCCESS": 8,
+        "PENDING": 8,
         "SKIPPED": 2
       },
       "applicable_ci_passes": false,
@@ -830,7 +835,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -950,7 +955,10 @@
       "merge_state": "CLEAN",
       "status": "Closed: superseded by #614",
       "note": "Excluded from open and delivered-improvement counts.",
-      "check_counts": {},
+      "check_counts": {
+        "SUCCESS": 14,
+        "SKIPPED": 4
+      },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
       "required_checks": [],
@@ -1031,7 +1039,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -1089,7 +1097,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1204,7 +1212,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1432,7 +1440,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1548,12 +1556,12 @@
       "mergeable": "MERGEABLE",
       "merge_state": "UNSTABLE",
       "status": "Changed head; current acceptance gates remain",
-      "note": "Prior evidence remains tied to its recorded source. Current head and checks are captured here; exact successor acceptance is stated separately where verified.",
+      "note": "Signature-only source-equivalent repair retained. Current Gitleaks job failed downloading its pinned tool with HTTP504 before scanning; targeted retry was refused while the parent workflow remains active. Original failure is retained; parent615 and terminal CI remain required.",
       "check_counts": {
+        "CANCELLED": 16,
         "SUCCESS": 5,
         "PENDING": 10,
-        "SKIPPED": 3,
-        "CANCELLED": 3,
+        "SKIPPED": 4,
         "FAILURE": 2
       },
       "applicable_ci_passes": false,
@@ -1674,10 +1682,9 @@
       "status": "Both numeric GPU matrices and repaired CPU consumer pass; final gates remain",
       "note": "The 49fed65d/c85e8718 image passed all four numeric cells in both 5,200-row matrices: B200 5,162 successful/38 failed or invalid; RTX 5,166/34. Both managed workflows failed at visualization; those failures and verified cleanup remain retained. Cursor's repaired consumer486 passed independent 111-test, 5,200-row and actual retained B200/RTX journal CPU checks. Published 0b0accdd is the AST-equivalent Codex formatting successor and passed one uninterrupted 24,243-test full suite, with 154 skips and 1 non-strict xpass. Current CI, exact updated-image qualification and visual acceptance remain open; the retained VLM result is FAIL. No new GPU rerun or robot-safety claim follows.",
       "check_counts": {
-        "SUCCESS": 6,
-        "PENDING": 9,
-        "SKIPPED": 2,
-        "IN_PROGRESS": 1
+        "SUCCESS": 10,
+        "PENDING": 6,
+        "SKIPPED": 2
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -1887,7 +1894,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -1945,7 +1952,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -2115,8 +2122,10 @@
       "status": "Accepted stack; ancestors must land first",
       "note": "Accepted against its current feature base; ancestors must land, then retarget/rebase and refresh review and checks. The previous warning incorrectly combined superseded failed/cancelled checks with the latest successful same-source run. The retained remediation review matches this source.",
       "check_counts": {
+        "CANCELLED": 15,
         "SUCCESS": 14,
-        "SKIPPED": 4
+        "SKIPPED": 5,
+        "FAILURE": 2
       },
       "applicable_ci_passes": true,
       "required_checks_app_and_source_verified": true,
@@ -2493,7 +2502,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -2876,7 +2885,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -2932,7 +2941,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -2990,7 +2999,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -3050,9 +3059,10 @@
       "status": "Changed head; current acceptance gates remain",
       "note": "Prior evidence remains tied to its recorded source. Current head and checks are captured here; exact successor acceptance is stated separately where verified.",
       "check_counts": {
+        "CANCELLED": 15,
         "SUCCESS": 20,
-        "CANCELLED": 1,
-        "SKIPPED": 2
+        "SKIPPED": 3,
+        "FAILURE": 2
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": true,
@@ -3096,21 +3106,19 @@
       "title": "Harden agent metadata credential request paths",
       "source_commit": "52dfa35d470642f632a845e4fb20002c0d35b218",
       "state": "OPEN",
-      "draft": true,
+      "draft": false,
       "base": "main",
       "base_commit": "99be7d39f4481aa2c29f72204175698da1a7a258",
       "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Repair source and full suite pass; fresh hosted CI pending",
-      "note": "Published52dfa35d repairs only the latest capability-audit fixture while retaining the real production credential-provenance guard. Independent positive/negative controls pass; one guard-bypass mutant is detected by both negative cases. One uninterrupted Linux full suite passed25,140 tests,155 skips and1 non-strict xpass. Native trusted-base scanners retain609 base/609 candidate findings and zero new regressions. The cumulative PR still changes production code; only this successor delta is test-only. The original hosted failure and Darwin reaper failure remain retained. Unconfigured audit paths still report credential errors; no real credentials were supplied to hermetic tests. Fresh current-head hosted CI remains pending.",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
-        "SUCCESS": 4,
-        "IN_PROGRESS": 5,
-        "SKIPPED": 2,
-        "QUEUED": 7
+        "SUCCESS": 19,
+        "SKIPPED": 2
       },
-      "applicable_ci_passes": false,
-      "required_checks_app_and_source_verified": false,
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -3126,6 +3134,14 @@
           "source_commit": "52dfa35d470642f632a845e4fb20002c0d35b218",
           "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35622427363/job/106408492713",
+          "passes_required_identity": true
+        },
+        {
+          "name": "security-regression",
+          "app_id": 15368,
+          "source_commit": "52dfa35d470642f632a845e4fb20002c0d35b218",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35622427363/job/106421366143",
           "passes_required_identity": true
         }
       ],
@@ -3144,6 +3160,13 @@
         "failed": 0,
         "errors": 0,
         "log_sha256": "17f65eb99a9ad85a32e50cce8f22fd3c205f08f6997198bccac9578b9fe8a8f0"
+      },
+      "ahead_base_signature_audit": {
+        "base_commit": "99be7d39f4481aa2c29f72204175698da1a7a258",
+        "ahead_commit_count": 5,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
       }
     },
     {
@@ -3159,7 +3182,12 @@
       "merge_state": "BLOCKED",
       "status": "Closed: experimental work not delivered",
       "note": "Excluded from open and delivered-improvement counts.",
-      "check_counts": {},
+      "check_counts": {
+        "SUCCESS": 10,
+        "SKIPPED": 4,
+        "CANCELLED": 3,
+        "FAILURE": 1
+      },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
       "required_checks": [],
@@ -3179,7 +3207,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 14,
         "SKIPPED": 4
@@ -3248,8 +3276,8 @@
       "base_commit": "eb75a05d1dda3d391d75b8cdad0754460ab3b5f8",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
-      "status": "Scoped source review retained; current CI incomplete",
-      "note": "Current-source review acceptance does not replace pending CI, draft promotion, merge-queue integration or any separate workload gate.",
+      "status": "Hosted proof and CI pass; prerequisite and full-suite environment closure remain",
+      "note": "Real hosted proof and current-source CI pass. PR596 remains an explicit prerequisite; the retained local full run failed four detection tests because optional Torch was absent. No new local full pass or post-parent request-byte equivalence is claimed.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -3282,7 +3310,9 @@
           "passes_required_identity": true
         }
       ],
-      "depends_on": [],
+      "depends_on": [
+        596
+      ],
       "public_proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/4c017e2db23b270e2ef114b698f43dc9cd98b716/docs/testing/evidence/kimi-k3-disclosed-controls-a26a868e/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e5f4210090dac2d1a1880bdffdc33a9e042c102b/docs/testing/evidence/apriltag-kimi-k3-production-census/README.md"
@@ -3301,7 +3331,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Accepted source, uninterrupted applicable local gates, all applicable exact-head checks and app-bound required checks pass. The complete ahead-base signature chain is GitHub-verified. Required merge-queue integration remains; this audit did not enqueue or merge the PR. Exact-source full suite:25,280 passed,155 skipped,1 non-strict xpass; prior eight prerequisite failures remain historical.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 3
@@ -3423,21 +3453,19 @@
       "title": "fix(workflow): reject missing explicit SkyPilot config",
       "source_commit": "a934e081f5c93dfb07e0811fe0392508c6c34035",
       "state": "OPEN",
-      "draft": true,
+      "draft": false,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
       "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Source and full suite accepted; hosted CI pending",
-      "note": "Exact published source and uninterrupted full suite are independently accepted (25283 passed,155 skipped,1 non-strict xpass). Current exact-head hosted checks remain incomplete; no queue readiness is claimed.",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
-        "SUCCESS": 13,
-        "SKIPPED": 2,
-        "PENDING": 2,
-        "IN_PROGRESS": 1
+        "SUCCESS": 19,
+        "SKIPPED": 2
       },
-      "applicable_ci_passes": false,
-      "required_checks_app_and_source_verified": false,
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -3453,6 +3481,14 @@
           "source_commit": "a934e081f5c93dfb07e0811fe0392508c6c34035",
           "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35567805198/job/106233009833",
+          "passes_required_identity": true
+        },
+        {
+          "name": "security-regression",
+          "app_id": 15368,
+          "source_commit": "a934e081f5c93dfb07e0811fe0392508c6c34035",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35567805198/job/106419837609",
           "passes_required_identity": true
         }
       ],
@@ -3472,6 +3508,13 @@
         "wrapper_exit_code": 0,
         "finished_at": "2026-09-21T12:00:40.409224+00:00",
         "log_sha256": "4c19c201b5b21948e328af512f2bfae01e106bdea75dc252951607c0025a0bdc"
+      },
+      "ahead_base_signature_audit": {
+        "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
+        "ahead_commit_count": 1,
+        "all_ahead_commits_captured": true,
+        "all_verified": true,
+        "unverified_commits": []
       }
     },
     {
@@ -3486,7 +3529,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Signed published43e60003 has exactly the independently accepted33f source tree. All21 applicable checks pass or skip, all required app15368 checks pass, and every ahead-base signature is verified. The uninterrupted full suite passed25,399 tests,155 skips and1 non-strict xpass. Actual local Kubernetes/containerd proof covers six cases, four real Pods, requested placement, public fixture ServiceAccount defaults, pre-create refusals, real pull failure and exact-UID cleanup; cluster absence was independently verified. Root marked the PR ready. This is local CPU boundary proof, not private-registry credential success, a cloud-target/GPU test, or physical-safety proof.",
+      "note": "Accepted source and applicable validation; current source-bound GitHub Actions checks and complete ahead-base signatures are verified. Required merge-queue integration remains.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 2
@@ -3562,9 +3605,8 @@
       "status": "Source and full suite accepted; hosted CI pending",
       "note": "Exact published source and uninterrupted full suite are independently accepted (25281 passed,155 skipped,1 non-strict xpass). Current exact-head hosted checks remain incomplete; no queue readiness is claimed.",
       "check_counts": {
-        "SUCCESS": 11,
+        "SUCCESS": 15,
         "SKIPPED": 2,
-        "PENDING": 4,
         "IN_PROGRESS": 1
       },
       "applicable_ci_passes": false,
@@ -3619,9 +3661,9 @@
       "status": "Generic source and full local suite accepted; hosted CI pending",
       "note": "Exact 73d5bb7e0 is independently accepted for the generic SSH host-key layer repair. The final uninterrupted suite passed 25,280 tests, 155 skips and one non-strict xpass; the original Cursor terminal exit 0, exact command/source and byte-identical log are independently verified. Both earlier prerequisite-failure runs remain retained. The source-equivalent private Evo image supplies 12 verified ancestor layers with zero host-key entries and two disjoint startup-key sets. This scoped generic fix can close independently of Evo/AprilTag capability qualification. Current CI, draft closure and required merge queue remain.",
       "check_counts": {
-        "SUCCESS": 10,
-        "PENDING": 6,
-        "SKIPPED": 2
+        "SUCCESS": 13,
+        "SKIPPED": 2,
+        "PENDING": 3
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -3672,9 +3714,10 @@
       "status": "Exact source and full local suite pass; hosted CI pending",
       "note": "Exact 2f9032465 source is accepted and retains production helper bytes from the ed24 proof producer. Published same-image controls demonstrate HIGH private-key detection previously hidden by CRITICAL filtering; the fixable-CRITICAL vulnerability policy is retained. The uninterrupted full local suite finished at 10:11 UTC with 25,299 passed, 155 skipped, one non-strict xpass and zero failures/errors in 747.71 seconds. The independently retrieved log matches its retained SHA256 and exact source remained clean and unchanged. Hosted CI remains pending; deterministic copy refusal is not actual public-image publication.",
       "check_counts": {
-        "SUCCESS": 10,
-        "PENDING": 6,
-        "SKIPPED": 2
+        "SUCCESS": 11,
+        "SKIPPED": 2,
+        "PENDING": 4,
+        "IN_PROGRESS": 1
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -3731,9 +3774,10 @@
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "check_counts": {
-        "SUCCESS": 6,
-        "PENDING": 10,
-        "SKIPPED": 2
+        "SUCCESS": 8,
+        "PENDING": 7,
+        "SKIPPED": 2,
+        "IN_PROGRESS": 1
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -3795,7 +3839,7 @@
   "count_definition": {
     "tracked_historical": "63 records:60 open,1 merged579,2 closed611/656; not delivered features.",
     "excluded": "Abandoned duplicate685 and unowned689 excluded.",
-    "queue_candidates": "17 accepted, non-draft main PRs have passing applicable/app-bound checks, CLEAN mergeability and complete verified signature chains. Required merge-queue integration remains.",
+    "queue_candidates": "19 accepted, non-draft main PRs have passing applicable/app-bound checks, CLEAN mergeability and complete verified signature chains. Required merge-queue integration remains.",
     "signature_pending": "No unresolved signature in audited candidates; rewritten581/608/615 wait for fresh CI.",
     "delivered_improvement_count": null
   },
@@ -3813,6 +3857,16 @@
       "pr": 683,
       "at": "2026-09-21T16:02:07.532743+00:00",
       "reason": "Published agent repair or root draft closure after main snapshot"
+    },
+    {
+      "pr": 654,
+      "at": "2026-09-21T16:43:12.790025+00:00",
+      "reason": "Root verified final CI/signatures and removed draft"
+    },
+    {
+      "pr": 682,
+      "at": "2026-09-21T16:46:30.992421+00:00",
+      "reason": "Root verified final CI/signatures and removed draft"
     }
   ],
   "program_execution": {
@@ -3820,10 +3874,14 @@
     "recovery": "Scoped Codex recovery and validation continue with explicit attribution; completed Cursor work and failed attempts remain retained.",
     "no_blanket_worker_liveness_claim": true
   },
-  "root_operational_update_at": "2026-09-21T16:09:23.075801+00:00",
+  "root_operational_update_at": "2026-09-21T16:54:51.820610+00:00",
   "fresh_ci_after_signature_repair": [
     581,
     608,
     615
-  ]
+  ],
+  "audit_receipts_sha256": {
+    "github-pr-state.private.json": "7d78cf0206f1bf2ead1e7e96e874486a9b8947cd30fd21b42d9ede756670158b",
+    "ready-signatures-checks.private.json": "dfd9c8e2cd42ebeebcb37000c7d932571400224fe30126fcb489d34d9d255dba"
+  }
 }
