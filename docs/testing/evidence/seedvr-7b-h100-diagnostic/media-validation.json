@@ -1,0 +1,37 @@
+{
+  "files": {
+    "bicubic.mp4": {
+      "bytes": 81998,
+      "codec": "h264",
+      "duration_seconds": 2.0,
+      "fps": "50/1",
+      "frames": 100,
+      "height": 480,
+      "sha256": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+      "width": 640
+    },
+    "restored-7b.mp4": {
+      "bytes": 210739,
+      "codec": "h264",
+      "duration_seconds": 2.0,
+      "fps": "50/1",
+      "frames": 100,
+      "height": 480,
+      "sha256": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70",
+      "width": 640
+    }
+  },
+  "generated_detail_is_sensor_truth": false,
+  "light_output": {
+    "bytes": 124695,
+    "codec": "h264",
+    "duration_seconds": 0.5,
+    "fps": "50/1",
+    "frames": 25,
+    "height": 480,
+    "published": false,
+    "sha256": "b84813dc9438964e09c55e6dda4fa3e41a63d3bcae9f353c7a2abeba26bfdc9a",
+    "width": 640
+  },
+  "schema": "npa.seedvr2.7b-public-media.v1"
+}

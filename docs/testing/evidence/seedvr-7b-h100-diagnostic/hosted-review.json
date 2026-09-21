@@ -1,0 +1,789 @@
+{
+  "annotation": {
+    "accepted": false,
+    "baseline_video_sha256": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+    "candidate_video_sha256": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70",
+    "corrected_anchors": [
+      32
+    ],
+    "execution_contract_sha256": "5c42fe8595a8828ecb178daa674bc55762e0e24eb48acf346b90622557e7ee8c",
+    "gates": {
+      "all_responses_schema_valid": true,
+      "candidate_corrected_at_least_one_baseline_error": true,
+      "candidate_exact_tuple_not_below_baseline": true,
+      "candidate_introduced_no_new_critical_error": false,
+      "controls_passed": true
+    },
+    "manifest_sha256": "085e1debda772ad9f178bcc60f2da45a9a743f8762105af0aedc608d751ffa89",
+    "methods": {
+      "baseline": {
+        "all_fields": {
+          "correct": 8,
+          "total": 27
+        },
+        "critical_errors": [
+          {
+            "anchor_frame": 48,
+            "expected": "stationary",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "moving"
+          }
+        ],
+        "exact_tuple": {
+          "correct": 1,
+          "total": 9
+        },
+        "schema_valid": true,
+        "task_scene_accepted": {
+          "count": 5,
+          "total": 9
+        }
+      },
+      "candidate": {
+        "all_fields": {
+          "correct": 15,
+          "total": 27
+        },
+        "critical_errors": [
+          {
+            "anchor_frame": 60,
+            "expected": "stationary",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "moving"
+          },
+          {
+            "anchor_frame": 96,
+            "expected": "partially_visible",
+            "field": "bottle_visibility",
+            "kind": "visible_out_of_view_contradiction",
+            "predicted": "out_of_view"
+          },
+          {
+            "anchor_frame": 96,
+            "expected": "grasped",
+            "field": "gripper_contact",
+            "kind": "grasp_state_contradiction",
+            "predicted": "none"
+          },
+          {
+            "anchor_frame": 76,
+            "expected": "moving",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "stationary"
+          }
+        ],
+        "exact_tuple": {
+          "correct": 2,
+          "total": 9
+        },
+        "schema_valid": true,
+        "task_scene_accepted": {
+          "count": 9,
+          "total": 9
+        }
+      }
+    },
+    "model": "MiniMaxAI/MiniMax-M3",
+    "new_candidate_critical_errors": [
+      {
+        "anchor_frame": 60,
+        "field": "bottle_motion",
+        "kind": "motion_state_contradiction"
+      },
+      {
+        "anchor_frame": 76,
+        "field": "bottle_motion",
+        "kind": "motion_state_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "bottle_visibility",
+        "kind": "visible_out_of_view_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "gripper_contact",
+        "kind": "grasp_state_contradiction"
+      }
+    ],
+    "raw_summary_sha256": "733e6fbea545c154778348065a9c4a3bb7911f0b017973e171de5b9a09f4d26d",
+    "response_count": 20,
+    "returned_models": [
+      "MiniMaxAI/MiniMax-M3"
+    ],
+    "rows": [
+      {
+        "anchor_frame": 32,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": false
+        },
+        "item_id": "item-000",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "7af9c230329f64bef55f07a899c9be40b1d41fd8c881f6f2188e21d32912d4f6",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 16,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": false
+        },
+        "item_id": "item-001",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "51b0cf3a3740576472ee6c23b6de74111de617fe3cadaaf602038682d37bf7a5",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 68,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-002",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "69ac8d85025975358ce20918b37f590f667001eef4e609d9bb85f2f4ba7d6817",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 60,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-003",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "36a9cba52040f20fbaca7dd84b8c8e7b42d8910790c25b278eb11d096226b8d8",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 84,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-004",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "cff00bf9ff435f2bf75a35a0b226293d8fdbbac2d6e1c1d0b66a4745f7d916cd",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 68,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "item_id": "item-005",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "46365c48498bbb52b44bd3ea3b5f3347ca18378d7f4525cfca654876483626a7",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 76,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-006",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "478d5f131bc6c1c2bbaa7a8cd78e6b7c4471fcfc9420f9907f15549575fb3b76",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 0,
+        "critical_errors": [],
+        "exact_tuple": true,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "none"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": true
+        },
+        "item_id": "item-007",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "3350c4445c0317dc95ad8b1e3ee72fe259295c9f9a504dd4514c354b8f3f6ef6",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 60,
+        "critical_errors": [
+          {
+            "anchor_frame": 60,
+            "expected": "stationary",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "moving"
+          }
+        ],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "item_id": "item-008",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "aa132cb332bdbc4f0ea138df26430046013ae4290698802bb2d5bcec85024a12",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 48,
+        "critical_errors": [
+          {
+            "anchor_frame": 48,
+            "expected": "stationary",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "moving"
+          }
+        ],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-009",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "e49821959018b122989394bd4b60ddb75cdb999470f5f01df01d4e4a6fbce362",
+        "schema_errors": []
+      },
+      {
+        "control": "blank",
+        "item_id": "item-010",
+        "kind": "control",
+        "passed": true,
+        "raw_response_sha256": "e55eeafc3c317de49f739f9c56efba1799d6ca1fbfeba780dd2f46afc445a66d",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 96,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-011",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "aa86ca62e90290f15f596fb13f4bd1e7894c8191cfb187a5af12225e72e7b08e",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 96,
+        "critical_errors": [
+          {
+            "anchor_frame": 96,
+            "expected": "partially_visible",
+            "field": "bottle_visibility",
+            "kind": "visible_out_of_view_contradiction",
+            "predicted": "out_of_view"
+          },
+          {
+            "anchor_frame": 96,
+            "expected": "grasped",
+            "field": "gripper_contact",
+            "kind": "grasp_state_contradiction",
+            "predicted": "none"
+          }
+        ],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-012",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "2a34f3a98b18f04f0a7f81847a59146aa9e8731e7d0d98db4fd7cf3b4cfd511c",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 48,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "item_id": "item-013",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "10c0a567c2dbd1d9b77ab701963f84c979c1a141b9d72c4276dcb6d8742d91bb",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 0,
+        "critical_errors": [],
+        "exact_tuple": true,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "none"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": true
+        },
+        "item_id": "item-014",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "959923bec935d94805e842efae08e649d820da8ec92f06b4992118995768ca17",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 32,
+        "critical_errors": [],
+        "exact_tuple": true,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": true
+        },
+        "item_id": "item-015",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "a77d17d198d505178bb27fad609654c11a6e7c696bc0ef4d784cf0a6ceccd539",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 76,
+        "critical_errors": [
+          {
+            "anchor_frame": 76,
+            "expected": "moving",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "stationary"
+          }
+        ],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "item_id": "item-016",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "df408a04b6bd60affe1eded9c8b65d598cafc7e862e9685aae1fe3074b7758c7",
+        "schema_errors": []
+      },
+      {
+        "control": "unrelated",
+        "item_id": "item-017",
+        "kind": "control",
+        "passed": true,
+        "raw_response_sha256": "5bc595ba14f88595d8e3f55a7eb58e88d7e496fa8deac2a20bbce7816fa41880",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 84,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "item_id": "item-018",
+        "kind": "annotation",
+        "method": "candidate",
+        "raw_response_sha256": "549bf18c2e48573010cd9d03a902c4d1855acad696ebf9caad8888965e93ca7d",
+        "schema_errors": []
+      },
+      {
+        "anchor_frame": 16,
+        "critical_errors": [],
+        "exact_tuple": false,
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": false
+        },
+        "item_id": "item-019",
+        "kind": "annotation",
+        "method": "baseline",
+        "raw_response_sha256": "1c9f6714fec3c8e1e86b279e0d4d1df915397963b341f5b0aad6ca29d0806464",
+        "schema_errors": []
+      }
+    ],
+    "scorer_sha256": "618635b6c12c23114ab5988c92d522edca84e5eaea224eaa7b8e647016c33b8b",
+    "source_score_sha256": "c51d7ab9d744ad9174fabeda350bc7f9eb3bb72be7f608c234812eec0eb01a56",
+    "usefulness_outcome": "fail"
+  },
+  "objective_failure_unchanged": true,
+  "overall_acceptance": false,
+  "schema": "npa.seedvr2.7b-hosted-review-public.v1",
+  "verdict": "Annotation FAIL due four new critical contradictions; visual preference is non-gating and cannot override objective failure.",
+  "visual": {
+    "acceptance_authority": false,
+    "candidate_video_sha256": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70",
+    "comparison_manifest_sha256": "d9c781d9902cfea49b184bd439c200a8c39fc72678d59a558de1c825d114dcab",
+    "critical_failure_count": 0,
+    "limitations": [
+      "All raw responses and exact submitted image hashes are retained, but every hosted visual judge tested pre-candidate was disqualified under the frozen calibration scorer.",
+      "The frozen objective gate failed and cannot be overridden by visual preference.",
+      "This post-response blinded-panel opening is non-gating visual evidence and has no acceptance authority."
+    ],
+    "model": "moonshotai/Kimi-K2.6",
+    "preference_counts": {
+      "candidate": 7,
+      "equivalent": 2
+    },
+    "rows": [
+      {
+        "anchor_frame": 0,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "No blank frames, unrelated content, mismatched runs, reversed order, duplicates within panels, or synthetic artifacts detected. Both panels are valid and complete."
+        },
+        "item_sha256": "87e49cd8de77ae8594bba5c1aed208f321a0e425c329669991f0cd9e43d1986b",
+        "panel_a_defects": [
+          "none"
+        ],
+        "panel_b_defects": [
+          "none"
+        ],
+        "preference_reason": "Both panels depict the exact same scene, object states, motion sequence, and temporal progression. No discernible difference in legibility, scene preservation, chronological consistency, or visual quality. Both appear to be duplicate renderings of the same underlying sequence.",
+        "preferred_method": "equivalent",
+        "preferred_panel": "equivalent",
+        "raw_response_sha256": "15a7f6ebafcec534b9c79cb2e427b8379255087aa1bd923a8eee4802a68c7408",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 16,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "none"
+        },
+        "item_sha256": "2808039e46713f78c991a1d7a0f5210893f53aa61629758c3513d1bd30569a22",
+        "panel_a_defects": [
+          "none"
+        ],
+        "panel_b_defects": [
+          "temporal_inconsistency"
+        ],
+        "preference_reason": "Panel A shows natural physical interaction where bottle position shifts in response to approaching gripper, providing legible interaction state. Panel B has frozen bottle position despite gripper motion, making the interaction state harder to interpret and less physically plausible.",
+        "preferred_method": "candidate",
+        "preferred_panel": "A",
+        "raw_response_sha256": "ba008830f189c60b40a826daf1429cb9a4f761426c45522ec57b699c74868c0a",
+        "same_scene_and_interval": true,
+        "temporal_defect": "B",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 32,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "none"
+        },
+        "item_sha256": "e28b1dd6d66d6065ca2347b6b965c88ad1af402857b2a6ec3f9e368eb7de8fe9",
+        "panel_a_defects": [
+          "slight_blur",
+          "mild_compression_artifacts"
+        ],
+        "panel_b_defects": [
+          "slight_blur",
+          "mild_compression_artifacts",
+          "possible_label_texture_difference"
+        ],
+        "preference_reason": "Panel B shows clearer bottle label detail with more legible white banding on the green bottle, making the object state more discernible. The gripper-bottle spatial relationship is slightly more defined in Panel B, aiding annotation of approach trajectory. Panel A appears marginally softer on the bottle texture.",
+        "preferred_method": "candidate",
+        "preferred_panel": "B",
+        "raw_response_sha256": "5434dfbefa040610aa0ee4fbdbb07e4bd11425a97d61449b50ead933e153b945",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 48,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "No critical failures detected. Both panels show valid, matched sequences from the same scene and interval."
+        },
+        "item_sha256": "ebfd21ae821d173f5ef76908fc26848d72f914984273fba7b3169c9062179c6f",
+        "panel_a_defects": [
+          "slight_blur_in_motion_regions",
+          "mild_compression_artifacts"
+        ],
+        "panel_b_defects": [
+          "slight_blur_in_motion_regions"
+        ],
+        "preference_reason": "Panel B shows marginally cleaner edges on the gripper and bottle, with slightly reduced blur/ringing artifacts compared to Panel A. The gripper-bottle interaction state is more legible in Panel B, particularly at frame 48 where the spatial relationship between gripper fingers and bottle neck is clearer. Panel A exhibits subtle oversharpening or compression artifacts around high-contrast edges (gripper shadows, bottle label).",
+        "preferred_method": "candidate",
+        "preferred_panel": "B",
+        "raw_response_sha256": "95ecb50ee7d836a90a6437863b56d753c0119eeea5dd710567695d3406a333ca",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 60,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "none"
+        },
+        "item_sha256": "e308f7892927f378c4146fc00cb3240692beb36d6da997d6cf3c85fb3005c7d0",
+        "panel_a_defects": [
+          "slight_blur_on_bottle_label",
+          "moderate_motion_blur"
+        ],
+        "panel_b_defects": [
+          "minor_sharpness_artifacts_possible"
+        ],
+        "preference_reason": "Panel B shows superior legibility of the bottle label and gripper-object interaction details. The white label on the green bottle is more clearly readable in Panel B, making it more useful for precise annotation of grasp state. Both panels show the same scene and temporal sequence, but Panel B has better preservation of fine texture detail without apparent downsides.",
+        "preferred_method": "candidate",
+        "preferred_panel": "B",
+        "raw_response_sha256": "99dedece73db31a40d0f50aeca19acfd39975c3480d7b4395c5ac673d2c7031f",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 68,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "none"
+        },
+        "item_sha256": "bb06f54e72599fb586522ed981986e0fe4cce9c66ebd230c02cbe7965c8c89a6",
+        "panel_a_defects": [
+          "slight_blur_in_motion_regions"
+        ],
+        "panel_b_defects": [
+          "reduced_sharpness",
+          "lower_contrast",
+          "softer_edges",
+          "possible_compression_artifacts"
+        ],
+        "preference_reason": "Panel A has superior legibility of the bottle/gripper interaction state with sharper edges, better contrast, and clearer definition of contact geometry. The gripper fingers and bottle boundaries are more distinct, making precise annotation of interaction state easier.",
+        "preferred_method": "candidate",
+        "preferred_panel": "A",
+        "raw_response_sha256": "315db8c144128f322da8da6ab713f43c2859639251b7eefd62e62271b7dc2cb6",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 76,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "No blank frames, unrelated content, mismatched runs, duplicated frames, reversed order, or unsupported synthetic content detected in either panel."
+        },
+        "item_sha256": "c03d6596f0af78b030ba6e995f79d43500bfeaef139f930fc49a954fa6452822",
+        "panel_a_defects": [
+          "slight_blur_or_compression_artifacts",
+          "low_texture_detail_on_white_surface"
+        ],
+        "panel_b_defects": [
+          "slight_blur_or_compression_artifacts",
+          "low_texture_detail_on_white_surface"
+        ],
+        "preference_reason": "Both panels show identical scene content, object states, and temporal progression. No meaningful difference in legibility of bottle/gripper interaction, scene preservation, or temporal consistency. Both appear to be the same run with no distinguishing quality differences visible.",
+        "preferred_method": "equivalent",
+        "preferred_panel": "equivalent",
+        "raw_response_sha256": "2463317c95e903f8d2ca412649a28bd05bb3db8cdbd8c359b817d4916c83badb",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 84,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "none"
+        },
+        "item_sha256": "c1684139d65b6bde82ed3acf3cfbbbd0d4543b44bd854b1139231b395d13d374",
+        "panel_a_defects": [
+          "none"
+        ],
+        "panel_b_defects": [
+          "blurring",
+          "reduced_sharpness"
+        ],
+        "preference_reason": "Panel A has superior legibility with sharper edges on gripper fingers and bottle, clearer shadow definition, and better preserved texture detail on the white surface and objects. Panel B exhibits noticeable blur that reduces precision in identifying contact points between gripper and bottle.",
+        "preferred_method": "candidate",
+        "preferred_panel": "A",
+        "raw_response_sha256": "40a384fac9e374a948d45825ecc2f8591f1e8f8d27f501c6a68be837b991c41e",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      },
+      {
+        "anchor_frame": 96,
+        "critical_failure": {
+          "kind": "none",
+          "panel": "none",
+          "present": false,
+          "visible_evidence": "none"
+        },
+        "item_sha256": "0883f68b56684d008a94f51c02163745f661bc9fdf9192260a34303f4a2d9f60",
+        "panel_a_defects": [
+          "clipping"
+        ],
+        "panel_b_defects": [
+          "clipping",
+          "motion_blur"
+        ],
+        "preference_reason": "Panel A has sharper frame 88 with clearer bottle/gripper interaction detail and more legible label texture. Panel B's frame 88 exhibits motion blur on the manipulated object, reducing clarity of the critical grasping state. Both panels show identical clipping progression in frames 96 and 99.",
+        "preferred_method": "candidate",
+        "preferred_panel": "A",
+        "raw_response_sha256": "8e1881737b5862448ca965a6d5f7dec1c580c676cf8e64fca224f83b0743decf",
+        "same_scene_and_interval": true,
+        "temporal_defect": "none",
+        "unsupported_detail": "none"
+      }
+    ],
+    "run_summary_sha256": "59717b27defbf983f3eee188123527f0c58bbe86be8a9dda8e24ea1f4ecb1a4c",
+    "scoring_status": "non_gating_only_no_prequalified_hosted_judge_and_objective_failed",
+    "source_summary_sha256": "2897396eaa3ac4f47ed258aceae8039b18b7dadfae47b3a53250701dca1ed339",
+    "temporal_defect_counts": {
+      "B": 1,
+      "none": 8
+    },
+    "unsupported_detail_counts": {
+      "none": 9
+    }
+  }
+}

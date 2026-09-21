@@ -1,0 +1,64 @@
+{
+  "acceptance": "FUNCTIONAL_DIAGNOSTIC_PASS_OBJECTIVE_AND_ANNOTATION_FAIL",
+  "annotation_score_sha256": "c51d7ab9d744ad9174fabeda350bc7f9eb3bb72be7f608c234812eec0eb01a56",
+  "diagnostic_only": true,
+  "generated_detail_is_sensor_truth": false,
+  "hardware": "NVIDIA H100 80GB HBM3, compute capability 9.0, non-MIG",
+  "image_digest": "sha256:5b4258c7a3be29962c928237fa2d46bcc9667db02757349ad114033df21db7ca",
+  "inputs": {
+    "light": "44013573e65c7b64f92deac1acaeb4828abb860cad3696d99e6808ddee81149e",
+    "main": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4"
+  },
+  "model": {
+    "files": {
+      "ema_vae.pth": {
+        "bytes": 1002691902,
+        "repository": "ByteDance-Seed/SeedVR2-7B",
+        "revision": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+        "sha256": "c7df8a67e68b7f9aca3d5d2153d2ce8ab4373687741a0f9ce87cb356ace51cac"
+      },
+      "neg_emb.pt": {
+        "bytes": 656540,
+        "repository": "ByteDance-Seed/SeedVR2-3B",
+        "revision": "37255ff8cccfb01071b87f635a5948ca8d53117c",
+        "sha256": "6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581"
+      },
+      "pos_emb.pt": {
+        "bytes": 595100,
+        "repository": "ByteDance-Seed/SeedVR2-3B",
+        "revision": "37255ff8cccfb01071b87f635a5948ca8d53117c",
+        "sha256": "fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799"
+      },
+      "seedvr2_ema_7b.pth": {
+        "bytes": 32958774606,
+        "repository": "ByteDance-Seed/SeedVR2-7B",
+        "revision": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+        "sha256": "e1b2ae25505607e61f2a7dc7967ba778aaf3e3626d9969ce6e24c52d9ddebfcd"
+      }
+    },
+    "repository": "ByteDance-Seed/SeedVR2-7B",
+    "revision": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+    "weights_baked": false
+  },
+  "npa_source_revision": "b8d9c9c56d8adc2ec76a5a41fd37e97e0069e2f4",
+  "objective_report_sha256": "a454938dd35c3bb4a899701e536020fafc1a945ef9591165007b0ddb336e68d1",
+  "optional_color_fix_used": false,
+  "outputs": {
+    "light": "b84813dc9438964e09c55e6dda4fa3e41a63d3bcae9f353c7a2abeba26bfdc9a",
+    "main": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70"
+  },
+  "restore_runtime_identity_is_self_reported": true,
+  "schema": "npa.seedvr2.7b-public-provenance.v1",
+  "separate_platform_receipts_retained": true,
+  "source_video_published": false,
+  "upstream": {
+    "adapter_sha256": "9b432bf00e13334c707b9675fa5aa85acae3407986a159ef43e8e527a55d5063",
+    "config_sha256": "d2d58ff62257064d85ee502959c22953e1e86ccc50ae03c87bd2b54c11ba11a8",
+    "entrypoint_sha256": "a245f65566d0ab80c25e09d47b24fe2adda482ffa8591a4661facc4930b8d11e",
+    "patched_entrypoint_sha256": "5779c90e1d26b0d9062dc0cf4da87776ada9912d5db4a9903a9dc104a12039b5",
+    "repository": "https://github.com/ByteDance-Seed/SeedVR",
+    "revision": "e4de8c24441a67e1b7df56abea10645059bb1185"
+  },
+  "visual_summary_sha256": "2897396eaa3ac4f47ed258aceae8039b18b7dadfae47b3a53250701dca1ed339",
+  "weights_baked_or_published": false
+}

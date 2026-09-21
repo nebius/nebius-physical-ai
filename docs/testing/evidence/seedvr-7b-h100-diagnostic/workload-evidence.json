@@ -1,0 +1,145 @@
+{
+  "acceptance_boundary": "Functional direct source-overlay diagnostic on H100; not a shipped workflow or 7B product claim.",
+  "artifact_hashes": {
+    "light_restored_video": "b84813dc9438964e09c55e6dda4fa3e41a63d3bcae9f353c7a2abeba26bfdc9a",
+    "main_restored_video": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70",
+    "reservation": "26317008a94471b7d8862c5f9f6373097b10f99373217e747b6881821b173d44",
+    "upstream_log": "27eed5d1f6b8a6ed756c5bb2359355a6d802eb5fb745d9fe61ccbf67e6863d83"
+  },
+  "candidate_preflight_sha256": "caa2ecbfaada70d92fe7c48fe67c11227a53cf2770344c6d9f9f6deacb417b52",
+  "cleanup_log_sha256": "4915c64576f0641c5bf02466e63018ae4b67a4a7d60c37afa8a2b40ce8ef170e",
+  "downloaded_inventory_sha256": "01ac7238bd5022a5856fbfcd88e8e0fcb1d1cd9a7f23839ceb153030e4036c68",
+  "finished_at": "2026-09-21T04:27:07.923821+00:00",
+  "inputs": {
+    "light": {
+      "media": {
+        "bytes": 92479,
+        "codec": "h264",
+        "duration_seconds": 0.5,
+        "fps": "50/1",
+        "frames": 25,
+        "height": 480,
+        "width": 640
+      },
+      "sha256": "44013573e65c7b64f92deac1acaeb4828abb860cad3696d99e6808ddee81149e"
+    },
+    "main": {
+      "media": {
+        "bytes": 13793,
+        "codec": "h264",
+        "duration_seconds": 2.0,
+        "fps": "50/1",
+        "frames": 100,
+        "height": 240,
+        "width": 320
+      },
+      "sha256": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4"
+    }
+  },
+  "kubernetes_job_receipt_sha256": "78b1a821df717db56c14c63422920434be90f780365fd1c78f7e18ed54c6574f",
+  "kubernetes_pod_receipt_sha256": "7ccfb5b69daf84d3c90cad5671c38d0488ef8b932045e5b30f68bd1f5526cf85",
+  "limitations": [
+    "This is a 7B source-overlay diagnostic, not shipped 7B support.",
+    "Generated detail is a review aid, not observed sensor truth.",
+    "Heavy degradation and large motion can fail or create unpleasant detail.",
+    "Light degradation and small inputs can be oversharpened."
+  ],
+  "model": {
+    "files": {
+      "ema_vae.pth": {
+        "bytes": 1002691902,
+        "repository": "ByteDance-Seed/SeedVR2-7B",
+        "revision": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+        "sha256": "c7df8a67e68b7f9aca3d5d2153d2ce8ab4373687741a0f9ce87cb356ace51cac"
+      },
+      "neg_emb.pt": {
+        "bytes": 656540,
+        "repository": "ByteDance-Seed/SeedVR2-3B",
+        "revision": "37255ff8cccfb01071b87f635a5948ca8d53117c",
+        "sha256": "6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581"
+      },
+      "pos_emb.pt": {
+        "bytes": 595100,
+        "repository": "ByteDance-Seed/SeedVR2-3B",
+        "revision": "37255ff8cccfb01071b87f635a5948ca8d53117c",
+        "sha256": "fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799"
+      },
+      "seedvr2_ema_7b.pth": {
+        "bytes": 32958774606,
+        "repository": "ByteDance-Seed/SeedVR2-7B",
+        "revision": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+        "sha256": "e1b2ae25505607e61f2a7dc7967ba778aaf3e3626d9969ce6e24c52d9ddebfcd"
+      }
+    },
+    "repository": "ByteDance-Seed/SeedVR2-7B",
+    "revision": "eb0c4281d41ba3767d4f14370f0e37e9e9180c16",
+    "weights_baked": false
+  },
+  "outputs": {
+    "light": {
+      "derived_sensor_truth": false,
+      "media": {
+        "bytes": 124695,
+        "codec": "h264",
+        "duration_seconds": 0.5,
+        "fps": "50/1",
+        "frames": 25,
+        "height": 480,
+        "width": 640
+      },
+      "sha256": "b84813dc9438964e09c55e6dda4fa3e41a63d3bcae9f353c7a2abeba26bfdc9a",
+      "unique_decoded_frames": 25
+    },
+    "main": {
+      "derived_sensor_truth": false,
+      "media": {
+        "bytes": 210739,
+        "codec": "h264",
+        "duration_seconds": 2.0,
+        "fps": "50/1",
+        "frames": 100,
+        "height": 480,
+        "width": 640
+      },
+      "sha256": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70",
+      "unique_decoded_frames": 100
+    }
+  },
+  "runner": {
+    "path": "/overlay/run_seedvr2_7b_diagnostic_v3.py",
+    "python": "/opt/npa-venv/bin/python",
+    "sha256": "138635157515f65897d5d864a8b0d721455a1c9d473366147b058ffdc9830f82"
+  },
+  "runtime": {
+    "color_fix": false,
+    "gpu": {
+      "compute_capability": "9.0",
+      "count": "1",
+      "driver_version": "580.173.02",
+      "memory_mib": "81559",
+      "mig_mode": "Disabled",
+      "name": "NVIDIA H100 80GB HBM3",
+      "status": "available"
+    },
+    "image_digest": "sha256:5b4258c7a3be29962c928237fa2d46bcc9667db02757349ad114033df21db7ca",
+    "npa_source_revision": "b8d9c9c56d8adc2ec76a5a41fd37e97e0069e2f4",
+    "sequence_parallel_size": 1,
+    "workspace_free_bytes_before_download": 1004963483648
+  },
+  "schema": "npa.seedvr2.7b-workload-public.v1",
+  "single_candidate_enforcement": "The output scope was empty immediately before launch; a create-only reservation was written and read back before model download; no second candidate was submitted.",
+  "source": {
+    "config_sha256": "d2d58ff62257064d85ee502959c22953e1e86ccc50ae03c87bd2b54c11ba11a8",
+    "entrypoint_sha256": "a245f65566d0ab80c25e09d47b24fe2adda482ffa8591a4661facc4930b8d11e",
+    "overlay": {
+      "adapter_sha256": "9b432bf00e13334c707b9675fa5aa85acae3407986a159ef43e8e527a55d5063",
+      "patched_source_sha256": "5779c90e1d26b0d9062dc0cf4da87776ada9912d5db4a9903a9dc104a12039b5",
+      "source_sha256": "a245f65566d0ab80c25e09d47b24fe2adda482ffa8591a4661facc4930b8d11e"
+    },
+    "patched_entrypoint_sha256": "5779c90e1d26b0d9062dc0cf4da87776ada9912d5db4a9903a9dc104a12039b5",
+    "repository": "https://github.com/ByteDance-Seed/SeedVR",
+    "revision": "e4de8c24441a67e1b7df56abea10645059bb1185"
+  },
+  "started_at": "2026-09-21T04:20:29.642546+00:00",
+  "status": "ok"
+}

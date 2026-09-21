@@ -1,0 +1,62 @@
+{
+  "decoder": {
+    "binary": "/usr/bin/ffmpeg",
+    "decoded_frames_per_video": 100,
+    "format": "RGB24",
+    "resizing": "none",
+    "sha256": "36d94a605d612e4090d1b8aec889d0c0801c6eafb1593c90f5c0dfd2e2966a45"
+  },
+  "frame60_sheet": [
+    {
+      "column": 0,
+      "exact_pixels_match": true,
+      "frame_index": 60,
+      "role": "source"
+    },
+    {
+      "column": 1,
+      "exact_pixels_match": true,
+      "frame_index": 60,
+      "role": "bicubic"
+    },
+    {
+      "column": 2,
+      "exact_pixels_match": true,
+      "frame_index": 60,
+      "role": "restored_7b"
+    }
+  ],
+  "schema": "npa.seedvr2.7b-public-pixel-verification.v1",
+  "six_frame_sheet": [
+    {
+      "exact_pixels_match": true,
+      "frame_index": 0,
+      "tile_index": 0
+    },
+    {
+      "exact_pixels_match": true,
+      "frame_index": 20,
+      "tile_index": 1
+    },
+    {
+      "exact_pixels_match": true,
+      "frame_index": 40,
+      "tile_index": 2
+    },
+    {
+      "exact_pixels_match": true,
+      "frame_index": 60,
+      "tile_index": 3
+    },
+    {
+      "exact_pixels_match": true,
+      "frame_index": 80,
+      "tile_index": 4
+    },
+    {
+      "exact_pixels_match": true,
+      "frame_index": 99,
+      "tile_index": 5
+    }
+  ]
+}

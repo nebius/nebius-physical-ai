@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-21T04:45:01.169959+00:00",
+  "scope": "Independent exact panel and sampled tile comparison using the originally bound Linux decoder; no resizing or retouching.",
+  "decoder_sha256": "36d94a605d612e4090d1b8aec889d0c0801c6eafb1593c90f5c0dfd2e2966a45",
+  "decoder_version": "ffmpeg version 4.4.2-0ubuntu0.22.04.1 Copyright (c) 2000-2021 the FFmpeg developers",
+  "video_hashes": {
+    "source": "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198",
+    "bicubic": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+    "restored_7b": "55f360f78105390607ea71d93fea4e9b1bc2207d29ac728bd782a265b99b7b70"
+  },
+  "frame60_exact_panels": 3,
+  "sampled_sheet_exact_tiles": 6,
+  "image_hashes": {
+    "frame60-source-bicubic-7b.png": "ce6131a5f633416cdfe090389a6cc6d189660896e2870c6b6030895e192a17d2",
+    "restored-7b-six-frames.png": "8512ed2a1a282e179f2be0edb2e16a4672c383473580133af5554308a9a0918d"
+  },
+  "limit": "A separate local macOS ffmpeg8.1 comparison had1-2 channel-value rounding differences and was not credited as an exact match."
+}
