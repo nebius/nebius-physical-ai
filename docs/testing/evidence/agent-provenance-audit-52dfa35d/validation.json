@@ -1,0 +1,54 @@
+{
+  "source_head": "52dfa35d470642f632a845e4fb20002c0d35b218",
+  "source_tree": "5a42dfd87f4a39870469b925211139b33a5d7a0b",
+  "base": "99be7d39f4481aa2c29f72204175698da1a7a258",
+  "full_linux_cpu_suite": {
+    "passed": 25140,
+    "failed": 0,
+    "skipped": 155,
+    "deselected": 0,
+    "xfailed": 0,
+    "xpassed": 1,
+    "errors": 0,
+    "seconds": 885.09,
+    "repository_live_gpu_e2e_exclusions": true,
+    "source_unchanged": true,
+    "log_sha256": "17f65eb99a9ad85a32e50cce8f22fd3c205f08f6997198bccac9578b9fe8a8f0",
+    "independent_receipt_sha256": "ae3135220baea6ad09552b77303384fb1103caab7e1cda63fc06d6114bbaf84c"
+  },
+  "new_test_fixture": {
+    "focused_passed": 8,
+    "guard_bypass_mutants": 1,
+    "negative_cases_detecting_mutant": 2,
+    "review_receipt_sha256": "b46927ce01be3d02e886014427ffc4cd3c0ce549b32ffacc804e4efbdb3344b2"
+  },
+  "native_security": {
+    "scanner_regression_workload": "pass",
+    "base_findings": 609,
+    "candidate_findings": 609,
+    "new_regressions": 0,
+    "candidate_application_installed_in_scanner_environment": false,
+    "receipt_sha256": "d69bdd388a90a064e5f3a3cd8af45e461b739eb163c6f9b25eca5b2e69a93afb"
+  },
+  "source_binding": {
+    "production_source_identical_to": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
+    "latest_delta": "one test file; credential guard and audit classifier unchanged",
+    "github_signature_verified": true
+  },
+  "retained_failure": {
+    "earlier_hosted_audit": "healthy test fixture lacked required credential provenance",
+    "darwin_affected_tests": {
+      "passed": 228,
+      "failed": 1,
+      "cause": "unchanged Linux descendant reaper calls os.waitid, unavailable on Darwin",
+      "log_sha256": "2c57be3805bd30b099fdd764d00f3214f034d48ff63e79114347f119f7ca988f"
+    }
+  },
+  "limits": [
+    "Full local suite is separate from hosted coverage and current-head CI.",
+    "Linux backend validation; macOS backend support not established.",
+    "Earlier live CPU evidence remains scoped to its original producer; this fixture repair did not redeploy.",
+    "The historical deployment manifest was not copied before teardown; no new deployed-Python-byte attestation is claimed.",
+    "GPU and VLM evaluation do not apply to this nonvisual agent credential/process change."
+  ]
+}
