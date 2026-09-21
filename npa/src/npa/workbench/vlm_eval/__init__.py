@@ -1430,6 +1430,14 @@ def _hosted_structured_response(
     return _parse_api_structured_response(message, served_model=served_model)
 
 
+def _openai_headers(*, backend: str, api_key_env: str) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
 def _call_openai_compatible(
     *,
     backend: str,
@@ -1446,10 +1454,7 @@ def _call_openai_compatible(
     request, profile = _openai_request(
         backend=backend, model=model, prompt=prompt, frames=frames
     )
-    headers = {"Content-Type": "application/json"}
-    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
+    headers = _openai_headers(backend=backend, api_key_env=api_key_env)
     data = _post_with_readiness_retry(
         url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
     )

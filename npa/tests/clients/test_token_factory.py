@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 from pathlib import Path
 
@@ -534,6 +536,109 @@ def test_kimi_profile_uses_low_reasoning_without_fixed_sampling_fields() -> None
     assert requests[0]["reasoning_effort"] == "low"
     assert "temperature" not in requests[0]
     assert "max_tokens" not in requests[0]
+
+
+@pytest.mark.parametrize(
+    ("model", "suffix"),
+    [
+        (
+            "nvidia/Nemotron-3_5-Lightning",
+            b',"temperature":0.0,"chat_template_kwargs":{"enable_thinking":false}}',
+        ),
+        (
+            "MiniMaxAI/MiniMax-M3",
+            b',"temperature":0.0,"chat_template_kwargs":{"thinking_mode":"disabled"}}',
+        ),
+        ("vendor/explicit-model", b',"temperature":0.0}'),
+        ("moonshotai/Kimi-K3", b',"reasoning_effort":"low"}'),
+    ],
+)
+def test_chat_profile_preserves_literal_request_field_order(model, suffix) -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    _client(handler).chat_completion_text(
+        model=model,
+        messages=[{"role": "user", "content": "task"}],
+    )
+    prefix = (
+        b'{"model":'
+        + json.dumps(model).encode()
+        + b',"messages":[{"role":"user","content":"task"}]'
+    )
+    assert requests == [prefix + suffix]
+
+
+def test_model_discrimination_is_centralized_in_chat_profile() -> None:
+    from npa.clients import token_factory
+    from npa.workbench import vlm_eval
+
+    canonical_ids = {
+        "nvidia/Nemotron-3_5-Lightning",
+        "MiniMaxAI/MiniMax-M3",
+        "moonshotai/Kimi-K3",
+    }
+    client_tree = ast.parse(inspect.getsource(token_factory))
+    profile_assignment = next(
+        node
+        for node in ast.walk(client_tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_CHAT_PROFILES"
+            for target in node.targets
+        )
+    )
+    profile_literals = {
+        node.value
+        for node in ast.walk(profile_assignment)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    allowed_assignments = [
+        node
+        for node in ast.walk(client_tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and (target.id.startswith("DEFAULT_") or target.id == "_CHAT_PROFILES")
+            for target in node.targets
+        )
+    ]
+    allowed_literals = {
+        id(node)
+        for assignment in allowed_assignments
+        for node in ast.walk(assignment)
+        if isinstance(node, ast.Constant) and node.value in canonical_ids
+    }
+    all_canonical_literals = {
+        id(node)
+        for node in ast.walk(client_tree)
+        if isinstance(node, ast.Constant) and node.value in canonical_ids
+    }
+    assert profile_literals.issuperset(canonical_ids)
+    assert all_canonical_literals == allowed_literals
+
+    for builder in (
+        token_factory.token_factory_chat_profile,
+        token_factory.default_chat_extra,
+        token_factory._chat_completion_payload,
+        vlm_eval._openai_request,
+    ):
+        tree = ast.parse(inspect.getsource(builder))
+        model_comparisons = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Compare, ast.Match))
+            and any(
+                isinstance(child, ast.Name) and child.id == "model"
+                for child in ast.walk(node)
+            )
+        ]
+        assert model_comparisons == []
 
 
 def test_explicit_kimi_extra_wins_over_direct_output_profile() -> None:

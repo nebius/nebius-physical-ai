@@ -85,6 +85,9 @@ class TokenFactoryChatProfile:
     def default_extra(self) -> dict[str, Any]:
         """Build fresh default request fields for this profile.
 
+        Args:
+            None.
+
         Returns:
             Model-specific top-level request fields.
 
@@ -153,6 +156,44 @@ def default_chat_extra(model: str) -> dict[str, Any]:
     """
 
     return token_factory_chat_profile(model).default_extra()
+
+
+def _chat_completion_payload(
+    *,
+    model: str,
+    messages: Sequence[dict[str, Any]],
+    temperature: float,
+    max_tokens: int | None,
+    response_format: dict[str, Any] | None,
+    extra: dict[str, Any] | None,
+) -> dict[str, Any]:
+    profile = token_factory_chat_profile(model)
+    payload: dict[str, Any] = {"model": model, "messages": list(messages)}
+    if profile.include_temperature:
+        payload["temperature"] = temperature
+    payload.update(profile.default_extra())
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if extra:
+        template = payload.get("chat_template_kwargs", {})
+        payload.update(extra)
+        if isinstance(extra.get("chat_template_kwargs"), dict):
+            payload["chat_template_kwargs"] = {
+                **template,
+                **extra["chat_template_kwargs"],
+            }
+    return payload
+
+
+def _validate_chat_completion_input(
+    model: str, messages: Sequence[dict[str, Any]]
+) -> None:
+    if not model:
+        raise TokenFactoryError("model is required")
+    if not messages:
+        raise TokenFactoryError("messages must be a non-empty sequence")
 
 
 @dataclass(frozen=True)
@@ -353,34 +394,35 @@ class TokenFactoryClient:
         response_format: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Issue a chat-completion request and return the parsed JSON payload."""
+        """Issue a chat-completion request.
 
-        if not model:
-            raise TokenFactoryError("model is required")
-        if not messages:
-            raise TokenFactoryError("messages must be a non-empty sequence")
+        Args:
+            model: Exact hosted model or dedicated-endpoint identifier.
+            messages: OpenAI-compatible chat messages.
+            temperature: Ordinary sampling temperature when the profile permits it.
+            max_tokens: Optional caller-selected output-token limit.
+            response_format: Optional caller-selected response format.
+            extra: Explicit provider fields applied after profile defaults.
 
-        profile = token_factory_chat_profile(model)
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": list(messages),
-            **profile.default_extra(),
-        }
-        if profile.include_temperature:
-            payload["temperature"] = temperature
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        if response_format is not None:
-            payload["response_format"] = response_format
-        if extra:
-            template = payload.get("chat_template_kwargs", {})
-            payload.update(extra)
-            if isinstance(extra.get("chat_template_kwargs"), dict):
-                payload["chat_template_kwargs"] = {
-                    **template,
-                    **extra["chat_template_kwargs"],
-                }
+        Returns:
+            The parsed JSON response object.
 
+        Raises:
+            TokenFactoryError: If inputs or the provider response are invalid.
+        """
+
+        _validate_chat_completion_input(model, messages)
+        payload = _chat_completion_payload(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            extra=extra,
+        )
+        return self._chat_completion_response(payload)
+
+    def _chat_completion_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = self._post_json(self._config.chat_completions_url, payload)
         if not isinstance(data, dict):
             raise TokenFactoryError("Token Factory returned a non-object response")
