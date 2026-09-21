@@ -1,0 +1,152 @@
+{
+  "current_pr_source": {
+    "relation": "Image was produced at e62. Later shipped runtime.py docstring describes synthetic input accurately; executable AST unchanged. Other successors changed nonshipped prose and formatter-only tests. This is not an image built from487.",
+    "revision": "487a8c6da403d1a7fef63e8d26979d136004219d"
+  },
+  "dataset": {
+    "archive_sha256": "b94e0146c1d48c5edfc11af71b4af39ffca604485668c55a127c3b43203a6bd5",
+    "license": "CC BY3.0; accompanying attribution and changes notice required",
+    "name": "Open3D DemoICPPointClouds, release20220301-data; Redwood augmented ICL-NUIM synthetic living-room benchmark",
+    "nature": "Modeled indoor scene and simulated sensor noise, not a fresh real-sensor capture"
+  },
+  "execution": {
+    "fused_points": 6341,
+    "input_fragment_points": 528065,
+    "input_fragments": 3,
+    "pose_graph_edges": 3,
+    "pose_graph_nodes": 3,
+    "stage_exit_codes": {
+      "multiway": 0,
+      "reconstruct": 0,
+      "register": 0,
+      "stage-demo": 0,
+      "validate": 0,
+      "visualize": 0
+    }
+  },
+  "frozen_parameters": {
+    "density_quantile": 0.02,
+    "icp_estimation": "point_to_plane",
+    "poisson_depth": 9,
+    "support_distance_factor": 1.0,
+    "voxel_size": 0.05
+  },
+  "independent_output_review": {
+    "all_checks_pass": true,
+    "checks": {
+      "coverage_metrics_recomputed": true,
+      "fragment_byte_hashes": true,
+      "fused_byte_hash": true,
+      "fused_points_count": true,
+      "graph_fitness_matches_correspondence_fraction": true,
+      "graph_icp_fitness_summary": true,
+      "graph_icp_inlier_rmse_summary": true,
+      "graph_journal_digest": true,
+      "graph_pair_count": true,
+      "graph_proper_rigid_transforms": true,
+      "mesh_byte_hashes": true,
+      "pair_journal_digest": true,
+      "pairs_fitness_matches_correspondence_fraction": true,
+      "pairs_icp_fitness_summary": true,
+      "pairs_icp_inlier_rmse_summary": true,
+      "pairs_pair_count": true,
+      "pairs_proper_rigid_transforms": true,
+      "rrd_bytes_hash": true,
+      "source_manifest_digest": true,
+      "supported_mesh_counts": true,
+      "supported_reported_unsupported_area": true,
+      "supported_vertex_distance_metrics": true,
+      "uncropped_reported_unsupported_area": true,
+      "uncropped_vertex_distance_metrics": true
+    },
+    "report_sha256": "7a2b7b110e16f192f07d77086cad8119a42dacff2ab53843afecced3d80fdd37"
+  },
+  "metric_interpretation": {
+    "coverage": "Distances from the6341 fused/downsampled cloud samples to the supported mesh. This is not measured coverage of the entire scene or every original fragment point.",
+    "icp": "Fitness and inlier RMSE measure agreement of transformed cloud pairs, not absolute ground-truth pose error.",
+    "support": "A triangle counts unsupported when a vertex exceeds the frozen distance to observed fused-cloud samples. Sparse correct surfaces can exceed it; removal is not proof of fabrication.",
+    "topology": "The supported mesh is not watertight, edge-manifold or vertex-manifold. No physics-ready or completeness claim."
+  },
+  "metrics": {
+    "coverage": {
+      "fraction_within_two_voxels": 0.9996845923355937,
+      "fraction_within_voxel": 0.9927456237186564,
+      "sample_to_surface_p95": 0.022179409861564636,
+      "sample_to_surface_rmse": 0.010833634994924068
+    },
+    "graph_icp_fitness": {
+      "max": 0.7459679467181299,
+      "mean": 0.6805316580509793,
+      "min": 0.6210677194658888
+    },
+    "graph_icp_inlier_rmse": {
+      "max": 0.007243658005133795,
+      "mean": 0.0067442013441124,
+      "min": 0.006424206488271183
+    },
+    "pairs_icp_fitness": {
+      "max": 0.7459679467181299,
+      "mean": 0.6835178330920093,
+      "min": 0.6210677194658888
+    },
+    "pairs_icp_inlier_rmse": {
+      "max": 0.007243659931560267,
+      "mean": 0.006904199735246239,
+      "min": 0.0065647395389322105
+    },
+    "supported": {
+      "is_edge_manifold": false,
+      "is_vertex_manifold": false,
+      "is_watertight": false,
+      "max_vertex_distance_to_sample": 0.04999510770347187,
+      "median_vertex_distance_to_sample": 0.019093525221919073,
+      "p95_vertex_distance_to_sample": 0.03597756910535006,
+      "surface_area": 10.514146446035735,
+      "triangles": 28206,
+      "unsupported_area_fraction": 0.0,
+      "unsupported_triangle_area": 0.0,
+      "vertices": 14736
+    },
+    "uncropped": {
+      "is_edge_manifold": false,
+      "is_vertex_manifold": true,
+      "is_watertight": false,
+      "max_vertex_distance_to_sample": 0.9053369257995862,
+      "median_vertex_distance_to_sample": 0.021895147769687255,
+      "p95_vertex_distance_to_sample": 0.21817264490072977,
+      "surface_area": 22.244905403954604,
+      "triangles": 36660,
+      "unsupported_area_fraction": 0.5273458684087471,
+      "unsupported_triangle_area": 11.730758957918871,
+      "vertices": 18413
+    }
+  },
+  "producer": {
+    "image_index_sha256": "a6c05625dd796ed1c25f3192a5078a604da64e76d7a0d96531d88cc4954587c0",
+    "runtime_manifest_sha256": "d7eaa4275bba783c504b4eeb8d66f5fac5bf8ae7e6c092db620e5e9d403a58e6",
+    "source_revision": "e62ab7073b8b8235decd7d8013ac58b7bba802b1"
+  },
+  "retained_original_artifact_sha256": {
+    "graph/fused.ply": "5c023503951aebac6b1d0f9c64771dec448dd4827693dd236a0de766a0f6cc49",
+    "graph/pairs.jsonl": "1d312fd5c54ba87ea9ea700029b41054568391ce0a73c4920d20b9d8badf9e10",
+    "graph/pose_graph.json": "22984049c01069ebc95d0911286d1406a31e494503c70b5bdd49052e44816c24",
+    "graph/result.json": "3e1066a9dd01020f19c7bd5a4039bdbccb4d7a614d95fbcbc97f92d18986c44c",
+    "pairs/aligned/cloud_bin_0__cloud_bin_1.ply": "7d753cbcaaae65da0ac3122ad0e41c4a63ee80582ce9e4ee685e641cc5d614e7",
+    "pairs/aligned/cloud_bin_1__cloud_bin_2.ply": "2d05bb49ad7e80803f5e76361aae02489c031f428c9310d102c26e24cb513bd8",
+    "pairs/pairs.jsonl": "eb35d0d3a5798f65bd8f552bb8b24b0300474e9fcf867187b087b3e2da2e4168",
+    "pairs/result.json": "920e0ff2b7af7e828d74c7e55ac34fac32be2ea58cb82ca6acd6fd02b6e86c12",
+    "prepared/fragments/cloud_bin_0.pcd": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+    "prepared/fragments/cloud_bin_1.pcd": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+    "prepared/fragments/cloud_bin_2.pcd": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+    "prepared/manifest.json": "51cf830b0182ce68c17953b1c8392a4c420eb75c7d5486afcebb749026d2a968",
+    "reports/point_cloud.rrd": "4799271fe08072cb85221c5018055a74548e2b4b322045c01b3e1cf8b80ed96b",
+    "reports/rrd-manifest.json": "19de645c611ffee8fe44c19f22615993a49a2e0b3c2ae7ce8fe687d63fa30642",
+    "surface/mesh.ply": "8efdf225178681364c4310f0345d7e6f4f3371970ce4a51828f7d141cae74127",
+    "surface/mesh_uncropped.ply": "3c3fb5bb385b4a47002b6bb12f701e51d04a4b15740737733ad53860b043eabc",
+    "surface/result.json": "54d3c16898d9e5f82936a09f783b25c154370b10fa0a99ad53e0b4a53363292c",
+    "validation/validation.json": "312e1fb8345a679317ba10b61fbf24451dfaffb0085c1dc3188af5dfc12e166d"
+  },
+  "review_separation": "Native-view presentation and any hosted VLM judgment are separate reports. Neither proves numerical accuracy, physical safety, or task success.",
+  "schema": "npa.open3d.local-cpu-measurements.v1",
+  "scope": "Real execution of six shipped Open3D CLI stages in private CPU containers on synthetic benchmark data. This is not a SkyPilot workflow replay or physical robot validation."
+}

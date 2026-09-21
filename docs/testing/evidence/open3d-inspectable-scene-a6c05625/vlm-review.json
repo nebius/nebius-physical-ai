@@ -1,0 +1,150 @@
+{
+  "schema": "npa.open3d.hosted-visual-review.v1",
+  "review_scope": "Descriptive inspection of one native rendered frame. Actual hosted provider API calls; this is not a validation of the shipped workbench vlm-eval CLI. No numeric score, quality threshold, geometry accuracy or safety gate.",
+  "provider": "Nebius Token Factory",
+  "model_requested": "MiniMaxAI/MiniMax-M3",
+  "request_settings": {
+    "temperature": 0.0,
+    "max_tokens": 900,
+    "image_encoding": "Exact unresized, uncropped PNG bytes in base64 data URL",
+    "thinking_parameter_sent": false
+  },
+  "frozen_plan_sha256": "c2b238a78b5948c6ceaf1fd1364b403c692c21103a1560f0d461506c130fd7e3",
+  "frozen_plan_discrepancy": {
+    "declared": "thinking_mode=disabled",
+    "actual": "No explicit thinking parameter was sent. The provider returned nonzero reasoning-token usage, recorded per call. The original private freeze is preserved without rewriting it after responses.",
+    "effect": "Do not claim a disabled-thinking evaluation configuration."
+  },
+  "calls": [
+    {
+      "call": "subject",
+      "purpose": "the actual review of the final native capture",
+      "frozen_expectation": "a description of visible geometry; no expected verdict is fixed in advance",
+      "image_file": "native-view.png",
+      "image_sha256": "86dcfdf977db3876f1af89b871e9837bc7d9723dc9e6d76f47378dd629a90ee5",
+      "prompt": "You are reviewing a screenshot of a 3D viewer for an engineer who has to decide what to inspect next. Describe only what is visible in the image.\n\nAnswer these four questions, each in two or three sentences:\n\n1. Readability and framing. Is the geometry legible at this size? Is anything clipped by a pane edge, hidden behind another element, or too small to assess? Is any pane empty?\n2. Point data versus surface. Can you distinguish discrete sampled points from a continuous reconstructed surface? Where does each appear?\n3. Completeness cues. Are there visible holes, open boundaries, ragged edges, or regions where a surface appears to bridge across a gap in the underlying data?\n4. What to inspect next. Given only this image, what would you tell the engineer to open or check first, and why?\n\nRules. Report what you can see and say plainly when you cannot tell. Do not estimate accuracy, error, or physical dimensions: nothing in the image supports that. If the image contains no geometry, say so directly rather than describing what the pane labels suggest should be there.",
+      "prompt_sha256": "84849899710ea396e4ef09e508660c031c04d7fd6c194dcf03b20e55273e5e7c",
+      "request_body_sha256": "2f6f6901902edb45291a1d982223fa70b0e336f0fcb7b34c2dd4746cc07f3596",
+      "sent_at_utc": "2026-09-21T12:00:32.240391+00:00",
+      "received_at_utc": "2026-09-21T12:00:36.812021+00:00",
+      "http_status": 200,
+      "provider_created_unix": 1789992034,
+      "model_returned": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 940,
+        "completion_tokens": 611,
+        "total_tokens": 1551,
+        "reasoning_tokens": 353
+      },
+      "raw_response_sha256": "79b74ec6757b10e2d1890b646294e8be0cafc5dadc39a02edfef63d889986712",
+      "raw_response_bytes": 4062,
+      "answer": "1. **Readability and framing.** The geometry is legible in both panes at this size. The left pane shows a larger, closer view of the structure, while the right pane shows the same object at a smaller scale, fitting comfortably within its frame. Nothing appears clipped by pane edges, and neither pane is empty.\n\n2. **Point data versus surface.** Discrete sampled points are visible as the bumpy, granular orange texture covering most of the structure, particularly on the angled roof-like surfaces. Smoother, continuous reconstructed surfaces appear as the gray/white regions, especially on the lower portions and what looks like a protruding element on the right side of the structure.\n\n3. **Completeness cues.** There are visible ragged edges and open boundaries, most notably on the right side of the structure where the geometry tapers off into scattered, sparse points. The left edge also shows irregular boundaries where the surface ends abruptly. I cannot tell from this view whether any surface is bridging across gaps in the underlying data.\n\n4. **What to inspect next.** I would suggest opening the right-side region of the structure first, where the geometry clearly thins out into sparse points and ragged edges \u2014 this is where data coverage appears weakest and any bridging artifacts or missing surface would be most apparent."
+    },
+    {
+      "call": "control_blank",
+      "purpose": "negative control: identical viewer, identical pane labels, no geometry at all",
+      "frozen_expectation": "states that the panes are empty. Describing a reconstruction here would mean the judge reads the labels rather than the pixels, which would invalidate the subject response",
+      "image_file": "control-blank-geometry.png",
+      "image_sha256": "72e7cf8528b2e8d413ec4b71a74f7a2b6b570de6f66624ca55c73d773c4c383b",
+      "prompt": "You are reviewing a screenshot of a 3D viewer for an engineer who has to decide what to inspect next. Describe only what is visible in the image.\n\nAnswer these four questions, each in two or three sentences:\n\n1. Readability and framing. Is the geometry legible at this size? Is anything clipped by a pane edge, hidden behind another element, or too small to assess? Is any pane empty?\n2. Point data versus surface. Can you distinguish discrete sampled points from a continuous reconstructed surface? Where does each appear?\n3. Completeness cues. Are there visible holes, open boundaries, ragged edges, or regions where a surface appears to bridge across a gap in the underlying data?\n4. What to inspect next. Given only this image, what would you tell the engineer to open or check first, and why?\n\nRules. Report what you can see and say plainly when you cannot tell. Do not estimate accuracy, error, or physical dimensions: nothing in the image supports that. If the image contains no geometry, say so directly rather than describing what the pane labels suggest should be there.",
+      "prompt_sha256": "84849899710ea396e4ef09e508660c031c04d7fd6c194dcf03b20e55273e5e7c",
+      "request_body_sha256": "ec9b86405b1f9e532a7e9d6f05ead4491de97caca12a5c3a74863360310fb200",
+      "sent_at_utc": "2026-09-21T12:00:36.816642+00:00",
+      "received_at_utc": "2026-09-21T12:00:40.681707+00:00",
+      "http_status": 200,
+      "provider_created_unix": 1789992038,
+      "model_returned": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 940,
+        "completion_tokens": 438,
+        "total_tokens": 1378,
+        "reasoning_tokens": 169
+      },
+      "raw_response_sha256": "a74fabdf930e8aa79d707564795f53601aac6bead4300407b47951482640179c",
+      "raw_response_bytes": 3029,
+      "answer": "1. **Readability and framing.** Both panes are framed normally with no clipping at the edges, but neither pane contains any visible geometry \u2014 only an empty perspective grid floor receding into a dark purple/blue background. There is nothing to assess because no points, surfaces, or meshes are rendered in either view.\n\n2. **Point data versus surface.** I cannot distinguish point data from a reconstructed surface because neither is visible. The panes show only the empty grid; no discrete points and no continuous surface appear anywhere in the image.\n\n3. **Completeness cues.** No holes, open boundaries, ragged edges, or bridging artifacts can be observed, since there is no geometry present to exhibit them. The image contains no surface or point data to evaluate for completeness.\n\n4. **What to inspect next.** I would tell the engineer that the image itself shows no geometry, so the first thing to check is whether the data has actually loaded into the viewer \u2014 the \"Observed scan only\" / \"Supported surface only\" toggles in the right pane, the scene selection, and the log_time indicator at the bottom left are the only leads visible. If the data is confirmed loaded elsewhere, the next step would be to verify the visibility toggles and camera framing, since the panes appear empty rather than showing a clipped or off-screen model."
+    },
+    {
+      "call": "control_identity_truthful",
+      "purpose": "identity control: the true identity is supplied",
+      "frozen_expectation": "consistent with the subject response; supplying a true identity should not change what is visible",
+      "image_file": "native-view.png",
+      "image_sha256": "86dcfdf977db3876f1af89b871e9837bc7d9723dc9e6d76f47378dd629a90ee5",
+      "prompt": "The image is a screenshot of the Rerun viewer showing an Open3D result: several overlapping scans registered into one frame, plus a Poisson surface reconstructed from them. The input is a synthetic indoor benchmark, not a real sensor capture.\n\nGiven that, answer the four rubric questions below.\n\nYou are reviewing a screenshot of a 3D viewer for an engineer who has to decide what to inspect next. Describe only what is visible in the image.\n\nAnswer these four questions, each in two or three sentences:\n\n1. Readability and framing. Is the geometry legible at this size? Is anything clipped by a pane edge, hidden behind another element, or too small to assess? Is any pane empty?\n2. Point data versus surface. Can you distinguish discrete sampled points from a continuous reconstructed surface? Where does each appear?\n3. Completeness cues. Are there visible holes, open boundaries, ragged edges, or regions where a surface appears to bridge across a gap in the underlying data?\n4. What to inspect next. Given only this image, what would you tell the engineer to open or check first, and why?\n\nRules. Report what you can see and say plainly when you cannot tell. Do not estimate accuracy, error, or physical dimensions: nothing in the image supports that. If the image contains no geometry, say so directly rather than describing what the pane labels suggest should be there.",
+      "prompt_sha256": "67ca7abe0a84c5ba1de9b218a8f05d3092f292d6cf5da7377136d7ccc1ebd49b",
+      "request_body_sha256": "af79e30d129b9dfed84859e2a77748e8a290d167347de913e0caecfbfaa13550",
+      "sent_at_utc": "2026-09-21T12:00:40.688384+00:00",
+      "received_at_utc": "2026-09-21T12:00:45.818067+00:00",
+      "http_status": 200,
+      "provider_created_unix": 1789992043,
+      "model_returned": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 998,
+        "completion_tokens": 698,
+        "total_tokens": 1696,
+        "reasoning_tokens": 401
+      },
+      "raw_response_sha256": "22132e4c5667207bf30097b2221f27e4cb58d555d2662bb95ce62cb995d0af60",
+      "raw_response_bytes": 4562,
+      "answer": "1. **Readability and framing.** The geometry is legible in both panes but rendered fairly small relative to the available viewport, with the right pane showing the same scene at a noticeably reduced scale. Nothing is clipped by a pane edge and no pane is empty, though fine surface detail is hard to assess at this zoom level.\n\n2. **Point data versus surface.** In the left pane you can see a granular, bumpy texture consistent with discrete sampled points alongside smoother shaded regions consistent with a continuous reconstructed surface; the right pane shows only the discrete point cloud, with no smooth surface visible. The orange/brown walls and gray interior elements appear in both, but only the left pane exhibits the smoother Poisson-style fill.\n\n3. **Completeness cues.** The reconstruction has clearly open boundaries \u2014 the structure does not close into a full room, and the right-hand and rear edges fade into ragged, fragmented points rather than a clean surface. There are regions where the smoother surface appears to span across gaps in the underlying points, particularly along the upper wall/roof area and where the gray interior mass meets the orange walls.\n\n4. **What to inspect next.** I would tell the engineer to first open the per-scan alignment view (or the individual fragment streams) to check whether the ragged edges and bridging surfaces correspond to misregistered scans rather than true geometry. After that, isolating the Poisson mesh alone would help confirm whether the bridging regions are reconstruction artifacts versus real surfaces supported by the points."
+    },
+    {
+      "call": "control_identity_false",
+      "purpose": "identity control: a false identity is supplied for the same pixels",
+      "frozen_expectation": "should not manufacture evidence for the false framing. Confirming an outdoor construction site or intensity colourisation would show the response follows the prompt rather than the image",
+      "image_file": "native-view.png",
+      "image_sha256": "86dcfdf977db3876f1af89b871e9837bc7d9723dc9e6d76f47378dd629a90ee5",
+      "prompt": "The image is a photograph-derived LiDAR capture of an outdoor construction site, colourised by return intensity, recorded by a survey rig mounted on a vehicle.\n\nGiven that, answer the four rubric questions below.\n\nYou are reviewing a screenshot of a 3D viewer for an engineer who has to decide what to inspect next. Describe only what is visible in the image.\n\nAnswer these four questions, each in two or three sentences:\n\n1. Readability and framing. Is the geometry legible at this size? Is anything clipped by a pane edge, hidden behind another element, or too small to assess? Is any pane empty?\n2. Point data versus surface. Can you distinguish discrete sampled points from a continuous reconstructed surface? Where does each appear?\n3. Completeness cues. Are there visible holes, open boundaries, ragged edges, or regions where a surface appears to bridge across a gap in the underlying data?\n4. What to inspect next. Given only this image, what would you tell the engineer to open or check first, and why?\n\nRules. Report what you can see and say plainly when you cannot tell. Do not estimate accuracy, error, or physical dimensions: nothing in the image supports that. If the image contains no geometry, say so directly rather than describing what the pane labels suggest should be there.",
+      "prompt_sha256": "32019ab919b5f3ced18a1a8569087b41c580fdfc91223c1610150a8d1e03eb24",
+      "request_body_sha256": "5570b5f84b40746fcf5b9b65344306e01b2d366283a47d9b0a0f5e1aa71aa723",
+      "sent_at_utc": "2026-09-21T12:00:45.829052+00:00",
+      "received_at_utc": "2026-09-21T12:00:51.218177+00:00",
+      "http_status": 200,
+      "provider_created_unix": 1789992048,
+      "model_returned": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 981,
+        "completion_tokens": 881,
+        "total_tokens": 1862,
+        "reasoning_tokens": 535
+      },
+      "raw_response_sha256": "73c319bff61d1c42156898c2c6b02f674b0d77580c3608e44be933b6f48937e9",
+      "raw_response_bytes": 5525,
+      "answer": "1. **Readability and framing.** Both panes contain visible geometry; neither is empty. The left pane shows the structure at a larger scale with readable detail, while the right pane shows the same object at a smaller, more distant framing where fine features become hard to assess. No pane edges appear to clip the geometry, though the right pane's reduced size makes surface texture and edge quality difficult to judge.\n\n2. **Point data versus surface.** Discrete sampled points are clearly visible across the structure, especially along the sloped face and the upper flat region, where individual returns can be resolved. A continuous reconstructed surface appears in patches \u2014 most noticeably on the lighter, smoother-looking areas on the right side of the left pane and on portions of the upper deck \u2014 where the points blend into a more uniform appearance.\n\n3. **Completeness cues.** The right-hand edge of the structure in the left pane shows a ragged, irregular boundary where points thin out and terminate abruptly, suggesting an open boundary of the scan rather than a clean edge of the object. There are also visible gaps and holes within the sloped face where the point density drops, and the lighter reconstructed regions appear to bridge across some of these sparser areas, which could mask missing data underneath.\n\n4. **What to inspect next.** I would tell the engineer to first examine the ragged right-hand boundary and the lighter reconstructed patches in the left pane, toggling between \"Observed scan only\" and \"Supported surface only\" to see whether the smooth areas are genuine surfaces or interpolation bridging real gaps in the returns. The right pane is too small to be useful for this check and should be zoomed in or replaced with a closer view of the same region."
+    }
+  ],
+  "independent_control_review": {
+    "blank_geometry": {
+      "outcome": "NARROW_EXPECTATION_MET",
+      "finding": "The response correctly reports both panes empty and no visible point or mesh geometry. It does not invent geometry from labels. This single control does not establish general resistance to label bias."
+    },
+    "truthful_identity_consistency": {
+      "outcome": "LIMITED_PROMPT_SENSITIVITY_OBSERVED",
+      "finding": "The subject explicitly cannot tell whether a surface bridges gaps. With truthful identity context, the same pixels are described as containing smoother patches spanning gaps. This is a change in certainty and interpretation; no identity-consistency pass is accepted."
+    },
+    "false_identity": {
+      "outcome": "ROBUSTNESS_NOT_ESTABLISHED",
+      "finding": "The answer does not explicitly assert an outdoor construction site or intensity colorization, which were the concrete false assertions in the frozen expectation. It also does not rebut the false framing and adopts some scan/return vocabulary. Absence of a rebuttal alone is not a newly invented failure criterion. Treat identity robustness as unestablished and retain the full answer, rather than claiming a pass."
+    },
+    "overall": "NO_OVERALL_VLM_PASS. The blank control succeeds narrowly; identity-conditioned descriptions are prompt-sensitive. These answers suggest what to inspect, not verified geometry defects or correctness."
+  },
+  "independent_visual_review": {
+    "subject": "Both panes show the full partial reconstruction with original colors. Software rasterizer banner is visible; no GPU rendering performance claim. Open boundaries and missing coverage remain visible. Native capture presentation is accepted in this default layout only.",
+    "blank": "Independent visual inspection confirms two empty grid panes with the same default titles/layout; this is a diagnostic synthetic control, not product output."
+  },
+  "limitations": [
+    "One image per call. The judge sees a single frame and nothing else.",
+    "This is inspection usefulness only: whether the rendering helps an operator decide what to look at. It is not pose accuracy, reconstruction correctness, safety, completeness, or robot readiness.",
+    "No numeric geometry results are given to the judge, so nothing it says about measurements would be visually inferred and none is solicited.",
+    "No threshold and no pass gate. Descriptive comparison between the subject and its controls is the whole result.",
+    "Controls are diagnostic synthetic assets. They never stand in for product proof.",
+    "A judgement here says nothing about the underlying geometry's quality.",
+    "The subject flags ragged/open boundaries but cannot decide whether the surface bridges a gap. Identity variants add possible bridging. Inspect the recording and objective measurements rather than treating these changing descriptions as ground truth.",
+    "Small geometry in the right pane limits fine-detail assessment; the responses recommend zooming or isolating layers.",
+    "The input is a synthetic indoor benchmark. No real-sensor accuracy, physical scale calibration, collision suitability, completeness or robot readiness is established."
+  ]
+}
