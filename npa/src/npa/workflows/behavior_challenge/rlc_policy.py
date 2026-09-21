@@ -137,11 +137,11 @@ def _stock_correlation_record(path: Path | None) -> dict | None:
 def _verify_task(args, plan):
     tasks = plan["recipe"]["tasks"]
     if (
-        plan["recipe"]["split"] != "development"
+        plan["recipe"]["split"] not in {"development", "report"}
         or not isinstance(tasks, list)
         or len(tasks) != 1
     ):
-        raise ValueError("RLC transfer currently requires one development task")
+        raise ValueError("RLC transfer requires one development or report task")
     for relative, revision in (
         (".", SOURCE_COMMIT),
         ("openpi", OPENPI_COMMIT),
@@ -370,7 +370,7 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
 
     Args:
         args: Managed policy paths and loopback endpoint.
-        plan: Frozen one-task development recipe.
+        plan: Frozen one-task development or report recipe.
         output: Evidence directory receiving launcher sources and provenance.
     Returns:
         Policy interpreter command using the published control settings.

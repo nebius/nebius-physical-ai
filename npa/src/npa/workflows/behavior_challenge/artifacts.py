@@ -70,7 +70,8 @@ def inspect_rollout(output: Path, case: dict) -> dict:
     stem = f"{case['task']}_{case['instance_id']}_0"
     metrics = output / "json" / f"{stem}.json"
     video = output / "videos" / f"{stem}.mp4"
-    score = _validate_metrics(json.loads(metrics.read_bytes()), case)
+    original = json.loads(metrics.read_bytes())
+    score = _validate_metrics(original, case)
     with av.open(str(video)) as container:
         frames = sum(1 for _ in container.decode(video=0))
     if frames == 0:
@@ -78,6 +79,8 @@ def inspect_rollout(output: Path, case: dict) -> dict:
     return {
         **case,
         "q_score": score,
+        "success": original["success"],
+        "steps": original["steps"],
         "video_frames": frames,
         "files": {str(p.relative_to(output)): file_digest(p) for p in (metrics, video)},
     }

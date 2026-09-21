@@ -288,6 +288,124 @@ def test_adaptive_pinned_native_act_keeps_queue_across_profile_boundary():
     assert telemetry["transition_queue_refreshes"] == 0
 
 
+def test_adaptive_transition_refresh_no_transition_matches_adaptive_control():
+    control_native = B1KPolicyWrapper()
+    control_calls = install_pinned_native_act(control_native)
+    control = rlc_execution.configure_execution(
+        control_native, "adaptive-short-chunk"
+    )
+    refresh_native = B1KPolicyWrapper()
+    refresh_calls = install_pinned_native_act(refresh_native)
+    refresh = rlc_execution.configure_execution(
+        refresh_native, "adaptive-short-chunk-transition-refresh"
+    )
+    observation = {
+        "task_id": np.array([1]),
+        "robot_r1::proprio": np.zeros(61, dtype=np.float32),
+    }
+
+    control_action = control.act(observation)
+    refresh_action = refresh.act(observation)
+
+    np.testing.assert_array_equal(control_action.value, refresh_action.value)
+    assert control_calls == refresh_calls
+    assert control_native.current_stage == refresh_native.current_stage == 0
+    np.testing.assert_array_equal(control_native.last_actions, refresh_native.last_actions)
+    assert control_native.action_index == refresh_native.action_index == 1
+    assert refresh.telemetry()["transition_queue_refreshes"] == 0
+
+
+def test_adaptive_transition_refresh_discards_once_and_resamples_new_stage():
+    native = B1KPolicyWrapper()
+    calls = install_pinned_native_act(native)
+    policy = rlc_execution.configure_execution(
+        native, "adaptive-short-chunk-transition-refresh"
+    )
+    native.current_stage = 3
+    native.prediction_history.extend((4, 4))
+    observation = {
+        "task_id": np.array([1]),
+        "robot_r1::proprio": np.zeros(61, dtype=np.float32),
+    }
+
+    policy.act(observation)
+
+    assert [call["stage"] for call in calls] == [3, 4]
+    assert native.current_stage == 4
+    assert native.config.execute_in_n_steps == 10
+    assert native.last_actions is not None and native.last_actions.shape == (10, 23)
+    assert native.action_index == 1
+    assert native.step_count == 1
+    telemetry = policy.telemetry()
+    assert telemetry["predictions"] == 2
+    assert telemetry["coarse_predictions"] == 1
+    assert telemetry["precision_predictions"] == 1
+    assert telemetry["accepted_stage_transitions"] == 1
+    assert telemetry["transition_queue_refreshes"] == 1
+    refresh_event = next(
+        event for event in telemetry["events"] if event["kind"] == "transition_queue_refresh"
+    )
+    assert refresh_event["discarded_queued_actions"] == 19
+    assert refresh_event["discarded_inpainting_actions"] == 4
+
+    policy.act(observation)
+
+    assert len(calls) == 2
+    assert policy.telemetry()["transition_queue_refreshes"] == 1
+
+
+def test_adaptive_transition_refresh_is_bounded_when_resample_transitions_again():
+    native = B1KPolicyWrapper()
+
+    def transition_every_prediction(self, observation):
+        self.prediction_count += 1
+        self.last_actions = np.ones((self.config.execute_in_n_steps, 23))
+        self.action_index = 1
+        self.next_initial_actions = np.ones((4, 23))
+        self.current_stage += 1
+        return observation
+
+    native.act = MethodType(transition_every_prediction, native)
+    policy = rlc_execution.configure_execution(
+        native, "adaptive-short-chunk-transition-refresh"
+    )
+
+    with pytest.raises(RuntimeError, match="bounded transition refresh"):
+        policy.act({"task_id": np.array([1])})
+
+    assert native.prediction_count == 2
+    assert native.last_actions is None
+    assert policy.telemetry()["accepted_stage_transitions"] == 2
+    assert policy.telemetry()["transition_queue_refreshes"] == 2
+
+
+def test_adaptive_transition_refresh_reset_clears_episode_state():
+    native = B1KPolicyWrapper()
+    install_pinned_native_act(native)
+    policy = rlc_execution.configure_execution(
+        native, "adaptive-short-chunk-transition-refresh"
+    )
+    native.current_stage = 3
+    native.prediction_history.extend((4, 4))
+    observation = {
+        "task_id": np.array([1]),
+        "robot_r1::proprio": np.zeros(61, dtype=np.float32),
+    }
+    policy.act(observation)
+
+    policy.reset()
+
+    assert native.config.actions_to_execute == 26
+    assert native.config.execute_in_n_steps == 20
+    assert native.last_actions is None
+    assert native.action_index == 0
+    assert native.next_initial_actions is None
+    assert not native.prediction_history
+    assert policy.telemetry()["observations"] == 0
+    assert policy.telemetry()["transition_queue_refreshes"] == 0
+    assert policy.telemetry()["variant"] == "adaptive-short-chunk-transition-refresh"
+
+
 def test_reset_restores_native_execution_defaults():
     native = B1KPolicyWrapper()
     native.current_stage = 4
@@ -338,3 +456,10 @@ def test_provenance_distinguishes_stock_and_selected_trials():
     assert stock["evaluation"] == "experimental_no_aggregate_gain_established"
     with pytest.raises(ValueError, match="stock weights only"):
         rlc_execution.execution_provenance("adaptive-short-chunk", selected=True)
+
+    refresh = rlc_execution.execution_provenance(
+        "adaptive-short-chunk-transition-refresh", selected=False
+    )
+    assert refresh is not None
+    assert refresh["parent_variant"] == "adaptive-short-chunk"
+    assert refresh["evaluation"] == "experimental_no_aggregate_gain_established"

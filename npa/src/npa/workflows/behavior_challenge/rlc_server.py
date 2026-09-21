@@ -124,7 +124,12 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--port", type=int, required=True)
     value.add_argument(
         "--execution-variant",
-        choices=(NATIVE_EXECUTION, "final-stage-backtrack", "adaptive-short-chunk"),
+        choices=(
+            NATIVE_EXECUTION,
+            "final-stage-backtrack",
+            "adaptive-short-chunk",
+            "adaptive-short-chunk-transition-refresh",
+        ),
         default=NATIVE_EXECUTION,
     )
     return value

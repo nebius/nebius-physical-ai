@@ -38,6 +38,24 @@ The chunk variant changes the next chunk at prediction boundaries, using shorter
 chunks for the last two predicted stages. It never truncates an active queue.
 Both use policy predictions and permitted onboard observations.
 
+The completed comparison ranked selected plus final-stage backtracking first on
+mean Q, but it did not isolate backtracking as the cause. That arm backtracked
+only in cases 314 and 319; gains occurred in several cases without a backtrack,
+case 319 regressed, and case 320 succeeded without a backtrack. The adaptive
+stock arm reached mean Q 0.50 with no full successes. Its telemetry recorded 88
+accepted stage transitions and no action-queue refresh at those boundaries.
+
+The next one-factor development arm is
+`adaptive-short-chunk-transition-refresh`. It retains the stock checkpoint and
+the adaptive horizon settings. When native stage voting accepts a new stage, it
+discards the remaining actions and inpainting prefix produced for the old stage,
+then performs one bounded resample from the new stage. A second transition during
+that resample fails closed instead of recursing. The intervention uses the
+policy's stage state and permitted observations; it does not read simulator goal
+state, reward, instance segmentation, or report identifiers. Its first rollout
+is experimental and cannot be described as an official score or an established
+improvement.
+
 [AAC](https://arxiv.org/abs/2604.04161) adapts chunk size using action entropy.
 [DEHP](https://arxiv.org/abs/2606.11408), revised July 2026, learns a horizon
 predictor while keeping the action policy frozen. These motivate testing execution

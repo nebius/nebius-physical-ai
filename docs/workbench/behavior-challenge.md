@@ -11,6 +11,10 @@ The [September 21 recovery experiment plan](behavior-recovery-experiments-2026-0
 records the next fixed-weight execution comparisons and stock-anchored training
 recipe. Its GPU results are pending.
 
+The [campaign control plane](behavior-campaign.md) freezes policy identities,
+assigns complete task panels across workers, and preserves per-instance progress
+in S3. Recovery verifies the original metrics and videos before reusing results.
+
 **Latest completed training experiment, September 19:** both
 [matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
 updates, full holdout selection, and selected-model export. GPU validation found
@@ -105,7 +109,7 @@ stock's Q=0.50. Across all sixty matched cases, selected Q=0.298750 remains
 below stock's Q=0.324028.
 The published RLC comparison below is a separate measured result.
 
-`--policy-kind rlc` selects a development-only transfer of the published
+`--policy-kind rlc` selects a single-task development or reporting transfer of the published
 [RLC 2025 winning solution](https://github.com/IliaLarchenko/behavior-1k-solution).
 Its learned task/stage memory, rolling action inpainting, compression and
 proprioception-based recovery replace the radio-only baseline controller.

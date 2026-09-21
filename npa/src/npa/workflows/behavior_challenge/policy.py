@@ -228,7 +228,12 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
     execution_variant = getattr(args, "policy_execution_variant", "native")
     variants = {
         "official": {"native"},
-        "rlc": {"native", "final-stage-backtrack", "adaptive-short-chunk"},
+        "rlc": {
+            "native",
+            "final-stage-backtrack",
+            "adaptive-short-chunk",
+            "adaptive-short-chunk-transition-refresh",
+        },
         "rlc-selected": {"native", "transition-refresh", "final-stage-backtrack"},
     }
     policy_kind = getattr(args, "policy_kind", "official")

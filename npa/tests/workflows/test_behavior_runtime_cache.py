@@ -1,0 +1,335 @@
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+import shutil
+import tarfile
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from npa.workflows.behavior_challenge import runtime_cache
+from npa.workflows.behavior_challenge.runtime_cache import prepare_runtime
+
+MANIFEST_URI = "s3://private-runtime/manifest.json"
+
+
+class FakeStorage:
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self.objects = objects
+        self.calls: list[str] = []
+
+    def download_file(self, uri: str, path: str) -> None:
+        self.calls.append(uri)
+        Path(path).write_bytes(self.objects[uri])
+
+
+def _sha(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _tar(entries: list[tuple[str, str, bytes | str]]) -> bytes:
+    stream = io.BytesIO()
+    with tarfile.open(
+        fileobj=stream, mode="w:gz", format=tarfile.PAX_FORMAT
+    ) as archive:
+        for kind, name, value in entries:
+            member = tarfile.TarInfo(name)
+            member.mode = 0o755 if name.endswith("python") else 0o644
+            if kind == "file":
+                assert isinstance(value, bytes)
+                member.size = len(value)
+                archive.addfile(member, io.BytesIO(value))
+            elif kind == "directory":
+                member.type = tarfile.DIRTYPE
+                member.size = 0
+                archive.addfile(member)
+            elif kind == "hardlink":
+                member.type = tarfile.LNKTYPE
+                member.linkname = str(value)
+                member.size = 0
+                archive.addfile(member)
+            elif kind == "symlink":
+                member.type = tarfile.SYMTYPE
+                member.linkname = str(value)
+                member.size = 0
+                archive.addfile(member)
+            elif kind == "fifo":
+                member.type = tarfile.FIFOTYPE
+                member.size = 0
+                archive.addfile(member)
+            else:
+                raise AssertionError(kind)
+    return stream.getvalue()
+
+
+def _manifest_bytes(archives: list[tuple[str, bytes]]) -> bytes:
+    value = {
+        "schema": "npa.behavior.private-runtime.v1",
+        "allowed_directories": ["work", ".local/python"],
+        "archives": [
+            {"uri": uri, "sha256": _sha(payload), "bytes": len(payload)}
+            for uri, payload in archives
+        ],
+    }
+    return (json.dumps(value, sort_keys=True) + "\n").encode()
+
+
+def _runtime_objects(
+    *, extra_first: list[tuple[str, str, bytes | str]] | None = None
+) -> tuple[dict[str, bytes], bytes]:
+    first = _tar(
+        [
+            ("file", ".local/python/bin/python", b"immutable-python"),
+            ("file", "work/runtime.txt", b"runtime"),
+            *(extra_first or []),
+        ]
+    )
+    second = _tar(
+        [
+            ("file", "work/data/original", b"shared"),
+            ("hardlink", "work/data/copy", "work/data/original"),
+        ]
+    )
+    archives = [
+        ("s3://private-runtime/base.tar.gz", first),
+        ("s3://private-runtime/data.tar.gz", second),
+    ]
+    manifest = _manifest_bytes(archives)
+    return {MANIFEST_URI: manifest, **dict(archives)}, manifest
+
+
+def _run(
+    tmp_path: Path,
+    objects: dict[str, bytes],
+    manifest: bytes,
+) -> tuple[dict[str, Any], FakeStorage, FakeStorage, Path, Path]:
+    home = tmp_path / "home"
+    home.mkdir()
+    workspace = home / "work"
+    manifest_storage = FakeStorage({MANIFEST_URI: objects[MANIFEST_URI]})
+    archive_storage = FakeStorage(
+        {key: value for key, value in objects.items() if key != MANIFEST_URI}
+    )
+    receipt = prepare_runtime(
+        manifest_storage,
+        archive_storage,
+        MANIFEST_URI,
+        _sha(manifest),
+        home,
+        workspace,
+    )
+    return receipt, manifest_storage, archive_storage, home, workspace
+
+
+def test_prepare_runtime_restores_verified_archives_and_reuses_clean_base(
+    tmp_path: Path,
+) -> None:
+    objects, manifest = _runtime_objects()
+    receipt, manifest_storage, archive_storage, home, workspace = _run(
+        tmp_path, objects, manifest
+    )
+
+    assert receipt["schema"] == "npa.behavior.runtime-ready.v2"
+    assert receipt["manifest_sha256"] == _sha(manifest)
+    assert receipt["python_directory"] == ".local/python"
+    assert (home / ".local/python/bin/python").read_bytes() == b"immutable-python"
+    assert (workspace / "runtime.txt").read_bytes() == b"runtime"
+    assert (workspace / "data/copy").read_bytes() == b"shared"
+    assert (
+        os.stat(workspace / "data/original").st_ino
+        == os.stat(workspace / "data/copy").st_ino
+    )
+    assert manifest_storage.calls == [MANIFEST_URI]
+    assert archive_storage.calls == [
+        "s3://private-runtime/base.tar.gz",
+        "s3://private-runtime/data.tar.gz",
+    ]
+
+    shutil.rmtree(home / ".local/python")
+    reused = prepare_runtime(
+        manifest_storage,
+        archive_storage,
+        MANIFEST_URI,
+        _sha(manifest),
+        home,
+        workspace,
+    )
+    assert reused == receipt
+    assert (home / ".local/python/bin/python").read_bytes() == b"immutable-python"
+    assert manifest_storage.calls == [MANIFEST_URI, MANIFEST_URI]
+    assert len(archive_storage.calls) == 2
+
+
+def test_prepare_runtime_refuses_to_overlay_existing_python(tmp_path: Path) -> None:
+    objects, manifest = _runtime_objects()
+    _, manifest_storage, archive_storage, home, workspace = _run(
+        tmp_path, objects, manifest
+    )
+
+    with pytest.raises(ValueError, match="unexpectedly occupied"):
+        prepare_runtime(
+            manifest_storage,
+            archive_storage,
+            MANIFEST_URI,
+            _sha(manifest),
+            home,
+            workspace,
+        )
+
+
+@pytest.mark.parametrize(
+    "entry, message",
+    [
+        (("file", "/absolute", b"bad"), "safe POSIX path"),
+        (("file", "work/../escape", b"bad"), "safe POSIX path"),
+        (("file", "other/file", b"bad"), "outside manifest-allowed"),
+        (
+            ("file", "work/.npa-runtime-cache/runtime-ready.json", b"bad"),
+            "reserved runtime cache state",
+        ),
+        (("symlink", "work/link", "work/runtime.txt"), "unsupported member"),
+        (("fifo", "work/pipe", b""), "unsupported member"),
+        (("hardlink", "work/link", "work/missing"), "extracted regular file"),
+    ],
+)
+def test_prepare_runtime_rejects_unsafe_members(
+    tmp_path: Path,
+    entry: tuple[str, str, bytes | str],
+    message: str,
+) -> None:
+    objects, manifest = _runtime_objects(extra_first=[entry])
+
+    with pytest.raises(ValueError, match=message):
+        _run(tmp_path, objects, manifest)
+
+
+def test_prepare_runtime_rejects_duplicate_member(tmp_path: Path) -> None:
+    objects, manifest = _runtime_objects(
+        extra_first=[("file", "work/runtime.txt", b"duplicate")]
+    )
+
+    with pytest.raises(ValueError, match="duplicate member"):
+        _run(tmp_path, objects, manifest)
+
+
+def test_prepare_runtime_rejects_changed_archive_identity(tmp_path: Path) -> None:
+    objects, manifest = _runtime_objects()
+    objects["s3://private-runtime/base.tar.gz"] += b"changed"
+
+    with pytest.raises(ValueError, match="archive identity differs"):
+        _run(tmp_path, objects, manifest)
+
+
+def test_prepare_runtime_validates_manifest_before_creating_workspace(
+    tmp_path: Path,
+) -> None:
+    objects, manifest = _runtime_objects()
+    home = tmp_path / "home"
+    home.mkdir()
+    workspace = home / "work"
+    manifest_storage = FakeStorage({MANIFEST_URI: objects[MANIFEST_URI]})
+    archive_storage = FakeStorage({})
+
+    with pytest.raises(ValueError, match="manifest SHA-256 differs"):
+        prepare_runtime(
+            manifest_storage,
+            archive_storage,
+            MANIFEST_URI,
+            "0" * 64,
+            home,
+            workspace,
+        )
+    assert not workspace.exists()
+    assert archive_storage.calls == []
+
+
+def test_prepare_runtime_retries_interrupted_first_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    objects, manifest = _runtime_objects()
+    original = runtime_cache._extract_archive
+    attempts = 0
+
+    def interrupt(archive: Path, home: Path, allowed: list[Any]) -> None:
+        nonlocal attempts
+        attempts += 1
+        original(archive, home, allowed)
+        if attempts == 1:
+            raise RuntimeError("interrupted")
+
+    monkeypatch.setattr(runtime_cache, "_extract_archive", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        _run(tmp_path, objects, manifest)
+
+    monkeypatch.setattr(runtime_cache, "_extract_archive", original)
+    home = tmp_path / "home"
+    workspace = home / "work"
+    manifest_storage = FakeStorage({MANIFEST_URI: objects[MANIFEST_URI]})
+    archive_storage = FakeStorage(
+        {key: value for key, value in objects.items() if key != MANIFEST_URI}
+    )
+    receipt = prepare_runtime(
+        manifest_storage,
+        archive_storage,
+        MANIFEST_URI,
+        _sha(manifest),
+        home,
+        workspace,
+    )
+    assert receipt["schema"] == "npa.behavior.runtime-ready.v2"
+    assert (home / ".local/python/bin/python").read_bytes() == b"immutable-python"
+
+
+def test_prepare_runtime_rejects_changed_python_cache(tmp_path: Path) -> None:
+    objects, manifest = _runtime_objects()
+    _, manifest_storage, archive_storage, home, workspace = _run(
+        tmp_path, objects, manifest
+    )
+    shutil.rmtree(home / ".local/python")
+    cache_file = workspace / ".npa-runtime-cache/python-base/bin/python"
+    cache_file.write_bytes(b"changed")
+
+    with pytest.raises(ValueError, match="cache is incomplete or changed"):
+        prepare_runtime(
+            manifest_storage,
+            archive_storage,
+            MANIFEST_URI,
+            _sha(manifest),
+            home,
+            workspace,
+        )
+
+
+def test_prepare_runtime_rejects_changed_marker(tmp_path: Path) -> None:
+    objects, manifest = _runtime_objects()
+    _, manifest_storage, archive_storage, home, workspace = _run(
+        tmp_path, objects, manifest
+    )
+    shutil.rmtree(home / ".local/python")
+    marker = next((workspace / ".npa-runtime-cache").glob("archive-0-*.json"))
+    value = json.loads(marker.read_text())
+    value["archive_bytes"] += 1
+    marker.write_text(json.dumps(value))
+
+    with pytest.raises(ValueError, match="marker identity differs"):
+        prepare_runtime(
+            manifest_storage,
+            archive_storage,
+            MANIFEST_URI,
+            _sha(manifest),
+            home,
+            workspace,
+        )
+
+
+def test_prepare_runtime_uses_separate_storage_clients(tmp_path: Path) -> None:
+    objects, manifest = _runtime_objects()
+    _, manifest_storage, archive_storage, _, _ = _run(tmp_path, objects, manifest)
+
+    assert set(manifest_storage.calls) == {MANIFEST_URI}
+    assert MANIFEST_URI not in archive_storage.calls
+    assert all(uri.endswith(".tar.gz") for uri in archive_storage.calls)

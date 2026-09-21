@@ -8,6 +8,9 @@ stock-anchored BEHAVIOR training experiment:
 - `native_nnx_anchor.py` captures an independent parent action state, evaluates
   student and parent in one mapped NNX call with shared stochastic inputs, and
   reduces those outputs through the shared objective.
+- `export_qualification.py` validates an immutable serving export, finite
+  actions, the documented task-specific `-inf` stage mask, and fixed-output
+  byte identities without importing campaign infrastructure.
 - `recipe.json` records the frozen experiment proposal.
 
 Install the explicit FP32 correlation state before calling

@@ -33,13 +33,50 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
             "transition-refresh",
             "final-stage-backtrack",
             "adaptive-short-chunk",
+            "adaptive-short-chunk-transition-refresh",
         ),
         default="native",
     )
 
 
+def _add_runtime_arguments(run):
+    run.add_argument("--upstream-root", type=Path, required=True)
+    run.add_argument("--evaluator-python", required=True)
+    run.add_argument("--data-root", required=True)
+    run.add_argument("--host", required=True)
+    run.add_argument("--port", type=int, default=8000)
+    _add_policy_arguments(run)
+
+
+def _add_campaign_commands(commands):
+    from .campaign_runner import aggregate_campaign_worker, evaluate_partition
+
+    worker = commands.add_parser(
+        "campaign-worker", help="Internal resumable case worker"
+    )
+    worker.add_argument("--partition-uri", required=True)
+    worker.add_argument("--worker-index", type=int, required=True)
+    worker.add_argument("--worker-receipt-uri", required=True)
+    _add_runtime_arguments(worker)
+    worker.set_defaults(handler=evaluate_partition)
+    aggregate = commands.add_parser(
+        "campaign-aggregate", help="Verify complete original evidence"
+    )
+    aggregate.add_argument("--receipt-uri", required=True)
+    aggregate.set_defaults(handler=aggregate_campaign_worker)
+    for command in (worker, aggregate):
+        command.add_argument("--panel-uri", required=True)
+        command.add_argument("--output-path", required=True)
+        command.add_argument("--workspace", type=Path, required=True)
+
+
+def _plan(args):
+    verify_upstream(args.upstream_root)
+    return make_plan(json.loads(args.recipe_path.read_bytes()), args.upstream_root)
+
+
 def main() -> None:
-    """Plan locally or invoke the licensed evaluator through the workflow stage.
+    """Plan locally or invoke internal stages through the Workbench workflow.
 
     Args:
         None; reads command-line arguments.
@@ -51,31 +88,19 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    plan = commands.add_parser(
-        "plan", help="Freeze a recipe without simulation or asset access"
-    )
+    plan = commands.add_parser("plan", help="Freeze a recipe without simulation")
     plan.add_argument("--recipe-path", type=Path, required=True)
     plan.add_argument("--upstream-root", type=Path, required=True)
-    run = commands.add_parser(
-        "evaluate", help="Internal worker stage; use the workbench workflow"
-    )
+    plan.set_defaults(handler=_plan)
+    run = commands.add_parser("evaluate", help="Internal licensed evaluator stage")
     run.add_argument("--input-path", required=True)
     run.add_argument("--output-path", required=True)
     run.add_argument("--policy-readme-uri", required=True)
-    run.add_argument("--upstream-root", type=Path, required=True)
-    run.add_argument("--evaluator-python", required=True)
-    run.add_argument("--data-root", required=True)
-    run.add_argument("--host", required=True)
-    run.add_argument("--port", type=int, default=8000)
-    _add_policy_arguments(run)
+    _add_runtime_arguments(run)
+    run.set_defaults(handler=evaluate)
+    _add_campaign_commands(commands)
     args = parser.parse_args()
-    if args.command == "plan":
-        verify_upstream(args.upstream_root)
-        result = make_plan(
-            json.loads(args.recipe_path.read_bytes()), args.upstream_root
-        )
-    else:
-        result = evaluate(args)
+    result = args.handler(args)
     print(json.dumps(result, indent=2))
 
 

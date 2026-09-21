@@ -16,7 +16,13 @@ from typing import Any
 _NATIVE = "native"
 _FINAL_STAGE_BACKTRACK = "final-stage-backtrack"
 _ADAPTIVE_SHORT_CHUNK = "adaptive-short-chunk"
-_STOCK_VARIANTS = (_NATIVE, _FINAL_STAGE_BACKTRACK, _ADAPTIVE_SHORT_CHUNK)
+_ADAPTIVE_TRANSITION_REFRESH = "adaptive-short-chunk-transition-refresh"
+_STOCK_VARIANTS = (
+    _NATIVE,
+    _FINAL_STAGE_BACKTRACK,
+    _ADAPTIVE_SHORT_CHUNK,
+    _ADAPTIVE_TRANSITION_REFRESH,
+)
 _NATIVE_EXECUTION = (26, 4, 20, 3, 2)
 _NATIVE_WRAPPER_SHA256 = (
     "59711eefc2829cfee9db30d0985794dd7a12024843e3c7271fcc8364f5b5c97e"
@@ -126,8 +132,7 @@ def configure_execution(policy: Any, variant: str) -> Any:
 
     Args:
         policy: Newly created pinned ``B1KPolicyWrapper``.
-        variant: ``native``, ``final-stage-backtrack``, or
-            ``adaptive-short-chunk``.
+        variant: One of the stock RLC execution variants in ``_STOCK_VARIANTS``.
     Returns:
         The unchanged native policy or the requested execution wrapper.
     Raises:
@@ -140,6 +145,8 @@ def configure_execution(policy: Any, variant: str) -> Any:
     _verify_native_policy(policy)
     if variant == _FINAL_STAGE_BACKTRACK:
         return _FinalStageBacktrackPolicy(policy)
+    if variant == _ADAPTIVE_TRANSITION_REFRESH:
+        return _AdaptiveTransitionRefreshPolicy(policy)
     return _AdaptiveShortChunkPolicy(policy)
 
 
@@ -156,8 +163,17 @@ def execution_provenance(variant: str, *, selected: bool) -> Mapping[str, Any] |
     """
     if variant == _NATIVE:
         return None
-    if variant == _ADAPTIVE_SHORT_CHUNK and selected:
+    adaptive_variants = {_ADAPTIVE_SHORT_CHUNK, _ADAPTIVE_TRANSITION_REFRESH}
+    if variant in adaptive_variants and selected:
         raise ValueError("Adaptive short chunks are supported for stock weights only")
+    if variant == _ADAPTIVE_TRANSITION_REFRESH:
+        return MappingProxyType(
+            {
+                "parent_variant": _ADAPTIVE_SHORT_CHUNK,
+                "intervention": "refresh_action_queue_after_accepted_stage_transition",
+                "evaluation": "experimental_no_aggregate_gain_established",
+            }
+        )
     identity = _EXPERIMENT_IDENTITIES.get((variant, selected))
     if identity is None:
         raise ValueError("Unsupported RLC execution variant")
@@ -286,6 +302,8 @@ class _FinalStageBacktrackPolicy(_EpisodeTelemetry):
 class _AdaptiveShortChunkPolicy(_EpisodeTelemetry):
     """Use native execution until either of the final two stages needs a prediction."""
 
+    _VARIANT = _ADAPTIVE_SHORT_CHUNK
+
     def __init__(self, policy: Any) -> None:
         self.policy = policy
         self._native_config = policy.config
@@ -305,6 +323,12 @@ class _AdaptiveShortChunkPolicy(_EpisodeTelemetry):
         self._begin_episode()
         self._telemetry["observations"] += 1
         self._apply_task_change(observation)
+        action, before_stage, after_stage = self._act_once(observation)
+        if after_stage != before_stage:
+            self._record_transition(before_stage, after_stage)
+        return action
+
+    def _act_once(self, observation: Mapping[str, Any]) -> tuple[Any, int, int]:
         profile = self._select_profile()
         before_stage = int(self.policy.current_stage)
         before_predictions = int(self.policy.prediction_count)
@@ -312,9 +336,7 @@ class _AdaptiveShortChunkPolicy(_EpisodeTelemetry):
         after_stage = int(self.policy.current_stage)
         if int(self.policy.prediction_count) == before_predictions + 1:
             self._record_prediction(profile, before_stage, after_stage)
-        if after_stage != before_stage:
-            self._record_transition(before_stage, after_stage)
-        return action
+        return action, before_stage, after_stage
 
     def telemetry(self) -> Mapping[str, Any]:
         """Return a read-only snapshot without evaluator case identifiers."""
@@ -410,7 +432,7 @@ class _AdaptiveShortChunkPolicy(_EpisodeTelemetry):
     def _reset_telemetry(self) -> None:
         self._active_episode_ordinal = None
         self._telemetry = {
-            "variant": _ADAPTIVE_SHORT_CHUNK,
+            "variant": self._VARIANT,
             "observations": 0,
             "predictions": 0,
             "coarse_predictions": 0,
@@ -419,3 +441,54 @@ class _AdaptiveShortChunkPolicy(_EpisodeTelemetry):
             "transition_queue_refreshes": 0,
             "events": [],
         }
+
+
+class _AdaptiveTransitionRefreshPolicy(_AdaptiveShortChunkPolicy):
+    """Resample once from a newly accepted stage after discarding its stale queue."""
+
+    _VARIANT = _ADAPTIVE_TRANSITION_REFRESH
+
+    def act(self, observation: Mapping[str, Any]) -> Any:
+        self._begin_episode()
+        self._telemetry["observations"] += 1
+        self._apply_task_change(observation)
+        step_before = int(self.policy.step_count)
+        action, before_stage, after_stage = self._act_once(observation)
+        if after_stage == before_stage:
+            return action
+        self._record_transition(before_stage, after_stage)
+        self._refresh_transition_queue(before_stage, after_stage)
+        self.policy.step_count = step_before
+        return self._bounded_resample(observation)
+
+    def _bounded_resample(self, observation: Mapping[str, Any]) -> Any:
+        step_before = int(self.policy.step_count)
+        action, before_stage, after_stage = self._act_once(observation)
+        if after_stage == before_stage:
+            return action
+        self._record_transition(before_stage, after_stage)
+        self._refresh_transition_queue(before_stage, after_stage)
+        self.policy.step_count = step_before
+        raise RuntimeError("Stage changed again during the bounded transition refresh")
+
+    def _refresh_transition_queue(self, before: int, after: int) -> None:
+        queued = self.policy.last_actions
+        queue_length = len(queued) if queued is not None else 0
+        discarded = max(queue_length - int(self.policy.action_index), 0)
+        retained = self.policy.next_initial_actions
+        retained_count = len(retained) if retained is not None else 0
+        self.policy.last_actions = None
+        self.policy.action_index = 0
+        self.policy.next_initial_actions = None
+        self._telemetry["transition_queue_refreshes"] += 1
+        event = {
+            "kind": "transition_queue_refresh",
+            "episode_ordinal": self._active_episode_ordinal,
+            "observation_ordinal": self._telemetry["observations"] - 1,
+            "from_stage": before,
+            "to_stage": after,
+            "discarded_queued_actions": discarded,
+            "discarded_inpainting_actions": retained_count,
+        }
+        self._telemetry["events"].append(event)
+        _LOGGER.info("%s%s", _HORIZON_EVENT, json.dumps(event, sort_keys=True))

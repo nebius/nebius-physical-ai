@@ -269,7 +269,11 @@ def test_stock_server_execution_variant_parser_keeps_native_default(server):
     assert native.execution_variant == "native"
     assert native.correlation_asset is None
     assert native.correlation_sha256 is None
-    for variant in ("final-stage-backtrack", "adaptive-short-chunk"):
+    for variant in (
+        "final-stage-backtrack",
+        "adaptive-short-chunk",
+        "adaptive-short-chunk-transition-refresh",
+    ):
         parsed = server.parser().parse_args([*common, "--execution-variant", variant])
         assert parsed.execution_variant == variant
 
@@ -405,12 +409,31 @@ def test_connection_resets_memory_without_sending_reset_response(
 
 @pytest.mark.parametrize(
     "split,tasks",
-    [("report", ["radio"]), ("development", "all"), ("development", ["a", "b"])],
+    [("development", "all"), ("development", ["a", "b"]), ("other", ["radio"])],
 )
-def test_unvalidated_transfer_cannot_enter_reporting(split, tasks, tmp_path):
+def test_transfer_requires_one_supported_split_task(split, tasks, tmp_path):
     plan = {"recipe": {"split": split, "tasks": tasks}}
-    with pytest.raises(ValueError, match="one development task"):
+    with pytest.raises(ValueError, match="one development or report task"):
         rlc_policy.prepare_policy(argparse.Namespace(), plan, tmp_path)
+
+
+@pytest.mark.parametrize("split", ["development", "report"])
+def test_transfer_accepts_one_task_for_both_campaign_splits(split, monkeypatch):
+    monkeypatch.setattr(rlc_policy, "_verify_checkout", lambda *_: None)
+    monkeypatch.setattr(
+        rlc_policy, "_task_checkpoint", lambda *_: (1, "checkpoint_2")
+    )
+    args = SimpleNamespace(
+        policy_kind="rlc",
+        policy_root=Path("/policy"),
+        upstream_root=Path("/upstream"),
+    )
+
+    result = rlc_policy._verify_task(
+        args, {"recipe": {"split": split, "tasks": ["picking_up_trash"]}}
+    )
+
+    assert result == (1, "checkpoint_2")
 
 
 def test_published_file_verifier_rejects_substituted_model(tmp_path, monkeypatch):
