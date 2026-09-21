@@ -8,6 +8,6 @@ The complete-byte scan covered all 12 layers and 88,099 records. Its raw exit 1 
 
 The native SPDX generator produced one invalid enum. A separately labeled derivative changes only that enum and passes official SPDX2.3 schema and reference checks. The original report remains failed. The image contains GPL-3.0 Evo and attributed numerical-library/font components; it is not described as all-permissive.
 
-Private delivery preserved the accepted digest and all three remote manifest bytes. Fresh target health passed, but its declared pull Secret was absent; a scoped run-owned credential-delivery repair precedes the actual target pull and standard Sky CPU run. Those lifecycle results are still pending. No public image promotion or GPU/VLM result is claimed.
+Private delivery preserved the accepted digest and all three remote manifest bytes. The missing pull Secret was repaired with a run-owned Secret. An actual observed-authority Pod successfully pulled the exact image and was deleted. The supported cloud job then succeeded with 67 durable objects and verified cleanup, including that owned Secret. Its observer missed the short-lived task Pod configuration; corrected capture and final source validation remain required before complete lifecycle acceptance. No public image promotion or GPU/VLM result is claimed.
 
 [Machine-readable qualification](review.json) records identities, counts and limits. Raw operational receipts and credentials remain private.

@@ -52,12 +52,16 @@
   "private_delivery": {
     "same_index_preserved": true,
     "three_manifest_readbacks_equal": true,
-    "actual_target_pull_pending": true
+    "actual_target_pull_pending": false,
+    "observed_authority_probe_passed": true,
+    "cloud_job_succeeded_objects": 67,
+    "cloud_cleanup_verified": true,
+    "full_task_pod_observation_missing": true
   },
   "limitations": [
     "Synthetic metric controls and pinned upstream examples do not establish real-world SLAM/navigation/safety accuracy.",
     "No GPU or hosted VLM acceptance is claimed.",
-    "The fresh standard Sky CPU lifecycle is still pending.",
+    "The cloud job succeeded and cleaned up, but its full task-Pod observation is incomplete; the fixed experiment will repeat on updated source.",
     "Earlier confidentiality findings belong to the rejected predecessor image and remain retained."
   ]
 }

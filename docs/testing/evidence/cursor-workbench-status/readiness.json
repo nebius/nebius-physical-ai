@@ -1,15 +1,17 @@
 {
   "schema": "npa.public-pr-readiness/v5",
-  "snapshot_utc": "2026-09-21T19:21:26.846870+00:00",
-  "mergeability_verified_at": "2026-09-21T19:21:26.846870+00:00",
-  "prepared_at": "2026-09-21T19:30:32.396277+00:00",
-  "required_checks_verified_at": "2026-09-21T19:26:41.045112+00:00",
+  "snapshot_utc": "2026-09-21T19:45:12.270565+00:00",
+  "mergeability_verified_at": "2026-09-21T19:45:12.270565+00:00",
+  "prepared_at": "2026-09-21T19:46:40.758576+00:00",
+  "required_checks_verified_at": "2026-09-21T19:45:19.281519+00:00",
   "tracked_open_count": 63,
   "tracked_historical_count": 66,
   "queue_candidates": [
+    581,
     594,
     596,
     607,
+    608,
     609,
     613,
     614,
@@ -31,7 +33,8 @@
     686,
     687,
     692,
-    693
+    693,
+    709
   ],
   "excluded_closed_prs": [
     611,
@@ -91,8 +94,8 @@
   "workloads": [
     {
       "workload": "evo trajectory evaluation",
-      "current_result": "New immutable 2d1e1c07 image is privately qualified and delivered. Fresh image-local execution reproduced 62 functional outputs, ten native ZIPs and all 690 independently recomputed control values; two positive and two negative controls passed. Complete-byte coverage passed, with raw 54 findings retained and individually reconciled to reviewed public bytes; no private-literal matches remain. Actual private target health passed, but its declared pull Secret was absent. A uniquely owned credential-delivery repair is underway before the fresh standard Sky workflow.",
-      "remaining_acceptance": "Complete the actual supported Sky lifecycle and cleanup on the new image, then current-source CI including the missing security-regression context. No public-image promotion.",
+      "current_result": "New immutable 2d1e1c07 image is privately qualified and delivered. Fresh image-local execution reproduced 62 functional outputs, ten native ZIPs and all 690 independently recomputed control values; two positive and two negative controls passed. Complete-byte coverage passed, with raw 54 findings retained and individually reconciled to reviewed public bytes; no private-literal matches remain. The missing pull Secret was repaired with a uniquely owned Secret; an actual observed-authority Pod pulled the new image and was cleaned up. The supported cloud job succeeded with 67 durable objects and verified cleanup. Its observer missed the short-lived task Pod configuration, so the fixed experiment will repeat on the updated source with corrected capture.",
+      "remaining_acceptance": "Complete independent cloud-artifact checks and observed task-Pod configuration/dependency proof on the updated source, then current-source CI including security-regression. No public-image promotion.",
       "proof_links": [
         "../evo-neutral-qualified-2d1e1c07/README.md"
       ]
@@ -231,8 +234,8 @@
     },
     {
       "workload": "Owned absent-resource recovery",
-      "current_result": "Exact 59f8829d passed 25,561 full-suite tests and native security comparison. The actual owned-resource absence reconciliation made eight provider reads, closed the original local journal/lease, and a second real CLI call proved a safe repeat without additional reads or mutations. Hosted CI remains required.",
-      "remaining_acceptance": "Current-source hosted CI and draft closure.",
+      "current_result": "Exact 59f8829d passed 25,561 full-suite tests and native security comparison. The actual owned-resource absence reconciliation made eight provider reads, closed the original local journal/lease, and a second real CLI call proved a safe repeat without additional reads or mutations. All applicable hosted checks now pass; required merge-queue integration remains.",
+      "remaining_acceptance": "Required merge-queue integration.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/363cb7bc1df8e7526740e0b3a6d632daf27b8c90/docs/testing/evidence/mk8s-absence-reconciliation-59f8829d/README.md"
       ]
@@ -270,16 +273,15 @@
       "base": "main",
       "base_commit": "9505f1ff0184cbf39a4c5845d4ddcc07b5e938c8",
       "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Exact local gates accepted; fresh hosted CI pending",
-      "note": "Current main integrated; exact 8bbcdf57 full suite: 25,507 passed, 155 skipped, one non-strict xpass. Native security: 607 baseline/607 candidate findings, zero regressions. Fresh hosted CI is required.",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Current main integrated; exact 8bbcdf57 full suite: 25,507 passed, 155 skipped, one non-strict xpass. Native security: 607 baseline/607 candidate findings, zero regressions. All applicable hosted checks now pass; required merge-queue integration remains.",
       "check_counts": {
-        "QUEUED": 1,
-        "SKIPPED": 2,
-        "SUCCESS": 17
+        "SUCCESS": 20,
+        "SKIPPED": 2
       },
-      "applicable_ci_passes": false,
-      "required_checks_app_and_source_verified": false,
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -299,11 +301,11 @@
         },
         {
           "name": "security-regression",
-          "app_id": null,
-          "source_commit": null,
-          "conclusion": "MISSING_OR_PENDING",
-          "url": null,
-          "passes_required_identity": false
+          "app_id": 15368,
+          "source_commit": "8bbcdf57f35c93281ec537125264935c3845401d",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35641728029/job/106484068775",
+          "passes_required_identity": true
         }
       ],
       "depends_on": [],
@@ -328,17 +330,16 @@
       "draft": true,
       "base": "main",
       "base_commit": "95c4eb685122d590d7e03f3da2d9583a16e74e6e",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "CPU execution and source gates pass; complete image scan retains failures",
       "note": "Published 841ceb59e retains the uninterrupted 24,060-test full pass and accepted CPU attempt 5: 67 artifacts, 10 native result archives and 690 recomputed synthetic values. The replacement-image scan now completed with 24 coverage checks passing, 88,097 records and 887,103,079 scanned record bytes. Raw exit 1/valid=false remains: 57 native findings and 11 exact private-literal matches, including confidential provenance/export metadata. Semantic review did not identify an operator credential in reviewed matches, but confidentiality-clean and public-image acceptance remain false. Original image and postprocessing failures remain retained; CI is separate.",
       "check_counts": {
-        "SKIPPED": 2,
-        "IN_PROGRESS": 1,
-        "SUCCESS": 15
+        "SUCCESS": 19,
+        "SKIPPED": 2
       },
-      "applicable_ci_passes": false,
-      "required_checks_app_and_source_verified": false,
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -358,11 +359,11 @@
         },
         {
           "name": "security-regression",
-          "app_id": null,
-          "source_commit": null,
-          "conclusion": "MISSING_OR_PENDING",
-          "url": null,
-          "passes_required_identity": false
+          "app_id": 15368,
+          "source_commit": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35599140170/job/106484829074",
+          "passes_required_identity": true
         }
       ],
       "depends_on": [],
@@ -401,8 +402,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "3e2ffdda360ab777d80dc9de685bd06060919a22",
-      "mergeable": "MERGEABLE",
-      "merge_state": "CLEAN",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Old lease reconciled; fresh H200 preflight before paired GPU experiment",
       "note": "The supported742 terminal reconciliation passed against the actual provider: four exact old resources were absent, complete filtered inventories passed, and the original owned journal and lease reached durable terminal state. A separate fresh CLI retry returned already-reconciled without additional provider reads or mutations. Earlier API-shape failures and original journal bytes remain retained. No candidate GPU Job or quality acceptance follows; fresh H200 preflight is in progress.",
       "check_counts": {
@@ -524,15 +525,15 @@
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Accepted permission-fix source; exact build and full validation running",
       "note": "The private944 source passed one uninterrupted full suite:24,302 tests,154 skips and1 non-strict xpass, with exact clean source and hash-bound log. Its built image then FAILED the real default-user gate because COPY-created parent directories were not traversable. Accepted352dd126 changes only directory creation/modes plus a regression test; the owner reports its private build active and a fresh exact-source full started at17:47:57 UTC after the CI-policy suite completed. Earlier dependency/license/image failures remain retained. No new image or GPU acceptance is claimed. Owner reports352 real default-user/runtime and license gates now pass; remaining final-image scans are active. The first GPU run remains gated on complete image qualification and exact deployment bindings.",
       "check_counts": {
         "SKIPPED": 2,
-        "PENDING": 4,
         "IN_PROGRESS": 1,
-        "SUCCESS": 10,
+        "SUCCESS": 11,
+        "PENDING": 3,
         "FAILURE": 1
       },
       "applicable_ci_passes": false,
@@ -649,7 +650,7 @@
       "source_commit": "2995156d4e132d4eec4e4191391dbdb8ad430660",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-20260919",
       "base_commit": "93e92802e38004aee83cfbc84f01e871256984e1",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -709,8 +710,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "bf72c108b1d44784a0d232da2b7d0006e6f57a5f",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Inspectable local execution and image qualification pass; Sky workflow and CI failing",
       "note": "The exact e62/a6 private image complete-byte reconciliation is accepted: raw scanner exit 1 and all 269 findings remain retained, with 19 reconciliation gates passing. Six shipped local CLI stages exited zero; 24 independent numeric/hash/geometry checks passed. The public native capture and sanitized recording preserve all 17 geometry arrays. A fresh anonymous browser fetched the exact 8,105,428-byte recording across CORS, verified its hash, decoded it, and rendered both inspected panes. Fused points: 6,341; mesh: 14,736 vertices/28,206 triangles. The scene remains nonwatertight and nonmanifold. Four hosted visual calls include an empty-geometry control and identity prompts that expose prompt sensitivity; a thinking-setting protocol deviation remains disclosed. This is inspection evidence, not calibrated geometry accuracy or robot usefulness. Published source 487a8c6da is independently bound to the accepted image and the f916 full suite: 24,307 passed, 154 skipped, one non-strict xpass. Supported SkyPilot lifecycle acceptance and current hosted CI remain separate. Current hosted failures: image-security / Base image CVE inventory.",
       "check_counts": {
@@ -849,16 +850,15 @@
       "base": "main",
       "base_commit": "9505f1ff0184cbf39a4c5845d4ddcc07b5e938c8",
       "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
-      "status": "Exact local gates accepted; fresh hosted CI pending",
-      "note": "Current main integrated; exact 6b62b129 full suite: 25,508 passed, 155 skipped, one non-strict xpass. Native security: 607 baseline/607 candidate findings, zero regressions. Fresh hosted CI is required.",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Current main integrated; exact 6b62b129 full suite: 25,508 passed, 155 skipped, one non-strict xpass. Native security: 607 baseline/607 candidate findings, zero regressions. All applicable hosted checks now pass; required merge-queue integration remains.",
       "check_counts": {
-        "IN_PROGRESS": 1,
-        "SKIPPED": 2,
-        "SUCCESS": 17
+        "SUCCESS": 20,
+        "SKIPPED": 2
       },
-      "applicable_ci_passes": false,
-      "required_checks_app_and_source_verified": false,
+      "applicable_ci_passes": true,
+      "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -878,11 +878,11 @@
         },
         {
           "name": "security-regression",
-          "app_id": null,
-          "source_commit": null,
-          "conclusion": "MISSING_OR_PENDING",
-          "url": null,
-          "passes_required_identity": false
+          "app_id": 15368,
+          "source_commit": "6b62b12955c89b5fab94d1a02964ccc3813d28e3",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35641737414/job/106482644708",
+          "passes_required_identity": true
         }
       ],
       "depends_on": [],
@@ -965,8 +965,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "CLEAN",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Readiness withdrawn; AprilTag replacement qualification pending",
       "note": "The predecessor image contains three SSH host private keys in an ancestor layer. The generic source repair and separate Evo evidence do not qualify AprilTag replacement bytes. Fresh exact image/security/runtime-key qualification, CPU detector replay, artifact equivalence, cleanup and current source/CI closure remain. Retained presentation and 47-label controls do not establish geometry, pose or robot safety.",
       "check_counts": {
@@ -1047,7 +1047,7 @@
       "source_commit": "d116cbbcb03aefb8190952a41a883b8df812aa63",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-consistency-20260919",
       "base_commit": "2995156d4e132d4eec4e4191391dbdb8ad430660",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -1228,11 +1228,10 @@
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "status": "Exact local gates accepted; fresh hosted CI pending",
-      "note": "Current main integrated without changing the 11 PR-specific files; exact ccb64699 full suite: 25,558 passed, 155 skipped, one non-strict xpass. Native security: 607 baseline/607 candidate findings, zero regressions. Fresh hosted CI is required.",
+      "note": "Current main integrated without changing the 11 PR-specific files; exact ccb64699 full suite: 25,558 passed, 155 skipped, one non-strict xpass. Native security: 607 baseline/607 candidate findings, zero regressions. All applicable hosted checks now pass; required merge-queue integration remains.",
       "check_counts": {
         "SKIPPED": 2,
-        "QUEUED": 12,
-        "SUCCESS": 4,
+        "SUCCESS": 16,
         "IN_PROGRESS": 1
       },
       "applicable_ci_passes": false,
@@ -1242,17 +1241,17 @@
           "name": "gitleaks",
           "app_id": 15368,
           "source_commit": "ccb64699facc2742ec65a60fc9116207e848e9d7",
-          "conclusion": "MISSING_OR_PENDING",
+          "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35644247049/job/106481593667",
-          "passes_required_identity": false
+          "passes_required_identity": true
         },
         {
           "name": "scan",
           "app_id": 15368,
           "source_commit": "ccb64699facc2742ec65a60fc9116207e848e9d7",
-          "conclusion": "MISSING_OR_PENDING",
+          "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35644247049/job/106481593978",
-          "passes_required_identity": false
+          "passes_required_identity": true
         },
         {
           "name": "security-regression",
@@ -1347,7 +1346,7 @@
       "source_commit": "e232f713f248b2fdb37c3bf0edeeef2ad7138020",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-sampling-20260920",
       "base_commit": "d116cbbcb03aefb8190952a41a883b8df812aa63",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -1405,7 +1404,7 @@
       "source_commit": "2e1805c5adadceac850724fa9edb20072a34e5c8",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-cancel-absence-20260920",
       "base_commit": "b1123f9128ce998c7bffcd9957a60da49474fa52",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -1461,7 +1460,7 @@
       "source_commit": "788726b343a7bca1151d6eda5124941f7608a838",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-terminality-20260920",
       "base_commit": "2e1805c5adadceac850724fa9edb20072a34e5c8",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -1574,7 +1573,7 @@
       "source_commit": "f4f4cb7aaf52702e49ec04a9d80f79a7b7d60d7c",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-artifact-name-20260920",
       "base_commit": "e232f713f248b2fdb37c3bf0edeeef2ad7138020",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -1632,10 +1631,10 @@
       "source_commit": "8fc45429c30ae89c555da5142ffc7226969b660c",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-submission-receipt-20260920",
       "base_commit": "9833525790360aa180a83f17be04c5d8e5dd6ca1",
-      "mergeable": "UNKNOWN",
-      "merge_state": "UNKNOWN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "UNSTABLE",
       "status": "Changed head; current acceptance gates remain",
       "note": "Signature-only source-equivalent repair retained. Current Gitleaks job failed downloading its pinned tool with HTTP504 before scanning; targeted retry was refused while the parent workflow remains active. Original failure is retained; parent615 and terminal CI remain required.",
       "check_counts": {
@@ -1697,7 +1696,7 @@
       "source_commit": "b88de92b03a57af82ebef03a8e72d41546f283e7",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-second-judge-20260920",
       "base_commit": "f4f4cb7aaf52702e49ec04a9d80f79a7b7d60d7c",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -1758,8 +1757,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Both numeric GPU matrices and repaired CPU consumer pass; final gates remain",
       "note": "The 49fed65d/c85e8718 image passed all four numeric cells in both 5,200-row matrices: B200 5,162 successful/38 failed or invalid; RTX 5,166/34. Both managed workflows failed at visualization; those failures and verified cleanup remain retained. Cursor's repaired consumer486 passed independent 111-test, 5,200-row and actual retained B200/RTX journal CPU checks. Published 0b0accdd is the AST-equivalent Codex formatting successor and passed one uninterrupted 24,243-test full suite, with 154 skips and 1 non-strict xpass. Current CI, exact updated-image qualification and visual acceptance remain open; the retained VLM result is FAIL. No new GPU rerun or robot-safety claim follows.",
       "check_counts": {
@@ -1863,7 +1862,7 @@
       "source_commit": "d15aa243913b5638b2ed39da80fcfbb114629e38",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-preflight-images-20260920",
       "base_commit": "4369e175cdc7f1616fbea06ebbe1e8f1880f14e4",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -1921,7 +1920,7 @@
       "source_commit": "46f50ad77777ca469d6782fe1101896d9999ec2f",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-confusion-20260920",
       "base_commit": "b88de92b03a57af82ebef03a8e72d41546f283e7",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2094,7 +2093,7 @@
       "source_commit": "48220e837f79b004d80d7434c67c46ea99f1b77a",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-prefix-output-marker-20260920",
       "base_commit": "803115985c70dbfa31e14ffebc10756fbd49c2b3",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2149,7 +2148,7 @@
       "source_commit": "fa621c0051b3cb724f9140fe5b3044f4df4625ea",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-artifacts-20260920",
       "base_commit": "54d61f256fe5efad0b279e109d503e4b179ab0c6",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2204,7 +2203,7 @@
       "source_commit": "281fd30bf38ed84c61a94213b2b3177248365828",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-valid-output-recovery-20260920",
       "base_commit": "48220e837f79b004d80d7434c67c46ea99f1b77a",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2259,7 +2258,7 @@
       "source_commit": "16601ddbcade28af986f74ac6eb612c03d35b296",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-succeeded-identity-20260920",
       "base_commit": "281fd30bf38ed84c61a94213b2b3177248365828",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2314,7 +2313,7 @@
       "source_commit": "52cd330b3895c040288744536f5b782f92e105ee",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-preference-20260920",
       "base_commit": "2bf755b3129fd904ab69222b944ed1bfee525f62",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2368,7 +2367,7 @@
       "source_commit": "edfe23a7ab03abf5ddae827a9b9a404b80868186",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-provider-status-fidelity-20260920",
       "base_commit": "16601ddbcade28af986f74ac6eb612c03d35b296",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2423,7 +2422,7 @@
       "source_commit": "c3e91b8169ee00a25fda341981b700eb96ca78aa",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-block-relaunch-resume-20260920",
       "base_commit": "edfe23a7ab03abf5ddae827a9b9a404b80868186",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2478,7 +2477,7 @@
       "source_commit": "f6fbad60918a1cd1766e4be73c9d48baffefb1da",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-block-relaunch-resume-20260920",
       "base_commit": "edfe23a7ab03abf5ddae827a9b9a404b80868186",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2531,7 +2530,7 @@
       "source_commit": "abbe30736ac17dbdba5e7208bb52c21ef092b024",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-output-reuse-crash-resume-20260920",
       "base_commit": "c3e91b8169ee00a25fda341981b700eb96ca78aa",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2642,7 +2641,7 @@
       "source_commit": "d28b270d42dc1f48c9127fd24f81d906e8c7ccae",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-completed-replay-identity-20260920",
       "base_commit": "abbe30736ac17dbdba5e7208bb52c21ef092b024",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2695,7 +2694,7 @@
       "source_commit": "7a6454add3a5464950a116a70f750b6c6dfb0f97",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-image-pin-binding-20260920",
       "base_commit": "d28b270d42dc1f48c9127fd24f81d906e8c7ccae",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2748,7 +2747,7 @@
       "source_commit": "204e126aefe63d0a363bda9d6be9e1c35b0d919a",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-image-selection-binding-20260920",
       "base_commit": "7a6454add3a5464950a116a70f750b6c6dfb0f97",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2805,8 +2804,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Acceptance incomplete",
       "note": "Relevant source/image/runtime, objective or visual-review gates remain outstanding; see the workload summary and scoped proof. Current hosted failures: test-gate / pytest-3.12-shard-1, test-gate / coverage, lint-gate / ruff, security-scanners, security-regression.",
       "check_counts": {
@@ -2861,7 +2860,7 @@
       "source_commit": "c958ac2a2ba39c8e78778fccc9bde9129ccba34c",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "cursor/physicalai-vlm-missing-terminal-20260920",
       "base_commit": "52cd330b3895c040288744536f5b782f92e105ee",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -2914,7 +2913,7 @@
       "source_commit": "788b4e6326c4f1ddf9e13a1c65d64606f2d00c97",
       "state": "OPEN",
       "draft": true,
-      "base": "main",
+      "base": "codex/studio-smoother-edit-20260917",
       "base_commit": "ef15281845e11faa4fb0a931eafd65a6dbecc318",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -3139,7 +3138,7 @@
       "source_commit": "c5d15e942a9b981b969ed17cf8b549dd51e01c56",
       "state": "OPEN",
       "draft": false,
-      "base": "main",
+      "base": "cursor/physicalai-workflows-fail-redaction-20260920",
       "base_commit": "8fc45429c30ae89c555da5142ffc7226969b660c",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
@@ -3355,8 +3354,8 @@
       "draft": true,
       "base": "main",
       "base_commit": "eb75a05d1dda3d391d75b8cdad0754460ab3b5f8",
-      "mergeable": "MERGEABLE",
-      "merge_state": "CLEAN",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "status": "Hosted proof and CI pass; prerequisite and full-suite environment closure remain",
       "note": "Real hosted proof and current-source CI pass. PR596 remains an explicit prerequisite; the retained local full run failed four detection tests because optional Torch was absent. No new local full pass or post-parent request-byte equivalence is claimed.",
       "check_counts": {
@@ -3893,11 +3892,11 @@
       "draft": true,
       "base": "main",
       "base_commit": "24141e67c8127be1036c431eab06e33d44314045",
-      "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "mergeable": "UNKNOWN",
+      "merge_state": "UNKNOWN",
       "check_counts": {
         "SKIPPED": 2,
-        "IN_PROGRESS": 4,
+        "CANCELLED": 4,
         "SUCCESS": 12
       },
       "applicable_ci_passes": false,
@@ -4112,17 +4111,16 @@
       "title": "Safely finalize owned MK8s operations after verified absence",
       "source_commit": "59f8829d23e16a553da310f26d7cc85f398a775f",
       "state": "OPEN",
-      "draft": true,
+      "draft": false,
       "base": "main",
       "base_commit": "9505f1ff0184cbf39a4c5845d4ddcc07b5e938c8",
       "mergeable": "MERGEABLE",
-      "merge_state": "BLOCKED",
+      "merge_state": "CLEAN",
       "check_counts": {
-        "SKIPPED": 2,
-        "IN_PROGRESS": 2,
-        "SUCCESS": 14
+        "SUCCESS": 19,
+        "SKIPPED": 2
       },
-      "applicable_ci_passes": false,
+      "applicable_ci_passes": true,
       "required_checks": [
         {
           "name": "gitleaks",
@@ -4142,16 +4140,16 @@
         },
         {
           "name": "security-regression",
-          "app_id": null,
-          "source_commit": null,
-          "conclusion": "MISSING_OR_PENDING",
-          "url": null,
-          "passes_required_identity": false
+          "app_id": 15368,
+          "source_commit": "59f8829d23e16a553da310f26d7cc85f398a775f",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35642665742/job/106487038243",
+          "passes_required_identity": true
         }
       ],
-      "required_checks_app_and_source_verified": false,
-      "note": "Exact 59f8829d passed 25,561 full-suite tests and native security comparison. The actual owned-resource absence reconciliation made eight provider reads, closed the original local journal/lease, and a second real CLI call proved a safe repeat without additional reads or mutations. Hosted CI remains required.",
-      "status": "Exact local gates accepted; fresh hosted CI pending"
+      "required_checks_app_and_source_verified": true,
+      "note": "Exact 59f8829d passed 25,561 full-suite tests and native security comparison. The actual owned-resource absence reconciliation made eight provider reads, closed the original local journal/lease, and a second real CLI call proved a safe repeat without additional reads or mutations. All applicable hosted checks now pass; required merge-queue integration remains.",
+      "status": "Ready for required merge queue"
     }
   ],
   "workload_update_recorded_at": "2026-09-21T17:50:31.526423+00:00",
@@ -4169,6 +4167,6 @@
     "recovery": "Codex is implementing and validating the active recovery work. Completed Cursor work retains its original attribution.",
     "no_blanket_worker_liveness_claim": true
   },
-  "supplemental_verified_at": "2026-09-21T19:30:32.396277+00:00",
-  "root_operational_update_at": "2026-09-21T19:30:32.396277+00:00"
+  "supplemental_verified_at": "2026-09-21T19:46:40.758576+00:00",
+  "root_operational_update_at": "2026-09-21T19:46:40.758576+00:00"
 }
