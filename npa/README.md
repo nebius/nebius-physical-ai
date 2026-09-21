@@ -328,6 +328,16 @@ requirements. `.github/dependabot.yml` schedules daily update proposals for
 Python, browser-test npm, and GitHub Actions dependencies. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
 
+The base-image scanner uses Docker with Buildx and the checksum-verified Trivy
+binary. From the repository root, `npa/.venv/bin/python
+npa/scripts/scan_base_images.py --inventory
+npa/docker/workbench/base-image-security.json --cache-dir <private-directory>`
+scans the full inventory. `--matrix` emits every validated entry name without
+starting a scan; `--entry-name <name>` scans exactly that existing entry and
+rejects unknown names. These options are mutually exclusive. CI isolates each
+entry on its own runner and requires every applicable result. See
+[base-image scan storage and cleanup](../docs/security/image-reproducibility.md#cve-scanning).
+
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,
 runtime, lint, guardrail, and test gates, and calls an always-reporting image
@@ -337,11 +347,11 @@ scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. All seven bases run inside one job with two
-bounded local workers. One Trivy database download is hard-linked into isolated
-worker caches, rather than using seven queued runners or a lock-contended shared
-cache. This baseline check does not replace the
-complete image scans required before publication.
+on fixable CRITICAL OS findings. Each base has its own runner, temporary archive,
+cache, and isolated builder. Owned build state is removed before the archive
+scan; archives and temporary scan data are cleaned after each entry. The required
+inventory aggregate fails when any applicable entry fails or does not finish.
+This baseline check does not replace complete image scans before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment
