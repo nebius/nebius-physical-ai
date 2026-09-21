@@ -238,7 +238,17 @@ class NativeTrainer:
         observation: Any,
         actions: Any,
     ) -> tuple[Any, dict[str, Any]]:
-        """Evaluate the executable paired native objective."""
+        """Evaluate the executable paired native objective.
+
+        Args:
+            model: Student model containing the selected action parameters.
+            parent_action_state: Independently stored selected parent state.
+            rng, observation, actions: Shared native loss inputs.
+        Returns:
+            Scalar total loss and public logging metrics.
+        Raises:
+            ValueError: Student, parent, or detailed-loss contracts differ.
+        """
         import jax
         import jax.numpy as jnp
         from native_nnx_anchor import native_anchored_loss, paired_detailed_losses
@@ -264,7 +274,16 @@ class NativeTrainer:
     def value_and_grad(
         self, model: Any, rng: Any, observation: Any, actions: Any
     ) -> tuple[tuple[Any, dict[str, Any]], Any]:
-        """Differentiate only the exact selected action parameters."""
+        """Differentiate only the exact selected action parameters.
+
+        Args:
+            model: Student model at the current native state.
+            rng, observation, actions: Native detailed-loss inputs.
+        Returns:
+            Loss with metrics and gradients for the selected state only.
+        Raises:
+            ValueError: The paired native loss contract differs.
+        """
         from flax import nnx
 
         diff_state = nnx.DiffState(0, self.trainable_filter)

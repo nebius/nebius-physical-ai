@@ -445,6 +445,9 @@ def require_tree_exact(label: str, left: dict[str, Any], right: dict[str, Any]) 
         left: First flat array tree.
         right: Second flat array tree.
 
+    Returns:
+        None after every path and array matches.
+
     Raises:
         ValueError: Leaf paths or any array bytes differ.
     """
