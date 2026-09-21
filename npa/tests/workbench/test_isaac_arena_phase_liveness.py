@@ -1,5 +1,6 @@
 """Exercise measured phase stalls and real owned-process cleanup without a simulator."""
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -172,7 +173,7 @@ def test_termination_escalates_only_for_owned_process(tmp_path):
 def _child_is_active(stat: Path) -> bool:
     try:
         return stat.read_text().split()[2] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         # Reaping can remove /proc/<pid>/stat at any point, including mid-read.
         return False
 
@@ -227,6 +228,27 @@ def test_child_probe_accepts_reaping_during_read(tmp_path, monkeypatch):
         raise FileNotFoundError(path)
 
     monkeypatch.setattr(Path, "read_text", reap_before_read)
+    assert not _child_is_active(stat)
+
+
+def test_child_probe_accepts_esrch_during_read(tmp_path, monkeypatch):
+    """Accept Linux ESRCH when the process disappears during the stat read.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        monkeypatch: Simulates procfs reporting an exited process at read time.
+    Returns:
+        None.
+    Raises:
+        AssertionError: ESRCH is misclassified as a cleanup failure.
+    """
+    stat = tmp_path / "stat"
+    stat.write_text("123 (python) S 1 123 123\n")
+
+    def process_disappeared(path):
+        raise ProcessLookupError(errno.ESRCH, os.strerror(errno.ESRCH), path)
+
+    monkeypatch.setattr(Path, "read_text", process_disappeared)
     assert not _child_is_active(stat)
 
 
