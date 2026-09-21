@@ -151,14 +151,20 @@ def test_profile_readiness_reports_token_mint_failure() -> None:
         (FileNotFoundError("synthetic-provider-output"), "cli_unavailable"),
         (
             subprocess.TimeoutExpired(
-                "nebius", 30, output="synthetic-provider-output", stderr="synthetic-provider-output"
+                "nebius",
+                30,
+                output="synthetic-provider-output",
+                stderr="synthetic-provider-output",
             ),
             "timeout",
         ),
         (OSError("synthetic-provider-output"), "probe_error"),
         (
             subprocess.CalledProcessError(
-                1, "nebius", output="synthetic-provider-output", stderr="synthetic-provider-output"
+                1,
+                "nebius",
+                output="synthetic-provider-output",
+                stderr="synthetic-provider-output",
             ),
             "probe_error",
         ),

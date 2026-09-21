@@ -130,14 +130,18 @@ def test_eval_stages_discover_their_checkpoint_and_publish_metrics() -> None:
         assert "--discover-checkpoint" in step.argv, state
         assert "--write-canonical-metrics" in step.argv, state
         # The search prefix is the TRAINING output, which is what /train was handed.
-        assert step.argv[step.argv.index("--checkpoint-uri") + 1].endswith(f"/training/{view}")
+        assert step.argv[step.argv.index("--checkpoint-uri") + 1].endswith(
+            f"/training/{view}"
+        )
         assert step.outputs[0]["uri"].endswith("/metrics.json")
 
 
 def test_spec_documents_synthetic_and_real_label_maps() -> None:
     text = SPEC_PATH.read_text(encoding="utf-8")
 
-    assert "pedestrian/motorcycle/bicycle" in text, "the real-BDD100K alternative must stay documented"
+    assert "pedestrian/motorcycle/bicycle" in text, (
+        "the real-BDD100K alternative must stay documented"
+    )
     assert json.loads(yaml.safe_load(text)["config"]["detection_label_map"]) == (
         SYNTHETIC_BDD100K_LABEL_MAP
     )
@@ -210,8 +214,12 @@ def test_wrapper_submits_the_rendered_spec_and_forwards_tokens(
     # The rendered document is the spec's plan, and the override reached the argv.
     names = [doc["name"] for doc in captured["docs"] if "name" in doc and "run" in doc]
     assert names, captured["docs"]
-    rendered = Path.read_text  # keep flake-free; the assertion below uses the parsed docs
-    assert any("--synthetic 5000" in doc["run"] for doc in captured["docs"] if "run" in doc)
+    rendered = (
+        Path.read_text
+    )  # keep flake-free; the assertion below uses the parsed docs
+    assert any(
+        "--synthetic 5000" in doc["run"] for doc in captured["docs"] if "run" in doc
+    )
     assert rendered is Path.read_text
 
 
@@ -291,7 +299,9 @@ class TestMockStageEnv:
 
 
 @pytest.mark.timeout(300)
-def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypatch) -> None:
+def test_mock_endpoint_validation_drives_every_stage(
+    capsys, tmp_path, monkeypatch
+) -> None:
     """The offline proof: every stage's real argv against stand-in services."""
 
     wrapper = _load_wrapper_module()
@@ -320,7 +330,9 @@ def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypat
         item["path"] for item in summary["lancedb_requests"] if item["method"] == "POST"
     ] == wrapper.EXPECTED_LANCEDB_POSTS
     assert [
-        item["path"] for item in summary["detection_requests"] if item["method"] == "POST"
+        item["path"]
+        for item in summary["detection_requests"]
+        if item["method"] == "POST"
     ] == wrapper.EXPECTED_DETECTION_POSTS
     # Every stage ran, and each one ran its own argv.
     assert [item["name"] for item in summary["task_results"]] == EXPECTED_STAGE_ORDER
@@ -328,7 +340,9 @@ def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypat
         assert item["returncode"] == 0, item
 
     train_payloads = [
-        item["payload"] for item in summary["detection_requests"] if item["path"] == "/train"
+        item["payload"]
+        for item in summary["detection_requests"]
+        if item["path"] == "/train"
     ]
     assert len(train_payloads) == 3
     from npa.workbench.detection_training.schemas import TrainRequest
@@ -339,7 +353,10 @@ def test_mock_endpoint_validation_drives_every_stage(capsys, tmp_path, monkeypat
         # The real training contract reserves detector category zero for
         # background and resolves omitted counts from the explicit label map.
         # Prove the effective model count, not an optional transport default.
-        assert resolve_num_classes(TrainRequest.model_validate(payload)) == len(SYNTHETIC_BDD100K_LABEL_MAP) + 1
+        assert (
+            resolve_num_classes(TrainRequest.model_validate(payload))
+            == len(SYNTHETIC_BDD100K_LABEL_MAP) + 1
+        )
 
 
 @pytest.mark.timeout(300)
@@ -353,9 +370,18 @@ def test_mock_run_awaits_training_and_resolves_the_real_checkpoint(
     monkeypatch.setenv("PATH", _path_without_scripts_dir())
     output = tmp_path / "mock.json"
 
-    assert wrapper.main(
-        ["--mock-endpoints", "--run-id", "bdd100k-mock-order", "--output-json", str(output)]
-    ) == 0
+    assert (
+        wrapper.main(
+            [
+                "--mock-endpoints",
+                "--run-id",
+                "bdd100k-mock-order",
+                "--output-json",
+                str(output),
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
     summary = json.loads(output.read_text(encoding="utf-8"))
 
@@ -371,7 +397,9 @@ def test_mock_run_awaits_training_and_resolves_the_real_checkpoint(
 
     # The eval payload names a concrete checkpoint file, not the training directory.
     eval_payloads = [
-        item["payload"] for item in summary["detection_requests"] if item["path"] == "/eval"
+        item["payload"]
+        for item in summary["detection_requests"]
+        if item["path"] == "/eval"
     ]
     assert len(eval_payloads) == 3
     for payload in eval_payloads:

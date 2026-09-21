@@ -5,14 +5,33 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 # Pre-PR Validation
 
-Every pull request runs lint and docs drift, unit and browser tests, security
-regressions, harness guardrails, secret scanning, and confidentiality scanning.
-`Security regression / security-regression` requires the scanner comparison,
-reusable image-security workflow, and hostile-input runtime tests on every PR,
-merge queue candidate, and main push.
-Its workflow has no path filters. Verify actual required contexts in branch
-protection before claiming merge enforcement. `image-security-scan` is called by
-that required check without path filters; it retains scheduled and manual scans.
+Every pull request has one automatic candidate workflow. PRs and merge candidates
+run the same complete five-shard Python 3.12 coverage suite, Cypress, focused
+Python 3.10/3.14 compatibility checks, lint, docs drift, guardrails, security
+regressions, secret scanning, and confidentiality scanning. Cross-subsystem
+coverage must pass before queue admission. Full shards include smoke and CLI
+install tests without duplicate subsystem jobs. Only narrowly recognized prose
+edits skip runtime suites; those retain smoke and every documentation,
+repository, and security gate. See `CONTRIBUTING.md` for the trusted-base selector,
+which uses the base's merge-candidate policy for both events during rollout.
+The queue rechecks the combined candidate against its current base.
+A daily audit covers all supported Python versions instead of starting a full
+audit after every merge. Independent validation jobs use available GitHub runner
+capacity without job-level concurrency locks or matrix `max-parallel` caps.
+Preserve per-PR supersession on the parent and distinct workflow group prefixes
+for reusable children. Merge candidates use their own SHA-specific groups.
+`test_ci_concurrency` rejects shared validation locks and matrix caps;
+`test_ci_workflows` guards cancellation and required results. See the contributor
+concurrency guide for organization runner limits and rollout behavior. Refresh
+older PR branches after a scheduling change lands; rerunning an old commit
+retains its original workflow configuration.
+`Security regression / security-regression` requires
+every candidate component and the reusable image-security workflow.
+The required workflows have no top-level path filters. Image scope is classified
+inside always-reporting jobs: image, packaging, workflow, or security-policy
+changes run the deep checks; unrelated source changes take the fast path. Main,
+scheduled, and manual image audits always run deeply. Verify actual required
+contexts in branch protection before claiming merge enforcement.
 
 All of them are reproducible locally. Run them in cost order so the cheap ones
 catch the common mistakes before you spend minutes on the full suite.
@@ -30,6 +49,11 @@ absolute path:
 ```bash
 make test PYTHON=/workspace/npa/.venv/bin/python
 ```
+
+If that venv is shared across checkouts (worktree, agent sandbox) rather than
+installed fresh in this one, `make test`/`test-smoke`/`test-guardrails` fail
+fast via `make check-env` before running anything, rather than silently
+testing a different checkout's code — see `testing-conventions` for why.
 
 ## The Ladder
 
@@ -114,9 +138,10 @@ npa/.venv/bin/python -m pytest \
 ```
 
 Run this gate before pushing, in addition to the full suite and applicable live
-workload validation. Workflow registration belongs in
-`AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py` for direct
-PR triggers. The reusable image workflow is covered by `test_image_security_gate`;
+workload validation. Only the unified parent belongs in
+`AUTOMATIC_PR_WORKFLOWS` in `npa/tests/guardrails/test_ci_workflows.py`; component
+workflows are reusable and main-only. The image workflow is covered by
+`test_image_security_gate`;
 preserve its distinct concurrency group, minimal caller permissions, and the
 existing PR concurrency controls. Image findings must not produce a passing
 `security-regression` result.
@@ -125,14 +150,19 @@ existing PR concurrency controls. Image findings must not produce a passing
 sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
-Run the coverage gate from the package directory, matching CI:
+Run the equivalent coverage floor from the package directory. Merge-queue CI
+uses five deterministic, duration-balanced shards; the daily three-interpreter
+audit retains four per interpreter. Both merge their coverage data:
 
 ```bash
 cd npa
-.venv/bin/python -m pytest tests/ -v --tb=short --cov=npa --cov-report=term-missing --cov-fail-under=60
+.venv/bin/python -m pytest tests/ -v --tb=short --cov=src/npa --cov-report=term-missing --cov-fail-under=60
 ```
 
-From the repository root, `--cov=npa` can select the enclosing directory and
+Keep the coverage source scoped to `src/npa`. Selecting the import name with
+`--cov=npa` can also trace temporary test modules that deliberately impersonate
+that package, and those files no longer exist when CI merges shard data. From the
+repository root, `--cov=npa` can additionally select the enclosing directory and
 include tests and scripts in the coverage total. That percentage does not prove
 package coverage. Check the report's file population, including package modules
 that no test executed. If correcting a report from retained traces, preserve the
@@ -150,11 +180,22 @@ Before investigating a failure, check whether it is one of these:
   venv: `PATH="$PWD/npa/.venv/bin:$PATH"`.
 
 When a failure looks unrelated to your change, confirm it against a clean base
-before spending time on it:
+before spending time on it. `git worktree add` never brings an untracked
+`npa/.venv` (it is gitignored), so the new worktree needs one of:
 
 ```bash
 git worktree add /tmp/main-check origin/main
-cd /tmp/main-check && npa/.venv/bin/python -m pytest <the failing test> -q
+
+# Option A: this worktree's own venv (works standalone, costs an install).
+python3 -m venv /tmp/main-check/npa/.venv
+/tmp/main-check/npa/.venv/bin/pip install -e "/tmp/main-check/npa[dev,adapter]"
+/tmp/main-check/npa/.venv/bin/python -m pytest /tmp/main-check/npa/tests/<the failing test> -q
+
+# Option B: reuse this checkout's already-installed venv, corrected with
+# PYTHONPATH so it resolves `main-check`'s source, not this checkout's
+# (see "Use The Repo Virtualenv" above for why the correction is required).
+PYTHONPATH=/tmp/main-check/npa/src npa/.venv/bin/python -m pytest \
+  /tmp/main-check/npa/tests/<the failing test> -q
 ```
 
 The shared dev/operator VM has both of those binaries, so the full suite passes

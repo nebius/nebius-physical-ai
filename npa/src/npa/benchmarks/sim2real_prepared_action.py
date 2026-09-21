@@ -31,7 +31,12 @@ IMAGE_ROLES = (
     "viewer",
 )
 CANONICAL_SECRET_ENV_NAMES = frozenset(
-    {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"}
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+        "NEBIUS_TOKEN_FACTORY_KEY",
+    }
 )
 REQUIRED_PREFLIGHTS = (
     "health_preflight",
@@ -209,7 +214,9 @@ def create_receipt(path: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
     return body
 
 
-def create_receipt_from_request(request_path: Path, output_path: Path) -> dict[str, Any]:
+def create_receipt_from_request(
+    request_path: Path, output_path: Path
+) -> dict[str, Any]:
     """Materialize a receipt from one private, value-bearing operator request."""
 
     request = json.loads(request_path.read_text(encoding="utf-8"))
@@ -236,7 +243,9 @@ def create_receipt_from_request(request_path: Path, output_path: Path) -> dict[s
     }
     _require_keys(request, keys, "receipt request")
     if request["schema"] != "npa.sim2real.prepared_workflow_action.request.v1":
-        raise PreparedActionError("receipt_schema_invalid", "unsupported request schema")
+        raise PreparedActionError(
+            "receipt_schema_invalid", "unsupported request schema"
+        )
     workspace = Path(request["workspace"]).resolve()
     evidence = Path(request["evidence_dir"]).resolve()
     private_root = Path(request["private_root"]).resolve()
@@ -268,11 +277,15 @@ def create_receipt_from_request(request_path: Path, output_path: Path) -> dict[s
     observed_workspace = workspace_state(workspace)
     source_commit = request["source_commit"]
     benchmark_base = request["benchmark_base"]
-    base_is_ancestor = benchmark_base == source_commit or subprocess.run(
-        ["git", "merge-base", "--is-ancestor", benchmark_base, source_commit],
-        cwd=workspace,
-        check=False,
-    ).returncode == 0
+    base_is_ancestor = (
+        benchmark_base == source_commit
+        or subprocess.run(
+            ["git", "merge-base", "--is-ancestor", benchmark_base, source_commit],
+            cwd=workspace,
+            check=False,
+        ).returncode
+        == 0
+    )
     if (
         observed_workspace["head"] != source_commit
         or observed_workspace["detached"] is not True
@@ -415,7 +428,8 @@ def _load_owner_only_json(path: Path, *, private_root: Path) -> dict[str, Any]:
         )
     if info.st_uid != os.getuid():
         raise PreparedActionError(
-            "receipt_permissions_invalid", "receipt must be owned by the controller user"
+            "receipt_permissions_invalid",
+            "receipt must be owned by the controller user",
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -447,7 +461,9 @@ def _validate_argv_contract(receipt: Mapping[str, Any]) -> None:
     if (
         not isinstance(argv, list)
         or not argv
-        or any(not isinstance(token, str) or not token or "\0" in token for token in argv)
+        or any(
+            not isinstance(token, str) or not token or "\0" in token for token in argv
+        )
     ):
         raise PreparedActionError("argv_contract_invalid", "argv must be strings")
     if len(argv) > 256 or sum(map(len, argv)) > 64_000:
@@ -639,7 +655,8 @@ def validate_receipt(
         )
     if receipt_path.parent.resolve() != context.control_dir.resolve():
         raise PreparedActionError(
-            "receipt_location_invalid", "receipt is outside the controller control directory"
+            "receipt_location_invalid",
+            "receipt is outside the controller control directory",
         )
     receipt = _load_owner_only_json(receipt_path, private_root=context.private_root)
     top_keys = {
@@ -663,7 +680,9 @@ def validate_receipt(
     }
     _require_keys(receipt, top_keys, "receipt")
     if receipt["schema"] != RECEIPT_SCHEMA:
-        raise PreparedActionError("receipt_schema_invalid", "unsupported receipt schema")
+        raise PreparedActionError(
+            "receipt_schema_invalid", "unsupported receipt schema"
+        )
     expected_receipt_sha = canonical_sha256(
         {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     )
@@ -720,7 +739,9 @@ def validate_receipt(
     if project["selection_sha256"] != canonical_sha256(
         {"alias": project["alias"], "infra": project["infra"]}
     ):
-        raise PreparedActionError("receipt_tampered", "project selection digest differs")
+        raise PreparedActionError(
+            "receipt_tampered", "project selection digest differs"
+        )
     if staged["identity_sha256"] != canonical_sha256(staged["identity"]):
         raise PreparedActionError("receipt_tampered", "staged input identity differs")
     base_runtime = {"runtime": True, "resume": True, "max_wait_seconds": 0}
@@ -756,7 +777,9 @@ def validate_receipt(
             "receipt_schema_invalid", "all images must be immutable digest references"
         )
     preflights = receipt["preflights"]
-    if not isinstance(preflights, list) or [item.get("name") for item in preflights if isinstance(item, dict)] != list(REQUIRED_PREFLIGHTS):
+    if not isinstance(preflights, list) or [
+        item.get("name") for item in preflights if isinstance(item, dict)
+    ] != list(REQUIRED_PREFLIGHTS):
         raise PreparedActionError(
             "receipt_schema_invalid", "receipt does not bind every required preflight"
         )
@@ -771,14 +794,18 @@ def validate_receipt(
     if argv_sha256(receipt["argv"]) != receipt["argv_sha256"]:
         raise PreparedActionError("argv_digest_mismatch", "argv digest does not match")
     _validate_argv_contract(receipt)
-    spec_path = resolve_sandbox_private_path(spec["sandbox_path"], evidence=context.evidence)
+    spec_path = resolve_sandbox_private_path(
+        spec["sandbox_path"], evidence=context.evidence
+    )
     manifest_path = resolve_sandbox_private_path(
         staged["manifest_sandbox_path"], evidence=context.evidence
     )
     if file_sha256(spec_path) != spec["sha256"]:
         raise PreparedActionError("spec_mismatch", "canonical spec digest changed")
     if file_sha256(manifest_path) != staged["manifest_sha256"]:
-        raise PreparedActionError("staged_input_mismatch", "staged input digest changed")
+        raise PreparedActionError(
+            "staged_input_mismatch", "staged input digest changed"
+        )
     for item in preflights:
         evidence_path = resolve_sandbox_private_path(
             item["evidence_sandbox_path"], evidence=context.evidence
@@ -800,19 +827,21 @@ def validate_receipt(
                 "preflight_not_passed", f"{item['name']} preflight is not passed"
             )
     observed_workspace = workspace_state(context.workspace)
-    base_is_ancestor = benchmark["base_commit"] == source[
-        "source_commit"
-    ] or subprocess.run(
-        [
-            "git",
-            "merge-base",
-            "--is-ancestor",
-            benchmark["base_commit"],
-            source["source_commit"],
-        ],
-        cwd=context.workspace,
-        check=False,
-    ).returncode == 0
+    base_is_ancestor = (
+        benchmark["base_commit"] == source["source_commit"]
+        or subprocess.run(
+            [
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                benchmark["base_commit"],
+                source["source_commit"],
+            ],
+            cwd=context.workspace,
+            check=False,
+        ).returncode
+        == 0
+    )
     if (
         observed_workspace["head"] != source["workspace_commit"]
         or observed_workspace["detached"] is not True
@@ -840,7 +869,8 @@ def validate_receipt(
         if missing:
             raise PreparedActionError(
                 "missing_required_secrets",
-                "required secret environment names are unavailable: " + ", ".join(missing),
+                "required secret environment names are unavailable: "
+                + ", ".join(missing),
             )
     return receipt
 
@@ -885,7 +915,11 @@ def recover_occurrence(
         if event.get("occurrence_id") == occurrence_id
     ]
     finished = next(
-        (event for event in reversed(events) if event.get("phase") == "execution_finished"),
+        (
+            event
+            for event in reversed(events)
+            if event.get("phase") == "execution_finished"
+        ),
         None,
     )
     if finished and isinstance(finished.get("result"), dict):
@@ -897,8 +931,16 @@ def recover_occurrence(
 
 def _prior_execution_state(state_path: Path, action_id: str | None = None) -> str:
     events = _state_events(state_path, action_id)
-    starts = {str(item.get("occurrence_id")) for item in events if item.get("phase") == "execution_started"}
-    finishes = {str(item.get("occurrence_id")) for item in events if item.get("phase") == "execution_finished"}
+    starts = {
+        str(item.get("occurrence_id"))
+        for item in events
+        if item.get("phase") == "execution_started"
+    }
+    finishes = {
+        str(item.get("occurrence_id"))
+        for item in events
+        if item.get("phase") == "execution_finished"
+    }
     if starts - finishes:
         return "indeterminate"
     if finishes:
@@ -977,9 +1019,7 @@ def _safe_result(
             and len(candidate) <= 64
             and re.fullmatch(r"[A-Z0-9_-]+", candidate)
         )
-        if authoritative and (
-            completed.returncode == 0 or is_terminal_fail(candidate)
-        ):
+        if authoritative and (completed.returncode == 0 or is_terminal_fail(candidate)):
             accepted = True
             status = candidate
     safe_view = {

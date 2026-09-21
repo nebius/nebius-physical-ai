@@ -68,9 +68,7 @@ class StorageScope:
             return self._authorize_s3(target, operation=operation)
         return self._authorize_local(target, operation=operation)
 
-    def _authorize_s3(
-        self, target: AuthorizedUri, *, operation: str
-    ) -> AuthorizedUri:
+    def _authorize_s3(self, target: AuthorizedUri, *, operation: str) -> AuthorizedUri:
         bucket = target.bucket
         key = target.key
         if not any(

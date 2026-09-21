@@ -20,14 +20,14 @@ images. It and existing saved `container_registry` values do not repoint these
 repository-owned runtime defaults; select custom bytes with a complete image
 reference or an explicit workflow `--registry`.
 
-The main-branch public plan and accepted-release manifest were verified against
-GHCR without credentials on **2026-09-05**. All **32 current release tags**
-resolved and matched their recorded digests. All **43 retained table references**
-(32 current pins and 11 historical aliases) resolved anonymously; manifest and
-OCI config hashes were checked, and every inspected runtime was `linux/amd64`.
-No missing or drifted accepted release required a build, promotion, or registry
-write. This audit did not execute new CPU/GPU workloads or repeat payload scans;
-capability results below retain their original exact-digest evidence.
+The combined public plan and accepted-release manifest were verified against
+GHCR without credentials on **2026-09-17**. All **34 current release tags**
+matched their recorded digests; independent manifest and OCI config reads
+confirmed `linux/amd64` runtime metadata. This read-only audit includes both
+Isaac Arena and OpenArm. The earlier 2026-09-12 audit covered 44 table references
+(33 then-current pins and 11 historical aliases); historical aliases were not
+re-audited on September 17. Capability results below remain tied to their
+original exact-digest evidence.
 
 **Built** is the UTC build date of the newest listed variant, read from OCI
 `created`, or from the immutable timestamp/`npa.build_ts` when a reproducible
@@ -46,12 +46,11 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory, including the pending NCore integration, has
-**38 packaging entries** (36 redistribution-eligible and two restricted) and
-**39 mapped tools**: 33 public-release members, two restricted tools, and four
-quarantined tools (`curobo`, `ncore`, `openpi`, and `robocasa`). These counts come
-from `packaging-contract.yaml` and `npa.deploy.images`; they do not constitute
-a new registry audit or acceptance of the quarantined images.
+The current source inventory has **42 packaging entries** (40 redistribution-eligible
+and two restricted) and **43 mapped tools**: 37 public-release members, two
+restricted tools, and four quarantined tools (`curobo`, `ncore`, `openpi` and
+`robocasa`). These counts come from `packaging-contract.yaml` and `npa.deploy.images`;
+they do not constitute acceptance of the quarantined images.
 
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
@@ -61,6 +60,77 @@ publication gates plus the checked-in Blackwell validator and real
 `DiffusionPolicy` construction on B200. This optional version does not replace
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
+
+The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
+that optional 0.6.0 image by digest and stages its adapters from the checkout.
+It uses the image's non-root runtime user and baked SkyPilot prerequisites;
+no new image publication is required for the experiment.
+
+## Native model publication
+
+The `npa-diffusers`, `npa-lingbot-world` and `npa-sam2` source-only runtimes
+were built from `d54eec137d3b2d86ff1acef736e36967b1fad7d3`, passed mandatory
+public-image gates, and completed six native B200 capability checks on their
+exact public development digests. On 2026-09-16, the repository publisher promoted
+those same bytes to the supported release tags below. Independent anonymous
+full image pulls and digest parity passed for all three. Weights and CUDA
+packages remain runtime fetches. B300 remains unvalidated for these images.
+See the [native workflow guide](video-generation-byof.md) and
+[capability evidence](validation/studio-public-models-20260916.json).
+
+## 2026-09-17 Isaac Arena recovery qualification
+
+`npa-isaac-arena:0.3.0-isaaclab3-20260917-r4` selects the accepted public
+manifest `sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e`
+from source `ae5adea6ab895660996f513f14160c89d06f47e5`. Official build
+`35211514544` passed the full publication gates. Independent anonymous pull,
+source hashes and digest-bound signatures passed; corrected payload/history
+checks inspected all 42 layers / 127,560 paths and the 126,146-path registry
+filesystem. The earlier outer-archive probe is not accepted as a payload scan.
+
+Fresh `arena-b200-reconcile-ae5adea6-20260917-r3` completed four native
+1,050-step state-only episodes. Fresh `arena-rtx-reconcile-ae5adea6-20260917-r3`
+completed 43 exact replay actions through native terminal with no padding,
+success 1.0 and door openness 0.200→0.815. Four coherent frame pairs bind
+spatially to native task progress. Independent retrieval verified 60 B200
+objects / 51,006,097 bytes and 24 RTX objects / 4,978,517 bytes; both
+43-frame MP4s fully decoded. The separate factual RRD was decoded, checked
+against native pixels/metrics and privately stored with read-after-write.
+Both controllers are SUCCEEDED with zero active workers; shared capacity,
+controllers and storage remain intact. See [fresh proof and hashes](isaac-arena.md#fresh-recovery-qualification--2026-09-17).
+
+## Historical 2026-09-15 Isaac Arena task-evidence publication
+
+`npa-isaac-arena:0.3.0-isaaclab3-20260912-r3` promotes, without rebuilding, the
+exact public development manifest
+`sha256:267f2b5785c9a1d2df7aba58a0ea4bb112edb976b5b83fef2afbbd130a23c32c`
+from source revision `feadf144a277366265c1331d0176d43e835092be`. Public build
+workflow `35005920685` passed source/license, complete 126,120-entry payload,
+vulnerability, secret, SBOM, provenance, worker-bootstrap, and anonymous-pull
+gates.
+
+Run `arena-b200-state-feadf144-20260915-r1` completed four real upstream
+`cube_goal_pose` episodes on B200: seeds 42–45 each ran 1,050 steps with
+`success_rate=0.0` and `object_moved_rate=1.0`. This remains truthful state-only
+coverage and makes no video claim. Run `arena-rtx-task-feadf144-20260915-r1`
+completed the GR1 open-microwave task on RTX PRO 6000. It executed the exact
+42-action native terminal prefix with zero padding, reported upstream
+`success_rate=1.0`, and increased door openness from 0.200 to 0.846. The
+registered task adapter bound that progress interval to spatially coherent
+denoised motion. The 1280×720 evidence MP4 has SHA-256
+`658fd8f3070ea52ef365af5e117538892d0ecf927d19d2d1f39d1227793c5780`.
+Independent retrieval hash-checked 63 B200 objects / 51,025,377 bytes and 26
+RTX objects / 13,264,455 bytes.
+
+The prior r2 coordinate is historical. Its four-seed B200 state
+regression completed 4,200 steps and intentionally emitted no video. The RTX
+visual proof is rejected: it executed 80 source actions, held the final action
+for another 170 steps, and reported `success_rate=0.0`. Its 72,519,371-byte
+H.264 MP4 decoded as 1280×720, 5.04 seconds, and 252 frames, but stochastic
+render grain could satisfy the former pixel-delta test without useful task
+motion. The publication and state-execution facts remain valid; this run does
+not qualify RTX visual behavior. Isaac Sim/Lab and Lightwheel assets remain
+operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
 ## Pending NCore conversion image
 
@@ -243,7 +313,7 @@ and populated caches remain absent from the public image.
 | SONIC (GR00T-WholeBodyControl) | `npa-sonic` | `cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | 2026-08-03 | Whole-body humanoid locomotion training and evaluation using `gear_sonic` (Apache-2.0 at a pinned commit). The public active image runtime-fetches Isaac and requires GPU Operator driver mounts. The old L40S and combined H100/H200 MuJoCo images are restricted and rejected; compute-only serverless use requires a separately validated custom image. |
 | Lichtblick 1.26.0 | `npa-lichtblick` | `1.26.0` | 2026-08-07 | Fully open-source (MPL-2.0), Foxglove-compatible MCAP/ROS log viewer served by Caddy on port 8080. No account or proprietary component is required. |
 | Cosmos Curator 0.1.2 | `npa-cosmos-curate` | `0.1.2-skypilot-v1-20260813T164700Z` | 2026-08-13 | Runs real `cosmos-curate` stages in process: download, fixed-stride extraction, clip transcode, motion-vector decode, motion filtering, and clip writing. GPU-stage models are fetched at runtime with the operator's Hugging Face token. |
-| FiftyOne 1.15.0.post1 (Voxel51) | `npa-fiftyone` | `1.15.0.post1` | 2026-08-13 | Dataset curation and visualization UI on port 5151, including uniqueness, similarity, and embedding visualization. Bundles a `mongod` binary so FiftyOne can launch its own metadata database. |
+| FiftyOne 1.21.0 (Voxel51) | `npa-fiftyone` | `1.21.0-skypilot-v1-20260915` | 2026-09-15 | CPU dataset curation and loopback visualization on port 5151, including real Brain uniqueness, similarity, and embedding visualization. The non-root SkyPilot worker includes MongoDB 7.0.40 with matching source and notices, and supports the current NPA dependency environment. |
 | Cosmos3-Super serving | `npa-cosmos3-serving` | `0.2.0-oss` | 2026-08-17 | Zero-payload non-root bootstrap on a digest-pinned public Python base. The serving closure, models, and guardrails are operator runtime fetches after terms and entitlement checks; the exact accepted digest passed guarded multi-GPU service boot and real inference. |
 | LTX-2.5 2.5 | `npa-ltx2` | `2.5-rtfetch-20260817` | 2026-08-17 | Lightricks LTX-2.5 text-to-video, shipped with zero Lightricks bytes: source and gated weights are operator-entitled runtime fetches. The accepted digest passed the exact-layer payload scan, entitlement refusal, and real GPU text-to-video plus decoded-MP4 validation. |
 | SONIC MuJoCo | `npa-sonic-mujoco` | `0.2.0-runtime` | 2026-08-17 | Independently rebuilt from pinned Apache-2.0 SONIC source on a digest-pinned public Python base with a hash-locked PyTorch/MuJoCo closure. The exact accepted digest passed the real B200 Unitree G1 rollout and payload gates. |
@@ -259,7 +329,208 @@ and populated caches remain absent from the public image.
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
 | Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. It is built from `sim2real-envgen/Dockerfile`. |
+| Isaac Lab-Arena 0.3.0 | `npa-isaac-arena` | `0.3.0-isaaclab3-20260917-r4` | 2026-09-17 | Real completed-episode evaluation through pinned upstream `policy_runner.py`, with independent phase-liveness supervision and verified native rendering quality. The public image bakes Apache-2.0 Arena source and its hash-locked Apache-2.0 Lightwheel SDK client, but no Lightwheel registry asset; Isaac Sim/Lab and provider-controlled registry USDs remain operator runtime fetches. Fresh exact-digest qualification covers four B200 state seeds and successful RTX GR1 open-microwave replay with 43 exact native actions, progress-bound video and a factual RRD. Upstream remains alpha. |
+| Diffusers native generation and depth | `npa-diffusers` | `0.38.0-rtfetch-20260916` | 2026-09-16 | Pinned OSS runtime for Mochi 1, CogVideoX-2B, Wan 2.1 14B and Depth Anything V2 Small. All four native capabilities qualified on B200 at the exact public digest; CUDA and checkpoints fetched at runtime. |
+| LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
+| SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
+
+## External PAIDF runtime images
+
+The direct translations require operator-built compatibility images for DIG,
+generation in IAA/EVG, and the four labeling services. The upstream generation
+images lack worker prerequisites; the labeling images invoke `main` instead of
+forwarding SkyPilot shell arguments. The wrappers supply missing prerequisites
+and argument forwarding while retaining their pinned upstream runtimes. DIG builds the
+pinned Apache-2.0 AnomalyGen source on public CUDA bases. Every
+workflow image reference is immutable, and submit must
+prove both registry pullability and the SkyPilot worker bootstrap contract for
+the exact digest before launch. NGC images require the operator's authorized NGC
+pull secret. Model and dataset access is a separate runtime preflight and never
+grants redistribution rights.
+
+| Workflow role | Immutable external image | NPA publication status |
+| --- | --- | --- |
+| DIG vendor reference (not executed) | `nvcr.io/nvidia/paidf-anomalygen@sha256:e62a87d1dc58b6de8b8a352dc8ec2a2e3e400288d66b2b8b19b92d97e7a0bc09` | Vendor-owned NGC image; pull verified, but not SkyPilot-compatible |
+| DIG setup, fine-tune, generation, and native labels | `<operator-registry>/npa-paidf-anomalygen-sky@sha256:5aff3f4b40a4340ece2594c567ce8e5683a82ddc295c39d80588e228a13a28cf` built from `paidf-anomalygen-sky/Dockerfile` | Operator-private publication verified 2026-09-06; exact-layer/rootfs, vulnerability-policy, SPDX SBOM, bootstrap, offline runtime, B200 CUDA/attention, and the complete native DIG workload passed; never NPA public GHCR |
+| IAA Qwen Image Edit blueprint reference | `docker.io/vllm/vllm-omni@sha256:5d8c7e742c98858f257d82307e378391f0e7d77065e141c733cc4778042128ab` | Not executed: failed bootstrap and contains vLLM 0.20 affected by CVE-2026-48746 |
+| IAA Qwen Image Edit selected parent | `docker.io/vllm/vllm-omni@sha256:8b0cc5438eb27b34cdfd22011b735da6a94835a09e9c56ddf9e8cb300d679919` | Aligned upstream vLLM/Omni 0.22.0 security update; wrapper publication/bootstrap and complete IAA GPU workflow verified |
+| EVG Cosmos3 Super Image2Video upstream parent | `docker.io/vllm/vllm-omni@sha256:970dee6658ea223f615b2438ce41e47f1d5322225482546e6e6bc5d8134f757c` | Exact wrapper parent; upstream worker bootstrap failed |
+| IAA generation and CPU postprocessing worker | `<operator-registry>/npa-paidf-image-edit-sky@sha256:ef7450cfc12efb92a0260f09df9a83f4b0590ccb4a9fc6157b819721adc56cd8` | Operator-private publication verified 2026-09-05; bootstrap and repository security policy passed; complete nine-state IAA acceptance passed |
+| EVG generation worker | `<operator-registry>/npa-paidf-event-video-sky@sha256:277a255e8bce7bd6e0e8561f2cc6cca2ecc86abdb791c57b33eca287d0d0d29a` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG acceptance passed on B200 |
+| IAA/EVG attribute-search upstream parent | `nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG detection/tracking upstream parent | `nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG captioning upstream parent | `nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| EVG Visual QA upstream parent | `nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c` | Exact restricted NGC wrapper parent; original entrypoint does not forward worker argv |
+| IAA/EVG attribute-search worker | `<operator-registry>/npa-paidf-attribute-search-sky@sha256:d61d56ae69bf2971fbf5b03fe97a492a865c317906b1ec5c67a46133b5b97641` | Operator-private publication verified 2026-09-05; bootstrap/security and complete IAA/EVG acceptance passed |
+| EVG detection/tracking worker | `<operator-registry>/npa-paidf-detection-sky@sha256:6fa1c78eddad6f6d2bea732b246aa37b512008d8724a0e987291188d0e17b0b2` | Operator-private publication verified 2026-09-05; bootstrap/security, real CPU inference and complete EVG acceptance passed on B200 |
+| EVG captioning worker | `<operator-registry>/npa-paidf-captioning-sky@sha256:ce97a86413005dbf844ae454a47b6e0a41ce521bd0403237e133c26bfed63ff7` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG acceptance passed with B200 CUVID decoding |
+| EVG Visual QA worker | `<operator-registry>/npa-paidf-visual-qa-sky@sha256:27f600a12ccfb71c6744394d7b41375c36eed2df53833fb883b9ec5fa73070e4` | Operator-private publication verified 2026-09-05; bootstrap/security and complete EVG protocol acceptance passed; person answers cover 29/33 questions |
+
+The DIG worker was privately published from
+`743d87df3a19fc0571d95c1d98b2bc53a2b438e9`, using pinned Apache-2.0
+AnomalyGen source revision `dbaf7d7d9003f048230f9026da5969e9e5931785`.
+The table records its runnable `linux/amd64` child; the distinct OCI index is
+`sha256:c8e96df2ed5ef71427e075817649f5c80eef426b0148aa9c7b15e801ee0a7060`
+and the image config is
+`sha256:17f17fe9a5debdff93711a75e8a5910571b22c30cfa5d7e20dba88d112fe45e5`.
+Authenticated manifest/config readback matched those identities and 22 ordered
+rootfs diff IDs over 21 unique blobs. Anonymous reads were denied. This proves
+the accepted manifests/config and private publication; it does not turn the
+image into an NPA public release.
+
+The generic exact-layer/rootfs inventory covered 67,908 files and
+10,673,751,967 bytes. All 1,924 weight-shaped candidates were reviewed; no gated
+runtime model weights, credential paths, or populated model-cache paths were
+accepted as payload. The 757,547-byte byte audit has SHA-256
+`ce049048587669de54ec20f02c3b9832c76cfdb2cad5ba7854c9baef062d4d7e`.
+The 1,683-package SPDX SBOM is 4,282,800 bytes with SHA-256
+`296731803937d2d20392da5671e53979c61099868c15f45ad47ace04dc5eb5dc`.
+
+The complete vulnerability inventory remains nonempty:
+
+| Severity | Total findings | Findings reporting a fixed version |
+| --- | ---: | ---: |
+| CRITICAL | 5 | 0 |
+| HIGH | 186 | 13 |
+| MEDIUM | 2,173 | 90 |
+| LOW | 268 | 43 |
+| UNKNOWN | 3 | 2 |
+
+The existing fixed-CRITICAL policy passed without a new ignore; it is not a
+zero-vulnerability claim. One JWT-shaped scanner match is an inert string in
+exact published scikit-image source. Six embedded PEM blocks match attributed
+public GnuTLS fixtures; this establishes equality of those blocks, not of the
+containing ELF. The original scanner inventory remains retained.
+
+Bootstrap, isolated NPA installation, CUDA dependency imports, offline CPU
+`torchrun`, and W&B fresh, persisted-run, and retry cases passed. The exact
+image then passed real B200 CUDA/FlashAttention/Triton checks and four native
+causal/full attention cases. It measured Python 3.13.15, Torch 2.13.0+cu132,
+CUDA 13.2, and device capability 10.0. FlashAttention maximum absolute error was
+`0.000273943`, Triton maximum absolute error was `0`, and the largest attention
+relative L2 error was `0.00305612 < 0.015`. Training used default NATTEN
+`blackwell-fmha` with Q/K/V gradients; inference used default cuDNN. This
+diagnostic loaded no model weights and did not run a full model forward, so it
+is recorded separately from the full workload result.
+
+The durable native DIG run `paidf-dig-15395d41fe18` completed all four logical
+states against that exact runnable child. Resume retained the valid
+`record-upstream` result from attempt 1 at the image-build source revision (185
+seconds); attempt 8 at
+`ff198c6c289ee05ec5953e5968dc2c626ab27eee` completed
+`prepare-base-checkpoints` (1,002 seconds), `finetune` (4,710 seconds), and
+`anomaly-infer` (1,051 seconds). The unchanged recipe reached all 15,000
+iterations with 1,000-iteration validation/save intervals, early stopping
+disabled, and no early-stop artifact. The evaluator selected checkpoint 13,000,
+whose content hash is
+`f54b720e786229395717f8a6bde9c8a2864735cddcada6f45d147cd5add04f65`;
+the selected score was `0.4711651623249054`, versus the terminal checkpoint's
+`0.4695567297935487`. The retained trace contains 1,500 loss samples, and 56
+run-bound B200 observations reached maxima of 100% utilization, 40,688 MiB
+resident memory, and 945.84 W.
+
+All 30 requested outcomes were accounted: 24 generated RGB images and six
+text-guardrail blocks. The generated media total 605,744 bytes and produced 24
+native COCO annotations in one label file; the anomaly subtree contains 293
+objects and 3,541,820 bytes. The stable whole-run inventory contains 5,007
+objects and 157,040,084,602 bytes, including runtime-fetched checkpoints. The
+media manifest SHA-256 is
+`c8eb3b5da00dbfabf2ff3e4b3fd3f96b7d73a827e26227dbdf847127059fb115`,
+and the labels SHA-256 is
+`b330be50a83692d05a5bdc692e4d84ff2e7645991d891b1eabe07d78e33d06e8`.
+The real Qwen text guardrail was enabled and enforcing. Image enforcement was
+false: the upstream image preset applies face blurring but has no image-content
+classifier. That limitation is retained rather than promoted to a full image
+guardrail claim.
+
+The resolved dependency closure remains restricted pending a separate
+redistribution review. Runtime checkpoints and data stay outside the image and
+are fetched under the operator's applicable access and license terms. Private
+access, byte acceptance, and successful execution do not grant redistribution
+rights.
+
+The three privately published labeling workers were built from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e` using immutable full-SHA
+development tags. The recorded digests select the runnable `linux/amd64` child
+of each OCI index. Authenticated manifest/config reads, local and remote layer
+identity, and the attached SLSA provenance were verified; both child and index
+returned HTTP 403 without credentials. Each passed the actual SkyPilot
+bootstrap, generic NPA installation with unchanged vendor files, complete
+layer/license/secret review, vulnerability policy, and SPDX SBOM generation.
+Each inventory contains zero HIGH/CRITICAL vulnerabilities, 74 MEDIUM and
+24 LOW; reviewed public cryptographic test vectors are retained as such. Exact
+private locations and receipts remain in access-controlled evidence. This proves
+image publication and bootstrap. Attribute search also passed the complete IAA
+workflow, and all three workers passed the complete EVG workflow. The person
+questionnaire produced 29 valid answers from 33 questions; successful protocol
+acceptance does not establish complete attribute coverage.
+EVG captioning and anomaly Visual QA require a scheduled GPU for the pinned
+H.264 CUVID decoder even though model inference uses a hosted VLM. Their
+profiles reserve one B200 each. Crop-only person QA shares the Visual QA
+profile; the attribute-search stage remains on CPU.
+
+The IAA generation worker was privately published from
+`a04508698d3813785263831741f02b8bb8040d6d`, with the same remote
+index/child/layer/provenance and authenticated-versus-anonymous pull checks.
+Both shell bootstrap modes, the installed Qwen service argv, authenticated
+middleware, and NPA installation preserving vendor files passed. Its complete
+inventory records six unfixed CRITICAL findings, 241 HIGH, 3,505 MEDIUM and
+460 LOW, with zero secret findings. It passes the repository's fixed-CRITICAL
+policy without new ignore entries; this does not mean its inventory is empty.
+The SPDX 2.3 SBOM contains 1,782 packages. Public auxiliary test/model tables
+inherited from the parent were reviewed against exact source bytes; actual
+workflow checkpoints are fetched at runtime. The complete nine-state IAA workflow
+subsequently passed on reserved B200 capacity with this exact generation digest
+and the recorded attribute-search digest: one evaluated JPEG, CPU postprocessing,
+structured attributes, nine grounded search queries, and independently verified
+terminal artifacts. The [workflow guide](guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records source, hashes, timings, and observed quality limitations.
+
+The EVG generation worker was privately published from
+`b7ae4f198b20f087afef46d31fffee367eb4fa2e` and independently
+verified against its remote OCI index, runnable child, layers and provenance.
+Both shell bootstrap modes and NPA installation preserving vendor files passed.
+Its full inventory records six unfixed CRITICAL findings, 216 HIGH, 3,400 MEDIUM
+and 433 LOW, with zero secrets. The fixed-CRITICAL policy passed without new
+ignore entries, including clearance of the earlier NLTK finding. Its SPDX 2.3
+SBOM contains 1,831 packages. The exact worker subsequently passed real guarded
+generation and the complete EVG workflow on reserved B200 capacity. Independent
+terminal validation reopened the assembled video and its full labeling lineage;
+the [workflow guide](guides/physical-ai-data-factory.md#native-live-validation-evidence)
+records source revisions, media hashes, timings and output limitations.
+
+The RF-DETR worker was privately published from
+`ce010547321e8fee7b8783f684349a311ace63b2`, with remote OCI
+index/child/layer/provenance identity and authenticated pull verification;
+anonymous reads were denied. Both shell bootstrap modes, NPA installation
+preserving vendor files, the actual service CLI and real CPU checkpoint inference
+passed. Its full inventory contains zero CRITICAL findings, 22 HIGH, 340 MEDIUM
+and 91 LOW. All ten inherited public TLS fixture-key findings were matched to
+exact public source bytes, with no unresolved secret findings. The repository
+policy passed and the SPDX 2.3 SBOM contains 894 packages. Real B200 detection
+and tracking and the complete EVG workflow subsequently passed with this digest.
+
+Separate queries inside the accepted IAA generation, EVG generation and
+detection images measured B200 capability 10.0, advertised `sm_100`, and an
+exact float32 matrix-multiplication result. The
+[GPU matrix](image-gpu-compatibility-matrix.md) records the actual framework
+versions and architecture lists. These receipts promote only B200; advertised
+wheel architectures alone do not establish B300 or RTX PRO 6000 acceptance.
+
+The licensing and runtime-fetch boundary is recorded in
+`skills/NOTICE-NVIDIA-PAIDF`. The machine-readable packaging contract includes
+all seven restricted compatibility sources. The labeling wrappers preserve
+`/app/.venv/bin/main` and the vendor service packages. NPA installs into an
+independent `/opt/npa-venv`; the vendor environment remains untouched. Parent payloads
+remain subject to complete built-layer licensing and security review. No new
+compatibility image is claimed as built, published, or functionally accepted
+merely because a recipe exists.
+The supported FiftyOne release uses loopback access through verified SSH or
+Kubernetes port-forwarding. Redeploy older versions to replace public listeners
+and use the current dependency environment. Existing tags retain their original
+bytes. See the [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md)
+and [exact-image validation](../../npa/docker/workbench/fiftyone/RELEASE.md).
 
 ## Candidates outside the supported public release plan
 
@@ -279,20 +550,14 @@ closure with the maintained Google Cloud Storage SDK and verifies object
 generations, checksums and destination paths during dataset preparation.
 This source change does not qualify or republish an existing image digest.
 
-The FiftyOne candidate now requires loopback access through verified SSH or
-Kubernetes port-forwarding. Published tags retain their original bytes until a
-validated replacement is promoted; redeploy existing public listeners using the
-updated deployment path. See the [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
+The source candidate updates FiftyOne to 1.22.0 with native LeRobot v3 multimodal
+playback and temporal-tag review, retaining MongoDB 7.0.40 and its source annex.
+This does not promote the candidate over the accepted 1.21 release above. Use
+verified SSH or Kubernetes port-forward access; see the
+[FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
 
-FiftyOne is the remaining public-release tag override for an unpromoted worker
-candidate: public execution selects the verified `1.15.0.post1`, while an
-explicit custom registry can select the newer supported worker pin. Cosmos
-Transfer and Rerun now select their published coherent Sim2Real releases.
-Private availability and redistribution eligibility do not establish public
-release membership.
-
-The source security candidates update FiftyOne to 1.21.0 with MongoDB 7.0.40,
-and update the SONIC MuJoCo evaluator to the hash-locked Torch 2.13 closure
+The source security candidates update the SONIC MuJoCo evaluator to the
+hash-locked Torch 2.13 closure
 on a patched Python base. The Cosmos3 native Ray candidate selects the pinned
 framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
 extension, and removes inherited attention binaries from the older Torch ABI.
@@ -311,17 +576,16 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 33 accepted release references resolved anonymously to their recorded
-digests on 2026-09-16. Twenty resolve directly to an image manifest and 13 to
-an OCI index; the runtime variants in both forms are `linux/amd64`. The chart
-groups the current publishing plan three ways:
+All 37 accepted release references resolved anonymously to their recorded
+digests on 2026-09-17. The chart groups the current publishing plan three ways:
 
-- **17 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **21 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3`, `npa-cosmos3-ray-serve`, `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-genesis`, `npa-groot`,
+  `npa-isaac-arena`,
   `npa-lancedb`, `npa-lerobot`, `npa-lerobot-policy`, `npa-lerobot-vlm-rl`,
-  `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`, and
-  `npa-wan2-2`. This band does not mean every cell has a current-release run:
+  `npa-loop-eval`, `npa-ltx2`, `npa-reference-policy`, `npa-sonic-mujoco`,
+  `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
 - **8 public images are blocked on at least one platform**:
@@ -372,11 +636,11 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 
 ## Verification scope
 
-The registry verification confirms exact tag spelling, anonymous manifest and
+The earlier catalog inspections checked tag spelling, anonymous manifest and
 config access, content hashes, platform metadata, selected OCI labels, exposed
-ports, entrypoints, and build timestamps. It is not a new packaging-policy or
-functional-validation pass. The current accepted SONIC Kubernetes pin declares
-OCI user `root`; the other 32 current releases declare non-root users. SONIC's
+ports, entrypoints, and build timestamps. The 2026-09-17 check above verifies
+accepted release digests; it is not a new packaging-policy or functional-validation
+pass. The accepted SONIC Kubernetes pin retains its documented OCI user `root`. SONIC's
 legacy runtime-user limitation remains documented in the
 [security review](../security/container-golden-evals.md); a current non-root
 Dockerfile does not retroactively change those accepted bytes. Source contracts

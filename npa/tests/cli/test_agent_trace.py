@@ -47,7 +47,14 @@ def _action_result(**overrides):
         "tier": "cheap",
         "needs_confirmation": False,
         "steps": [
-            {"step": 1, "phase": "call", "tool": "sim_viz_status", "args": {}, "status": "ok", "observation": {"run_id": "r"}},
+            {
+                "step": 1,
+                "phase": "call",
+                "tool": "sim_viz_status",
+                "args": {},
+                "status": "ok",
+                "observation": {"run_id": "r"},
+            },
             {"step": 2, "phase": "final", "status": "ok"},
         ],
     }
@@ -65,7 +72,16 @@ def test_spans_from_action_loop_has_root_and_steps():
 
 def test_spans_flag_empty_tool_result_event():
     result = _action_result(
-        steps=[{"step": 1, "phase": "call", "tool": "artifacts_runs", "args": {}, "status": "ok", "observation": {}}]
+        steps=[
+            {
+                "step": 1,
+                "phase": "call",
+                "tool": "artifacts_runs",
+                "args": {},
+                "status": "ok",
+                "observation": {},
+            }
+        ]
     )
     spans = T.spans_from_action_loop(result)
     tool_span = next(s for s in spans if s.kind == T.KIND_TOOL)
@@ -96,7 +112,16 @@ def test_spans_treat_terminal_empty_as_successful_observation():
 
 def test_spans_never_leak_secret_args():
     result = _action_result(
-        steps=[{"step": 1, "phase": "call", "tool": "x", "args": {"api_key": "sekret"}, "status": "ok", "observation": {"a": 1}}]
+        steps=[
+            {
+                "step": 1,
+                "phase": "call",
+                "tool": "x",
+                "args": {"api_key": "sekret"},
+                "status": "ok",
+                "observation": {"a": 1},
+            }
+        ]
     )
     spans = T.spans_from_action_loop(result)
     # arg_keys are sorted key names only; the value never enters the span.
@@ -110,7 +135,14 @@ def test_spans_from_drive():
         "stopped_reason": "promoted",
         "decision": "promote_checkpoint",
         "final_run_id": "run-1",
-        "iterations": [{"iteration": 1, "run_id": "run-1", "decision": "promote_checkpoint", "status_confirmed": True}],
+        "iterations": [
+            {
+                "iteration": 1,
+                "run_id": "run-1",
+                "decision": "promote_checkpoint",
+                "status_confirmed": True,
+            }
+        ],
     }
     spans = T.spans_from_drive(drive)
     assert spans[0].name == "agent.sim2real.drive"
@@ -153,7 +185,14 @@ def test_analyze_flags_max_steps_exhaustion():
 def test_analyze_flags_unsurfaced_tool_error():
     trace = _action_result(
         steps=[
-            {"step": 1, "phase": "call", "tool": "x", "args": {}, "status": "error", "observation": {"error": "boom"}},
+            {
+                "step": 1,
+                "phase": "call",
+                "tool": "x",
+                "args": {},
+                "status": "error",
+                "observation": {"error": "boom"},
+            },
             {"step": 2, "phase": "final", "status": "ok"},
         ]
     )
@@ -164,7 +203,16 @@ def test_analyze_flags_unsurfaced_tool_error():
 
 def test_analyze_flags_truncated_observation():
     trace = _action_result(
-        steps=[{"step": 1, "phase": "call", "tool": "x", "args": {}, "status": "ok", "observation": {"truncated": True, "preview": "..."}}]
+        steps=[
+            {
+                "step": 1,
+                "phase": "call",
+                "tool": "x",
+                "args": {},
+                "status": "ok",
+                "observation": {"truncated": True, "preview": "..."},
+            }
+        ]
     )
     report = T.analyze_traces([trace])
     kinds = {f["kind"] for f in report["silent_failures"]}
@@ -172,7 +220,11 @@ def test_analyze_flags_truncated_observation():
 
 
 def test_analyze_clusters_by_signature():
-    traces = [_action_result(), _action_result(), _action_result(stopped_reason="max_steps", ok=False)]
+    traces = [
+        _action_result(),
+        _action_result(),
+        _action_result(stopped_reason="max_steps", ok=False),
+    ]
     report = T.analyze_traces(traces)
     assert report["totals"]["traces"] == 3
     # Two distinct signatures: done|sim_viz_status and max_steps|sim_viz_status.

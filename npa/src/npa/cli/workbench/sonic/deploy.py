@@ -20,25 +20,47 @@ import typer
 
 
 def deploy_cmd(
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime."),
-    mode: DeployMode = typer.Option(DeployMode.sim, "--mode", help="SONIC deploy mode."),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help="Runtime."
+    ),
+    mode: DeployMode = typer.Option(
+        DeployMode.sim, "--mode", help="SONIC deploy mode."
+    ),
     checkpoint_source: CheckpointSource = typer.Option(
         CheckpointSource.hf, "--checkpoint-source", help="Checkpoint source."
     ),
-    model_repo: str = typer.Option("nvidia/GEAR-SONIC", "--model-repo", help="Hugging Face model repo."),
-    checkpoint_path: str = typer.Option("", "--checkpoint-path", help="Local, S3, or HF checkpoint path."),
-    hf_token_env: str = typer.Option("HF_TOKEN", "--hf-token-env", help="Environment variable containing the HF token."),
-    tensorrt_version: str = typer.Option("", "--tensorrt-version", help="TensorRT version override."),
+    model_repo: str = typer.Option(
+        "nvidia/GEAR-SONIC", "--model-repo", help="Hugging Face model repo."
+    ),
+    checkpoint_path: str = typer.Option(
+        "", "--checkpoint-path", help="Local, S3, or HF checkpoint path."
+    ),
+    hf_token_env: str = typer.Option(
+        "HF_TOKEN",
+        "--hf-token-env",
+        help="Environment variable containing the HF token.",
+    ),
+    tensorrt_version: str = typer.Option(
+        "", "--tensorrt-version", help="TensorRT version override."
+    ),
     port: int = typer.Option(5557, "--port", help="Realtime debug/visualization port."),
     zmq_port: int = typer.Option(5556, "--zmq-port", help="ZMQ input port."),
     project_id: str = typer.Option("", "--project-id", help="Nebius project ID."),
     tenant_id: str = typer.Option("", "--tenant-id", help="Nebius tenant ID."),
     region: str = typer.Option("", "--region", help="Nebius region."),
-    gpu_type: str = typer.Option("", "--gpu-type", help="GPU type for GPU deploy paths."),
-    output_path: str = typer.Option("", "--output-path", help="S3 URI for serverless deploy smoke output."),
+    gpu_type: str = typer.Option(
+        "", "--gpu-type", help="GPU type for GPU deploy paths."
+    ),
+    output_path: str = typer.Option(
+        "", "--output-path", help="S3 URI for serverless deploy smoke output."
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Plan only."),
-    default: bool = typer.Option(False, "--default", help="Mark this SONIC runtime as default when persisted."),
-    confirm_real: bool = typer.Option(False, "--confirm-real", help="Required to acknowledge real robot mode."),
+    default: bool = typer.Option(
+        False, "--default", help="Mark this SONIC runtime as default when persisted."
+    ),
+    confirm_real: bool = typer.Option(
+        False, "--confirm-real", help="Required to acknowledge real robot mode."
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", "--output", help="Output format."
     ),

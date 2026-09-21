@@ -37,7 +37,6 @@ def _embedded_ui_html(source: str = "") -> str:
     return rendered_agent_ui_html()
 
 
-
 def test_describe_user_prompt_is_kind_specific() -> None:
     rerun = vf.describe_user_prompt(
         "rerun",
@@ -45,12 +44,17 @@ def test_describe_user_prompt_is_kind_specific() -> None:
     )
     assert vf.DESCRIBE_MARKER in rerun
     assert "heldout-sim" in rerun
-    assert "NOT 'blank'" in rerun or "not blank" in rerun.lower() or "not 'blank'" in rerun
+    assert (
+        "NOT 'blank'" in rerun or "not blank" in rerun.lower() or "not 'blank'" in rerun
+    )
     assert "Next actions" in rerun
 
     video = vf.describe_user_prompt("video", {"run_id": "r1"})
     assert "video viewer" in video
-    assert "success/failure" in video.lower() or "success/failure" in vf._KIND_GUIDANCE["video"]
+    assert (
+        "success/failure" in video.lower()
+        or "success/failure" in vf._KIND_GUIDANCE["video"]
+    )
 
     data = vf.describe_user_prompt("data", {"text_excerpt": '{"success_rate": 0.4}'})
     assert "success_rate" in data
@@ -64,7 +68,12 @@ def test_describe_prompt_includes_pipeline_provenance() -> None:
     )
     prompt = vf.describe_user_prompt(
         "rerun",
-        {"run_id": "paidf-1", "capture": "frame", "has_image": True, "provenance": prov},
+        {
+            "run_id": "paidf-1",
+            "capture": "frame",
+            "has_image": True,
+            "provenance": prov,
+        },
     )
     assert "Pipeline provenance" in prompt
     assert "Cosmos Transfer 2.5" in prompt
@@ -75,7 +84,10 @@ def test_describe_prompt_includes_pipeline_provenance() -> None:
 
 def test_visual_context_block_surfaces_provenance() -> None:
     block = vf.format_visual_context_block(
-        {"run_id": "paidf-1", "provenance": "Augment — Cosmos Transfer 2.5 [GPU (Nebius K8s)]"}
+        {
+            "run_id": "paidf-1",
+            "provenance": "Augment — Cosmos Transfer 2.5 [GPU (Nebius K8s)]",
+        }
     )
     assert "provenance" in block
     assert "Cosmos Transfer 2.5" in block
@@ -98,7 +110,10 @@ def test_describe_prompt_includes_grounded_origin() -> None:
 
 def test_visual_context_block_surfaces_origin() -> None:
     block = vf.format_visual_context_block(
-        {"run_id": "paidf-1", "origin": "No separate original input image was stored for run `paidf-1`."}
+        {
+            "run_id": "paidf-1",
+            "origin": "No separate original input image was stored for run `paidf-1`.",
+        }
     )
     assert "origin" in block
     assert "No separate original input image was stored" in block
@@ -231,7 +246,10 @@ def test_metadata_only_describe_keeps_structured_visual_feedback_path() -> None:
     ui = _embedded_ui_html(source)
     assert "explicitly an offline held-out policy evaluation" in ui
     assert "do not infer synthetic imagery or task behavior from the GR00T name" in ui
-    assert "The camera pixels come from the persisted held-out LeRobot observation videos" in ui
+    assert (
+        "The camera pixels come from the persisted held-out LeRobot observation videos"
+        in ui
+    )
     assert "Never say the original input is absent" in ui
     assert "rerunRecordingActivatedAt" in ui
     assert "window.Cypress ? 0 : 8000" in ui
@@ -295,7 +313,12 @@ def test_is_visual_feedback_turn_detection() -> None:
         messages=[
             {
                 "role": "user",
-                "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}],
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AA"},
+                    }
+                ],
             }
         ]
     )
@@ -319,7 +342,10 @@ def test_format_visual_context_block_skips_secrets() -> None:
 def test_text_from_content_handles_multimodal() -> None:
     assert (
         vf.text_from_content(
-            [{"type": "text", "text": "hello"}, {"type": "image_url", "image_url": {"url": "x"}}]
+            [
+                {"type": "text", "text": "hello"},
+                {"type": "image_url", "image_url": {"url": "x"}},
+            ]
         )
         == "hello"
     )
@@ -389,7 +415,10 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     primer_source = ui_html.split("function primeRerunCaptureBridge", 1)[1].split(
         "async function grabFromRerunCaptureBridge", 1
     )[0]
-    assert "Keep following canvas replacements through the full startup window" in primer_source
+    assert (
+        "Keep following canvas replacements through the full startup window"
+        in primer_source
+    )
     assert "Date.now() < deadline" in primer_source
     assert "bridge.video.readyState >= 2" not in primer_source
 
@@ -399,17 +428,19 @@ def test_ui_and_backend_visual_feedback_contract() -> None:
     assert "grabFromRerunCaptureBridge(500, { forceRestart: false })" in probe_source
     assert "grabFromRerunCaptureBridge(500, { forceRestart: true })" not in probe_source
 
-    grab_source = ui_html.split("async function grabFromRerunCaptureBridge", 1)[1].split(
-        "async function captureCanvasDataUrl", 1
-    )[0]
+    grab_source = ui_html.split("async function grabFromRerunCaptureBridge", 1)[
+        1
+    ].split("async function captureCanvasDataUrl", 1)[0]
     assert "restartAt" not in grab_source
     assert "ensureRerunCaptureBridge(iframe, { forceRestart: true })" not in grab_source
 
-    quality_source = ui_html.split("async function waitForQualityRerunFrame", 1)[1].split(
-        "async function captureRerunViewerFrame", 1
-    )[0]
+    quality_source = ui_html.split("async function waitForQualityRerunFrame", 1)[
+        1
+    ].split("async function captureRerunViewerFrame", 1)[0]
     assert "ensureRerunCaptureBridge(iframe);" in quality_source
-    assert "ensureRerunCaptureBridge(iframe, { forceRestart: true })" not in quality_source
+    assert (
+        "ensureRerunCaptureBridge(iframe, { forceRestart: true })" not in quality_source
+    )
 
 
 def test_build_multimodal_user_content() -> None:
@@ -427,7 +458,9 @@ def test_frame_looks_blank_from_stats_rejects_uniform_gray() -> None:
     assert vf.frame_looks_blank_from_stats(mean=3.0, variance=1.0, value_range=2.0)
     assert vf.frame_looks_blank_from_stats(mean=250.0, variance=1.0, value_range=3.0)
     # Skeleton-on-dark-grid style content has high variance/range.
-    assert not vf.frame_looks_blank_from_stats(mean=40.0, variance=1200.0, value_range=200.0)
+    assert not vf.frame_looks_blank_from_stats(
+        mean=40.0, variance=1200.0, value_range=200.0
+    )
     # Sparse orange/cyan strokes on near-black: mean/variance stay tiny, but vivid pixels count.
     assert not vf.frame_looks_blank_from_stats(
         mean=4.0,

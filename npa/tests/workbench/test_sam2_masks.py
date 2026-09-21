@@ -16,9 +16,7 @@ def test_sam2_config_is_pinned_and_validates_quality_bounds() -> None:
     assert config.model_id == "facebook/sam2.1-hiera-tiny"
     assert len(config.model_revision) == 40
     with pytest.raises(sm.Sam2MaskError, match="area fractions"):
-        sm.Sam2MaskConfig(
-            min_area_fraction=0.7, max_area_fraction=0.6
-        ).validate()
+        sm.Sam2MaskConfig(min_area_fraction=0.7, max_area_fraction=0.6).validate()
 
 
 def test_sam2_rejects_prompt_coordinates_in_the_workflow_surface() -> None:
@@ -30,8 +28,18 @@ def test_automatic_mask_selection_rejects_speckles_and_background() -> None:
     selected = sm._select_automatic_boxes(
         [
             {"area": 1, "bbox": [1, 1, 1, 1], "predicted_iou": 1, "stability_score": 1},
-            {"area": 9_900, "bbox": [0, 0, 100, 100], "predicted_iou": 1, "stability_score": 1},
-            {"area": 1_600, "bbox": [20, 20, 40, 40], "predicted_iou": 0.95, "stability_score": 0.96},
+            {
+                "area": 9_900,
+                "bbox": [0, 0, 100, 100],
+                "predicted_iou": 1,
+                "stability_score": 1,
+            },
+            {
+                "area": 1_600,
+                "bbox": [20, 20, 40, 40],
+                "predicted_iou": 0.95,
+                "stability_score": 0.96,
+            },
         ],
         width=100,
         height=100,
@@ -40,6 +48,100 @@ def test_automatic_mask_selection_rejects_speckles_and_background() -> None:
         limit=2,
     )
     assert selected == [(20.0, 20.0, 60.0, 60.0)]
+
+
+def test_automatic_mask_selection_prefers_compact_distinct_foreground() -> None:
+    selected = sm._select_automatic_boxes(
+        [
+            # The historical area score preferred this broad, high-confidence
+            # background proposal because its area was closest to half a frame.
+            {
+                "area": 5_500,
+                "bbox": [0, 0, 100, 55],
+                "predicted_iou": 1.0,
+                "stability_score": 1.0,
+            },
+            {
+                "area": 400,
+                "bbox": [10, 10, 20, 20],
+                "predicted_iou": 0.95,
+                "stability_score": 0.96,
+            },
+            # A near-duplicate of the compact object must not consume another
+            # propagation slot even though its confidence is also high.
+            {
+                "area": 420,
+                "bbox": [10, 10, 21, 20],
+                "predicted_iou": 0.94,
+                "stability_score": 0.95,
+            },
+            {
+                "area": 300,
+                "bbox": [65, 60, 15, 20],
+                "predicted_iou": 0.91,
+                "stability_score": 0.93,
+            },
+        ],
+        width=100,
+        height=100,
+        min_area_fraction=0.002,
+        max_area_fraction=0.65,
+        limit=2,
+    )
+
+    assert selected == [
+        (10.0, 10.0, 30.0, 30.0),
+        (65.0, 60.0, 80.0, 80.0),
+    ]
+
+
+def test_sam2_contract_versions_the_automatic_selection_policy() -> None:
+    assert sm.Sam2MaskConfig().public_contract()["selection_policy"] == (
+        "compact-motion-foreground-v3"
+    )
+
+
+def test_temporal_motion_support_includes_action_path_not_static_backdrop(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    frames = []
+    for index, left in enumerate((8, 24, 40)):
+        frame = Image.new("RGB", (64, 48), (180, 180, 180))
+        draw = ImageDraw.Draw(frame)
+        draw.rectangle((2, 2, 12, 12), fill=(40, 70, 180))
+        draw.rectangle((left, 29, left + 5, 36), fill=(20, 180, 40))
+        path = tmp_path / f"frame-{index:02d}.png"
+        frame.save(path)
+        frames.append(path)
+
+    mask, evidence = sm._temporal_motion_support(frames, width=64, height=48)
+
+    assert mask[32, 10]
+    assert mask[32, 43]
+    assert not mask[7, 7]
+    assert not mask[20, 30]
+    assert evidence == {
+        "engine": "temporal-rgb-range-v1",
+        "sample_count": 3,
+        "threshold": 24,
+        "dilation_pixels": 11,
+        "coverage": pytest.approx(float(mask.mean())),
+    }
+
+
+def test_temporal_motion_support_rejects_camera_wide_change(tmp_path: Path) -> None:
+    from PIL import Image
+
+    frames = []
+    for index, value in enumerate((0, 255)):
+        path = tmp_path / f"wide-{index}.png"
+        Image.new("RGB", (32, 24), (value, value, value)).save(path)
+        frames.append(path)
+
+    with pytest.raises(sm.Sam2MaskError, match="camera-wide motion"):
+        sm._temporal_motion_support(frames, width=32, height=24)
 
 
 def test_publish_sam2_masks_requires_and_publishes_exact_frame_count(
@@ -119,6 +221,13 @@ def test_load_published_sam2_masks_reuses_only_an_exact_contract(
         "height": 3,
         "object_count": 1,
         "mask_coverage": {"mean": 0.5, "min": 0.5, "max": 0.5},
+        "motion_support": {
+            "engine": sm.SAM2_MOTION_ENGINE,
+            "sample_count": 2,
+            "threshold": sm.SAM2_MOTION_THRESHOLD,
+            "dilation_pixels": sm.SAM2_MOTION_DILATION,
+            "coverage": 0.2,
+        },
         "runtime": {"device": "cuda", "seconds": 2.0, "frames_per_second": 1.0},
         "manifest_uri": f"{base}manifest.json",
         "masks_uri": f"{base}masks/",

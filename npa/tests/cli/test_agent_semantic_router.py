@@ -56,7 +56,9 @@ def test_insights_metric_questions_route_to_action_zero_tokens():
         "how many gpus did each run use",
         "show the lineage of the hardened policy",
     ):
-        result = S.classify_intent_semantic(turn, known_intents=KNOWN, model_call=_model)
+        result = S.classify_intent_semantic(
+            turn, known_intents=KNOWN, model_call=_model
+        )
         assert result["mode"] == S.MODE_ACTION, turn
         assert result["tokens"] == 0, turn
         assert result["source"] == S.SOURCE_KEYWORD, turn
@@ -81,7 +83,9 @@ def test_insights_signal_does_not_overroute_non_metric_which_runs():
         return _completion({"intent": "none", "confidence": 0.9})
 
     for turn in ("which runs are still active", "which runs are queued right now"):
-        result = S.classify_intent_semantic(turn, known_intents=KNOWN, model_call=_model)
+        result = S.classify_intent_semantic(
+            turn, known_intents=KNOWN, model_call=_model
+        )
         assert result["mode"] != S.MODE_ACTION, turn
     # …but a metric/resource qualifier still routes to the insights loop.
     assert not S._insights_action_signal("which runs are still active")
@@ -90,7 +94,9 @@ def test_insights_signal_does_not_overroute_non_metric_which_runs():
 
 def test_paraphrase_routes_via_model_when_keyword_misses():
     def _model(messages, *, tier="cheap"):
-        return _completion({"intent": "sonic_capabilities", "confidence": 0.8}, tokens=9)
+        return _completion(
+            {"intent": "sonic_capabilities", "confidence": 0.8}, tokens=9
+        )
 
     result = S.classify_intent_semantic(
         "tell me about whole-body locomotion training support",
@@ -144,11 +150,17 @@ def test_cache_short_circuits_second_call():
 
     def _model(messages, *, tier="cheap"):
         calls["n"] += 1
-        return _completion({"intent": "cosmos_capabilities", "confidence": 0.7}, tokens=8)
+        return _completion(
+            {"intent": "cosmos_capabilities", "confidence": 0.7}, tokens=8
+        )
 
     text = "does it handle world-model generation and diffusion inference"
-    first = S.classify_intent_semantic(text, known_intents=KNOWN, model_call=_model, cache=cache)
-    second = S.classify_intent_semantic(text, known_intents=KNOWN, model_call=_model, cache=cache)
+    first = S.classify_intent_semantic(
+        text, known_intents=KNOWN, model_call=_model, cache=cache
+    )
+    second = S.classify_intent_semantic(
+        text, known_intents=KNOWN, model_call=_model, cache=cache
+    )
     assert first["intent"] == "cosmos_capabilities"
     assert second["intent"] == "cosmos_capabilities"
     assert second["tokens"] == 0
@@ -161,7 +173,10 @@ def test_low_confidence_model_intent_is_rejected():
         return _completion({"intent": "sonic_capabilities", "confidence": 0.1})
 
     result = S.classify_intent_semantic(
-        "an ambiguous phrase", known_intents=KNOWN, model_call=_model, min_confidence=0.4
+        "an ambiguous phrase",
+        known_intents=KNOWN,
+        model_call=_model,
+        min_confidence=0.4,
     )
     assert result["mode"] == S.MODE_NONE
     assert result["intent"] is None

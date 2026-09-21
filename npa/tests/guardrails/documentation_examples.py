@@ -30,7 +30,8 @@ def _documentation_paths(root: Path) -> list[Path]:
     for directory in ("npa", "deploy", "workbench", "research"):
         for parent, directories, files in os.walk(root / directory):
             directories[:] = [
-                name for name in directories
+                name
+                for name in directories
                 if not name.startswith(".") and name not in {"vendor", "node_modules"}
             ]
             if "README.md" in files:
@@ -70,7 +71,8 @@ class _HtmlReferences(HTMLParser):
 
 def _inline_text(token) -> str:
     return "".join(
-        child.content for child in token.children or []
+        child.content
+        for child in token.children or []
         if child.type in {"text", "code_inline", "image"}
     )
 
@@ -105,7 +107,9 @@ def _links(content: str) -> list[tuple[int, str]]:
             if child.type in {"link_open", "image"}:
                 found.append((line, child.attrGet("href") or child.attrGet("src")))
             elif child.type in {"html_block", "html_inline"}:
-                found.extend((line, href) for href in _HtmlReferences(child.content).links)
+                found.extend(
+                    (line, href) for href in _HtmlReferences(child.content).links
+                )
     return found
 
 
@@ -119,7 +123,8 @@ def _link_errors(path: Path) -> list[str]:
         if not target.exists():
             errors.append(f"line {line}: missing file: {href}")
         elif (
-            uri.fragment and target.suffix.lower() == ".md"
+            uri.fragment
+            and target.suffix.lower() == ".md"
             and unquote(uri.fragment) not in _anchors(target)
         ):
             errors.append(f"line {line}: missing anchor: {href}")
@@ -184,7 +189,10 @@ def _shell_syntax_errors(path: Path, bash: str) -> list[str]:
         if token.type != "fence" or token.info.strip() not in {"bash", "sh", "shell"}:
             continue
         result = subprocess.run(
-            [bash, "-n"], input=token.content, text=True, capture_output=True,
+            [bash, "-n"],
+            input=token.content,
+            text=True,
+            capture_output=True,
         )
         if result.returncode:
             line = (token.map or [0])[0] + 2
@@ -195,18 +203,25 @@ def _shell_syntax_errors(path: Path, bash: str) -> list[str]:
 def _option_parameters(command) -> dict:
     return {
         spelling: parameter
-        for parameter in command.params if isinstance(parameter, TyperOption)
+        for parameter in command.params
+        if isinstance(parameter, TyperOption)
         for spelling in [*parameter.opts, *parameter.secondary_opts]
     }
 
 
 def _command_error(root, argv: list[str]) -> str:
+    if argv[1:2] == ["studio"]:
+        return _studio_error(argv[2:])
     command = root
     names = ["npa"]
     index = 1
     while index < len(argv):
         argument = argv[index]
-        if argument in _SHELL_BOUNDARIES or argument == "--" or argument.startswith("..."):
+        if (
+            argument in _SHELL_BOUNDARIES
+            or argument == "--"
+            or argument.startswith("...")
+        ):
             break
         if argument.startswith("-"):
             option = argument.split("=", 1)[0]
@@ -230,16 +245,91 @@ def _command_error(root, argv: list[str]) -> str:
     return ""
 
 
+def _studio_parser(command: str):
+    from npa.studio import _init_parser
+    from npa.studio_artifacts import _parser as search_parser
+    from npa.studio_project import _parser as create_parser
+
+    parsers = {"init": _init_parser, "search": search_parser, "create": create_parser}
+    if command in parsers:
+        return parsers[command]()
+    import importlib
+    import sys
+
+    renderer = Path(__file__).resolve().parents[2] / "src/npa/studio_renderer"
+    sys.path.insert(0, str(renderer))
+    try:
+        module = {"draft": "film_draft", "watch": "film_watch"}.get(command, "edit")
+        return importlib.import_module(module)._parser()
+    finally:
+        sys.path.remove(str(renderer))
+
+
+def _studio_error(arguments: list[str]) -> str:
+    if arguments[:1] == ["--registry"]:
+        arguments = arguments[2:]
+    elif arguments and arguments[0].startswith("--registry="):
+        arguments = arguments[1:]
+    if not arguments or arguments[0] in {"--help", "-h"}:
+        return ""
+    command = arguments[0]
+    if command == "list":
+        return "" if len(arguments) == 1 else "npa studio list takes no options"
+    if command in {"init", "search", "create"}:
+        options = arguments[1:]
+    else:
+        command = arguments[1] if len(arguments) > 1 else ""
+        options = arguments[2:]
+        if command not in {
+            "brief",
+            "scenes",
+            "narrate",
+            "draft",
+            "watch",
+            "preview",
+            "final",
+        }:
+            return f"npa studio: unknown film command {command}"
+    return _argparse_option_error(
+        _studio_parser(command), options, f"npa studio {command}"
+    )
+
+
+def _argparse_option_error(parser, arguments: list[str], command: str) -> str:
+    """Validate the import-light command against its actual argparse options."""
+    actions = parser._option_string_actions
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if (
+            argument in _SHELL_BOUNDARIES
+            or argument == "--"
+            or argument.startswith("...")
+        ):
+            break
+        if not argument.startswith("-"):
+            index += 1
+            continue
+        option = argument.split("=", 1)[0]
+        action = actions.get(option)
+        if action is None:
+            return f"{command}: unknown option {option}"
+        index += 1 if action.nargs == 0 or "=" in argument else 2
+    return ""
+
+
 def _workflow_variable_errors(root: Path, argv: list[str]) -> list[str]:
     if argv[1:3] != ["workbench", "workflow"]:
         return []
     paths = [
-        root / value for value in argv
+        root / value
+        for value in argv
         if value.startswith("workflows/") and value.endswith(".yaml")
     ]
     variables = [
         argv[index + 1].split("=", 1)[0]
-        for index, value in enumerate(argv[:-1]) if value == "--var"
+        for index, value in enumerate(argv[:-1])
+        if value == "--var"
     ]
     errors = []
     for path in paths:
@@ -247,9 +337,14 @@ def _workflow_variable_errors(root: Path, argv: list[str]) -> list[str]:
             errors.append(f"missing workflow specification: {path.relative_to(root)}")
             continue
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(spec, dict) or spec.get("apiVersion") != "npa.workflow/v0.0.1":
+        if (
+            not isinstance(spec, dict)
+            or spec.get("apiVersion") != "npa.workflow/v0.0.1"
+        ):
             continue
         for variable in variables:
             if variable not in spec.get("config", {}):
-                errors.append(f"{path.name}: undeclared configuration variable {variable}")
+                errors.append(
+                    f"{path.name}: undeclared configuration variable {variable}"
+                )
     return errors

@@ -24,7 +24,8 @@ from npa.cluster.gpu_driver import (
     resolve_gpu_driver_strategy,
 )
 from npa.cluster_backends.kuberay import (
-    validate_kuberay, validate_recipe_kuberay_compatibility,
+    validate_kuberay,
+    validate_recipe_kuberay_compatibility,
 )
 from npa.cluster_backends.mig import (
     GPU_DEVICE_PLUGIN_VERSION,
@@ -49,8 +50,11 @@ def patch_explicit_region_defaults(text: str) -> str:
         text,
     )
     for field in (
-        "cpu_nodes_platform", "cpu_nodes_preset", "gpu_nodes_platform",
-        "gpu_nodes_preset", "infiniband_fabric",
+        "cpu_nodes_platform",
+        "cpu_nodes_preset",
+        "gpu_nodes_platform",
+        "gpu_nodes_preset",
+        "infiniband_fabric",
     ):
         expression = f"coalesce(var.{field}, local.current_region_defaults.{field})"
         # Looking up a missing default must not discard an explicit value:
@@ -148,11 +152,22 @@ def validate_recipe_rtx_compatibility(cluster: Any, recipe_dir: Path) -> None:
         (module / "main.tf", r"values\s*=\s*local\.rtx_driver_values\b"),
     ]
     if cluster.gpu_driver_package_repositories:
-        required.extend([
-            (recipe_dir / "variables.tf", r"package_repositories\s*=\s*optional\(map\(string\)"),
-            (module / "variables.tf", r"package_repositories\s*=\s*optional\(map\(string\)"),
-            (module / "main.tf", r"data\s*=\s*var\.rtx_driver_profile\.package_repositories\b"),
-        ])
+        required.extend(
+            [
+                (
+                    recipe_dir / "variables.tf",
+                    r"package_repositories\s*=\s*optional\(map\(string\)",
+                ),
+                (
+                    module / "variables.tf",
+                    r"package_repositories\s*=\s*optional\(map\(string\)",
+                ),
+                (
+                    module / "main.tf",
+                    r"data\s*=\s*var\.rtx_driver_profile\.package_repositories\b",
+                ),
+            ]
+        )
     if variable not in inspect_recipe_declared_variables(recipe_dir) or any(
         not path.is_file() or not re.search(pattern, path.read_text())
         for path, pattern in required
@@ -208,11 +223,19 @@ def render_tfvars(
     if cluster.gpu_workload_profile:
         lines.append(
             "gpu_operator_rtx_driver_profile = "
-            + json.dumps({
-                "platform": gpu.platform, "preset": gpu.preset,
-                **({"package_repositories": cluster.gpu_driver_package_repositories}
-                   if cluster.gpu_driver_package_repositories else {}),
-            })
+            + json.dumps(
+                {
+                    "platform": gpu.platform,
+                    "preset": gpu.preset,
+                    **(
+                        {
+                            "package_repositories": cluster.gpu_driver_package_repositories
+                        }
+                        if cluster.gpu_driver_package_repositories
+                        else {}
+                    ),
+                }
+            )
         )
     lines.append(
         f"mig_strategy                 = {_tfstr(mig.strategy if mig_enabled else 'none')}"
@@ -308,7 +331,7 @@ def render_tfvars(
         else ""
     )
     lines.append(
-        f"filesystem_csi = {{ {filesystem_csi_repository}chart_version = \"0.1.6\", "
+        f'filesystem_csi = {{ {filesystem_csi_repository}chart_version = "0.1.6", '
         'namespace = "kube-system", make_default_storage_class = true, '
         'previous_default_storage_class_name = "compute-csi-default-sc" }'
     )
@@ -321,11 +344,16 @@ def render_tfvars(
     kuberay = cluster.kuberay
     if kuberay is not None and kuberay.enabled:
         lines.append("enable_kuberay_cluster   = true")
-        lines.append("kuberay_cpu_cluster = " + json.dumps({
-            "worker_replicas": kuberay.worker_replicas,
-            "worker_cpus": kuberay.worker_cpus,
-            "worker_memory_gib": kuberay.worker_memory_gib,
-        }))
+        lines.append(
+            "kuberay_cpu_cluster = "
+            + json.dumps(
+                {
+                    "worker_replicas": kuberay.worker_replicas,
+                    "worker_cpus": kuberay.worker_cpus,
+                    "worker_memory_gib": kuberay.worker_memory_gib,
+                }
+            )
+        )
     else:
         lines.append("enable_kuberay_cluster   = false")
     lines.append("enable_kuberay_service   = false")

@@ -24,7 +24,11 @@ from botocore.exceptions import ClientError, ProfileNotFound
 
 from npa.cluster.api import MK8sClient
 from npa.orchestration.skypilot._bin import resolve_sky_bin
-from npa.orchestration.skypilot import cleanup_all_for_run, submit_workflow, workflow_status
+from npa.orchestration.skypilot import (
+    cleanup_all_for_run,
+    submit_workflow,
+    workflow_status,
+)
 from npa.orchestration.skypilot.cleanup import run_tag, sky_environment
 
 
@@ -32,7 +36,9 @@ pytestmark = pytest.mark.e2e_skypilot
 
 CLUSTER_NAME = "npa-workbench-eu-north1"
 BUCKET = "your-bucket-name"
-S3_PREFIX_ROOT = os.environ.get("NPA_SKYPILOT_S3_PREFIX_ROOT", "skypilot-bootstrap-converge")
+S3_PREFIX_ROOT = os.environ.get(
+    "NPA_SKYPILOT_S3_PREFIX_ROOT", "skypilot-bootstrap-converge"
+)
 S3_ENDPOINT = "https://storage.eu-north1.nebius.cloud:443"
 POLL_INTERVAL_SECONDS = 30
 MAX_WAIT_SECONDS = 1800
@@ -55,12 +61,23 @@ def _require_skypilot_e2e() -> None:
         pytest.skip("NPA_E2E_SKYPILOT not set")
 
 
-def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    run_id = os.environ.get("NPA_SKYPILOT_TEST_RUN_ID") or f"w9skypilot-bootstrap-converge-{uuid.uuid4().hex[:8]}"
+def test_three_stage_dag_replays_through_npa_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = (
+        os.environ.get("NPA_SKYPILOT_TEST_RUN_ID")
+        or f"w9skypilot-bootstrap-converge-{uuid.uuid4().hex[:8]}"
+    )
     tag = run_tag(run_id)
-    sky_bin = str(resolve_sky_bin(os.environ.get("NPA_SKYPILOT_SKY_BIN") or os.environ.get("NPA_SKYPILOT_BIN")))
+    sky_bin = str(
+        resolve_sky_bin(
+            os.environ.get("NPA_SKYPILOT_SKY_BIN") or os.environ.get("NPA_SKYPILOT_BIN")
+        )
+    )
     submit_timeout = int(os.environ.get("NPA_SKYPILOT_SUBMIT_TIMEOUT_SECONDS", "7200"))
-    evidence_dir = Path(os.environ.get("NPA_SKYPILOT_EVIDENCE_DIR", str(tmp_path / "evidence")))
+    evidence_dir = Path(
+        os.environ.get("NPA_SKYPILOT_EVIDENCE_DIR", str(tmp_path / "evidence"))
+    )
     evidence_dir.mkdir(parents=True, exist_ok=True)
 
     isolated_root = tmp_path / "sky"
@@ -91,7 +108,9 @@ def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch
     assert check.returncode == 0, check.stderr or check.stdout
 
     s3_prefix = f"{S3_PREFIX_ROOT}/{run_id}"
-    yaml_path = _write_three_stage_yaml(tmp_path, run_id=run_id, tag=tag, s3_prefix=s3_prefix)
+    yaml_path = _write_three_stage_yaml(
+        tmp_path, run_id=run_id, tag=tag, s3_prefix=s3_prefix
+    )
     shutil.copy2(yaml_path, evidence_dir / "three-stage-wrapper.yaml")
 
     s3_client = _s3_client()
@@ -104,7 +123,9 @@ def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch
         sky_bin=sky_bin,
         timeout=submit_timeout,
     )
-    (evidence_dir / "submit-result.json").write_text(json.dumps(result.__dict__, indent=2, sort_keys=True) + "\n")
+    (evidence_dir / "submit-result.json").write_text(
+        json.dumps(result.__dict__, indent=2, sort_keys=True) + "\n"
+    )
     assert result.status == "SUBMITTED", result.error or result.stderr
     assert result.job_id
 
@@ -146,13 +167,23 @@ def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch
 
     for stage in ("stage-1", "stage-2", "stage-3"):
         _capture_command(
-            [sky_bin, "jobs", "logs", "--config", str(config_path), result.job_id, f"{tag}-{stage}"],
+            [
+                sky_bin,
+                "jobs",
+                "logs",
+                "--config",
+                str(config_path),
+                result.job_id,
+                f"{tag}-{stage}",
+            ],
             evidence_dir / f"sky-jobs-logs-{stage}.txt",
             env=os.environ.copy(),
             timeout=300,
         )
 
-    marker = s3_client.get_object(Bucket=BUCKET, Key=f"{s3_prefix}/final-marker.json")["Body"].read()
+    marker = s3_client.get_object(Bucket=BUCKET, Key=f"{s3_prefix}/final-marker.json")[
+        "Body"
+    ].read()
     marker_data = json.loads(marker.decode("utf-8"))
     assert marker_data["chain"] == "stage1->stage2->stage3"
     assert marker_data["verified"] is True
@@ -164,10 +195,21 @@ def test_three_stage_dag_replays_through_npa_wrapper(tmp_path: Path, monkeypatch
         config_path=config_path,
         sky_bin=sky_bin,
     )
-    (evidence_dir / "cleanup-result.json").write_text(json.dumps(cleanup.__dict__, indent=2, sort_keys=True) + "\n")
+    (evidence_dir / "cleanup-result.json").write_text(
+        json.dumps(cleanup.__dict__, indent=2, sort_keys=True) + "\n"
+    )
 
     _capture_command(
-        [sky_bin, "jobs", "queue", "--config", str(config_path), "--skip-finished", "--output", "json"],
+        [
+            sky_bin,
+            "jobs",
+            "queue",
+            "--config",
+            str(config_path),
+            "--skip-finished",
+            "--output",
+            "json",
+        ],
         evidence_dir / "sky-jobs-queue-after-cleanup.json",
         env=os.environ.copy(),
         timeout=180,
@@ -297,7 +339,9 @@ def _tenant_id(home: Path) -> str:
     return ""
 
 
-def _write_three_stage_yaml(tmp_path: Path, *, run_id: str, tag: str, s3_prefix: str) -> Path:
+def _write_three_stage_yaml(
+    tmp_path: Path, *, run_id: str, tag: str, s3_prefix: str
+) -> Path:
     docs = [
         {"name": run_id, "execution": "serial"},
         _stage_doc(f"{tag}-stage-1", "1", s3_prefix),
@@ -388,16 +432,22 @@ def _wait_for_job(
             config_path=config_path,
             sky_bin=sky_bin,
         )
-        (evidence_dir / "last-status.json").write_text(json.dumps(last.__dict__, indent=2, sort_keys=True) + "\n")
+        (evidence_dir / "last-status.json").write_text(
+            json.dumps(last.__dict__, indent=2, sort_keys=True) + "\n"
+        )
         if last.status in TERMINAL_STATUSES:
             return last
         time.sleep(POLL_INTERVAL_SECONDS)
-    pytest.fail(f"SkyPilot job {job_id} did not finish within {MAX_WAIT_SECONDS}s; last={last}")
+    pytest.fail(
+        f"SkyPilot job {job_id} did not finish within {MAX_WAIT_SECONDS}s; last={last}"
+    )
 
 
 def _s3_client():
     try:
-        session = boto3.session.Session(profile_name=os.environ.get("AWS_PROFILE", "nebius"))
+        session = boto3.session.Session(
+            profile_name=os.environ.get("AWS_PROFILE", "nebius")
+        )
     except ProfileNotFound:
         session = boto3.session.Session()
     return session.client("s3", endpoint_url=S3_ENDPOINT)
@@ -405,7 +455,9 @@ def _s3_client():
 
 def _delete_s3_prefix(client, prefix: str) -> None:
     while True:
-        response = client.list_objects_v2(Bucket=BUCKET, Prefix=prefix.rstrip("/") + "/")
+        response = client.list_objects_v2(
+            Bucket=BUCKET, Prefix=prefix.rstrip("/") + "/"
+        )
         objects = [{"Key": item["Key"]} for item in response.get("Contents", [])]
         if objects:
             client.delete_objects(Bucket=BUCKET, Delete={"Objects": objects})
@@ -415,7 +467,9 @@ def _delete_s3_prefix(client, prefix: str) -> None:
 
 def _s3_prefix_exists(client, prefix: str) -> bool:
     try:
-        response = client.list_objects_v2(Bucket=BUCKET, Prefix=prefix.rstrip("/") + "/", MaxKeys=1)
+        response = client.list_objects_v2(
+            Bucket=BUCKET, Prefix=prefix.rstrip("/") + "/", MaxKeys=1
+        )
     except ClientError:
         return False
     return bool(response.get("Contents"))
@@ -438,7 +492,15 @@ def _capture_command(
         check=False,
     )
     output_path.write_text(
-        json.dumps({"cmd": cmd, "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr}, indent=2)
+        json.dumps(
+            {
+                "cmd": cmd,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+            },
+            indent=2,
+        )
         + "\n",
         encoding="utf-8",
     )

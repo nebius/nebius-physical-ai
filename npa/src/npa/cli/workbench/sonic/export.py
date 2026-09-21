@@ -34,7 +34,9 @@ class MetadataMode(str, Enum):
 
 
 def export_cmd(
-    checkpoint: str = typer.Option(..., "--checkpoint", help="Trained SONIC policy checkpoint path."),
+    checkpoint: str = typer.Option(
+        ..., "--checkpoint", help="Trained SONIC policy checkpoint path."
+    ),
     output_path: str = typer.Option(
         ...,
         "--output",

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 
+from .paidf_runtime_audit import assert_completed_fresh_runtime
 from .test_npa_workflow_submit_live_e2e import _assert_paidf_live_artifacts
 
 
@@ -43,17 +44,18 @@ def test_completed_fresh_local_mp4_pipeline() -> None:
 
     runtime = read("npa-workflow/runtime.json")
     assert runtime["status"] == "succeeded" and runtime["run_id"] == run_id
-    assert all(wave["status"] == "succeeded" for wave in runtime["waves"])
-    assert all(wave["replayed"] is False for wave in runtime["waves"])
-    assert all(wave["adopted"] is False for wave in runtime["waves"])
+    assert_completed_fresh_runtime(client, parsed.netloc, prefix, runtime)
     provenance = read("input/provenance.json")
     assert provenance["source_kind"] == "video_uri"
     assert provenance["run_id"] == run_id
     _assert_public_mp4_input(client, parsed.netloc, run_id, read)
     _assert_fresh_objects(client, parsed.netloc, run_id)
     _assert_paidf_live_artifacts(
-        spec="paidf-cosmos3.yaml", waves=runtime["waves"], bucket=parsed.netloc,
-        run_id=run_id, e2e_project=project,
+        spec="paidf-cosmos3.yaml",
+        waves=runtime["waves"],
+        bucket=parsed.netloc,
+        run_id=run_id,
+        e2e_project=project,
     )
     _assert_recording_identity(client, parsed.netloc, prefix, run_id)
 
@@ -88,7 +90,9 @@ def _assert_fresh_objects(client, bucket, run_id) -> None:
         count = 0
         for page in paginator.paginate(Bucket=bucket, Prefix=f"{root}/{run_id}/"):
             for item in page.get("Contents", []):
-                assert item["LastModified"] >= fresh_after, "Object predates this submission"
+                assert item["LastModified"] >= fresh_after, (
+                    "Object predates this submission"
+                )
                 count += 1
         assert count > 0, f"Missing {root} artifacts"
 
@@ -103,3 +107,18 @@ def _assert_recording_identity(client, bucket, prefix, run_id) -> None:
             recording = load_recording(path)
             assert recording.recording_id() == run_id
             assert recording.application_id() == "neural-reconstruction"
+            text_columns = 0
+            for chunk in recording.chunks():
+                batch = chunk.to_record_batch()
+                for field, column in zip(batch.schema.names, batch.columns):
+                    if "text" not in field.lower():
+                        continue
+                    text_columns += 1
+                    text = json.dumps(column.to_pylist(), ensure_ascii=False)
+                    assert bucket not in text, (
+                        "Recording text contains the private bucket"
+                    )
+                    assert "s3://" not in text.lower(), (
+                        "Recording text must use run-relative references"
+                    )
+            assert text_columns > 0, "Recording has no reviewable provenance text"

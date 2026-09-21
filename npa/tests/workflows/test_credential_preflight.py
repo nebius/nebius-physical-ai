@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 import pytest
@@ -275,6 +276,95 @@ def test_supported_checks_add_nebius_without_changing_defaults() -> None:
 def test_run_credential_preflight_rejects_unknown_check() -> None:
     with pytest.raises(ValueError):
         run_credential_preflight(_Creds(), checks=["bogus"])
+
+
+def test_run_credential_preflight_runs_checks_concurrently() -> None:
+    """All 3 probes must be in flight at once, proven deterministically.
+
+    A ``threading.Barrier(3)`` only releases once all 3 parties have called
+    ``wait()``. If the checks ran serially, the first probe would block at
+    the barrier forever (no other party ever arrives) and this test would
+    fail with a deterministic ``BrokenBarrierError`` on timeout rather than
+    a flaky wall-clock measurement.
+    """
+
+    barrier = threading.Barrier(3, timeout=5)
+
+    probes = CredentialProbes(
+        hf_validator=lambda token: (barrier.wait(), _HFResult(ok=True))[1],
+        ngc_validator=lambda key: (barrier.wait(), "reachable")[1],
+        token_factory_verifier=lambda: (barrier.wait(), [])[1],
+    )
+    creds = _Creds(hf_token="hf_x", ngc_api_key="nvapi-x", token_factory_api_key="v1.x")
+
+    results = run_credential_preflight(
+        creds, probes=probes, checks=["hf", "ngc", "token_factory"]
+    )
+
+    assert [r.name for r in results] == ["hf", "ngc", "token_factory"]
+    assert all(r.status == PASS for r in results)
+
+
+def test_run_credential_preflight_preserves_order_regardless_of_finish_order() -> None:
+    """Result order follows ``checks`` order even when ngc finishes before hf."""
+
+    ngc_done = threading.Event()
+
+    def _hf_validator(token):
+        assert ngc_done.wait(timeout=5), "ngc never signaled completion"
+        return _HFResult(ok=True)
+
+    def _ngc_validator(key):
+        ngc_done.set()
+        return "reachable"
+
+    probes = CredentialProbes(hf_validator=_hf_validator, ngc_validator=_ngc_validator)
+    creds = _Creds(hf_token="hf_x", ngc_api_key="nvapi-x")
+
+    results = run_credential_preflight(creds, probes=probes, checks=["hf", "ngc"])
+    assert [r.name for r in results] == ["hf", "ngc"]
+    assert all(r.status == PASS for r in results)
+
+
+def test_run_credential_preflight_caps_workers_for_repeated_check_names() -> None:
+    """Many duplicate check names must not scale the thread pool 1:1 with them.
+
+    Exactly ``over_cap`` (one more than the distinct-check cap of 5, so 6)
+    duplicate ``"hf"`` checks are submitted, and the probe waits on a
+    barrier that also requires exactly ``over_cap`` parties. Capped at 5
+    concurrent workers, only 5 of the 6 can ever be running at once -- the
+    running 5 are all blocked on the barrier, so none can finish and free a
+    slot for the 6th -- so the barrier can never reach its 6th party and
+    every probe deterministically times out. If the pool were instead sized
+    to ``len(checks)`` (the pre-fix behavior, 6 here), all 6 would run
+    immediately, the barrier would release normally on the first attempt,
+    and no exception would be raised -- so this test fails against that
+    regression.
+    """
+
+    over_cap = len(SUPPORTED_CREDENTIAL_CHECKS) + 1
+    barrier = threading.Barrier(over_cap, timeout=0.3)
+
+    def _hf_validator(token):
+        barrier.wait()
+        return _HFResult(ok=True)
+
+    probes = CredentialProbes(hf_validator=_hf_validator)
+    creds = _Creds(hf_token="hf_x")
+
+    with pytest.raises(threading.BrokenBarrierError):
+        run_credential_preflight(creds, probes=probes, checks=["hf"] * over_cap)
+
+
+def test_run_credential_preflight_propagates_first_ordered_exception() -> None:
+    def _boom(*_args):
+        raise RuntimeError("nebius probe exploded")
+
+    probes = CredentialProbes(nebius_profile_verifier=_boom)
+    creds = _Creds(hf_token="hf_x")
+
+    with pytest.raises(RuntimeError, match="nebius probe exploded"):
+        run_credential_preflight(creds, probes=probes, checks=["nebius", "hf"])
 
 
 def test_has_failure_true_when_any_fail() -> None:

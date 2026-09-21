@@ -41,19 +41,27 @@ def test_is_publicly_routable_ip_rejects_private_and_loopback() -> None:
 
 
 def test_rrd_proxy_uri_allowed_rejects_localhost_and_metadata_names() -> None:
-    assert not proxy.rrd_proxy_uri_allowed("http://localhost/sim2real.rrd", resolve=False)
+    assert not proxy.rrd_proxy_uri_allowed(
+        "http://localhost/sim2real.rrd", resolve=False
+    )
     assert not proxy.rrd_proxy_uri_allowed("https://metadata/latest", resolve=False)
-    assert not proxy.rrd_proxy_uri_allowed("https://metadata.google.internal/", resolve=False)
+    assert not proxy.rrd_proxy_uri_allowed(
+        "https://metadata.google.internal/", resolve=False
+    )
     assert not proxy.rrd_proxy_uri_allowed("http://foo.internal/x.rrd", resolve=False)
     assert not proxy.rrd_proxy_uri_allowed("ftp://example.com/x.rrd", resolve=False)
     assert not proxy.rrd_proxy_uri_allowed("not-a-url", resolve=False)
 
 
 def test_rrd_proxy_uri_allowed_ip_literals() -> None:
-    assert proxy.rrd_proxy_uri_allowed(f"https://{_public_v4()}/rerun/recordings/sim2real.rrd")
+    assert proxy.rrd_proxy_uri_allowed(
+        f"https://{_public_v4()}/rerun/recordings/sim2real.rrd"
+    )
     assert not proxy.rrd_proxy_uri_allowed(f"http://{_loopback_v4()}:8787/x.rrd")
     assert not proxy.rrd_proxy_uri_allowed(f"http://{_private_v4()}/x.rrd")
-    assert not proxy.rrd_proxy_uri_allowed(f"http://{_link_local_v4()}/latest/meta-data")
+    assert not proxy.rrd_proxy_uri_allowed(
+        f"http://{_link_local_v4()}/latest/meta-data"
+    )
 
 
 def test_rrd_proxy_uri_allowed_resolves_hostname() -> None:
@@ -74,7 +82,9 @@ def test_rrd_proxy_uri_allowed_resolves_hostname() -> None:
 
 
 def test_rrd_proxy_uri_allowed_without_resolve_refuses_hostnames() -> None:
-    assert not proxy.rrd_proxy_uri_allowed("https://cdn.example.test/a.rrd", resolve=False)
+    assert not proxy.rrd_proxy_uri_allowed(
+        "https://cdn.example.test/a.rrd", resolve=False
+    )
 
 
 def test_embedded_and_source_contract() -> None:

@@ -1,0 +1,58 @@
+[
+  {
+    "end": 2666666746,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 0,
+    "tag": "subtask:ready"
+  },
+  {
+    "end": 5333333492,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 2666666746,
+    "tag": "subtask:approach"
+  },
+  {
+    "end": 6333333492,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 5333333492,
+    "tag": "subtask:grasp"
+  },
+  {
+    "end": 8166666985,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 6333333492,
+    "tag": "subtask:transfer"
+  },
+  {
+    "end": 9300000191,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 8166666985,
+    "tag": "subtask:place"
+  },
+  {
+    "end": 10000000000,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 9300000191,
+    "tag": "subtask:release"
+  },
+  {
+    "end": 12000000000,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 10000000000,
+    "tag": "subtask:retract"
+  },
+  {
+    "end": 15133333333,
+    "index_type": 2,
+    "sample_id": "episode-0",
+    "start": 12000000000,
+    "tag": "subtask:complete"
+  }
+]

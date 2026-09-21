@@ -110,10 +110,14 @@ def _summarize(path: Path) -> SpecSummary:
 def spec_step_summary() -> list[SpecSummary]:
     """Summarize every discoverable npa.workflow spec, sorted by name."""
 
-    return sorted((_summarize(p) for p in iter_npa_workflow_specs()), key=lambda s: s.name)
+    return sorted(
+        (_summarize(p) for p in iter_npa_workflow_specs()), key=lambda s: s.name
+    )
 
 
-def comprehensive_specs(summaries: list[SpecSummary] | None = None) -> list[SpecSummary]:
+def comprehensive_specs(
+    summaries: list[SpecSummary] | None = None,
+) -> list[SpecSummary]:
     """Specs with at least ``MIN_COMPREHENSIVE_STEPS`` executable steps."""
 
     summaries = summaries if summaries is not None else spec_step_summary()
@@ -205,7 +209,9 @@ def minimal_cover(summaries: list[SpecSummary] | None = None) -> list[SpecSummar
     return sorted(chosen, key=lambda s: s.name)
 
 
-def rotating_spec(day_index: int, summaries: list[SpecSummary] | None = None) -> SpecSummary | None:
+def rotating_spec(
+    day_index: int, summaries: list[SpecSummary] | None = None
+) -> SpecSummary | None:
     """Pick one comprehensive spec for ``day_index`` (round-robins over days)."""
 
     pool = comprehensive_specs(summaries)
@@ -215,7 +221,9 @@ def rotating_spec(day_index: int, summaries: list[SpecSummary] | None = None) ->
     return pool[day_index % len(pool)]
 
 
-def daily_plan_set(day_index: int, summaries: list[SpecSummary] | None = None) -> list[SpecSummary]:
+def daily_plan_set(
+    day_index: int, summaries: list[SpecSummary] | None = None
+) -> list[SpecSummary]:
     """The >= 4-step workflows to plan today: the image-covering set + a rotating extra."""
 
     summaries = summaries if summaries is not None else spec_step_summary()

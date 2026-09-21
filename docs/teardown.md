@@ -17,6 +17,8 @@ Cleanup follows this order: cancel jobs → agent → controller → cluster →
 → owned storage IAM → project entry → local state. Keep recovery identity until
 cloud cleanup is verified. `npa cleanup` reports local residue and recovery
 instructions; it never deletes cloud resources.
+For a dedicated workflow API, also finish the [owned local API stop](#owned-local-workflow-api)
+after its controller cleanup and before retiring the operator environment.
 
 ## Two ways in
 
@@ -54,6 +56,20 @@ npa destroy --project "<alias>" --all --delete-project --yes --json
 npa cleanup --full --yes --project "<alias>"
 npa configure --forget-project "<alias>"
 ```
+
+`storage bucket delete` retires the deleted bucket's saved credentials from
+**both** the legacy top-level `storage` section and the exact project's scoped
+credential-store record in the same atomic rewrite, so a later `npa configure
+--project <alias>` cannot rebuild the bucket/access-key view from a stale
+scoped record. The scoped `terraform_state` record (the Terraform S3 backend
+keys, independent from the object-storage access key) is retired in that same
+rewrite when it names the same bucket, so `resolve_terraform_state` cannot
+resurrect it either. IAM ownership evidence (`storage_iam`) is untouched by
+the bucket delete; it survives until the ownership-gated `storage
+service-account delete` retires it too.
+
+Without `--wait`, local retirement follows an accepted purge request while the
+bucket may still be pending deletion. Use `--wait` to confirm provider absence.
 
 ## Cloud spend vs local clutter
 
@@ -173,6 +189,29 @@ the same provider identity checks and rejects missing, destroyed, rolled-back, o
 replaced clusters. Cross-project use is refused. `--rebind` is allowed only after
 the managed-job queue is proven terminal; changing an alias for the same
 project/cluster ids is not a rebind.
+
+### Owned local workflow API
+
+Controller cleanup stops its temporary transaction API, but leaves the original
+workflow API running. After the submit driver and every other client of that
+unique API have finished, preserve successful exact-run cancellation and
+controller-cleanup receipts before calling
+`npa.orchestration.skypilot.local_api.stop_isolated_api(Path(owned_run_directory))`.
+Controller cleanup must report `overall_verified`, `remote_absence_verified`,
+and `local_metadata_cleared` as true. A controller result for one context is not
+permission to stop an API shared by other workflows.
+
+The [PAIDF receipt-checked cleanup example](../workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup)
+validates its original per-run directory and API identity before cloud cleanup,
+then provides an independent local-stop block for recovery from those receipts.
+Do not repeat controller deletion merely to finish the local stop: unrelated
+controllers can remain after the owned metadata has been removed.
+
+The helper stops only its recorded local process tree; it does not cancel jobs,
+delete cloud resources, or remove run state and artifacts. Verify its retained
+daemon record reports `state: stopped` with null `pid` and `start_ticks`.
+Preserve records on any failure. Never substitute `sky api stop`, which is not
+scoped to the owned API, or remove state while processes are still alive.
 
 ### Cluster teardown
 

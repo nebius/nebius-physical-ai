@@ -14,6 +14,24 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "CPU-only system-info contract",
         "proprietary antioch-sim distribution absent",
     ],
+    "diffusers": [
+        "hash-locked CUDA runtime and pinned CogVideoX-2B checkpoint load",
+        "native GPU text-to-video pipeline generates and fully decodes an MP4",
+        "output hashes and runtime provenance accompany the capability artifact",
+        "separate workflow qualification covers Mochi, Wan and relative depth",
+    ],
+    "lingbot-world": [
+        "pinned upstream model and operator-supplied source image load",
+        "native camera-conditioned generation runs on four CUDA ranks",
+        "each rank records positive attention and all-to-all execution",
+        "generated MP4 fully decodes with camera and checkpoint provenance",
+    ],
+    "sam2": [
+        "pinned SAM 2.1 Small checkpoint loads on CUDA",
+        "native video predictor propagates a first-frame box through the input",
+        "raw predicted masks and a fully decoded overlay MP4 are retained",
+        "unchanged source pixels are checked after video encoding",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
@@ -79,6 +97,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "headless runtime launch",
         "manipulation env create",
         "env step loop",
+    ],
+    "isaac-arena": [
+        "pinned official Isaac Lab-Arena 0.3.0 policy_runner starts through runtime-fetched Isaac",
+        "hash-pinned Apache-2.0 GR1 open-microwave replay drives nonzero upstream actions on CUDA",
+        "episode JSONL and the upstream static HTML evaluation report are non-empty",
+        "RTX qualification requires current-run task success and simulator-ground-truth progress bound to denoised coherent visual motion; historical r2 visual evidence is rejected",
+        "NPA result manifest binds artifact hashes, task metrics, input hash, and video to the exact run",
     ],
     "leisaac": [
         "real LeIsaac-SO101-PickOrange-v0 environment starts",
@@ -164,9 +189,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "motion-lib validate_motion_lib on synthetic payload",
     ],
     "fiftyone": [
-        "fiftyone import + version pin",
-        "CLI --help",
-        "app config (DB-free env smoke)",
+        "FiftyOne installed version pin",
+        "create a real dataset using bundled MongoDB",
+        "query the dataset and verify sample fields",
+        "CPU Brain uniqueness, similarity and PCA visualization",
+        "launch the App on loopback, read its response and stop it",
     ],
     "lancedb": [
         "FastAPI server start",

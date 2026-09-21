@@ -1,0 +1,66 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: isaac-arena-evaluation-rtxpro
+  description: >-
+    Replay a genuine nonzero GR1 open-microwave trajectory with the real
+    Isaac Lab-Arena policy runner on RTX PRO 6000. Require a viewport MP4 that
+    passes denoised coherent-motion checks over the simulator-ground-truth
+    door-progress interval. Bind it to the exact run, input, successful task
+    result, and retained metric trace.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/isaac-arena/rtxpro"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  input_uri: "s3://{{config.bucket}}/operator-inputs/isaac-arena/gr1-open-microwave.hdf5"
+  environment: gr1_open_microwave
+  policy_type: replay
+  # Legacy WXYZ Pink hand targets and initial root poses are represented as
+  # XYZW in private execution scratch, with both file hashes and the conversion
+  # recorded. Physical commands and source action count/order are preserved.
+  # NPA applies the episode's recorded initial_state through Isaac Lab reset_to,
+  # then executes every source command exactly once. It never pads, repeats,
+  # truncates, or holds an action to manufacture a completed episode.
+  # The NPA viewport-only source patch keeps Kit and environment rendering
+  # enabled without adding the GR1 embodiment's unused observation cameras.
+  # The runtime prefers native NVIDIA EGL/Vulkan and otherwise extracts the
+  # exact loaded-driver package plus a validated private headless EGL ICD into
+  # run-private scratch; it never mutates the node.
+  # Follow upstream's GR1 tutorial replay path: CPU physics and replay tensors,
+  # with the reserved RTX GPU retained for viewport rendering. The small test
+  # fixture does not record its source physics device; validate this run anew.
+  execution_device: cpu
+  num_episodes: "1"
+  num_envs: "1"
+  seed: "42"
+  embodiment: gr1_pink
+  # The tutorial recording contains the robot and microwave only. An optional
+  # extra object changes the scene and requires its own recorded initial state.
+  object: ""
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # Arena's viewport recorder requires rasterization/RT hardware. B200 is not
+    # an interchangeable fallback for this workload.
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 64Gi
+
+initial: evaluate
+
+states:
+  evaluate:
+    description: Replay a successful open-door episode and retain ground-truth-bound visual evidence.
+    toolRef: workbench.isaac_arena.evaluate_video
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.isaac_arena.evaluation.v1
+      - uri: "{{config.output_uri}}evaluation.log"
+        schema: text/plain
+      - uri: "{{config.output_uri}}upstream/"
+        schema: npa.isaac_arena.upstream_evaluation.v1
+    terminal: true

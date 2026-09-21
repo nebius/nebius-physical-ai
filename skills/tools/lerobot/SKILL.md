@@ -22,6 +22,7 @@ remains available for a validated operator override. VM deployment installs the
 selected package and has no `--image` option. The September 12 release supersedes
 the anonymous September 5 audit that found no public 0.6.0 image. Its bare
 `0.6.0` tag is a compatibility alias; use the manifest's immutable pin and digest.
+The optional 0.6.0 image is validated on B200 and does not replace the 0.5.1 default.
 
 Canonical manifest: `npa/src/npa/deploy/lerobot_version_manifest.json`.
 
@@ -68,7 +69,36 @@ CUDA base, then run a real ACT training step from the LeRobot venv.
 
 ## Data Contract
 
+For newly simulated robot demonstration data, use the Token Factory robot SDG
+path documented in `docs/workbench/token-factory-robot-sdg.md`. It runs real Fetch
+pick-and-place in MuJoCo, records synchronized workspace/wrist RGB, joint states
+and Cartesian/gripper actions, and exports physics-accepted episodes to LeRobot
+v3. Native-reader validation must check language task labels as well as video
+decoding and action alignment. The scripted teacher uses simulator state; this
+does not prove physical robot transfer or learned-policy performance.
+
+For a reproducible demonstration-first transfer experiment, use
+`workflows/testing/lerobot-transfer.yaml` and
+`docs/workbench/guides/lerobot-transfer.md`. The standard runtime owns four waves:
+prepare, paired ACT training, paired native PushT evaluation, and reporting.
+The recipe pins LeRobot 0.6.0 and public PushT data, excludes reserved episodes from training and
+normalization, and disables affine image augmentation for absolute actions.
+Select the arm using validation only; derive expert demonstration requests only
+from validation failures. Report held-out success uncertainty without claiming
+physical robot transfer. The default uses B200 for training and evaluation;
+PushT renders on CPU. No new image or
+per-blueprint CLI is required; stage the exact source with `submit --stage-src`.
+
 Input format is `LeRobotDataset` in Hugging Face format. Use the SimToLeRobot adapter to convert Genesis or other simulation outputs.
+
+For manual System 1 subtask labels, load LeRobot v3 into FiftyOne 1.22, create
+complete non-overlapping `subtask:<label>` temporal tags, and run
+`npa workbench fiftyone export-lerobot-subtasks`. The derived dataset retains
+the episode task instruction and adds per-frame `subtask_index`,
+`meta/subtasks.parquet`, and resumable annotation metadata. FiftyOne is the
+review UI; LeRobot remains the durable training format. The source dataset is
+immutable. Run `workflows/testing/lerobot-subtask-proof.yaml` after export when
+the result needs a reproducible coverage gate and a row-level LeRobot proof.
 
 Output is a policy checkpoint on S3.
 

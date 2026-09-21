@@ -13,6 +13,7 @@ import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.execution_preflight import ExecutionPreflightError
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.skypilot.image_bootstrap_contract import (
@@ -24,13 +25,13 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
 from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+from npa.provisioning_journal import OperationJournalError
 
 
 runner = CliRunner()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OPENPI_FOUR_MODE_SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
+    REPO_ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 )
 
 SPEC = {
@@ -70,6 +71,11 @@ class _RecordingOperation:
         self.transitions.append((phase, kwargs))
 
 
+class _PreparedRecordingOperation(_RecordingOperation):
+    def read(self) -> dict[str, object]:
+        return {"phase": "prepared", "resources": []}
+
+
 def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> None:
     operation = _RecordingOperation()
     transaction = type("Transaction", (), {"launch_sequence": 0})()
@@ -88,10 +94,58 @@ def test_prelaunch_reconciliation_failure_does_not_leave_recovery_blocker() -> N
     assert operation.transitions[0][1]["details"]["launch_attempted"] is False
 
 
-def test_postlaunch_failure_preserves_recovery_blocker() -> None:
+def test_execution_preflight_failure_does_not_leave_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+
+    workflow_cli._record_workflow_submit_failure(
+        operation,
+        ExecutionPreflightError("storage_mount", "static profile is unavailable"),
+    )
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "ExecutionPreflightError",
+        "launch_attempted": False,
+    }
+
+
+def test_verified_preflight_failure_releases_lifecycle_lock() -> None:
+    operation = _RecordingOperation()
+    error = SkyPilotSubmitError("capacity unavailable", launch_attempted=False)
+
+    workflow_cli._record_workflow_submit_failure(operation, error)
+
+    assert operation.rollback["attempted"] is False
+    assert operation.rollback["completed"] is True
+    assert operation.transitions[0][0] == "rolled-back"
+
+
+def test_ambiguous_failure_preserves_recovery_blocker() -> None:
+    operation = _RecordingOperation()
+    workflow_cli._record_workflow_submit_failure(
+        operation, SkyPilotSubmitError("unknown")
+    )
+
+    assert operation.rollback is None
+    assert operation.transitions == [("recovery-required", {"error": "unknown"})]
+
+
+@pytest.mark.parametrize("launch_attempted", [None, False])
+def test_postlaunch_failure_preserves_recovery_blocker(launch_attempted) -> None:
     operation = _RecordingOperation()
     transaction = type("Transaction", (), {"launch_sequence": 1})()
-    error = SkyPilotSubmitError("launch indeterminate", transaction=transaction)
+    error = SkyPilotSubmitError(
+        "launch indeterminate",
+        transaction=transaction,
+        launch_attempted=launch_attempted,
+    )
 
     workflow_cli._record_workflow_submit_failure(operation, error)
 
@@ -99,6 +153,28 @@ def test_postlaunch_failure_preserves_recovery_blocker() -> None:
     assert operation.transitions == [
         ("recovery-required", {"error": "launch indeterminate"})
     ]
+
+
+def test_context_rejection_finalizes_unentered_submit_operation() -> None:
+    operation = _PreparedRecordingOperation()
+
+    workflow_cli._record_unentered_workflow_submit_failure(
+        operation, OperationJournalError("another lifecycle operation is active")
+    )
+
+    assert operation.rollback == {
+        "attempted": False,
+        "completed": True,
+        "removed": [],
+        "preserved": [],
+        "outcomes": [],
+    }
+    assert operation.transitions[0][0] == "rolled-back"
+    assert operation.transitions[0][1]["details"] == {
+        "error_type": "OperationJournalError",
+        "launch_attempted": False,
+        "context_acquired": False,
+    }
 
 
 @pytest.fixture()
@@ -237,7 +313,9 @@ def test_openpi_readiness_uses_fully_resolved_planned_profiles(
 
 
 def test_submit_refuses_two_gpus_per_task_on_single_gpu_nodes(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
@@ -317,8 +395,27 @@ def test_resolution_is_skipped_when_disabled(
     )
 
 
+@pytest.fixture
+def owned_gpu_discovery(tmp_path, monkeypatch, sky_bin):
+    from npa.orchestration.skypilot import _bin, local_api
+
+    selected = tmp_path / "selected-kubeconfig"
+    selected.write_text(
+        "apiVersion: v1\ncurrent-context: npa-cluster\n"
+        "contexts:\n- name: npa-cluster\n  context: {cluster: selected}\n"
+        "clusters:\n- name: selected\n  cluster: {server: 'https://kubernetes.invalid'}\n"
+    )
+    monkeypatch.setenv("KUBECONFIG", str(selected))
+    monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "npa/config.yaml")
+    monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda _value: Path(sky_bin))
+    monkeypatch.setattr(local_api, "_require_linux_host", lambda: None)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+    monkeypatch.setattr(local_api, "stop_isolated_api", lambda _scope: None)
+    return selected
+
+
 def test_workflow_gpus_prints_the_export_line(
-    monkeypatch: pytest.MonkeyPatch, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -336,18 +433,20 @@ def test_workflow_gpus_prints_the_export_line(
 
 
 def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     monkeypatch.setenv("KUBECONTEXT", "unrelated-ambient-context")
     kubeconfig = tmp_path / "kubeconfig"
-    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    kubeconfig.write_text(
+        owned_gpu_discovery.read_text().replace("npa-cluster", "selected-cluster")
+    )
     monkeypatch.setattr(
         "npa.cluster.state.kubeconfig_file", lambda _cluster: kubeconfig
     )
     seen: dict[str, str] = {}
 
-    def discover_inventory(*, context: str):
+    def discover_inventory(*, context: str, kubeconfig: Path):
         seen["inventory_context"] = context
         return type(
             "Inventory",
@@ -362,7 +461,7 @@ def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
             },
         )()
 
-    def discover_catalog(*, context: str, sky_bin: str):
+    def discover_catalog(*, context: str, kubeconfig: Path, sky_bin: str):
         seen["catalog_context"] = context
         return KubernetesGpuCatalog({}, context=context)
 
@@ -398,7 +497,7 @@ def test_workflow_gpus_explicit_cluster_wins_over_ambient_context(
 
 
 def test_workflow_gpus_isolated_state_does_not_consult_shared_owner(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -424,8 +523,8 @@ def test_workflow_gpus_isolated_state_does_not_consult_shared_owner(
     assert result.exit_code == 0, result.output
 
 
-def test_workflow_gpus_shared_state_still_rejects_another_owner_context(
-    monkeypatch: pytest.MonkeyPatch, sky_bin: str
+def test_workflow_gpus_owned_discovery_ignores_another_shared_owner_context(
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -446,8 +545,8 @@ def test_workflow_gpus_shared_state_still_rejects_another_owner_context(
         ],
     )
 
-    assert result.exit_code == 2, result.output
-    assert "Shared controller owner context does not match" in result.output
+    assert result.exit_code == 0, result.output
+    assert not json.loads(result.stdout)["skypilot_error"]
 
 
 def test_submit_isolated_state_skips_shared_owner_verification(
@@ -466,7 +565,9 @@ def test_submit_isolated_state_skips_shared_owner_verification(
     )
 
 
-def test_submit_isolated_state_refuses_shared_controller_binding(tmp_path: Path) -> None:
+def test_submit_isolated_state_refuses_shared_controller_binding(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(ValueError, match="cannot be combined"):
         workflow_cli._verify_submit_controller_owner(
             project="project-alias",
@@ -496,7 +597,7 @@ def test_submit_shared_state_still_verifies_controller_owner(
 
 
 def test_workflow_gpus_resolves_a_spec(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -519,7 +620,7 @@ def test_workflow_gpus_resolves_a_spec(
 
 
 def test_workflow_gpus_json_reports_the_exact_alias_resolution(
-    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -550,7 +651,7 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
 
 
 def test_workflow_gpus_resolves_templated_accelerator_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
     monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
     _stub_catalog(monkeypatch, CATALOG_OUTPUT)
@@ -759,7 +860,10 @@ states:
     def check(images, **kwargs):
         observed["images"] = list(images)
         observed["pull_secrets_by_image"] = kwargs["pull_secrets_by_image"]
-        return [ImagePullCheck(image=image, status="ok", http_status=200) for image in images]
+        return [
+            ImagePullCheck(image=image, status="ok", http_status=200)
+            for image in images
+        ]
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
@@ -847,6 +951,77 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
     )
 
     assert result == []
+
+
+@pytest.mark.parametrize("source", ["oci_attestation", "ephemeral_capability_probe"])
+@pytest.mark.parametrize(
+    "selected_image",
+    [
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:release",
+        "registry.example.invalid/selected/npa-cosmos-curate:custom",
+    ],
+)
+def test_cached_capability_preserves_the_selected_image_repository(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    spec_path: Path,
+    selected_image: str,
+    source: str,
+) -> None:
+    """Identical mirrored bytes must not redirect a verified pull to another registry."""
+    digest = "sha256:" + "7" * 64
+    cached_image = "registry.example.invalid/previous/npa-cosmos-curate@" + digest
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cache_path = tmp_path / ".npa/cache/sky-image-bootstrap.json"
+    store_cached_evidence(
+        cache_path,
+        ImageContractEvidence(
+            image=cached_image,
+            digest=digest,
+            contract_version=CONTRACT_VERSION,
+            state="compatible",
+            source=source,
+            cleanup="verified",
+        ),
+    )
+    original_cache = cache_path.read_bytes()
+    checked: list[str] = []
+
+    def pull(images, **_kwargs):
+        checked.extend(images)
+        return [
+            ImagePullCheck(image=image, status="ok", digest=digest) for image in images
+        ]
+
+    def metadata(image, **_kwargs):
+        assert image == selected_image
+        return digest, {ATTESTATION_LABEL: CONTRACT_VERSION}
+
+    def unexpected_probe(**_kwargs):
+        raise AssertionError("compatible bytes should reuse capability evidence")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        pull,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        metadata,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.image_bootstrap_contract.probe_image_capabilities",
+        unexpected_probe,
+    )
+    pins = workflow_cli._preflight_submit_images(
+        spec_path,
+        options=SkypilotRenderOptions(image_overrides={"*": selected_image}),
+        assume_decision="promote_checkpoint",
+        enabled=True,
+    )
+
+    assert checked == [selected_image]
+    assert pins == {selected_image: selected_image.rsplit(":", 1)[0] + "@" + digest}
+    assert cache_path.read_bytes() == original_cache
 
 
 def test_image_bootstrap_observing_progress_preserves_exact_json(capsys) -> None:

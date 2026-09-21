@@ -7,6 +7,18 @@ description: Use before running or interpreting NPA tests, lint checks, or valid
 
 Use the repository virtualenv. Never use bare `python`; use `npa/.venv/bin/python`.
 
+If that venv is shared across checkouts (a symlinked `npa/.venv` in a git
+worktree or agent sandbox, rather than its own `pip install -e`), it can
+silently import a *different* checkout's `npa` while pytest still collects
+*this* checkout's test files — no error, no non-zero exit, just a misleading
+result. Run `make check-env` (or
+`npa/.venv/bin/python npa/scripts/check_dev_environment.py`) before trusting
+any test output from such a checkout; it fails fast with the exact
+`PYTHONPATH` fix. `make test`/`test-smoke`/`test-guardrails`/`test-e2e`
+already run it first. Separately, `make test-prereqs` reports (without
+blocking) which full-suite-parity tools are missing and how much temp-disk
+headroom is available — see CONTRIBUTING.md's "Testing Requirements".
+
 Correct command from repo root:
 
 ```bash
@@ -29,9 +41,26 @@ only running a slice:
 .venv/bin/python -m pytest tests/ -q -n auto
 ```
 
-Use the serial form when a failure needs a readable, ordered traceback. CI still
-runs serially with coverage, so treat a parallel pass as the fast signal, not as a
-replacement for the gate.
+Use the serial form when a failure needs a readable, ordered traceback. PR and
+merge-queue CI run the same full Python 3.12 coverage suite, Cypress,
+and focused Python 3.10/3.14 compatibility checks. The full suite uses xdist
+inside five duration-balanced shards, then merges coverage before enforcing
+the floor. Narrow prose-only candidates retain smoke, docs, guardrails, and
+security gates; see `CONTRIBUTING.md` for the trusted-base classification.
+Scheduled/manual audits repeat four shards across supported interpreters.
+Independent validation jobs use available GitHub runner capacity without shared
+job-level concurrency locks or matrix `max-parallel` caps. Keep the parent
+workflow's per-PR cancellation so new commits supersede old runs, and keep
+reusable workflow group prefixes distinct from their caller. `test_ci_concurrency`
+prevents shared validation locks and matrix caps; `test_ci_workflows` guards
+cancellation and required results. Organization runner limits may still cause
+waiting; refresh old branches after workflow changes land to adopt the policy.
+Every full Python 3.12 run uploads module timings; successful runs emit a merged
+profile. Use successful scheduled main profiles for reviewed weight updates.
+The independent CI timing report separates runner waiting from execution and
+setup; see `CONTRIBUTING.md` for dependency pins and report interpretation.
+A local parallel pass is the
+fast signal, not a reproduction of that distributed coverage gate.
 
 **Docs drift is a required gate and is slow to re-run blind.** `scripts/build_docs.sh`
 memoizes and prefetches its `npa --help` walk (~1 min, was ~5), but it still costs a
@@ -138,6 +167,22 @@ and you report numeric results from running it.
   Terraform provider (`PermissionDenied`/`Unauthenticated` even though the CLI
   works); `provisioner._run` scrubs it, but when reproducing by hand
   `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` first.
+- **`npa storage bucket delete` / `service-account delete` / `npa configure
+  --forget-project` changes:** run
+  `npa/tests/e2e/test_config_storage_cleanup_live_e2e.py` against one
+  disposable project:
+  ```bash
+  NPA_INTEGRATION_E2E=1 NPA_STORAGE_CLEANUP_LIVE_E2E=1 \
+    NPA_E2E_PROJECT=<alias> \
+    NPA_CONFIG_DIR=/private/path/to/config \
+    NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR=/private/path/to/evidence \
+    npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_config_storage_cleanup_live_e2e.py -q -s
+  ```
+  The hermetic safety-contract tests in the same file run under plain
+  `pytest` with no env vars and never touch the network. See
+  `tests/cli/test_cleanup_teardown.py` for the separate credential-pruning
+  failure and concurrent-write checks.
 - If a full live run is genuinely infeasible in the environment, say so
   explicitly and still commit the `plan_only` live-matrix entry — never silently
   ship smoke-only.

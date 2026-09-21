@@ -153,7 +153,9 @@ class FrankaPickPlaceEnv:
             self.N_JOINTS = self._robot_spec.n_arm_joints
             self.N_GRIPPER = self._robot_spec.n_gripper_joints
             self.N_DOFS = self._robot_spec.dof_count
-            self.N_PRIV_OBS = self.N_DOFS + 13  # joints + gripper(1)+pose(7)+contacts(2)+goal(3)
+            self.N_PRIV_OBS = (
+                self.N_DOFS + 13
+            )  # joints + gripper(1)+pose(7)+contacts(2)+goal(3)
             self.N_STATE = self.N_DOFS + 1
 
         if self.cfg.action_space not in ("joint", "cartesian"):
@@ -195,8 +197,10 @@ class FrankaPickPlaceEnv:
         # Precompute IK damping matrix for cartesian mode
         if self.cfg.action_space == "cartesian":
             lam = self.cfg.ik_damping
-            self._ik_damping = (lam ** 2) * torch.eye(
-                3, device=self.device, dtype=torch.float32,
+            self._ik_damping = (lam**2) * torch.eye(
+                3,
+                device=self.device,
+                dtype=torch.float32,
             ).unsqueeze(0)  # (1, 3, 3) — broadcasts over n_envs
 
     def _apply_scene_spec(self, spec: SceneSpec) -> None:
@@ -228,7 +232,7 @@ class FrankaPickPlaceEnv:
                 enable_collision=True,
                 enable_self_collision=False,
                 enable_joint_limit=True,
-                batch_dofs_info=True,   # Required for per-env DR of kp/kv
+                batch_dofs_info=True,  # Required for per-env DR of kp/kv
                 batch_links_info=True,  # Required for per-env DR of mass/friction
             ),
             vis_options=gs.options.VisOptions(
@@ -325,15 +329,26 @@ class FrankaPickPlaceEnv:
         self._robot.set_dofs_force_range(force_lower, force_upper)
 
         # Target positions per env (may be randomized)
-        self._target_pos = torch.tensor(
-            self.cfg.target_pos, device=self.device, dtype=torch.float32,
-        ).unsqueeze(0).expand(self.n_envs, -1).clone()
+        self._target_pos = (
+            torch.tensor(
+                self.cfg.target_pos,
+                device=self.device,
+                dtype=torch.float32,
+            )
+            .unsqueeze(0)
+            .expand(self.n_envs, -1)
+            .clone()
+        )
 
-        self._step_count = torch.zeros(self.n_envs, device=self.device, dtype=torch.long)
+        self._step_count = torch.zeros(
+            self.n_envs, device=self.device, dtype=torch.long
+        )
 
         # Precompute home position tensor
         self._home_qpos = torch.tensor(
-            home_qpos, device=self.device, dtype=torch.float32,
+            home_qpos,
+            device=self.device,
+            dtype=torch.float32,
         )
 
     def _add_robot_entity(self, gs: Any) -> Any:
@@ -533,9 +548,16 @@ class FrankaPickPlaceEnv:
         )
 
         # Reset cube position (with optional randomization)
-        cube_pos = torch.tensor(
-            self.cfg.cube_init_pos, device=self.device, dtype=torch.float32,
-        ).unsqueeze(0).expand(n, -1).clone()
+        cube_pos = (
+            torch.tensor(
+                self.cfg.cube_init_pos,
+                device=self.device,
+                dtype=torch.float32,
+            )
+            .unsqueeze(0)
+            .expand(n, -1)
+            .clone()
+        )
 
         if self.cfg.domain_randomize:
             noise = (torch.rand(n, 3, device=self.device) - 0.5) * 2.0
@@ -543,9 +565,15 @@ class FrankaPickPlaceEnv:
             noise[:, 2] = 0.0  # Keep cube on table surface
             cube_pos += noise
 
-        cube_quat = torch.tensor(
-            list(self._manip_quat), device=self.device, dtype=torch.float32,
-        ).unsqueeze(0).expand(n, -1)
+        cube_quat = (
+            torch.tensor(
+                list(self._manip_quat),
+                device=self.device,
+                dtype=torch.float32,
+            )
+            .unsqueeze(0)
+            .expand(n, -1)
+        )
         self._cube.set_pos(cube_pos, envs_idx=env_ids)
         self._cube.set_quat(cube_quat, envs_idx=env_ids)
 
@@ -575,28 +603,30 @@ class FrankaPickPlaceEnv:
         )
 
         if self.cfg.action_space == "cartesian":
-            delta_xyz = actions[:, :3]   # (n_envs, 3)
+            delta_xyz = actions[:, :3]  # (n_envs, 3)
             gripper_cmd = actions[:, 3:]  # (n_envs, 1)
 
             if self.cfg.action_scale > 0:
                 delta_xyz = delta_xyz.clamp(
-                    -self.cfg.action_scale, self.cfg.action_scale,
+                    -self.cfg.action_scale,
+                    self.cfg.action_scale,
                 )
 
             # Resolve Cartesian delta to joint delta via IK
             joint_deltas = self._ik_resolve_delta(delta_xyz)
         else:
-            joint_deltas = actions[:, :self.N_JOINTS]
-            gripper_cmd = actions[:, self.N_JOINTS:]  # (n_envs, 1)
+            joint_deltas = actions[:, : self.N_JOINTS]
+            gripper_cmd = actions[:, self.N_JOINTS :]  # (n_envs, 1)
 
             if self.cfg.action_scale > 0:
                 joint_deltas = joint_deltas.clamp(
-                    -self.cfg.action_scale, self.cfg.action_scale,
+                    -self.cfg.action_scale,
+                    self.cfg.action_scale,
                 )
 
         # Current joint positions
         current_pos = self._robot.get_dofs_position()  # (n_envs, 9)
-        joint_targets = current_pos[:, :self.N_JOINTS] + joint_deltas
+        joint_targets = current_pos[:, : self.N_JOINTS] + joint_deltas
 
         if self.N_GRIPPER > 0:
             # Gripper: cmd > 0 → open, cmd <= 0 → close. Open/close widths come
@@ -673,13 +703,16 @@ class FrankaPickPlaceEnv:
             "contact_flags": contact_flags,
             "goal_position": self._target_pos,
             "ee_pos": ee_pos,
-            "flat": torch.cat([
-                joint_pos,
-                gripper_state,
-                object_pose,
-                contact_flags,
-                self._target_pos,
-            ], dim=-1),
+            "flat": torch.cat(
+                [
+                    joint_pos,
+                    gripper_state,
+                    object_pose,
+                    contact_flags,
+                    self._target_pos,
+                ],
+                dim=-1,
+            ),
         }
         return obs
 
@@ -741,7 +774,9 @@ class FrankaPickPlaceEnv:
 
         # Randomize friction on the cube
         lo, hi = self.cfg.friction_range
-        friction_ratio = lo + torch.rand(n, self._cube.n_links, device=self.device) * (hi - lo)
+        friction_ratio = lo + torch.rand(n, self._cube.n_links, device=self.device) * (
+            hi - lo
+        )
         self._cube.set_friction_ratio(
             friction_ratio,
             links_idx_local=range(self._cube.n_links),
@@ -776,10 +811,15 @@ class FrankaPickPlaceEnv:
         dist_to_cube = torch.norm(ee_pos - cube_pos, dim=-1)
         if self.cfg.approach_scale > 0:
             # Exponential: strong gradient near cube, weak at distance
-            approach_reward = torch.exp(-self.cfg.approach_scale * dist_to_cube) * self.cfg.approach_weight
+            approach_reward = (
+                torch.exp(-self.cfg.approach_scale * dist_to_cube)
+                * self.cfg.approach_weight
+            )
         else:
             # Linear: uniform gradient at all distances, clamped to [0, weight]
-            approach_reward = (1.0 - dist_to_cube).clamp(min=0.0) * self.cfg.approach_weight
+            approach_reward = (1.0 - dist_to_cube).clamp(
+                min=0.0
+            ) * self.cfg.approach_weight
 
         # 2. Grasp reward — bonus for finger contact
         contacts = obs["contact_flags"]
@@ -825,8 +865,10 @@ class FrankaPickPlaceEnv:
         """Mean gripper opening as (n_envs, 1); zeros for gripperless arms."""
 
         if self.N_GRIPPER > 0:
-            return joint_pos[:, self.N_JOINTS:].mean(dim=-1, keepdim=True)
-        return torch.zeros(joint_pos.shape[0], 1, device=joint_pos.device, dtype=joint_pos.dtype)
+            return joint_pos[:, self.N_JOINTS :].mean(dim=-1, keepdim=True)
+        return torch.zeros(
+            joint_pos.shape[0], 1, device=joint_pos.device, dtype=joint_pos.dtype
+        )
 
     def _get_contact_flags(self) -> torch.Tensor:
         """Detect contact between gripper fingers and the cube.
@@ -872,7 +914,7 @@ class FrankaPickPlaceEnv:
         # Get full Jacobian for the end-effector link: (n_envs, 6, n_dofs)
         # Rows 0-2 are the position Jacobian, rows 3-5 are orientation.
         J_full = self._robot.get_jacobian(link=self._ee_link)
-        J_pos = J_full[:, :3, :self.N_JOINTS]  # (n_envs, 3, 7)
+        J_pos = J_full[:, :3, : self.N_JOINTS]  # (n_envs, 3, 7)
 
         # Damped least-squares: J^T (J J^T + λ²I)^{-1} Δx
         JJT = torch.bmm(J_pos, J_pos.transpose(1, 2))  # (n_envs, 3, 3)

@@ -22,10 +22,7 @@ from npa.workflows.byof import openpi_live
 from npa.workflows.byof import openpi_service_rbac as service_rbac
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = (
-    ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
-)
+SPEC = ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 DIGEST_IMAGE = "registry.example.invalid/openpi@sha256:" + "a" * 64
 
 

@@ -71,7 +71,9 @@ def load_agent_live_context() -> AgentLiveContext:
     record = _agent_record(project, name)
     if not record:
         raise RuntimeError(f"missing agent config for {project}/{name}")
-    auth_user, auth_password = _load_auth_secret(str(record.get("auth_secret_path", "")))
+    auth_user, auth_password = _load_auth_secret(
+        str(record.get("auth_secret_path", ""))
+    )
     agent_url = str(record.get("agent_url", ""))
     rerun_url = str(record.get("rerun_url", ""))
     sim_viz_url = str(record.get("sim_viz_url", rerun_url))
@@ -162,7 +164,9 @@ def assert_ui_version_marker(html: str) -> str:
     assert re.fullmatch(r"\d+|dev", version), f"unexpected npa-ui-version: {version!r}"
     expected = os.environ.get("NPA_AGENT_EXPECTED_UI_VERSION")
     if expected:
-        assert version == expected, f"npa-ui-version {version!r} != expected {expected!r}"
+        assert version == expected, (
+            f"npa-ui-version {version!r} != expected {expected!r}"
+        )
     return version
 
 
@@ -173,9 +177,7 @@ RERUN_STATIC_CANDIDATES = (
     "/rerun/version",
 )
 
-ONBOARD_SOLUTION_PROMPT = (
-    "add an open source repo, containerize, push to registry, and run a GPU smoke on live infra"
-)
+ONBOARD_SOLUTION_PROMPT = "add an open source repo, containerize, push to registry, and run a GPU smoke on live infra"
 
 ONBOARD_OSS_REPO_PROMPT = (
     "onboard https://github.com/githubtraining/hellogitworld.git on Ubuntu, "
@@ -200,7 +202,9 @@ def assert_grounded_onboard_solution_reply(payload: dict[str, object]) -> str:
     assert "<repo-url>" in reply
     assert "container-verify" in reply or "<task>" in reply
     assert "registry" in reply.lower()
-    assert not reply.strip().startswith("GET /api"), "raw GET path instead of onboarding guidance"
+    assert not reply.strip().startswith("GET /api"), (
+        "raw GET path instead of onboarding guidance"
+    )
     apis_used = payload.get("apis_used")
     assert isinstance(apis_used, list) and apis_used
     assert "tools" in apis_used

@@ -36,6 +36,37 @@ your Python environment; remote workloads use their container dependencies.
 See [installation](../docs/install.md) for supported platforms, virtual
 environments, and the separate SkyPilot environment.
 
+The cluster GPU smoke manages an owned SkyPilot API session through workload
+cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
+The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
+also provides a read-only live audit using the selected run URI, project, and
+saved pre-submission UTC timestamp. Its test settings are scoped to the audit
+shell and do not submit work. For task-specific augmentation, set the optional
+`appearance_profiles_json` workflow config to a JSON array of coherent lighting,
+background, color-grade and surface-finish profiles; its empty default retains
+the starter sampler. Cosmos3's `caption_instruction` supplies `augment_subject`
+as context while requiring uncertainty for unclear features; override it for
+task or camera terminology. Source and generated-video caption frames are sampled
+across the complete decoded clip, including both endpoints, instead of stopping
+after its first eight seconds. Older caption workflows retain their default
+instruction. With edge transfer, `transfer_rgb_weight` optionally adds the
+complete source RGB video as a native conditioning hint, weighted relative to
+edge weight 1. Its default 0 disables the hint; it never blends source pixels
+into generated output. Independently, `transfer_first_chunk_conditional_frames`
+defaults to 1, anchoring the first generation window to the original RGB frame.
+Set it to 0 with edge transfer to allow a new appearance from the first frame;
+complete source edges and generated overlap between later windows remain active.
+This can also reduce object-identity preservation, so review actual paired clips.
+`transfer_cfg_normalization` accepts `disabled` (the compatibility default) or
+`enabled` with edge transfer. It forwards the pinned framework's `normalize_cfg`
+sampling option and records the effective boolean in `transfer.json`. Compare
+matched sources, prompts and seeds before adopting it; this option does not
+establish geometry or contact fidelity.
+The [realistic manipulation guide](../docs/workbench/guides/paidf-realistic-augmentation.md)
+includes the battery dataset, configuration examples and quality review.
+The [LeRobot comparison](../docs/workbench/guides/paidf-lerobot-realism.md)
+extends that review to cup opening, coffee preparation and a simulated cube lift.
+
 Extra tools required by specific commands:
 
 - `ray[default]==2.58.0` in the NPA application environment for
@@ -69,6 +100,18 @@ chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
+
+The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
+retains invalid hosted visual judgments as failed audit evidence. Its
+`npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts
+a verified interrupted audit so saved responses are revalidated and only missing
+episodes make new requests; omit the option for a fresh audit.
+The workflow's `learning_recipe=adaptive-bounded-exploration` selects bounded learned joint targets and exploration,
+hold-aligned rewards, richer observations, and a training-outcome curriculum.
+Use `learning_recipe=joint-baseline` for the historical comparison. The module's
+`prepare --learning-recipe` option seals this choice. Lift/hold thresholds stay fixed;
+new runs additionally enforce measured simulation limits and a task-domain envelope.
+UR10e's new sealed physics profile preserves its USD mimic-joint mechanics.
 
 ## Workbench Runtimes
 
@@ -165,6 +208,31 @@ For artifact conversion and sharing, see the
 
 ## Developing and testing npa
 
+Build actual RGB/action robot demonstrations with
+[robot SDG and LeRobot export](../docs/workbench/token-factory-robot-sdg.md).
+`npa workbench token-factory robot-sdg` uses S3 handoffs; the SDK's `robot_sdg`
+accepts local paths. Install `npa[robot-sdg]` and `ffmpeg`. The default router
+is Token Factory, and the simulator seed defaults to zero. Set
+`NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE=1` and `NPA_LEROBOT_PROOF_PYTHON` to a native
+LeRobot 0.5.1 interpreter to run live simulation and dataset validation. Optional
+`NPA_ROBOT_SDG_OUTPUT_DIR` preserves the run in a new local directory. These
+environment variables are unset by default; the simulator uses no physical robot.
+
+Build synthetic instruction datasets with the
+[automatically routed Token Factory SDG pipeline](../docs/workbench/token-factory-sdg.md).
+`npa workbench token-factory sdg` accepts S3 input/output paths; the SDK accepts
+local files for development. Routing defaults to Token Factory's hosted Lightning
+model, with Lightning/MiniMax generation and MiniMax review. Optional `--router jev`
+requires a separate TypeSafe key. `NPA_TOKEN_FACTORY_SDG_LIVE=1` opts into paid live
+pipeline tests; it defaults to unset.
+
+The optional [Jev model router](../docs/workbench/jev-routing.md) selects between
+eligible Token Factory text models in agent chat. `NPA_AGENT_MODEL_ROUTER=jev`
+enables it during agent deployment/bootstrap; it defaults to unset.
+`TYPESAFE_API_KEY` is required and can be saved in the existing private NPA
+credential store. The guide includes the live evaluation script, the opt-in
+`NPA_JEV_ROUTING_LIVE=1` tests, and provider-reported prefix-cache evidence.
+
 To work on `npa` itself, create the contributor environment and use the `make`
 targets from the repo root:
 
@@ -191,14 +259,43 @@ PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
   make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
 ```
 
+To recheck checkpoint selection from a completed GPU validation job, set
+`NPA_E2E_CHECKPOINT_SELECTION_EVIDENCE_CONFIG` to an owner-only JSON file and run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py -q
+```
+
+There is no default evidence target; the live check skips without the variable.
+The [test module](tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py)
+documents the required provider identity, digest-pinned image, source archive,
+GPU platform/count, training-output prefix, and minimum episode count. It reads
+existing resources, verifies checkpoint and source bytes, recomputes distances
+from recorded final positions, and reruns selection in both candidate orders.
+The input bundle must come from real policy rollouts; this check does not launch
+training, establish policy quality, or claim a complete Sim2Real pipeline run.
+Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and main pushes run the full coverage suite on Python 3.10, 3.12,
-and 3.14. A focused compatibility check runs before the CPU tensor dependencies
-are installed, so async cancellation and isolated SkyPilot fixture regressions
-surface early. Run it locally with:
+Pull requests and merge candidates run the same full Python 3.12 suite,
+dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
+Five duration-balanced coverage shards run with xdist and cached constrained
+installs, then enforce the merged coverage floor. Full suites include smoke
+and CLI install checks without a duplicate subsystem job. The queue reruns
+these checks against the combined latest-main candidate. Recognized prose-only
+edits retain smoke, documentation, lint, guardrail, and security checks while
+skipping runtime suites.
+See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
+rules and local inspection command. Scheduled/manual audits run the full suite
+on all three supported versions. Every full Python 3.12 run publishes module
+timings, with merged profiles from successful runs for reviewed rebalancing.
+The focused compatibility check runs before CPU tensor dependencies are
+installed, so async cancellation and isolated SkyPilot fixture regressions
+surface before merge. Run it locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
@@ -208,13 +305,42 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
-The required [security check](../docs/security/merge-security-gate.md) calls the
-image security workflow once on every PR, merge queue candidate, and main push.
-It waits for successful image scans before running the runtime security tests.
+CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
+CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
+--update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
+intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
+also explains the automatic `ci-timing-report` job, whose summary and
+JSON artifact separate runner waiting, setup, and execution for completed runs.
+For queue rejections, follow the
+[merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
+The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
+lets independent jobs use available GitHub runner capacity without shared
+repository-wide job queues. Newer commits still cancel older checks of the same
+PR. Organization runner limits can cause waiting; already queued runs retain
+their original workflow configuration until their branches are refreshed.
+Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
+parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
+
+Application and CI dependency scans reject known vulnerabilities even when the
+same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
+update `npa/requirements-lock.txt` and regenerate CI pins when changing package
+requirements. `.github/dependabot.yml` schedules daily update proposals for
+Python, browser-test npm, and GitHub Actions dependencies. Reproduce the scan
+with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
+
+The required [security check](../docs/security/merge-security-gate.md) is the
+single automatic candidate workflow. It runs secrets, confidentiality, source,
+runtime, lint, guardrail, and test gates, and calls an always-reporting image
+security workflow. Image-affecting candidates receive the deep image checks;
+unrelated candidates take a verified fast path. Main and weekly audits always
+scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. This baseline check does not replace the
+on fixable CRITICAL OS findings. All seven bases run inside one job with two
+bounded local workers. One Trivy database download is hard-linked into isolated
+worker caches, rather than using seven queued runners or a lock-contended shared
+cache. This baseline check does not replace the
 complete image scans required before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
@@ -228,5 +354,21 @@ authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
 
+For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
+plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
+`NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the
+configured bucket and storage service account for real. See
+[`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
+for the full env contract and safety preconditions.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
+
+## Workbench Studio
+
+`npa studio init --directory ./my-studio` creates a portable local film editor
+using the installed renderer. Create a project from your own media with
+`npa studio create`, author its storyboard, then draft, narrate and render it.
+Install `npa[studio]` for optional speech generation and FFmpeg separately.
+See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
+configuration, offline narration, artifact search and privacy boundaries.

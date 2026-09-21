@@ -7,7 +7,13 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from npa.clients.config import ConfigError, _load_yaml, _resolve_project_section, default_project_name, list_projects
+from npa.clients.config import (
+    ConfigError,
+    _load_yaml,
+    _resolve_project_section,
+    default_project_name,
+    list_projects,
+)
 from npa.cluster.state import kubeconfig_file, load_cluster_state
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -29,11 +35,15 @@ RTXPRO_SMOKE_TRAIN_YAML = BYOF_PROFILES_DIR / "isaac-lab-rl-train-rtxpro-smoke.y
 BYOF_DATAGEN_SMOKE_YAML = BYOF_PROFILES_DIR / "byof-datagen-rtxpro-smoke.yaml"
 BYOF_CONTAINER_SMOKE_YAML = BYOF_PROFILES_DIR / "byof-container-smoke-rtxpro.yaml"
 RTXPRO_SKYPILOT_CONFIG = BYOF_PROFILES_DIR / "skypilot-kubernetes-rtxpro.yaml"
-BYOF_ONBOARD_SKILL = WORKSPACE_ROOT / "skills" / "workflows" / "byof-onboard" / "SKILL.md"
+BYOF_ONBOARD_SKILL = (
+    WORKSPACE_ROOT / "skills" / "workflows" / "byof-onboard" / "SKILL.md"
+)
 
 DEFAULT_VALIDATION_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
 DEFAULT_VALIDATION_REPO_REF = "main"
-DEFAULT_UBUNTU_VALIDATION_REPO_URL = "https://github.com/githubtraining/hellogitworld.git"
+DEFAULT_UBUNTU_VALIDATION_REPO_URL = (
+    "https://github.com/githubtraining/hellogitworld.git"
+)
 DEFAULT_UBUNTU_VALIDATION_REPO_REF = "master"
 
 
@@ -117,12 +127,18 @@ def resolve_byof_project() -> str:
 def byof_validation_repo() -> tuple[str, str]:
     """Return the OSS repo used to validate BYOF container layout on live infra."""
 
-    url = os.environ.get("NPA_BYOF_REPO_URL", "").strip() or os.environ.get(
-        "NPA_BYOF_VALIDATION_REPO_URL", DEFAULT_VALIDATION_REPO_URL
-    ).strip()
-    ref = os.environ.get("NPA_BYOF_REPO_REF", "").strip() or os.environ.get(
-        "NPA_BYOF_VALIDATION_REPO_REF", DEFAULT_VALIDATION_REPO_REF
-    ).strip()
+    url = (
+        os.environ.get("NPA_BYOF_REPO_URL", "").strip()
+        or os.environ.get(
+            "NPA_BYOF_VALIDATION_REPO_URL", DEFAULT_VALIDATION_REPO_URL
+        ).strip()
+    )
+    ref = (
+        os.environ.get("NPA_BYOF_REPO_REF", "").strip()
+        or os.environ.get(
+            "NPA_BYOF_VALIDATION_REPO_REF", DEFAULT_VALIDATION_REPO_REF
+        ).strip()
+    )
     return url, ref
 
 
@@ -131,7 +147,9 @@ def byof_ubuntu_validation_repo() -> tuple[str, str]:
 
     if os.environ.get("NPA_BYOF_UBUNTU_VALIDATION_REPO_URL", "").strip():
         url = os.environ["NPA_BYOF_UBUNTU_VALIDATION_REPO_URL"].strip()
-        ref = os.environ.get("NPA_BYOF_UBUNTU_VALIDATION_REPO_REF", DEFAULT_UBUNTU_VALIDATION_REPO_REF).strip()
+        ref = os.environ.get(
+            "NPA_BYOF_UBUNTU_VALIDATION_REPO_REF", DEFAULT_UBUNTU_VALIDATION_REPO_REF
+        ).strip()
         return url, ref or DEFAULT_UBUNTU_VALIDATION_REPO_REF
     url, ref = byof_validation_repo()
     if "leisaac" in url.lower():
@@ -211,9 +229,16 @@ def resolve_byof_kubernetes_target(project: str | None = None) -> ByofKubernetes
     ).strip()
 
     if not context:
-        context = str(k8s.get("context") or k8s.get("k8s_context") or storage.get("k8s_context") or "").strip()
+        context = str(
+            k8s.get("context")
+            or k8s.get("k8s_context")
+            or storage.get("k8s_context")
+            or ""
+        ).strip()
     if not kubeconfig:
-        kubeconfig = str(k8s.get("kubeconfig") or k8s.get("kubeconfig_path") or "").strip()
+        kubeconfig = str(
+            k8s.get("kubeconfig") or k8s.get("kubeconfig_path") or ""
+        ).strip()
 
     if cluster_name:
         state = load_cluster_state(cluster_name)
@@ -238,7 +263,9 @@ def resolve_byof_kubernetes_target(project: str | None = None) -> ByofKubernetes
         if default_kube.is_file():
             kubeconfig = str(default_kube)
 
-    return ByofKubernetesTarget(context=context, kubeconfig=kubeconfig, namespace=namespace)
+    return ByofKubernetesTarget(
+        context=context, kubeconfig=kubeconfig, namespace=namespace
+    )
 
 
 def _uses_rtxpro_profile(project: str | None) -> bool:
@@ -251,7 +278,9 @@ def _uses_rtxpro_profile(project: str | None) -> bool:
     ).upper()
     if "RTXPRO" in accel or "RTX-PRO" in accel or "BLACKWELL" in accel:
         return True
-    profile = str(k8s.get("byof_profile") or k8s.get("gpu_profile") or "").strip().lower()
+    profile = (
+        str(k8s.get("byof_profile") or k8s.get("gpu_profile") or "").strip().lower()
+    )
     return profile in {"rtxpro", "rtx6000", "rtx-pro"}
 
 
@@ -267,7 +296,9 @@ def resolve_byof_resource_yaml(
     if override:
         return override
 
-    normalized_workload = (workload or os.environ.get("NPA_BYOF_WORKLOAD", "rl-train")).strip().lower()
+    normalized_workload = (
+        (workload or os.environ.get("NPA_BYOF_WORKLOAD", "rl-train")).strip().lower()
+    )
     k8s = _project_kubernetes_block(project)
     if normalized_workload in {"container-verify", "solution-smoke"}:
         key = "byof_container_smoke_yaml" if smoke else "byof_container_yaml"
@@ -305,7 +336,9 @@ def skypilot_config_for_project(project: str | None) -> str:
     if override:
         return override
     k8s = _project_kubernetes_block(project)
-    configured = str(k8s.get("skypilot_config") or k8s.get("byof_skypilot_config") or "").strip()
+    configured = str(
+        k8s.get("skypilot_config") or k8s.get("byof_skypilot_config") or ""
+    ).strip()
     if configured:
         path = Path(configured)
         return str(path if path.is_absolute() else REPO_ROOT / configured)

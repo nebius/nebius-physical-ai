@@ -15,6 +15,7 @@ __all__ = [
     "groot",
     "insights",
     "isaac_lab",
+    "isaac_arena",
     "lancedb",
     "lerobot",
     "mjlab",

@@ -43,13 +43,8 @@ from .npa_workflow_live_helpers import live_bucket
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-OPENPI_SPEC = (
-    REPO_ROOT / "workflows" / "testing" / "byof-openpi.yaml"
-)
-FOUR_MODE_SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
-)
+OPENPI_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-openpi.yaml"
+FOUR_MODE_SPEC = REPO_ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 EXPECTED_CAPABILITIES = {
     "pi05_droid_jointpos_polaris_checkpoint_download",
     "pi05_droid_jointpos_polaris_direct_infer",

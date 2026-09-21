@@ -181,7 +181,9 @@ def test_incomplete_local_lineage_fails_for_each_missing_member(colmap_run, rela
         viz._load_nurec_docs(colmap_run, [])
 
 
-@pytest.mark.parametrize("marker", ["source/attribution.json", "ncore/sequence/conversion.json"])
+@pytest.mark.parametrize(
+    "marker", ["source/attribution.json", "ncore/sequence/conversion.json"]
+)
 def test_each_local_lineage_marker_requires_the_complete_trio(colmap_run, marker):
     for relative in COLMAP_DOCUMENTS:
         if relative != marker:
