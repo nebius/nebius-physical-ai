@@ -106,6 +106,55 @@ authentication. Credentials never appear in URLs or ordinary status output.
 Foreign browser origins are rejected, and the gateway disables response caching.
 VNC and websockify remain bound to the VM's loopback interface.
 
+## Mobile Codex chat
+
+After `public-access` is configured, add a phone-friendly chat interface to the
+same HTTPS gateway:
+
+```bash
+npa tools desktop chat-setup --ssh-host "$DESKTOP_SSH_HOST" \
+  --connect-vscode --dry-run --json
+npa tools desktop chat-setup --ssh-host "$DESKTOP_SSH_HOST" \
+  --connect-vscode --json
+npa tools desktop open --ssh-host "$DESKTOP_SSH_HOST" --chat
+```
+
+Open `/chat/` on the desktop's HTTPS origin and sign in with the same desktop
+username and password. No VPN is required when the gateway uses a verified
+external address. The layout supports iPhone-sized screens, a session search,
+archived sessions, paginated history, and a composer that stays above the mobile
+keyboard. It sends prompts, streams replies and tool activity, steers a running
+turn, stops a turn, and presents command/file approvals and questions. Specialized
+MCP and dynamic-tool requests remain in VS Code.
+
+The browser and VS Code share one Codex app-server through a private Unix
+socket. `--connect-vscode` backs up the existing VS Code settings and selects a
+local transport adapter using `chatgpt.cliExecutable`. Reload the VS Code window
+after its current work finishes. The adapter uses the installed extension's
+Codex binary, so no second account login or API key is copied to the browser.
+This integration uses Codex's experimental app-server API and development
+executable setting; revalidate both clients after extension upgrades.
+
+Existing sessions open in an older, independent Codex process are readable in
+the mobile UI. Close the session in that client before reopening it for mobile
+control. The service detects those writers rather than running two agents
+against the same session log. New sessions and sessions opened in the connected
+VDI VS Code window share live controls. Other SSH-based IDE windows are left
+unchanged.
+
+The `npa-codex-server.service` and `npa-codex-chat.service` user services survive
+browser disconnects. Chat binds only to loopback, requires authentication on
+every route, and rejects cross-origin mutations. The gateway protects the page,
+assets, session history, and control endpoints. Prompts render as text; returned
+HTML cannot execute scripts. No credentials are embedded in the web assets or
+URLs. Chat history stays in the existing Codex home and its encrypted backup.
+
+Repeated setup preserves the running Codex engine; it refreshes the lightweight
+web service. Refresh browser tabs after an update. To undo IDE integration,
+restore the saved `chatgpt.cliExecutable` setting from the private chat state and
+reload the window after work finishes. Stop the shared engine only after its
+active conversations have finished.
+
 ## Recovery
 
 | Failure | Recovery |

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#171717" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <title>Codex · Your desktop</title>
+    <link rel="stylesheet" href="/chat/chat.css" />
+    <script src="/chat/chat.js" defer></script>
+  </head>
+  <body>
+    <button id="scrim" aria-label="Close sessions"></button>
+    <aside id="sidebar" aria-label="Codex sessions">
+      <div class="brand">
+        <span class="brand-icon" aria-hidden="true">⌘</span
+        ><strong>Codex</strong><span class="tag">VDI</span>
+      </div>
+      <button id="new-chat" class="new-chat"><span>＋</span> New chat</button>
+      <label class="search"
+        ><span aria-hidden="true">⌕</span
+        ><input
+          id="search"
+          type="search"
+          placeholder="Search sessions"
+          aria-label="Search sessions"
+      /></label>
+      <div class="list-heading">
+        <span>Your sessions</span
+        ><select id="archive" aria-label="Session collection">
+          <option value="false">Recent</option>
+          <option value="true">Archived</option>
+        </select>
+      </div>
+      <nav id="sessions" aria-label="Session list">
+        <p class="muted loading">Loading sessions…</p>
+      </nav>
+      <button id="more-sessions" class="subtle" hidden>
+        Load more sessions
+      </button>
+      <footer>
+        <span id="connection" role="status">Connecting…</span
+        ><a href="/desktop.html" target="_blank" rel="noopener"
+          >Open desktop ↗</a
+        >
+      </footer>
+    </aside>
+    <main>
+      <header>
+        <button id="menu" class="icon" aria-label="Show sessions">☰</button>
+        <div class="heading">
+          <h1 id="title">Your Codex workspace</h1>
+          <p id="project">Continue from any screen</p>
+        </div>
+        <button id="refresh" class="icon" aria-label="Refresh chat">↻</button>
+      </header>
+      <div id="notice" role="alert" hidden></div>
+      <section id="conversation" aria-label="Conversation" tabindex="0">
+        <div id="welcome">
+          <span class="welcome-icon">⌘</span>
+          <h2>Your work, wherever you are.</h2>
+          <p>
+            Open a session or start a new chat.<br />Codex runs on your desktop
+            in the cloud.
+          </p>
+          <button id="welcome-new" class="primary">Start a chat</button>
+        </div>
+        <button id="older" class="subtle" hidden>Load earlier messages</button>
+        <div id="messages"></div>
+      </section>
+      <section id="requests" aria-label="Pending decisions"></section>
+      <form id="composer">
+        <div class="compose-box">
+          <textarea
+            id="prompt"
+            rows="1"
+            placeholder="Ask Codex to work on something…"
+            aria-label="Message Codex"
+            disabled
+          ></textarea>
+          <div class="compose-bottom">
+            <span id="run-state">Choose a session to begin</span>
+            <div>
+              <button type="button" id="stop" hidden>■ Stop</button
+              ><button
+                id="send"
+                type="submit"
+                class="send"
+                aria-label="Send message"
+                disabled
+              >
+                ↑
+              </button>
+            </div>
+          </div>
+        </div>
+        <p class="composer-note">Same conversations. Work stays on your VDI.</p>
+      </form>
+    </main>
+    <dialog id="new-dialog">
+      <form id="new-form">
+        <h2>New chat</h2>
+        <p>Choose the project directory on your VDI.</p>
+        <label
+          >Working directory<input id="cwd" autocomplete="off" required
+        /></label>
+        <div class="dialog-actions">
+          <button type="button" id="cancel-new">Cancel</button
+          ><button class="primary" type="submit">Create chat</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

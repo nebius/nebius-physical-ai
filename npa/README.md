@@ -26,6 +26,8 @@ For a persistent remote development environment, use
 installs VS Code and Codex on an existing Ubuntu VM, provides a sharp browser
 desktop with adjustable workspace size, and can enable authenticated HTTPS on a
 public IP. Its setup and operation commands live under `npa tools`.
+`npa tools desktop chat-setup --connect-vscode` adds authenticated mobile Codex
+chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it.
 
 From the repository root, with your virtual environment active:
 

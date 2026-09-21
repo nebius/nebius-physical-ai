@@ -15,6 +15,7 @@ display  Change desktop density without restarting applications.
 status  Inspect desktop services and recovery records without disclosing secrets.
 public-access  Enable HTTPS with a trusted IP certificate and a separate strong login.
 open  Open the desktop using public HTTPS or a private SSH tunnel.
+chat-setup  Install authenticated mobile chat on the existing desktop HTTPS gateway.
 ```
 
 ## Options
@@ -32,6 +33,7 @@ open  Open the desktop using public HTTPS or a private SSH tunnel.
 | `status` | Inspect desktop services and recovery records without disclosing secrets. |
 | `public-access` | Enable HTTPS with a trusted IP certificate and a separate strong login. |
 | `open` | Open the desktop using public HTTPS or a private SSH tunnel. |
+| `chat-setup` | Install authenticated mobile chat on the existing desktop HTTPS gateway. |
 
 ## Examples
 

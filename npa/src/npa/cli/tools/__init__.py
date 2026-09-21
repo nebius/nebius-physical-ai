@@ -156,19 +156,57 @@ def public_access(
 def open_cmd(
     ssh_host: str = typer.Option(..., "--ssh-host"),
     local_port: int = typer.Option(16080, "--local-port", min=1024, max=65535),
+    chat: bool = typer.Option(
+        False, "--chat", help="Open the mobile Codex chat interface."
+    ),
 ) -> None:
     """Open the desktop using public HTTPS or a private SSH tunnel.
 
     Args:
         ssh_host: Selected SSH destination.
         local_port: Local tunnel port when public access is not configured.
+        chat: Open shared mobile chat instead of the desktop viewer.
     Returns:
         None.
     Raises:
         typer.Exit: Opening or connecting failed.
     """
     try:
-        typer.echo(open_desktop(ssh_host, local_port=local_port))
+        typer.echo(open_desktop(ssh_host, local_port=local_port, chat=chat))
     except (ValueError, RuntimeError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
+
+
+@desktop.command("chat-setup")
+@intent_boundary(OperationIntent.ENSURE_PRESENT)
+@json_stdout_contract
+def chat_setup(
+    ssh_host: str = typer.Option(..., "--ssh-host"),
+    connect_vscode: bool = typer.Option(
+        False,
+        "--connect-vscode",
+        help="Configure VS Code to share sessions after its next window reload.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    output_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Install authenticated mobile chat on the existing desktop HTTPS gateway.
+
+    Args:
+        ssh_host: Existing desktop SSH alias.
+        connect_vscode: Configure the VDI IDE's shared runtime without restarting it.
+        dry_run: Show the plan without connecting.
+        output_json: Emit JSON instead of text.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: Setup fails.
+    """
+    _emit(
+        ssh_host,
+        "chat-setup",
+        output_json,
+        connect_vscode=connect_vscode,
+        dry_run=dry_run,
+    )

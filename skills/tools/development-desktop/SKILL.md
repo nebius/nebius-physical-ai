@@ -35,6 +35,15 @@ Implementation belongs in `npa/src/npa/tools/desktop`, independently of Workbenc
    recovery services but does not provision a backup repository or storage keys.
    Use encrypted backups with independent recovery keys, consistent online
    SQLite copies for Codex databases, and actual file/database restore checks.
+7. For mobile control, run `chat-setup --ssh-host <alias> --connect-vscode`
+   after authenticated public access works. The mobile UI lives at `/chat/`
+   on the same origin and uses the same desktop login. It shares a private
+   Codex runtime with the VDI IDE; reload the IDE only when its work is idle.
+   Keep sessions held by older independent Codex processes read-only until
+   their owner releases them. Test real prompts from both clients, reconnects,
+   active-turn steering/stopping, approvals, and phone-sized layouts. Preserve
+   the existing account and model configuration. Never copy account tokens to
+   the browser or restart a shared engine with active work during setup.
 
 See [the operator guide](../../../docs/tools/development-desktop.md) for login,
 recovery, public-access prerequisites, and cleanup. Use the contribution,

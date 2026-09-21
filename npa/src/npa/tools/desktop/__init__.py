@@ -16,7 +16,7 @@ def _validate_host(host: str) -> None:
 
 
 def _configuration(action: str, options: dict) -> dict:
-    if action not in {"setup", "status", "display", "public-access"}:
+    if action not in {"setup", "status", "display", "public-access", "chat-setup"}:
         raise ValueError("Unsupported desktop action.")
     result = {"action": action, **options}
     if "dpi" in result and not 96 <= result["dpi"] <= 240:
@@ -34,12 +34,26 @@ def _configuration(action: str, options: dict) -> dict:
     return result
 
 
+def _chat_assets():
+    names = [
+        "chat_setup.py",
+        "chat_server.py",
+        "chat_rpc.py",
+        "chat_proxy.py",
+        "chat_history.py",
+        "chat.html",
+        "chat.css",
+        "chat.js",
+    ]
+    return {name: (Path(__file__).parent / name).read_text() for name in names}
+
+
 def operate(host: str, action: str, *, dry_run: bool = False, **options) -> dict:
     """Run a desktop action on an explicitly selected existing SSH host.
 
     Args:
         host: Existing SSH alias or user@hostname using the operator's SSH keys.
-        action: Setup, status, display, or public-access.
+        action: Setup, status, display, public-access, or chat-setup.
         dry_run: Return the intended action without connecting or writing files.
         options: Validated action-specific configuration; never credentials.
     Returns:
@@ -52,6 +66,8 @@ def operate(host: str, action: str, *, dry_run: bool = False, **options) -> dict
     config = _configuration(action, options)
     if dry_run:
         return {"planned": True, "ssh_host": host, **config}
+    if action == "chat-setup":
+        config["chat_assets"] = _chat_assets()
     source = (Path(__file__).parent / "remote.py").read_text()
     payload = source + "\n_run(" + repr(config) + ")\n"
     result = subprocess.run(
@@ -71,12 +87,13 @@ def operate(host: str, action: str, *, dry_run: bool = False, **options) -> dict
         raise RuntimeError("Desktop operation returned an invalid response.") from exc
 
 
-def open_desktop(host: str, *, local_port: int = 16080) -> str:
+def open_desktop(host: str, *, local_port: int = 16080, chat: bool = False) -> str:
     """Open the authenticated public desktop or establish a private SSH tunnel.
 
     Args:
         host: Existing SSH alias or user@hostname.
         local_port: Loopback port for the SSH-only viewer.
+        chat: Open the mobile chat interface on the existing HTTPS gateway.
     Returns:
         The browser URL, without credentials.
     Raises:
@@ -87,6 +104,12 @@ def open_desktop(host: str, *, local_port: int = 16080) -> str:
     if not 1024 <= local_port <= 65535:
         raise ValueError("Local port must be between 1024 and 65535.")
     state = operate(host, "status")
+    if chat:
+        url = state.get("chat", {}).get("url")
+        if not url:
+            raise RuntimeError("Run desktop chat-setup before opening mobile chat.")
+        webbrowser.open(url)
+        return url
     url = state.get("public_url")
     if not url:
         _tunnel(host, local_port)

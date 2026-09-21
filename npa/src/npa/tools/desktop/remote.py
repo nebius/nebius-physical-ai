@@ -343,6 +343,8 @@ def _status():
         "nebius-desktop-web",
         "nebius-desktop-backup.timer",
         "nebius-desktop-snapshot-watch",
+        "npa-codex-server",
+        "npa-codex-chat",
     ):
         result = subprocess.run(
             ["systemctl", "--user", "is-active", name],
@@ -361,6 +363,7 @@ def _status():
         ("display.json", "display"),
         ("backup-last-success.json", "last_backup"),
         ("snapshot-verification.json", "snapshot"),
+        ("chat.json", "chat"),
     ):
         path = _STATE / name
         if path.exists():
@@ -394,6 +397,9 @@ def _gateway_config(config, *, tls):
         text += _NGINX_TLS.replace("@PORT@", str(config["https_port"])).replace(
             "@PUBLIC_IP@", config["public_ip"]
         )
+    text = text.replace(
+        "@CHAT_ROUTE@", _NGINX_CHAT if (_STATE / "chat.json").exists() else ""
+    )
     return (
         "user www-data;\nworker_processes auto;\npid /run/npa-desktop-gateway.pid;\nerror_log /var/log/nginx/npa-desktop-error.log;\nevents {}\nhttp {\ninclude /etc/nginx/mime.types;\n"
         + text
@@ -535,6 +541,38 @@ def _verify_gateway(config):
         raise RuntimeError("Authenticated gateway verification failed.")
 
 
+def _chat_setup(config):
+    from urllib.parse import urlsplit
+
+    public = _STATE / "public-access.json"
+    if not public.exists():
+        raise RuntimeError("Configure authenticated public-access before mobile chat.")
+    names = {
+        "chat_setup.py",
+        "chat_server.py",
+        "chat_rpc.py",
+        "chat_proxy.py",
+        "chat_history.py",
+        "chat.html",
+        "chat.css",
+        "chat.js",
+    }
+    if set(config["chat_assets"]) != names:
+        raise ValueError("Unexpected mobile chat assets.")
+    root = _STATE / "codex-chat"
+    root.mkdir(mode=0o700, exist_ok=True)
+    for name, source in config["chat_assets"].items():
+        _write(root / name, source)
+    _command(
+        ["/usr/bin/python3", str(root / "chat_setup.py")],
+        data=json.dumps({"connect_vscode": config.get("connect_vscode", False)}),
+    )
+    url = urlsplit(json.loads(public.read_text())["url"])
+    _configure_gateway(
+        {"public_ip": url.hostname, "https_port": url.port or 443}, tls=True
+    )
+
+
 def _run(config):
     os.umask(0o077)
     _STATE.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -547,6 +585,8 @@ def _run(config):
                 _display(config["dpi"])
             elif config["action"] == "public-access":
                 _public_access(config)
+            elif config["action"] == "chat-setup":
+                _chat_setup(config)
         print(json.dumps(_status()))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         with (_STATE / "setup.log").open("a") as log, redirect_stderr(log):
@@ -617,6 +657,7 @@ server {
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
     location = /desktop-credentials.json { alias /etc/npa-desktop/vnc-credentials.json; default_type application/json; }
+@CHAT_ROUTE@
     location / {
         proxy_pass http://127.0.0.1:6080;
         proxy_http_version 1.1;
@@ -627,6 +668,18 @@ server {
         proxy_buffering off;
     }
 }
+"""
+_NGINX_CHAT = """    location = /chat { return 308 /chat/; }
+    location /chat/ {
+        proxy_pass http://127.0.0.1:6090;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Connection "";
+        proxy_read_timeout 65s;
+        proxy_buffering off;
+        client_max_body_size 2m;
+    }
 """
 _GATEWAY_UNIT = """[Unit]
 Description=NPA development desktop authenticated HTTPS gateway
