@@ -13,10 +13,154 @@ from npa.execution_preflight import (
     verify_serverless_execution,
     verify_serverless_gpu,
 )
+from npa.orchestration.skypilot.k8s_runtime_class import (
+    verify_kubernetes_runtime_classes,
+)
 from npa.orchestration.npa_workflow.submit_credentials import (
     SubmitCredentialContext,
     resolve_submit_credentials,
 )
+
+
+def _runtime_class_spec(name: str | None = None) -> dict:
+    return {} if name is None else {"runtimeClassName": name}
+
+
+def test_runtime_class_preflight_accepts_class_in_exact_context():
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"metadata":{"name":"nvidia"}}',
+            stderr="",
+        )
+
+    verify_kubernetes_runtime_classes(
+        [_runtime_class_spec("nvidia")],
+        context="selected-context",
+        environment={"KUBECONFIG": "/private/selected-kubeconfig"},
+        runner=run,
+    )
+
+    assert calls[0][0] == [
+        "kubectl",
+        "--context",
+        "selected-context",
+        "get",
+        "runtimeclass.node.k8s.io",
+        "nvidia",
+        "--output=json",
+    ]
+    assert calls[0][1]["env"]["KUBECONFIG"] == "/private/selected-kubeconfig"
+
+
+def test_runtime_class_preflight_rejects_missing_class_actionably():
+    def run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr='Error from server (NotFound): runtimeclasses.node.k8s.io "nvidia" not found',
+        )
+
+    with pytest.raises(ExecutionPreflightError, match="not installed") as caught:
+        verify_kubernetes_runtime_classes(
+            [_runtime_class_spec("nvidia")],
+            context="selected-context",
+            runner=run,
+        )
+
+    assert caught.value.status == "fail"
+    assert "remove the explicit runtimeClassName" in str(caught.value)
+
+
+def test_runtime_class_preflight_skips_unspecified_class():
+    def unexpected(*args, **kwargs):
+        raise AssertionError(
+            "kubectl must not run without an explicit runtimeClassName"
+        )
+
+    verify_kubernetes_runtime_classes(
+        [_runtime_class_spec()],
+        context="selected-context",
+        runner=unexpected,
+    )
+
+
+@pytest.mark.parametrize("task_default", [None, ""])
+def test_task_runtime_default_suppresses_global_runtime_class(task_default):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("the effective pod uses the cluster default runtime")
+
+    verify_kubernetes_runtime_classes(
+        [{"runtimeClassName": task_default}],
+        context="selected-context",
+        global_pod_spec={"runtimeClassName": "nvidia"},
+        runner=unexpected,
+    )
+
+
+def test_task_without_runtime_class_inherits_global_runtime_class():
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"metadata":{"name":"nvidia"}}',
+            stderr="",
+        )
+
+    verify_kubernetes_runtime_classes(
+        [{}],
+        context="selected-context",
+        global_pod_spec={"runtimeClassName": "nvidia"},
+        runner=run,
+    )
+
+    assert calls[0][-2] == "nvidia"
+
+
+def test_task_runtime_class_replaces_global_runtime_class():
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"metadata":{"name":"kata"}}',
+            stderr="",
+        )
+
+    verify_kubernetes_runtime_classes(
+        [{"runtimeClassName": "kata"}],
+        context="selected-context",
+        global_pod_spec={"runtimeClassName": "nvidia"},
+        runner=run,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][-2] == "kata"
+
+
+def test_runtime_class_preflight_preserves_authorization_failure():
+    def run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="private subject cannot get resource runtimeclasses: Forbidden",
+        )
+
+    with pytest.raises(ExecutionPreflightError, match="RBAC") as caught:
+        verify_kubernetes_runtime_classes(
+            [_runtime_class_spec("nvidia")],
+            context="selected-context",
+            runner=run,
+        )
+
+    assert caught.value.status == "unknown"
+    assert "private subject" not in str(caught.value)
 
 
 class ProbeS3:
@@ -806,6 +950,37 @@ def raw_task(**env):
         },
         "run": "true",
     }
+
+
+def test_runtime_class_failure_prevents_storage_probe_and_launch_boundary(
+    provider,
+    configured,
+    monkeypatch,
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    document = raw_task()
+    document["config"] = {
+        "kubernetes": {"pod_config": {"spec": {"runtimeClassName": "nvidia"}}}
+    }
+
+    def missing(command, **kwargs):
+        assert command[1:3] == ["--context", "unit-context"]
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr='Error from server (NotFound): runtimeclasses "nvidia" not found',
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_runtime_class.subprocess.run", missing
+    )
+    with pytest.raises(ExecutionPreflightError, match="runtime_class"):
+        preflight_skypilot_submission(
+            [document], project="unit", infra="k8s/unit-context"
+        )
+
+    assert not provider.s3.calls
 
 
 @pytest.fixture
