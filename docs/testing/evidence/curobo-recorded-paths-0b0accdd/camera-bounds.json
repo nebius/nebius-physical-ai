@@ -1,0 +1,32 @@
+{
+  "point_count": 519,
+  "min": [
+    0.10456621646881104,
+    -0.8165692090988159,
+    -0.10985212028026581
+  ],
+  "max": [
+    0.536635160446167,
+    0.19167298078536987,
+    0.6812989711761475
+  ],
+  "center": [
+    0.320600688457489,
+    -0.312448114156723,
+    0.2857234254479408
+  ],
+  "radius": 0.6762314572919615,
+  "eye_position": [
+    1.8083098944998046,
+    -2.003026757386627,
+    1.5029400485734716
+  ],
+  "eye_up": [
+    0,
+    0,
+    1
+  ],
+  "basis": "all actual path vertices and declared goals in the three unchanged public recordings",
+  "recording_bytes_changed": false,
+  "purpose": "Camera fitted to the union of all actual path vertices and declared goals; preserves successful and failed cases."
+}
