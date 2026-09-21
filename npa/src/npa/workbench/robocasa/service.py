@@ -423,6 +423,13 @@ def _run_capability(
                 "execution lock to fail closed",
                 run_id,
             )
+            update(
+                "failed",
+                None,
+                outcome.error
+                or "RoboCasa worker cleanup could not prove all descendants stopped",
+            )
+            return
         if outcome.error is not None:
             update("failed", None, outcome.error)
         elif outcome.result is None:

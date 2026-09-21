@@ -1145,6 +1145,38 @@ def test_unstopped_worker_poisons_execution_gate(
     assert runs.get("run").error == "cleanup failed"
 
 
+def test_unstopped_worker_discards_successful_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.robocasa import service
+
+    runs = RunRegistry()
+    runs["run"] = _status("run", "queued")
+    gate = service.GpuExecutionGate()
+    monkeypatch.setattr(
+        service,
+        "_execute_capability_in_worker",
+        lambda _body: service._WorkerOutcome(
+            result={"ok": True},
+            stopped=False,
+        ),
+    )
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+    )
+
+    service._run_capability(request, "run", runs, gate)
+
+    status = runs.get("run")
+    assert gate.available is False
+    assert status.status == "failed"
+    assert status.result is None
+    assert status.error == (
+        "RoboCasa worker cleanup could not prove all descendants stopped"
+    )
+
+
 class _FakeActionSpace:
     shape = (7,)
 
