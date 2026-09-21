@@ -16,6 +16,7 @@ config:
   base_profile: ubuntu
   base_image: "ubuntu:22.04"
   build_command: |
+    set -eu
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       build-essential ca-certificates cmake fonts-dejavu-core ninja-build \
@@ -56,6 +57,9 @@ config:
       -o /usr/local/bin/apriltag-pjpeg-gray
     PYTHONPATH=/usr/local/lib/python3.10/site-packages \
       python3 -c "from apriltag import apriltag; assert apriltag('tag36h11')"
+    # CTest is required by runtime validation; its Windows packaging signing key
+    # is unused by this Linux detector and must never enter an image layer.
+    rm -f /usr/share/cmake-*/Templates/Windows/Windows_TemporaryKey.pfx
   workload: solution-smoke
   smoke_command: |
     export PYTHONPATH="/usr/local/lib/python3.10/site-packages:${PYTHONPATH:-}"
