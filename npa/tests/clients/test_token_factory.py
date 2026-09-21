@@ -576,9 +576,26 @@ def test_chat_profile_preserves_literal_request_field_order(model, suffix) -> No
     assert requests == [prefix + suffix]
 
 
+def _stable_ast(value):
+    if isinstance(value, ast.AST):
+        fields = (
+            (field, _stable_ast(getattr(value, field)))
+            for field in value._fields
+            # Python 3.12 added an empty field absent from supported 3.10/3.11.
+            if field != "type_params"
+        )
+        return type(value).__name__, tuple(fields)
+    if isinstance(value, list):
+        return tuple(_stable_ast(item) for item in value)
+    return value
+
+
+def _ast_node_sha256(node: ast.AST) -> str:
+    return hashlib.sha256(repr(_stable_ast(node)).encode()).hexdigest()
+
+
 def _ast_sha256(source: str) -> str:
-    tree = ast.parse(textwrap.dedent(source))
-    return hashlib.sha256(ast.dump(tree, include_attributes=False).encode()).hexdigest()
+    return _ast_node_sha256(ast.parse(textwrap.dedent(source)))
 
 
 def _profile_assignment_sha256() -> str:
@@ -594,21 +611,19 @@ def _profile_assignment_sha256() -> str:
             for target in node.targets
         )
     )
-    return hashlib.sha256(
-        ast.dump(assignment, include_attributes=False).encode()
-    ).hexdigest()
+    return _ast_node_sha256(assignment)
 
 
 _EXPECTED_POLICY_AST_HASHES = {
-    "profile-assignment": "b8c3be781fc70f3425e7a835fc52dee5f92219581e558803d01b5f2e4390df69",
-    "profile-lookup": "818c81d6b67fe43c07f4d22af3f4a8d145fb8aed0ecabafeb66360841eb799e0",
-    "profile-default-extra": "170e7c306fe82bfd85843d668ada47ad6eb35d215fefa18fcede2f6ca6ab4f75",
-    "default-chat-extra": "99846d1e4a684f3df3f7bd8ed337b2e18cf84b9d38ca0a1a0d97463340d9f8a8",
-    "client-payload": "d31038f5401e7c9dc0eb5817614f797e7804723c5b0b74baba961a4ce13e6bc6",
-    "client-entrypoint": "d39c925dca9e2965b710645b2b1dd6b6d0ecc7f0cc3ec8d2be5ad1f310657165",
-    "hosted-request": "101e924cc81415fbd9d8997c3c182cee2f0909cb89789ab40a24239b307ecadc",
-    "hosted-response": "82cccfbd894542709b0e9af5b9f746cc061115f8d77533a91929e59d50f6dfda",
-    "hosted-call": "87e073b95f7493681755b46e8cadaa289da2d3777827cb1cbb39fdfd55a8a05d",
+    "profile-assignment": "b4e21e6ce330eb920b83fffa47feedc1be87eb2709a7ab35fd220af81dc755c9",
+    "profile-lookup": "1fd0f1189f1e8e928d7ea6339846c064bdfe8be6e57d9631d2d4fc3b8f9f33ab",
+    "profile-default-extra": "2b253244da201da02dcf4dda19245897186435f03637a23acb81d43955e74198",
+    "default-chat-extra": "1cb2a719340cb8cb801c67dae2a3383c071b695e9057d84ee118391e5bd56e28",
+    "client-payload": "9398a00f57375892b9be1844e07a5bb38eb532298382b618e19dbd3df4dcf813",
+    "client-entrypoint": "a54c9277802ea71119b8c4c2024fb4ac212928ff40b4843e23a44d3ccce6bdd3",
+    "hosted-request": "9183ee81e359c6abd170bc9ea51fcdd1aa380552d6e7651c9ba6232aab32ae8a",
+    "hosted-response": "79ec961221a6cd29d6d156785c0d0e4ea3a9643127cea8c144809b37e8f87507",
+    "hosted-call": "2849ba4a92a7ca8a6859947e0eb4ac19bdbb15a6126e21d3eaac583275f8e5d8",
 }
 
 
