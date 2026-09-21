@@ -52,6 +52,26 @@ chooses the page by measuring contrast against the content's own luminance; it a
 expected a trade there and the measurement found none, and separates the controlled comparison from
 the confounded one.
 
+## The viewer's own frame
+
+`capability-record-viewer-ui-capture.json`, with the frames under `viewer-ui/`. Root's directive that
+PLY renders do not prove the UI was right, and not only procedurally: capturing the viewer found a
+defect no offscreen render could have surfaced.
+
+Every camera was fitted for a 4:3 frame, and the blueprint's own `column_shares=[2,1]` means no view is
+ever shown in one — the scene pane is about 1.07 and each tab about 0.53. Measured on the completed
+run's geometry, in the pane each view is actually displayed in, the old fit put the tab views at 2.31
+frame half-extents and the scene at 1.157. The per-pane fit lands all four at 0.926. The offscreen
+renders could not show this because they were drawn at the same 4:3 the camera assumed; the 0.926 I
+reported earlier was true only in a frame shape the layout never produces.
+
+The record also keeps a measurement of mine that did not survive scrutiny. I first read clipping off a
+pixel audit of the captured frame, and that audit cannot work here: the blueprint deliberately draws a
+metre grid across the whole pane, so content spans the full width and touches every edge no matter what
+the camera does — it reported "clipped" for both members of a controlled pair including the fixed one.
+The claim rests on the projection-space measurement instead, which the grid cannot confound.
+`harness/viewer_pane_audit.py` is kept with that limitation in its docstring.
+
 ## Viewer reconciliation
 
 `capability-record-viewer-reconciliation.json` covers two narrow findings from root's review of the

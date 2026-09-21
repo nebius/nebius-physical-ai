@@ -1408,11 +1408,7 @@ def test_every_view_frames_the_geometry_that_view_actually_shows():
     audit happened.
     """
 
-    from npa.workbench.open3d.runner import (
-        CAMERA_ASPECT,
-        VIEW_GEOMETRY,
-        _view_cameras,
-    )
+    from npa.workbench.open3d.runner import VIEW_GEOMETRY, _view_cameras
 
     geometry = _sprawling_scene()
     cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
@@ -1420,7 +1416,7 @@ def test_every_view_frames_the_geometry_that_view_actually_shows():
     assert set(cameras) == set(VIEW_GEOMETRY), "every view needs its own camera"
     for view_name, spec in VIEW_GEOMETRY.items():
         for key in spec.geometry:
-            reach = _inside_frame(geometry[key], cameras[view_name], CAMERA_ASPECT)
+            reach = _inside_frame(geometry[key], cameras[view_name], spec.aspect)
             assert reach <= 1.0, (
                 f"{view_name!r} clips its own {key} geometry at {reach:.3f} of the "
                 "frame half-extent"
@@ -1436,7 +1432,6 @@ def test_a_view_is_framed_snugly_rather_than_stranded_in_an_empty_frame():
     """
 
     from npa.workbench.open3d.runner import (
-        CAMERA_ASPECT,
         CAMERA_FRAME_MARGIN,
         VIEW_GEOMETRY,
         _view_cameras,
@@ -1448,7 +1443,7 @@ def test_a_view_is_framed_snugly_rather_than_stranded_in_an_empty_frame():
     cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
     for view_name, spec in VIEW_GEOMETRY.items():
         shown = np.vstack([geometry[key] for key in spec.geometry])
-        reach = _inside_frame(shown, cameras[view_name], CAMERA_ASPECT)
+        reach = _inside_frame(shown, cameras[view_name], spec.aspect)
         assert reach >= 1.0 / CAMERA_FRAME_MARGIN - 0.05, (
             f"{view_name!r} strands its geometry at {reach:.3f}; the frame is "
             "mostly empty, which is as hard to review as a crop"
@@ -1592,6 +1587,53 @@ def test_the_blueprint_draws_the_entities_the_table_says_each_view_draws():
         "the blueprint draws entities the table does not declare, so the camera "
         "and the contents can drift apart again"
     )
+
+
+def test_a_view_in_a_narrow_tab_is_fitted_for_that_tab_and_not_for_a_wide_pane():
+    """A fit is only as good as the pane it was fitted for.
+
+    Captured from the running viewer, every view fitted for 4:3 filled the full
+    width of its pane and touched both side edges while using 44% of the height of
+    the narrow tab -- the signature of fitting a wide shape into a narrow one. The
+    offscreen renders could not show this, because they were rendered at the same
+    4:3 the camera assumed.
+    """
+
+    import numpy as np
+
+    from npa.workbench.open3d.runner import (
+        CAMERA_WINDOW_ASPECT,
+        SCAN_VIEW,
+        SCENE_VIEW,
+        VIEW_GEOMETRY,
+        _view_cameras,
+    )
+
+    geometry = _sprawling_scene()
+    cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
+
+    # The tab column is half the width of the scene pane, so its views must sit
+    # further back, not at the same distance.
+    assert VIEW_GEOMETRY[SCAN_VIEW].aspect < VIEW_GEOMETRY[SCENE_VIEW].aspect
+    assert all(
+        camera["pane_aspect"] == VIEW_GEOMETRY[name].aspect
+        for name, camera in cameras.items()
+    ), "a camera must record the pane it was fitted for"
+    assert max(spec.aspect for spec in VIEW_GEOMETRY.values()) <= CAMERA_WINDOW_ASPECT
+
+    # And the fit must hold in that pane: the same geometry, checked against each
+    # view's own shape rather than one shared assumption.
+    for view_name, spec in VIEW_GEOMETRY.items():
+        shown = np.vstack([geometry[key] for key in spec.geometry])
+        reach = _inside_frame(shown, cameras[view_name], spec.aspect)
+        assert reach <= 1.0, (
+            f"{view_name!r} clips in its own {spec.aspect:.2f} pane at {reach:.3f}"
+        )
+        # A camera fitted for the wide pane would clip here; that is the defect.
+        wide = _inside_frame(
+            shown, cameras[view_name], VIEW_GEOMETRY[SCENE_VIEW].aspect
+        )
+        assert wide <= reach, "a wider pane cannot be tighter than a narrow one"
 
 
 def test_a_reconstruction_that_carries_colour_keeps_it_and_one_that_does_not_is_left_alone():

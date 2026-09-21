@@ -764,10 +764,12 @@ CAMERA_FOV_DEGREES = 55.0
 CAMERA_ELEVATION_DEGREES = 28.0
 CAMERA_FRAME_MARGIN = 1.08
 #: Rerun's 3D views are wider than tall; the horizontal half-angle scales by this.
+#: Fallback pane shape for a camera fitted outside the shipped layout. Views in the
+#: blueprint carry their own pane aspect; this covers a direct _camera call.
 CAMERA_ASPECT = 4.0 / 3.0
 
 
-def _camera(points, up: list[float]) -> dict[str, Any]:
+def _camera(points, up: list[float], aspect: float = CAMERA_ASPECT) -> dict[str, Any]:
     """Place an elevated three-quarter eye far enough back to fit ``points``.
 
     The distance is solved rather than guessed: a hand-picked multiple of the
@@ -778,6 +780,11 @@ def _camera(points, up: list[float]) -> dict[str, Any]:
     what belongs in frame and that is not always one cloud. Fitting this against
     the fused cloud while a view drew the uncropped surface on top is what left
     the audit view clipped 23% past its own edge.
+
+    ``aspect`` is the shape of the pane the result will be displayed in. Getting it
+    wrong clips the sides while leaving vertical headroom, which is exactly what a
+    captured viewer frame showed: fitted for 4:3, the scene filled the full width of
+    a 1.13 pane and a 0.57 tab and used 44% of the tab's height.
     """
 
     import numpy as np
@@ -818,8 +825,7 @@ def _camera(points, up: list[float]) -> dict[str, Any]:
         depth = distance + along
         depth = np.where(depth < 1e-6, 1e-6, depth)
         reach = np.abs(
-            np.stack([lateral / half_angle / CAMERA_ASPECT, vertical / half_angle])
-            / depth
+            np.stack([lateral / half_angle / aspect, vertical / half_angle]) / depth
         ).max()
         if reach <= 1e-9:
             break
@@ -829,6 +835,7 @@ def _camera(points, up: list[float]) -> dict[str, Any]:
         "look_target": [float(value) for value in centre],
         "up": [float(value) for value in up_vector],
         "distance": distance,
+        "pane_aspect": float(aspect),
         "fov_degrees": CAMERA_FOV_DEGREES,
         "elevation_degrees": CAMERA_ELEVATION_DEGREES,
         "scene_span": float(np.linalg.norm(extent)),
@@ -842,11 +849,30 @@ SURFACE_VIEW = "Supported surface only"
 REMOVED_VIEW = "Removed: unsupported surface"
 
 
+#: Nominal viewer window shape, used only to turn the layout's column shares into
+#: a per-pane aspect. Deliberately narrower than a wide monitor: a pane fitted for
+#: a shape narrower than the real one keeps a margin, and one fitted for a wider
+#: shape clips the sides. Only the first mistake is reviewable.
+CAMERA_WINDOW_ASPECT = 16.0 / 10.0
+
+#: Horizontal share of the window each pane of the blueprint receives, matching the
+#: column_shares the layout below actually sets.
+CAMERA_SCENE_SHARE = 2.0 / 3.0
+CAMERA_TAB_SHARE = 1.0 / 3.0
+
+
 class _View(NamedTuple):
-    """What a view draws, and which geometry its camera therefore has to frame."""
+    """What a view draws, and which geometry its camera therefore has to frame.
+
+    ``aspect`` is the shape of the pane this view occupies, not a property of the
+    geometry. A camera has to be fitted against the pane it will be displayed in:
+    the same fit that frames a scene comfortably in a wide pane clips it in a
+    narrow tab, which is what the layout's 2:1 column split produces.
+    """
 
     geometry: tuple[str, ...]
     contents: tuple[str, ...]
+    aspect: float
 
 
 #: One table for every view: the geometry its camera frames and the entities it
@@ -864,13 +890,24 @@ class _View(NamedTuple):
 #: geometry is never shown floating free of the scan it came from.
 VIEW_GEOMETRY: dict[str, _View] = {
     SCENE_VIEW: _View(
-        ("fused", "mesh"), ("/world/fused", "/world/mesh", "/world/fragments/**")
+        ("fused", "mesh"),
+        ("/world/fused", "/world/mesh", "/world/fragments/**"),
+        CAMERA_WINDOW_ASPECT * CAMERA_SCENE_SHARE,
     ),
-    SCAN_VIEW: _View(("fused",), ("/world/fused", "/world/fragments/**")),
-    SURFACE_VIEW: _View(("mesh",), ("/world/mesh",)),
+    SCAN_VIEW: _View(
+        ("fused",),
+        ("/world/fused", "/world/fragments/**"),
+        CAMERA_WINDOW_ASPECT * CAMERA_TAB_SHARE,
+    ),
+    SURFACE_VIEW: _View(
+        ("mesh",),
+        ("/world/mesh",),
+        CAMERA_WINDOW_ASPECT * CAMERA_TAB_SHARE,
+    ),
     REMOVED_VIEW: _View(
         ("unsupported", "mesh", "fused"),
         ("/world/mesh", "/world/mesh_unsupported", "/world/fused"),
+        CAMERA_WINDOW_ASPECT * CAMERA_TAB_SHARE,
     ),
 }
 
@@ -896,6 +933,7 @@ def _view_cameras(geometry: dict[str, Any], up: list[float]) -> dict[str, Any]:
                 ]
             ),
             up,
+            spec.aspect,
         )
     return cameras
 
