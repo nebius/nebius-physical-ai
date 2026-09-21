@@ -69,6 +69,14 @@ CUDA base, then run a real ACT training step from the LeRobot venv.
 
 ## Data Contract
 
+For newly simulated robot demonstration data, use the Token Factory robot SDG
+path documented in `docs/workbench/token-factory-robot-sdg.md`. It runs real Fetch
+pick-and-place in MuJoCo, records synchronized workspace/wrist RGB, joint states
+and Cartesian/gripper actions, and exports physics-accepted episodes to LeRobot
+v3. Native-reader validation must check language task labels as well as video
+decoding and action alignment. The scripted teacher uses simulator state; this
+does not prove physical robot transfer or learned-policy performance.
+
 For a reproducible demonstration-first transfer experiment, use
 `workflows/testing/lerobot-transfer.yaml` and
 `docs/workbench/guides/lerobot-transfer.md`. The standard runtime owns four waves:
