@@ -481,9 +481,9 @@ cancels the complete superseded gate instead of six independent fragments:
 
 | Workflow | What it runs | Reproduce locally |
 | --- | --- | --- |
-| `.github/workflows/test.yml` | Identical PR/queue coverage; prose smoke; scheduled compatibility audit | `make test` |
+| `.github/workflows/test.yml` | Full PR coverage; exact-tree queue reuse; scheduled compatibility audit | `make test` |
 | `.github/workflows/lint.yml` | `ruff check .`, and `scripts/build_docs.sh --check` for `docs/cli/` drift | `make lint`, `make docs-check` |
-| `.github/workflows/harness-guardrails.yml` | `pytest npa/tests/guardrails` | `make test-guardrails` |
+| `pr-precheck`; `.github/workflows/harness-guardrails.yml` on main | `pytest npa/tests/guardrails` | `make test-guardrails` |
 | `.github/workflows/confidentiality-scan.yml` | `npa.guardrails.confidentiality` over the diff and tree | needs the denylist secrets; see `skills/atomic/protect-nebius-infra-details/SKILL.md` |
 | `.github/workflows/gitleaks.yml` | the custom Nebius-pattern rules in `.gitleaks.toml` | `gitleaks detect` |
 | `.github/workflows/image-security-scan.yml` | Always reports scope; runs Trivy and complete-byte checks for image-affecting candidates and every main/scheduled audit | `npa/tests/docker/` for the contract checks |
@@ -505,12 +505,47 @@ tree and lets those tests self-skip. Both numbers rise as tests land; the shape 
 the difference, several hundred more collected and skipped in CI, is the part that
 stays true.
 
-Pull requests and merge candidates run the same checks before they can pass:
-five duration-balanced Python 3.12 coverage shards, the dedicated Cypress job,
-and focused Python 3.10/3.14 compatibility tests, alongside security, lint,
-documentation drift, and repository guardrails. Source and test changes always
-receive the full suite, including tests outside the changed subsystem. Coverage
-is combined before enforcing the 60% floor on both events.
+Pull requests publish `pr-precheck` first: dependency-input consistency,
+lint and formatting, all guardrails, smoke tests, and full test collection. Its five-minute
+execution budget provides an early signal; a pass is not permission to merge.
+Fresh source/dependency, secret and confidentiality scans also start immediately.
+A failed precheck prevents the expensive test and image jobs from starting.
+
+PR admission still requires eight duration-balanced Python 3.12 coverage shards,
+Cypress, focused Python 3.10/3.14 compatibility tests, security, documentation
+drift, and repository guardrails. Source and test changes receive the full suite,
+including other subsystems; merged coverage must meet the unchanged 60% floor.
+
+The queue reuses successful PR validation only for an **identical Git tree**,
+including file modes, tests, workflows, and dependencies. A verifier copied from
+the trusted base reads GitHub run/job/artifact metadata with read-only access.
+It requires the current PR head, latest run attempt, every required job, either
+full coverage/browser results or the established prose smoke, a unique receipt
+for the tested PR merge commit, and evidence started within the last 24 hours.
+It checks that commit's parent and tree through GitHub's Git API. It never
+downloads or executes PR artifacts. Different commit messages or squash SHAs do
+not invalidate identical bytes.
+
+The queue reruns gitleaks, confidentiality, and the source/dependency scanners
+against its actual base/candidate. It does not rebuild CUDA images or repeat
+unit/browser tests whose identical tree already passed. When preceding merges
+change the combined tree, it reruns all tests, lint, guardrails and hostile-input
+checks. Complete Git-tree comparisons include additions, deletions and file
+modes. The trusted base image-scope policy decides whether image inputs changed:
+unchanged image inputs reuse the successful image checks; changed inputs rerun
+the full image gate too. Missing, stale, failed, or rerun evidence fails closed
+with an instruction to refresh the branch and complete PR validation before
+requeueing. Never retry stale evidence
+unchanged. The installing PR retains the full old queue gate because its base
+has no verifier yet. Refresh older branches after rollout to publish receipts.
+
+The operating targets are an early signal within five minutes and queue
+validation within ten. Hosted-runner waiting is outside these execution budgets;
+GitHub does not reserve capacity for this repository. Set the queue's check
+response timeout to ten minutes only after this workflow is on main and a live
+queue candidate has verified the new path. A timeout rejects, never merges, an
+unvalidated candidate. Optional timing reports run on PR/main validation only;
+their completion is not a prerequisite for reusing already-passed required jobs.
 
 Full suites collect smoke tests and run the CLI install check in the shards,
 avoiding duplicate smoke and subsystem jobs. Cypress runs once in its own job,
@@ -586,7 +621,7 @@ of the parent workflow can interrupt reporting.
 
 Independent validation jobs use GitHub's available runner capacity. Validation
 workflows have no job-level concurrency locks or matrix `max-parallel` caps:
-all five pytest shards and browser checks can run together, and unrelated PRs,
+after the fast precheck all eight pytest shards and browser checks can run together, and unrelated PRs,
 merge candidates, and audits do not serialize through repository-wide slots.
 Scope selection, coverage aggregation, and the final required check wait only
 for their declared dependencies and an available runner.
@@ -610,15 +645,16 @@ capacity if waiting persists. See [GitHub's concurrency documentation](https://d
 Already queued runs keep the workflow configuration from their original commit.
 After this policy lands on `main`, refresh older PR branches to create runs with
 the new configuration; rerunning an old commit does not adopt it. Merge
-candidates receive it through their combined commit. Required checks, coverage,
-and the merge queue timeout retain their existing behavior.
+candidates receive it through their combined commit. Required checks and coverage
+remain enforced. Queue timeout changes follow the staged rollout described above.
 
 ### Merge readiness and queue rejections
 
-PR admission includes every test category required by the queue. The queue still
-tests a new commit combining the PR with the current base and preceding queued
-changes. A green PR check applies to its tested commit; a queue rejection
-can expose a newer dependency policy, an interaction, or a flaky test. Open the
+PR admission includes every test category required by the queue. The queue
+compares its combined tree with the completed PR validation and reruns fresh
+security scans. A preceding merge can change that tree; the queue then reruns
+combined-tree tests and any affected image checks. Missing, failed or stale PR
+evidence requires a branch refresh and complete PR validation before retrying. Open the
 failed **Security regression** run whose event is **merge_group**, then inspect
 the first failed component job. Cancelled sibling shards usually follow a failed
 shard through matrix fail-fast; their cancellation is not the original failure.

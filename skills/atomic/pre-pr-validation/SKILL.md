@@ -5,8 +5,8 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 # Pre-PR Validation
 
-Every pull request has one automatic candidate workflow. PRs and merge candidates
-run the same complete five-shard Python 3.12 coverage suite, Cypress, focused
+Every pull request has one automatic candidate workflow. PRs
+run the complete eight-shard Python 3.12 coverage suite, Cypress, focused
 Python 3.10/3.14 compatibility checks, lint, docs drift, guardrails, security
 regressions, secret scanning, and confidentiality scanning. Cross-subsystem
 coverage must pass before queue admission. Full shards include smoke and CLI
@@ -14,7 +14,14 @@ install tests without duplicate subsystem jobs. Only narrowly recognized prose
 edits skip runtime suites; those retain smoke and every documentation,
 repository, and security gate. See `CONTRIBUTING.md` for the trusted-base selector,
 which uses the base's merge-candidate policy for both events during rollout.
-The queue rechecks the combined candidate against its current base.
+The queue verifies successful, less-than-24-hour PR evidence for the identical
+combined Git tree using trusted-base `ci_queue_evidence.py`, then reruns fresh
+secret, confidentiality and source/dependency scans. Changed combined trees rerun
+all tests, lint, guardrails and hostile-input checks; image checks rerun when the
+trusted base policy identifies changed image inputs. Missing, failed or stale
+evidence fails closed: refresh the branch and finish PR checks before requeueing.
+`pr-precheck` gives a five-minute early signal without replacing full admission.
+The queue execution target is ten minutes; hosted-runner waits can add delay.
 A daily audit covers all supported Python versions instead of starting a full
 audit after every merge. Independent validation jobs use available GitHub runner
 capacity without job-level concurrency locks or matrix `max-parallel` caps.
@@ -29,7 +36,9 @@ concurrency guide for organization runner limits and rollout behavior. Refresh
 older PR branches after a scheduling change lands; rerunning an old commit
 retains its original workflow configuration.
 `Security regression / security-regression` requires
-every candidate component and the reusable image-security workflow.
+every PR component and image-security validation, or verified identical-tree
+evidence plus fresh security scans for queue candidates. Changed combined trees
+require fresh test results and any affected image checks.
 The required workflows have no top-level path filters. Image scope is classified
 inside always-reporting jobs: image, packaging, workflow, or security-policy
 changes run the deep checks; unrelated source changes take the fast path. Main,
@@ -154,7 +163,7 @@ sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
 Run the equivalent coverage floor from the package directory. Merge-queue CI
-uses five deterministic, duration-balanced shards; the daily three-interpreter
+uses eight deterministic, duration-balanced shards; the daily three-interpreter
 audit retains four per interpreter. Both merge their coverage data:
 
 ```bash

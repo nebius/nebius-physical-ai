@@ -5,10 +5,19 @@ runs **Security regression / security-regression**. It is the only automatic PR
 workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
 source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
-PRs and merge-queue candidates run the same browser and focused Python
-compatibility checks alongside the complete duration-balanced Python 3.12
-coverage suite. This catches cross-subsystem failures before queue admission;
-the queue rechecks the combined candidate against the latest main revision.
+PRs run browser and focused Python compatibility checks alongside the complete
+Python 3.12 coverage suite. `pr-precheck` provides an early five-minute signal;
+it does not replace required validation. Queue candidates reuse those successful
+results only after trusted-base code verifies the current PR head, latest
+attempt, all required jobs, receipt, tested merge parent, and an identical Git
+tree through GitHub APIs. Evidence must be less than 24 hours old; no downloaded
+artifact content is trusted. Changed combined trees rerun all tests, lint,
+guardrails and hostile-input checks. A complete Git-tree comparison and the
+trusted base image-scope policy decide whether image checks must rerun too.
+Stale proof, missing results and API errors reject the queue candidate. Secret, confidentiality and real
+source/dependency scanners still run against every queue candidate. Main and
+scheduled deep image audits remain in place. See the
+[queue evidence and timing contract](../../CONTRIBUTING.md#testing-requirements).
 The narrow prose-only exception described in
 [the contributor CI guide](../../CONTRIBUTING.md) retains smoke, documentation,
 lint, guardrails, and every security gate. The test selector comes from the
@@ -24,7 +33,7 @@ Organization runner limits can still cause waiting. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
 for cancellation and rollout behavior, including refreshing older PR branches.
 
-The image workflow has no top-level path filter. Its two automatic jobs always
+The image workflow has no top-level path filter. On full PR validation and main audits its two automatic jobs
 report an internal, fail-closed scope decision. Image, packaging, workflow, and
 security-policy changes run complete-byte, configuration, and base-image checks;
 unrelated source changes take the verified fast path. Main, scheduled, and manual
