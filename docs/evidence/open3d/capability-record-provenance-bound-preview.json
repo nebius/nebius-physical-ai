@@ -2,23 +2,24 @@
   "what_this_is": "A provenance-bound ordinary native viewer capture of an aggregate fused-cloud preview, rendered from the retained fused cloud and mesh of the earlier completed run.",
   "recorded_utc": "2026-09-21T04:51:02Z",
   "supersedes": {
-    "reason": "The first attempt at this preview invented provenance to satisfy required fields: a 64-zero fused_sha256, and a single fragment named f0 with an identity pose, built from the already-fused cloud. The pixels were real; those three claims were not. Found by an independent audit before publication.",
+    "reason": "The first attempt at this preview invented provenance to satisfy required fields: a 64-zero fused_sha256, and a single fragment named f0 with an identity pose, built from the already-fused cloud. The pixels were real; those three claims were not. Found by an independent audit before final acceptance -- not before publication: the frame had already been committed and pushed, in 1441e211 under the viewer-ui directory, and it is retained at its new path below rather than removed.",
     "preserved_at": "viewer-ui/superseded-preview/",
     "invalid_artifacts": {
       "generator": {
-        "file": "mkrrd-invalid-provenance.py",
+        "file": "viewer-ui/superseded-preview/mkrrd-invalid-provenance.py",
         "sha256": "5c0138dc9e1018afe4f94dd3381cfd8f740e0d4f444340db4b45f931365d1afb"
       },
       "recording": {
-        "file": "point_cloud.rrd",
+        "file": "point_cloud.rrd, retained in the lane evidence pack under evidence/open3d/viewer-ui/superseded-preview/ and deliberately not committed",
         "sha256": "36383fb1dce7a4becc35e60d21a52a7c4bbeec089d864c7f5a6daf589557c784"
       },
       "frame": {
-        "file": "ordinary-window-4x3.png",
+        "file": "viewer-ui/superseded-preview/ordinary-window-4x3.png",
         "sha256": "04b6ee08b801bda7958ec6ba741e01350393f63d7929639e6c4d1510a16f4206"
       }
     },
-    "classification": "A PLY visualization preview only. Its pixels show real geometry and it may be cited for what the viewer looked like, never for fragment identity, pose, registration, or content hash."
+    "classification": "A PLY visualization preview only. Its pixels show real geometry and it may be cited for what the viewer looked like, never for fragment identity, pose, registration, or content hash.",
+    "where_each_lives": "The generator and the frame are committed under viewer-ui/superseded-preview/ so the defect stays visible in the repository. The invalid recording itself is not committed: it is 736 KB backing no claim, and its hash here is enough to identify it in the lane evidence pack."
   },
   "recording": {
     "file": "viewer-ui/preview-aggregate-fused.rrd",
@@ -48,7 +49,8 @@
     "runner_module_sha256": "eb4ad47c4e96210ac893e4dc3b97d301de4c02f6cd076fe325e972ba13784a1f",
     "repository_commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
     "runner_source_dirty_at_generation": true,
-    "dirty_note": "The runner was mounted into the image from the working tree, so the module hash above is the binding, not the commit. The commit is recorded for context only."
+    "dirty_note": "The runner was mounted into the image from the working tree, so the module hash above is the binding, not the commit. The commit is recorded for context only.",
+    "binding_note": "Generated from dirty working-tree source, which is now committed at cbbb22e17 with byte-identical runner bytes. The generation history is kept rather than rewritten to read as though it had been clean."
   },
   "camera": {
     "Scene: observed scan and supported surface": {
@@ -140,7 +142,7 @@
     "window_scale_factor_guessed_by_winit": 1,
     "open3d_version": "0.20.0",
     "image_used_for_generation": "npa-open3d:claimfix, sha256:60ecaefc93f0fd369a7811630896d0d2b8e7b3014913ef9a4aae002e0e31451d",
-    "image_caveat": "That image's build-arg revision label reads 651b094c and is stale; the binding that matters is the mounted runner module hash above, which an independent review also byte-matched to the commit."
+    "image_caveat": "That image's build-arg revision label reads 651b094c and is stale. The binding that matters is the mounted runner module, SHA256 eb4ad47c4e96210ac893e4dc3b97d301de4c02f6cd076fe325e972ba13784a1f, which was dirty working-tree source beyond 1441e211 at the moment of generation and has since been committed as cbbb22e17 -- verified by hashing runner.py at that commit. An earlier independent byte-match by a review lane was of a different module hash, d84e1ca6.. at commit 16012b10, and is not transferable to this one."
   },
   "capture": {
     "frame": "viewer-ui/ordinary-native.png",
@@ -184,12 +186,36 @@
   "wgpu_discriminating_control": {
     "ordinary_native_viewing": "no wgpu validation error at all; the complete viewer log is retained in the status record",
     "screenshot_to_path": "reproducibly emits Surface::configure at 40000x40000",
-    "conclusion": "Upstream rerun-cli 0.31.4's startup screenshot path fails while ordinary native viewing passes. This matches the independent source lead that the screenshotter requests an immediate viewport resize during App::new from a content rectangle that is not yet initialised."
+    "conclusion": "Across the trials actually run, rerun-cli 0.31.4's startup screenshot path reproducibly emits a 40000x40000 Surface::configure and the ordinary native window emits no wgpu error. So the error was not observed on the ordinary path and no recording or configuration of this tool was found to influence it.",
+    "not_claimed": "Not claimed: that no repository configuration or recording could ever affect this error. The content-rectangle explanation is a source-backed hypothesis from an independent review reading upstream 0.31.4, consistent with the measurements including the inverse scale-factor relationship, and is not a proven root cause. The observed scope is these trials, on this software renderer."
   },
   "limits_retained": [
     "The reconstruction has real holes and partial surfaces; they are visible in the preview and are not defects of the rendering.",
     "No claim is made about watertightness, collision fitness, or mesh readiness.",
     "Software rasterizer, so this is a correctness and framing capture, not a performance one.",
     "This is an intermediate regenerated preview. It is not a workflow artifact, and the earlier completed run's own shipped recording remains a separate file with its own hash."
-  ]
+  ],
+  "preview_parameters_differ_from_the_run_they_read": {
+    "voxel_size": {
+      "preview": 0.02,
+      "historical_run": 0.05,
+      "source_of_truth": "the run's own result.json"
+    },
+    "up_axis": {
+      "preview": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "historical_run": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "source_of_truth": "the run's own rrd-manifest.json, which snapped the largest plane normal 19.998 degrees to an axis at 0.3206 inlier fraction"
+    },
+    "why_it_matters": "voxel_size sets point radii and feeds up-axis inference, so the two differences are related rather than independent.",
+    "status": "A deliberate preview parameter, not recovered original metadata. This preview therefore does not reproduce the run's presentation and must not be read as doing so. It is within the documented inferred-up limitation.",
+    "independently_confirmed_by": "root, who decoded the recording and matched its aggregate positions and triangles to the historical run's own RRD exactly while noting both parameter differences."
+  }
 }

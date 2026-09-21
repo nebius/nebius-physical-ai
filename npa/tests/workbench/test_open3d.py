@@ -1655,12 +1655,17 @@ def test_a_view_in_a_narrow_tab_is_fitted_for_that_tab_and_not_for_a_wide_pane()
     """
 
     import numpy as np
+    import rerun as rr
+    import rerun.blueprint as rrb
 
     from npa.workbench.open3d.runner import (
+        CAMERA_SCENE_SHARE,
+        CAMERA_TAB_SHARE,
         CAMERA_WINDOW_ASPECT,
         SCAN_VIEW,
         SCENE_VIEW,
         VIEW_GEOMETRY,
+        _blueprint,
         _view_cameras,
     )
 
@@ -1684,6 +1689,25 @@ def test_a_view_in_a_narrow_tab_is_fitted_for_that_tab_and_not_for_a_wide_pane()
                 f"{view_name!r} clips at {reach:.4f} in a {window:.3f} window, which is "
                 "at least as wide as the shape it was fitted for"
             )
+
+    # Every assertion above derives its expected pane shape from the same share constants the
+    # cameras are fitted with, so editing a share moves the camera and the expectation together
+    # and nothing fails. The layout the panes actually get is the independent anchor: read the
+    # real blueprint back and require the cameras to have been fitted for those columns. A
+    # review lane found this hole by mutating the layout and killing none of the suite.
+    columns = _blueprint(rr, rrb, cameras).root_container.column_shares
+    assert columns is not None, (
+        "the layout must state its column shares for a camera to match"
+    )
+    total = sum(columns)
+    assert (columns[0] / total, columns[1] / total) == (
+        CAMERA_SCENE_SHARE,
+        CAMERA_TAB_SHARE,
+    ), (
+        f"the blueprint gives its panes {columns} but the cameras were fitted for "
+        f"{CAMERA_SCENE_SHARE:.4f}/{CAMERA_TAB_SHARE:.4f} of the window; a camera fitted for a "
+        "pane share the layout does not use puts its view outside the pane"
+    )
 
     # The tab column is half the width of the scene pane, so its views must sit
     # further back, not at the same distance.

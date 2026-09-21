@@ -900,10 +900,15 @@ REMOVED_VIEW = "Removed: unsupported surface"
 #: are in `evidence/open3d/pane-fit-window-aspect-sweep.json`.
 CAMERA_WINDOW_ASPECT = 4.0 / 3.0
 
-#: Horizontal share of the window each pane of the blueprint receives, matching the
-#: column_shares the layout below actually sets.
-CAMERA_SCENE_SHARE = 2.0 / 3.0
-CAMERA_TAB_SHARE = 1.0 / 3.0
+#: Column widths the blueprint gives the scene pane and the tab column, in the units Rerun's
+#: ``column_shares`` takes. The camera shares below are derived from these rather than restated
+#: as their own literals, because two literals that have to agree are two literals that can
+#: drift: changing the layout without changing the cameras puts every tab view back outside its
+#: pane, and a comment saying they match is not something a test can check. There is one number
+#: to change now, and it changes both.
+CAMERA_COLUMN_SHARES = (2, 1)
+CAMERA_SCENE_SHARE = CAMERA_COLUMN_SHARES[0] / sum(CAMERA_COLUMN_SHARES)
+CAMERA_TAB_SHARE = CAMERA_COLUMN_SHARES[1] / sum(CAMERA_COLUMN_SHARES)
 
 
 class _View(NamedTuple):
@@ -1061,7 +1066,7 @@ def _blueprint(rr, rrb, cameras: dict[str, Any]):
                 },
             ),
             rrb.Tabs(*tabs),
-            column_shares=[2, 1],
+            column_shares=list(CAMERA_COLUMN_SHARES),
         ),
         collapse_panels=True,
     )
