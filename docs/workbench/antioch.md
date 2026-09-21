@@ -278,7 +278,9 @@ so independent Antioch stages cannot collide. `adapter_image` must be an immutab
 digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.
 
 `initial_posture` selects `pregrasp` (default) or the original `droid` reset.
-`camera_mounts` selects `native_wide` (default) or `droid_reference`. These public
+`camera_mounts` selects `native_wide` (default), `droid_reference`, or `task_view`.
+The `task_view` rig places a fixed exterior camera in front of the table and uses
+the wider wrist bracket to retain target coverage during approach. These public
 experiment choices are validated and forwarded through supported scenario
 parameter overrides on initial dispatch and recovery. The scenario persists the
 selected posture, initial joints, rig name, and exact camera calibration; a

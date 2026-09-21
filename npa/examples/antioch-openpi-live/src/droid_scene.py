@@ -60,22 +60,35 @@ DROID_REFERENCE_CALIBRATION = {
         "focal_length": 2.8,
     },
 }
+TASK_VIEW_CALIBRATION = {
+    "exterior": {
+        # Looking toward the robot from in front of the table keeps the forearm
+        # behind the target during approach. The lens resolves the cube without
+        # a moving camera or a crop applied to the policy input.
+        "position": (0.95, -0.8, 0.68),
+        "quaternion_wxyz": (0.8097311153426455, 0.5133783487801894,
+                             0.15218591261237785, 0.24003674687851262),
+        "focal_length": 3.584,
+    },
+    "wrist": CAMERA_CALIBRATION["wrist"],
+}
 
 
 def camera_calibration(mounts="native_wide"):
     """Resolve one fixed camera rig without changing process-global calibration.
 
     Args:
-        mounts: Named native wide or converted DROID reference mount pair.
+        mounts: Named fixed policy camera mount pair.
     Returns:
         Independent per-view calibration dictionaries.
     Raises:
         ValueError: The requested mount pair is unsupported.
     """
     choices = {"native_wide": CAMERA_CALIBRATION,
-               "droid_reference": DROID_REFERENCE_CALIBRATION}
+               "droid_reference": DROID_REFERENCE_CALIBRATION,
+               "task_view": TASK_VIEW_CALIBRATION}
     if mounts not in choices:
-        raise ValueError("camera_mounts must be native_wide or droid_reference")
+        raise ValueError("camera_mounts must be native_wide, droid_reference or task_view")
     return {view: values.copy() for view, values in choices[mounts].items()}
 
 

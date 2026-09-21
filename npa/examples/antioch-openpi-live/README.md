@@ -55,6 +55,10 @@ Defaults remain `pregrasp` and `native_wide`. To evaluate the wider approach wit
 the earlier reference rig, set `initial_posture` to `droid` and `camera_mounts`
 to `droid_reference` in that config. Direct scenario dispatch accepts the same
 choices through `--set initial_posture=droid --set camera_mounts=droid_reference`.
+The `task_view` alternative uses a fixed exterior camera in front of the table
+and the wider wrist mount. It addresses the reference rig losing the target
+during approach; it preserves all camera, action, contact, and lift checks.
+Use `--set camera_mounts=task_view` or the matching private config value.
 Unknown choices fail validation before dispatch. Results retain both the rig
 name and its exact fixed calibration. The reference option restores the
 0.05/0.57/0.66 m exterior mount and converted native wrist mount with a 2.8 mm

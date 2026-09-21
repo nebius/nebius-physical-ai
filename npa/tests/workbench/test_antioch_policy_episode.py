@@ -61,6 +61,28 @@ def test_camera_rig_selection_keeps_optics_and_calibration_consistent(modules):
     assert camera_calibration() == native
 
 
+def test_task_view_retains_cube_and_approach_region(modules):
+    from scipy.spatial.transform import Rotation
+    from droid_scene import camera_calibration, optical_config
+
+    scenario, _episode = modules
+    calibration = camera_calibration("task_view")
+    exterior = calibration["exterior"]
+    w, x, y, z = exterior["quaternion_wxyz"]
+    rotation = Rotation.from_quat([x, y, z, w])
+    eye = np.asarray(exterior["position"])
+    pose = (eye, eye + rotation.apply([0, 0, -1]), rotation.apply([0, 1, 0]))
+    optics = optical_config("exterior", "task_view")
+    # Cover the pickup volume and elevated starting fingers, not just the cube
+    # center used to aim a camera. Native renders separately test occlusion.
+    for point in ([.48, 0, .035], [.3, -.15, .1], [.6, .15, .1], [.4, 0, .55]):
+        assert scenario._point_in_camera_frame(point, pose, optics)
+    assert calibration["wrist"] == camera_calibration("native_wide")["wrist"]
+    assert optics["focal_length"] == exterior["focal_length"]
+    calibration["wrist"]["focal_length"] = 100
+    assert camera_calibration("task_view")["wrist"]["focal_length"] == 2.1
+
+
 @pytest.mark.parametrize("field", ["initial_posture", "camera_mounts"])
 def test_pickup_rejects_unknown_experiment_before_simulation(modules, monkeypatch, field):
     scenario, _episode = modules
@@ -615,7 +637,7 @@ def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
         ("pickup", 450, None, True, "droid"),
     ],
 )
-@pytest.mark.parametrize("camera_mounts", ["native_wide", "droid_reference"])
+@pytest.mark.parametrize("camera_mounts", ["native_wide", "droid_reference", "task_view"])
 def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     modules,
     monkeypatch,

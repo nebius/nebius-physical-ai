@@ -159,7 +159,7 @@ def _scenario_command(
     """Keep public experiment choices typed and separate from private bundles."""
     if initial_posture not in {"pregrasp", "droid"}:
         raise ValueError("Unsupported initial_posture")
-    if camera_mounts not in {"native_wide", "droid_reference"}:
+    if camera_mounts not in {"native_wide", "droid_reference", "task_view"}:
         raise ValueError("Unsupported camera_mounts")
     command = [str(executable), "scenario", "run", "--scenario", scenario,
                "--timeout", str(timeout_seconds), "--stream", "--verbose"]
@@ -1296,7 +1296,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--scenario-timeout-seconds", type=int, default=14_400)
     run.add_argument("--initial-posture", choices=("pregrasp", "droid"), default="pregrasp")
     run.add_argument(
-        "--camera-mounts", choices=("native_wide", "droid_reference"), default="native_wide"
+        "--camera-mounts", choices=("native_wide", "droid_reference", "task_view"), default="native_wide"
     )
     run.add_argument("--owner-identity", required=True)
     run.add_argument("--health-port", type=int, default=18_080)

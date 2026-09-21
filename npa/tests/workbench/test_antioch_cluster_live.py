@@ -77,8 +77,9 @@ def test_cluster_live_rejects_unrecognized_experiment_choices(tmp_path: Path, fi
         _config(tmp_path, **{field: "unreviewed"})
 
 
-def test_cluster_experiment_choices_reach_vendor_process(tmp_path: Path, monkeypatch) -> None:
-    config = _config(tmp_path, initial_posture="droid", camera_mounts="droid_reference")
+@pytest.mark.parametrize("mounts", ["native_wide", "droid_reference", "task_view"])
+def test_cluster_experiment_choices_reach_vendor_process(tmp_path: Path, monkeypatch, mounts) -> None:
+    config = _config(tmp_path, initial_posture="droid", camera_mounts=mounts)
     manifests = cluster_deploy.build_public_manifests(config)
     containers = manifests["adapter_deployment"]["spec"]["template"]["spec"]["containers"]
     command = next(item["command"] for item in containers if item["name"] == "antioch-controller")
@@ -97,7 +98,7 @@ def test_cluster_experiment_choices_reach_vendor_process(tmp_path: Path, monkeyp
     received = (tmp_path / "vendor-arguments").read_text().splitlines()
     assert received.count("--set") == 2
     assert received.count("--scenario") == 1
-    assert received[-4:] == ["--set", "initial_posture=droid", "--set", "camera_mounts=droid_reference"]
+    assert received[-4:] == ["--set", "initial_posture=droid", "--set", f"camera_mounts={mounts}"]
 
 
 def test_pickup_parameters_do_not_leak_to_other_scenarios() -> None:

@@ -1717,7 +1717,7 @@ def openpi_franka_pickup_v3(
         "pregrasp", description="Fixed initial arm posture: pregrasp or droid"
     ),
     camera_mounts: str = antioch.param(
-        "native_wide", description="Fixed camera rig: native_wide or droid_reference"
+        "native_wide", description="Fixed camera rig: native_wide, droid_reference or task_view"
     ),
 ) -> None:
     """Evaluate measured approach and a sustained physical pickup.
@@ -1735,8 +1735,8 @@ def openpi_franka_pickup_v3(
     """
     if initial_posture not in {"pregrasp", "droid"}:
         raise ValueError("initial_posture must be pregrasp or droid")
-    if camera_mounts not in {"native_wide", "droid_reference"}:
-        raise ValueError("camera_mounts must be native_wide or droid_reference")
+    if camera_mounts not in {"native_wide", "droid_reference", "task_view"}:
+        raise ValueError("camera_mounts must be native_wide, droid_reference or task_view")
     _run_openpi_episode(run, prompt, objective="pickup", control_steps=control_steps,
                        initial_posture=initial_posture, camera_mounts=camera_mounts)
 
