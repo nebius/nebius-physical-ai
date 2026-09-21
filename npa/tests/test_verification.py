@@ -458,6 +458,37 @@ def test_workflow_state_redactor_covers_unstructured_credential_formats(
     assert secret not in redact_text(message)
 
 
+@pytest.mark.parametrize(
+    ("key", "separator"),
+    [
+        ("X-Amz-Signature", "="),
+        ("x_amz_signature", "="),
+        ('"X-Amz-Signature"', ": "),
+        ("'x_amz_signature'", ":"),
+    ],
+)
+def test_workflow_state_redactor_covers_standalone_aws_signatures(
+    key: str,
+    separator: str,
+) -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    secret = "synthetic-aws-signature"
+    message = f'provider {key}{separator}"{secret}" retry safely'
+    sanitized = redact_text(message)
+
+    assert secret not in sanitized
+    assert sanitized == f'provider {key}{separator}"<redacted>" retry safely'
+
+
+def test_workflow_state_redactor_preserves_noncredential_signatures() -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    message = "request_signature=sha256:synthetic-digest retry safely"
+
+    assert redact_text(message) == message
+
+
 def test_workflow_state_redactor_preserves_nonsecret_diagnostics() -> None:
     from npa.orchestration.skypilot.workflow_state import redact_text
 

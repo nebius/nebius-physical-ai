@@ -31,6 +31,7 @@ _SECRET_KEY_MARKERS = (
     "access-key",
     "accesskey",
 )
+_SECRET_EXACT_KEYS = frozenset(("x-amz-signature", "x_amz_signature"))
 _NON_SECRET_WORKFLOW_TOKEN_REFERENCES = tuple(
     (f"unknown {scope} ", f"{scope}.") for scope in ("config", "run", "state", "loop")
 )
@@ -108,6 +109,8 @@ def _is_public_workflow_token(text: str, match: re.Match[str], value: str) -> bo
 
 
 def _has_secret_key_marker(key: str) -> bool:
+    if key in _SECRET_EXACT_KEYS:
+        return True
     for marker in _SECRET_KEY_MARKERS:
         search_from = 0
         while (start := key.find(marker, search_from)) >= 0:
