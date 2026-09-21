@@ -125,10 +125,18 @@ from 0.333278408726 to 0.223172082376, a 33.04% reduction; all three trained tas
 improved this offline metric. This does not establish a simulator Q improvement.
 
 The subsequent B200 qualification verified the frozen runtime, parent checkpoint,
-dataset, traces, and archived selected-model bytes. Its native-versus-reloaded
-inference check then failed with `fixed-seed action bytes differ`. The failure
-log and input identities were preserved. The difference's cause and magnitude
-remain under investigation; this export is not qualified for rollout serving.
+dataset, traces, and archived selected-model bytes. In a fresh process, the
+reloaded policy's actions differed from the historical export hash, failing with
+`fixed-seed action bytes differ`. The earlier exporter retained hashes but omitted
+the exact transformed observation and raw action arrays. Consequently, this
+check cannot distinguish reconstructed-input differences from numerical
+differences across compilations. The failure log and input identities were
+preserved; this export remains unqualified for rollout serving.
+
+The next diagnostic saves the transformed observation and raw outputs before
+asserting equality, then compares independent loads using those same observation
+bytes. It retains the historical mismatch explicitly. Passing that repeatability
+check alone would not recover the missing historical native-output evidence.
 
 Development indices 10–19 are reused and are not unseen data. Reporting indices
 0–9 remain separate until the choice is fixed. Keep interrupted panels and failed

@@ -82,6 +82,9 @@ regexes = [
     # Public Comet12 checkpoint Git blob SHA-1, independently verified from its
     # 45-byte Hugging Face payload. Its e00 prefix matches the identifier rule.
     '''e00367cf5293b1e5680e76ff36f2e01c4c23a415''',
+    # Public Comet50 checkpoint Git blob SHA-1, independently verified from its
+    # 19,663-byte Hugging Face payload. Its e00 prefix matches the identifier rule.
+    '''e00923ccf417486f96b4c7f41bb400e8f9651274''',
 ]
 paths = [
     '''SECURITY\.md''',

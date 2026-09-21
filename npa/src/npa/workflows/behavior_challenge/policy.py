@@ -156,7 +156,7 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
     require_openpi_terms()
     if args.host not in {"localhost", "127.0.0.1"}:
         raise ValueError("Managed policy requires a loopback evaluator host")
-    if getattr(args, "policy_kind", "official") == "comet12":
+    if getattr(args, "policy_kind", "official") in {"comet12", "comet50"}:
         if _healthy(args.port):
             raise ValueError(
                 "Policy port is already serving; refusing an unrelated endpoint"
@@ -244,13 +244,16 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         },
         "rlc-selected": {"native", "transition-refresh", "final-stage-backtrack"},
         "comet12": {"native"},
+        "comet50": {"native"},
     }
     policy_kind = getattr(args, "policy_kind", "official")
     task_name = getattr(args, "policy_task_name", None)
-    if policy_kind == "comet12" and not task_name:
-        raise ValueError("Comet12 policy requires --policy-task-name")
-    if policy_kind != "comet12" and task_name:
-        raise ValueError("--policy-task-name requires --policy-kind comet12")
+    comet_kind = policy_kind in {"comet12", "comet50"}
+    if comet_kind and not task_name:
+        label = "Comet12" if policy_kind == "comet12" else "Comet50"
+        raise ValueError(f"{label} policy requires --policy-task-name")
+    if not comet_kind and task_name:
+        raise ValueError("--policy-task-name requires --policy-kind comet12 or comet50")
     if execution_variant not in variants[policy_kind]:
         raise ValueError(f"Unsupported {policy_kind} execution variant")
     if selected_kind and not all(selected_rlc):
@@ -265,8 +268,9 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         raise ValueError("Stock RLC correlation requires --policy-kind rlc")
     if selected_kind and not all(selected):
         raise ValueError("Selected RLC policy requires all four policy paths")
-    if policy_kind == "comet12" and not all(selected):
-        raise ValueError("Comet12 policy requires all four policy paths")
+    if comet_kind and not all(selected):
+        label = "Comet12" if policy_kind == "comet12" else "Comet50"
+        raise ValueError(f"{label} policy requires all four policy paths")
     if execution_variant != "native" and not all(selected):
         raise ValueError("Execution variant requires all four managed policy paths")
     if not any(selected):

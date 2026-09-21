@@ -291,9 +291,7 @@ def test_adaptive_pinned_native_act_keeps_queue_across_profile_boundary():
 def test_adaptive_transition_refresh_no_transition_matches_adaptive_control():
     control_native = B1KPolicyWrapper()
     control_calls = install_pinned_native_act(control_native)
-    control = rlc_execution.configure_execution(
-        control_native, "adaptive-short-chunk"
-    )
+    control = rlc_execution.configure_execution(control_native, "adaptive-short-chunk")
     refresh_native = B1KPolicyWrapper()
     refresh_calls = install_pinned_native_act(refresh_native)
     refresh = rlc_execution.configure_execution(
@@ -310,7 +308,9 @@ def test_adaptive_transition_refresh_no_transition_matches_adaptive_control():
     np.testing.assert_array_equal(control_action.value, refresh_action.value)
     assert control_calls == refresh_calls
     assert control_native.current_stage == refresh_native.current_stage == 0
-    np.testing.assert_array_equal(control_native.last_actions, refresh_native.last_actions)
+    np.testing.assert_array_equal(
+        control_native.last_actions, refresh_native.last_actions
+    )
     assert control_native.action_index == refresh_native.action_index == 1
     assert refresh.telemetry()["transition_queue_refreshes"] == 0
 
@@ -343,7 +343,9 @@ def test_adaptive_transition_refresh_discards_once_and_resamples_new_stage():
     assert telemetry["accepted_stage_transitions"] == 1
     assert telemetry["transition_queue_refreshes"] == 1
     refresh_event = next(
-        event for event in telemetry["events"] if event["kind"] == "transition_queue_refresh"
+        event
+        for event in telemetry["events"]
+        if event["kind"] == "transition_queue_refresh"
     )
     assert refresh_event["discarded_queued_actions"] == 19
     assert refresh_event["discarded_inpainting_actions"] == 4

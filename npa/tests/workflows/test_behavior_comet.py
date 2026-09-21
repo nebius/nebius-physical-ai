@@ -1,4 +1,4 @@
-"""Focused contracts for the simulation-independent Comet12 adapter."""
+"""Focused contracts for the simulation-independent Comet family adapter."""
 
 import asyncio
 import argparse
@@ -58,6 +58,23 @@ def test_frozen_checkpoint_inventory_has_exact_public_identity():
     assert manifest["lfs_file_count"] == 2436
     assert manifest["lfs_bytes"] == 12_411_371_755
     assert manifest["task_ids"] == list(comet_policy.SUPPORTED_TASK_IDS)
+
+
+def test_comet50_inventory_has_distinct_exact_public_identity():
+    profile = comet_policy.COMET50_PROFILE
+    manifest = comet_policy.load_checkpoint_manifest(profile=profile)
+
+    assert manifest["revision"] == profile.revision
+    assert manifest["checkpoint"] == "pi05-b1kpt50-cs32"
+    assert manifest["file_count"] == len(manifest["files"]) == 5948
+    assert manifest["total_bytes"] == 12_441_366_957
+    assert manifest["lfs_bytes"] == 12_411_355_688
+    assert manifest["task_ids"] == list(range(50))
+    with pytest.raises(ValueError, match="inventory identity differs"):
+        comet_policy.load_checkpoint_manifest(
+            Path(comet_policy.__file__).with_name("comet50-checkpoint.json"),
+            comet_policy.COMET12_PROFILE,
+        )
 
 
 def test_checkpoint_verifier_checks_lfs_git_blob_and_exact_set(tmp_path):
@@ -123,7 +140,9 @@ def test_checkpoint_archive_binds_full_sha_prefix_and_extracted_bytes(
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr(f"{comet_policy.CHECKPOINT_NAME}/metadata", b"metadata")
     expected = hashlib.sha256(archive.read_bytes()).hexdigest()
-    monkeypatch.setattr(comet_policy, "load_checkpoint_manifest", lambda: manifest)
+    monkeypatch.setattr(
+        comet_policy, "load_checkpoint_manifest", lambda profile: manifest
+    )
 
     assert (
         comet_policy.verify_checkpoint_archive(archive, root, expected)
@@ -276,11 +295,8 @@ def test_prepare_policy_stages_only_adapters_and_public_provenance(
     output = tmp_path / "output"
     output.mkdir()
     monkeypatch.setattr(comet_policy, "verify_source", lambda root: {})
-    monkeypatch.setattr(
-        comet_policy,
-        "verify_checkpoint_archive",
-        lambda archive, root, sha: {"params/private": {}},
-    )
+    verify = Mock(return_value={"params/private": {}})
+    monkeypatch.setattr(comet_policy, "verify_checkpoint_archive", verify)
     args = SimpleNamespace(
         policy_python=Path("/runtime/python"),
         policy_root=source,
@@ -314,12 +330,62 @@ def test_prepare_policy_stages_only_adapters_and_public_provenance(
     assert provenance["redistribution"] == "private-runtime-checkpoint"
     assert provenance["evaluation_status"] == "not_evaluated"
     assert provenance["checkpoint_file_count"] == 1
+    assert verify.call_args.args[-1] == comet_policy.COMET12_PROFILE
     assert set(provenance["adapters"]) == {
         "comet_policy.py",
         "comet_server.py",
         "comet12-checkpoint.json",
     }
     assert not any("private" in name for name in provenance["adapters"])
+
+
+def test_prepare_comet50_uses_one_profile_for_inventory_task_and_server(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source"
+    output = tmp_path / "output"
+    upstream = tmp_path / "upstream"
+    (source / "scripts").mkdir(parents=True)
+    (upstream / "docs/challenge").mkdir(parents=True)
+    mapping = {"task_49": {"task_index": 49, "task": "Complete task 49."}}
+    (source / "scripts/task_mapping.json").write_text(json.dumps(mapping))
+    registry = {"tasks": [{"id": f"task_{index}"} for index in range(50)]}
+    (upstream / "docs/challenge/task_data.json").write_text(json.dumps(registry))
+    output.mkdir()
+    monkeypatch.setattr(comet_policy, "verify_source", lambda root: {})
+    verify = Mock(return_value={"params/private": {}})
+    monkeypatch.setattr(comet_policy, "verify_checkpoint_archive", verify)
+    args = SimpleNamespace(
+        policy_kind="comet50",
+        policy_python=Path("/runtime/python"),
+        policy_root=source,
+        policy_checkpoint=tmp_path / "checkpoint",
+        policy_archive=tmp_path / "checkpoint.zip",
+        policy_task_name="task_49",
+        upstream_root=upstream,
+        port=8000,
+    )
+    plan = {
+        "recipe": {
+            "split": "development",
+            "tasks": ["task_49"],
+            "policy_checkpoint_sha256": "a" * 64,
+        },
+        "cases": [{"policy_port": 8000}],
+    }
+
+    command = comet_policy.prepare_policy(args, plan, output)
+    provenance = json.loads((output / "policy-provenance.json").read_text())
+
+    assert command[-2:] == ["--profile", "comet50"]
+    assert provenance["kind"] == "comet50"
+    assert provenance["model_revision"] == comet_policy.COMET50_PROFILE.revision
+    assert set(provenance["adapters"]) == {
+        "comet_policy.py",
+        "comet_server.py",
+        "comet50-checkpoint.json",
+    }
+    assert verify.call_args.args[-1] == comet_policy.COMET50_PROFILE
 
 
 def test_prepare_policy_rejects_task_or_split_drift(tmp_path):
@@ -460,6 +526,32 @@ def test_connection_resets_state_and_returns_original_action_shape(
     assert all(item["action"].shape == (23,) for item in socket.sent[1:])
 
 
+def test_connection_exposes_selected_comet50_identity(server, monkeypatch):
+    codec = SimpleNamespace(
+        Packer=lambda: SimpleNamespace(pack=lambda value: value),
+        unpackb=lambda value: value,
+    )
+    monkeypatch.setitem(
+        sys.modules, "openpi_client", SimpleNamespace(msgpack_numpy=codec)
+    )
+
+    class Socket:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, value):
+            self.sent.append(value)
+
+        async def __aiter__(self):
+            return
+            yield
+
+    socket = Socket()
+    asyncio.run(server._connection(socket, Mock(), comet_policy.COMET50_PROFILE))
+
+    assert socket.sent == [{"policy": "comet50-2025-transfer"}]
+
+
 def test_server_parser_restricts_checkpoint_tasks(server):
     common = [
         "--source-root",
@@ -474,6 +566,14 @@ def test_server_parser_restricts_checkpoint_tasks(server):
     assert server.parser().parse_args([*common, "--task-id", "1"]).task_id == 1
     with pytest.raises(SystemExit):
         server.parser().parse_args([*common, "--task-id", "2"])
+    assert (
+        server.parser()
+        .parse_args([*common, "--task-id", "49", "--profile", "comet50"])
+        .task_id
+        == 49
+    )
+    with pytest.raises(SystemExit):
+        server.parser().parse_args([*common, "--task-id", "50", "--profile", "comet50"])
 
 
 def test_managed_cli_exposes_comet_kind_and_task_name():
@@ -486,6 +586,11 @@ def test_managed_cli_exposes_comet_kind_and_task_name():
 
     assert args.policy_kind == "comet12"
     assert args.policy_task_name == "picking_up_trash"
+
+    comet50 = value.parse_args(
+        ["--policy-kind", "comet50", "--policy-task-name", "picking_up_trash"]
+    )
+    assert comet50.policy_kind == "comet50"
 
 
 def test_health_endpoint_is_the_only_readiness_surface(server):

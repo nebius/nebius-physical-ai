@@ -257,7 +257,7 @@ def test_generator_rejects_mutable_or_ambiguous_execution(change, message):
     elif change == "duplicate-worker":
         slots[1]["worker_index"] = 0
     elif change == "workspace-outside-pvc":
-        slots[0]["workspace"] = "/tmp/worker-0"
+        slots[0]["workspace"] = "/outside-pvc/worker-0"
     else:
         partition["workers"][0]["case_ids"] = []
 

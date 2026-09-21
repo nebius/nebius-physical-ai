@@ -24,6 +24,7 @@ _SERVING_FILES = (
     "comet_policy.py",
     "comet_server.py",
     "comet12-checkpoint.json",
+    "comet50-checkpoint.json",
 )
 _INPUT_FIELDS = (
     "policy_selected_export_receipt",

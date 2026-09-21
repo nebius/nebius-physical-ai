@@ -338,8 +338,67 @@ does not establish compliance with the challenge's 24 GB model requirement.
 Managed policy startup has a ten-minute deadline, checked after each bounded
 health probe. A process that remains alive without a timely successful
 `/healthz` response raises a startup error pointing to `policy.log` and is
-terminated before any evaluation case begins. This applies to both managed
-official and RLC policies.
+terminated before any evaluation case begins. This applies to every managed
+policy kind.
+
+### Run a managed Comet baseline
+
+The managed policy supervisor also supports Team Comet's released π0.5
+checkpoints. Both profiles use the clean `mli0603/openpi-comet` source at commit
+`4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5`, its `pi05_b1k-base` runtime
+configuration, and the checkpoint's bundled normalization statistics.
+
+| Policy kind | Exact Hugging Face revision and folder | Declared task coverage |
+| --- | --- | --- |
+| `comet12` | `sunshk/openpi_comet` at `a3d85eb978b58501c99f6c927a18d52ec6c1532c`, `pi05-b1kpt12-cs32` | `0,1,6,17,18,22,30,32,34,35,40,45` |
+| `comet50` | `sunshk/openpi_comet` at `61739ffbced89dd5ba1b87c30d93d6084b79b0af`, `pi05-b1kpt50-cs32` | `0` through `49` |
+
+The earlier Comet12 revision does not contain the Comet50 folder. Do not use it
+as a Comet50 identity. Each packaged inventory pins all 5,948 checkpoint files,
+their byte sizes, and their Git blob or LFS identities. Fetch only the selected
+folder into private storage, verify the complete inventory, and retain the
+original deterministic archive alongside its extracted readback. Model weights
+must not enter the source tree, workflow overlay, public image, or public result
+bundle. The source is Apache-2.0, while the Hugging Face model card declares no
+weight license; apply the operator's Gemma/PaliGemma terms scope and do not infer
+redistribution permission from public download access.
+
+Pass one profile and all four managed paths to `campaign-worker` or `evaluate`:
+
+```text
+--policy-kind comet50
+--policy-root /private/openpi-comet
+--policy-python /private/openpi-comet/.venv/bin/python
+--policy-checkpoint /private/pi05-b1kpt50-cs32
+--policy-archive /private/pi05-b1kpt50-cs32.zip
+--policy-task-name picking_up_trash
+```
+
+The recipe must select exactly that task and bind the private archive's full
+SHA-256. The supervisor rejects task-name/ID mismatches, tasks outside the
+profile's coverage, altered source, incomplete inventories, extra checkpoint
+files, non-native execution variants, and partial managed-path configuration.
+It launches a fresh policy process for each case because an upstream websocket
+reset clears action queues but does not establish that model sampling state was
+rewound.
+
+The checked-in adapter tests cover both inventories, cross-profile rejection,
+task coverage including Comet50 task 49, task 50 rejection, profile-specific
+server identity, source/task bindings, camera and proprioception transforms,
+finite 23-dimensional actions, and complete private archive verification. This
+is implementation coverage only. The current shared Comet adapter bytes and the
+Comet50 checkpoint have not completed a GPU load, action smoke, or challenge
+rollout, so neither profile should be described as currently GPU-qualified by
+this integration.
+
+The earlier Comet12-only adapter at Workbench commit
+`3abb75e4e9ee29732dff102f1b643789006f4049` completed a B200 development smoke.
+Two fresh processes loaded the verified checkpoint and produced identical first
+actions from the same serialized synthetic observation. Original outputs were
+downloaded and hash-verified. Its maximum reported JAX allocator peak was
+7,190,793,728 bytes; that excludes other runtime allocations. This result covers
+that earlier adapter's loader and action schema, with no simulator, task score,
+or official 24 GB qualification. It does not qualify the changed shared adapter.
 
 ## Freeze the evaluation selection
 

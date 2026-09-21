@@ -420,9 +420,7 @@ def test_transfer_requires_one_supported_split_task(split, tasks, tmp_path):
 @pytest.mark.parametrize("split", ["development", "report"])
 def test_transfer_accepts_one_task_for_both_campaign_splits(split, monkeypatch):
     monkeypatch.setattr(rlc_policy, "_verify_checkout", lambda *_: None)
-    monkeypatch.setattr(
-        rlc_policy, "_task_checkpoint", lambda *_: (1, "checkpoint_2")
-    )
+    monkeypatch.setattr(rlc_policy, "_task_checkpoint", lambda *_: (1, "checkpoint_2"))
     args = SimpleNamespace(
         policy_kind="rlc",
         policy_root=Path("/policy"),

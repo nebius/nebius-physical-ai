@@ -1,5 +1,6 @@
-"""Verify and adapt the pinned Comet12 policy without importing its runtime."""
+"""Verify and adapt pinned Comet family policies without importing their runtime."""
 
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -13,10 +14,74 @@ import numpy as np
 
 SOURCE_COMMIT = "4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5"
 MODEL_REPOSITORY = "sunshk/openpi_comet"
-MODEL_REVISION = "a3d85eb978b58501c99f6c927a18d52ec6c1532c"
-CHECKPOINT_NAME = "pi05-b1kpt12-cs32"
 CONFIG_NAME = "pi05_b1k-base"
-SUPPORTED_TASK_IDS = (0, 1, 6, 17, 18, 22, 30, 32, 34, 35, 40, 45)
+
+
+@dataclass(frozen=True)
+class CometProfile:
+    """Describe one immutable Comet checkpoint release.
+
+    Attributes:
+        kind: Managed policy selection and provenance name.
+        revision: Full Hugging Face repository revision.
+        checkpoint: Checkpoint directory at that revision.
+        inventory: Packaged complete file inventory.
+        schema: Required inventory schema.
+        task_ids: Declared checkpoint training coverage.
+        file_count: Exact inventory member count.
+        total_bytes: Exact sum of inventory member sizes.
+        lfs_file_count: Inventory members identified by LFS SHA-256.
+        lfs_bytes: Exact sum of LFS member sizes.
+        handshake: Evaluator-visible websocket policy identity.
+    """
+
+    kind: str
+    revision: str
+    checkpoint: str
+    inventory: str
+    schema: str
+    task_ids: tuple[int, ...]
+    file_count: int
+    total_bytes: int
+    lfs_file_count: int
+    lfs_bytes: int
+    handshake: str
+
+
+COMET12_PROFILE = CometProfile(
+    kind="comet12",
+    revision="a3d85eb978b58501c99f6c927a18d52ec6c1532c",
+    checkpoint="pi05-b1kpt12-cs32",
+    inventory="comet12-checkpoint.json",
+    schema="npa.behavior.comet12-checkpoint-inventory.v1",
+    task_ids=(0, 1, 6, 17, 18, 22, 30, 32, 34, 35, 40, 45),
+    file_count=5948,
+    total_bytes=12_441_382_544,
+    lfs_file_count=2436,
+    lfs_bytes=12_411_371_755,
+    handshake="comet12-2025-transfer",
+)
+COMET50_PROFILE = CometProfile(
+    kind="comet50",
+    revision="61739ffbced89dd5ba1b87c30d93d6084b79b0af",
+    checkpoint="pi05-b1kpt50-cs32",
+    inventory="comet50-checkpoint.json",
+    schema="npa.behavior.comet50-checkpoint-inventory.v1",
+    task_ids=tuple(range(50)),
+    file_count=5948,
+    total_bytes=12_441_366_957,
+    lfs_file_count=2436,
+    lfs_bytes=12_411_355_688,
+    handshake="comet50-2025-transfer",
+)
+COMET_PROFILES = {
+    profile.kind: profile for profile in (COMET12_PROFILE, COMET50_PROFILE)
+}
+
+# Compatibility aliases keep the original Comet12 API and defaults stable.
+MODEL_REVISION = COMET12_PROFILE.revision
+CHECKPOINT_NAME = COMET12_PROFILE.checkpoint
+SUPPORTED_TASK_IDS = COMET12_PROFILE.task_ids
 CAMERAS = ("zed_link", "left_realsense_link", "right_realsense_link")
 PROPRIOCEPTION_INDICES = {
     "R1Pro": {
@@ -86,35 +151,54 @@ def verify_source(root: Path) -> dict[str, str]:
     return dict(SOURCE_FILES)
 
 
-def load_checkpoint_manifest(path: Path | None = None) -> dict:
+def get_profile(kind: str) -> CometProfile:
+    """Return the immutable release profile for one policy kind.
+
+    Args:
+        kind: Managed Comet policy selection.
+    Returns:
+        Exact release profile used by every loader boundary.
+    Raises:
+        ValueError: The selection is not a supported Comet release.
+    """
+    try:
+        return COMET_PROFILES[kind]
+    except KeyError as error:
+        raise ValueError("Unsupported Comet checkpoint profile") from error
+
+
+def load_checkpoint_manifest(
+    path: Path | None = None, profile: CometProfile = COMET12_PROFILE
+) -> dict:
     """Load and validate the frozen public checkpoint inventory metadata.
 
     Args:
         path: Optional inventory path used by focused tests.
+        profile: Exact checkpoint release expected in the inventory.
     Returns:
         Validated checkpoint inventory.
     Raises:
         ValueError: Metadata identity, totals, paths, or entries are malformed.
     """
-    source = path or Path(__file__).with_name("comet12-checkpoint.json")
+    source = path or Path(__file__).with_name(profile.inventory)
     _regular_file(source, "Comet checkpoint inventory")
     manifest = json.loads(source.read_text())
-    _validate_manifest_header(manifest)
+    _validate_manifest_header(manifest, profile)
     _validate_manifest_files(manifest)
     return manifest
 
 
-def _validate_manifest_header(manifest: dict) -> None:
+def _validate_manifest_header(manifest: dict, profile: CometProfile) -> None:
     expected = {
-        "schema": "npa.behavior.comet12-checkpoint-inventory.v1",
+        "schema": profile.schema,
         "repository": MODEL_REPOSITORY,
-        "revision": MODEL_REVISION,
-        "checkpoint": CHECKPOINT_NAME,
-        "file_count": 5948,
-        "total_bytes": 12_441_382_544,
-        "lfs_file_count": 2436,
-        "lfs_bytes": 12_411_371_755,
-        "task_ids": list(SUPPORTED_TASK_IDS),
+        "revision": profile.revision,
+        "checkpoint": profile.checkpoint,
+        "file_count": profile.file_count,
+        "total_bytes": profile.total_bytes,
+        "lfs_file_count": profile.lfs_file_count,
+        "lfs_bytes": profile.lfs_bytes,
+        "task_ids": list(profile.task_ids),
     }
     if any(manifest.get(key) != value for key, value in expected.items()):
         raise ValueError("Comet checkpoint inventory identity differs")
@@ -188,17 +272,20 @@ def _verify_checkpoint_files(root: Path, manifest: dict) -> dict[str, dict]:
     return expected
 
 
-def verify_checkpoint(root: Path) -> dict[str, dict]:
+def verify_checkpoint(
+    root: Path, profile: CometProfile = COMET12_PROFILE
+) -> dict[str, dict]:
     """Verify every fetched Comet checkpoint file against its frozen identity.
 
     Args:
         root: Extracted checkpoint folder, excluding its Hugging Face parent.
+        profile: Exact checkpoint release expected at the root.
     Returns:
         The exact verified file inventory.
     Raises:
         ValueError: File sets, sizes, digests, or file types differ.
     """
-    return _verify_checkpoint_files(root, load_checkpoint_manifest())
+    return _verify_checkpoint_files(root, load_checkpoint_manifest(profile=profile))
 
 
 def _checkpoint_digest(path: Path, identity: dict) -> str:
@@ -207,8 +294,10 @@ def _checkpoint_digest(path: Path, identity: dict) -> str:
     return _git_blob_digest(path, identity["size"])
 
 
-def _archive_members(archive: Path) -> dict[str, zipfile.ZipInfo]:
-    prefix = CHECKPOINT_NAME + "/"
+def _archive_members(
+    archive: Path, profile: CometProfile = COMET12_PROFILE
+) -> dict[str, zipfile.ZipInfo]:
+    prefix = profile.checkpoint + "/"
     members = {}
     with zipfile.ZipFile(archive) as bundle:
         for member in bundle.infolist():
@@ -242,7 +331,10 @@ def _archive_matches_file(bundle, member, path: Path) -> bool:
 
 
 def verify_checkpoint_archive(
-    archive: Path, root: Path, expected_sha256: str
+    archive: Path,
+    root: Path,
+    expected_sha256: str,
+    profile: CometProfile = COMET12_PROFILE,
 ) -> dict[str, dict]:
     """Verify the full private archive, extraction, and frozen HF inventory.
 
@@ -250,6 +342,7 @@ def verify_checkpoint_archive(
         archive: Operator-created Zip64 archive with one checkpoint prefix.
         root: Extracted checkpoint directory.
         expected_sha256: Frozen full archive SHA-256 from the campaign recipe.
+        profile: Exact checkpoint release expected in the archive and root.
     Returns:
         The exact verified checkpoint file inventory.
     Raises:
@@ -258,8 +351,8 @@ def verify_checkpoint_archive(
     _regular_file(archive, "Comet checkpoint archive")
     if _digest(archive) != expected_sha256:
         raise ValueError("Comet checkpoint archive differs from the frozen recipe")
-    manifest = load_checkpoint_manifest()
-    members = _archive_members(archive)
+    manifest = load_checkpoint_manifest(profile=profile)
+    members = _archive_members(archive, profile)
     if set(members) != set(manifest["files"]):
         raise ValueError("Comet checkpoint archive file set differs")
     with zipfile.ZipFile(archive) as bundle:
@@ -269,19 +362,25 @@ def verify_checkpoint_archive(
     return _verify_checkpoint_files(root, manifest)
 
 
-def task_identity(source_root: Path, task_id: int, task_name: str) -> dict:
+def task_identity(
+    source_root: Path,
+    task_id: int,
+    task_name: str,
+    profile: CometProfile = COMET12_PROFILE,
+) -> dict:
     """Bind an allowed Comet task ID to its pinned prompt metadata.
 
     Args:
         source_root: Verified Comet source root.
         task_id: Original BEHAVIOR challenge task index.
         task_name: Exact source task name requested by the evaluator plan.
+        profile: Release whose declared task coverage must include the task.
     Returns:
         Pinned task metadata consumed by the upstream wrapper.
     Raises:
         ValueError: The task is unsupported or its mapping differs.
     """
-    if task_id not in SUPPORTED_TASK_IDS:
+    if task_id not in profile.task_ids:
         raise ValueError("Comet checkpoint does not declare this task")
     mapping_path = source_root / "scripts/task_mapping.json"
     _regular_file(mapping_path, "Comet task mapping")
@@ -372,8 +471,8 @@ def build_source_overlay(root: Path, overlay: Path) -> Path:
     return overlay
 
 
-def _stage_adapters(output: Path) -> dict[str, str]:
-    names = ("comet_policy.py", "comet_server.py", "comet12-checkpoint.json")
+def _stage_adapters(output: Path, profile: CometProfile) -> dict[str, str]:
+    names = ("comet_policy.py", "comet_server.py", profile.inventory)
     identities = {}
     for name in names:
         source = Path(__file__).with_name(name)
@@ -383,8 +482,10 @@ def _stage_adapters(output: Path) -> dict[str, str]:
     return identities
 
 
-def _server_command(args, output: Path, task_id: int, task_name: str) -> list[str]:
-    return [
+def _server_command(
+    args, output: Path, task_id: int, task_name: str, profile: CometProfile
+) -> list[str]:
+    command = [
         str(args.policy_python),
         str(output / "comet_server.py"),
         "--source-root",
@@ -398,9 +499,14 @@ def _server_command(args, output: Path, task_id: int, task_name: str) -> list[st
         "--port",
         str(args.port),
     ]
+    if profile != COMET12_PROFILE:
+        command.extend(("--profile", profile.kind))
+    return command
 
 
-def _campaign_task(args, plan: dict) -> tuple[int, str]:
+def _campaign_task(
+    args, plan: dict, profile: CometProfile = COMET12_PROFILE
+) -> tuple[int, str]:
     tasks = plan["recipe"].get("tasks")
     if plan["recipe"].get("split") not in {"development", "report"}:
         raise ValueError("Comet transfer requires development or report split")
@@ -413,7 +519,7 @@ def _campaign_task(args, plan: dict) -> tuple[int, str]:
     if not isinstance(row, dict) or type(row.get("task_index")) is not int:
         raise ValueError("Comet campaign task metadata is malformed")
     task_id = row["task_index"]
-    task_identity(args.policy_root, task_id, tasks[0])
+    task_identity(args.policy_root, task_id, tasks[0], profile)
     registry_path = args.upstream_root / "docs/challenge/task_data.json"
     registry = json.loads(registry_path.read_text())
     current = [item.get("id") for item in registry.get("tasks", [])]
@@ -431,7 +537,7 @@ def _verify_campaign_ports(args, plan: dict) -> None:
 
 
 def prepare_policy(args, plan: dict, output: Path) -> list[str]:
-    """Verify and stage Comet12 for the managed policy supervisor.
+    """Verify and stage a Comet profile for the managed policy supervisor.
 
     Args:
         args: Managed policy source, interpreter, checkpoint, task, and port.
@@ -442,25 +548,27 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     Raises:
         ValueError: Source, task, checkpoint, or plan contracts differ.
     """
+    profile = get_profile(getattr(args, "policy_kind", "comet12"))
     verify_source(args.policy_root)
     _verify_campaign_ports(args, plan)
-    task_id, task_name = _campaign_task(args, plan)
+    task_id, task_name = _campaign_task(args, plan, profile)
     files = verify_checkpoint_archive(
         args.policy_archive,
         args.policy_checkpoint,
         plan["recipe"]["policy_checkpoint_sha256"],
+        profile,
     )
-    adapters = _stage_adapters(output)
-    command = _server_command(args, output, task_id, task_name)
+    adapters = _stage_adapters(output, profile)
+    command = _server_command(args, output, task_id, task_name, profile)
     evidence = {
-        "schema": "npa.behavior.comet12-policy.v1",
-        "kind": "comet12",
+        "schema": f"npa.behavior.{profile.kind}-policy.v1",
+        "kind": profile.kind,
         "source_commit": SOURCE_COMMIT,
         "model_repository": MODEL_REPOSITORY,
-        "model_revision": MODEL_REVISION,
-        "checkpoint": CHECKPOINT_NAME,
+        "model_revision": profile.revision,
+        "checkpoint": profile.checkpoint,
         "checkpoint_file_count": len(files),
-        "checkpoint_inventory_sha256": adapters["comet12-checkpoint.json"],
+        "checkpoint_inventory_sha256": adapters[profile.inventory],
         "task_id": task_id,
         "task_name": task_name,
         "adapters": adapters,
