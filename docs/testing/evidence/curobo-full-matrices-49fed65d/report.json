@@ -1,0 +1,689 @@
+{
+  "format": "npa.curobo.public-full-matrix-review.v1",
+  "created_at": "2026-09-21T12:44:20.362232+00:00",
+  "producer_source_commit": "49fed65d0d1a315ce08addab533c56c48180d419",
+  "formatting_successor_commit": "662f04c3a98e395f4f0f37a19475806a553ffe06",
+  "immutable_image_index": "sha256:c85e8718c9645cc70fddc0e20ea66edd317448a8c50c0444bbcc85384db07550",
+  "image_configuration_digest": "sha256:43dd64ab4afdad6b6c124ad67a15a4fe873998a927523265c173d5adfe64037c",
+  "upstream_source_revision": "8e734f3ced1df898990bcd92de40abce475907db",
+  "dataset_revision": "81e3d1d605de84100d8ab880b43096aba221a48b",
+  "benchmark_input_sha256": "8de6ed0014786011b07d24fc6ffb40feae06eb6c5c3a613cad686f7dbaebefe4",
+  "seed": 2,
+  "runs": {
+    "b200": {
+      "hardware": {
+        "compute_capability": [
+          10,
+          0
+        ],
+        "cuda_version": "13.0",
+        "name": "NVIDIA B200",
+        "torch_version": "2.13.0+cu130"
+      },
+      "totals": {
+        "success": 5162,
+        "failed": 18,
+        "invalid": 20,
+        "input_count": 5200
+      },
+      "stage_statuses": {
+        "benchmark": "SUCCEEDED",
+        "prepare": "SUCCEEDED",
+        "validate": "SUCCEEDED",
+        "visualize": "FAILED"
+      },
+      "workflow_exit_code": 1,
+      "numeric_acceptance_passed": true,
+      "acceptance_cells": {
+        "dynamics/motion_benchmaker": {
+          "maximum_unusable_eligible": 39,
+          "passed": true,
+          "unusable_eligible": 0
+        },
+        "dynamics/mpinets": {
+          "maximum_unusable_eligible": 89,
+          "passed": true,
+          "unusable_eligible": 8
+        },
+        "kinematic/motion_benchmaker": {
+          "maximum_unusable_eligible": 7,
+          "passed": true,
+          "unusable_eligible": 2
+        },
+        "kinematic/mpinets": {
+          "maximum_unusable_eligible": 17,
+          "passed": true,
+          "unusable_eligible": 8
+        }
+      },
+      "dataset_mode_cells": {
+        "dynamics/motion_benchmaker": {
+          "eligible_success_fraction": 1.0,
+          "failed": 0,
+          "input_count": 800,
+          "invalid": 1,
+          "success": 799,
+          "torque_violation_successes": 0,
+          "usable_successes": 799
+        },
+        "dynamics/mpinets": {
+          "eligible_success_fraction": 0.9955332216638749,
+          "failed": 8,
+          "input_count": 1800,
+          "invalid": 9,
+          "success": 1783,
+          "torque_violation_successes": 0,
+          "usable_successes": 1783
+        },
+        "kinematic/motion_benchmaker": {
+          "eligible_success_fraction": 0.9974968710888611,
+          "failed": 2,
+          "input_count": 800,
+          "invalid": 1,
+          "success": 797,
+          "torque_violation_successes": 42,
+          "usable_successes": 797
+        },
+        "kinematic/mpinets": {
+          "eligible_success_fraction": 0.9955332216638749,
+          "failed": 8,
+          "input_count": 1800,
+          "invalid": 9,
+          "success": 1783,
+          "torque_violation_successes": 10,
+          "usable_successes": 1783
+        }
+      },
+      "summary": {
+        "dynamics": {
+          "eligible_count": 2590,
+          "failed": 8,
+          "input_count": 2600,
+          "invalid": 10,
+          "metrics": {
+            "energy_proxy_j": {
+              "count": 2582,
+              "mean": 81.41017517851668,
+              "p50": 73.14314251134934,
+              "p95": 161.41934191390595,
+              "p98": 176.6544206823484
+            },
+            "joint_path_length_rad": {
+              "count": 2582,
+              "mean": 3.234609982254547,
+              "p50": 3.3153048241503527,
+              "p95": 4.897706198934447,
+              "p98": 5.886649386147702
+            },
+            "max_abs_jerk_rad_s3": {
+              "count": 2582,
+              "mean": 130.3857706847069,
+              "p50": 117.17802047729492,
+              "p95": 235.39570236206052,
+              "p98": 280.67921447753906
+            },
+            "max_torque_nm": {
+              "count": 2582,
+              "mean": 62.3296409118479,
+              "p50": 65.44999337507093,
+              "p95": 80.50796821461496,
+              "p98": 82.5727197374579
+            },
+            "planner_total_seconds": {
+              "count": 2582,
+              "mean": 0.07460189305766435,
+              "p50": 0.0633540474176407,
+              "p95": 0.167871203303337,
+              "p98": 0.1765474591946602
+            },
+            "position_error_m": {
+              "count": 2582,
+              "mean": 4.386477173155852e-05,
+              "p50": 1.365714012990793e-07,
+              "p95": 1.1169447407155526e-05,
+              "p98": 0.0003734683344373484
+            },
+            "rotation_error_rad": {
+              "count": 2582,
+              "mean": 3.664373004630836e-05,
+              "p50": 2.0197558114887215e-07,
+              "p95": 2.3100523549146286e-06,
+              "p98": 0.00019864337897161055
+            },
+            "solver_seconds": {
+              "count": 2582,
+              "mean": 0.057962635432353415,
+              "p50": 0.04920431977510452,
+              "p95": 0.13226120469570155,
+              "p98": 0.14172342630386356
+            },
+            "tool_path_length_m": {
+              "count": 2582,
+              "mean": 0.7421178472795452,
+              "p50": 0.6453297076622504,
+              "p95": 1.4782741080991988,
+              "p98": 2.0650457407426237
+            },
+            "torque_violation": {
+              "count": 2582,
+              "mean": 0.0,
+              "p50": 0.0,
+              "p95": 0.0,
+              "p98": 0.0
+            },
+            "trajectory_duration_seconds": {
+              "count": 2582,
+              "mean": 1.7118513035875804,
+              "p50": 1.5000000223517418,
+              "p95": 2.500000037252903,
+              "p98": 3.0000000447034836
+            },
+            "wall_plan_seconds": {
+              "count": 2590,
+              "mean": 0.09292387654259565,
+              "p50": 0.06240438099484891,
+              "p95": 0.24667946374866,
+              "p98": 0.3503323975206857
+            }
+          },
+          "success": 2582,
+          "success_fraction_all": 0.9930769230769231,
+          "success_fraction_eligible": 0.9969111969111969
+        },
+        "kinematic": {
+          "eligible_count": 2590,
+          "failed": 10,
+          "input_count": 2600,
+          "invalid": 10,
+          "metrics": {
+            "energy_proxy_j": {
+              "count": 2580,
+              "mean": 58.18701284438173,
+              "p50": 51.88135547583698,
+              "p95": 117.95889280029722,
+              "p98": 132.42698201435894
+            },
+            "joint_path_length_rad": {
+              "count": 2580,
+              "mean": 3.130423951981486,
+              "p50": 3.25588837250666,
+              "p95": 4.75019855029027,
+              "p98": 5.049224584012526
+            },
+            "max_abs_jerk_rad_s3": {
+              "count": 2580,
+              "mean": 132.0248460821403,
+              "p50": 117.23439407348633,
+              "p95": 256.6131774902343,
+              "p98": 282.6969409179688
+            },
+            "max_torque_nm": {
+              "count": 2580,
+              "mean": 48.90771440034837,
+              "p50": 47.35465430740885,
+              "p95": 79.29798576521617,
+              "p98": 86.89411404000334
+            },
+            "planner_total_seconds": {
+              "count": 2580,
+              "mean": 0.053041821868059245,
+              "p50": 0.04998921513557434,
+              "p95": 0.0596396374464035,
+              "p98": 0.11491300814151774
+            },
+            "position_error_m": {
+              "count": 2580,
+              "mean": 3.72245521712977e-05,
+              "p50": 1.365714012990793e-07,
+              "p95": 1.8831694251275487e-05,
+              "p98": 0.0003294302307767799
+            },
+            "rotation_error_rad": {
+              "count": 2580,
+              "mean": 4.674669372277398e-05,
+              "p50": 2.0277560253134652e-07,
+              "p95": 3.5596712223195847e-06,
+              "p98": 0.00017482599476352357
+            },
+            "solver_seconds": {
+              "count": 2580,
+              "mean": 0.040454602878916175,
+              "p50": 0.0383487041592598,
+              "p95": 0.04666542093157768,
+              "p98": 0.08565632639408126
+            },
+            "tool_path_length_m": {
+              "count": 2580,
+              "mean": 0.7938893887398834,
+              "p50": 0.6700869289585237,
+              "p95": 1.7274698119379024,
+              "p98": 2.2739989204016875
+            },
+            "torque_violation": {
+              "count": 2580,
+              "mean": 0.020155038759689922,
+              "p50": 0.0,
+              "p95": 0.0,
+              "p98": 0.42000000000007276
+            },
+            "trajectory_duration_seconds": {
+              "count": 2580,
+              "mean": 1.6300387839793928,
+              "p50": 1.5000000223517418,
+              "p95": 2.0000000298023224,
+              "p98": 2.500000037252903
+            },
+            "wall_plan_seconds": {
+              "count": 2590,
+              "mean": 0.06196117621016251,
+              "p50": 0.049029629000870045,
+              "p95": 0.05876489305119321,
+              "p98": 0.1939326812398211
+            }
+          },
+          "success": 2580,
+          "success_fraction_all": 0.9923076923076923,
+          "success_fraction_eligible": 0.9961389961389961
+        }
+      },
+      "independent_replay": {
+        "fk_replay_count": 5162,
+        "dynamics_replay_count": 5162,
+        "max_fk_position_replay_error_m": 0.0,
+        "max_fk_quaternion_component_replay_error": 0.0,
+        "max_fk_quaternion_replay_error_rad": 0.0,
+        "max_torque_replay_error_nm": 0.0
+      },
+      "terminal_goal_distance_m": {
+        "max": 0.004926785150086785,
+        "mean": 4.054594839176596e-05
+      },
+      "terminal_goal_orientation_rad": {
+        "max": 0.02393238337478988,
+        "mean": 4.1692694149220824e-05
+      },
+      "dynamics_contract": {
+        "active_joint_names": [
+          "panda_joint1",
+          "panda_joint2",
+          "panda_joint3",
+          "panda_joint4",
+          "panda_joint5",
+          "panda_joint6",
+          "panda_joint7"
+        ],
+        "attached_mass_kg": 3.0,
+        "bad_rows": 0,
+        "successful_rows_checked": 2582,
+        "torque_width": 7,
+        "trajectory_width": 7
+      },
+      "failed_and_invalid_records_preserved": true,
+      "durable_readback": {
+        "object_count": 29,
+        "bytes": 540277610,
+        "all_objects_hash_verified_by_independent_consumer": true,
+        "receipt_sha256": "3711c4af1005d3f37174e7cf7f02525a95751b1842b929236d054df5f1c73cc4"
+      },
+      "original_artifact_sha256": {
+        "journal": "6eda94645f4704783583fc26bfc5073f4f51b79b6b606f892075cc19f1f3bc14",
+        "result": "dc721bc91b47542490a3455111be1c50413780dd8a57fa4ce45579e89dd0dc96",
+        "validation": "fb20ab018161daadad1441b1c07b20b3bf1103931907bbf5f3e79ffd2f933b6b",
+        "independent_verdict": "1d40cbf65d721a2cdfea3f1bd137b149322bb0b8869341dd1e68069f695d0d33",
+        "visualize_task_log": "84262e9cd8d49e48253763acb08466a7c748172e8b540172c46978044b36011f"
+      },
+      "original_journal_bytes": 540106516,
+      "timing": {
+        "benchmark_elapsed_seconds": 1011.8208899490055,
+        "subprocess_wall_seconds": 1033.6173381929984
+      }
+    },
+    "rtx": {
+      "hardware": {
+        "compute_capability": [
+          12,
+          0
+        ],
+        "cuda_version": "13.0",
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "torch_version": "2.13.0+cu130"
+      },
+      "totals": {
+        "success": 5166,
+        "failed": 14,
+        "invalid": 20,
+        "input_count": 5200
+      },
+      "stage_statuses": {
+        "benchmark": "SUCCEEDED",
+        "prepare": "SUCCEEDED",
+        "validate": "SUCCEEDED",
+        "visualize": "FAILED"
+      },
+      "workflow_exit_code": 1,
+      "numeric_acceptance_passed": true,
+      "acceptance_cells": {
+        "dynamics/motion_benchmaker": {
+          "maximum_unusable_eligible": 39,
+          "passed": true,
+          "unusable_eligible": 0
+        },
+        "dynamics/mpinets": {
+          "maximum_unusable_eligible": 89,
+          "passed": true,
+          "unusable_eligible": 7
+        },
+        "kinematic/motion_benchmaker": {
+          "maximum_unusable_eligible": 7,
+          "passed": true,
+          "unusable_eligible": 0
+        },
+        "kinematic/mpinets": {
+          "maximum_unusable_eligible": 17,
+          "passed": true,
+          "unusable_eligible": 7
+        }
+      },
+      "dataset_mode_cells": {
+        "dynamics/motion_benchmaker": {
+          "eligible_success_fraction": 1.0,
+          "failed": 0,
+          "input_count": 800,
+          "invalid": 1,
+          "success": 799,
+          "torque_violation_successes": 0,
+          "usable_successes": 799
+        },
+        "dynamics/mpinets": {
+          "eligible_success_fraction": 0.9960915689558906,
+          "failed": 7,
+          "input_count": 1800,
+          "invalid": 9,
+          "success": 1784,
+          "torque_violation_successes": 0,
+          "usable_successes": 1784
+        },
+        "kinematic/motion_benchmaker": {
+          "eligible_success_fraction": 1.0,
+          "failed": 0,
+          "input_count": 800,
+          "invalid": 1,
+          "success": 799,
+          "torque_violation_successes": 42,
+          "usable_successes": 799
+        },
+        "kinematic/mpinets": {
+          "eligible_success_fraction": 0.9960915689558906,
+          "failed": 7,
+          "input_count": 1800,
+          "invalid": 9,
+          "success": 1784,
+          "torque_violation_successes": 10,
+          "usable_successes": 1784
+        }
+      },
+      "summary": {
+        "dynamics": {
+          "eligible_count": 2590,
+          "failed": 7,
+          "input_count": 2600,
+          "invalid": 10,
+          "metrics": {
+            "energy_proxy_j": {
+              "count": 2583,
+              "mean": 81.31324172616814,
+              "p50": 73.39415345320306,
+              "p95": 160.86938804257747,
+              "p98": 176.40725336726015
+            },
+            "joint_path_length_rad": {
+              "count": 2583,
+              "mean": 3.2301886985087207,
+              "p50": 3.3086884189774852,
+              "p95": 4.875948546853348,
+              "p98": 5.81528648832053
+            },
+            "max_abs_jerk_rad_s3": {
+              "count": 2583,
+              "mean": 130.49573867707764,
+              "p50": 117.21968078613281,
+              "p95": 235.8234252929688,
+              "p98": 279.8412170410156
+            },
+            "max_torque_nm": {
+              "count": 2583,
+              "mean": 62.29285278972008,
+              "p50": 65.22759851716309,
+              "p95": 80.59656806434884,
+              "p98": 82.80057459162559
+            },
+            "planner_total_seconds": {
+              "count": 2583,
+              "mean": 0.08221463060508252,
+              "p50": 0.0696617271900177,
+              "p95": 0.1732305470228196,
+              "p98": 0.20056023387432112
+            },
+            "position_error_m": {
+              "count": 2583,
+              "mean": 4.680894839990277e-05,
+              "p50": 1.365714012990793e-07,
+              "p95": 1.2396426518535108e-05,
+              "p98": 0.0005232594138942661
+            },
+            "rotation_error_rad": {
+              "count": 2583,
+              "mean": 3.8236963726499283e-05,
+              "p50": 2.0178416093585838e-07,
+              "p95": 2.3849391254771063e-06,
+              "p98": 0.00022909504827112054
+            },
+            "solver_seconds": {
+              "count": 2583,
+              "mean": 0.05818823960858447,
+              "p50": 0.04967340850830078,
+              "p95": 0.12559332270622253,
+              "p98": 0.1441520066690445
+            },
+            "tool_path_length_m": {
+              "count": 2583,
+              "mean": 0.7387896970711947,
+              "p50": 0.6453191142807955,
+              "p95": 1.468965054960955,
+              "p98": 2.021022283786896
+            },
+            "torque_violation": {
+              "count": 2583,
+              "mean": 0.0,
+              "p50": 0.0,
+              "p95": 0.0,
+              "p98": 0.0
+            },
+            "trajectory_duration_seconds": {
+              "count": 2583,
+              "mean": 1.7084785388148758,
+              "p50": 1.5000000223517418,
+              "p95": 2.500000037252903,
+              "p98": 3.0000000447034836
+            },
+            "wall_plan_seconds": {
+              "count": 2590,
+              "mean": 0.1039860903956068,
+              "p50": 0.06912866258062422,
+              "p95": 0.28700587486382567,
+              "p98": 0.4382613816205399
+            }
+          },
+          "success": 2583,
+          "success_fraction_all": 0.9934615384615385,
+          "success_fraction_eligible": 0.9972972972972973
+        },
+        "kinematic": {
+          "eligible_count": 2590,
+          "failed": 7,
+          "input_count": 2600,
+          "invalid": 10,
+          "metrics": {
+            "energy_proxy_j": {
+              "count": 2583,
+              "mean": 58.21284065139655,
+              "p50": 51.996497114334474,
+              "p95": 118.0116857803876,
+              "p98": 133.41135651200523
+            },
+            "joint_path_length_rad": {
+              "count": 2583,
+              "mean": 3.130616016560788,
+              "p50": 3.2556635854939557,
+              "p95": 4.756438519681277,
+              "p98": 5.049076506571169
+            },
+            "max_abs_jerk_rad_s3": {
+              "count": 2583,
+              "mean": 131.84412629706796,
+              "p50": 117.55179595947266,
+              "p95": 255.2182159423828,
+              "p98": 281.221130371094
+            },
+            "max_torque_nm": {
+              "count": 2583,
+              "mean": 48.92719224191162,
+              "p50": 47.406246691414495,
+              "p95": 79.73899667422667,
+              "p98": 86.88301496744161
+            },
+            "planner_total_seconds": {
+              "count": 2583,
+              "mean": 0.05963689420673674,
+              "p50": 0.055606465458869936,
+              "p95": 0.07264989885091783,
+              "p98": 0.12830478818416619
+            },
+            "position_error_m": {
+              "count": 2583,
+              "mean": 3.9218358251029715e-05,
+              "p50": 1.365714012990793e-07,
+              "p95": 1.925519463839014e-05,
+              "p98": 0.0003772357653360819
+            },
+            "rotation_error_rad": {
+              "count": 2583,
+              "mean": 6.494213741058701e-05,
+              "p50": 2.021590432832454e-07,
+              "p95": 3.7477590012713493e-06,
+              "p98": 0.00018880484392866666
+            },
+            "solver_seconds": {
+              "count": 2583,
+              "mean": 0.04140726270008309,
+              "p50": 0.03887414348125458,
+              "p95": 0.0484082022547722,
+              "p98": 0.0882006418371201
+            },
+            "tool_path_length_m": {
+              "count": 2583,
+              "mean": 0.7944014764435985,
+              "p50": 0.670321633455991,
+              "p95": 1.7269706372090516,
+              "p98": 2.3214982829926365
+            },
+            "torque_violation": {
+              "count": 2583,
+              "mean": 0.02013162988772745,
+              "p50": 0.0,
+              "p95": 0.0,
+              "p98": 0.36000000000012733
+            },
+            "trajectory_duration_seconds": {
+              "count": 2583,
+              "mean": 1.6308556185718706,
+              "p50": 1.5000000223517418,
+              "p95": 2.0000000298023224,
+              "p98": 2.500000037252903
+            },
+            "wall_plan_seconds": {
+              "count": 2590,
+              "mean": 0.0676687325537924,
+              "p50": 0.05504409526474774,
+              "p95": 0.07256167053710669,
+              "p98": 0.22416320133022885
+            }
+          },
+          "success": 2583,
+          "success_fraction_all": 0.9934615384615385,
+          "success_fraction_eligible": 0.9972972972972973
+        }
+      },
+      "independent_replay": {
+        "fk_replay_count": 5166,
+        "dynamics_replay_count": 5166,
+        "max_fk_position_replay_error_m": 0.0,
+        "max_fk_quaternion_component_replay_error": 0.0,
+        "max_fk_quaternion_replay_error_rad": 0.0,
+        "max_torque_replay_error_nm": 0.0
+      },
+      "terminal_goal_distance_m": {
+        "max": 0.004926785150086785,
+        "mean": 4.3013653406275026e-05
+      },
+      "terminal_goal_orientation_rad": {
+        "max": 0.02905643139945637,
+        "mean": 5.158897959534807e-05
+      },
+      "dynamics_contract": {
+        "active_joint_names": [
+          "panda_joint1",
+          "panda_joint2",
+          "panda_joint3",
+          "panda_joint4",
+          "panda_joint5",
+          "panda_joint6",
+          "panda_joint7"
+        ],
+        "attached_mass_kg": 3.0,
+        "bad_rows": 0,
+        "successful_rows_checked": 2583,
+        "torque_width": 7,
+        "trajectory_width": 7
+      },
+      "failed_and_invalid_records_preserved": true,
+      "durable_readback": {
+        "object_count": 28,
+        "bytes": 540495287,
+        "all_objects_hash_verified_by_independent_consumer": true,
+        "receipt_sha256": "023b3e62164661bf22aab15dc877f6f666bea22e4c93a4fbd0f07606f179a4e9"
+      },
+      "original_artifact_sha256": {
+        "journal": "2b54287f57c440fa41571131e510fd4b134e2dc8cf9e73d62d27223f0a4ca412",
+        "result": "86059fea3a607db958996c7634bba5d7a384d2a87165edca1322908832e76c2b",
+        "validation": "1610fab22196a674811095875850e6d9e407eb9ee6f808e086520d8b064cc5bd",
+        "independent_verdict": "8cd1035a0951592f0db21d42aff6fe64e782d1f845f8dfa8ad91d078a8a4f2ca",
+        "visualize_task_log": "84262e9cd8d49e48253763acb08466a7c748172e8b540172c46978044b36011f"
+      },
+      "original_journal_bytes": 540318792,
+      "timing": {
+        "benchmark_elapsed_seconds": 1176.8475694269873,
+        "subprocess_wall_seconds": 1201.0299043422565
+      }
+    }
+  },
+  "scope": {
+    "numeric_full_matrices_passed": true,
+    "full_workflows_passed": false,
+    "rrd_accepted": false,
+    "vlm_quality_gate_performed_for_these_full_runs": false,
+    "complete_image_byte_policy_accepted": false,
+    "physical_robot_execution_performed": false,
+    "raw_journals_published": false,
+    "reviewer_scope": "Independent consumer verified every durable object and all journal rows; root crosschecked eight retained receipts/results and their counts. Public report contains selected aggregate fields and hashes, not the private raw journals."
+  },
+  "limitations": [
+    "Both workflows failed the visualization stage after prepare, benchmark, and numerical validation succeeded.",
+    "Planner success is upstream feasibility, not independent collision certification.",
+    "The benchmark follows upstream relaxed joint limits (+/-0.2 rad), OBB scene conversion, and optimizer settings.",
+    "Dynamics carries 3 kg; energy is a Pinocchio inverse-dynamics proxy on the optimized trajectory.",
+    "Kinematic acceptance does not enforce torque limits: 52 successful kinematic trajectories per GPU violate them.",
+    "Zero replay discrepancy means agreement with retained values, not zero terminal goal error.",
+    "No physical-robot execution approval or VLM quality pass is established."
+  ]
+}
