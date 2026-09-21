@@ -1,0 +1,224 @@
+{
+  "schema": "npa.review.open3d-current-workflow.v1",
+  "pr": 602,
+  "recorded_utc": "2026-09-21T07:18:39.017977+00:00",
+  "status": "Observed CPU workflow and native presentation passed. The exact image fails the security gate with four fixable CRITICAL OS-package vulnerabilities; PR release acceptance is withheld.",
+  "source": {
+    "runtime_producer_commit": "b18d7aef56bbe25a5b45290e0b705f20a59ad4da",
+    "immutable_image_digest": "sha256:926325abdab02b96110c1a0ea26922d31cb55ccf0f8c597e03692bd5ebbc2855",
+    "runner_file_sha256": "0ede699e5856fad35cb2a897e7b46946a45d284179b41cd16fac70b5fb6ce75b",
+    "native_smoke_file_sha256": "19694eadb7fc6fb94388551cd3159094a25ae16a2339cf60276ee698b7ffe2c8",
+    "inside_image_matches_committed_runner_and_smoke": true,
+    "binding_scope": "Verified actual file bytes inside the image, exact digest in all six rendered tasks and a running workload container; this is not a substitute for full image byte/security/licensing qualification.",
+    "evidence_privacy_repair_commit": "9e6b5845859d1283da9e4dd6ad28ae7701a83159",
+    "evidence_revision_relation": "Evidence-only privacy/history correction; runtime producer remains b18 and image remains 9263. No newer package/image bytes are claimed."
+  },
+  "execution": {
+    "route": "Standard npa.workflow via SkyPilot managed jobs on Kubernetes",
+    "accelerator": "CPU; no GPU requested",
+    "stages": [
+      {
+        "name": "stage",
+        "status": "SUCCEEDED"
+      },
+      {
+        "name": "register",
+        "status": "SUCCEEDED"
+      },
+      {
+        "name": "validate",
+        "status": "SUCCEEDED"
+      },
+      {
+        "name": "multiway",
+        "status": "SUCCEEDED"
+      },
+      {
+        "name": "reconstruct",
+        "status": "SUCCEEDED"
+      },
+      {
+        "name": "visualize",
+        "status": "SUCCEEDED"
+      }
+    ],
+    "durable_s3_resume_submitted": false,
+    "durable_s3_resume_proven": false,
+    "object_count_observed": 20,
+    "voxel_size": 0.05,
+    "inferred_up": [
+      0.0,
+      0.0,
+      -1.0
+    ],
+    "open3d_version": "0.20.0",
+    "rerun_version": "0.31.4"
+  },
+  "dataset": {
+    "name": "Open3D DemoICPPointClouds, Redwood RGB-D living-room1 fragments",
+    "release": "20220301-data",
+    "license": "CC-BY-3.0",
+    "upstream_zip_sha256": "b94e0146c1d48c5edfc11af71b4af39ffca604485668c55a127c3b43203a6bd5",
+    "upstream_zip_md5": "596cffe5f9c587045e7397ad70754de9",
+    "original_fragment_bytes_equal_downloaded_release_members": true,
+    "fragments": [
+      {
+        "fragment_id": "cloud_bin_0",
+        "points": 198835,
+        "source_sha256": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+        "pose_points_max_abs_error": 0.0,
+        "rrd_positions_equal_after_float32": true
+      },
+      {
+        "fragment_id": "cloud_bin_1",
+        "points": 137833,
+        "source_sha256": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+        "pose_points_max_abs_error": 0.0,
+        "rrd_positions_equal_after_float32": true
+      },
+      {
+        "fragment_id": "cloud_bin_2",
+        "points": 191397,
+        "source_sha256": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+        "pose_points_max_abs_error": 0.0,
+        "rrd_positions_equal_after_float32": true
+      }
+    ],
+    "kind": "synthetic indoor benchmark fragments from augmented ICL-NUIM; real workload execution, not a fresh physical sensor capture"
+  },
+  "numeric_lineage": {
+    "method": "Independently loaded original PCDs, applied retained registration graph poses as NumPy points @ R.T + t, cast to float32, and compared every decoded fragment position; all exact. Compared all fused positions, mesh vertices and triangle indices against actual PLYs. Check ran inside exact image with network disabled.",
+    "fragment_transform_max_abs_error": 0.0,
+    "fused_points": 6339,
+    "fused_positions_equal": true,
+    "mesh_vertices": 14738,
+    "mesh_triangles": 28215,
+    "mesh_arrays_equal": true,
+    "camera_receipt_equal": true
+  },
+  "retained_original_artifacts": [
+    {
+      "role": "decoded workflow recording",
+      "sha256": "b4089d51d94b832f86c024c045ed5d2e92a873d6eeaf62bcfa6d1ebcf0206436",
+      "bytes": 8101326
+    },
+    {
+      "role": "recording manifest",
+      "sha256": "e4dc7a761ac76b162cdcf7eeb762c30455eda4a8f3c3ad7c85459fad1feb73f9",
+      "bytes": 2873
+    },
+    {
+      "role": "registered fused point cloud",
+      "sha256": "163cd17ff6fd4049ba9166616262efd059265259e2b2d36054799028abb9d761",
+      "bytes": 323553
+    },
+    {
+      "role": "cropped mesh",
+      "sha256": "52f1ff2467566dc08846e0615c399a2b1ec6da6c19c24647a93f50a5c5a748c9",
+      "bytes": 1118757
+    },
+    {
+      "role": "uncropped mesh",
+      "sha256": "6fe008977b57dad6078a0d581fcfad62d37f9f1ec952012fd5d7db29a1647495",
+      "bytes": 1415634
+    },
+    {
+      "role": "registration graph",
+      "sha256": "97645b7e0825287b51e7a037d5f76ef93de9940ce498c54c23053c127b074109",
+      "bytes": 2175
+    },
+    {
+      "role": "surface measurements",
+      "sha256": "3f58d841a3d4c588ad1dc3fcc43026d3306e017f0262400fd42be835fb069999",
+      "bytes": 2994
+    }
+  ],
+  "surface_measurements": {
+    "fused_input_points": 6339,
+    "sample_to_surface_coverage": {
+      "fraction_within_two_voxels": 0.9996844928222117,
+      "fraction_within_voxel": 0.9927433349108692,
+      "sample_to_surface_p95": 0.02208942361176014,
+      "sample_to_surface_rmse": 0.010819162242114544,
+      "samples": 6339
+    },
+    "cropped_mesh": {
+      "vertex_count": 14738,
+      "triangle_count": 28215,
+      "is_watertight": false,
+      "is_edge_manifold": false,
+      "is_vertex_manifold": false
+    },
+    "removed_vertices": 3670,
+    "unsupported_area_fraction_before_crop": 0.5273845953849617,
+    "unsupported_area_share_beyond_three_voxels": 0.7298500028435703,
+    "interpretation": "Distance from observed samples does not prove fabricated surface. Sparse coverage of a correct closed cube also triggers this measure; deciding geometric correctness requires an independent reference surface."
+  },
+  "capture": {
+    "file": "ordinary-native-replay.png",
+    "sha256": "1082371502b4e643e4e385f07bf9b0f0eecd03621c1e6e8d3bc7494faadf2b28",
+    "bytes": 509393,
+    "width": 1024,
+    "height": 768,
+    "method": "Unedited whole native window captured through X11 after loading the actual workflow RRD",
+    "renderer": "Vulkan llvmpipe software rasterizer",
+    "independent_visual_review": "Both actual panes retain the complete displayed geometry, observed colors and visible partial surfaces; no tooltip, error dialog or provenance panel blocks the view. Software renderer banner retained.",
+    "verdict": "Default-layout presentation pass only."
+  },
+  "limitations": [
+    "The mesh is partial, has visible holes, and is not watertight, edge-manifold or vertex-manifold.",
+    "No collision readiness, physics validity, full-scene reconstruction accuracy or general quality claim.",
+    "No independent hosted VLM evaluation or GPU/performance result is claimed in this pack.",
+    "The exact current image fails its security gate. Complete byte/licensing qualification and required CI are separate gates; this successful runtime is not a release authorization.",
+    "Operational originals, including the RRD, are privately retained because they contain infrastructure metadata; hashes identify their exact bytes. The public screenshot is unchanged and the report is explicitly an allowlisted derived summary.",
+    "The documentation branch privacy/history correction is independently accepted at 9e6b58458; this runtime pack does not assert current PR merge readiness.",
+    "A target image-pull credential had to be delivered before the managed workload recovered; workflow success does not prove shipping preflight catches that issue.",
+    "Synthetic benchmark input does not establish accuracy on physical sensor data or robot deployment usefulness."
+  ],
+  "image_security": {
+    "verdict": "FAILED_CURRENT_IMAGE_REBUILD_REQUIRED",
+    "private_security_receipt_sha256": "c2e491f091cc85437c5286e9c6b6a5defbd8d8f4895f17332a9ceb2e9ee71ccb",
+    "fixable_critical_findings": [
+      {
+        "VulnerabilityID": "CVE-2026-58016",
+        "PkgName": "libglib2.0-0t64",
+        "InstalledVersion": "2.84.4-3~deb13u3",
+        "FixedVersion": "2.84.4-3~deb13u4",
+        "Severity": "CRITICAL"
+      },
+      {
+        "VulnerabilityID": "CVE-2026-13221",
+        "PkgName": "perl-base",
+        "InstalledVersion": "5.40.1-6",
+        "FixedVersion": "5.40.1-6+deb13u1",
+        "Severity": "CRITICAL"
+      },
+      {
+        "VulnerabilityID": "CVE-2026-42496",
+        "PkgName": "perl-base",
+        "InstalledVersion": "5.40.1-6",
+        "FixedVersion": "5.40.1-6+deb13u1",
+        "Severity": "CRITICAL"
+      },
+      {
+        "VulnerabilityID": "CVE-2026-8376",
+        "PkgName": "perl-base",
+        "InstalledVersion": "5.40.1-6",
+        "FixedVersion": "5.40.1-6+deb13u1",
+        "Severity": "CRITICAL"
+      }
+    ],
+    "complete_byte_scan": "in progress; no promotion",
+    "required_next_step": "Scoped pinned package/snapshot correction and notice delivery, new immutable source/image, fresh complete qualification and applicable replay. Existing runtime proof stays bound to old 9263 bytes.",
+    "findings_scope": "Unchanged image-security policy findings; individual exploitability is not asserted.",
+    "license_notice_delivery": {
+      "verdict": "FAIL_MISSING_MCAP_MIT_GRANT",
+      "package": "mcap",
+      "version": "1.4.0",
+      "missing": "Foxglove MIT permission/copyright notice absent from installed package and exact upstream sdist",
+      "authoritative_license_commit": "b33fa682a5c517b1d213faeabd118e0b4f9d9d93",
+      "authoritative_license_sha256": "da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d",
+      "retained_finding_sha256": "62af8460f19ba50f20d699505dbc193ecce41d853e87f5cec3feefed50759e39"
+    }
+  }
+}
