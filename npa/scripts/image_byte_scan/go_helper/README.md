@@ -13,17 +13,24 @@ results are emitted in record order. Admission reserves payload bytes against a
 independently of archive size; a record larger than the whole budget is admitted
 alone rather than refused, so coverage never depends on a size threshold.
 
-That budget bounds admitted payload bytes, not resident memory. Detecting a
-record costs about **8x its size** resident — measured 8.04x at 128 MiB and 8.29x
-at 64 MiB — because the detector holds the raw bytes, a string copy, a lowercased
-copy and the regexp engine's working set. Size the host accordingly: a full
-budget is roughly 4 GiB resident, and a single 900 MB layer blob is roughly
-6.8 GiB while it is scanned.
+That budget bounds admitted payload bytes, not resident memory: the detector
+holds the raw bytes, a string copy, a lowercased copy and the regexp engine's
+working set. Measured peak RSS for a single record, Linux x86_64, Go toolchain
+1.27.1, one record in flight:
 
-Real images make both facts matter. A container image is bimodal: tens of
-thousands of small records plus a handful of layer blobs in the hundreds of
-megabytes. Records above the budget run alone, so the achievable speedup is set
-by what share of the image's bytes sit in them.
+| record | peak RSS | multiple of record size |
+| --- | --- | --- |
+| 16 MiB | 161 MB | 9.85x |
+| 64 MiB | 543 MB | 8.29x |
+| 128 MiB | 1,053 MB | 8.04x |
+
+These are single-record measurements at those three sizes, and the multiple is
+not constant across them. Sizing above 128 MiB by extrapolating it is an
+estimate, not a measurement; larger records have not been measured.
+
+Records above the budget run alone, so a small number of large serialized records
+can limit parallelism; quantifying that limit requires a measured time profile,
+which the helper does not currently emit.
 
 ## Prepare the helper
 
