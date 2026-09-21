@@ -44,6 +44,50 @@ def cpu_placement_requirement() -> str:
     )
 
 
+def _config_is_enabled(value: Any) -> bool:
+    """Return whether a config flag uses an enabled truthy string form."""
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_source_sha(value: str) -> bool:
+    """Return whether a value is an exact lowercase 40-character hexadecimal SHA."""
+    return len(value) == 40 and all(char in "0123456789abcdef" for char in value)
+
+
+def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
+    """Mirror the renderer's two independent ``config.source_sha`` gates.
+
+    ``skypilot_render.build_skypilot_task_doc`` normalizes the value with
+    ``strip().lower()`` and then (1) rejects any non-empty value that is not an
+    exact 40-character hexadecimal SHA regardless of baked mode, and (2) requires
+    a value to be present when ``require_baked_npa`` is enabled. Reproduce both so
+    a missing or malformed attestation is reported by preflight rather than as a
+    per-step render error.
+    """
+    issues: list[Issue] = []
+    require_baked = _config_is_enabled(config.get("require_baked_npa"))
+    source_sha_value = str(config.get("source_sha") or "").strip().lower()
+    if source_sha_value and not _is_source_sha(source_sha_value):
+        issues.append(
+            (
+                "config.source_sha is not an exact 40-character hexadecimal source "
+                "attestation",
+                "set --var source_sha=<40-hex> to the exact source commit the "
+                "attested immutable task images were built from",
+            )
+        )
+    elif require_baked and not source_sha_value:
+        issues.append(
+            (
+                "config.source_sha is missing while config.require_baked_npa is "
+                "enabled",
+                "set --var source_sha=<40-hex> to the exact source commit the "
+                "attested immutable task images were built from",
+            )
+        )
+    return issues
+
+
 def static_prerequisites(
     config: Mapping[str, Any],
     *,
@@ -70,6 +114,8 @@ def static_prerequisites(
                 "verify the exact bytes",
             )
         )
+
+    issues.extend(_source_sha_issues(config))
 
     pvc = str(config.get("isaac_cache_pvc") or "").strip()
     if not pvc:

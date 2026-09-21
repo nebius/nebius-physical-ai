@@ -31,6 +31,12 @@ SPEC = (
 COSMOS3_SPEC = (
     Path(__file__).resolve().parents[3] / "workflows" / "main" / "paidf-cosmos3.yaml"
 )
+NVIDIA_VDA_SPEC = (
+    Path(__file__).resolve().parents[3]
+    / "workflows"
+    / "testing"
+    / "nvidia-paidf-vda-cosmos-transfer25.yaml"
+)
 SIM2REAL_SPEC = (
     Path(__file__).resolve().parents[3] / "workflows" / "main" / "sim2real.yaml"
 )
@@ -40,6 +46,32 @@ SONIC_SPEC = (
     / "testing"
     / "sonic-export-eval.yaml"
 )
+
+
+def test_nvidia_vda_conditioning_policy_is_versioned_by_the_committed_spec() -> None:
+    from npa.cli.workbench.workflow import _paidf_conditioning_policy
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+
+    assert (
+        _paidf_conditioning_policy(NVIDIA_PAIDF_VDA_WORKFLOW_NAME, {})
+        == "source-fidelity-v2"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == "source-fidelity-v3"
+    )
+    assert (
+        _paidf_conditioning_policy(
+            "physical-ai-data-factory",
+            {"input_conditioning_policy": "source-fidelity-v3"},
+        )
+        == ""
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -82,6 +114,24 @@ def _submit_cosmos3(*args: str):
             str(COSMOS3_SPEC),
             "--run-id",
             "paidf-cosmos3-preflight-demo",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            *args,
+        ],
+    )
+
+
+def _submit_nvidia_vda(*args: str):
+    return runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(NVIDIA_VDA_SPEC),
+            "--run-id",
+            "nvidia-vda-preflight-demo",
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
@@ -597,6 +647,25 @@ def test_plan_only_without_source_uri_is_read_only(
     assert not state_root.exists()
     stage.assert_not_called()
     upload_input.assert_not_called()
+
+
+def test_nvidia_vda_plan_stages_input_beneath_its_own_run_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+
+    result = _submit_nvidia_vda(
+        "--plan-only", "--var", "bucket=real-bucket", "--output-format", "json"
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["plan"]["steps"][0]["state"] == "record-upstream"
+    serialized_plan = json.dumps(payload["plan"], sort_keys=True)
+    assert (
+        "s3://real-bucket/nvidia-paidf-vda-cosmos-transfer25/"
+        "nvidia-vda-preflight-demo/input/"
+    ) in serialized_plan
 
 
 def test_plan_only_human_output_is_compact_and_details_are_explicit() -> None:

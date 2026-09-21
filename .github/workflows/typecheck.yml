@@ -11,6 +11,10 @@ permissions:
 
 jobs:
   mypy:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'test-1' || 'test' }}
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
