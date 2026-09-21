@@ -1,0 +1,235 @@
+{
+  "camera": {
+    "azim": -55,
+    "bounds": "per-capture equal cube over complete path plus goal, 30% total margin, minimum span 0.12m",
+    "elev": 25
+  },
+  "captures": [
+    {
+      "bytes": 165114,
+      "dataset": null,
+      "hardware": "B200",
+      "kind": "golden",
+      "mode": null,
+      "name": "b200-golden-feasible-v3.png",
+      "role": "feasible",
+      "selection_order": 0,
+      "sha256": "bfba8b7cba4c888e2a78bbdb97f91efb35f12b4cca34358cd5cbfa3c4f694087"
+    },
+    {
+      "bytes": 185305,
+      "dataset": null,
+      "hardware": "B200",
+      "kind": "golden",
+      "mode": null,
+      "name": "b200-golden-blocked-v3.png",
+      "role": "blocked",
+      "selection_order": 1,
+      "sha256": "af6506da24ff2374412de94133b684572447f7ce2231988f444f353c55cc88be"
+    },
+    {
+      "bytes": 166280,
+      "dataset": null,
+      "hardware": "RTX_PRO_6000",
+      "kind": "golden",
+      "mode": null,
+      "name": "rtx_pro_6000-golden-feasible-v3.png",
+      "role": "feasible",
+      "selection_order": 2,
+      "sha256": "188e3d2f575b1648f54d7d43c8f625d1744d61832b5b1670f552518a5205e2a7"
+    },
+    {
+      "bytes": 186470,
+      "dataset": null,
+      "hardware": "RTX_PRO_6000",
+      "kind": "golden",
+      "mode": null,
+      "name": "rtx_pro_6000-golden-blocked-v3.png",
+      "role": "blocked",
+      "selection_order": 3,
+      "sha256": "22c45411baf2bf80bdde5d0f1da9d8304f804cd67b85b3902b7e78e16678ccd0"
+    },
+    {
+      "bytes": 202769,
+      "dataset": "motion_benchmaker",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "kinematic",
+      "name": "b200-motion-benchmaker-kinematic-success-v3.png",
+      "role": "success",
+      "selection_order": 4,
+      "sha256": "f847a5beb4c21cc3a94594d000483b81b3b06124241c1e11e70725354e408a27"
+    },
+    {
+      "bytes": 205960,
+      "dataset": "motion_benchmaker",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "kinematic",
+      "name": "b200-motion-benchmaker-kinematic-failed-v3.png",
+      "role": "failed",
+      "selection_order": 5,
+      "sha256": "6069d7964e2c9084e3ac5685598b61df0616a6785d7cb5f17e82ede93f27ebd7"
+    },
+    {
+      "bytes": 197551,
+      "dataset": "motion_benchmaker",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "dynamics",
+      "name": "b200-motion-benchmaker-dynamics-success-v3.png",
+      "role": "success",
+      "selection_order": 6,
+      "sha256": "539bc04c0fd7f7a95079ae5f0671f026dd72f4175bee0b22042c4a2bb170e463"
+    },
+    {
+      "bytes": 171439,
+      "dataset": "motion_benchmaker",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "dynamics",
+      "name": "b200-motion-benchmaker-dynamics-last-success-no-failure-observed-v3.png",
+      "role": "last_success_no_failure_observed",
+      "selection_order": 7,
+      "sha256": "cf920fa7a999c2aef84a5b5986867bbc39a44e8c46fe656c70c874810d4d6eec"
+    },
+    {
+      "bytes": 165915,
+      "dataset": "mpinets",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "kinematic",
+      "name": "b200-mpinets-kinematic-success-v3.png",
+      "role": "success",
+      "selection_order": 8,
+      "sha256": "8f6e2bff258e8d4dc45c403dfe38ca54c869282d9823757bc87231222322d98f"
+    },
+    {
+      "bytes": 201400,
+      "dataset": "mpinets",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "kinematic",
+      "name": "b200-mpinets-kinematic-failed-v3.png",
+      "role": "failed",
+      "selection_order": 9,
+      "sha256": "fd3ae388e7b19335bfb2f29fad580b93b626e36e83e14feaf9c1057602416583"
+    },
+    {
+      "bytes": 167040,
+      "dataset": "mpinets",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "dynamics",
+      "name": "b200-mpinets-dynamics-success-v3.png",
+      "role": "success",
+      "selection_order": 10,
+      "sha256": "193c0efa72b4f8016eb1c1aae29e7e86980b40f7334ddb8ed424783fcd0d886b"
+    },
+    {
+      "bytes": 201318,
+      "dataset": "mpinets",
+      "hardware": "B200",
+      "kind": "benchmark",
+      "mode": "dynamics",
+      "name": "b200-mpinets-dynamics-failed-v3.png",
+      "role": "failed",
+      "selection_order": 11,
+      "sha256": "3b418d496a88d1526a12d9156f9da8334ae08295a953d49f98bc9e814d03689e"
+    }
+  ],
+  "cell_counts": {
+    "motion_benchmaker::dynamics": {
+      "invalid": 1,
+      "success": 799
+    },
+    "motion_benchmaker::kinematic": {
+      "failed": 2,
+      "invalid": 1,
+      "success": 797
+    },
+    "mpinets::dynamics": {
+      "failed": 8,
+      "invalid": 9,
+      "success": 1783
+    },
+    "mpinets::kinematic": {
+      "failed": 8,
+      "invalid": 9,
+      "success": 1783
+    }
+  },
+  "claim_boundary": "Factual path/goal/status presentation only; no collision, torque, hidden-state, or robot-safety claim.",
+  "judge_summary": {
+    "disclosed_failures": [
+      "identity-mismatch false passes",
+      "clipped-path false pass",
+      "valid-path false negative under superseded global scaling",
+      "alternative models failed disclosed calibration",
+      "explicit-observable protocol did not qualify"
+    ],
+    "final_calls": 0,
+    "qualified": false,
+    "real_hosted_calls": 60,
+    "returned_total_tokens": 56535,
+    "critical_observations": [
+      "MiniMax score-v1 false-passed an acknowledged kinematic-vs-dynamics mismatch.",
+      "MiniMax score-v2 rejected a valid path that global axis scaling visually collapsed; this prompted deterministic per-capture complete-path bounds.",
+      "With corrected path visibility, MiniMax score-v3 false-passed both a clipped 44/81 path and an acknowledged mode mismatch; one response rationale said the mismatch required score 0.0 while returning score 0.9/pass.",
+      "MiniCPM-V-4_5 and Gemma-3-27B failed disclosed calibration.",
+      "The prospective explicit-observable protocol remained unqualified because MiniMax produced malformed JSON on several cases and false negatives on valid disclosed passes."
+    ],
+    "final_result": "NOT_EXECUTED_AS_REQUIRED_BY_FROZEN_PLAN"
+  },
+  "non_claims": [
+    "collision freedom",
+    "torque validity",
+    "hidden planner state",
+    "robot safety",
+    "final visual acceptance"
+  ],
+  "rrd_groups": {
+    "b200-benchmark-selected": {
+      "journal_sha256": "cafe4c0dfa889a97621d9dac4ca44037d435aa5547ac42b4cdeddcbc1c927360",
+      "row_count": 8,
+      "rrd_bytes": 636788,
+      "rrd_sha256": "c1136fea01d767c1e5790dd686d2b14d1193709d839a3bc30c3a976a955da76b"
+    },
+    "b200-golden": {
+      "journal_sha256": "cdd4ff93b431af6bd7f9f9e569f51033c0ecefed50c3811b4f355a932ee7f312",
+      "row_count": 2,
+      "rrd_bytes": 164514,
+      "rrd_sha256": "7e6a938d7e5d5c501782985a927068b0916d86dbdd245dfe914bd86889a73986"
+    },
+    "rtx-golden": {
+      "journal_sha256": "59488628f7f2d1f82c8fe9c39c0562746c776088ac56bd4aa0d5657e5477e75b",
+      "row_count": 2,
+      "rrd_bytes": 164294,
+      "rrd_sha256": "571f9b7cd22e06b6789b5512795c1cecb68012732f74f3008f4a384c23c725a7"
+    }
+  },
+  "schema": "curobo.visual-review.public-candidate.v1",
+  "selection_rule": "Frozen plan v2 order: both golden feasible/blocked, then first success/first failure for motion_benchmaker kinematic,dynamics (3 kg) and mpinets kinematic,dynamics (3 kg); fallback last success only when no failure exists.",
+  "source_head": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
+  "status": "visual-judge-not-qualified",
+  "validation": {
+    "all_recordings_verified_and_semantically_compared": true,
+    "independent_hygiene_receipt_sha256": "265469018af06722b4a1a0136e934a8483acd1ed45b66edf394b78425bbc2ac7",
+    "exhaustive_arrow_string_scan": true,
+    "private_literal_count": 41,
+    "private_matches": 0,
+    "all_native_png_metadata_checked": true,
+    "original_gpu_workflows": "FAILED_AT_VISUALIZATION",
+    "retained_cpu_recording_repair": "PASS_ON_BOTH_FULL_JOURNALS",
+    "updated_image_qualification": "PENDING",
+    "full_suite": {
+      "source": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
+      "passed": 24243,
+      "skipped": 154,
+      "xpassed": 1,
+      "failed": 0,
+      "errors": 0,
+      "live_gpu_e2e_excluded": true
+    }
+  }
+}
