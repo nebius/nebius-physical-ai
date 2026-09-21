@@ -39,7 +39,9 @@ def _write(path, content):
 
 def _binary():
     machine = "macos-aarch64" if platform.machine() == "arm64" else "macos-x86_64"
-    extensions = list(Path.home().glob(f".vscode/extensions/openai.chatgpt-*/bin/{machine}/codex"))
+    extensions = list(
+        Path.home().glob(f".vscode/extensions/openai.chatgpt-*/bin/{machine}/codex")
+    )
     if extensions:
         return str(max(extensions, key=lambda path: path.stat().st_mtime))
     binary = shutil.which("codex")
@@ -52,7 +54,9 @@ def _node():
     binary = shutil.which("node")
     if not binary:
         raise RuntimeError("Install Node.js 22.13 or newer for the Mac adapter.")
-    version = subprocess.check_output([binary, "--version"], text=True).strip().lstrip("v")
+    version = (
+        subprocess.check_output([binary, "--version"], text=True).strip().lstrip("v")
+    )
     if tuple(int(part) for part in version.split(".")[:2]) < (22, 13):
         raise RuntimeError("The Mac adapter requires Node.js 22.13 or newer.")
     return binary
@@ -63,12 +67,20 @@ def _gateway_password(info):
         return info["password"]
     access = Path.home() / ".codex-mobile/access.txt"
     if not access.exists():
-        raise RuntimeError("The existing mobile gateway's private access file is required for migration.")
-    values = dict(line.split(": ", 1) for line in access.read_text().splitlines() if ": " in line)
+        raise RuntimeError(
+            "The existing mobile gateway's private access file is required for migration."
+        )
+    values = dict(
+        line.split(": ", 1) for line in access.read_text().splitlines() if ": " in line
+    )
     password = values.get("Password", "")
-    digest = hashlib.scrypt(password.encode(), salt=info["salt"].encode(), n=16384, r=8, p=1, dklen=64)
+    digest = hashlib.scrypt(
+        password.encode(), salt=info["salt"].encode(), n=16384, r=8, p=1, dklen=64
+    )
     if not hmac.compare_digest(digest.hex(), info["password_hash"]):
-        raise RuntimeError("The saved mobile login does not match the selected gateway.")
+        raise RuntimeError(
+            "The saved mobile login does not match the selected gateway."
+        )
     return password
 
 
@@ -84,15 +96,29 @@ def _configuration(gateway_host, port, gateway_port):
         return config
     info = gateway_operation(gateway_host, "inspect") if gateway_host else None
     origin = info["origin"] if info else f"http://127.0.0.1:{port}"
-    _write(root / "password", _gateway_password(info) if info else secrets.token_urlsafe(32))
-    return {"backend": "native", "host_label": "your Mac", "node": _node(),
-            "binary": _binary(), "codexHome": os.environ.get("CODEX_HOME", str(Path.home() / ".codex")),
-            "defaultCwd": str(Path.cwd()), "cwd": str(Path.cwd()), "socket": "",
-            "port": port, "gateway_port": gateway_port, "gateway_host": gateway_host,
-            "username": info["username"] if info else "developer", "origin": origin,
-            "password_file": str(root / "password"),
-            "session_secret": info.get("session_secret") if info else None,
-            "url": origin + ("/local-chat/" if info and info["kind"] == "desktop" else "/chat/")}
+    _write(
+        root / "password",
+        _gateway_password(info) if info else secrets.token_urlsafe(32),
+    )
+    return {
+        "backend": "native",
+        "host_label": "your Mac",
+        "node": _node(),
+        "binary": _binary(),
+        "codexHome": os.environ.get("CODEX_HOME", str(Path.home() / ".codex")),
+        "defaultCwd": str(Path.cwd()),
+        "cwd": str(Path.cwd()),
+        "socket": "",
+        "port": port,
+        "gateway_port": gateway_port,
+        "gateway_host": gateway_host,
+        "username": info["username"] if info else "developer",
+        "origin": origin,
+        "password_file": str(root / "password"),
+        "session_secret": info.get("session_secret") if info else None,
+        "url": origin
+        + ("/local-chat/" if info and info["kind"] == "desktop" else "/chat/"),
+    }
 
 
 def _adopt_gateway(config, host):
@@ -102,19 +128,40 @@ def _adopt_gateway(config, host):
     _write(_root() / "password.previous", Path(config["password_file"]).read_text())
     password_path = _root() / "gateway-password"
     _write(password_path, password)
-    return {**config, "gateway_host": host, "origin": info["origin"],
-            "password_file": str(password_path),
-            "username": info["username"], "session_secret": info.get("session_secret"),
-            "url": info["origin"] + ("/local-chat/" if info["kind"] == "desktop" else "/chat/")}
+    return {
+        **config,
+        "gateway_host": host,
+        "origin": info["origin"],
+        "password_file": str(password_path),
+        "username": info["username"],
+        "session_secret": info.get("session_secret"),
+        "url": info["origin"]
+        + ("/local-chat/" if info["kind"] == "desktop" else "/chat/"),
+    }
 
 
 def _install_assets(root):
     source = Path(__file__).parent
-    names = ["chat_server.py", "chat_rpc.py", "chat_history.py", "chat_models.py",
-             "chat_delivery.py", "chat_session.py", "chat_native.py", "chat.html", "chat.css", "chat.js"]
+    names = [
+        "chat_server.py",
+        "chat_rpc.py",
+        "chat_history.py",
+        "chat_models.py",
+        "chat_delivery.py",
+        "chat_session.py",
+        "chat_native.py",
+        "chat.html",
+        "chat.css",
+        "chat.js",
+    ]
     assets = {name: (source / name).read_text() for name in names}
-    assets.update({"native/" + path.name: path.read_text()
-                   for path in (source / "native").iterdir() if path.is_file()})
+    assets.update(
+        {
+            "native/" + path.name: path.read_text()
+            for path in (source / "native").iterdir()
+            if path.is_file()
+        }
+    )
     digest = hashlib.sha256(json.dumps(assets, sort_keys=True).encode()).hexdigest()
     runtime = root / "versions" / digest
     if (runtime / ".ready").exists():
@@ -122,8 +169,13 @@ def _install_assets(root):
     runtime.mkdir(parents=True, exist_ok=True)
     for name, content in assets.items():
         _write(runtime / name, content)
-    subprocess.run(["npm", "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
-                   cwd=runtime / "native", check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        ["npm", "ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
+        cwd=runtime / "native",
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     _write(runtime / ".ready", digest)
     return runtime
 
@@ -143,14 +195,21 @@ def setup_local(*, gateway_host=None, port=6091, gateway_port=6091, dry_run=Fals
         RuntimeError: Prerequisites or the existing gateway are unavailable.
     """
     if platform.system() != "Darwin":
-        raise ValueError("--local currently supports macOS; use --ssh-host for Linux desktops.")
+        raise ValueError(
+            "--local currently supports macOS; use --ssh-host for Linux desktops."
+        )
     if not all(1024 <= value <= 65535 for value in (port, gateway_port)):
         raise ValueError("Choose unprivileged local and gateway ports.")
     if gateway_host:
         _validate_host(gateway_host)
     if dry_run:
-        return {"planned": True, "runtime": "local", "gateway": bool(gateway_host),
-                "port": port, "gateway_port": gateway_port}
+        return {
+            "planned": True,
+            "runtime": "local",
+            "gateway": bool(gateway_host),
+            "port": port,
+            "gateway_port": gateway_port,
+        }
     root = _root()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (root / "operation.lock").open("a") as lock:
@@ -159,7 +218,9 @@ def setup_local(*, gateway_host=None, port=6091, gateway_port=6091, dry_run=Fals
 
 
 def _apply_local(root, gateway_host, port, gateway_port):
-    previous = (root / "config.json").read_text() if (root / "config.json").exists() else None
+    previous = (
+        (root / "config.json").read_text() if (root / "config.json").exists() else None
+    )
     config = _configuration(gateway_host, port, gateway_port)
     config.setdefault("installation_id", str(uuid.uuid4()))
     if not service_running(_LABEL):
@@ -181,20 +242,38 @@ def _apply_local(root, gateway_host, port, gateway_port):
         if previous:
             _write(root / "config.json", previous)
         raise
-    install_service(_LABEL, [sys.executable, str(runtime / "chat_server.py"), str(root / "config.json"), version], root)
+    install_service(
+        _LABEL,
+        [
+            sys.executable,
+            str(runtime / "chat_server.py"),
+            str(root / "config.json"),
+            version,
+        ],
+        root,
+    )
     _connect_gateway(config, root)
     return local_status()
 
 
 def _prepare_engine(config, runtime):
-    contents = [path.read_bytes() for path in sorted((runtime / "native").iterdir()) if path.is_file()]
-    settings = {key: config.get(key) for key in ("binary", "node", "codexHome", "defaultCwd")}
-    digest = hashlib.sha256(b"".join(contents) + json.dumps(settings, sort_keys=True).encode()).hexdigest()
+    contents = [
+        path.read_bytes()
+        for path in sorted((runtime / "native").iterdir())
+        if path.is_file()
+    ]
+    settings = {
+        key: config.get(key) for key in ("binary", "node", "codexHome", "defaultCwd")
+    }
+    digest = hashlib.sha256(
+        b"".join(contents) + json.dumps(settings, sort_keys=True).encode()
+    ).hexdigest()
     if config.get("native_version") == digest:
         return None
     connection = None
     if service_running(_LABEL + ".engine"):
         from .chat_native import native_connection
+
         connection = native_connection(config, _root() / "config.json", None)
         try:
             connection.call("runtime/prepareUpdate", {})
@@ -206,8 +285,13 @@ def _prepare_engine(config, runtime):
 
 
 def _install_engine(config, root, prepared):
-    command = [config["node"], str(Path(config["native_runtime_path"]) / "native/bridge.mjs"),
-               str(root / "config.json"), "--serve", config["native_version"]]
+    command = [
+        config["node"],
+        str(Path(config["native_runtime_path"]) / "native/bridge.mjs"),
+        str(root / "config.json"),
+        "--serve",
+        config["native_version"],
+    ]
     try:
         install_service(_LABEL + ".engine", command, root)
     except (OSError, subprocess.SubprocessError):
@@ -223,13 +307,19 @@ def _check_upgrade(config, runtime):
     if not service_running(_LABEL) or config.get("runtime_path") == str(runtime):
         return
     password = Path(config["password_file"]).read_text().strip()
-    authorization = base64.b64encode(f'{config["username"]}:{password}'.encode()).decode()
-    request = Request(f'http://127.0.0.1:{config["port"]}/chat/api/state',
-                      headers={"Authorization": "Basic " + authorization})
+    authorization = base64.b64encode(
+        f"{config['username']}:{password}".encode()
+    ).decode()
+    request = Request(
+        f"http://127.0.0.1:{config['port']}/chat/api/state",
+        headers={"Authorization": "Basic " + authorization},
+    )
     with urlopen(request) as response:
         state = json.load(response)
     if state.get("runtime", {}).get("ownedActive"):
-        raise RuntimeError("Wait for mobile-owned turns to finish before updating local chat.")
+        raise RuntimeError(
+            "Wait for mobile-owned turns to finish before updating local chat."
+        )
 
 
 def _connect_gateway(config, root):
@@ -238,9 +328,15 @@ def _connect_gateway(config, root):
         return
     command = tunnel_command(host, config["port"], config["gateway_port"])
     install_service(_LABEL + ".tunnel", command, root)
-    gateway_operation(host, "configure", origin=config["origin"], port=config["gateway_port"],
-                      installation_id=config["installation_id"], username=config["username"],
-                      password=Path(config["password_file"]).read_text().strip())
+    gateway_operation(
+        host,
+        "configure",
+        origin=config["origin"],
+        port=config["gateway_port"],
+        installation_id=config["installation_id"],
+        username=config["username"],
+        password=Path(config["password_file"]).read_text().strip(),
+    )
 
 
 def local_status():
@@ -257,11 +353,18 @@ def local_status():
     if not path.exists():
         return {"installed": False, "runtime": "local"}
     config = json.loads(path.read_text())
-    return {"installed": True, "runtime": "local", "url": config["url"],
-            "service_running": service_running(_LABEL),
-            "engine_running": service_running(_LABEL + ".engine"),
-            "tunnel_running": service_running(_LABEL + ".tunnel") if config.get("gateway_host") else None,
-            "credentials_file": config.get("password_file", str(_root() / "password")), "username": config["username"]}
+    return {
+        "installed": True,
+        "runtime": "local",
+        "url": config["url"],
+        "service_running": service_running(_LABEL),
+        "engine_running": service_running(_LABEL + ".engine"),
+        "tunnel_running": service_running(_LABEL + ".tunnel")
+        if config.get("gateway_host")
+        else None,
+        "credentials_file": config.get("password_file", str(_root() / "password")),
+        "username": config["username"],
+    }
 
 
 def open_local():

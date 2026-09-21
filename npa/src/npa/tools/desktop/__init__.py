@@ -17,7 +17,12 @@ def _validate_host(host: str) -> None:
 
 def _configuration(action: str, options: dict) -> dict:
     if action not in {
-        "setup", "status", "display", "public-access", "chat-setup", "optimize"
+        "setup",
+        "status",
+        "display",
+        "public-access",
+        "chat-setup",
+        "optimize",
     }:
         raise ValueError("Unsupported desktop action.")
     result = {"action": action, **options}

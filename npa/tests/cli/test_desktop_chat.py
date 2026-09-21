@@ -10,7 +10,9 @@ import httpx
 import pytest
 
 from npa.tools.desktop.chat_server import (
-    ChatHandler, _answer_result, _update_created_threads,
+    ChatHandler,
+    _answer_result,
+    _update_created_threads,
 )
 from npa.tools.desktop.chat_rpc import CodexConnection
 from npa.tools.desktop.chat_history import owned_elsewhere
@@ -93,7 +95,11 @@ def test_wrong_password_cannot_read_threads(chat):
 
 def test_send_identity_is_forwarded_and_replayed_without_a_second_turn(chat):
     client, rpc = chat
-    body = {"id": "existing-thread", "text": "one send", "clientUserMessageId": str(uuid.uuid4())}
+    body = {
+        "id": "existing-thread",
+        "text": "one send",
+        "clientUserMessageId": str(uuid.uuid4()),
+    }
     assert client.post("/chat/api/send", json=body).status_code == 200
     assert client.post("/chat/api/send", json=body).status_code == 200
     sends = [call for call in rpc.call.call_args_list if call.args[0] == "turn/start"]
@@ -104,15 +110,23 @@ def test_send_identity_is_forwarded_and_replayed_without_a_second_turn(chat):
 def test_image_only_prompt_preserves_image_input(chat):
     client, rpc = chat
     image = "data:image/png;base64,aGVsbG8="
-    response = client.post("/chat/api/send", json={"id": "existing-thread", "images": [image]})
+    response = client.post(
+        "/chat/api/send", json={"id": "existing-thread", "images": [image]}
+    )
     assert response.status_code == 200
     assert rpc.call.call_args.args[1]["input"][-1] == {"type": "image", "url": image}
 
 
-@pytest.mark.parametrize("image", ["https://example.test/private.png", "data:image/svg+xml;base64,PHN2Zz4=", {}])
+@pytest.mark.parametrize(
+    "image",
+    ["https://example.test/private.png", "data:image/svg+xml;base64,PHN2Zz4=", {}],
+)
 def test_images_cannot_fetch_remote_resources_or_execute_svg(chat, image):
     client, rpc = chat
-    response = client.post("/chat/api/send", json={"id": "existing-thread", "text": "image", "images": [image]})
+    response = client.post(
+        "/chat/api/send",
+        json={"id": "existing-thread", "text": "image", "images": [image]},
+    )
     assert response.status_code == 400
     assert all(call.args[0] != "turn/start" for call in rpc.call.call_args_list)
 
@@ -290,7 +304,8 @@ def test_model_catalog_reads_all_pages_without_hardcoded_model_names():
         {"data": [{**_MODEL, "model": "another-model"}], "nextCursor": None},
     ]
     assert [model["model"] for model in available_models(rpc)] == [
-        "example-model", "another-model"
+        "example-model",
+        "another-model",
     ]
     rpc.call.assert_called_with(
         "model/list", {"includeHidden": False, "cursor": "next-page"}
@@ -350,7 +365,8 @@ def test_settings_change_updates_the_same_thread_without_starting_a_turn(chat):
 def test_settings_change_rejects_a_foreign_origin(chat):
     client, rpc = chat
     response = client.post(
-        "/chat/api/settings", json={"id": "thread", "model": "example-model"},
+        "/chat/api/settings",
+        json={"id": "thread", "model": "example-model"},
         headers={"Origin": "https://hostile.example.test"},
     )
     assert response.status_code == 403
@@ -364,18 +380,26 @@ def test_native_first_turn_invalidates_unmaterialized_mobile_history():
     rpc.events = deque()
     rpc.sequence = 0
     rpc.on_notification = lambda message: _update_created_threads(created, message)
-    rpc._receive({
-        "method": "thread/settings/updated",
-        "params": {"threadId": "new-thread", "threadSettings": {
-            "model": "updated-model", "effort": "low",
-        }},
-    })
+    rpc._receive(
+        {
+            "method": "thread/settings/updated",
+            "params": {
+                "threadId": "new-thread",
+                "threadSettings": {
+                    "model": "updated-model",
+                    "effort": "low",
+                },
+            },
+        }
+    )
     assert created["new-thread"]["model"] == "updated-model"
     assert created["new-thread"]["reasoningEffort"] == "low"
-    rpc._receive({
-        "method": "turn/started",
-        "params": {"threadId": "new-thread", "turn": {"id": "native-turn"}},
-    })
+    rpc._receive(
+        {
+            "method": "turn/started",
+            "params": {"threadId": "new-thread", "turn": {"id": "native-turn"}},
+        }
+    )
     assert "new-thread" not in created
     assert rpc.sequence == 2
     assert rpc.events[-1][1]["method"] == "turn/started"

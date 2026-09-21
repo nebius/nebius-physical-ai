@@ -119,7 +119,9 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _guard(self, mutation=False):
         config = self.server.config
         password = Path(config["password_file"]).read_text().strip()
-        if not mobile_session(self.headers.get("Cookie", ""), config.get("session_secret")) and not _authorized(
+        if not mobile_session(
+            self.headers.get("Cookie", ""), config.get("session_secret")
+        ) and not _authorized(
             self.headers.get("Authorization", ""), config["username"], password
         ):
             self._respond(
@@ -184,7 +186,12 @@ class ChatHandler(BaseHTTPRequestHandler):
             return {"data": available_models(rpc)}
         if path == "/chat/api/modes":
             modes = rpc.call("collaborationMode/list", {})["data"]
-            return {"data": [{"mode": mode["mode"], "name": mode.get("name", mode["mode"])} for mode in modes]}
+            return {
+                "data": [
+                    {"mode": mode["mode"], "name": mode.get("name", mode["mode"])}
+                    for mode in modes
+                ]
+            }
         if path == "/chat/api/threads":
             return self._list_threads(query)
         if path == "/chat/api/thread":
@@ -203,7 +210,9 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "installationId": self.server.config.get("installation_id"),
                 "hostLabel": self.server.config.get("host_label", "VDI"),
                 "native": self.server.config.get("backend") == "native",
-                "runtime": rpc.call("runtime/status", {}) if self.server.config.get("backend") == "native" else {},
+                "runtime": rpc.call("runtime/status", {})
+                if self.server.config.get("backend") == "native"
+                else {},
             }
         raise ValueError("Unknown chat route.")
 
@@ -221,8 +230,10 @@ class ChatHandler(BaseHTTPRequestHandler):
         return self.server.rpc.call(
             "thread/turns/list",
             {
-                "threadId": query["id"], "limit": 10,
-                "sortDirection": "desc", "itemsView": "full",
+                "threadId": query["id"],
+                "limit": 10,
+                "sortDirection": "desc",
+                "itemsView": "full",
                 "cursor": query.get("cursor"),
             },
         )
@@ -311,7 +322,9 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _new_thread(self, body):
         cwd = Path(body.get("cwd") or self.server.config["cwd"]).expanduser()
         if not cwd.is_dir():
-            raise ValueError("Choose an existing project directory on the execution host.")
+            raise ValueError(
+                "Choose an existing project directory on the execution host."
+            )
         result = self.server.rpc.call("thread/start", {"cwd": str(cwd.resolve())})
         self.server.attached.add(result["thread"]["id"])
         if self.server.config.get("backend") != "native":
@@ -363,9 +376,11 @@ class ChatHandler(BaseHTTPRequestHandler):
         if not isinstance(text, str) or (not text.strip() and not images):
             raise ValueError("Write a message first.")
         if not isinstance(images, list) or any(
-            not isinstance(image, str) or not re.fullmatch(
+            not isinstance(image, str)
+            or not re.fullmatch(
                 r"data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+", image
-            ) for image in images
+            )
+            for image in images
         ):
             raise ValueError("Attach PNG, JPEG, or WebP images.")
         return self._deliver(body, text, images)
@@ -412,8 +427,10 @@ def main(config_path):
     server.attached = set()
     server.created = {}
     server.deliveries = Deliveries(Path(config_path).parent / "deliveries.sqlite")
+
     def notify(message):
         _update_created_threads(server.created, message)
+
     if config.get("backend") == "native":
         try:
             from .chat_native import native_connection

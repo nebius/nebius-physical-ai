@@ -35,7 +35,9 @@ class NativeTransport:
         adapter = Path(__file__).parent / "native" / "bridge.mjs"
         self.child = subprocess.Popen(
             [config["node"], str(adapter), str(config_path)],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
         )
         self.reader = self.child.stdout
         self.writer = self.child.stdin

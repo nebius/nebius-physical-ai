@@ -35,7 +35,9 @@ def model_selection(rpc, body, thread):
         RuntimeError: Codex cannot provide its catalog.
     """
     if set(body) - {"id", "model", "effort", "serviceTier", "mode"}:
-        raise ValueError("Only model and reasoning settings, speed, and mode can be changed here.")
+        raise ValueError(
+            "Only model and reasoning settings, speed, and mode can be changed here."
+        )
     name = body.get("model", thread.get("model"))
     model = next((m for m in available_models(rpc) if m["model"] == name), None)
     if model is None:

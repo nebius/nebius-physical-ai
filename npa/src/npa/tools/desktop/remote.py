@@ -281,9 +281,18 @@ def _optimize(environment=None):
         ("xsettings", "/Gtk/EnableAnimations"),
     ]:
         _command(
-            prefix + [
-                "xfconf-query", "-c", channel, "-p", key,
-                "-n", "-t", "bool", "-s", "false",
+            prefix
+            + [
+                "xfconf-query",
+                "-c",
+                channel,
+                "-p",
+                key,
+                "-n",
+                "-t",
+                "bool",
+                "-s",
+                "false",
             ],
             environment=environment,
         )

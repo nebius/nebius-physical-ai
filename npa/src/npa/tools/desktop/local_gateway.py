@@ -25,7 +25,9 @@ def gateway_operation(host, action, **options):
     payload = source + "\nmain(" + repr({"action": action, **options}) + ")\n"
     result = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "--", host, "/usr/bin/python3", "-"],
-        input=payload, text=True, capture_output=True,
+        input=payload,
+        text=True,
+        capture_output=True,
     )
     if result.returncode:
         log = Path.home() / ".local/share/nebius-desktop/local-chat/gateway-error.log"
@@ -33,5 +35,7 @@ def gateway_operation(host, action, **options):
         log.touch(mode=0o600, exist_ok=True)
         log.chmod(0o600)
         log.write_text(result.stderr)
-        raise RuntimeError(f"Gateway operation failed; inspect the private log at {log}.")
+        raise RuntimeError(
+            f"Gateway operation failed; inspect the private log at {log}."
+        )
     return json.loads(result.stdout)

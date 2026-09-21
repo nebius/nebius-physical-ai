@@ -27,12 +27,21 @@ def mobile_session(header, secret):
         if cookie is None:
             return False
         payload, signature = cookie.value.split(".")
-        expected = base64.urlsafe_b64encode(
-            hmac.new(secret.encode(), payload.encode(), hashlib.sha256).digest()
-        ).decode().rstrip("=")
+        expected = (
+            base64.urlsafe_b64encode(
+                hmac.new(secret.encode(), payload.encode(), hashlib.sha256).digest()
+            )
+            .decode()
+            .rstrip("=")
+        )
         if not hmac.compare_digest(signature, expected):
             return False
-        value = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-        return isinstance(value.get("expires"), (int, float)) and value["expires"] > time.time() * 1000
+        value = json.loads(
+            base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))
+        )
+        return (
+            isinstance(value.get("expires"), (int, float))
+            and value["expires"] > time.time() * 1000
+        )
     except (CookieError, ValueError, TypeError, UnicodeDecodeError):
         return False

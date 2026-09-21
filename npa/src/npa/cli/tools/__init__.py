@@ -101,7 +101,9 @@ def display(
 @json_stdout_contract
 def status(
     ssh_host: str | None = typer.Option(None, "--ssh-host"),
-    local: bool = typer.Option(False, "--local", help="Inspect chat running on this Mac."),
+    local: bool = typer.Option(
+        False, "--local", help="Inspect chat running on this Mac."
+    ),
     output_json: bool = typer.Option(False, "--json"),
 ) -> None:
     """Inspect desktop services and recovery records without disclosing secrets.
@@ -118,6 +120,7 @@ def status(
     if local:
         _require_target(ssh_host, local)
         from npa.tools.desktop.local_runtime import local_status
+
         result = local_status()
         typer.echo(json.dumps(result, indent=2))
         return
@@ -187,7 +190,9 @@ def public_access(
 @desktop.command("open")
 def open_cmd(
     ssh_host: str | None = typer.Option(None, "--ssh-host"),
-    local: bool = typer.Option(False, "--local", help="Open chat attached to this Mac."),
+    local: bool = typer.Option(
+        False, "--local", help="Open chat attached to this Mac."
+    ),
     local_port: int = typer.Option(16080, "--local-port", min=1024, max=65535),
     chat: bool = typer.Option(
         False, "--chat", help="Open the mobile Codex chat interface."
@@ -209,6 +214,7 @@ def open_cmd(
         _require_target(ssh_host, local)
         if local:
             from npa.tools.desktop.local_runtime import open_local
+
             typer.echo(open_local())
             return
         typer.echo(open_desktop(ssh_host, local_port=local_port, chat=chat))
@@ -222,8 +228,14 @@ def open_cmd(
 @json_stdout_contract
 def chat_setup(
     ssh_host: str | None = typer.Option(None, "--ssh-host"),
-    local: bool = typer.Option(False, "--local", help="Use Codex and open VS Code chats on this Mac."),
-    gateway_ssh_host: str | None = typer.Option(None, "--gateway-ssh-host", help="Existing managed HTTPS gateway for local chat."),
+    local: bool = typer.Option(
+        False, "--local", help="Use Codex and open VS Code chats on this Mac."
+    ),
+    gateway_ssh_host: str | None = typer.Option(
+        None,
+        "--gateway-ssh-host",
+        help="Existing managed HTTPS gateway for local chat.",
+    ),
     local_port: int = typer.Option(6091, "--local-port", min=1024, max=65535),
     gateway_port: int = typer.Option(6091, "--gateway-port", min=1024, max=65535),
     connect_vscode: bool = typer.Option(
@@ -253,7 +265,9 @@ def chat_setup(
     _require_target(ssh_host, local)
     if local:
         if connect_vscode:
-            raise typer.BadParameter("Local mode follows VS Code automatically; omit --connect-vscode.")
+            raise typer.BadParameter(
+                "Local mode follows VS Code automatically; omit --connect-vscode."
+            )
         _local_setup(gateway_ssh_host, local_port, gateway_port, dry_run, output_json)
         return
     if gateway_ssh_host:
@@ -274,8 +288,11 @@ def _require_target(host, local):
 
 def _local_setup(host, port, gateway_port, dry_run, output_json):
     from npa.tools.desktop.local_runtime import setup_local
+
     try:
-        result = setup_local(gateway_host=host, port=port, gateway_port=gateway_port, dry_run=dry_run)
+        result = setup_local(
+            gateway_host=host, port=port, gateway_port=gateway_port, dry_run=dry_run
+        )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         typer.echo(json.dumps({"error": str(error)}) if output_json else str(error))
         raise typer.Exit(1) from error

@@ -23,8 +23,11 @@ def install_service(label, command, root):
     path = Path.home() / "Library/LaunchAgents" / (label + ".plist")
     path.parent.mkdir(parents=True, exist_ok=True)
     value = {
-        "Label": label, "ProgramArguments": command,
-        "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 5,
+        "Label": label,
+        "ProgramArguments": command,
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ThrottleInterval": 5,
         "WorkingDirectory": str(root),
         "StandardOutPath": str(root / (label + ".log")),
         "StandardErrorPath": str(root / (label + ".error.log")),
@@ -36,7 +39,9 @@ def install_service(label, command, root):
     if path.exists() and path.read_bytes() == data and loaded.returncode == 0:
         return
     if loaded.returncode == 0:
-        subprocess.run(["launchctl", "bootout", target], check=True, capture_output=True)
+        subprocess.run(
+            ["launchctl", "bootout", target], check=True, capture_output=True
+        )
     previous = path.read_bytes() if path.exists() else None
     path.write_bytes(data)
     path.chmod(0o600)
@@ -73,7 +78,8 @@ def service_running(label):
     """
     result = subprocess.run(
         ["launchctl", "print", f"gui/{os.getuid()}/{label}"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     return result.returncode == 0 and "state = running" in result.stdout
 
@@ -91,8 +97,18 @@ def tunnel_command(host, local_port, gateway_port):
         None.
     """
     return [
-        "/usr/bin/ssh", "-NT", "-o", "BatchMode=yes",
-        "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15",
-        "-o", "ServerAliveCountMax=3", "-R",
-        f"127.0.0.1:{gateway_port}:127.0.0.1:{local_port}", "--", host,
+        "/usr/bin/ssh",
+        "-NT",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ServerAliveInterval=15",
+        "-o",
+        "ServerAliveCountMax=3",
+        "-R",
+        f"127.0.0.1:{gateway_port}:127.0.0.1:{local_port}",
+        "--",
+        host,
     ]
