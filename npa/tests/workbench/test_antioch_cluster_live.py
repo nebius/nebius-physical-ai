@@ -77,7 +77,7 @@ def test_cluster_live_rejects_unrecognized_experiment_choices(tmp_path: Path, fi
         _config(tmp_path, **{field: "unreviewed"})
 
 
-@pytest.mark.parametrize("mounts", ["native_wide", "droid_reference", "task_view"])
+@pytest.mark.parametrize("mounts", ["native_wide", "droid_reference", "droid_detail", "task_view"])
 def test_cluster_experiment_choices_reach_vendor_process(tmp_path: Path, monkeypatch, mounts) -> None:
     config = _config(tmp_path, initial_posture="droid", camera_mounts=mounts)
     manifests = cluster_deploy.build_public_manifests(config)

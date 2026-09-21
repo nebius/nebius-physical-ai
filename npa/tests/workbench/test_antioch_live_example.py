@@ -1376,7 +1376,7 @@ def test_live_scene_is_tabletop_lit_and_droid_reset_aligned() -> None:
     assert "world.scene.add_ground_plane(z_position=-0.75, color=" in source
     assert 'prim_path="/World/Tabletop"' in source
     assert 'prim_path="/World/Cube"' in source
-    assert "position=np.array(CUBE_INITIAL_POSITION)" in source
+    assert "position=np.array(cube_initial_position)" in source
     assert "robot.set_joint_positions(" in source
     assert 'WRIST_CAMERA_PATH = "/World/PolicyWrist"' in source
     assert "wrist_mount = _calibrate_wrist_camera_mount(" in source

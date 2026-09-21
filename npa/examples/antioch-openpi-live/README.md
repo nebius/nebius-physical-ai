@@ -59,6 +59,10 @@ The `task_view` alternative uses a fixed exterior camera in front of the table
 and the wider wrist mount. It addresses the reference rig losing the target
 during approach; it preserves all camera, action, contact, and lift checks.
 Use `--set camera_mounts=task_view` or the matching private config value.
+The `droid_detail` rig preserves the reference wrist camera and both reference
+camera poses, increasing only the exterior focal length from 2.1 to 2.8 mm to
+give the cube more model pixels. Select it through `camera_mounts` in the private
+cluster config or `--set camera_mounts=droid_detail` in the scenario CLI.
 Unknown choices fail validation before dispatch. Results retain both the rig
 name and its exact fixed calibration. The reference option restores the
 0.05/0.57/0.66 m exterior mount and converted native wrist mount with a 2.8 mm
@@ -80,13 +84,21 @@ The pickup uses native 320x180 RGB inputs, resized to 224x126 and centered in a
 224x224 black-padded tensor, preserving the wide cameras' aspect ratio. Exposure
 and contrast checks inspect only the content rows, so padding cannot disguise a
 blank or overexposed sensor. Target resolution checks use the exact model pixels.
+Before the first inference, the red target must also clear every edge of each
+sensor's image content. Black letterbox padding is excluded from this boundary
+check. A partly clipped cube can contain enough red pixels to pass the size
+threshold, so clipping has its own `target_clipped` rejection. Later partial
+views remain usable when the other camera resolves the cube or the measured
+grasp provides contact evidence.
 
 The fixed exterior camera views the table from a low side angle, keeping the
 cube clear of the forearm at all seven inspected poses from failed policy runs.
 A fixed wrist bracket moves the camera away from the tool body and uses a wider
-2.1 mm lens. Native diagnostic renders show the complete initial target and
+2.1 mm lens. Native diagnostic renders from the controlled pregrasp pose show the complete initial target and
 improved visibility at both previous closest-approach poses and one earlier
 visibility-loss pose.
+The same wrist mount can clip the cube at the original wider DROID start;
+that combination must pass the initial framing gate before any policy request.
 The wrist still cannot see the cube at every unfavorable arm pose; the independent
 exterior view supplies target visibility then. Both mounts remain fixed to their
 respective world or rigid-body frames and never track the cube.
@@ -167,9 +179,12 @@ The default cluster scenario is `openpi_franka_pickup_v3`. Two valid replies
 establish communication only. Pickup requires at least 5 cm of measured approach,
 force on **both** fingers, and 5 cm of cube lift held continuously for one
 **simulation second** while the gripper is measurably closed from its open width.
-The closure check accommodates the 7 cm cube; it does not incorrectly require
-a finger gap below 4 cm. Both initial action segments must execute before task
-success can be reported.
+The pickup scene uses a 5.5 cm cube, with its size and initial position preserved in
+results. This replaces the earlier 7 cm cube to provide more centering margin
+inside the gripper; results from the two sizes are different task conditions.
+The closure check requires measured closure and bilateral contact, without
+assuming a finger gap below 4 cm. Both initial action segments must execute
+before task success can be reported.
 
 `control_steps` is the finite trial length in applied policy targets, default
 450 (30 nominal seconds of target intervals, excluding inference waits).

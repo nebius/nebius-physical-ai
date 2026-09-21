@@ -61,6 +61,19 @@ def test_camera_rig_selection_keeps_optics_and_calibration_consistent(modules):
     assert camera_calibration() == native
 
 
+def test_detail_rig_retains_reference_frames_and_independent_calibration(modules):
+    from droid_scene import camera_calibration, optical_config
+
+    reference = camera_calibration("droid_reference")
+    detail = camera_calibration("droid_detail")
+    assert detail["wrist"] == reference["wrist"]
+    for key in ("position", "quaternion_wxyz"):
+        assert detail["exterior"][key] == reference["exterior"][key]
+    assert optical_config("exterior", "droid_detail")["focal_length"] > reference["exterior"]["focal_length"]
+    detail["wrist"]["position"] = (0, 0, 0)
+    assert camera_calibration("droid_detail")["wrist"] == reference["wrist"]
+
+
 def test_task_view_retains_cube_and_approach_region(modules):
     from scipy.spatial.transform import Rotation
     from droid_scene import camera_calibration, optical_config
@@ -143,6 +156,31 @@ def test_droid_policy_resize_preserves_aspect_and_measures_model_target_pixels(m
     assert 27 <= frame.target_extent[0] <= 30
     assert 27**2 <= frame.red_cube_pixels <= 30**2
     assert frame.luminance_mean > float(frame.rgb.mean())
+    assert not frame.target_clipped
+
+
+@pytest.mark.parametrize("policy_format", ["square", "droid"])
+@pytest.mark.parametrize("edge", ["top", "bottom", "left", "right"])
+@pytest.mark.parametrize("view", ["exterior", "wrist"])
+def test_startup_rejects_target_cut_by_sensor_edge(modules, policy_format, edge, view):
+    scenario, _episode = modules
+    height, width = (180, 320) if policy_format == "droid" else (224, 224)
+    rows, columns = np.indices((height, width))
+    raw = np.repeat(((rows + columns * 2) % 180 + 30)[..., None], 3, axis=2).astype(np.uint8)
+    y = 0 if edge == "top" else height - 24 if edge == "bottom" else height // 2
+    x = 0 if edge == "left" else width - 24 if edge == "right" else width // 2
+    raw[y:y + 24, x:x + 24] = [220, 12, 8]
+    clipped = scenario._camera_frame_from_buffer(raw, view=view, policy_format=policy_format)
+    assert not clipped.reason and scenario._target_resolved(clipped)
+    clear = scenario._camera_frame_from_buffer(_rgb(shifted=True), view="other")
+    frames = (clipped, clear) if view == "exterior" else (clear, clipped)
+    kwargs = dict(render_sequence=2, last_accepted_render_sequence=1,
+                  exterior_cube_in_frame=True, wrist_cube_in_frame=True)
+    pair = scenario._validate_camera_pair(*frames, initial_alignment=True, **kwargs)
+    assert not pair.accepted and pair.reason == "target_clipped"
+    assert pair.rejected_view == view
+    # A later partial view remains usable when the other camera resolves the cube.
+    assert scenario._validate_camera_pair(*frames, initial_alignment=False, **kwargs).accepted
 
 
 def test_droid_binds_observed_joints_by_name_and_excludes_passive_joints(modules):
@@ -416,7 +454,7 @@ def test_scene_optics_cover_cube_and_approach_region(modules):
         np.subtract(scenario.EXTERIOR_CAMERA_EYE, scenario.CUBE_INITIAL_POSITION)
     )
     projected = (
-        224 * optics["focal_length"] / optics["horizontal_aperture"] * 0.07 / distance
+        224 * optics["focal_length"] / optics["horizontal_aperture"] * scenario.CUBE_SIZE_METERS / distance
     )
     assert projected > 12
 
@@ -797,7 +835,7 @@ def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
         ("pickup", 450, None, True, "droid"),
     ],
 )
-@pytest.mark.parametrize("camera_mounts", ["native_wide", "droid_reference", "task_view"])
+@pytest.mark.parametrize("camera_mounts", ["native_wide", "droid_reference", "droid_detail", "task_view"])
 def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     modules,
     monkeypatch,
@@ -854,6 +892,9 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         initial_posture=initial_posture, camera_mounts=camera_mounts,
     )
     assert run.results["initial_arm_posture"] == initial_posture
+    size = scenario.PICKUP_CUBE_SIZE_METERS if objective == "pickup" else scenario.CUBE_SIZE_METERS
+    assert run.results["cube_size_m"] == size
+    assert run.results["initial_cube_position_m"] == [*scenario.CUBE_INITIAL_POSITION[:2], size / 2]
     assert run.results["post_reset_controller"] == "openpi_policy_only"
     if objective == "pickup":
         from droid_scene import camera_calibration

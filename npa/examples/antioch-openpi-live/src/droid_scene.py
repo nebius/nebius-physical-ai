@@ -71,6 +71,10 @@ DROID_REFERENCE_CALIBRATION = {
         "focal_length": 2.8,
     },
 }
+DROID_DETAIL_CALIBRATION = {
+    "exterior": {**DROID_REFERENCE_CALIBRATION["exterior"], "focal_length": 2.8},
+    "wrist": DROID_REFERENCE_CALIBRATION["wrist"].copy(),
+}
 TASK_VIEW_CALIBRATION = {
     "exterior": {
         # Looking toward the robot from in front of the table keeps the forearm
@@ -97,9 +101,10 @@ def camera_calibration(mounts="native_wide"):
     """
     choices = {"native_wide": CAMERA_CALIBRATION,
                "droid_reference": DROID_REFERENCE_CALIBRATION,
+               "droid_detail": DROID_DETAIL_CALIBRATION,
                "task_view": TASK_VIEW_CALIBRATION}
     if mounts not in choices:
-        raise ValueError("camera_mounts must be native_wide, droid_reference or task_view")
+        raise ValueError("Unsupported camera_mounts")
     return {view: values.copy() for view, values in choices[mounts].items()}
 
 

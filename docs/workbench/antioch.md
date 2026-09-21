@@ -280,7 +280,9 @@ so independent Antioch stages cannot collide. `adapter_image` must be an immutab
 digest. Deployment, status, stop, and cutover-finalization refuse unowned objects.
 
 `initial_posture` selects `pregrasp` (default) or the original `droid` reset.
-`camera_mounts` selects `native_wide` (default), `droid_reference`, or `task_view`.
+`camera_mounts` selects `native_wide` (default), `droid_reference`, `droid_detail`,
+or `task_view`. The detail rig preserves the reference wrist camera and both
+reference poses, with a 2.8 mm exterior focal length for a larger target image.
 The `task_view` rig places a fixed exterior camera in front of the table and uses
 the wider wrist bracket to retain target coverage during approach. These public
 experiment choices are validated and forwarded through supported scenario
@@ -294,7 +296,14 @@ communication from measured manipulation: 5 cm of end-effector approach,
 bilateral finger contact, and 5 cm of lift held continuously for one simulation
 second are required for pickup success. Its `control_steps` parameter defaults
 to 450 applied targets; exhaustion without pickup is an explicit failed result.
+The pickup cube is 5.5 cm wide; `cube_size_m` and `initial_cube_position_m`
+preserve this task condition in results. Earlier 7 cm trials are not directly
+comparable. The smaller cube provides more centering margin inside the gripper.
 Camera exposure/contrast and initial target/gripper framing are separate gates.
+Initial target framing also rejects a red target touching an image-content edge
+in either view, including the content edges inside DROID's letterbox padding.
+This prevents a partly clipped cube from passing solely on pixel count. Later
+partial views retain the existing other-camera or measured-contact fallback.
 The exact requests, lossless inputs, raw actions, applied targets and measured
 physics are retained in `policy-evidence.zip` with a SHA-256 manifest. The
 controller checks both the persisted verdicts and archive digest before retiring

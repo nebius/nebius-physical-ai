@@ -83,6 +83,7 @@ DROID_RESET_JOINTS = (
 )
 TASK_LABEL = "red_cube_pickup"
 CUBE_SIZE_METERS = 0.07
+PICKUP_CUBE_SIZE_METERS = 0.055
 CUBE_INITIAL_POSITION = (0.48, 0.0, CUBE_SIZE_METERS / 2.0)
 PICKUP_LIFT_METERS = 0.05
 PICKUP_HOLD_SECONDS = 1.0
@@ -125,6 +126,7 @@ class CameraFrame:
     raw_channels: int = 0
     near_white_fraction: float = 0.0
     target_extent: tuple[int, int] = (0, 0)
+    target_clipped: bool = False
 
 
 @dataclass(frozen=True)
@@ -1044,15 +1046,25 @@ def _camera_quality_reason(frame: CameraFrame) -> str:
     return ""
 
 
+def _red_target_mask(rgb):
+    import numpy as np
+
+    return ((rgb[..., 0] > 80)
+            & (rgb[..., 0].astype(np.float32) > rgb[..., 1] * 1.35)
+            & (rgb[..., 0].astype(np.float32) > rgb[..., 2] * 1.35))
+
+
 def _classify_camera_rgb(rgb, frame, *, content_rgb=None) -> CameraFrame:
     import numpy as np
 
     # Letterbox padding must not make a white or flat sensor image pass exposure
     # and contrast checks. Target resolution still uses the exact model pixels.
-    luminance = np.mean(rgb if content_rgb is None else content_rgb, axis=2)
-    red_mask = ((rgb[..., 0] > 80)
-                & (rgb[..., 0].astype(np.float32) > rgb[..., 1] * 1.35)
-                & (rgb[..., 0].astype(np.float32) > rgb[..., 2] * 1.35))
+    content = rgb if content_rgb is None else content_rgb
+    luminance = np.mean(content, axis=2)
+    red_mask = _red_target_mask(rgb)
+    content_mask = _red_target_mask(content)
+    clipped = bool(content_mask[0].any() or content_mask[-1].any()
+                   or content_mask[:, 0].any() or content_mask[:, -1].any())
     rows, columns = np.nonzero(red_mask)
     extent = (int(columns.max() - columns.min() + 1),
               int(rows.max() - rows.min() + 1)) if rows.size else (0, 0)
@@ -1064,6 +1076,7 @@ def _classify_camera_rgb(rgb, frame, *, content_rgb=None) -> CameraFrame:
         raw_max=float(frame.max()), raw_nonzero=int(np.count_nonzero(frame)),
         raw_channels=int(frame.shape[2]),
         near_white_fraction=float(np.mean(luminance > 240)), target_extent=extent,
+        target_clipped=clipped,
     )
     return replace(result, reason=_camera_quality_reason(result))
 
@@ -1336,6 +1349,9 @@ def _validate_camera_pair(
     wrist_target = wrist_cube_in_frame and _target_resolved(wrist_frame)
     if initial_alignment and not gripper_views_aligned:
         return CameraPair(False, exterior_frame, wrist_frame, "pair", "gripper_out_of_frame")
+    if initial_alignment and (exterior_frame.target_clipped or wrist_frame.target_clipped):
+        view = "exterior" if exterior_frame.target_clipped else "wrist"
+        return CameraPair(False, exterior_frame, wrist_frame, view, "target_clipped")
     if initial_alignment and not (exterior_target and wrist_target):
         view = "exterior" if not exterior_target else "wrist"
         return CameraPair(False, exterior_frame, wrist_frame, view, "target_unresolved")
@@ -1648,6 +1664,7 @@ def _record_camera_quality(run, camera_quality):
         "minimum_dynamic_range": MIN_CAMERA_DYNAMIC_RANGE,
         "minimum_target_pixels": MIN_EXTERIOR_RED_CUBE_PIXELS,
         "minimum_target_extent": MIN_TARGET_EXTENT_PIXELS,
+        "initial_target_must_clear_image_edges": True,
     })
 
 
@@ -1665,7 +1682,7 @@ def _record_episode_checks(
     run.add_result("render_settings", render_settings)
     _record_camera_quality(run, camera_quality)
     run.check("initial_target_resolved_both_views", initial_target_resolved,
-              detail="Both initial policy views resolved the target before any inference")
+              detail="Both initial policy views resolved the target clear of image edges before inference")
     run.check("policy_evidence_complete", evidence.requests == requests > 0
               and evidence.applied == applied and evidence.responses > 0,
               detail="Lossless inputs, request hashes, raw responses and control trace archived")
@@ -1720,7 +1737,7 @@ def openpi_franka_pickup_v3(
         "pregrasp", description="Fixed initial arm posture: pregrasp or droid"
     ),
     camera_mounts: str = antioch.param(
-        "native_wide", description="Fixed camera rig: native_wide, droid_reference or task_view"
+        "native_wide", description="Fixed rig: native_wide, droid_reference, droid_detail or task_view"
     ),
 ) -> None:
     """Evaluate measured approach and a sustained physical pickup.
@@ -1738,8 +1755,8 @@ def openpi_franka_pickup_v3(
     """
     if initial_posture not in {"pregrasp", "droid"}:
         raise ValueError("initial_posture must be pregrasp or droid")
-    if camera_mounts not in {"native_wide", "droid_reference", "task_view"}:
-        raise ValueError("camera_mounts must be native_wide, droid_reference or task_view")
+    if camera_mounts not in {"native_wide", "droid_reference", "droid_detail", "task_view"}:
+        raise ValueError("Unsupported camera_mounts")
     _run_openpi_episode(run, prompt, objective="pickup", control_steps=control_steps,
                        initial_posture=initial_posture, camera_mounts=camera_mounts)
 
@@ -1794,12 +1811,16 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
     import droid_scene
 
     droid = objective == "pickup"
+    cube_size_m = PICKUP_CUBE_SIZE_METERS if droid else CUBE_SIZE_METERS
+    cube_initial_position = (*CUBE_INITIAL_POSITION[:2], cube_size_m / 2.0)
     if initial_posture not in {"pregrasp", "droid"} or (not droid and initial_posture != "droid"):
         raise ValueError("Unsupported initial arm posture for this objective")
     reset_joints = (droid_scene.PREGRASP_RESET_JOINTS
                     if initial_posture == "pregrasp" else DROID_RESET_JOINTS)
     run.add_result("initial_arm_posture", initial_posture)
     run.add_result("initial_arm_joints", list(reset_joints))
+    run.add_result("cube_size_m", cube_size_m)
+    run.add_result("initial_cube_position_m", list(cube_initial_position))
     run.add_result("post_reset_controller", "openpi_policy_only")
     robot = (droid_scene.create_robot(world) if droid else
              world.scene.add(Franka(prim_path="/World/Franka", name="franka")))
@@ -1815,8 +1836,8 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
         DynamicCuboid(
             prim_path="/World/Cube",
             name="cube",
-            position=np.array(CUBE_INITIAL_POSITION),
-            size=CUBE_SIZE_METERS,
+            position=np.array(cube_initial_position),
+            size=cube_size_m,
             color=np.array([0.95, 0.03, 0.02]),
         )
     )
@@ -2296,6 +2317,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                             "near_white": frame.near_white_fraction,
                             "dynamic_range": frame.dynamic_range,
                             "target_pixels": frame.red_cube_pixels,
+                            "target_clipped": frame.target_clipped,
                         })
                     exterior_rgb = pair.exterior.rgb
                     wrist_rgb = pair.wrist.rgb
@@ -2445,7 +2467,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                         f"{SCENE_ENTITY}/cube",
                         rr.Boxes3D(
                             centers=[cube_position.tolist()],
-                            sizes=[[CUBE_SIZE_METERS] * 3],
+                            sizes=[[cube_size_m] * 3],
                             colors=[[242, 8, 5, 255]],
                         ),
                     ),

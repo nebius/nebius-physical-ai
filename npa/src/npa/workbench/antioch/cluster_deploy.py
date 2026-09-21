@@ -70,7 +70,7 @@ class ClusterLiveConfig(BaseModel):
     adapter_replicas: int = Field(default=1, ge=0, le=1)
     scenario_timeout_seconds: int = Field(default=14_400, ge=60)
     initial_posture: Literal["pregrasp", "droid"] = "pregrasp"
-    camera_mounts: Literal["native_wide", "droid_reference", "task_view"] = "native_wide"
+    camera_mounts: Literal["native_wide", "droid_reference", "droid_detail", "task_view"] = "native_wide"
     kubelet_source_cidrs: list[str] = Field(min_length=1)
 
     @field_validator(
