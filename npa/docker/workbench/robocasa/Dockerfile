@@ -133,6 +133,13 @@ RUN git init /opt/robocasa/source \
       --no-build-isolation --no-deps -e /opt/robocasa/source \
     && rm -rf /opt/robocasa/source/.git /root/.cache/pip /tmp/pip-*
 
+# The pinned CUDA devel base retains stale userspace kernel headers. They are
+# needed only by the build toolchain above; remove them and their reverse build
+# dependencies before any final-runtime acceptance check.
+RUN apt-get purge -y --auto-remove linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && ! dpkg-query --show linux-libc-dev >/dev/null 2>&1
+
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
     && python -c "from importlib.metadata import metadata, version; from packaging.requirements import Requirement; requirements = [Requirement(raw) for raw in (metadata('lerobot').get_all('Requires-Dist') or [])]; incompatible = [str(req) for req in requirements if req.name in {'torch', 'torchvision'} and not req.specifier.contains(version(req.name), prereleases=True)]; assert not incompatible, incompatible" \

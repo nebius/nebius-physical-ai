@@ -247,6 +247,18 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
     assert absent_symlink == len(commands) - 1
 
 
+def test_robocasa_runtime_purges_vulnerable_builder_headers_before_smoke() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    source_install = text.index("# Install RoboCasa source")
+    purge = text.index("apt-get purge -y --auto-remove linux-libc-dev")
+    absence = text.index("! dpkg-query --show linux-libc-dev")
+    final_import = text.index("# Fail the image build")
+    non_root_smoke = text.index('RUN test "$(id -u)" != "0"')
+
+    assert source_install < purge < absence < final_import < non_root_smoke
+
+
 def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
     smoke = SMOKE_SCRIPT.read_text(encoding="utf-8")
@@ -522,7 +534,7 @@ def test_every_robocasa_from_base_has_one_security_inventory_entry() -> None:
         assert entries[0] == {
             "name": "nvidia-cuda-12-4-1-cudnn-devel-ubuntu22-04",
             "image": PINNED_CUDA_BASE,
-            "purge_linux_libc_dev": False,
+            "purge_linux_libc_dev": True,
             "upgrade_os": False,
         }
 
