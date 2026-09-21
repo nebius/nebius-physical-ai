@@ -9,7 +9,28 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG OPEN3D_VERSION=0.20.0
 ARG NPA_SOURCE_SHA
-ARG DEBIAN_SNAPSHOT=20260801T000000Z
+# Moved forward from 20260801T000000Z, which resolved trixie before the 13.7
+# point release (2026-09-12) and so still carried libglib2.0-0t64
+# 2.84.4-3~deb13u3 and perl-base 5.40.1-6. Those are the versions the image
+# security policy failed on: CVE-2026-58016 for glib, CVE-2026-13221 /
+# CVE-2026-42496 / CVE-2026-8376 for perl.
+ARG DEBIAN_SNAPSHOT=20260913T000000Z
+
+# The two packages whose vulnerable versions blocked this image, as the lowest
+# version that carries the fix. `apt-get upgrade` below is what installs them;
+# these are asserted afterwards so a snapshot that silently stops carrying the
+# fix fails the build instead of shipping. Compared with dpkg rather than as
+# strings, because `~` sorts *before* the empty string and `u10` is above `u5`:
+# glib's actual fixed version in trixie is 2.84.4-3~deb13u5, above the
+# 2.84.4-3~deb13u4 the scanner named, and no string comparison gets that right.
+ARG MIN_LIBGLIB_VERSION=2.84.4-3~deb13u4
+ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1
+
+# The mcap release the retained notice was taken from, and that notice's bytes.
+# mcap ships no licence file in its wheel or its sdist, so this image carries the
+# grant; both are checked at build time. See THIRD_PARTY_NOTICES.md.
+ARG MCAP_NOTICE_VERSION=1.4.0
+ARG MCAP_NOTICE_SHA256=da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d
 
 LABEL npa.tool="open3d" \
       npa.version="${OPEN3D_VERSION}" \
@@ -56,6 +77,13 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get install -y --no-install-recommends \
       ca-certificates curl openssh-client openssh-server procps rsync sudo \
       libgl1 libegl1 libgomp1 libglib2.0-0 libusb-1.0-0 libidn2-0 \
+    && for pin in "libglib2.0-0t64 ${MIN_LIBGLIB_VERSION}" \
+                  "perl-base ${MIN_PERL_BASE_VERSION}"; do \
+         set -- ${pin}; \
+         installed="$(dpkg-query --show --showformat='${Version}' "$1")"; \
+         dpkg --compare-versions "${installed}" ge "$2" || { \
+           echo "$1 ${installed} is below the fixed $2" >&2; exit 1; }; \
+       done \
     && install -d -m 0755 /run/sshd /workspace /opt/npa \
     && rm -f /etc/ssh/ssh_host_* \
     && printf '%s\n' \
@@ -76,6 +104,12 @@ COPY --chown=ubuntu:ubuntu docker/workbench/open3d/requirements.txt \
     /opt/npa/open3d-requirements.txt
 COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/open3d/entrypoint.sh \
     /opt/npa/docker/workbench/open3d/entrypoint.sh
+# mcap is MIT but ships no licence file in either its wheel or its sdist, so the
+# grant only reaches a recipient if the image carries it. See THIRD_PARTY_NOTICES.md.
+COPY --chmod=0444 docker/workbench/open3d/THIRD_PARTY_NOTICES.md \
+    /usr/share/doc/npa-open3d/THIRD_PARTY_NOTICES.md
+COPY --chmod=0444 docker/workbench/open3d/notices/ \
+    /usr/share/doc/npa-open3d/notices/
 
 USER ubuntu
 WORKDIR /workspace
@@ -92,6 +126,9 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -c "import open3d as o3d; r = o3d.pipelines.registration; assert callable(r.registration_icp); assert callable(r.registration_ransac_based_on_feature_matching); assert callable(r.compute_fpfh_feature); assert callable(r.global_optimization); assert callable(o3d.geometry.TriangleMesh.create_from_point_cloud_poisson)" \
     && python -c "from npa.workbench.open3d import runner; assert callable(runner.main)" \
     && npa workbench open3d --help > /dev/null \
+    && echo "${MCAP_NOTICE_SHA256}  /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt" \
+      | sha256sum --check --status \
+    && python -c "import importlib.metadata as m; v = m.version('mcap'); assert v == '${MCAP_NOTICE_VERSION}', f'mcap {v} no longer matches the retained notice; refresh docker/workbench/open3d/notices/mcap-LICENSE.txt'" \
     && install -d -m 0700 /home/ubuntu/.cache/open3d
 
 # Command-passthrough: SkyPilot's Kubernetes bootstrap runs its own shell in this
