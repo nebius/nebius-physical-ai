@@ -129,7 +129,7 @@ jobs:
           always() && steps.scope.outputs.deep == 'true' &&
           (github.event_name == 'push' || github.event_name == 'schedule' ||
           github.event_name == 'workflow_dispatch')
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
@@ -193,7 +193,7 @@ jobs:
 
       - name: Upload CUDA 12.4 SARIF
         if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
@@ -202,7 +202,7 @@ jobs:
 
       - name: Upload CUDA 12.6 SARIF
         if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
@@ -211,7 +211,7 @@ jobs:
 
       - name: Upload CUDA 12.8 Ubuntu 22.04 SARIF
         if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
@@ -220,7 +220,7 @@ jobs:
 
       - name: Upload CUDA 12.8 Ubuntu 24.04 SARIF
         if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
@@ -229,7 +229,7 @@ jobs:
 
       - name: Upload CUDA 13 cuDNN SARIF
         if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
@@ -238,7 +238,7 @@ jobs:
 
       - name: Upload CUDA 13 base SARIF
         if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload Python base SARIF
         if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
