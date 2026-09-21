@@ -83,7 +83,6 @@ from npa.clients.serverless import (
     EndpointSpec,
     EndpointStatus,
     EndpointNotFoundError,
-    JobInfo,
     ServerlessClient,
     ServerlessClientError,
 )
@@ -129,6 +128,7 @@ from npa.serverless_common import (
     SubnetResolutionError,
     build_serverless_job_env,
     build_serverless_output_upload_cmd,
+    job_status_payload,
     require_s3_credentials,
     resolve_gpu_platform,
     resolve_subnet,
@@ -1534,36 +1534,6 @@ def _serverless_endpoint_status(cfg: Any) -> EndpointInfo:
     return ServerlessClient().get_endpoint(project_id, endpoint_ref)
 
 
-def _serverless_job_status_payload(
-    client: ServerlessClient,
-    info: JobInfo,
-    *,
-    platform: str = "",
-    gpu_count: int = 0,
-) -> dict[str, Any]:
-    status = client.classify_queue_state(info)
-    payload: dict[str, Any] = {
-        "job_id": info.id,
-        "job_name": info.name,
-        "status": status,
-        "raw_status": info.status,
-        "output_uris": list(info.output_uris),
-    }
-    if info.status == "queued":
-        payload["queue_state_classification"] = (
-            "capacity" if status == "waiting_for_capacity" else "scheduled"
-        )
-        payload["queued_for_seconds"] = info.queued_for_seconds
-        payload["platform"] = platform or info.platform
-        payload["gpu_count"] = gpu_count or info.gpu_count
-        payload["hint"] = (
-            "Platform may be at capacity. Retry status in a few minutes."
-            if status == "waiting_for_capacity"
-            else "Job is scheduled and waiting to start."
-        )
-    return payload
-
-
 def _serverless_job_status_for_config(cfg: Any) -> dict[str, Any] | None:
     job_cfg = getattr(cfg, "serverless_job", None)
     job_ref = str(getattr(job_cfg, "job_id", "") or getattr(job_cfg, "job_name", ""))
@@ -1572,7 +1542,7 @@ def _serverless_job_status_for_config(cfg: Any) -> dict[str, Any] | None:
         return None
     client = ServerlessClient()
     info = client.get_job(job_ref, project_id)
-    result = _serverless_job_status_payload(
+    result = job_status_payload(
         client,
         info,
         platform=str(getattr(job_cfg, "gpu_type", "")),
@@ -3253,7 +3223,7 @@ def train_cmd(
             _fail("Provide a job ID or name for train status.")
         info = client.get_job(ref, resolved_project_id)
         _output(
-            _serverless_job_status_payload(
+            job_status_payload(
                 client,
                 info,
                 platform=gpu_type,
