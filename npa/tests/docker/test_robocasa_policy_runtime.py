@@ -23,6 +23,7 @@ RUNTIME_LOCK = IMAGE_DIR / "requirements.lock"
 BUILD_LOCK = IMAGE_DIR / "build-requirements.lock"
 LEROBOT_LOCK = IMAGE_DIR / "lerobot-requirements.lock"
 BASE_INVENTORY = IMAGE_DIR.parent / "base-image-security.json"
+PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
 ROBOCASA_COMMIT = "8f3c96ec8d1bfcd8126cad2bca887da98d30e997"
 ROBOSUITE_COMMIT = "85abee228d1c43ab1939bce33028099945d453b4"
 PINNED_CUDA_BASE_NAME = "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
@@ -361,6 +362,20 @@ def test_robocasa_builder_streams_the_committed_npa_subtree(
     assert docker_argv[-1] == "-"
     assert docker_argv[docker_argv.index("-f") + 1] == (
         "docker/workbench/robocasa/Dockerfile"
+    )
+
+
+def test_robocasa_publication_uses_committed_tree_builder() -> None:
+    workflow = PUBLICATION_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "if: matrix.tool != 'ncore' && matrix.tool != 'robocasa'" in workflow
+    assert 'if [[ "$TOOL" == robocasa ]]; then' in workflow
+    assert 'NPA_SOURCE_SHA="$DEVELOPMENT_SHA" ROBOCASA_VERSION=0.1.1' in workflow
+    assert "npa/docker/workbench/robocasa/build.sh" in workflow
+    assert '--registry "$NPA_PUBLIC_REGISTRY"' in workflow
+    assert (
+        'test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-robocasa:dev-$DEVELOPMENT_SHA"'
+        in workflow
     )
 
 

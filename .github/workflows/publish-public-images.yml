@@ -385,7 +385,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stage supported workflow catalog in the package build context
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'robocasa'
         run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 
       - name: Build NCore committed attested OCI archive
@@ -405,6 +405,13 @@ jobs:
         if: matrix.tool != 'ncore'
         run: |
           set -euo pipefail
+          if [[ "$TOOL" == robocasa ]]; then
+            NPA_SOURCE_SHA="$DEVELOPMENT_SHA" ROBOCASA_VERSION=0.1.1 \
+              npa/docker/workbench/robocasa/build.sh \
+                --registry "$NPA_PUBLIC_REGISTRY"
+            test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-robocasa:dev-$DEVELOPMENT_SHA"
+            exit 0
+          fi
           build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
           if [[ -n "${LEROBOT_VERSION:-}" ]]; then
             [[ "$TOOL" == lerobot && "$LEROBOT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
