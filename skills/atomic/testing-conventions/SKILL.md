@@ -7,6 +7,18 @@ description: Use before running or interpreting NPA tests, lint checks, or valid
 
 Use the repository virtualenv. Never use bare `python`; use `npa/.venv/bin/python`.
 
+If that venv is shared across checkouts (a symlinked `npa/.venv` in a git
+worktree or agent sandbox, rather than its own `pip install -e`), it can
+silently import a *different* checkout's `npa` while pytest still collects
+*this* checkout's test files — no error, no non-zero exit, just a misleading
+result. Run `make check-env` (or
+`npa/.venv/bin/python npa/scripts/check_dev_environment.py`) before trusting
+any test output from such a checkout; it fails fast with the exact
+`PYTHONPATH` fix. `make test`/`test-smoke`/`test-guardrails`/`test-e2e`
+already run it first. Separately, `make test-prereqs` reports (without
+blocking) which full-suite-parity tools are missing and how much temp-disk
+headroom is available — see CONTRIBUTING.md's "Testing Requirements".
+
 Correct command from repo root:
 
 ```bash
