@@ -6,10 +6,19 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
 import yaml
+from packaging.markers import default_environment
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
@@ -363,3 +372,35 @@ def test_seedvr_readability_rejects_untagged_input_before_mutation(
     with pytest.raises(AssertionError, match="pre-existing tag"):
         module._local_base()
     assert calls == [["docker", "image", "inspect", image]]
+
+
+def test_seedvr_service_lock_satisfies_current_core_dependencies() -> None:
+    project = tomllib.loads((ROOT / "npa/pyproject.toml").read_text())["project"]
+    lock = (DOCKER_DIR / "service-requirements.lock").read_text()
+    pins = {
+        canonicalize_name(name): version
+        for name, version in re.findall(
+            r"^([A-Za-z0-9_.-]+)==([^\s\\;]+)", lock, re.MULTILINE
+        )
+    }
+    target = default_environment()
+    target.update(
+        python_version="3.12",
+        python_full_version="3.12.14",
+        sys_platform="linux",
+        os_name="posix",
+        platform_machine="x86_64",
+        platform_system="Linux",
+        implementation_name="cpython",
+        platform_python_implementation="CPython",
+        extra="",
+    )
+    for declaration in project["dependencies"]:
+        required = Requirement(declaration)
+        if required.marker and not required.marker.evaluate(target):
+            continue
+        name = canonicalize_name(required.name)
+        assert name in pins, f"Service lock omits {required}"
+        assert pins[name] in required.specifier, (
+            f"Service lock pins {name}=={pins[name]}, but core requires {required}"
+        )

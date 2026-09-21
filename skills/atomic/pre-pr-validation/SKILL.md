@@ -20,6 +20,9 @@ audit after every merge. Independent validation jobs use available GitHub runner
 capacity without job-level concurrency locks or matrix `max-parallel` caps.
 Preserve per-PR supersession on the parent and distinct workflow group prefixes
 for reusable children. Merge candidates use their own SHA-specific groups.
+The aggregate gate uses `!cancelled()` to report failed dependencies while
+allowing obsolete runs to terminate; `always()` can keep their final job queued
+ahead of the replacement candidate.
 `test_ci_concurrency` rejects shared validation locks and matrix caps;
 `test_ci_workflows` guards cancellation and required results. See the contributor
 concurrency guide for organization runner limits and rollout behavior. Refresh
@@ -158,6 +161,12 @@ audit retains four per interpreter. Both merge their coverage data:
 cd npa
 .venv/bin/python -m pytest tests/ -v --tb=short --cov=src/npa --cov-report=term-missing --cov-fail-under=60
 ```
+
+Dependabot groups daily version updates across Python, npm, and GitHub Actions
+into one `dependencies` PR. Review overlapping package declarations together;
+a bot edit of `npa/ci/requirements.txt` does not prove its input fingerprint is
+current. Regenerate the CI pins after Python declaration changes and run the
+combined candidate through the same required gates.
 
 Keep the coverage source scoped to `src/npa`. Selecting the import name with
 `--cov=npa` can also trace temporary test modules that deliberately impersonate

@@ -280,6 +280,7 @@ LABEL org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 COPY --chmod=0444 docker/workbench/seedvr2/REDISTRIBUTION.md /usr/share/doc/npa-seedvr2/REDISTRIBUTION.md
 COPY --chmod=0444 docker/workbench/seedvr2/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-seedvr2/THIRD_PARTY_NOTICES.md
+COPY --chmod=0444 docker/workbench/seedvr2/MCAP-1.4.0-LICENSE.txt /usr/share/doc/npa-seedvr2/MCAP-1.4.0-LICENSE.txt
 COPY --chmod=0755 docker/workbench/seedvr2/entrypoint.sh /usr/local/bin/seedvr2-entrypoint
 
 RUN install -d -m 0755 -o ubuntu -g ubuntu \

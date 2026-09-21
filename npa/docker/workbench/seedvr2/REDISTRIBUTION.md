@@ -66,3 +66,12 @@ manifest graph, the complete saved archive, and the scanner implementation.
 Python `.pth` files fail closed except for the exact path and bytes of the
 inventoried setuptools and Rerun bootstrap files. The publication workflow
 runs this gate before push and again against bytes pulled by immutable digest.
+
+### MCAP service dependency notice
+
+The runtime includes the `mcap==1.4.0` Python package under MIT. Its installed
+distribution omits the full grant, so the final image separately includes the
+unchanged Foxglove Technologies notice at
+`/usr/share/doc/npa-seedvr2/MCAP-1.4.0-LICENSE.txt`.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md#mcap-python-140) binds the
+upstream release source and exact notice hash.

@@ -58,3 +58,12 @@ Hugging Face revision `37255ff8cccfb01071b87f635a5948ca8d53117c` and verifies:
 The model repository declares Apache-2.0 and is public, non-gated. No model
 payload, sensor clip, generated output, token, object-storage credential, or
 populated cache is included in the image.
+
+## MCAP Python 1.4.0
+
+The service environment includes `mcap==1.4.0`, copyright Foxglove Technologies
+Inc, under the MIT license. The exact upstream grant is delivered as
+`/usr/share/doc/npa-seedvr2/MCAP-1.4.0-LICENSE.txt` (SHA-256
+`da11235665c17d4c1634072dae92b8ba1b38d6fdde2ccf19a6bbede33253f58d`).
+Source: [the MCAP 1.4.0 release license](https://github.com/foxglove/mcap/blob/b33fa682a5c517b1d213faeabd118e0b4f9d9d93/LICENSE).
+The upstream wheel's metadata names MIT but does not deliver this notice.
