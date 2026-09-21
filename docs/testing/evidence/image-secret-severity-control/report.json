@@ -1,0 +1,71 @@
+{
+  "schema": "npa.public-image-secret-control.v1",
+  "scanner_image": "docker.io/aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f",
+  "input_archive_sha256": "200bf2bcbd43a31bf591a9f38811810012779093629a78c2416df901ec1c0a11",
+  "execution": "CPU; real pinned Trivy scanner over one retained private image archive",
+  "runs": {
+    "baseline": {
+      "severity": "CRITICAL",
+      "returncode": 0,
+      "report_sha256": "24d51d21d0ff66d59bc5ac16a2d9f442bcdddf6d786b664cdc9504e4faf36fbe",
+      "secret_count": 0,
+      "secret_severity_counts": {},
+      "critical_vulnerabilities": 6,
+      "fixable_critical_vulnerabilities": 0,
+      "production_helper_control": {
+        "source_file_sha256": "a69d5496c1eed25786ac30aeb593a6b5f5ec9b1d0b6826b41a58b066f2dc447e",
+        "receipt_sha256": "ebbb8e4d11a81afdef75ab764255dc6845cb0059c0568c0a4f6afcd3bf0303ca",
+        "scanner_image": "docker.io/aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f",
+        "severity": "CRITICAL",
+        "verdict": "accepted",
+        "scanner_returncode": 0,
+        "scanner_stdout_sha256": "a3720fdf64b9d6084ed22b85d41f710dc5f6abd6662187efd49c758ce1e81a09",
+        "transport_substitution": "Registry digest argument replaced by retained archive input; platform flag removed."
+      }
+    },
+    "candidate": {
+      "severity": "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+      "returncode": 0,
+      "report_sha256": "4e5aabdc1c8c3db05d477e449a7146e616644cd9ba9e3f923e29e64d7ea7780b",
+      "secret_count": 3,
+      "secret_severity_counts": {
+        "HIGH": 3
+      },
+      "critical_vulnerabilities": 6,
+      "fixable_critical_vulnerabilities": 0,
+      "production_helper_control": {
+        "source_file_sha256": "25334055032c8eb2e4fa70057cbaaa50e705066b97c9afe393dcdd1eddfc0a87",
+        "receipt_sha256": "ab8c6c24bbaf4e1e1de6051b828ef286f56f758d502a114ffe73c56524c904db",
+        "scanner_image": "docker.io/aquasec/trivy@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f",
+        "severity": "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL",
+        "verdict": "rejected",
+        "scanner_returncode": 0,
+        "scanner_stdout_sha256": "c0e023fae6c88ec191b689aab91b7ffa1f2b4d1cc4741ff3c2253f8e7552fa6f",
+        "transport_substitution": "Registry digest argument replaced by retained archive input; platform flag removed."
+      }
+    }
+  },
+  "same_critical_vulnerability_ids": true,
+  "source_file": "npa/src/npa/deploy/publish_public.py",
+  "candidate_file_hashes": {
+    "ed24aaa02f5df88b3e335b6327678fe0658450f8": "25334055032c8eb2e4fa70057cbaaa50e705066b97c9afe393dcdd1eddfc0a87",
+    "1668e1286bd0456cb67e878d3c6c54bca83ce752": "25334055032c8eb2e4fa70057cbaaa50e705066b97c9afe393dcdd1eddfc0a87",
+    "2f903246507ddc82e7e45e7b55a010e48507664c": "25334055032c8eb2e4fa70057cbaaa50e705066b97c9afe393dcdd1eddfc0a87"
+  },
+  "reviewed_at": "2026-09-21T08:22:44.282465+00:00",
+  "scope": {
+    "public_copy_performed": false,
+    "image_acceptance_established": false,
+    "gpu_applicable": false,
+    "vlm_applicable": false,
+    "ci_publication_workflow_executed": false,
+    "limitations": [
+      "One retained private image; observed secret findings were HIGH.",
+      "The matched scanner comparison changes the severity selection. Registry transport was substituted with a local archive.",
+      "The production helper was executed, but a real registry copy was not performed.",
+      "The workflow addition has separate static and regression validation; this experiment did not execute the publication workflow.",
+      "Scanner reports and archive remain private; this report contains allowlisted counts, source/tool hashes and verdicts only.",
+      "CI and full-suite readiness are separate and are not certified by this report."
+    ]
+  }
+}
