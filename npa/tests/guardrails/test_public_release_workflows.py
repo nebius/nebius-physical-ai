@@ -52,7 +52,15 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
     text = PUBLISH.read_text(encoding="utf-8")
     spec = _spec(PUBLISH)
     triggers = spec.get("on") or spec[True]
-    assert set(triggers) == {"workflow_dispatch"}
+    # #504: the publisher also runs automatically on main-branch workbench
+    # docker changes and on a weekly refresh cadence. Both automatic triggers
+    # are narrowly scoped; dispatch remains for guarded manual promotion.
+    assert set(triggers) == {"workflow_dispatch", "push", "schedule"}
+    assert triggers["push"] == {
+        "branches": ["main"],
+        "paths": ["npa/docker/workbench/**"],
+    }
+    assert triggers["schedule"] == [{"cron": "0 6 * * 1"}]
     assert spec["permissions"]["packages"] == "write"
     assert spec["permissions"]["attestations"] == "write"
     assert "development_image_for_tool" in text
@@ -68,6 +76,56 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         "NPA_PUBLISH_TOOL",
     ):
         assert stale_variable not in text
+
+
+def test_automatic_triggers_build_dev_images_without_promoting() -> None:
+    """#504/#568: push/schedule runs must build dev images; never promote.
+
+    `inputs.*` is only populated for `workflow_dispatch`; on push and schedule
+    events every input is undefined. Tool selection therefore falls back to
+    `_automatic_build_tools`: the weekly schedule rebuilds every public tool
+    and a push rebuilds the tools whose workbench inputs changed, so
+    `dev-<sha>` tags track HEAD automatically. Promotion still requires an
+    explicit `workflow_dispatch` event with `dry_run: false`.
+    """
+    spec = _spec(PUBLISH)
+    jobs = spec["jobs"]
+
+    resolve = next(
+        step
+        for step in jobs["resolve"]["steps"]
+        if step.get("name") == "Resolve immutable public development plan"
+    )
+    # Dispatch inputs remain the explicit-selection path ...
+    assert resolve["env"]["BUILD_TOOLS"] == "${{ inputs.build_development_tools }}"
+    assert resolve["env"]["CLEANUP_TOOLS"] == "${{ inputs.cleanup_development_tools }}"
+    # ... but the plan script must also handle automatic events, where inputs
+    # are undefined, instead of resolving an empty matrix.
+    script = resolve["run"]
+    assert resolve["env"]["EVENT_NAME"] == "${{ github.event_name }}"
+    assert "_automatic_build_tools" in script
+    assert 'os.environ.get("EVENT_NAME", "")' in script
+    assert '"schedule"' in script
+    assert "packaging-contract.yaml" in script
+    assert (
+        jobs["build-development"]["if"]
+        == "${{ needs.resolve.outputs.build_count != '0' }}"
+    )
+    assert "cleanup_count != '0'" in jobs["cleanup-requested"]["if"]
+    assert "build_count != '0'" in jobs["cleanup-failed-build"]["if"]
+
+    promote_step = next(
+        step
+        for step in jobs["promote"]["steps"]
+        if step.get("name")
+        == "Promote exact validated digests and verify public parity"
+    )
+    assert promote_step["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}"
+    )
+    # The promote job never runs after a build: automatic dev builds must not
+    # fall through into a release preflight or write.
+    assert "needs.resolve.outputs.build_count == '0'" in jobs["promote"]["if"]
 
 
 def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (

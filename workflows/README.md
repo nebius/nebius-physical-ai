@@ -84,6 +84,12 @@ The CLI, agent, and live-submit matrix discover main, testing, and partner specs
 SkyPilot tasks are separate tool-specific examples; see the
 [reference-assets index](../npa/workflows/workbench/README.md).
 
+The established Cosmos Transfer VDA, the separately named direct NVIDIA VDA,
+and the direct DIG, IAA, and EVG translations are testing-tier PAIDF specs. The
+direct translations record `reports/upstream.json` and all execute through
+SkyPilot rather than OSMO or Airflow. The established Transfer and Cosmos 3
+workflow YAMLs remain unchanged from `main`.
+
 ## Spec catalog
 
 ### Main workflows
@@ -122,6 +128,10 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos3-super-h200-single-gpu.yaml`](testing/cosmos3-super-h200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one H200; distinct from node-throughput benchmarks |
 | [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
+| [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
+| [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
+| [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
+| [`nvidia-paidf-vda-cosmos-transfer25.yaml`](testing/nvidia-paidf-vda-cosmos-transfer25.yaml) | Separately named NVIDIA-derived VDA semantic translation → pinned upstream contract → real Cosmos Transfer 2.5/Evaluator/Curator/FiftyOne → Rerun ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
 | [`physical-ai-data-factory.yaml`](testing/physical-ai-data-factory.yaml) | Cosmos Transfer 2.5 PAIDF blueprint ([deploy guide](../docs/workbench/guides/physical-ai-data-factory-deploy.md)) |
 
 #### Robot learning and simulation

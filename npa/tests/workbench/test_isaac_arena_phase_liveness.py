@@ -2,8 +2,10 @@
 
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -167,6 +169,90 @@ def test_termination_escalates_only_for_owned_process(tmp_path):
     assert os.getpid() != process.pid
 
 
+def _child_is_active(stat: Path) -> bool:
+    try:
+        return stat.read_text().split()[2] != "Z"
+    except FileNotFoundError:
+        # Reaping can remove /proc/<pid>/stat at any point, including mid-read.
+        return False
+
+
+@pytest.mark.parametrize("state,active", [("S", True), ("R", True), ("Z", False)])
+def test_child_probe_distinguishes_live_processes_from_zombies(tmp_path, state, active):
+    """Keep live children failing the cleanup assertion while accepting zombies.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        state: Linux process state.
+        active: Whether the state represents a live child.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A process state is misclassified.
+    """
+    stat = tmp_path / "stat"
+    stat.write_text(f"123 (python) {state} 1 123 123\n")
+    assert _child_is_active(stat) is active
+
+
+def test_child_probe_accepts_already_reaped_process(tmp_path):
+    """Accept process state that init has already removed.
+
+    Args:
+        tmp_path: Isolated fixture directory with no process state.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A reaped process appears active.
+    """
+    assert not _child_is_active(tmp_path / "stat")
+
+
+def test_child_probe_accepts_reaping_during_read(tmp_path, monkeypatch):
+    """Reproduce init removing process state between observation and reading.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        monkeypatch: Simulates reaping at the read boundary.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Concurrent reaping appears as a cleanup failure.
+    """
+    stat = tmp_path / "stat"
+    stat.write_text("123 (python) S 1 123 123\n")
+
+    def reap_before_read(path):
+        path.unlink()
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(Path, "read_text", reap_before_read)
+    assert not _child_is_active(stat)
+
+
+def test_child_probe_does_not_hide_unreadable_process_state(tmp_path, monkeypatch):
+    """Keep errors other than process disappearance visible.
+
+    Args:
+        tmp_path: Isolated process-stat fixture directory.
+        monkeypatch: Simulates a permission failure.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The probe suppresses an unexpected read failure.
+    """
+
+    def denied(path):
+        raise PermissionError(path)
+
+    monkeypatch.setattr(Path, "read_text", denied)
+    with pytest.raises(PermissionError):
+        _child_is_active(tmp_path / "stat")
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Requires Linux /proc process state"
+)
 def test_termination_reaps_resistant_native_child_after_leader_exits(tmp_path):
     source = """import os, signal, time
 if os.fork() == 0:
@@ -185,10 +271,10 @@ while True: time.sleep(1)
     liveness._stop_owned_process(process)
     assert process.returncode == -15
     # A killed orphan can remain a zombie until the host init reaps it.
-    stat = __import__("pathlib").Path(f"/proc/{child_pid}/stat")
+    stat = Path(f"/proc/{child_pid}/stat")
     for _ in range(100):
-        if not stat.exists() or stat.read_text().split()[2] == "Z":
+        if not _child_is_active(stat):
             break
-        __import__("time").sleep(0.01)
+        time.sleep(0.01)
     else:
         pytest.fail("native child remained active after the leader terminated")
