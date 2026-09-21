@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from npa.workbench.curobo import runner
-from npa.workbench.curobo.artifacts import CuroboError, summarize, validate_report
+from npa.workbench.curobo import audit, runner
+from npa.workbench.curobo.artifacts import (
+    CuroboError,
+    canonical,
+    summarize,
+    validate_report,
+)
 from npa.workbench.curobo.benchmark_inventory import benchmark_identities, DATASET_FILES
 from npa.workbench.curobo.schemas import DATASET_REVISION, SOURCE_REVISION
 
@@ -158,12 +164,18 @@ def solved_row(monkeypatch):
 
     def forward_kinematics(state):
         assert state.joint_names == [f"joint{i}" for i in range(7)]
-        np.testing.assert_allclose(state.position.data, [[0.0] * 7, [0.1] * 7])
+        active = np.asarray(state.position.data)
         return SimpleNamespace(
             tool_poses=SimpleNamespace(
                 get_link_pose=lambda _name: SimpleNamespace(
-                    position=Tensor([[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]),
-                    quaternion=Tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]]),
+                    position=Tensor(
+                        np.column_stack(
+                            (active[:, 0], np.zeros((len(active), 2), dtype=active.dtype))
+                        )
+                    ),
+                    quaternion=Tensor(
+                        np.tile([1.0, 0.0, 0.0, 0.0], (len(active), 1))
+                    ),
                 )
             )
         )
@@ -193,7 +205,15 @@ def solved_row(monkeypatch):
         },
     }
 
-    def solve(benchmark=False, success=True, include_fingers=False):
+    def solve(benchmark=False, success=True, include_fingers=False, positions=None):
+        if positions is not None:
+            assert not include_fingers
+            values = np.asarray(positions)
+            assert values.ndim == 2 and values.shape[1] == 7
+            path.joint_names = [f"joint{i}" for i in range(7)]
+            path.position = Tensor(values)
+            for field in ("velocity", "acceleration", "jerk"):
+                setattr(path, field, Tensor(np.zeros_like(values)))
         if include_fingers:
             # Locked/mimic fingers are returned in the full interpolation. Put
             # them between active joints so slicing the first seven is invalid.
@@ -284,6 +304,36 @@ def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solv
         assert np.asarray(trajectory[field]).shape == (2, 9)
     np.testing.assert_array_equal(np.asarray(trajectory["position"])[:, [0, 4]], 0.04)
     assert trajectory["tool_position"] == [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]]
+
+
+def test_actual_runner_metrics_bind_serialized_float32_trajectory(solved_row):
+    steps = np.linspace(-1.3, 0.2, 4097, dtype=np.float32)
+    factors = np.asarray([1.0, -0.7, 0.3, -0.2, 0.11, -0.05, 0.02], dtype=np.float32)
+    positions = steps[:, None] * factors[None, :]
+    row = {
+        "mode": "kinematic",
+        "dataset": "operator",
+        "problem_id": "float32-serialization",
+        **solved_row(positions=positions),
+    }
+
+    raw_float32_metric = float(
+        np.linalg.norm(np.diff(positions, axis=0), axis=1).sum()
+    )
+    durable_metric = float(
+        np.linalg.norm(
+            np.diff(np.asarray(row["trajectory"]["position"], dtype=float), axis=0),
+            axis=1,
+        ).sum()
+    )
+    assert abs(raw_float32_metric - durable_metric) > 1e-9
+    assert row["metrics"]["joint_path_length_rad"] == durable_metric
+
+    journal = canonical(row) + b"\n"
+    report = report_for([row], "plan")
+    report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+    validation = audit.audit_bytes(canonical(report), journal, run_id="report-test")
+    assert validation["problem_count"] == 1
 
 
 @pytest.mark.parametrize(

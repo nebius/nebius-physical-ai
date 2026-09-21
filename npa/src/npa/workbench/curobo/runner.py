@@ -98,6 +98,38 @@ def _joint_series(state):
     }
 
 
+def _durable_trajectory_metrics(trajectory):
+    """Compute metrics from the values that will be written to the journal.
+
+    Args:
+        trajectory: Validated JSON-compatible trajectory payload.
+
+    Returns:
+        Metrics independently recomputable from the durable payload.
+
+    Raises:
+        KeyError: The validated trajectory is missing a required field.
+        TypeError: A trajectory field is not a numeric sequence.
+        ValueError: A trajectory value cannot be represented as a numeric array.
+    """
+
+    import numpy as np
+
+    positions = np.asarray(trajectory["position"], dtype=float)
+    tool_positions = np.asarray(trajectory["tool_position"], dtype=float)
+    jerk = np.asarray(trajectory["jerk"], dtype=float)
+    return {
+        "joint_path_length_rad": float(
+            np.linalg.norm(np.diff(positions, axis=0), axis=1).sum()
+        ),
+        "tool_path_length_m": float(
+            np.linalg.norm(np.diff(tool_positions, axis=0), axis=1).sum()
+        ),
+        "trajectory_duration_seconds": (len(positions) - 1) * trajectory["dt"],
+        "max_abs_jerk_rad_s3": float(np.abs(jerk).max()),
+    }
+
+
 def _solve(
     planner,
     problem,
@@ -152,7 +184,6 @@ def _solve(
     if result is None or not bool(result.success.item()):
         return record
     interpolated = result.get_interpolated_plan()
-    positions = _array(interpolated.position)
     # Interpolation includes locked/mimic joints (Franka's fingers), while the
     # kinematics model takes only active joints in its configured order.
     kinematic_state = interpolated.reorder(planner.joint_names)
@@ -178,14 +209,7 @@ def _solve(
             "solver_seconds": float(result.solve_time),
             "position_error_m": float(result.position_error.item()),
             "rotation_error_rad": float(result.rotation_error.item()),
-            "joint_path_length_rad": float(
-                np.linalg.norm(np.diff(positions, axis=0), axis=1).sum()
-            ),
-            "tool_path_length_m": float(
-                np.linalg.norm(np.diff(tool_positions, axis=0), axis=1).sum()
-            ),
-            "trajectory_duration_seconds": (len(positions) - 1) * trajectory["dt"],
-            "max_abs_jerk_rad_s3": float(np.abs(np.asarray(trajectory["jerk"])).max()),
+            **_durable_trajectory_metrics(trajectory),
         }
     )
     if benchmark_module is not None:
