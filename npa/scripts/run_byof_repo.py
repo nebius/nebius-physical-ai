@@ -327,12 +327,17 @@ def _dockerfile_text() -> str:
         "ARG BYOF_SOURCE_LABEL_REF\n"
         "ARG BYOF_BUILD_COMMAND\n"
         "USER root\n"
+        # openssh-server's postinst generates /etc/ssh/ssh_host_* during
+        # install. Deleting them in a later RUN leaves the private keys in that
+        # earlier layer, readable by anyone who pulls the image, even though the
+        # merged rootfs looks clean. Install and removal must stay in this one
+        # layer; runtime keys come from the ssh-keygen -A injected below.
         "RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
         "      git ca-certificates python3 python3-pip sudo rsync \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
-        "  && rm -rf /var/lib/apt/lists/*\n"
-        "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
-        "RUN install -d -m 0755 /run/sshd \\\n"
+        "  && (id -u ubuntu >/dev/null 2>&1 \\\n"
+        "    || useradd -m -s /bin/bash -u 1000 ubuntu) \\\n"
+        "  && install -d -m 0755 /run/sshd \\\n"
         "  && (grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
         "    || sed -i '/^  start)$/a\\    ssh-keygen -A' /etc/init.d/ssh) \\\n"
         "  && grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
@@ -340,7 +345,8 @@ def _dockerfile_text() -> str:
         "  && printf '%s\\n' 'PasswordAuthentication no' 'PermitRootLogin no' \\\n"
         "    > /etc/ssh/sshd_config.d/99-npa-container.conf \\\n"
         "  && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
-        "  && chmod 440 /etc/sudoers.d/ubuntu\n"
+        "  && chmod 440 /etc/sudoers.d/ubuntu \\\n"
+        "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN mkdir -p /workspace && chown ubuntu:ubuntu /workspace\n"
         "WORKDIR /workspace\n"
         "RUN --mount=type=secret,id=npa_byof_repo_token \\\n"
