@@ -30,7 +30,7 @@ def roots(tmp_path):
         yield
 
 
-def oci_fixture(*, artifact=False, nested=True, marker=None, padding=False):
+def oci_fixture(*, artifact=False, nested=True, marker=None, padding=False, revision=None):
     """Two ancestor layers, one whiteout, and a BuildKit attestation manifest."""
     blobs = {}
     def blob(data, media):
@@ -52,7 +52,8 @@ def oci_fixture(*, artifact=False, nested=True, marker=None, padding=False):
         raws[1] = bytes(raw)
     layers = [blob(raws[0], LAYER), blob(gzip.compress(raws[1], mtime=0), LAYER + "+gzip")]
     config = blob(js({"architecture": "amd64", "os": "linux", "rootfs": {"type": "layers", "diff_ids": ["sha256:" + digest(raw) for raw in raws]},
-                      "config": {"User": "1000", "Labels": {"review": tagged("config", "neutral")}},
+                      "config": {"User": "1000", "Labels": {"review": tagged("config", "neutral"),
+                                 **({"org.opencontainers.image.revision": revision} if revision else {})}},
                       "history": [{"created_by": tagged("history", "synthetic build")}]}), CONFIG)
     runtime = blob(js({"schemaVersion": 2, "mediaType": MANIFEST, "config": config, "layers": layers,
                        "annotations": {"review": tagged("manifest", "neutral")}}), MANIFEST)

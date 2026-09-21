@@ -156,6 +156,21 @@ findings by default. It has no implicit access to an operator's private review
 bundle. Do not upload that bundle as a public Actions artifact or add private
 evidence to Git to transport it.
 
+RoboTwin may explicitly supply a separate private review handoff for each of
+its pre-publication and post-pull gates. The runner exports the exact failed scan
+request to an operator-authorized private PUT object and retains the original
+inputs. A distinct GET-only capability retrieves the independent review's
+manifest and review pins. The existing adjudicator then checks every native,
+regex and literal occurrence, complete accounting, source and policy identities,
+archive/graph bindings and unchanged input snapshots. Its supported Docker-save
+verifiers are cuRobo and RoboTwin; unsupported graphs still refuse.
+
+This handoff adds no semantic roles, matching changes, automatic classifications
+or public-native exceptions. Each exact decision comes from a real independent
+review, and the raw failed report and ledger remain unchanged. All other image
+and publication gates remain required. Transport details and the four scoped
+secret names are documented in the [RoboTwin helper README](../../npa/docker/workbench/robotwin/README.md).
+
 ## Reviewed public native content
 
 The optional public content policy is distinct from private occurrence review.

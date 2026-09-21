@@ -132,6 +132,14 @@ except Exception:
     summary = {"diagnostic": "unavailable"}
 print("RoboTwin byte gate diagnostic: " + json.dumps(summary, sort_keys=True))
 PY
+  if (( scan_status == 1 )) && [[ -n "${ROBOTWIN_PRIVATE_REVIEW_REQUEST_URL:-}${ROBOTWIN_PRIVATE_REVIEW_RESPONSE_URL:-}" ]]; then
+    echo 'RoboTwin awaiting independent private byte review'
+    if npa/.venv/bin/python npa/docker/workbench/robotwin/private_review.py "$phase" "$phase_name" >/dev/null 2>&1; then
+      echo 'RoboTwin exact byte findings independently accepted; raw scan preserved'
+      exit 0
+    fi
+    echo 'RoboTwin independent private byte review failed'
+  fi
   if [[ -n "${ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL:-}" ]]; then
     # Even unexpected library diagnostics must never expose the signed URL.
     if npa/.venv/bin/python npa/docker/workbench/robotwin/private_failure_upload.py "$phase" >/dev/null 2>&1; then

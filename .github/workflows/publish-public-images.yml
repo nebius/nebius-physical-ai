@@ -444,6 +444,8 @@ jobs:
           CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
           INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
           ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_REQUEST_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_PRE_REQUEST_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_RESPONSE_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_PRE_RESPONSE_URL || '' }}
         run: |
           set -euo pipefail
           npa/.venv/bin/python - <<'PY'
@@ -700,6 +702,8 @@ jobs:
           CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
           INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
           ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_REQUEST_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_POST_REQUEST_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_RESPONSE_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_POST_RESPONSE_URL || '' }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
