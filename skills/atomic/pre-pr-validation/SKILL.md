@@ -20,6 +20,9 @@ audit after every merge. Independent validation jobs use available GitHub runner
 capacity without job-level concurrency locks or matrix `max-parallel` caps.
 Preserve per-PR supersession on the parent and distinct workflow group prefixes
 for reusable children. Merge candidates use their own SHA-specific groups.
+The aggregate gate uses `!cancelled()` to report failed dependencies while
+allowing obsolete runs to terminate; `always()` can keep their final job queued
+ahead of the replacement candidate.
 `test_ci_concurrency` rejects shared validation locks and matrix caps;
 `test_ci_workflows` guards cancellation and required results. See the contributor
 concurrency guide for organization runner limits and rollout behavior. Refresh

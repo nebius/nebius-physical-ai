@@ -234,7 +234,8 @@ jobs:
       - security-scanners
       - image-security
       - security-runtime
-    if: ${{ always() }}
+    # Report failed dependencies, but let superseded runs release the PR queue.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require every candidate gate and security audit

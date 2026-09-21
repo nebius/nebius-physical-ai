@@ -840,7 +840,7 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
         "image-security",
         "security-runtime",
     ]
-    assert job["if"] == "${{ always() }}"
+    assert job["if"] == "${{ !cancelled() }}"
     assert "continue-on-error" not in job
     required_step = job["steps"][0]
     assert required_step["env"] == {
