@@ -5,19 +5,21 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 # Pre-PR Validation
 
-Every pull request has one automatic candidate workflow. It runs lint, docs
-drift, guardrails, smoke feedback, security regressions, secret scanning, and
-confidentiality scanning. Recognized subsystem changes also run affected Python
-tests, with Cypress for agent/browser changes. Unknown or shared changes receive
-the full suite before queue admission. The merge queue runs browser and focused
-compatibility checks alongside the complete five-shard Python 3.12 coverage suite
-against the latest `main`, except for narrowly recognized prose edits. Those keep
-smoke and every documentation, repository, and security gate. See
-`CONTRIBUTING.md` for the trusted-base selector and conservative exception rules.
+Every pull request has one automatic candidate workflow. PRs and merge candidates
+run the same complete five-shard Python 3.12 coverage suite, Cypress, focused
+Python 3.10/3.14 compatibility checks, lint, docs drift, guardrails, security
+regressions, secret scanning, and confidentiality scanning. Cross-subsystem
+coverage must pass before queue admission. Full shards include smoke and CLI
+install tests without duplicate subsystem jobs. Only narrowly recognized prose
+edits skip runtime suites; those retain smoke and every documentation,
+repository, and security gate. See `CONTRIBUTING.md` for the trusted-base selector,
+which uses the base's merge-candidate policy for both events during rollout.
+The queue rechecks the combined candidate against its current base.
 A daily audit covers all supported Python versions in the smaller background
 pool instead of starting a full audit after every merge. Job concurrency permits
 seven PR jobs, nine merge-candidate jobs, and three audit jobs across the repository.
-Each candidate pool has a separate slot for coverage and final required checks.
+Each candidate pool has a separate slot for the short test-scope selector,
+coverage, and final required checks; keep long jobs out of that slot.
 Preserve `queue: max` with `cancel-in-progress: false` on shared job slots and
 per-PR supersession on the parent. Reusable callers must not hold child slots.
 `test_ci_concurrency` guards slot routing and queue retention; `test_ci_workflows`
