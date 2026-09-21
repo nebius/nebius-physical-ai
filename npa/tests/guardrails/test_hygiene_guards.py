@@ -406,11 +406,13 @@ def _heavy_module_import_violations(path: Path) -> list[str]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except SyntaxError:
         return []
-    # Only statements directly in the module body execute at import time. Reading
-    # the body alone is what lets the supported escapes through untouched: a
-    # function-level import, a try/except ImportError, an `if TYPE_CHECKING`
-    # block, and `pytest.importorskip` are all nested or are calls, never a
-    # top-level Import node.
+    # Scope is deliberately the direct Import/ImportFrom nodes of the module
+    # body. Imports nested at module level, inside if/class/for/with, do execute
+    # at import time but stay outside this guard. Reading the direct body alone
+    # is what lets the supported escapes through untouched: a function-level
+    # import, a try/except ImportError, an `if TYPE_CHECKING` block, and
+    # `pytest.importorskip` are all nested or are calls, never a top-level
+    # Import node.
     violations = []
     for node in tree.body:
         if isinstance(node, ast.Import):
@@ -423,7 +425,7 @@ def _heavy_module_import_violations(path: Path) -> list[str]:
             if name.split(".")[0] in HEAVY_TEST_IMPORTS:
                 violations.append(
                     f"{path}:{node.lineno} imports {name} at module level; "
-                    "use pytest.importorskip or import inside the test"
+                    "use pytest.importorskip or an optional-dependency fixture"
                 )
     return violations
 
