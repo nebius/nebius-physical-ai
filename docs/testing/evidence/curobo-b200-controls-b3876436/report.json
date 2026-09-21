@@ -1,0 +1,59 @@
+{
+  "hardware_family": "B200",
+  "compute_capability": [
+    10,
+    0
+  ],
+  "image_manifest_digest": "sha256:73d4ba23af61b3762200ee29fb2cdd153d6df6b75b4ada481ccb75b6c8ed2955",
+  "image_config_digest": "sha256:12d1f82d0f04d0d0a55324d2cfbf906e786750921ab7cbab48d52a33e1888ab3",
+  "image_source_sha": "b387643682271d867c816fba1a598295ffe57f37",
+  "pr_head_sha": "1479d3716311cc0543028973acd00ff534bc5691",
+  "stock_product_passed": true,
+  "statuses": {
+    "feasible": "success",
+    "goal-blocked": "failed"
+  },
+  "malformed_robot_rejected": true,
+  "malformed_outputs_absent": true,
+  "validation_valid": true,
+  "fk_replay_max_error_m": 0.0,
+  "max_fk_quaternion_replay_error_rad": 0.0,
+  "max_fk_quaternion_component_replay_error": 0.0,
+  "position_error_m": 1.3719009928081505e-07,
+  "rotation_error_rad": 1.622694725256224e-07,
+  "rrd_semantic_compare": "passed",
+  "rrd_trajectory_samples": 61,
+  "rrd_verified": true,
+  "artifact_count": 25,
+  "artifact_readback_sha256": "225c20c10dea082a478d6d2b4832ba1e3246335d23061d9c66ec592c160eb385",
+  "acceptance_sha256": "1e85bca4d77b4f3f8c8154bf10ee6f054cfd7ab530afd187137cd6a2101211e2",
+  "validation_sha256": "606b70789c6cfcea8a6781d1093367128d8a473768384145f32c59d286a1557a",
+  "journal_sha256": "1094910262ac983c1e6a1db6cb0c5678400da5e2568b2ecb58c14161927f8918",
+  "rrd_sha256": "b8a571fab60d5a22b1ad823b1a38695bde0a5bc7662a780254896416a91269be",
+  "readback_verify_sha256": "e3ededa558f9eb8e55ea5dbc352a37efc95553ff1332d5d6ebecfd9f866b75f3",
+  "readback_print_sha256": "05488ce51b1c044d1c5e75c536a41b83a3d532aa46dbe271d2c879ec370b4218",
+  "terminal_status": "SUCCEEDED",
+  "verdict": "PASS_B200_EXACT_IMAGE_CONTROLS",
+  "schema": "npa.public-curobo-controls.v1",
+  "scope": "Preliminary B200 positive and failure controls; not a full benchmark or release acceptance.",
+  "artifact_bytes_hash_checked": 969621,
+  "root_originals_hash_checked": 25,
+  "fresh_object_store_query_by_root": false,
+  "source_mapping": "Image produced from b3876436; PR head1479 changes three test files and formatting in the host image verifier. Runtime/build inputs are unchanged.",
+  "recomputed_from_unchanged_public_journal": {
+    "samples": 61,
+    "joint_columns": 9,
+    "planned_dt_seconds": 0.02500000037252903,
+    "planned_duration_seconds": 1.5000000223517418,
+    "terminal_goal_distance_m": 1.427736610998321e-07,
+    "tool_path_length_m": 0.6550320880671613
+  },
+  "limitations": [
+    "One positive case, one expected blocked-goal failure, and malformed-input rejection; no operational success-rate estimate.",
+    "Kinematics replay and goal agreement do not independently certify collision freedom or robot hardware execution.",
+    "This control contains no inverse-dynamics benchmark results.",
+    "No VLM quality gate is claimed for the data plot.",
+    "Complete image-byte qualification, RTX controls, full benchmark matrices, broad tests and current CI remain separate gates.",
+    "The original workflow RRD and operational records remain private; the public plot is derived from all61 retained trajectory samples."
+  ]
+}
