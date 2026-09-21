@@ -1,0 +1,90 @@
+{
+  "at": "2026-09-21T23:07:21.568250+00:00",
+  "verdict": "ACCEPT_ALL24_ACTUAL_VISIBLE_EVIDENCE_REVIEWS",
+  "source": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
+  "current_test_only_head": "1558422bed6aad3eba495e907456fa39e483d64a",
+  "model": "moonshotai/Kimi-K3",
+  "threshold": 0.9,
+  "freeze_sha256": "e9ba232ed51a8bb3e61c891a07edb0d0adc6254107c7a402e311305487bb70ec",
+  "phases": [
+    {
+      "phase": "calibration",
+      "calls": 8,
+      "passed": true,
+      "usage_total_tokens": 26267,
+      "verdict_sha256": "1754e9bcaf4881af552f6f1a2d8b234d5175263225320ebc1920f40d60636bf0",
+      "call_receipts_sha256": "dded709c172f8f76a63cb30723d6208a4bda57d7517c072c4124d4813cf1fa0c"
+    },
+    {
+      "phase": "holdout",
+      "calls": 4,
+      "passed": true,
+      "usage_total_tokens": 15722,
+      "verdict_sha256": "9375e12d37c91e8ce4b2d2c048fe86d698becf183d1d597da5f2beacdc489343",
+      "call_receipts_sha256": "93b7601c791bae1d20a8cb02ab76595c1658002f4ff530b21b815b4afc492abe"
+    },
+    {
+      "phase": "final",
+      "calls": 12,
+      "passed": true,
+      "usage_total_tokens": 44896,
+      "verdict_sha256": "4e3d1ddaffb728bf2ebcddb01e32291d8db691bec4a78760cdea48d00783a5ff",
+      "call_receipts_sha256": "6b404add2f4bb0381d4934d30aca335228a8b87b414ecc7df23abec0e8649169"
+    }
+  ],
+  "prior_trials": [
+    {
+      "trial": "curobo-vlm-kimi3-2231",
+      "phase": "calibration",
+      "calls": 8,
+      "passed": true,
+      "usage_total_tokens": 33032,
+      "verdict_sha256": "b9022c6114d383cfc831ffc299641b1bf0525cbbd5cb8f48ad76eb4d956e9ab7"
+    },
+    {
+      "trial": "curobo-vlm-kimi3-2231",
+      "phase": "holdout",
+      "calls": 4,
+      "passed": true,
+      "usage_total_tokens": 13870,
+      "verdict_sha256": "7e25eefab57422c5698462c9ab265df56d8957aec7007394a613876fdb18434c"
+    },
+    {
+      "trial": "curobo-vlm-kimi3-2231",
+      "phase": "final",
+      "calls": 1,
+      "passed": false,
+      "usage_total_tokens": 10722,
+      "verdict_sha256": "4d2a1663820fd036d68982efa1aefba7d71e4ab004644c74154705c7b9626679"
+    },
+    {
+      "trial": "curobo-vlm-kimi3-output-20260921",
+      "phase": "calibration",
+      "calls": 8,
+      "passed": false,
+      "usage_total_tokens": 33717,
+      "verdict_sha256": "9dd96c24ac9ee55ac2809ca9661974e8b35305abbc9408217b83591030d4ee11"
+    }
+  ],
+  "earlier_failed_trials": {
+    "calls": 60,
+    "usage_total_tokens": 56535
+  },
+  "calibration_final_overlap": 3,
+  "total_real_calls": 105,
+  "total_usage_tokens": 234761,
+  "scope": "Exact visible identities/status/path/goal presentation, not planner quality or collision/torque/safety. Retained holdout cases, three final-calibration overlaps. All prior failed trials preserved.",
+  "published_at": "2026-09-21T23:10:31.515935+00:00",
+  "request": {
+    "model": "moonshotai/Kimi-K3",
+    "temperature": 0,
+    "max_tokens": 131072,
+    "response_format": "strict json_schema from response-schema.json"
+  },
+  "root_verdict_sha256": "16ae3592e28bb9c2df711328109f5f4f9d829d19d0316021dfa892291a5556df",
+  "render_data_sha256": "010bdfcb488eb78f657f383d94ec190f83738a1f3e349ca1a26185baea275dd1",
+  "producer_gpu_source": "49fed65d0d1a315ce08addab533c56c48180d419",
+  "recording_image_source": "0b0accdd35406189a82bc3e2595ea3cfdef04195",
+  "recording_image_digest": "sha256:6abd9ef4635fb33f5894f82c712ae6dd478320061e165a31e2828380d1c6bfd8",
+  "publication_scope": "Sanitized visible output, image/request hashes and usage. Provider private response metadata and reasoning remain private. No customer credentials or infrastructure endpoints."
+}

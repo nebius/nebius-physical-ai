@@ -1,0 +1,116 @@
+{
+  "type": "object",
+  "properties": {
+    "observed": {
+      "type": "object",
+      "properties": {
+        "hardware": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dataset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "problem_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "hardware",
+        "dataset",
+        "mode",
+        "problem_id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "goal_marker_visible": {
+          "type": "boolean"
+        },
+        "path_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path_start_visible": {
+          "type": "boolean"
+        },
+        "path_terminal_visible": {
+          "type": "boolean"
+        },
+        "no_trajectory_text_visible": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "goal_marker_visible",
+        "path_label",
+        "path_start_visible",
+        "path_terminal_visible",
+        "no_trajectory_text_visible"
+      ],
+      "additionalProperties": false
+    },
+    "presentation": {
+      "type": "object",
+      "properties": {
+        "blank": {
+          "type": "boolean"
+        },
+        "readable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "blank",
+        "readable"
+      ],
+      "additionalProperties": false
+    },
+    "success": {
+      "type": "boolean"
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "rationale": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "observed",
+    "evidence",
+    "presentation",
+    "success",
+    "score",
+    "rationale"
+  ],
+  "additionalProperties": false
+}

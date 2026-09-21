@@ -1,0 +1,1750 @@
+[
+  {
+    "phase": "calibration",
+    "id": "pass-01-feasible",
+    "image": "b200-golden-feasible-v4.png",
+    "expected": {
+      "dataset": "operator",
+      "hardware": "B200",
+      "mode": "kinematic",
+      "problem_id": "franka-pose",
+      "role": "feasible",
+      "status": "success"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "operator",
+        "mode": "kinematic",
+        "problem_id": "franka-pose",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (61 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Identity matches expected exactly: title shows B200, subtitle shows operator | kinematic | franka-pose, and STATUS: SUCCESS. The declared-goal red star marker is visible at the path end. The legend path label transcribed verbatim is 'complete tool path (61 samples)', which starts with 'complete tool path (' and contains neither 'clipped' nor a sample fraction. The green path-start dot and purple path-terminal square are both visible. The figure is readable and not blank, and no 'NO TRAJECTORY EMITTED' text is present, consistent with a successful run. No collision, torque, or safety inference is made."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 6.986324805999175,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 909,
+        "prompt_tokens": 2530,
+        "total_tokens": 3439,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 682,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 682,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2466
+      },
+      "provider_cost": null,
+      "image_sha256": "fceca1ce944f2339df71ca0ab66e163fd2d1c110e434b21f381049bddca03fa7",
+      "prompt_sha256": "f74bbc8e52de6543d5aff8c41aec14d35f94d77244a44983924dec6cf4b2ca71",
+      "request_sha256": "b24ec67aaeb3ec85f6b0b89855d367d01114b04808482ce22e266b784e8ae961",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "calibration",
+    "id": "pass-02-blocked",
+    "image": "rtx_pro_6000-golden-blocked-v4.png",
+    "expected": {
+      "dataset": "operator",
+      "hardware": "RTX_PRO_6000",
+      "mode": "kinematic",
+      "problem_id": "blocked-goal-control",
+      "role": "blocked",
+      "status": "failed"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "RTX_PRO_6000",
+        "dataset": "operator",
+        "mode": "kinematic",
+        "problem_id": "blocked-goal-control",
+        "status": "failed"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title block reads 'RTX_PRO_6000 factual cuRobo capture', 'operator | kinematic | blocked-goal-control', 'STATUS: FAILED', exactly matching the expected identity and failed status. The legend shows a red star labeled 'declared goal' and a red star goal marker is visible inside the 3D axes. Large red text 'NO TRAJECTORY EMITTED' is displayed in the plot volume. No path polyline, no path legend label, and no start/terminal markers are present, satisfying the failed-run adequacy criteria. The figure is non-blank and fully legible; the footer disclaims any collision, torque, or safety claim, and none is inferred."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 5.297062658006325,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 762,
+        "prompt_tokens": 2535,
+        "total_tokens": 3297,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 524,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 524,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2471
+      },
+      "provider_cost": null,
+      "image_sha256": "d26f46db9b9ed7e4be4efbf1162bf986d714b5ef421e534fbef6d0577590527f",
+      "prompt_sha256": "3bed3b160d913182d3f308bea629c52dd9001aa3efed05d983ad8806737c8d32",
+      "request_sha256": "46a72ccfed850e2f2584b0de3d17bc5ea6f319f1d58ae3922003368c0c3fd424",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "calibration",
+    "id": "pass-03-benchmark-failure",
+    "image": "b200-motion-benchmaker-kinematic-failed-v4.png",
+    "expected": {
+      "dataset": "motion_benchmaker",
+      "hardware": "B200",
+      "mode": "kinematic",
+      "problem_id": "bookshelf_small_panda/31",
+      "role": "failed",
+      "status": "failed"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "motion_benchmaker",
+        "mode": "kinematic",
+        "problem_id": "bookshelf_small_panda/31",
+        "status": "failed"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title reads 'B200 factual cuRobo capture', 'motion_benchmaker | kinematic | bookshelf_small_panda/31', 'STATUS: FAILED', exactly matching the expected identity and failed status. The legend shows a red star labeled 'declared goal' and the red star goal marker is visible in the 3D axes. The text 'NO TRAJECTORY EMITTED' is prominently displayed, and no path label, path start, or terminal marker is present. This satisfies all criteria for an adequate failed run."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 5.854190362995723,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 644,
+        "prompt_tokens": 2536,
+        "total_tokens": 3180,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 440,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 440,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2472
+      },
+      "provider_cost": null,
+      "image_sha256": "8e09b8f09ca9cbe979f3c3fb7f8fd156b65cf7a96d661b5d66d49c83169241e9",
+      "prompt_sha256": "d1aff7bba5824784bd646241b91d344f30c2975135e7bc6c22cfafa70613d0b0",
+      "request_sha256": "92c3cea3a391e1a02ae48cda3d1968c30f2d62e282d1ddedd57e1e888a9e8dd7",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "calibration",
+    "id": "fail-01-blank",
+    "image": "calibration-fail-01-blank.png",
+    "expected": {
+      "dataset": "operator",
+      "hardware": "B200",
+      "mode": "kinematic",
+      "problem_id": "franka-pose",
+      "role": "feasible",
+      "status": "success"
+    },
+    "expected_label": "fail",
+    "correct": true,
+    "predicted_pass": false,
+    "validation_errors": [
+      "hardware_mismatch",
+      "dataset_mismatch",
+      "mode_mismatch",
+      "problem_id_mismatch",
+      "status_mismatch",
+      "blank_or_unreported",
+      "unreadable_or_unreported",
+      "goal_not_visible",
+      "complete_path_label_missing",
+      "path_start_not_visible",
+      "path_terminal_not_visible"
+    ],
+    "visible_model_response": {
+      "observed": {
+        "hardware": null,
+        "dataset": null,
+        "mode": null,
+        "problem_id": null,
+        "status": null
+      },
+      "evidence": {
+        "goal_marker_visible": false,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": true,
+        "readable": false
+      },
+      "success": false,
+      "score": 0.0,
+      "rationale": "The image is entirely blank (uniform white) with no visible text, legend, markers, trajectory, or plot content. No identity fields, goal marker, path label, or status can be transcribed, so the expected identity cannot be verified and the run cannot be deemed adequate."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 2.271906983005465,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 250,
+        "prompt_tokens": 2530,
+        "total_tokens": 2780,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 110,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2496,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 110,
+        "prompt_cache_hit_tokens": 2496,
+        "prompt_cache_miss_tokens": 34
+      },
+      "provider_cost": null,
+      "image_sha256": "bc4e473c4c34e90b0a2395b5a25462348b7bf6565f8206f991a9ba5252965202",
+      "prompt_sha256": "f74bbc8e52de6543d5aff8c41aec14d35f94d77244a44983924dec6cf4b2ca71",
+      "request_sha256": "7e910b0151aa4d50d7e78b5f3b2649e8c4b84df0f71616ec0259509e3e008585",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "calibration",
+    "id": "fail-02-clipped-hidden-goal",
+    "image": "calibration-fail-02-clipped-hidden-goal.png",
+    "expected": {
+      "dataset": "operator",
+      "hardware": "B200",
+      "mode": "kinematic",
+      "problem_id": "franka-pose",
+      "role": "feasible",
+      "status": "success"
+    },
+    "expected_label": "fail",
+    "correct": true,
+    "predicted_pass": false,
+    "validation_errors": [
+      "goal_not_visible",
+      "complete_path_label_missing"
+    ],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "operator",
+        "mode": "kinematic",
+        "problem_id": "franka-pose",
+        "status": "SUCCESS"
+      },
+      "evidence": {
+        "goal_marker_visible": false,
+        "path_label": "clipped path (33/61 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": false,
+      "score": 0.0,
+      "rationale": "The plot is non-blank and readable, and the visible identity text matches the expected B200 / operator / kinematic / franka-pose with STATUS: SUCCESS. However, the verbatim legend path label is 'clipped path (33/61 samples)', which contains 'clipped' and a sample fraction (33/61) and does not start with 'complete tool path ('. No declared-goal marker is visible; the legend only shows path start and path terminal. Per the audit rules, a clipped/fraction label is never complete and a hidden goal requires failure, so success=false and score=0.0."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 11.798012961007771,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 1710,
+        "prompt_tokens": 2530,
+        "total_tokens": 4240,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 1487,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2496,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 1487,
+        "prompt_cache_hit_tokens": 2496,
+        "prompt_cache_miss_tokens": 34
+      },
+      "provider_cost": null,
+      "image_sha256": "79a629ffe7a49aecfe0239d9f545e44f371482fb4b900c0a56282ac3df674a82",
+      "prompt_sha256": "f74bbc8e52de6543d5aff8c41aec14d35f94d77244a44983924dec6cf4b2ca71",
+      "request_sha256": "2930cd1b93751405ace462fe3d79168cd6f46bd731eecf48febf60af18905e8e",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "calibration",
+    "id": "fail-03-mismatched-run",
+    "image": "calibration-fail-03-mismatched-run.png",
+    "expected": {
+      "dataset": "mpinets",
+      "hardware": "B200",
+      "mode": "dynamics",
+      "problem_id": "dresser_neutral_goal/53",
+      "role": "failed",
+      "status": "failed"
+    },
+    "expected_label": "fail",
+    "correct": true,
+    "predicted_pass": false,
+    "validation_errors": [
+      "mode_mismatch"
+    ],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "mpinets",
+        "mode": "kinematic",
+        "problem_id": "dresser_neutral_goal/53",
+        "status": "FAILED"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": false,
+      "score": 0.0,
+      "rationale": "The plot is readable and shows a failed run with the declared-goal star marker visible, 'NO TRAJECTORY EMITTED' text present, and no path label, which would suit a failed expectation. However, the observed mode is 'kinematic' while the expected mode is 'dynamics'; this identity mismatch requires success=false and score=0.0. All other identity fields (hardware=B200, dataset=mpinets, problem_id=dresser_neutral_goal/53, status=FAILED) match."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 3.8748178720124997,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 410,
+        "prompt_tokens": 2533,
+        "total_tokens": 2943,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 207,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2496,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 207,
+        "prompt_cache_hit_tokens": 2496,
+        "prompt_cache_miss_tokens": 37
+      },
+      "provider_cost": null,
+      "image_sha256": "fd3ae388e7b19335bfb2f29fad580b93b626e36e83e14feaf9c1057602416583",
+      "prompt_sha256": "5f2e1b58b31bb4070e07b1b62b9ecdbc59bcad39fc79a36ce838d4839f78b1f6",
+      "request_sha256": "63eb1190018d79d8dc2958e7b503f5d1f7308e41682058effe9064a796659693",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "calibration",
+    "id": "ambiguous-01-blurred",
+    "image": "calibration-ambiguous-01-blurred.png",
+    "expected": {
+      "dataset": "operator",
+      "hardware": "B200",
+      "mode": "kinematic",
+      "problem_id": "franka-pose",
+      "role": "feasible",
+      "status": "success"
+    },
+    "expected_label": "fail",
+    "correct": true,
+    "predicted_pass": false,
+    "validation_errors": [
+      "hardware_mismatch",
+      "dataset_mismatch",
+      "mode_mismatch",
+      "problem_id_mismatch",
+      "status_mismatch",
+      "unreadable_or_unreported",
+      "complete_path_label_missing"
+    ],
+    "visible_model_response": {
+      "observed": {
+        "hardware": null,
+        "dataset": null,
+        "mode": null,
+        "problem_id": null,
+        "status": null
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": false
+      },
+      "success": false,
+      "score": 0.0,
+      "rationale": "The plot is not blank: a faint diagonal path line with a teal-ish start marker and a reddish terminal marker is visible, plus a legend-like cluster in the upper left and a title-like smudge at top center. However, the image is extremely blurred/overexposed and no text is legible, so hardware, dataset, mode, problem_id, status, and the legend path label cannot be transcribed. Exact identity/status match cannot be verified, and the goal marker cannot be confirmed as a declared-goal marker. Per the audit rules, unreadable fields and ambiguity require success=false and score=0.0."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 6.164286464001634,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 851,
+        "prompt_tokens": 2530,
+        "total_tokens": 3381,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 642,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2496,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 642,
+        "prompt_cache_hit_tokens": 2496,
+        "prompt_cache_miss_tokens": 34
+      },
+      "provider_cost": null,
+      "image_sha256": "358ddbe065ee5345a6c41d697ea9e6d0cc45ef8cd6e713987ced4979caf06c72",
+      "prompt_sha256": "f74bbc8e52de6543d5aff8c41aec14d35f94d77244a44983924dec6cf4b2ca71",
+      "request_sha256": "21668fbd2897aaa137aab336483d7ba4c91955c020ede780b044ffe2fb85ed28",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "calibration",
+    "id": "ambiguous-02-partial-crop",
+    "image": "calibration-ambiguous-02-partial-crop.png",
+    "expected": {
+      "dataset": "operator",
+      "hardware": "RTX_PRO_6000",
+      "mode": "kinematic",
+      "problem_id": "blocked-goal-control",
+      "role": "blocked",
+      "status": "failed"
+    },
+    "expected_label": "fail",
+    "correct": true,
+    "predicted_pass": false,
+    "validation_errors": [
+      "hardware_mismatch",
+      "dataset_mismatch",
+      "mode_mismatch",
+      "problem_id_mismatch",
+      "status_mismatch"
+    ],
+    "visible_model_response": {
+      "observed": {
+        "hardware": null,
+        "dataset": null,
+        "mode": null,
+        "problem_id": null,
+        "status": null
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": false,
+      "score": 0.0,
+      "rationale": "The plot is readable and shows a red star goal marker with the text 'NO TRAJECTORY EMITTED' and no path label, which is consistent with a failed run. However, none of the identity fields (hardware, dataset, mode, problem_id, status) are visibly present anywhere in the image, so the expected identity/status (RTX_PRO_6000/operator/kinematic/blocked-goal-control/failed) cannot be confirmed. Per the audit rules, any unreadable or missing identity field requires success=false and score=0.0."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 4.774997516011354,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 472,
+        "prompt_tokens": 2535,
+        "total_tokens": 3007,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 272,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2496,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 272,
+        "prompt_cache_hit_tokens": 2496,
+        "prompt_cache_miss_tokens": 39
+      },
+      "provider_cost": null,
+      "image_sha256": "3fe5091b6c9a9fb86b267f1b86676d213ea9d607d421eccbdc1cabd84c23672d",
+      "prompt_sha256": "3bed3b160d913182d3f308bea629c52dd9001aa3efed05d983ad8806737c8d32",
+      "request_sha256": "9f387a1757f8e43ac0cf6f700d4864e33a74cac0a4b521fd9d4137af9a56662f",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "holdout",
+    "id": "holdout-v3-pass-01",
+    "image": "holdout-v4-pass-01.png",
+    "expected": {
+      "hardware": "B200",
+      "dataset": "motion_benchmaker",
+      "mode": "kinematic",
+      "problem_id": "bookshelf_small_panda/4",
+      "status": "success"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "motion_benchmaker",
+        "mode": "kinematic",
+        "problem_id": "bookshelf_small_panda/4",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (81 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title and subtitle exactly match expected hardware B200, dataset motion_benchmaker, mode kinematic, problem_id bookshelf_small_panda/4, and STATUS: SUCCESS. The declared goal red star is visible and coincident with the purple path-terminal square; the green path-start marker is visible. The verbatim legend label is 'complete tool path (81 samples)', which starts with 'complete tool path (' and contains neither 'clipped' nor a sample fraction. No 'NO TRAJECTORY EMITTED' text is present. The figure is non-blank and readable."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 4.657037864002632,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 782,
+        "prompt_tokens": 2536,
+        "total_tokens": 3318,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 565,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 565,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2472
+      },
+      "provider_cost": null,
+      "image_sha256": "46378df0a83f0551b4fdc8b67da2b2c22c3cc6a083d2b352d065a9557b6ae185",
+      "prompt_sha256": "4e2f76230aa49a1fc52e608187e8090bba1430f14bdd8427844f1bfc15ab763c",
+      "request_sha256": "bfb8469d16687eb6327ddd0e171fc431b71a8736dbe86b12a3b640b636ecc555",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "holdout",
+    "id": "holdout-v3-pass-02",
+    "image": "holdout-v4-pass-02.png",
+    "expected": {
+      "hardware": "B200",
+      "dataset": "mpinets",
+      "mode": "dynamics",
+      "problem_id": "cubby_neutral_goal/4",
+      "status": "success"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "mpinets",
+        "mode": "dynamics",
+        "problem_id": "cubby_neutral_goal/4",
+        "status": "SUCCESS"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (41 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Visible identity matches expected: title shows B200, mpinets, dynamics, cubby_neutral_goal/4, and STATUS: SUCCESS. The declared-goal red star is visible (also in legend). The legend path label transcribed verbatim is 'complete tool path (41 samples)', which starts with 'complete tool path (' and contains neither 'clipped' nor a sample fraction. The green path-start marker and purple path-terminal square are both visible on the plotted blue path, and no 'NO TRAJECTORY EMITTED' text is present. The footer scope line disclaims collision/torque/safety, which is not inferred."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 15.795689897000557,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 2742,
+        "prompt_tokens": 2533,
+        "total_tokens": 5275,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 2511,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 128,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 2511,
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 2405
+      },
+      "provider_cost": null,
+      "image_sha256": "dde521a6e4e1159537d2aa6e593cfa53d89806fdbe96d918504df888ce6adf15",
+      "prompt_sha256": "7381d628cf0ff6fb9ee216a4684a2926ff75b057fffe722155414002954a7a6b",
+      "request_sha256": "5d7ef161a3e3dbbecd5ac6d13eb31eadf708e8e326c6c0521302aba24c0d075d",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "holdout",
+    "id": "holdout-v3-fail-01-hidden-goal",
+    "image": "holdout-holdout-v3-fail-01-hidden-goal.png",
+    "expected": {
+      "hardware": "B200",
+      "dataset": "motion_benchmaker",
+      "mode": "dynamics",
+      "problem_id": "bookshelf_small_panda/4",
+      "status": "success"
+    },
+    "expected_label": "fail",
+    "correct": true,
+    "predicted_pass": false,
+    "validation_errors": [
+      "goal_not_visible",
+      "complete_path_label_missing"
+    ],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "motion_benchmaker",
+        "mode": "dynamics",
+        "problem_id": "bookshelf_small_panda/4",
+        "status": "SUCCESS"
+      },
+      "evidence": {
+        "goal_marker_visible": false,
+        "path_label": "clipped path (44/81 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": false,
+      "score": 0.0,
+      "rationale": "Identity/status text matches the expected run (B200; motion_benchmaker; dynamics; bookshelf_small_panda/4; STATUS: SUCCESS), and the plot is readable and non-blank with visible path start and path terminal markers. However, the verbatim legend path label is 'clipped path (44/81 samples)', which does not start with 'complete tool path (' and contains both 'clipped' and the sample fraction 44/81; per the rules such a label is never complete. No separately declared-goal marker is visible (only 'path start' and 'path terminal' are declared), and 'NO TRAJECTORY EMITTED' is not present. Therefore the run is not adequate."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 8.952815573007683,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 1673,
+        "prompt_tokens": 2534,
+        "total_tokens": 4207,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 1426,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2496,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 1426,
+        "prompt_cache_hit_tokens": 2496,
+        "prompt_cache_miss_tokens": 38
+      },
+      "provider_cost": null,
+      "image_sha256": "a2025c32ff146529f36de701a95f94eecd5bd92c7bdb15f7c5a402084bfdc47c",
+      "prompt_sha256": "7756b2106c0a6d984c34ee8404339d6227237803faf6b96cd01f64362b66f398",
+      "request_sha256": "8e81e9830b53597ccf2b6c130752138f33779106e712d032b5cadc1ad4b407da",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "holdout",
+    "id": "holdout-v3-fail-02-cross-mode",
+    "image": "holdout-holdout-v3-fail-02-cross-mode.png",
+    "expected": {
+      "hardware": "B200",
+      "dataset": "mpinets",
+      "mode": "dynamics",
+      "problem_id": "tabletop_neutral_goal/78",
+      "status": "failed"
+    },
+    "expected_label": "fail",
+    "correct": true,
+    "predicted_pass": false,
+    "validation_errors": [
+      "mode_mismatch"
+    ],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "mpinets",
+        "mode": "kinematic",
+        "problem_id": "tabletop_neutral_goal/78",
+        "status": "FAILED"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": false,
+      "score": 0.0,
+      "rationale": "The plot is readable and shows the failed-run indicators (declared-goal star marker visible, 'NO TRAJECTORY EMITTED' text present, no path label). Hardware (B200), dataset (mpinets), problem_id (tabletop_neutral_goal/78), and status (FAILED) match the expected identity. However, the observed mode is 'kinematic' while the expected mode is 'dynamics'; this identity mismatch requires success=false and score=0.0."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 3.23249081200629,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 389,
+        "prompt_tokens": 2533,
+        "total_tokens": 2922,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 193,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 128,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 193,
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 2405
+      },
+      "provider_cost": null,
+      "image_sha256": "be988da62252d7b1e58d9e685f111b6a3577d774ecfaf7dd6d026ac928e8bffa",
+      "prompt_sha256": "cf6ea4179fd6b6fac931352ce19732c3401ab117b1f43d47b5121e8f4f096886",
+      "request_sha256": "a40ac7d577d5a3dbbf78c3982aa9472a7821d7ab71f1bdb19b4b75e1ce2c5904",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-golden-feasible-v3",
+    "image": "b200-golden-feasible-v4.png",
+    "expected": {
+      "dataset": "operator",
+      "mode": "kinematic",
+      "problem_id": "franka-pose",
+      "status": "success",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "operator",
+        "mode": "kinematic",
+        "problem_id": "franka-pose",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (61 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Visible title/identity reads B200, operator, kinematic, franka-pose with declared STATUS: SUCCESS, matching the expected identity. The declared-goal red star is visible in the legend and at the path end. The legend path label is verbatim 'complete tool path (61 samples)', which starts with 'complete tool path (' and contains no 'clipped' wording and no sample fraction. The green path-start marker and purple path-terminal marker are both visible, and no 'NO TRAJECTORY EMITTED' text is present. No collision, torque, hidden-state, or safety claim is inferred."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 10.861075498003629,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 1744,
+        "prompt_tokens": 2530,
+        "total_tokens": 4274,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 1525,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 384,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 1525,
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 2146
+      },
+      "provider_cost": null,
+      "image_sha256": "fceca1ce944f2339df71ca0ab66e163fd2d1c110e434b21f381049bddca03fa7",
+      "prompt_sha256": "f74bbc8e52de6543d5aff8c41aec14d35f94d77244a44983924dec6cf4b2ca71",
+      "request_sha256": "b24ec67aaeb3ec85f6b0b89855d367d01114b04808482ce22e266b784e8ae961",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-golden-blocked-v3",
+    "image": "b200-golden-blocked-v4.png",
+    "expected": {
+      "dataset": "operator",
+      "mode": "kinematic",
+      "problem_id": "blocked-goal-control",
+      "status": "failed",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "operator",
+        "mode": "kinematic",
+        "problem_id": "blocked-goal-control",
+        "status": "failed"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title reads 'B200 factual cuRobo capture', 'operator | kinematic | blocked-goal-control', 'STATUS: FAILED', exactly matching the expected identity and failed status. The legend shows a red star labeled 'declared goal' and the star marker is visible in the 3D axes. The red text 'NO TRAJECTORY EMITTED' is clearly displayed, and no path label, path line, start marker, or terminal marker is present. This satisfies all adequacy criteria for an expected failed run."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 7.723725622010534,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 634,
+        "prompt_tokens": 2530,
+        "total_tokens": 3164,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 437,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 437,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2466
+      },
+      "provider_cost": null,
+      "image_sha256": "a98ec671d1cd579102046d1880b5b55e276714207d8a9700a6f0e1ebc301592b",
+      "prompt_sha256": "126b95fbe88ce30efd7e43c4879dc494d430ab42868e836fe9abb946165c3c96",
+      "request_sha256": "38a19bf020094e4d8fe22f996d6bbae93f630985c6f91d7f3ff58181b972dcc9",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "rtx_pro_6000-golden-feasible-v3",
+    "image": "rtx_pro_6000-golden-feasible-v4.png",
+    "expected": {
+      "dataset": "operator",
+      "mode": "kinematic",
+      "problem_id": "franka-pose",
+      "status": "success",
+      "hardware": "RTX_PRO_6000"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "RTX_PRO_6000",
+        "dataset": "operator",
+        "mode": "kinematic",
+        "problem_id": "franka-pose",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (61 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title and subtitle exactly match expected identity (RTX_PRO_6000, operator, kinematic, franka-pose) and STATUS: SUCCESS. The declared-goal red star is visible at the path end, the legend label verbatim is 'complete tool path (61 samples)' which starts with 'complete tool path (' and contains no 'clipped' wording or sample fraction, and both the green path-start marker and purple path-terminal marker are visible. No 'NO TRAJECTORY EMITTED' text is present. The figure is non-blank and readable."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 3.9387619749904843,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 766,
+        "prompt_tokens": 2535,
+        "total_tokens": 3301,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 552,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 552,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2471
+      },
+      "provider_cost": null,
+      "image_sha256": "b168b3772c6b3f3c61e0022d3eb88bf30af3878641309f97585da7ec1066a3fb",
+      "prompt_sha256": "73340c551e53d152103618f4de97faf15566757b63a9d2f82d873b1fa888bd0f",
+      "request_sha256": "b67daf0da9b98210d9bec21bd703135a067913cf1b6c8e764251e0f4b40dd9ae",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "rtx_pro_6000-golden-blocked-v3",
+    "image": "rtx_pro_6000-golden-blocked-v4.png",
+    "expected": {
+      "dataset": "operator",
+      "mode": "kinematic",
+      "problem_id": "blocked-goal-control",
+      "status": "failed",
+      "hardware": "RTX_PRO_6000"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "RTX_PRO_6000",
+        "dataset": "operator",
+        "mode": "kinematic",
+        "problem_id": "blocked-goal-control",
+        "status": "FAILED"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title block reads 'RTX_PRO_6000 factual cuRobo capture', 'operator | kinematic | blocked-goal-control', 'STATUS: FAILED', matching the expected identity and failed status (case-insensitive). A red star 'declared goal' marker is shown in the legend and visible in the 3D scene. The red text 'NO TRAJECTORY EMITTED' is clearly displayed, and no path label, path start, or terminal markers are present. This satisfies all adequacy criteria for a failed expected run. No collision, torque, or safety claims are made or inferred."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 4.83376381600101,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 620,
+        "prompt_tokens": 2535,
+        "total_tokens": 3155,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 403,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 384,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 403,
+        "prompt_cache_hit_tokens": 384,
+        "prompt_cache_miss_tokens": 2151
+      },
+      "provider_cost": null,
+      "image_sha256": "d26f46db9b9ed7e4be4efbf1162bf986d714b5ef421e534fbef6d0577590527f",
+      "prompt_sha256": "3bed3b160d913182d3f308bea629c52dd9001aa3efed05d983ad8806737c8d32",
+      "request_sha256": "46a72ccfed850e2f2584b0de3d17bc5ea6f319f1d58ae3922003368c0c3fd424",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-motion-benchmaker-kinematic-success-v3",
+    "image": "b200-motion-benchmaker-kinematic-success-v4.png",
+    "expected": {
+      "dataset": "motion_benchmaker",
+      "mode": "kinematic",
+      "problem_id": "bookshelf_small_panda/0",
+      "status": "success",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "motion_benchmaker",
+        "mode": "kinematic",
+        "problem_id": "bookshelf_small_panda/0",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (81 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Visible identity matches expected exactly: title 'B200 factual cuRobo capture', subtitle 'motion_benchmaker | kinematic | bookshelf_small_panda/0', and banner 'STATUS: SUCCESS'. The declared-goal red star is visible in the legend and in the plot. The verbatim legend label is 'complete tool path (81 samples)', which starts with 'complete tool path (' and contains neither 'clipped' nor a sample fraction. The green path-start marker and purple path-terminal square are both visible, and no 'NO TRAJECTORY EMITTED' text is present. No collision, torque, hidden-state, or safety claim is inferred."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 16.05633785200189,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 2473,
+        "prompt_tokens": 2536,
+        "total_tokens": 5009,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 2239,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 2239,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2472
+      },
+      "provider_cost": null,
+      "image_sha256": "31d64a0212801a3af17da792c366ffec7b1cdabe71ed3a9b4ee67c45d6d3f1d2",
+      "prompt_sha256": "7be98420b31a4ccbc886fb3ef9bdb6e17f9189d7f75b76f04e32ed896c36aabe",
+      "request_sha256": "cb0ef453938f4c94fc4fc2d62038087bbfa4039292e62d1c5a73f88eccc9d094",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-motion-benchmaker-kinematic-failed-v3",
+    "image": "b200-motion-benchmaker-kinematic-failed-v4.png",
+    "expected": {
+      "dataset": "motion_benchmaker",
+      "mode": "kinematic",
+      "problem_id": "bookshelf_small_panda/31",
+      "status": "failed",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "motion_benchmaker",
+        "mode": "kinematic",
+        "problem_id": "bookshelf_small_panda/31",
+        "status": "failed"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Header matches expected identity exactly: B200, motion_benchmaker, kinematic, bookshelf_small_panda/31, STATUS: FAILED. A red star declared-goal marker is shown in the legend and in the 3D scene. The red text 'NO TRAJECTORY EMITTED' is clearly visible, and no path label, start marker, or terminal marker is present. This satisfies all adequacy conditions for an expected failed run; no collision, torque, or safety inference is made."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 12.329794984005275,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 1697,
+        "prompt_tokens": 2536,
+        "total_tokens": 4233,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 1499,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 2496,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 1499,
+        "prompt_cache_hit_tokens": 2496,
+        "prompt_cache_miss_tokens": 40
+      },
+      "provider_cost": null,
+      "image_sha256": "8e09b8f09ca9cbe979f3c3fb7f8fd156b65cf7a96d661b5d66d49c83169241e9",
+      "prompt_sha256": "d1aff7bba5824784bd646241b91d344f30c2975135e7bc6c22cfafa70613d0b0",
+      "request_sha256": "92c3cea3a391e1a02ae48cda3d1968c30f2d62e282d1ddedd57e1e888a9e8dd7",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-motion-benchmaker-dynamics-success-v3",
+    "image": "b200-motion-benchmaker-dynamics-success-v4.png",
+    "expected": {
+      "dataset": "motion_benchmaker",
+      "mode": "dynamics",
+      "problem_id": "bookshelf_small_panda/0",
+      "status": "success",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "motion_benchmaker",
+        "mode": "dynamics",
+        "problem_id": "bookshelf_small_panda/0",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (81 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Visible title/subtitle exactly match expected identity (B200; motion_benchmaker; dynamics; bookshelf_small_panda/0) and STATUS: SUCCESS matches expected success. The declared-goal red star marker is visible in the legend and plot. The verbatim legend path label is 'complete tool path (81 samples)', which starts with 'complete tool path (' and is not clipped and not a sample fraction. The green path-start marker and purple path-terminal square are both visible. No 'NO TRAJECTORY EMITTED' text is present. The figure is readable and not blank. No collision, torque, hidden-state, or safety claim is made."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 4.909457458998077,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 837,
+        "prompt_tokens": 2534,
+        "total_tokens": 3371,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 605,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 605,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2470
+      },
+      "provider_cost": null,
+      "image_sha256": "caed1a04d25003cca60874cdbdd2791177a2244ae1be8245e5653316fe3906be",
+      "prompt_sha256": "9b26d339512efa1da11931efc7f4e5c33cf2887f153ec287a445466f18430556",
+      "request_sha256": "7b43e6b33f07564740073db4ad9f52cd06173adc8cb9e2a56f2f30f2fcd74bb2",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-motion-benchmaker-dynamics-last-success-no-failure-observed-v3",
+    "image": "b200-motion-benchmaker-dynamics-last-success-no-failure-observed-v4.png",
+    "expected": {
+      "dataset": "motion_benchmaker",
+      "mode": "dynamics",
+      "problem_id": "table_under_pick_panda/99",
+      "status": "success",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "motion_benchmaker",
+        "mode": "dynamics",
+        "problem_id": "table_under_pick_panda/99",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (101 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title reads B200 / motion_benchmaker / dynamics / table_under_pick_panda/99 with STATUS: SUCCESS, matching the expected identity. The legend verbatim label is 'complete tool path (101 samples)', which starts with 'complete tool path (' and contains no 'clipped' wording or sample fraction. The declared-goal red star, green path-start dot, and purple path-terminal square are all visible in the 3D view, and no 'NO TRAJECTORY EMITTED' text is present. The plot is non-blank and readable."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 14.67257031200279,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 2418,
+        "prompt_tokens": 2534,
+        "total_tokens": 4952,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 2204,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 2204,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2470
+      },
+      "provider_cost": null,
+      "image_sha256": "fcb2a7058abb6fd98908064a12ec0a34b3733c15012ce448f2de3434d24fafff",
+      "prompt_sha256": "1e4f45ece352d25adad07a1a5c49d81e9cb7616417f8a759f01beb183635681c",
+      "request_sha256": "50d18f85ceec714ff6e2944475717194789dc457af997f53015a1740f8fd8a60",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-mpinets-kinematic-success-v3",
+    "image": "b200-mpinets-kinematic-success-v4.png",
+    "expected": {
+      "dataset": "mpinets",
+      "mode": "kinematic",
+      "problem_id": "cubby_neutral_goal/0",
+      "status": "success",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "mpinets",
+        "mode": "kinematic",
+        "problem_id": "cubby_neutral_goal/0",
+        "status": "success"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (61 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title/header exactly match expected identity (B200, mpinets, kinematic, cubby_neutral_goal/0) and STATUS: SUCCESS. The declared-goal red star is visible and coincident with the purple path-terminal square; the green path-start marker is visible. The verbatim legend label is 'complete tool path (61 samples)', which starts with 'complete tool path (' and contains neither 'clipped' nor a sample fraction. Plot is non-blank and readable."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 4.667461766002816,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 700,
+        "prompt_tokens": 2535,
+        "total_tokens": 3235,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 502,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 502,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2471
+      },
+      "provider_cost": null,
+      "image_sha256": "393bed1fb17a57c10949796d7cbcd0a229de93742723cd522d76eb329ef50aa2",
+      "prompt_sha256": "8ee58cfcf38c7de1b90135a316fdb845503ca2a90c5761f5ee07d73465cfff0a",
+      "request_sha256": "de676448cf025c7cc27fedbd52a1828b26ab4e3b7f3e258b7d24572ef6329818",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-mpinets-kinematic-failed-v3",
+    "image": "b200-mpinets-kinematic-failed-v4.png",
+    "expected": {
+      "dataset": "mpinets",
+      "mode": "kinematic",
+      "problem_id": "dresser_neutral_goal/53",
+      "status": "failed",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "mpinets",
+        "mode": "kinematic",
+        "problem_id": "dresser_neutral_goal/53",
+        "status": "failed"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Visible identity matches expected exactly: title shows B200, and the line reads mpinets | kinematic | dresser_neutral_goal/53 with STATUS: FAILED. A red star declared-goal marker is shown in the legend and inside the 3D axes. The red text NO TRAJECTORY EMITTED is clearly visible, and the legend contains only declared goal with no path label, satisfying all adequacy conditions for an expected failed run."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 12.440815342997666,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 1859,
+        "prompt_tokens": 2535,
+        "total_tokens": 4394,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 1673,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 64,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 1673,
+        "prompt_cache_hit_tokens": 64,
+        "prompt_cache_miss_tokens": 2471
+      },
+      "provider_cost": null,
+      "image_sha256": "6a653ec8021d3071afb4c32d6e52e16ceb5a3a7a373514f0a7291d8bec00e118",
+      "prompt_sha256": "f1237ed957cdbdd3ebba429c236d3257213b4f0ae44cfd0e012dd22735299671",
+      "request_sha256": "d57d8df58e59039ae80cd2b603d8d2a563b6423f692fbf5200087df02a1b8448",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-mpinets-dynamics-success-v3",
+    "image": "b200-mpinets-dynamics-success-v4.png",
+    "expected": {
+      "dataset": "mpinets",
+      "mode": "dynamics",
+      "problem_id": "cubby_neutral_goal/0",
+      "status": "success",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "mpinets",
+        "mode": "dynamics",
+        "problem_id": "cubby_neutral_goal/0",
+        "status": "SUCCESS"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": "complete tool path (61 samples)",
+        "path_start_visible": true,
+        "path_terminal_visible": true,
+        "no_trajectory_text_visible": false
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Title text exactly matches expected identity (B200, mpinets, dynamics, cubby_neutral_goal/0) and status SUCCESS. The legend path label is verbatim 'complete tool path (61 samples)', which starts with 'complete tool path (' and contains no 'clipped' wording or sample fraction. The declared goal marker (red star), path start (green dot), and path terminal (purple square) are all visible in the plot, and no 'NO TRAJECTORY EMITTED' text is present. The figure is non-blank and readable. Only the visible factual content is transcribed; no collision, torque, or safety claims are made."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 2.8101340720022563,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 378,
+        "prompt_tokens": 2533,
+        "total_tokens": 2911,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 143,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 128,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 143,
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 2405
+      },
+      "provider_cost": null,
+      "image_sha256": "ceb3ff1136dc74414949e4b4be76ae3dac58f0a64477ad946a4afb8e4096f45c",
+      "prompt_sha256": "6c603ab0c326ce0e669bbffdf6fcf74ffe700268c3401881daf6d5eeac851c29",
+      "request_sha256": "24d7371510dee0d2a0daab60ce41343c8f9a03bdb3830324b8f9d5628a191ab0",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  },
+  {
+    "phase": "final",
+    "id": "b200-mpinets-dynamics-failed-v3",
+    "image": "b200-mpinets-dynamics-failed-v4.png",
+    "expected": {
+      "dataset": "mpinets",
+      "mode": "dynamics",
+      "problem_id": "dresser_neutral_goal/53",
+      "status": "failed",
+      "hardware": "B200"
+    },
+    "expected_label": "pass",
+    "correct": true,
+    "predicted_pass": true,
+    "validation_errors": [],
+    "visible_model_response": {
+      "observed": {
+        "hardware": "B200",
+        "dataset": "mpinets",
+        "mode": "dynamics",
+        "problem_id": "dresser_neutral_goal/53",
+        "status": "FAILED"
+      },
+      "evidence": {
+        "goal_marker_visible": true,
+        "path_label": null,
+        "path_start_visible": false,
+        "path_terminal_visible": false,
+        "no_trajectory_text_visible": true
+      },
+      "presentation": {
+        "blank": false,
+        "readable": true
+      },
+      "success": true,
+      "score": 1.0,
+      "rationale": "Identity matches expected: title reads 'B200 factual cuRobo capture', 'mpinets | dynamics | dresser_neutral_goal/53', 'STATUS: FAILED'. Legend shows 'declared goal' with a red star, and a red star goal marker is visible in the plot. 'NO TRAJECTORY EMITTED' text is clearly displayed, and no path label or path start/terminal markers are present. All criteria for an adequate failed run are satisfied."
+    },
+    "call": {
+      "http_status": 200,
+      "latency_seconds": 3.1003565580031136,
+      "requested_model": "moonshotai/Kimi-K3",
+      "served_model": "moonshotai/Kimi-K3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 364,
+        "prompt_tokens": 2533,
+        "total_tokens": 2897,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 174,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 128,
+          "image_tokens": 1820
+        },
+        "reasoning_tokens": 174,
+        "prompt_cache_hit_tokens": 128,
+        "prompt_cache_miss_tokens": 2405
+      },
+      "provider_cost": null,
+      "image_sha256": "f986e5eeab285805a677126fb3b9c3309beb1e20244d84a482af1e9fb07a7597",
+      "prompt_sha256": "5f2e1b58b31bb4070e07b1b62b9ecdbc59bcad39fc79a36ce838d4839f78b1f6",
+      "request_sha256": "8fba4ebf51b938484fd0fee602fcaa4dd59b90b27155e63f123dbcf0bbaf4c17",
+      "transport_identity_pass": true,
+      "schema_valid": true
+    }
+  }
+]
