@@ -24,7 +24,7 @@ MarkupSafe==3.0.3
 mdurl==0.1.2
 -e git+ssh://git@github.com/nebius/nebius-physical-ai.git@42375a088cdafb96700ceecd8d14a94b2363bcf7#egg=npa&subdirectory=npa
 numpy==2.4.4
-packaging==26.1
+packaging==26.3
 pandas==3.0.3
 paramiko==5.0.0
 pluggy==1.6.0
