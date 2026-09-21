@@ -1,0 +1,104 @@
+{
+  "mesh": {
+    "bytes": 1118551,
+    "extent": [
+      3.581564784049988,
+      1.6155030727386475,
+      2.044376492500305
+    ],
+    "is_edge_manifold": false,
+    "is_vertex_manifold": false,
+    "is_watertight": false,
+    "sha256": "9af2833ee1fb7333ed044082c4f9bd63b592543e0cac086cfd00f750045f9bda",
+    "surface_area": 10.514635588813704,
+    "triangle_count": 28207,
+    "vertex_count": 14736
+  },
+  "mesh_uncropped": {
+    "bytes": 1415967,
+    "extent": [
+      3.9182933270931244,
+      2.1822177469730377,
+      2.7178331464529037
+    ],
+    "is_edge_manifold": false,
+    "is_vertex_manifold": true,
+    "is_watertight": false,
+    "sha256": "cbd7d6fa04c169d759349d01af304d98cff221be9da97df975ec43f7146e3e69",
+    "surface_area": 22.244948915441327,
+    "triangle_count": 36660,
+    "vertex_count": 18413
+  },
+  "coverage": {
+    "fraction_within_two_voxels": 0.9996845923355937,
+    "fraction_within_voxel": 0.9927456237186564,
+    "sample_to_surface_p95": 0.022179409861564636,
+    "sample_to_surface_rmse": 0.010834473185241222,
+    "samples": 6341
+  },
+  "support": {
+    "max_vertex_distance_to_sample": 0.04999511139230369,
+    "median_vertex_distance_to_sample": 0.01909357365145052,
+    "p95_vertex_distance_to_sample": 0.035977560732218035,
+    "unsupported_area": 0.0,
+    "unsupported_area_beyond_1_5_voxels": 0.0,
+    "unsupported_area_beyond_3_voxels": 0.0,
+    "unsupported_area_fraction": 0.0,
+    "voxel_size": 0.05
+  },
+  "support_before_crop": {
+    "max_vertex_distance_to_sample": 0.9053381662126001,
+    "median_vertex_distance_to_sample": 0.021895147769687182,
+    "p95_vertex_distance_to_sample": 0.21817263423627298,
+    "unsupported_area": 11.730313326627583,
+    "unsupported_area_beyond_1_5_voxels": 0.4841577555987876,
+    "unsupported_area_beyond_3_voxels": 0.38484405598814125,
+    "unsupported_area_fraction": 0.5273248039911214,
+    "voxel_size": 0.05
+  },
+  "unsupported_vertices_removed": 3677,
+  "poisson_depth": 9,
+  "density_quantile": 0.02,
+  "support_distance_factor": 1.0,
+  "schema": "npa.open3d.runtime-objective-summary/v1",
+  "geometry_accepted": false,
+  "icp_summary": {
+    "icp_fitness": {
+      "max": 0.7459679467181299,
+      "mean": 0.6805316580509793,
+      "min": 0.6210677194658888
+    },
+    "icp_inlier_rmse": {
+      "max": 0.007243658005133792,
+      "mean": 0.006744201310436522,
+      "min": 0.00642420638724356
+    },
+    "input_points": 535503,
+    "pair_count": 3,
+    "pairs_refined_by_icp": 3
+  },
+  "fused_points": 6341,
+  "raw_fragment_points": 528065,
+  "limits": [
+    "Reported in-sample support and coverage are not independent global reconstruction accuracy.",
+    "The supported mesh is not edge manifold, vertex manifold or watertight.",
+    "The crop alone does not establish safe collision geometry, grasp planning or physical task usefulness."
+  ],
+  "historical_held_out_p95_regressions": {
+    "scope": "Prior retained matched held-out experiment; not rerun for these new bytes.",
+    "before": [
+      0.133208,
+      0.037442,
+      0.058723
+    ],
+    "after": [
+      0.248509,
+      0.071962,
+      0.163619
+    ]
+  },
+  "source_reports_sha256": {
+    "surface/result.json": "894635ae554da1184eeea45ad69525a27fab684abad2313fb8721ef9848af2fb",
+    "graph/result.json": "7fae499b8e0499565080a270d76961aea86f23de1c0f6100028191a07ec4209e"
+  }
+}

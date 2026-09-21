@@ -1,0 +1,109 @@
+{
+  "schema": "npa.open3d.independent-camera-audit.v1",
+  "rrd_structural_verify_returncode": 0,
+  "decoded_blueprint_views": [
+    {
+      "view": "Observed scan only",
+      "vectors_match_manifest_within_1e-6": true,
+      "maximum_absolute_errors": {
+        "up": 0.0,
+        "look_target": 3.0515326931990217e-08,
+        "eye": 1.2817156935795992e-07
+      }
+    },
+    {
+      "view": "Removed: unsupported surface",
+      "vectors_match_manifest_within_1e-6": true,
+      "maximum_absolute_errors": {
+        "up": 0.0,
+        "look_target": 5.738782893338623e-08,
+        "eye": 1.2388543346730785e-07
+      }
+    },
+    {
+      "view": "Scene: observed scan and supported surface",
+      "vectors_match_manifest_within_1e-6": true,
+      "maximum_absolute_errors": {
+        "up": 0.0,
+        "look_target": 4.8879362113396496e-08,
+        "eye": 4.5051686381469835e-08
+      }
+    },
+    {
+      "view": "Supported surface only",
+      "vectors_match_manifest_within_1e-6": true,
+      "maximum_absolute_errors": {
+        "up": 0.0,
+        "look_target": 9.001846335010555e-08,
+        "eye": 1.8298442405750848e-07
+      }
+    }
+  ],
+  "cpu_projection": {
+    "camera": {
+      "distance": 3.796901681299392,
+      "elevation_degrees": 28.0,
+      "eye": [
+        4.662581523885433,
+        3.7037747882505587,
+        -0.5991494234518309
+      ],
+      "fov_degrees": 55.0,
+      "look_target": [
+        2.2920306473970413,
+        1.333223911762167,
+        1.1833879426121712
+      ],
+      "scene_extent": [
+        3.9182933270931244,
+        2.1879701666830558,
+        2.7178331464529037
+      ],
+      "scene_span": 5.246603954883166,
+      "up": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    "outputs": {
+      "graph/fused.ply": {
+        "vertices": 6341,
+        "minimum_forward_depth": 2.1879170801433068,
+        "maximum_abs_normalized_y": 0.637075084570552,
+        "maximum_abs_normalized_x": 0.8603849068040507,
+        "aspect_ratio": 1.4,
+        "outside_view_fraction": 0.0
+      },
+      "surface/mesh_uncropped.ply": {
+        "vertices": 18413,
+        "minimum_forward_depth": 1.831390094910842,
+        "maximum_abs_normalized_y": 0.6692611225455145,
+        "maximum_abs_normalized_x": 1.2345610284536426,
+        "aspect_ratio": 1.4,
+        "outside_view_fraction": 0.0
+      },
+      "surface/mesh.ply": {
+        "vertices": 14736,
+        "minimum_forward_depth": 2.2070391516497017,
+        "maximum_abs_normalized_y": 0.6260629746168527,
+        "maximum_abs_normalized_x": 0.8871252905277217,
+        "aspect_ratio": 1.4,
+        "outside_view_fraction": 0.0
+      }
+    },
+    "same_camera_and_scale": true
+  },
+  "limits": [
+    "Decoded RRD eye/up/target vectors match the manifest; live Rerun GUI framing was not inspected.",
+    "CPU projection uses the manifest 55-degree field of view, which is not encoded in EyeControls3D; this is not proof of the renderer default.",
+    "Fused point cloud is downsampled and does not reproduce all 528065 logged fragment points.",
+    "No global accuracy, held-out improvement, VLM acceptance, or physical task usefulness is established."
+  ],
+  "artifacts": {
+    "graph/fused.ply": "da82039ebd5fd7c753179db971ff051f7e4eb3dbb0b294b07108f00c81b6c7b7",
+    "surface/mesh_uncropped.ply": "cbd7d6fa04c169d759349d01af304d98cff221be9da97df975ec43f7146e3e69",
+    "surface/mesh.ply": "9af2833ee1fb7333ed044082c4f9bd63b592543e0cac086cfd00f750045f9bda"
+  },
+  "image_sha256": "e4549bb09f0a48ce45c46274cdd8d4494c076ff4c0cec212575d3600be9cd59c"
+}

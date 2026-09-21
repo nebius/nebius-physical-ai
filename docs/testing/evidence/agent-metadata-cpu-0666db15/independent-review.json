@@ -1,0 +1,35 @@
+{
+  "source_commit": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
+  "source_tree": "c9780675722de9fb1ac99547685f4e8529d9cbc4",
+  "verdict": "APPROVE_EXACT_SOURCE_AND_SCOPE_LIMITED_LIVE_CPU_PROOF",
+  "blocking_findings": [],
+  "independent_validation": {
+    "source_review": "Read complete delta across all three production files plus changed tests and deployment/auth/cleanup enforcement paths.",
+    "resource_access_tests": 74,
+    "rendered_backend_tests": 132,
+    "rendered_backend_seconds": 668.92,
+    "rendered_warnings": 160,
+    "rendered_warning_scope": "Existing FastAPI on_event deprecation warnings; tests all passed.",
+    "real_process_control": "Unmocked Linux child/descendant, actual ownership waitid, deadline return in 0.100846 seconds, registries cleared, breaker closed, subsequent command succeeded.",
+    "source_worktree_clean": true,
+    "producer_import_bound_to_frozen_checkout": true,
+    "original_artifact_hashes_matched": 5,
+    "additional_source_runner_summary_destroy_journal_hashes_matched": 9,
+    "local_agent_record_absent_independently_read": true,
+    "temporary_curl_auth_staging_absent": true,
+    "private_evidence_permissions_owner_only": true,
+    "provider_calls_by_reviewer": 0
+  },
+  "limitations": [
+    "Pinned clean producer and executing entrypoint verified; source deploy path enforces exact live deployment identity before health_verified. The separate live /deployment response and deployed Python byte hashes were not retained before teardown, so this is not independent backend-byte attestation.",
+    "Service fingerprint hashes deployment.json and systemd service unit only, not Python code.",
+    "Retained anonymous auth control is UI HTTP401; separate anonymous API-route probes were not retained. General API auth inheritance was checked in source.",
+    "Access response reports partial access, not unrestricted tenant authorization.",
+    "Infrastructure absence is established by retained production teardown receipt and its provider-verification source path; reviewer made no duplicate cloud query. Local record absence was directly rechecked. Shared IAM deliberately retained with --keep-iam.",
+    "Live success does not reproduce a kernel-uninterruptible metadata failure; deterministic failure controls and real CPU subprocess controls support the bounded request behavior.",
+    "GPU and VLM do not apply to this nonvisual agent runtime change."
+  ],
+  "source_verdict_sha256": "98954e28ead2d20cf6ea1e8545c3392cfa7b760f99313f96a6b8d3c2efd832b9",
+  "ci_complete": false,
+  "merged": false
+}

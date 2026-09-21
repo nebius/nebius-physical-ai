@@ -1,0 +1,78 @@
+{
+  "schema": "npa.program.agent-metadata-live-cpu-audit-receipt.v1",
+  "recorded_at": "2026-09-21T02:28:05Z",
+  "bundle_state": "FROZEN_READ_ONLY_REVIEW",
+  "source": {
+    "commit": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
+    "tree": "c9780675722de9fb1ac99547685f4e8529d9cbc4",
+    "clean_tree_required_by_runner": true,
+    "runner_sha256": "704c839b2b16d0c5929bd06be343420c40195b1312a792add47b62ee25238045"
+  },
+  "deployed_backend_identity": {
+    "deployment_contract": "build_deployment_manifest reads the executing checkout HEAD and tree; verify_remote_deployment requires the live internal /deployment response to match every immutable and live identity field before setup can reach health_verified",
+    "service_fingerprint": "6bc1c0b723043514fc5ae2c1bf656abc0fb287a6f90f7b024c93be1cd81c7975",
+    "service_fingerprint_scope": [
+      "deployment metadata file",
+      "backend systemd unit file"
+    ],
+    "deployment_manifest_captured_separately": false,
+    "limitation": "The live deployment manifest body was verified by the deploy path but was not copied into this evidence bundle before teardown. No redeploy is permitted to fill that historical capture gap."
+  },
+  "auth_negative_control": {
+    "unauthenticated_ui_status_code": 401,
+    "authenticated_ui_status_code": 200,
+    "authenticated_rerun_status_code": 200,
+    "basic_auth_enforced": true,
+    "status_artifact_sha256": "71268ba99a87abd492b887acfafd53d18f10d3ea93eb5b4db6f5980df23525f0"
+  },
+  "affected_live_paths": {
+    "access_refresh_http_status": 200,
+    "access_refresh_seconds": 3.636991,
+    "resource_inventory_http_status": 200,
+    "resource_inventory_seconds": 5.658939,
+    "credential_source": "instance_metadata",
+    "response_artifacts": [
+      {
+        "kind": "access response",
+        "sha256": "779b9a082bbc0a4418b39d5d1ddb32536358fe8a35467eecf651fa8cfbd78563"
+      },
+      {
+        "kind": "resources response",
+        "sha256": "3bb061265ab2790d3f4c5b09af08b26a16257003743769f8ce78414d72b24e1b"
+      }
+    ]
+  },
+  "teardown_readback": {
+    "outcome": "verified_deleted",
+    "verified": true,
+    "infrastructure_absent": true,
+    "local_agent_record_absent": true,
+    "destroy_artifact_sha256": "d57217609dd0e2b3285c2a0afec11f20945a3b1c93528365fd3ae9676b0bb08e",
+    "deploy_journal_phase": "committed",
+    "deploy_journal_sha256": "d3d2cb6d26d7b5d153a7d419f51b8a0f468878dcfa25fbd73fdb855808d695e6",
+    "destroy_journal_phase": "destroyed",
+    "destroy_journal_sha256": "7399f2aafeb5bf7499ed8f199cdf48efb9645f3288e7a85c1c6c23b093d97d69"
+  },
+  "implementation_hashes": [
+    {
+      "filename": "agent.py",
+      "sha256": "140c5cbf2d840faaa125759b9722c548b47127c2bbd0050b2f0cb069e9ad0fce"
+    },
+    {
+      "filename": "agent_resources.py",
+      "sha256": "19438686adad42371c5b5e9a47099fe5ca6014aff12712666eb0d7cf0c4f8bcb"
+    },
+    {
+      "filename": "agent_access_runtime.py",
+      "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+    },
+    {
+      "filename": "agent_deployment.py",
+      "sha256": "60aecdfdaf4ea824020f9eb17fc079a6d6883ede3d8669ce6bac495126c13a1d"
+    }
+  ],
+  "summary_sha256": "a07baa81a3b5996d1ff96a558a535cdd44a1e56bdd2bc7794ab4a7a6d0e03f60",
+  "raw_artifacts": "OWNER_ONLY_NOT_FOR_PUBLICATION",
+  "retained_source_json_sha256": "4ba7cc0544b2fcb3f53e17833c035c7868ffc53a9cfcd50c285638d3c8089e77",
+  "publication_transform": "Operator profile/config paths omitted; metric and source/artifact hashes preserved."
+}

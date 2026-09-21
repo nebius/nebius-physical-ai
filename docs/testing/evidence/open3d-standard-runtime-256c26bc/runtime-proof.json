@@ -1,0 +1,105 @@
+{
+  "schema": "npa.open3d.independent-runtime-proof/v1",
+  "observed_at": "2026-09-21T02:44:38Z",
+  "status": "SUCCEEDED",
+  "verification_status": "VERIFIED",
+  "live_verified": true,
+  "automation_may_trust_state": true,
+  "stages": [
+    {
+      "name": "stage",
+      "index": 1,
+      "state": "SUCCEEDED",
+      "outcome_provenance": "authoritative_stage_record",
+      "outcome_conflict": false,
+      "elapsed_seconds": 100
+    },
+    {
+      "name": "register",
+      "index": 2,
+      "state": "SUCCEEDED",
+      "outcome_provenance": "authoritative_stage_record",
+      "outcome_conflict": false,
+      "elapsed_seconds": 69
+    },
+    {
+      "name": "validate",
+      "index": 3,
+      "state": "SUCCEEDED",
+      "outcome_provenance": "authoritative_stage_record",
+      "outcome_conflict": false,
+      "elapsed_seconds": 65
+    },
+    {
+      "name": "multiway",
+      "index": 4,
+      "state": "SUCCEEDED",
+      "outcome_provenance": "authoritative_stage_record",
+      "outcome_conflict": false,
+      "elapsed_seconds": 68
+    },
+    {
+      "name": "reconstruct",
+      "index": 5,
+      "state": "SUCCEEDED",
+      "outcome_provenance": "authoritative_stage_record",
+      "outcome_conflict": false,
+      "elapsed_seconds": 69
+    },
+    {
+      "name": "visualize",
+      "index": 6,
+      "state": "SUCCEEDED",
+      "outcome_provenance": "authoritative_stage_record",
+      "outcome_conflict": false,
+      "elapsed_seconds": 68
+    }
+  ],
+  "accelerator_requested": false,
+  "execution_scope": "Six-stage CPU standard workflow; stage/register/validate/multiway/reconstruct/recording outputs retained.",
+  "durable_mount_resume_proven": false,
+  "source_commit": "256c26bc915080934814789be6a41bbc253f0d1c",
+  "selected_image_digest": "sha256:6afe90e331b932666704858ae3ccc1e658ef7dea1d8343925dda0699c4b6310b",
+  "image_oci_revision_matches_source": true,
+  "pr_head_at_review": "81fae3d514cc64042d338163583185ff1cc49f46",
+  "pr_head_delta_from_runtime_source": "One descendant commit changes only docs/evidence/open3d/README.md and capability-record-standard-runtime.json.",
+  "source_binding_limits": [
+    "Selected image digest, cached image OCI revision, emitted camera feature and downloaded output bytes are bound by retained receipts.",
+    "A generic source-bootstrap input was present in the task setup; independent per-file runtime source attestation was not retained in this audit.",
+    "No exact-head CI completion or final code/quality acceptance is asserted."
+  ],
+  "input_source": {
+    "public_source_url": "https://github.com/isl-org/open3d_downloads/releases/download/20220301-data/DemoICPPointClouds.zip",
+    "archive_sha256": "b94e0146c1d48c5edfc11af71b4af39ffca604485668c55a127c3b43203a6bd5",
+    "archive_md5": "596cffe5f9c587045e7397ad70754de9",
+    "archive_bytes": 10829466,
+    "fragments": [
+      {
+        "filename": "cloud_bin_0.pcd",
+        "bytes": 6362965,
+        "sha256": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+        "matches_retained_run_input": true
+      },
+      {
+        "filename": "cloud_bin_1.pcd",
+        "bytes": 4410901,
+        "sha256": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+        "matches_retained_run_input": true
+      },
+      {
+        "filename": "cloud_bin_2.pcd",
+        "bytes": 6124949,
+        "sha256": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+        "matches_retained_run_input": true
+      }
+    ],
+    "other_entries": [
+      "init.log"
+    ]
+  },
+  "original_receipt_sha256": {
+    "durable-ledger-status.private.json": "a0bac49e409938a98c3e9feb627bace51fbe8d47a0c4d5327d28aeddd5c99b18",
+    "submission-receipt.private.json": "c124f9945c99c940d4cae2328ee4edea2b61cbddf96dd9df6e40091cf23f45a2",
+    "image-labels.private.json": "3b02594ccc59eb3ec34e3da4a633f486f4392a2b6dd5c92e8939675873538a6b"
+  }
+}

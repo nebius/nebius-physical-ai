@@ -1,6 +1,6 @@
 {
   "schema": "npa.seedvr-diagnostic-provenance/v1",
-  "acceptance": "FAILED_OBJECTIVE_GATES",
+  "acceptance": "FAILED_OBJECTIVE_AND_TASK_ANNOTATION_GATES",
   "hardware": "NVIDIA H100 80GB HBM3",
   "execution_scope": "Official SeedVR2 3B main and light-input inference diagnostics using a predecessor image plus the reviewed adapter.",
   "predecessor_image_digest": "sha256:c34783b2aed18553cbbcb43d870e6658ba423c105db6f376c41e115efbf3e366",
@@ -92,6 +92,7 @@
   "objective_report_sha256": "896caf266aae34e601e484b4378e61f304ee605719ac7144216ced184e427b05",
   "restore_runtime_identity_is_self_reported": true,
   "verifier_runtime_identity_rechecked_on_h100": true,
-  "candidate_hosted_vlm_review": "PENDING at this diagnostic snapshot; no final blinded preference or physical-correctness verdict.",
-  "ship_workflow_acceptance": false
+  "candidate_hosted_vlm_review": "COMPLETED: task annotation FAIL (candidate1/9 vs bicubic2/9; new critical contradictions at frames76/96); visual INCONCLUSIVE due frozen runner identity mismatch.",
+  "ship_workflow_acceptance": false,
+  "hosted_review_file": "hosted-review.json"
 }

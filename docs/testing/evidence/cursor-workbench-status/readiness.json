@@ -209,18 +209,14 @@
       "number": 602,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/602",
       "title": "Add Open3D registration and reject reconstructed surface the scan never supported",
-      "source_commit": "aa3c9e60221900c28c0060cb17c69de97a429d85",
-      "status": "Full workload evidence incomplete",
+      "source_commit": "81fae3d514cc64042d338163583185ff1cc49f46",
+      "status": "Six-stage CPU runtime verified; final review, viewer proof and current CI incomplete",
       "draft": false,
-      "required_checks_pass": true,
-      "applicable_ci_passes": true,
+      "required_checks_pass": false,
+      "applicable_ci_passes": false,
       "depends_on": [],
       "public_proof_links": [
-        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/ATTRIBUTION.md",
-        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/README.md",
-        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/manifest.json",
-        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/metrics.json",
-        "https://github.com/nebius/nebius-physical-ai/blob/9afd6ad39e8a14c60c5a78c9493b8d86c92ffe71/docs/testing/evidence/open3d-retained-proof/vlm-calibration-summary.json"
+        "../open3d-standard-runtime-256c26bc/README.md"
       ],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/602#issuecomment-5748701073",
@@ -228,10 +224,12 @@
       ],
       "state": "OPEN",
       "ci_counts": {
-        "SUCCESS": 20,
-        "SKIPPED": 2
+        "SUCCESS": 3,
+        "PENDING": 11,
+        "SKIPPED": 3,
+        "IN_PROGRESS": 2
       },
-      "exact_review_status": "scope_not_fully_qualified"
+      "exact_review_status": "runtime_verified_final_acceptance_pending"
     },
     {
       "number": 607,
@@ -261,7 +259,7 @@
       "url": "https://github.com/nebius/nebius-physical-ai/pull/608",
       "title": "Guard against module-level GPU imports in tests",
       "source_commit": "0d6b5bb08f67bc0912eba47a2c975e4f201acd69",
-      "status": "Current review/CI closure",
+      "status": "Exact review accepted; current CI and draft promotion pending",
       "draft": true,
       "required_checks_pass": false,
       "applicable_ci_passes": false,
@@ -272,12 +270,12 @@
       ],
       "state": "OPEN",
       "ci_counts": {
-        "SUCCESS": 3,
-        "PENDING": 12,
+        "SUCCESS": 8,
+        "PENDING": 6,
         "SKIPPED": 3,
-        "QUEUED": 1
+        "IN_PROGRESS": 2
       },
-      "exact_review_status": "new_head_review_pending"
+      "exact_review_status": "accepted_exact_head_scoped_cpu"
     },
     {
       "number": 609,
@@ -441,11 +439,11 @@
       ],
       "state": "OPEN",
       "ci_counts": {
-        "SUCCESS": 4,
-        "PENDING": 12,
+        "SUCCESS": 10,
+        "PENDING": 6,
         "SKIPPED": 3
       },
-      "exact_review_status": "accepted_exact_head"
+      "exact_review_status": "accepted_exact_head_scoped_cpu"
     },
     {
       "number": 616,
@@ -690,16 +688,16 @@
       "number": 627,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/627",
       "title": "Add blinded, order-balanced VLM preference audits",
-      "source_commit": "2bf755b3129fd904ab69222b944ed1bfee525f62",
-      "status": "Accepted; dependency must land first",
-      "draft": true,
+      "source_commit": "46f50ad77777ca469d6782fe1101896d9999ec2f",
+      "status": "Accepted and ready for review; dependency #624 must land first",
+      "draft": false,
       "required_checks_pass": true,
       "applicable_ci_passes": true,
       "depends_on": [
         624
       ],
       "public_proof_links": [
-        "https://github.com/nebius/nebius-physical-ai/blob/2bf755b3129fd904ab69222b944ed1bfee525f62/docs/workbench/evidence/vlm-blinded-preference-review.md"
+        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/46f50ad77777ca469d6782fe1101896d9999ec2f/docs/workbench/evidence/vlm-blinded-preference-review.md"
       ],
       "review_links": [
         "https://github.com/nebius/nebius-physical-ai/pull/627#issuecomment-5750424491"
@@ -709,7 +707,16 @@
         "SUCCESS": 20,
         "SKIPPED": 2
       },
-      "exact_review_status": "accepted_exact_head"
+      "exact_review_status": "accepted_exact_head_for_parent_stack",
+      "hosted_evidence_limits": [
+        "The three pairs are three views of one scene and cannot estimate a general or operational preference rate.",
+        "One request per order cannot separate order effects from provider nondeterminism; two pairs changed confidence between orders and remain low-confidence escalations.",
+        "Three responses misread the visible 1.0 m scale as 10 m, and several auxiliary semantic or measurement-provenance claims exceed the pixels.",
+        "The uncapped regression proves omission of max_tokens in exact submitted requests; its 162\u2013279 completion-token responses do not empirically exercise a response longer than the removed 1,000-token cap.",
+        "Retained local evidence and the reviewed no-retry harness support exactly six attempts; provider-side logs were outside this review.",
+        "Visible preference and reviewer-label agreement do not establish model correctness, calibration, qualification, geometry accuracy, collision suitability, physical validity, or robot safety.",
+        "Ready means review-ready for parent stack #624; not eligible for the main merge queue. Revalidate source/head/base and CI after ordered retarget/rebase."
+      ]
     },
     {
       "number": 628,
@@ -1127,23 +1134,26 @@
       "url": "https://github.com/nebius/nebius-physical-ai/pull/654",
       "title": "Harden agent metadata credential request paths",
       "source_commit": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
-      "status": "Full workload evidence incomplete",
+      "status": "Exact review and live CPU proof accepted; current CI and draft promotion pending",
       "draft": true,
       "required_checks_pass": false,
       "applicable_ci_passes": false,
       "depends_on": [],
-      "public_proof_links": [],
+      "public_proof_links": [
+        "../agent-metadata-cpu-0666db15/README.md"
+      ],
       "review_links": [],
       "state": "OPEN",
       "ci_counts": {
         "SUCCESS": 10,
-        "PENDING": 3,
+        "IN_PROGRESS": 1,
+        "PENDING": 2,
         "SKIPPED": 3
       },
-      "exact_review_status": "scope_not_fully_qualified"
+      "exact_review_status": "accepted_exact_head_scoped_cpu"
     }
   ],
-  "targeted_refresh_utc": "2026-09-21T02:13:01.884549+00:00",
+  "targeted_refresh_utc": "2026-09-21T03:02:07.842946+00:00",
   "open_pr_count": 48,
   "closed_superseded_prs": [
     611
@@ -1152,6 +1162,46 @@
     "579": {
       "observed_at": "2026-09-21T02:28:13.561616+00:00",
       "reason": "Applicable current-head CI became terminal successful after independent exact-source acceptance."
+    },
+    "602": {
+      "observed_at": "2026-09-21T03:02:07.842946+00:00",
+      "reason": "Six-stage CPU runtime verified; final review, viewer proof and current CI incomplete"
+    },
+    "608": {
+      "observed_at": "2026-09-21T03:02:07.842946+00:00",
+      "reason": "Exact review accepted; current CI and draft promotion pending"
+    },
+    "615": {
+      "observed_at": "2026-09-21T03:02:07.842946+00:00",
+      "reason": "Exact review accepted; current CI incomplete"
+    },
+    "654": {
+      "observed_at": "2026-09-21T03:02:07.842946+00:00",
+      "reason": "Exact review and live CPU proof accepted; current CI and draft promotion pending"
+    },
+    "627": {
+      "observed_at": "2026-09-21T02:59:46.389955+00:00",
+      "reason": "Exact hosted proof and final docs-only head reviewed; promoted for parent #624 stack, not main queue."
     }
-  }
+  },
+  "adjacent_browser_cursor_cohort": {
+    "included_in_original_49": false,
+    "queue_candidates": [
+      {
+        "number": 650,
+        "url": "https://github.com/nebius/nebius-physical-ai/pull/650",
+        "source_commit": "47f7fea38fa5e7d6b2e162bab9ab4e032abc1e03",
+        "applicable_ci_passes": true,
+        "required_checks_pass": true,
+        "ci_counts": {
+          "SUCCESS": 14,
+          "SKIPPED": 4
+        },
+        "independent_tests": 37,
+        "mutation_kills": 2,
+        "scope": "CPU browser/API wiring; no GPU claim"
+      }
+    ]
+  },
+  "combined_confirmed_queue_candidate_count": 15
 }

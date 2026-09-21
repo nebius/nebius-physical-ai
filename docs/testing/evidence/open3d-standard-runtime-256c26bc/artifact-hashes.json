@@ -1,0 +1,27 @@
+{
+  "independently_downloaded_and_hashed": true,
+  "artifacts": [
+    {
+      "artifact": "graph/fused.ply",
+      "bytes": 323655,
+      "sha256": "da82039ebd5fd7c753179db971ff051f7e4eb3dbb0b294b07108f00c81b6c7b7"
+    },
+    {
+      "artifact": "surface/mesh.ply",
+      "bytes": 1118551,
+      "sha256": "9af2833ee1fb7333ed044082c4f9bd63b592543e0cac086cfd00f750045f9bda"
+    },
+    {
+      "artifact": "surface/mesh_uncropped.ply",
+      "bytes": 1415967,
+      "sha256": "cbd7d6fa04c169d759349d01af304d98cff221be9da97df975ec43f7146e3e69"
+    },
+    {
+      "artifact": "reports/point_cloud.rrd",
+      "bytes": 8053435,
+      "sha256": "478bf9e8cf53d19cd317066a20719b88ad717a78dec003586843ff10abe5538e"
+    }
+  ],
+  "rrd_structural_verify_returncode": 0,
+  "rrd_manifest_sha256": "2e919513b0cccac9439f93fd96e8297f4d8aa2ca6e445065040d117abddb2cf1"
+}

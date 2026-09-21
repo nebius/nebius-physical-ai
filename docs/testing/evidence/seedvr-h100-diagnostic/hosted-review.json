@@ -1,0 +1,495 @@
+{
+  "schema": "npa.seedvr.diagnostic-hosted-review/v1",
+  "overall_acceptance": false,
+  "annotation_scope": "Frozen blinded downstream task-state comparison on the predecessor-image diagnostic only; not visual-quality or exact-image qualification.",
+  "annotation": {
+    "accepted": false,
+    "gates": {
+      "all_responses_schema_valid": true,
+      "candidate_corrected_at_least_one_baseline_error": false,
+      "candidate_exact_tuple_not_below_baseline": false,
+      "candidate_introduced_no_new_critical_error": false,
+      "controls_passed": true
+    },
+    "methods": {
+      "baseline": {
+        "all_fields": {
+          "correct": 11,
+          "total": 27
+        },
+        "critical_errors": [],
+        "exact_tuple": {
+          "correct": 2,
+          "total": 9
+        },
+        "schema_valid": true,
+        "task_scene_accepted": {
+          "count": 5,
+          "total": 9
+        }
+      },
+      "candidate": {
+        "all_fields": {
+          "correct": 15,
+          "total": 27
+        },
+        "critical_errors": [
+          {
+            "anchor_frame": 76,
+            "expected": "moving",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "stationary"
+          },
+          {
+            "anchor_frame": 96,
+            "expected": "partially_visible",
+            "field": "bottle_visibility",
+            "kind": "visible_out_of_view_contradiction",
+            "predicted": "out_of_view"
+          },
+          {
+            "anchor_frame": 96,
+            "expected": "grasped",
+            "field": "gripper_contact",
+            "kind": "grasp_state_contradiction",
+            "predicted": "none"
+          }
+        ],
+        "exact_tuple": {
+          "correct": 1,
+          "total": 9
+        },
+        "schema_valid": true,
+        "task_scene_accepted": {
+          "count": 9,
+          "total": 9
+        }
+      }
+    },
+    "new_candidate_critical_errors": [
+      {
+        "anchor_frame": 76,
+        "field": "bottle_motion",
+        "kind": "motion_state_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "bottle_visibility",
+        "kind": "visible_out_of_view_contradiction"
+      },
+      {
+        "anchor_frame": 96,
+        "field": "gripper_contact",
+        "kind": "grasp_state_contradiction"
+      }
+    ],
+    "candidate_video_sha256": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b",
+    "baseline_video_sha256": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+    "model": "MiniMaxAI/MiniMax-M3",
+    "image_digest": "sha256:c34783b2aed18553cbbcb43d870e6658ba423c105db6f376c41e115efbf3e366",
+    "manifest_sha256": "349eef4c4a8fc0d3dba9df7130ef9f6ef21af05b1b70f52492bfac7d5999a3fd",
+    "rubric_sha256": "58c049de5a1f5acdf15e60726068f01ee545e4e2cd80b6517c9b6792f3865c0e",
+    "execution_contract_sha256": "5c42fe8595a8828ecb178daa674bc55762e0e24eb48acf346b90622557e7ee8c",
+    "scorer_sha256": "618635b6c12c23114ab5988c92d522edca84e5eaea224eaa7b8e647016c33b8b",
+    "scored_at": "2026-09-21T02:18:25.374318+00:00",
+    "response_count": 20,
+    "source_score_sha256": "d129aba268b5599cbdc3db3de89af3d514ac83603b81972dcc60d2a5093b5fa8",
+    "rows": [
+      {
+        "anchor_frame": 48,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "bbf309c761cab19a69f21c6a22bc7a6e4c49b199120ebf74a056b6790c10b6b6"
+      },
+      {
+        "anchor_frame": 16,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "f7b878063b8335dd91bfb25a7a9b530ef42481866910439a1c47e55a353b4326"
+      },
+      {
+        "anchor_frame": 68,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "111b396af4372f58b71e0200537889d12acc41f4476989938518f5b3e38c43fb"
+      },
+      {
+        "anchor_frame": 60,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "de9ebd9aa2eeb701c2e5378eb7e123ee4f8e1883fb7db09706e26c4a38e52f40"
+      },
+      {
+        "anchor_frame": 84,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "e74e0380217e6e3f70ec58c94f20306ffaab5ecd2fb6ea9c19e451b813f18ceb"
+      },
+      {
+        "kind": "control",
+        "schema_errors": [],
+        "raw_response_sha256": "41701b7f63ed3d8e8a46cd2d815f719e119b1ff7e96b0ed402bd96496b538078"
+      },
+      {
+        "anchor_frame": 84,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "2e521424623592c75604120181a1ff5a5450b0757ef9679f419b86e3fd93aa8c"
+      },
+      {
+        "anchor_frame": 76,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "exact_tuple": false,
+        "critical_errors": [
+          {
+            "anchor_frame": 76,
+            "expected": "moving",
+            "field": "bottle_motion",
+            "kind": "motion_state_contradiction",
+            "predicted": "stationary"
+          }
+        ],
+        "schema_errors": [],
+        "raw_response_sha256": "c2926041fb1941b61a1e7030ecefd2a421877eafc69e1e496df477163643948e"
+      },
+      {
+        "anchor_frame": 60,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "b53982cc79fce41cb4f1186e223cb9185960cd74f83a57661f1cd2e81031f400"
+      },
+      {
+        "anchor_frame": 0,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "none"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": true
+        },
+        "exact_tuple": true,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "6831e472d2f2168c2c9fff9eff10035081024f6366baf488b7abb70689c1c213"
+      },
+      {
+        "anchor_frame": 76,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "3439d5ea0e5f33ab3ef20108be202432783448e76732de0676b759580bf0579e"
+      },
+      {
+        "anchor_frame": 96,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [
+          {
+            "anchor_frame": 96,
+            "expected": "partially_visible",
+            "field": "bottle_visibility",
+            "kind": "visible_out_of_view_contradiction",
+            "predicted": "out_of_view"
+          },
+          {
+            "anchor_frame": 96,
+            "expected": "grasped",
+            "field": "gripper_contact",
+            "kind": "grasp_state_contradiction",
+            "predicted": "none"
+          }
+        ],
+        "schema_errors": [],
+        "raw_response_sha256": "22707175e7be0af277bd3041c68e543efcc3d11f93744b246e6539be88819969"
+      },
+      {
+        "anchor_frame": 16,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "55f71c0e968acd79bf0044f960377518bae8426b87620810bac548c2bdd09f8f"
+      },
+      {
+        "anchor_frame": 48,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "contact"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": false,
+          "gripper_contact": true
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "3e71850f358a2a54512f42dacb52994969a56f11f9f22c200db801a97570ec44"
+      },
+      {
+        "anchor_frame": 96,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "moving",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "28a4981f7f6e341abe3c56a09df2f333122778a5c9e3a80ff9d9e1f97b0a0fc6"
+      },
+      {
+        "anchor_frame": 68,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "partially_visible",
+          "gripper_contact": "grasped"
+        },
+        "field_matches": {
+          "bottle_motion": false,
+          "bottle_visibility": false,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "dc44c9fcc68ebaf63331898813711dbcfd565e6f3e71a983a51ef218ec7ba63b"
+      },
+      {
+        "anchor_frame": 32,
+        "kind": "annotation",
+        "method": "baseline",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": true
+        },
+        "exact_tuple": true,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "bfd1d21f89db79d1ec921ea345932273b7d59d334c9226d3e0325a56da52d6de"
+      },
+      {
+        "anchor_frame": 32,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "approaching"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": false
+        },
+        "exact_tuple": false,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "d298aa5ba68a6a308dfd29929d34f8702728b30539a94b44916d6e98de123010"
+      },
+      {
+        "kind": "control",
+        "schema_errors": [],
+        "raw_response_sha256": "948a938e8754467606a60d81d806304205b979d1f6f5c4bcfcaa16a64f062294"
+      },
+      {
+        "anchor_frame": 0,
+        "kind": "annotation",
+        "method": "candidate",
+        "expected": {
+          "bottle_motion": "stationary",
+          "bottle_visibility": "fully_visible",
+          "gripper_contact": "none"
+        },
+        "field_matches": {
+          "bottle_motion": true,
+          "bottle_visibility": true,
+          "gripper_contact": true
+        },
+        "exact_tuple": true,
+        "critical_errors": [],
+        "schema_errors": [],
+        "raw_response_sha256": "65514c3e6f100fba716f0c256933815092d44fc35740acba179f5859e72fc266"
+      }
+    ]
+  },
+  "visual": {
+    "model": "moonshotai/Kimi-K2.6",
+    "acceptance_authority": false,
+    "candidate_video_sha256": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b",
+    "image_digest": "sha256:c34783b2aed18553cbbcb43d870e6658ba423c105db6f376c41e115efbf3e366",
+    "preference_counts": {
+      "baseline": 1,
+      "candidate": 3,
+      "equivalent": 5
+    },
+    "critical_failure_count": 1,
+    "scoring_status": "inconclusive_frozen_scorer_rejected_runner_identity_transition_before_item_scoring",
+    "comparison_manifest_sha256": "e7f89ee263736df7b071f76a4f8c7eb0d07e8106f2a1927d6d847ce2a3193916",
+    "run_summary_sha256": "79ae15951c3792df34d24c4cd31337ea867da0d2ed9fc60c4d2e6cb7a1e8e2e4"
+  },
+  "visual_source_sha256": "11460725cb9511a255318e2041e6a2491afb9bf19a4f8476104ba58398e9bccd",
+  "visual_verdict": "INCONCLUSIVE: frozen scorer rejected calibration/candidate runner identity mismatch before item scoring. Post-response preference counts do not repair that mismatch. The model was already disqualified as an acceptance judge.",
+  "objective_failure_unchanged": true,
+  "ship_workflow_acceptance": false
+}

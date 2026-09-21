@@ -1,0 +1,13 @@
+{
+  "utc": "2026-09-21T02:31:54.504585+00:00",
+  "source_commit": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
+  "method": "Real Linux child and descendant, actual ownership waitid and reaper, no mocks or provider operations.",
+  "timeout_s": 0.1,
+  "observed_return_seconds": 0.10084605600013674,
+  "error": "agent command timed out",
+  "deadline_return_under_2_seconds": true,
+  "breaker_closed_after_cleanup": true,
+  "abandoned_registry_empty": true,
+  "active_registry_empty": true,
+  "subsequent_success": true
+}
