@@ -1,0 +1,80 @@
+{
+  "schema": "npa.mk8s.provider-rpc.real-cpu-lifecycle.v1",
+  "source_revision": "06b084f2db1870c6c258ce260e39e1e8379fa56b",
+  "source_tree": "6362ade058615b8705ba9f7ab3ea68ba867329bb",
+  "source_base": "9505f1ff0184cbf39a4c5845d4ddcc07b5e938c8",
+  "workload_scope": {
+    "provider": "Nebius Managed Kubernetes",
+    "owned_cluster_count": 1,
+    "cpu_nodes": 1,
+    "cpu_preset": "8vcpu-32gb",
+    "gpu_nodes": 0,
+    "workflows_or_model_inference_submitted": false
+  },
+  "applied_provider_deadlines": {
+    "apply_timeout_minutes": 120,
+    "inserted_defaults": {
+      "timeout": "120m",
+      "per_retry_timeout": "120m",
+      "auth_timeout": "120m"
+    },
+    "materialized_provider_sha256": "8ad380b8c7491a2c2d884092e5d18e97dafcc4cfe313759caeed711161c55966"
+  },
+  "provision": {
+    "started_at": "2026-09-21T18:44:12.902542+00:00",
+    "finished_at": "2026-09-21T18:59:28.292778+00:00",
+    "elapsed_seconds": 915.390236,
+    "exit": 0,
+    "ready_nodes": 1,
+    "default_storage_class_verified": true
+  },
+  "committed_live_test": {
+    "passed": 1,
+    "elapsed_seconds_reported_by_pytest": 1.06,
+    "exit": 0,
+    "log_sha256": "c46951216fb22cb70c4bbba01b026cd9532f4bdb3308e82f9390b88874bf801f"
+  },
+  "supported_destroy": {
+    "started_at": "2026-09-21T19:05:19.570310+00:00",
+    "finished_at": "2026-09-21T19:14:37.908604+00:00",
+    "elapsed_seconds": 558.338294,
+    "exit": 0
+  },
+  "committed_cleanup_test": {
+    "passed": 1,
+    "elapsed_seconds_reported_by_pytest": 0.99,
+    "exit": 0,
+    "log_sha256": "106e2242acc92dbbe0317802bbe2046a9d0be71b46ef14dc833068c0a34e7939"
+  },
+  "independent_cleanup": {
+    "reader_source": "59f8829d23e16a553da310f26d7cc85f398a775f",
+    "typed_absent_resources": {
+      "cluster": 1,
+      "cpu_node_group": 1,
+      "application_releases": 2
+    },
+    "provider_read_count": 8,
+    "complete_inventory_scopes": [
+      "project_clusters",
+      "cluster_node_groups",
+      "cluster_application_releases"
+    ],
+    "local_context_absent": true,
+    "project_lease_released": true,
+    "reader_cloud_mutations": false
+  },
+  "private_receipt_hashes": {
+    "provision-start.private.json": "1754453bbd3eb22804397587945ed9f5ded87e6d8b64c7febe8206d048fa494b",
+    "provision-result.private.json": "c1d67289efaef8dbc012f4f8f899fac467a8510b1843229fbfc048184b3a31dd",
+    "retained-live-manifest.private.json": "d62cbebce423c12f4abb928076aadd4f57a7b5e861260406b3a388fcba966dc1",
+    "down-result.private.json": "d9158ac3384515bc8f29ae8a14f3809f0c71af5c326503802c599d2d0892f52c",
+    "independent-final-absence/result.private.json": "a510fe73001ee4a8ba76c0dfcbb605258d35a4f2442a825670245d386e8ad75f",
+    "final-live-packet.private.json": "1928da6978dec1874fe178a03b1ee6f30cbbcac8f9981e1cb0c56ae8b04ad52f"
+  },
+  "limitations": [
+    "This is one real CPU-only provision/validation/destroy cycle; it is not a GPU, model, SkyPilot workflow, or performance result.",
+    "No artificial RPC delay or previous-source comparison was injected. Success does not isolate which deadline field was necessary.",
+    "The 120-minute values derive from the existing NPA apply deadline. The operation did not run for 120 minutes.",
+    "The verifier retains credential-authority, actual source, state and response bindings privately; raw infrastructure identifiers, configuration and credentials are excluded here."
+  ]
+}
