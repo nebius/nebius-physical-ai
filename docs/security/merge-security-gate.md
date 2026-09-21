@@ -13,8 +13,13 @@ described in [the contributor CI guide](../../CONTRIBUTING.md) retains smoke,
 documentation, lint, guardrails, and every security gate. The test selector comes
 from the trusted base commit; missing policy keeps full validation and invalid
 comparisons fail. The full three-interpreter test audit runs
-daily instead of immediately after each merge, so it cannot consume the hosted
-runner slots needed by the next queue candidate.
+daily instead of immediately after each merge. Repository-wide job concurrency
+limits validation to seven PR jobs, nine merge-candidate jobs, and three background
+audit jobs. Each candidate pool has a separate slot for coverage and the final
+required check; optional timing reports use the audit pool. These groups bound
+repository demand but cannot reserve organization runners. See the
+[validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
+for queue retention, superseded-commit cancellation, and rollout limits.
 
 The image workflow has no top-level path filter. Its two automatic jobs always
 report an internal, fail-closed scope decision. Image, packaging, workflow, and
