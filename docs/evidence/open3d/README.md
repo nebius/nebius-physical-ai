@@ -52,7 +52,22 @@ chooses the page by measuring contrast against the content's own luminance; it a
 expected a trade there and the measurement found none, and separates the controlled comparison from
 the confounded one.
 
-## The live workflow-runtime gate
+## The standard workflow runtime
+
+`capability-record-standard-runtime.json` closes the gate the earlier
+`live-runtime-attempt.json` recorded as blocked. It was not blocked: an isolated state root does not
+consult shared controller ownership, so the adoption guard never applies to a lane-owned run. What
+remained was a sequence of real preflight checks, and the record lists each one with the answer it got
+-- including the one that was *not* answered, where clearing it would have meant overwriting a shared
+AWS profile another lane was using, so the run gave up durable-mount resume instead.
+
+All six states produced their declared outputs. The part worth reading is that the run also proves the
+framing fix rather than asserting it: the image was built from the commit carrying the per-view
+cameras, and the live recording's audit view sits at distance 3.80 while the other three sit at
+3.26-3.27, pulled back specifically to frame the 8453 unsupported triangles the other views do not
+draw. The recording decodes under the repository's own verifier.
+
+## The earlier live-runtime attempt
 
 `live-runtime-attempt.json` records how far a real run gets and where it stops. It is the honest
 counterpart to the container results above: the image, the private digest-pinned delivery route, real
