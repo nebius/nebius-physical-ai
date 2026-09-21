@@ -1,0 +1,164 @@
+{
+  "schema": "npa.review.evo-private-image-qualification.v1",
+  "source_commit": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+  "image_index_digest": "sha256:b41b61305fd78a0a6a89e690b3130049d77877afa47c5d5ba0acf1b5570ac5ed",
+  "platform_manifest_digest": "sha256:a2770de320d4a64e0479c9bcd8803466dd9c3510b09fe4cee3d4d9967c00de14",
+  "upstream": {
+    "repo": "https://github.com/MichaelGrupp/evo.git",
+    "commit": "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422",
+    "version": "v1.35.1",
+    "license": "GPL-3.0-or-later"
+  },
+  "hardware": {
+    "cpu": "used",
+    "gpu": "not_applicable"
+  },
+  "artifact_integrity": {
+    "files": 67,
+    "all_downloaded_hashes_and_sizes_match": true
+  },
+  "native_commands": [
+    "evo_ape",
+    "evo_rpe",
+    "evo_traj"
+  ],
+  "result_archives_independently_decoded": 10,
+  "metrics": [
+    {
+      "case": "bounded_ape",
+      "error_count": 120,
+      "rmse_m": 0.0035454338272704316,
+      "archive_sha256": "a9f4c9108ad49658fa0b8ef1836476c7e633488bdc98e45342a988563a7463dc"
+    },
+    {
+      "case": "bounded_rpe",
+      "error_count": 110,
+      "rmse_m": 0.00594981427373233,
+      "archive_sha256": "5c758737d6a200c874e0a61a6017a2632afcd906912dda4b0ea7a63fbd86738f"
+    },
+    {
+      "case": "drifting_ape",
+      "error_count": 120,
+      "rmse_m": 0.4438116058995693,
+      "archive_sha256": "3647b079c5ed1fd72ebcd034848cc1712f641078fe334e42d2df999059bd7c6f"
+    },
+    {
+      "case": "drifting_rpe",
+      "error_count": 110,
+      "rmse_m": 0.1428767067835559,
+      "archive_sha256": "1e3f6ebfeff3ab0c84160135c48f9758f1440421d7f0fe3e3e12b902a4799fe0"
+    },
+    {
+      "case": "exact_ape",
+      "error_count": 120,
+      "rmse_m": 7.175037147775919e-16,
+      "archive_sha256": "03ecc064068a85d5f8cae25f6980236beeb93ec6d050cee54d5b441053e3c29e"
+    },
+    {
+      "case": "exact_rpe",
+      "error_count": 110,
+      "rmse_m": 7.454745723290291e-16,
+      "archive_sha256": "bf8ffb53c3df70b788bfa63272c4ef995a25248a6787bf5f489b59c664f97300"
+    },
+    {
+      "case": "kitti_orb_ape",
+      "error_count": 4541,
+      "rmse_m": 1.303449714565045,
+      "archive_sha256": "dbf2a0f17c0e565e1d82e8561617125837d9f889f882a58fab5c2b07ced0d380"
+    },
+    {
+      "case": "kitti_orb_rpe",
+      "error_count": 4458,
+      "rmse_m": 1.250926005096538,
+      "archive_sha256": "82d98c089a52f19d19505db496079106c1ef1f439f2a86fb5361a61bb1275e71"
+    },
+    {
+      "case": "kitti_sptam_ape",
+      "error_count": 4541,
+      "rmse_m": 3.7384879075826025,
+      "archive_sha256": "77bf04071fc202bd00f540026cd1ac213462edd1ec0a1e5186c29d6fb1c9df7d"
+    },
+    {
+      "case": "kitti_sptam_rpe",
+      "error_count": 4458,
+      "rmse_m": 2.7201316093183894,
+      "archive_sha256": "fb990379e904ec25573720ddcf6190466f3616c894181a61229c573684eea251"
+    }
+  ],
+  "synthetic_error_values_independently_recomputed_from_input_poses": 690,
+  "synthetic_thresholds": {
+    "ape_translation_rmse_m_max": 0.05,
+    "minimum_matched_poses": 100,
+    "rpe_translation_rmse_m_max": 0.02
+  },
+  "controls": {
+    "bounded": {
+      "expected": true,
+      "observed": true
+    },
+    "drifting": {
+      "expected": false,
+      "observed": false
+    },
+    "exact": {
+      "expected": true,
+      "observed": true
+    },
+    "malformed": {
+      "expected": false,
+      "observed": false
+    }
+  },
+  "confusion_matrix": {
+    "false_negative": 0,
+    "false_positive": 0,
+    "true_negative": 2,
+    "true_positive": 2
+  },
+  "malformed_returncode": 1,
+  "image_checks": {
+    "fixable_critical_findings": 0,
+    "all_severity_secret_findings": 0,
+    "all_ancestor_layers_inspected_for_private_host_keys": true,
+    "private_host_key_regular_files": 0,
+    "runtime_key_sets_distinct": true,
+    "sbom_packages": 184,
+    "license_rows": 756,
+    "payload_provenance_bootstrap_passed": true,
+    "complete_archive_byte_accounting_claimed": false,
+    "public_image_publication": false
+  },
+  "cleanup": {
+    "run_resources": "PASS",
+    "managed_controller": "PASS",
+    "temporary_pull_secret": "PASS"
+  },
+  "full_harness_result": "FAILED_POSTPROCESSING_RETAINED",
+  "full_harness_failure": "KeyError('path') during capture metadata resolution after workload, objective checks, and run cleanup",
+  "readonly_reconciliation": "PASS",
+  "visual_review_reuse": {
+    "byte_identical_captures": 6,
+    "new_vlm_calls": 0,
+    "scope": "presentation only"
+  },
+  "public_plot": {
+    "sha256": "399161ffcadc065b5d7028ea24fba68aba5d750c9458c5f4e38207942247bf04",
+    "dimensions": [
+      1011,
+      1001
+    ],
+    "source": "actual workload output, unchanged bytes"
+  },
+  "evidence_hashes": {
+    "artifact_manifest": "e295eed9da514183c13ecac9355dbebe95ed7c366ade4ed043e4d96c924ca733",
+    "objective_summary": "2ba105f79a15528f5ab3a4063efa77b3ce1373f42f3e9b0f9d438aa015e2b17d",
+    "independent_closure_review": "18debd9cec838ce7865ae38df5a660750721574369459db83a41a3ca33aecd44",
+    "visual_equivalence": "f4a49f69febb02aa7262fb6efa527956183e9b85705e6e07663f46f0e29656f1"
+  },
+  "limitations": [
+    "Synthetic metric-gate controls and pinned example compatibility only.",
+    "No real-world SLAM, navigation, sensor-accuracy, robot-safety or upstream-estimate-improvement claim.",
+    "Outer npa.workflow execution was not established.",
+    "Final image byte-accounting and current-commit CI remain separate readiness gates."
+  ]
+}
