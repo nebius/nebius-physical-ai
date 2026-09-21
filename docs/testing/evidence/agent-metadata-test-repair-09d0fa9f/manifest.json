@@ -1,0 +1,15 @@
+{
+  "schema": "npa.public_proof_manifest.v1",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "9263483e9100459820e7e6fa2cee86cd5d5c8ed4ce6e2bebcddef77093140829",
+      "bytes": 2378
+    },
+    {
+      "path": "source-equivalence.json",
+      "sha256": "e6c686364d8c8e82173e315979e43c9afdaf237461c5bf84a03fe4a664c7cad6",
+      "bytes": 3075
+    }
+  ]
+}

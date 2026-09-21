@@ -1,0 +1,69 @@
+{
+  "schema": "npa.public_source_equivalence.v1",
+  "pr": 654,
+  "reviewed_at": "2026-09-21T04:09:33.973453+00:00",
+  "live_producing_head": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
+  "reviewed_head": "09d0fa9f3693db57142b82d7d7caf192b72257e0",
+  "parent": "0666db15f7c5a715ceba74b9dbfa57fe93054e26",
+  "tree": "d9eb57581a8e0c5f796c7a349293e8e56c1b0c22",
+  "changed_files": [
+    "npa/tests/cli/test_agent_backend_render.py",
+    "npa/tests/cli/test_agent_fixall_security.py"
+  ],
+  "all_non_test_files_unchanged": true,
+  "production_files": [
+    {
+      "path": "npa/src/npa/cli/agent.py",
+      "live_producer_sha256": "140c5cbf2d840faaa125759b9722c548b47127c2bbd0050b2f0cb069e9ad0fce",
+      "new_head_sha256": "140c5cbf2d840faaa125759b9722c548b47127c2bbd0050b2f0cb069e9ad0fce",
+      "identical": true
+    },
+    {
+      "path": "npa/src/npa/cli/agent_resources.py",
+      "live_producer_sha256": "19438686adad42371c5b5e9a47099fe5ca6014aff12712666eb0d7cf0c4f8bcb",
+      "new_head_sha256": "19438686adad42371c5b5e9a47099fe5ca6014aff12712666eb0d7cf0c4f8bcb",
+      "identical": true
+    },
+    {
+      "path": "npa/src/npa/cli/agent_access_runtime.py",
+      "live_producer_sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd",
+      "new_head_sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd",
+      "identical": true
+    },
+    {
+      "path": "npa/src/npa/cli/agent_deployment.py",
+      "live_producer_sha256": "60aecdfdaf4ea824020f9eb17fc079a6d6883ede3d8669ce6bac495126c13a1d",
+      "new_head_sha256": "60aecdfdaf4ea824020f9eb17fc079a6d6883ede3d8669ce6bac495126c13a1d",
+      "identical": true
+    }
+  ],
+  "independent_scoped_tests": {
+    "passed": 23,
+    "failed": 0,
+    "warnings": 2,
+    "warning_kind": "existing FastAPI on_event deprecation",
+    "pytest_seconds": 4.9,
+    "wall_seconds": 5.246,
+    "platform": "macOS",
+    "python": "3.12.12"
+  },
+  "checks": {
+    "ruff_check": "passed",
+    "ruff_format_check": "passed",
+    "diff_check": "passed",
+    "isolated_worktree_clean_before_after": true
+  },
+  "verdict": "accepted test-only delta; fresh exact-head CI still required",
+  "new_live_run": false,
+  "production_replay_required": false,
+  "limits": [
+    "Original live proof limitations remain: happy-path CPU deployment is not a D-state reproduction; native Linux fault controls are separate.",
+    "Anonymous negative evidence covers UI root, not independent API-route probes.",
+    "Cloud absence is retained production teardown evidence; reviewer did not query provider.",
+    "Production source identity is bound, but deployed Python byte hashes were not retained; service fingerprint covers metadata/unit.",
+    "GPU/VLM not applicable to this test-only maintenance repair.",
+    "No new live/provider/hosted-model calls were made.",
+    "GitHub current head and all applicable fresh CI must be verified before ready.",
+    "WNOWAIT ownership flags and conservative /proc read-error behavior remain nonblocking mutation-test coverage gaps noted by independent public review."
+  ]
+}
