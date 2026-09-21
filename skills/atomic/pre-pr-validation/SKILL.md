@@ -15,16 +15,16 @@ edits skip runtime suites; those retain smoke and every documentation,
 repository, and security gate. See `CONTRIBUTING.md` for the trusted-base selector,
 which uses the base's merge-candidate policy for both events during rollout.
 The queue rechecks the combined candidate against its current base.
-A daily audit covers all supported Python versions in the smaller background
-pool instead of starting a full audit after every merge. Job concurrency permits
-seven PR jobs, nine merge-candidate jobs, and three audit jobs across the repository.
-Each candidate pool has a separate slot for the short test-scope selector,
-coverage, and final required checks; keep long jobs out of that slot.
-Preserve `queue: max` with `cancel-in-progress: false` on shared job slots and
-per-PR supersession on the parent. Reusable callers must not hold child slots.
-`test_ci_concurrency` guards slot routing and queue retention; `test_ci_workflows`
-guards cancellation and required results. See the contributor concurrency guide
-for platform queue limits and rollout behavior.
+A daily audit covers all supported Python versions instead of starting a full
+audit after every merge. Independent validation jobs use available GitHub runner
+capacity without job-level concurrency locks or matrix `max-parallel` caps.
+Preserve per-PR supersession on the parent and distinct workflow group prefixes
+for reusable children. Merge candidates use their own SHA-specific groups.
+`test_ci_concurrency` rejects shared validation locks and matrix caps;
+`test_ci_workflows` guards cancellation and required results. See the contributor
+concurrency guide for organization runner limits and rollout behavior. Refresh
+older PR branches after a scheduling change lands; rerunning an old commit
+retains its original workflow configuration.
 `Security regression / security-regression` requires
 every candidate component and the reusable image-security workflow.
 The required workflows have no top-level path filters. Image scope is classified

@@ -41,20 +41,20 @@ only running a slice:
 .venv/bin/python -m pytest tests/ -q -n auto
 ```
 
-Use the serial form when a failure needs a readable, ordered traceback. PR CI
-runs smoke and affected subsystem tests, or the full suite for unknown/shared
-changes. Agent/browser changes also run the dedicated Cypress job. Merge-queue
-CI runs browser and compatibility checks alongside xdist inside five
-duration-balanced Python 3.12 coverage shards, then merges their data before
-enforcing the floor. Narrow prose-only candidates retain smoke, docs, guardrails,
-and security gates; see `CONTRIBUTING.md` for the trusted-base classification.
+Use the serial form when a failure needs a readable, ordered traceback. PR and
+merge-queue CI run the same full Python 3.12 coverage suite, Cypress,
+and focused Python 3.10/3.14 compatibility checks. The full suite uses xdist
+inside five duration-balanced shards, then merges coverage before enforcing
+the floor. Narrow prose-only candidates retain smoke, docs, guardrails, and
+security gates; see `CONTRIBUTING.md` for the trusted-base classification.
 Scheduled/manual audits repeat four shards across supported interpreters.
-Repository-wide runner slots limit PR validation to seven jobs, merge validation
-to nine, and background audits to three; these totals do not grow with PR count.
-PR shards share two slots, while merges retain five; each candidate pool also has
-a completion slot. Keep shared slots queued with `queue: max`, never default replacement of
-waiting jobs. `test_ci_concurrency` guards every runner job and prevents nested
-caller/child locks; `test_ci_workflows` guards cancellation and required results.
+Independent validation jobs use available GitHub runner capacity without shared
+job-level concurrency locks or matrix `max-parallel` caps. Keep the parent
+workflow's per-PR cancellation so new commits supersede old runs, and keep
+reusable workflow group prefixes distinct from their caller. `test_ci_concurrency`
+prevents shared validation locks and matrix caps; `test_ci_workflows` guards
+cancellation and required results. Organization runner limits may still cause
+waiting; refresh old branches after workflow changes land to adopt the policy.
 Every full Python 3.12 run uploads module timings; successful runs emit a merged
 profile. Use successful scheduled main profiles for reviewed weight updates.
 The independent CI timing report separates runner waiting from execution and
@@ -167,6 +167,22 @@ and you report numeric results from running it.
   Terraform provider (`PermissionDenied`/`Unauthenticated` even though the CLI
   works); `provisioner._run` scrubs it, but when reproducing by hand
   `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` first.
+- **`npa storage bucket delete` / `service-account delete` / `npa configure
+  --forget-project` changes:** run
+  `npa/tests/e2e/test_config_storage_cleanup_live_e2e.py` against one
+  disposable project:
+  ```bash
+  NPA_INTEGRATION_E2E=1 NPA_STORAGE_CLEANUP_LIVE_E2E=1 \
+    NPA_E2E_PROJECT=<alias> \
+    NPA_CONFIG_DIR=/private/path/to/config \
+    NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR=/private/path/to/evidence \
+    npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_config_storage_cleanup_live_e2e.py -q -s
+  ```
+  The hermetic safety-contract tests in the same file run under plain
+  `pytest` with no env vars and never touch the network. See
+  `tests/cli/test_cleanup_teardown.py` for the separate credential-pruning
+  failure and concurrent-write checks.
 - If a full live run is genuinely infeasible in the environment, say so
   explicitly and still commit the `plan_only` live-matrix entry — never silently
   ship smoke-only.

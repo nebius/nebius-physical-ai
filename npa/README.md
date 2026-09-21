@@ -327,11 +327,11 @@ also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
 For queue rejections, follow the
 [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
-The shared [validation concurrency pools](../CONTRIBUTING.md#validation-concurrency)
-allow seven PR jobs, nine merge-candidate jobs, and three background audit jobs at
-once across the repository. Each candidate pool has a separate slot for coverage
-and the final required check. Waiting jobs are retained up to GitHub's queue limit,
-while superseded commits of the same PR still cancel their old checks.
+The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
+lets independent jobs use available GitHub runner capacity without shared
+repository-wide job queues. Newer commits still cancel older checks of the same
+PR. Organization runner limits can cause waiting; already queued runs retain
+their original workflow configuration until their branches are refreshed.
 Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
 parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
 
@@ -367,6 +367,13 @@ to an operator-owned S3 prefix; it has no default. The check requires an existin
 authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
+
+For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
+plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
+`NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the
+configured bucket and storage service account for real. See
+[`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
+for the full env contract and safety preconditions.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).

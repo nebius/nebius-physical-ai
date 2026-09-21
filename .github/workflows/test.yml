@@ -17,11 +17,6 @@ concurrency:
 
 jobs:
   scope:
-    concurrency:
-      # Start tests before long docs/guardrail jobs drain the metadata queue.
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'completion' || 'checks' }}
-      queue: max
-      cancel-in-progress: false
     name: test-scope
     runs-on: ubuntu-latest
     outputs:
@@ -71,10 +66,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   browser-mocked:
-    concurrency:
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ github.event_name == 'pull_request' && 'test-2' || github.event_name == 'merge_group' && 'test-5' || 'test' }}
-      queue: max
-      cancel-in-progress: false
     name: browser-and-compatibility
     needs: scope
     if: needs.scope.outputs.browser != 'false'
@@ -152,10 +143,6 @@ jobs:
             -q
 
   pr-smoke:
-    concurrency:
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'test-1' || 'test' }}
-      queue: max
-      cancel-in-progress: false
     name: pr-smoke
     needs: scope
     # Full shards already collect these tests and run the CLI install check.
@@ -213,10 +200,6 @@ jobs:
         run: ./scripts/check-source-drift.sh
 
   test:
-    concurrency:
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ github.event_name == 'merge_group' && format('test-{0}', matrix.shard) || github.event_name == 'pull_request' && (contains(fromJSON('[1, 3, 5]'), matrix.shard) && 'test-1' || 'test-2') || 'test' }}
-      queue: max
-      cancel-in-progress: false
     name: pytest-${{ matrix.python-version }}-shard-${{ matrix.shard }}
     needs: scope
     if: needs.scope.outputs.full_suite != 'false'
@@ -386,10 +369,6 @@ jobs:
         run: ./scripts/check-source-drift.sh
 
   coverage:
-    concurrency:
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'completion' || 'checks' }}
-      queue: max
-      cancel-in-progress: false
     name: coverage
     needs: [scope, test]
     # Failed shards already fail test-gate. Do not reserve another runner after
