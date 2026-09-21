@@ -273,6 +273,24 @@ PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
   make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
 ```
 
+To recheck checkpoint selection from a completed GPU validation job, set
+`NPA_E2E_CHECKPOINT_SELECTION_EVIDENCE_CONFIG` to an owner-only JSON file and run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py -q
+```
+
+There is no default evidence target; the live check skips without the variable.
+The [test module](tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py)
+documents the required provider identity, digest-pinned image, source archive,
+GPU platform/count, training-output prefix, and minimum episode count. It reads
+existing resources, verifies checkpoint and source bytes, recomputes distances
+from recorded final positions, and reruns selection in both candidate orders.
+The input bundle must come from real policy rollouts; this check does not launch
+training, establish policy quality, or claim a complete Sim2Real pipeline run.
+Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
