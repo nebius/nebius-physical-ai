@@ -19,6 +19,13 @@
     "recovery": "The surface is configured again at the real size and rendering proceeds. Captures come out at exactly the requested resolution -- 1024x768 requested, 2048x1536 written at the 2x scale factor -- and are fully legible."
   },
   "operational_consequence": "The viewer also panics on the way out, after the screenshot is written: 'Failed to take store hub from the Viewer' at re_viewer/src/app.rs:3694. So a capture script must verify the PNG rather than trust the exit status, which is non-zero on a successful capture. The error itself is upstream, harmless to the captures, and affects no measurement taken from them.",
-  "not_claimed": "The upstream line that supplies 40000 was not identified; that is inside the viewer/winit/eframe stack, whose source is not in this tree. What is established is that nothing this repository produces or configures influences it.",
-  "how_to_reproduce": "xvfb-run -a --server-args='-screen 0 1024x768x24' rerun --screenshot-to out.png --window-size 1024x768 <any>.rrd 2>&1 | grep 'Requested was'"
+  "not_claimed": "The upstream line that supplies 40000 was not identified by this lane, and the screenshotter lead above comes from an independent review reading upstream source. What is established here is that nothing this repository produces or configures influences it, and that the ordinary viewing path is unaffected.",
+  "how_to_reproduce": "xvfb-run -a --server-args='-screen 0 1024x768x24' rerun --screenshot-to out.png --window-size 1024x768 <any>.rrd 2>&1 | grep 'Requested was'",
+  "discriminating_control": {
+    "what_was_run": "The same recording in an ordinary native window with no --screenshot-to, captured externally with ffmpeg after the window had rendered.",
+    "result": "No wgpu validation error of any kind. The complete viewer log is retained in viewer-ui/ordinary-native-capture-status.json.",
+    "conclusion": "Upstream rerun-cli 0.31.4's startup screenshot path fails with a 40000x40000 Surface::configure while ordinary native viewing passes cleanly. The error belongs to the screenshot path, not to the viewer or to this tool's recordings.",
+    "independent_source_lead": "A review lane traced rerun 0.31.4 build 73bf766 to screenshotter.rs, where the screenshotter requests an immediate viewport resize from the context content rectangle with a 2x pixel factor during App::new. An uninitialised content rectangle at that moment is consistent with every measurement here, including the inverse scale-factor relationship. Not claimed as a proven root cause.",
+    "frame": "viewer-ui/ordinary-native.png"
+  }
 }

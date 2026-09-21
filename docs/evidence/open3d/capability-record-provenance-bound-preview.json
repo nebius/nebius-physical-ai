@@ -1,0 +1,195 @@
+{
+  "what_this_is": "A provenance-bound ordinary native viewer capture of an aggregate fused-cloud preview, rendered from the retained fused cloud and mesh of the earlier completed run.",
+  "recorded_utc": "2026-09-21T04:51:02Z",
+  "supersedes": {
+    "reason": "The first attempt at this preview invented provenance to satisfy required fields: a 64-zero fused_sha256, and a single fragment named f0 with an identity pose, built from the already-fused cloud. The pixels were real; those three claims were not. Found by an independent audit before publication.",
+    "preserved_at": "viewer-ui/superseded-preview/",
+    "invalid_artifacts": {
+      "generator": {
+        "file": "mkrrd-invalid-provenance.py",
+        "sha256": "5c0138dc9e1018afe4f94dd3381cfd8f740e0d4f444340db4b45f931365d1afb"
+      },
+      "recording": {
+        "file": "point_cloud.rrd",
+        "sha256": "36383fb1dce7a4becc35e60d21a52a7c4bbeec089d864c7f5a6daf589557c784"
+      },
+      "frame": {
+        "file": "ordinary-window-4x3.png",
+        "sha256": "04b6ee08b801bda7958ec6ba741e01350393f63d7929639e6c4d1510a16f4206"
+      }
+    },
+    "classification": "A PLY visualization preview only. Its pixels show real geometry and it may be cited for what the viewer looked like, never for fragment identity, pose, registration, or content hash."
+  },
+  "recording": {
+    "file": "viewer-ui/preview-aggregate-fused.rrd",
+    "sha256": "025f3d0a026015df0ca96dff33559276535b8c3e51419fd1821a4f1f670abf4a",
+    "typed_as": "aggregate fused-cloud view",
+    "fragments_logged": 0,
+    "why_zero": "The individual fragment clouds of that run were not retained locally, only fused.ply and mesh.ply. Zero is the accurate count; the scan view fits its camera against the fused cloud, so it still draws real geometry.",
+    "claims_not_made": [
+      "fragment identity",
+      "fragment pose",
+      "registration result"
+    ]
+  },
+  "inputs": {
+    "fused_ply": {
+      "path": "fused.ply",
+      "sha256": "da82039ebd5fd7c753179db971ff051f7e4eb3dbb0b294b07108f00c81b6c7b7"
+    },
+    "mesh_ply": {
+      "path": "mesh.ply",
+      "sha256": "9af2833ee1fb7333ed044082c4f9bd63b592543e0cac086cfd00f750045f9bda"
+    }
+  },
+  "generator": {
+    "script": "harness/preview_from_retained_plys.py",
+    "script_sha256": "9a359b060282f0482dafaa7e767bc6bb12e14349e2724e1e7141f8dd9ebebdca",
+    "runner_module_sha256": "eb4ad47c4e96210ac893e4dc3b97d301de4c02f6cd076fe325e972ba13784a1f",
+    "repository_commit": "1441e211400cf7d07c8d832d3ad787ff71d7fad2",
+    "runner_source_dirty_at_generation": true,
+    "dirty_note": "The runner was mounted into the image from the working tree, so the module hash above is the binding, not the commit. The commit is recorded for context only."
+  },
+  "camera": {
+    "Scene: observed scan and supported surface": {
+      "eye": [
+        5.083985322522582,
+        -0.4734144074898161,
+        4.299548066859977
+      ],
+      "look_target": [
+        2.304553525251076,
+        1.616581248879362,
+        1.5201162695884705
+      ],
+      "up": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "distance": 4.45180458634584,
+      "pane_aspect": 0.8888888888888888,
+      "fov_degrees": 55.0,
+      "elevation_degrees": 28.0,
+      "scene_span": 4.435701741142398,
+      "scene_extent": [
+        3.587130513584763,
+        1.6212554924486655,
+        2.044376492500305
+      ]
+    },
+    "Observed scan only": {
+      "eye": [
+        7.825085615531236,
+        -2.523230408759103,
+        7.071779669503185
+      ],
+      "look_target": [
+        2.292030615512725,
+        1.6373541135315965,
+        1.538724669484673
+      ],
+      "up": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "distance": 8.862271651985433,
+      "pane_aspect": 0.4444444444444444,
+      "fov_degrees": 55.0,
+      "elevation_degrees": 28.0,
+      "scene_span": 4.380502077551836,
+      "scene_extent": [
+        3.562084694108061,
+        1.5797097631441965,
+        2.001216666846432
+      ]
+    },
+    "Supported surface only": {
+      "eye": [
+        7.986184001672655,
+        -2.6565083381094166,
+        7.198963881242662
+      ],
+      "look_target": [
+        2.307336390018463,
+        1.613705039024353,
+        1.5201162695884705
+      ],
+      "up": [
+        0.0,
+        -1.0,
+        0.0
+      ],
+      "distance": 9.095787084086412,
+      "pane_aspect": 0.4444444444444444,
+      "fov_degrees": 55.0,
+      "elevation_degrees": 28.0,
+      "scene_span": 4.4291005546795725,
+      "scene_extent": [
+        3.581564784049988,
+        1.6155030727386475,
+        2.044376492500305
+      ]
+    }
+  },
+  "viewer": {
+    "rerun_version": "0.31.4",
+    "renderer": "wgpu Vulkan on llvmpipe (LLVM 15.0.7) software rasterizer, Mesa 23.2.1",
+    "renderer_is_software": true,
+    "window_scale_factor_guessed_by_winit": 1,
+    "open3d_version": "0.20.0",
+    "image_used_for_generation": "npa-open3d:claimfix, sha256:60ecaefc93f0fd369a7811630896d0d2b8e7b3014913ef9a4aae002e0e31451d",
+    "image_caveat": "That image's build-arg revision label reads 651b094c and is stale; the binding that matters is the mounted runner module hash above, which an independent review also byte-matched to the commit."
+  },
+  "capture": {
+    "frame": "viewer-ui/ordinary-native.png",
+    "frame_sha256": "248a5ed22737c81f6ed1c365bea461757eae7fc3b54bb7813c1f4f58ea4ebf43",
+    "mechanism": "ffmpeg x11grab of the whole window under one synchronous xvfb-run",
+    "no_screenshot_to": true,
+    "requested_window": "1024x768",
+    "window_at_readiness": "1600x1200",
+    "window_at_capture": "1024x768 at +0+0",
+    "full_window_not_a_crop": "The window is 1600x1200 when it first appears and resizes to the requested 1024x768 while loading. The grab reads the window's measured geometry at capture time, so it is the complete UI. Grabbing the requested size without measuring produced a crop of the larger window on the first attempt.",
+    "harness": "harness/capture_ordinary_viewer.sh",
+    "harness_sha256": "6507c8d29eb01e6f76e6c7a5a3e1e9c3045ee85bb500a6d11e4c74874ddd8a9c",
+    "viewer_exit_status": 143,
+    "viewer_exit_meaning": "SIGTERM from this harness's own graceful cleanup of the one PID it started, after the capture succeeded. Not a crash.",
+    "post_capture_shutdown_line": "'X connection to :99 broken (explicit kill or server shutdown)' follows the capture and is the server being reaped, not a rendering failure.",
+    "status_record": "viewer-ui/ordinary-native-capture-status.json"
+  },
+  "measured": {
+    "frame": "ordinary-native.png",
+    "size": [
+      1024,
+      768
+    ],
+    "divider_x": 682,
+    "scene_pane": {
+      "pane_aspect": 0.972,
+      "width_span": 0.833,
+      "height_span": 0.401,
+      "touches_pane_edges": [],
+      "clipped": false
+    },
+    "active_tab_pane": {
+      "pane_aspect": 0.476,
+      "width_span": 0.733,
+      "height_span": 0.191,
+      "touches_pane_edges": [],
+      "clipped": false
+    }
+  },
+  "what_the_capture_shows": "Both panes frame their geometry and touch no pane edge, in the ordinary 4:3 window that clipped before the pane-fit change. Mesh colours are the reconstruction's own.",
+  "wgpu_discriminating_control": {
+    "ordinary_native_viewing": "no wgpu validation error at all; the complete viewer log is retained in the status record",
+    "screenshot_to_path": "reproducibly emits Surface::configure at 40000x40000",
+    "conclusion": "Upstream rerun-cli 0.31.4's startup screenshot path fails while ordinary native viewing passes. This matches the independent source lead that the screenshotter requests an immediate viewport resize during App::new from a content rectangle that is not yet initialised."
+  },
+  "limits_retained": [
+    "The reconstruction has real holes and partial surfaces; they are visible in the preview and are not defects of the rendering.",
+    "No claim is made about watertightness, collision fitness, or mesh readiness.",
+    "Software rasterizer, so this is a correctness and framing capture, not a performance one.",
+    "This is an intermediate regenerated preview. It is not a workflow artifact, and the earlier completed run's own shipped recording remains a separate file with its own hash."
+  ]
+}

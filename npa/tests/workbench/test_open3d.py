@@ -1276,9 +1276,10 @@ def test_uneven_coverage_of_correct_geometry_reads_as_far_from_observations() ->
     adapter, and is reproduced here through the shipped functions and real Open3D. Figures
     and the generator: `evidence/open3d/irregular-density-counterexample.json`.
 
-    The numbers below are that reproduction, pinned so the semantics cannot quietly revert
-    to asserting fabrication. The geometry itself is rebuilt in the functional smoke, where
-    Open3D is available.
+    The numbers below are that reproduction verbatim, including the 1.5-voxel band this
+    classification does not read, so the fixture stays checkable against the report rather
+    than drifting into plausible-looking invention. The geometry itself is rebuilt in the
+    functional smoke, where Open3D is available.
     """
 
     from npa.workbench.open3d.runner import _crop_justification
@@ -1287,12 +1288,14 @@ def test_uneven_coverage_of_correct_geometry_reads_as_far_from_observations() ->
         vertices = range(9602)
 
     even = _crop_justification(
-        _support_block(unsupported=0.192187, beyond_1_5=0.0, beyond_3=0.0), 0, _Mesh()
+        _support_block(unsupported=0.192187, beyond_1_5=0.006875, beyond_3=0.0),
+        0,
+        _Mesh(),
     )
     assert even["removed_surface_reads_as"] == "near-threshold surface"
 
     uneven = _crop_justification(
-        _support_block(unsupported=0.315729, beyond_1_5=0.185, beyond_3=0.131615),
+        _support_block(unsupported=0.315729, beyond_1_5=0.169323, beyond_3=0.131615),
         0,
         _Mesh(),
     )

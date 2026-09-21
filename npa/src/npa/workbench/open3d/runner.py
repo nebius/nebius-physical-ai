@@ -510,9 +510,10 @@ def _crop_justification(before: dict[str, Any], removed: int, mesh) -> dict[str,
         reads_as = "far from any observation"
         note = (
             f"{share:.1%} of the unsupported area lay more than three voxels from any "
-            "sample, above the 10% mark that separates these two readings. Sample "
-            "spacing alone does not put area that far out, so the crop removed surface "
-            "the scan does not speak for. Whether that surface is wrong is a separate "
+            "sample, above the 10% mark that separates these two readings, so the crop "
+            "removed surface that no observation lies near. Why it lies far out is not "
+            "something this separates: thin coverage there and surface that does not "
+            "belong there both read this way. Whether the surface is wrong is a separate "
             "question this cannot answer: a correct surface over a sparsely covered "
             "region reads the same way. Measured, on a cube that was exactly its own "
             "ground truth, sampled densely on five faces and sparsely on the sixth: "

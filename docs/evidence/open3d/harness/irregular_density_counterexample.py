@@ -91,8 +91,15 @@ record = {
   ],
   "generator": "harness/irregular_density_counterexample.py",
   "reproduce":
-    "docker run --rm --network none --entrypoint python3 <open3d image> "
-    "harness/irregular_density_counterexample.py",
+    "From a repository checkout, feeding the harness over stdin because it is not part of "
+    "the image's build context:\n"
+    "  docker run --rm -i --network none --entrypoint python3 sha256:60ecaefc93f0fd369a7811630896d0d2b8e7b3014913ef9a4aae002e0e31451d - "
+    "< docs/evidence/open3d/harness/irregular_density_counterexample.py",
+  "reproduce_previous_form_was_broken":
+    "An earlier published form ran `python3 harness/irregular_density_counterexample.py` "
+    "inside the image and exited 2, because the harness is not in the image. Recorded so "
+    "the correction is visible rather than silent.",
+  "verified_image": "sha256:60ecaefc93f0fd369a7811630896d0d2b8e7b3014913ef9a4aae002e0e31451d",
   "open3d_version": o3d.__version__,
   "numpy_seed": 7,
 }
