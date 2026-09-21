@@ -650,7 +650,9 @@ def check_image_pulls_with_credentials(
                 timeout=timeout,
                 fetcher=fetcher,
             )
-        if operator_check.ok:
+        # A declared pod secret is the selected target-delivery contract. Host
+        # registry access cannot prove that Kubernetes can read or use it.
+        if operator_check.ok and not image_secret_names:
             checks.append(
                 ImagePullCheck(
                     **{
@@ -673,15 +675,19 @@ def check_image_pulls_with_credentials(
         if verified:
             checks.append(
                 ImagePullCheck(
-                    image=image,
+                    image=operator_check.image,
                     status="ok",
+                    http_status=operator_check.http_status,
                     detail=(
                         f"operator-side manifest check was {operator_check.status}; "
                         f"target pull authority verified: {detail}"
                     ),
-                    operator_status=operator_check.status,
+                    operator_status=(
+                        "verified" if operator_check.ok else operator_check.status
+                    ),
                     target_status="verified_pull_secret",
                     authority="kubernetes_image_pull_secret",
+                    digest=operator_check.digest,
                 )
             )
             continue
@@ -705,9 +711,12 @@ def check_image_pulls_with_credentials(
                     + f"; target pull authority unverified: {detail}"
                 ),
                 remedy=f"{remedy}; {target_remedy}" if remedy else target_remedy,
-                operator_status=operator_check.status,
+                operator_status=(
+                    "verified" if operator_check.ok else operator_check.status
+                ),
                 target_status="unverified",
                 authority="none",
+                digest=operator_check.digest,
             )
         )
     return checks

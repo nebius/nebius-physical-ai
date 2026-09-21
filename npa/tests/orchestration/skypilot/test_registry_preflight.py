@@ -24,6 +24,7 @@ REGISTRY = "registry-us.example"
 REPOSITORY = "u00j7q4jjkahvsx0jy/npa-cosmos2-transfer"
 TAG = "2.5.1-golden-eval-smoke-20260616T033000Z"
 IMAGE = f"{REGISTRY}/{REPOSITORY}:{TAG}"
+DIGEST = f"sha256:{'a' * 64}"
 MANIFEST_URL = f"https://{REGISTRY}/v2/{REPOSITORY}/manifests/{TAG}"
 # Representative Docker Registry v2 bearer challenge.
 CHALLENGE = {
@@ -60,10 +61,12 @@ class FakeRegistry:
         *,
         manifest_status: int,
         manifest_body: bytes = b"",
+        manifest_headers: dict[str, str] | None = None,
         token_status: int = 200,
     ):
         self.manifest_status = manifest_status
         self.manifest_body = manifest_body
+        self.manifest_headers = manifest_headers or {}
         self.token_status = token_status
         self.calls: list[tuple[str, dict[str, str]]] = []
 
@@ -89,7 +92,7 @@ class FakeRegistry:
             )
         if "Authorization" not in headers:
             return 401, dict(CHALLENGE), b""
-        return self.manifest_status, {}, self.manifest_body
+        return self.manifest_status, self.manifest_headers, self.manifest_body
 
 
 def _error_body(code: str, message: str) -> bytes:
@@ -383,7 +386,13 @@ def test_official_public_image_ignores_matching_stale_ghcr_credentials(
     registry = AnonymousRegistry()
     public_image = "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"
 
-    checks = check_image_pulls_with_credentials([public_image], fetcher=registry)
+    checks = check_image_pulls_with_credentials(
+        [public_image],
+        fetcher=registry,
+        secret_runner=lambda *args, **kwargs: pytest.fail(
+            "public path must not query Kubernetes secrets"
+        ),
+    )
 
     assert checks[0].ok
     assert registry.token_auth_headers == {}
@@ -395,9 +404,18 @@ def test_matching_private_registry_uses_configured_credentials(
     monkeypatch.setenv("NPA_REGISTRY_SERVER", REGISTRY)
     monkeypatch.setenv("NPA_REGISTRY_USERNAME", "svc")
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
-    registry = FakeRegistry(manifest_status=200)
+    registry = FakeRegistry(
+        manifest_status=200,
+        manifest_headers={"docker-content-digest": DIGEST},
+    )
 
-    checks = check_image_pulls_with_credentials([IMAGE], fetcher=registry)
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=registry,
+        secret_runner=lambda *args, **kwargs: pytest.fail(
+            "credentialed VM path must not query Kubernetes secrets"
+        ),
+    )
 
     assert checks[0].ok
     assert registry.calls[1][1]["Authorization"].startswith("Basic ")
@@ -450,6 +468,130 @@ def _docker_secret_result(registry: str, *, name: str = "pull-secret"):
     return subprocess.CompletedProcess(
         ["kubectl"], 0, stdout=json.dumps(payload), stderr=""
     )
+
+
+def _configure_private_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NPA_REGISTRY_SERVER", REGISTRY)
+    monkeypatch.setenv("NPA_REGISTRY_USERNAME", "svc")
+    monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
+
+
+def test_host_credentials_do_not_replace_declared_target_pull_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+    registry = FakeRegistry(
+        manifest_status=200,
+        manifest_headers={"docker-content-digest": DIGEST},
+    )
+    target_calls: list[list[str]] = []
+
+    def missing_in_selected_target(cmd, **kwargs):  # noqa: ANN001
+        target_calls.append(cmd)
+        assert cmd[:5] == [
+            "kubectl",
+            "--context",
+            "wrong-context",
+            "--namespace",
+            "wrong-namespace",
+        ]
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="secret not found in selected target"
+        )
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=registry,
+        pull_secrets_by_image={IMAGE: ("missing-secret",)},
+        context="wrong-context",
+        namespace="wrong-namespace",
+        secret_runner=missing_in_selected_target,
+    )
+
+    assert len(target_calls) == 1
+    assert checks[0].status == "target_pull_unverified"
+    assert checks[0].operator_status == "verified"
+    assert checks[0].target_status == "unverified"
+    assert checks[0].authority == "none"
+    assert checks[0].digest == DIGEST
+    assert "private-token" not in checks[0].render()
+
+
+def test_host_credentials_require_declared_secret_to_have_docker_config_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+    config = base64.b64encode(
+        json.dumps({"auths": {REGISTRY: {"auth": "redacted-test-value"}}}).encode()
+    ).decode()
+    payload = {
+        "type": "Opaque",
+        "data": {".dockerconfigjson": config},
+    }
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(
+            manifest_status=200,
+            manifest_headers={"docker-content-digest": DIGEST},
+        ),
+        pull_secret_names=("wrong-type",),
+        secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    assert checks[0].status == "target_pull_unverified"
+    assert "not a kubernetes.io/dockerconfigjson secret" in checks[0].detail
+    assert "redacted-test-value" not in checks[0].render()
+
+
+def test_host_credentials_require_declared_secret_to_cover_image_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(manifest_status=200),
+        pull_secret_names=("wrong-registry",),
+        secret_runner=lambda *args, **kwargs: _docker_secret_result(
+            "oci.example.test", name="wrong-registry"
+        ),
+    )
+
+    assert checks[0].status == "target_pull_unverified"
+    assert f"does not cover registry {REGISTRY}" in checks[0].detail
+
+
+def test_host_and_declared_target_authorities_are_both_verified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+    target_calls = 0
+
+    def valid_target(*args, **kwargs):  # noqa: ANN001
+        nonlocal target_calls
+        target_calls += 1
+        return _docker_secret_result(REGISTRY)
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(
+            manifest_status=200,
+            manifest_headers={"docker-content-digest": DIGEST},
+        ),
+        pull_secret_names=("pull-secret",),
+        context="target-context",
+        secret_runner=valid_target,
+    )
+
+    assert target_calls == 1
+    assert checks[0].ok
+    assert checks[0].operator_status == "verified"
+    assert checks[0].target_status == "verified_pull_secret"
+    assert checks[0].authority == "kubernetes_image_pull_secret"
+    assert checks[0].digest == DIGEST
 
 
 @pytest.mark.parametrize(
