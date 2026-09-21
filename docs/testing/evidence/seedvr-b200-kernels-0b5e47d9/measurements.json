@@ -1,0 +1,124 @@
+{
+  "schema": "seedvr.b200.kernel-proof.v1",
+  "source_commit": "0b5e47d97414a2fe46d6184efe9b4423b2b52198",
+  "runtime_manifest": "sha256:e48b35346e47d6d70f9336fda238c38c1c5cfc8c64448dca89840eb201ab0362",
+  "gpu": {
+    "name": "NVIDIA B200",
+    "compute": [
+      10,
+      0
+    ],
+    "driver": "580.173.02",
+    "memory_mib": 183359,
+    "mig": "Disabled"
+  },
+  "runtime": {
+    "torch": "2.13.0+cu130",
+    "cuda": "13.0",
+    "cudnn": 92000,
+    "flash_attn": "2.8.3.post1",
+    "apex": "0.1"
+  },
+  "seed": 666,
+  "peak_allocated_bytes": 34476544,
+  "controls": [
+    {
+      "dtype": "torch.bfloat16",
+      "finite": true,
+      "max_absolute_error": 0.06249427795410156,
+      "mean_absolute_error": 0.008766718208789825,
+      "name": "torch_matmul_bf16",
+      "pass": true,
+      "reference_tolerance": {
+        "atol": 0.02,
+        "rtol": 0.02
+      },
+      "shape": [
+        64,
+        64
+      ]
+    },
+    {
+      "dtype": "torch.bfloat16",
+      "finite": true,
+      "max_absolute_error": 0.06234931945800781,
+      "mean_absolute_error": 0.009195011109113693,
+      "name": "cudnn_conv2d_bf16",
+      "pass": true,
+      "reference_tolerance": {
+        "atol": 0.02,
+        "rtol": 0.02
+      },
+      "shape": [
+        1,
+        8,
+        16,
+        16
+      ]
+    },
+    {
+      "dtype": "torch.bfloat16",
+      "finite": true,
+      "max_absolute_error": 0.003874063491821289,
+      "mean_absolute_error": 0.0003734775527846068,
+      "name": "flash_attn_varlen_bf16",
+      "pass": true,
+      "reference_tolerance": {
+        "atol": 0.02,
+        "rtol": 0.02
+      },
+      "shape": [
+        80,
+        4,
+        64
+      ]
+    },
+    {
+      "dtype": "torch.bfloat16",
+      "finite": true,
+      "max_absolute_error": 0.007639169692993164,
+      "mean_absolute_error": 0.001176103949546814,
+      "name": "apex_fused_layer_norm_bf16",
+      "pass": true,
+      "reference_tolerance": {
+        "atol": 0.02,
+        "rtol": 0.02
+      },
+      "shape": [
+        8,
+        64
+      ]
+    },
+    {
+      "dtype": "torch.bfloat16",
+      "finite": true,
+      "max_absolute_error": 0.007746219635009766,
+      "mean_absolute_error": 0.0012162294005975127,
+      "name": "apex_fused_rms_norm_bf16",
+      "pass": true,
+      "reference_tolerance": {
+        "atol": 0.02,
+        "rtol": 0.02
+      },
+      "shape": [
+        8,
+        64
+      ]
+    }
+  ],
+  "actual_job_exit_code": 0,
+  "target_pod_image_digest_verified": true,
+  "default_uid": 1000,
+  "private_delivery_verified": true,
+  "anonymous_registry_access_denied": true,
+  "owned_resources_cleanup_verified": true,
+  "raw_report_sha256": "0e40dab415a5d70d2bafc45e13dcada7b870e0dcf41979d370e3ecea225eb032",
+  "raw_log_sha256": "90ea1f0f3aabf598b6be85c860c40897c3173436ee1fd99f629811659c37e31f",
+  "probe_sha256": "3f3d07442cb90d9d05452c06262424d94e6d34377c846c02147bc43e0cee4d36",
+  "kernel_receipt_sha256": "d18508d15caa408a85fbcd264c19b0752d2febd1835f27100a33956aa64a7ee3",
+  "cleanup_receipt_sha256": "cdf2dcbea9358dcfdbb2b21f804e690893b94ad1f1f311c0fefc83f980aee2af",
+  "root_verdict_sha256": "11213cf3ecea9c9f336b6fb987d1e033472a41187448331c33f40f72c4665057",
+  "claim": "Native kernel compatibility only; no model, dataset, restoration quality, throughput, or other GPU comparison.",
+  "model_quality_evaluation_passed": false,
+  "complete_byte_acceptance_pending": true
+}
