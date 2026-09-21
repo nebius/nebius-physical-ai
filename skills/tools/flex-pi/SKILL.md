@@ -31,8 +31,31 @@ For real training use `workbench.flex_pi.train` and the maintained
 `flex-pi-b200-public-training.yaml`. Its public `sort_utensils` dataset has
 136/115,620 train and 16/12,390 validation episodes/anchors, separate CC-BY-4.0
 rights, and the official YAM32 transforms. Require native four-GPU DDP,
-BF16, microbatch one, accumulation 24, and effective batch 96. The final
+BF16, default microbatch one, accumulation 24, and effective batch 96.
+Require the adapter's strict deterministic algorithms and pinned cuBLAS
+workspace for both baseline and candidate. Never use warning-only determinism
+or accept nondeterministic attention backward as a bitwise resume proof.
+Keep the guarded fixed DDP bucket policy for all comparisons. Before a full
+epoch, use `--mode profile-resume` to prove the exact next 96 anchors and full
+fresh-process state/update parity after the real 30-update profile. This early
+diagnostic does not satisfy full-epoch, validation or final-resume acceptance.
+`--microbatch-per-rank 3` uses accumulation eight only after automatic untimed
+fixed-input parity on a full update and the epoch tail; failed checks reject
+the candidate. Preserve the same data, objective, transforms and effective
+batch, and compare semantic workload hashes before throughput. The final
 36-sample update must preserve every anchor and use its actual denominator.
+Freeze the baseline's `dataset_stats.json` and provide its exact S3 object with
+`--normalization-path` and `--normalization-sha256` for every independent
+comparison run. Checkpoints include these bytes and fresh resume must reload
+them; never recompute normalization or relax its content-hash check on resume.
+Keep the default optimizer unless separate default-versus-selected optimizer
+parity is proven; microbatch and RMSNorm checks use the selected optimizer.
+
+`--compile-mode rmsnorm` is a separately gated candidate that compiles only
+the pinned deterministic normalization modules. It must pass fixed-input
+gradient/update/optimizer parity; graph breaks or steady-window recompilation
+on any rank reject its throughput. Keep compilation off unless this scope is
+being explicitly qualified, and prove fresh compiled resume for any winner.
 Training requires the full Wan VideoDiT and official derived ActionDiT
 initialization; the checkpoint-only inference instructions below apply only to
 the released RoboTwin inference checkpoint.

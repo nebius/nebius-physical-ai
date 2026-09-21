@@ -1,6 +1,7 @@
 """Summarize repeated fixed-workload measurement windows without cold steps."""
 
 import statistics
+import math
 
 PROFILE_UPDATES = 30
 EXCLUDED_INITIAL_UPDATES = 6
@@ -18,6 +19,7 @@ def summarize_measurements(rows):
         ValueError: Fewer than three complete steady-state windows were measured.
     """
     steady = [row for row in rows[EXCLUDED_INITIAL_UPDATES:] if row["samples"] == 96]
+    _verify_steady_compilation(rows, steady)
     windows = []
     for offset in range(0, len(steady) - WINDOW_UPDATES + 1, WINDOW_UPDATES):
         window = steady[offset : offset + WINDOW_UPDATES]
@@ -44,3 +46,27 @@ def summarize_measurements(rows):
         "maximum_samples_per_second": max(rates),
         "all_update_samples": sum(row["samples"] for row in rows),
     }
+
+
+def _verify_steady_compilation(rows, steady):
+    compiler = (
+        rows[EXCLUDED_INITIAL_UPDATES - 1].get("compiler_by_rank")
+        if len(rows) >= EXCLUDED_INITIAL_UPDATES
+        else None
+    )
+    if compiler is None:
+        if any("compiler_by_rank" in row for row in steady):
+            raise ValueError("compiler evidence missing from cold updates")
+        return
+    if len(compiler) != 4 or any(row["graph_breaks"] for row in compiler):
+        raise ValueError("compiled candidate reported graph breaks")
+    if any(
+        row["unique_graphs"] <= 0
+        or not math.isfinite(row["compile_seconds"])
+        or row["compile_seconds"] <= 0
+        for row in compiler
+    ):
+        raise ValueError("compiled candidate lacks completed compilation evidence")
+    for row in steady:
+        if row.get("compiler_by_rank") != compiler:
+            raise ValueError("compilation changed during steady measurement")

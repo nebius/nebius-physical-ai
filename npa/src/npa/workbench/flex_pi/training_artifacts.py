@@ -60,6 +60,7 @@ def _require_complete_state(directory):
         "trainer_state.json",
         "optimizer.bin",
         "scheduler.bin",
+        "dataset_stats.json",
         *(f"random_states_{rank}.pkl" for rank in range(4)),
     }
     missing = required.difference(

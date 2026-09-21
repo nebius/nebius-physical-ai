@@ -26,6 +26,10 @@ class TrainingRequest:
     Args:
         output_path: Run-scoped S3 destination for results and checkpoints.
         mode: Profile or complete training with fresh-process resume verification.
+        microbatch_per_rank: One anchor, or three after automatic parity qualification.
+        compile_mode: Eager execution or automatically qualified RMSNorm compilation.
+        normalization_path: Original normalization as an exact S3 object.
+        normalization_sha256: SHA-256 required with normalization_path.
         num_workers: Data loader workers per rank.
         prefetch_factor: Queued batches per worker.
         optimizer: Default, foreach, or fused AdamW implementation.
@@ -40,6 +44,10 @@ class TrainingRequest:
 
     output_path: str
     mode: str = "train"
+    microbatch_per_rank: int = 1
+    compile_mode: str = "off"
+    normalization_path: str = ""
+    normalization_sha256: str = ""
     num_workers: int = 4
     prefetch_factor: int = 4
     optimizer: str = "default"
@@ -49,12 +57,19 @@ class TrainingRequest:
 
 
 def _validate(request):
-    if request.mode not in {"profile", "train"}:
-        raise FlexPiError(
-            "mode must be profile or train (including automatic fresh resume)"
-        )
+    from npa.workbench.flex_pi.training_normalization import validate_normalization
+
+    validate_normalization(request)
+    if request.mode not in {"profile", "profile-resume", "train"}:
+        raise FlexPiError("mode must be profile, profile-resume or train")
     if request.optimizer not in {"default", "foreach", "fused"}:
         raise FlexPiError("optimizer must be default, foreach, or fused")
+    if request.compile_mode not in {"off", "rmsnorm"}:
+        raise FlexPiError("compile-mode must be off or rmsnorm")
+    if request.microbatch_per_rank not in {1, 3}:
+        raise FlexPiError(
+            "microbatch-per-rank must be 1 or 3, preserving the exact tail"
+        )
     if request.num_workers < 0 or request.prefetch_factor < 1:
         raise FlexPiError("workers must be nonnegative and prefetch positive")
     parsed = urlparse(request.output_path)
@@ -79,8 +94,8 @@ def _plan(request):
         "validation_frames": VALIDATION_FRAMES,
         "gpu_count": 4,
         "effective_batch": GLOBAL_BATCH,
-        "microbatch_per_rank": 1,
-        "gradient_accumulation_steps": 24,
+        "microbatch_per_rank": request.microbatch_per_rank,
+        "gradient_accumulation_steps": 24 // request.microbatch_per_rank,
         "final_training_batch": 36,
         "precision": "bf16",
         "peak_learning_rate": 1e-4,
@@ -128,8 +143,16 @@ def run_training(request: TrainingRequest) -> dict:
         plan.update(
             work_directory=str(work), asset_directory=str(cache / "assets" / identity)
         )
+        _prepare_normalization(request, plan, work)
         result = _run_phase(plan, root)
         return _publish_result(request, plan, result, root, work)
+
+
+def _prepare_normalization(request, plan, work):
+    from npa.workbench.flex_pi.training_normalization import stage_normalization
+
+    if request.normalization_path:
+        plan["normalization_file"] = str(stage_normalization(request, work))
 
 
 def _run_phase(plan, root):
@@ -142,11 +165,21 @@ def _run_phase(plan, root):
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [source, env.get("PYTHONPATH")]))
     process = subprocess.run(_vendor_command(request_path), env=env, stdout=sys.stderr)
     if process.returncode:
+        _publish_parity_rejection(plan)
         raise FlexPiError(f"training worker exited {process.returncode}")
     result = json.loads((root / "result.json").read_text())
     if result.get("reference_benchmark_beaten") is not False:
         raise FlexPiError("public training must remain non-comparable")
     return result
+
+
+def _publish_parity_rejection(plan):
+    from npa.clients.storage import StorageClient
+
+    report = Path(plan["work_directory"]) / "parity.json"
+    if report.is_file():
+        destination = plan["execution"]["output_path"].rstrip("/") + "/parity.json"
+        StorageClient.from_environment().upload_file(str(report), destination)
 
 
 def _publish_result(request, plan, result, root, work):
@@ -161,15 +194,18 @@ def _publish_result(request, plan, result, root, work):
         "workload.json",
         "dataset_stats.json",
         "capability.json",
+        "parity.json",
     ):
         path = work / filename
         if path.is_file():
             storage.upload_file(str(path), destination + "/" + filename)
-    if request.mode == "train":
+    if request.mode in {"train", "profile-resume"}:
         _verify_fresh_resume(plan, result, root, work, destination, storage)
     result.update({k: v for k, v in _plan(request).items() if k != "execution"})
     result["execution"] = {
-        key: value for key, value in asdict(request).items() if key != "output_path"
+        key: value
+        for key, value in asdict(request).items()
+        if key not in {"output_path", "normalization_path"}
     }
     publish_json(
         result, root / "published-result.json", destination + "/result.json", storage
@@ -196,12 +232,21 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
         **plan,
         "work_directory": str(work / "resume"),
         "resume_directory": str(restore),
+        "normalization_file": str(restore / "dataset_stats.json"),
+        "resume_probe_kind": "profile"
+        if plan["execution"]["mode"] == "profile-resume"
+        else "full",
         "execution": {**plan["execution"], "mode": "resume"},
     }
     resumed = _run_phase(resume_plan, root)
     _assert_resume_parity(result, resumed)
     checkpoint.pop("state_path")
-    result["checkpoint_resume_verified"] = True
+    verified_key = (
+        "profile_checkpoint_resume_verified"
+        if plan["execution"]["mode"] == "profile-resume"
+        else "checkpoint_resume_verified"
+    )
+    result[verified_key] = True
     result["checkpoint_read_after_write_verified"] = True
     result["resume"] = resumed
 

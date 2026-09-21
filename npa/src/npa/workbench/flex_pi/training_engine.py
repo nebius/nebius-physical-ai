@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import random
+import shutil
 import time
 
 import torch
@@ -63,6 +64,7 @@ class VerifiedTrainer(Wan22Trainer):
     """
 
     def _build_optimizer(self, parameters):
+        self._configure_ddp()
         mode = str(self.cfg.npa_optimizer)
         options = {} if mode == "default" else {mode: True}
         return torch.optim.AdamW(
@@ -73,6 +75,33 @@ class VerifiedTrainer(Wan22Trainer):
             **options,
         )
 
+    def _configure_ddp(self):
+        import accelerate
+        from accelerate.utils import DistributedDataParallelKwargs
+
+        # This upstream constructor hook runs before accelerator.prepare().
+        if accelerate.__version__ != "1.12.0":
+            raise RuntimeError(
+                "the fixed reducer adapter requires pinned Accelerate 1.12.0"
+            )
+        handler = self.accelerator.ddp_handler
+        if handler is None:
+            if (
+                str(self.accelerator.distributed_type.value) != "MULTI_GPU"
+                or isinstance(self.model, torch.nn.parallel.DistributedDataParallel)
+                or getattr(self.accelerator.state, "deepspeed_plugin", None) is not None
+                or getattr(self.accelerator.state, "fsdp_plugin", None) is not None
+            ):
+                raise RuntimeError(
+                    "fixed reducer setup requires native DDP before prepare"
+                )
+            handler = DistributedDataParallelKwargs(
+                find_unused_parameters=True, static_graph=False
+            )
+            self.accelerator.ddp_handler = handler
+        if not handler.find_unused_parameters or handler.static_graph:
+            raise RuntimeError("checkpoint replay requires fixed DDP bucket layout")
+
     def _build_loader(self, dataset, worker_init_fn=None):
         loader = super()._build_loader(dataset, worker_init_fn)
         if self.num_workers:
@@ -82,11 +111,15 @@ class VerifiedTrainer(Wan22Trainer):
     def _check_contract(self):
         if str(self.accelerator.distributed_type.value) != "MULTI_GPU":
             raise RuntimeError("the frozen optimizer contract requires native DDP")
-        if self.accelerator.num_processes != 4 or self.batch_size != 1:
+        if not self.model.find_unused_parameters or self.model.static_graph:
             raise RuntimeError(
-                "the accepted contract requires four ranks and microbatch one"
+                "actual DDP wrapping differs from the fixed bucket policy"
             )
-        if self.gradient_accumulation_steps != 24:
+        if self.accelerator.num_processes != 4 or self.batch_size not in {1, 3}:
+            raise RuntimeError(
+                "the accepted contract requires four ranks and microbatch one or three"
+            )
+        if self.gradient_accumulation_steps * self.batch_size != 24:
             raise RuntimeError("the accepted effective batch is 96")
         if (
             len(self.train_dataset) != TRAIN_FRAMES
@@ -121,7 +154,9 @@ class VerifiedTrainer(Wan22Trainer):
                 loss, _ = self.model(sample)
             if not torch.isfinite(loss):
                 raise RuntimeError("nonfinite training loss")
-            self.accelerator.backward(loss * (24 / divisor))
+            self.accelerator.backward(
+                loss * (self.gradient_accumulation_steps / divisor)
+            )
             if not self.accelerator.sync_gradients:
                 return float(loss.detach())
             norm = self.accelerator.clip_grad_norm_(
@@ -153,9 +188,9 @@ class VerifiedTrainer(Wan22Trainer):
         iterator = iter(self.train_loader)
         start = time.perf_counter()
         start_step = self.global_step
-        local_epoch_samples = TRAIN_FRAMES // 4
+        local_epoch_batches = TRAIN_FRAMES // (4 * self.batch_size)
         loader_wait = 0.0
-        for _ in range(local_epoch_samples):
+        for _ in range(local_epoch_batches):
             wait_start = time.perf_counter()
             try:
                 sample = next(iterator)
@@ -164,9 +199,11 @@ class VerifiedTrainer(Wan22Trainer):
             loader_wait += time.perf_counter() - wait_start
             indices.extend(sample.pop("npa_sample_index").detach().cpu().tolist())
             self.batch_in_epoch += 1
-            remainder = local_epoch_samples % 24
-            tail = self.batch_in_epoch > local_epoch_samples - remainder
-            loss = self._backward(sample, remainder if tail else 24)
+            remainder = local_epoch_batches % self.gradient_accumulation_steps
+            tail = self.batch_in_epoch > local_epoch_batches - remainder
+            loss = self._backward(
+                sample, remainder if tail else self.gradient_accumulation_steps
+            )
             losses.append(loss)
             if self.accelerator.sync_gradients:
                 self._record_update(start, losses, loader_wait)
@@ -180,25 +217,37 @@ class VerifiedTrainer(Wan22Trainer):
         return indices
 
     def _record_update(self, start, losses, loader_wait):
+        compiled = self.cfg.get("npa_compile_mode", "off") == "rmsnorm"
+        compiler = self._compiler_by_rank() if compiled else None
         torch.cuda.synchronize()
         elapsed = torch.tensor(
             time.perf_counter() - start, device=self.accelerator.device
         )
         torch.distributed.all_reduce(elapsed, op=torch.distributed.ReduceOp.MAX)
         elapsed = float(elapsed.item())
-        count = len(losses) * 4
-        loss_sum = torch.tensor(sum(losses), device=self.accelerator.device)
-        torch.distributed.all_reduce(loss_sum)
-        self._record(
-            {
-                "step": self.global_step,
-                "samples": count,
-                "seconds": elapsed,
-                "samples_per_second": count / elapsed,
-                "loss": float(loss_sum.item()) / count,
-                "rank_zero_loader_wait_seconds": loader_wait,
-            }
+        count = len(losses) * 4 * self.batch_size
+        loss_sum = torch.tensor(
+            sum(losses) * self.batch_size, device=self.accelerator.device
         )
+        torch.distributed.all_reduce(loss_sum)
+        measurement = {
+            "step": self.global_step,
+            "samples": count,
+            "seconds": elapsed,
+            "samples_per_second": count / elapsed,
+            "loss": float(loss_sum.item()) / count,
+            "rank_zero_loader_wait_seconds": loader_wait,
+        }
+        if compiler is not None:
+            measurement["compiler_by_rank"] = compiler
+        self._record(measurement)
+
+    def _compiler_by_rank(self):
+        from npa.workbench.flex_pi.training_compile import compiler_receipt
+
+        receipts = [None] * 4
+        torch.distributed.all_gather_object(receipts, compiler_receipt())
+        return receipts
 
     def _profile_updates(self, updates):
         if not self.accelerator.is_main_process:
@@ -285,6 +334,12 @@ class VerifiedTrainer(Wan22Trainer):
         root = Path(checkpoint["state_path"])
         if not (root / "trainer_state.json").is_file():
             raise RuntimeError("checkpoint lacks the exact training cursor")
+        if self.accelerator.is_main_process:
+            shutil.copyfile(
+                Path(self.output_dir) / "dataset_stats.json",
+                root / "dataset_stats.json",
+            )
+        self.accelerator.wait_for_everyone()
         digest = _state_digest(self.accelerator.unwrap_model(self.model))
         gathered = [None] * 4
         torch.distributed.all_gather_object(gathered, digest)
@@ -326,21 +381,13 @@ class VerifiedTrainer(Wan22Trainer):
             )
         return digest
 
-    def _resume_probe(self):
-        if (self.epoch, self.batch_in_epoch, self.global_step) != (
-            0,
-            TRAIN_FRAMES // 4,
-            1205,
-        ):
-            raise RuntimeError(
-                "checkpoint cursor does not identify the completed first epoch"
-            )
-        self.epoch = 1
-        self.batch_in_epoch = 0
-        self.train_sampler.clear_resume_batch_offset()
-        self.train_sampler.set_epoch_offset(1)
-        self.train_loader.set_epoch(0)
+    def _resume_probe(self, *, profile=False):
+        from npa.workbench.flex_pi.training_resume import prepare_continuation
+
+        expected = prepare_continuation(self, profile=profile)
         indices = self._train_updates(1)
+        if indices != expected:
+            raise RuntimeError("checkpoint continuation used the wrong ordered anchors")
         return {
             "step": self.global_step,
             "sample_order_sha256": self._verify_indices(indices, GLOBAL_BATCH),
@@ -349,11 +396,12 @@ class VerifiedTrainer(Wan22Trainer):
             "training_state": self._training_state_receipt(continuation=True),
         }
 
-    def execute(self, mode):
+    def execute(self, mode, *, profile_resume=False):
         """Run the selected acceptance phase without changing its data or objective.
 
         Args:
             mode: Profile, complete epoch, or checkpoint continuation.
+            profile_resume: Restrict a fresh diagnostic probe to the profile cursor.
         Returns:
             Measured phase evidence with exact sample accounting.
         Raises:
@@ -367,35 +415,58 @@ class VerifiedTrainer(Wan22Trainer):
             "world_size": 4,
             "initial_model_sha256": initial_digest,
         }
+        self._qualify_execution(mode, result)
         if mode == "resume":
-            return self._resume_result(result)
+            return self._resume_result(result, profile=profile_resume)
         if mode == "train":
             result["initial_validation"] = self._validation()
+        self._measure_training(mode, result)
+        if mode == "train":
+            self._finish_epoch(result)
+        elif mode == "profile-resume":
+            result["checkpoint"] = self._checkpoint()
+            result["resume_probe"] = self._resume_probe(profile=True)
+            result.update(full_epoch_completed=False, validation_completed=False)
+        return result
+
+    def _measure_training(self, mode, result):
+        profiling = mode in {"profile", "profile-resume"}
         updates = (
-            PROFILE_UPDATES
-            if mode == "profile"
-            else math.ceil(TRAIN_FRAMES / GLOBAL_BATCH)
+            PROFILE_UPDATES if profiling else math.ceil(TRAIN_FRAMES / GLOBAL_BATCH)
         )
         indices = (
             self._profile_updates(updates)
-            if mode == "profile"
+            if profiling
             else self._train_updates(updates)
         )
-        expected = PROFILE_UPDATES * GLOBAL_BATCH if mode == "profile" else TRAIN_FRAMES
+        expected = PROFILE_UPDATES * GLOBAL_BATCH if profiling else TRAIN_FRAMES
         result["sample_order_sha256"] = self._verify_indices(indices, expected)
         result["samples"] = expected
         result["final_model_sha256"] = self._synchronized_digest()
-        if mode == "train":
-            self._finish_epoch(result)
-        return result
 
-    def _resume_result(self, result):
+    def _qualify_execution(self, mode, result):
+        from npa.workbench.flex_pi.training_parity import verify_execution_parity
+
+        compiled = self.cfg.get("npa_compile_mode", "off") == "rmsnorm"
+        if (self.batch_size == 3 or compiled) and mode != "resume":
+            started = time.perf_counter()
+            result["execution_parity"] = verify_execution_parity(self)
+            result["rank_zero_qualification_seconds"] = time.perf_counter() - started
+        if compiled:
+            from npa.workbench.flex_pi.training_compile import (
+                enable_rmsnorm_compilation,
+            )
+
+            model = self.accelerator.unwrap_model(self.model)
+            result["compiled_rmsnorm_modules"] = enable_rmsnorm_compilation(model)
+
+    def _resume_result(self, result, *, profile=False):
         result["loaded_model_sha256"] = _state_digest(
             self.accelerator.unwrap_model(self.model)
         )
         result["loaded_step"] = self.global_step
         result["loaded_training_state"] = self._training_state_receipt()
-        result["resume_probe"] = self._resume_probe()
+        result["resume_probe"] = self._resume_probe(profile=profile)
         return result
 
     def _finish_epoch(self, result):

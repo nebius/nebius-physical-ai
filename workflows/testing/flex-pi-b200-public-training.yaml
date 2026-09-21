@@ -11,6 +11,10 @@ config:
   prefix: "runs/{{run.id}}/flex-pi-public-training"
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
   training_mode: train
+  microbatch_per_rank: "1"
+  compile_mode: "off"
+  normalization_path: ""
+  normalization_sha256: ""
   num_workers: "4"
   prefetch_factor: "4"
   optimizer: default
@@ -28,8 +32,7 @@ resources:
           containers:
             - name: ray-node
               env:
-                # This unprivileged four-GPU subset retains NVLink P2P while
-                # avoiding NVLS and cuMem host allocation startup failures.
+                # Use socket bootstrap and NVLink P2P for this unprivileged subset.
                 - {name: NCCL_CUMEM_ENABLE, value: "0"}
                 - {name: NCCL_CUMEM_HOST_ENABLE, value: "0"}
                 - {name: NCCL_NVLS_ENABLE, value: "0"}

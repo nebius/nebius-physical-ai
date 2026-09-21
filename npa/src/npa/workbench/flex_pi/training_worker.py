@@ -10,35 +10,50 @@ import subprocess
 import sys
 import time
 
+from npa.workbench.flex_pi.training_normalization import normalization_overrides
+
 
 def _configuration(plan, root, assets):
-    from hydra import compose, initialize_config_dir
     from flexpi.utils.config_resolvers import register_default_resolvers
-    from omegaconf import OmegaConf
     from npa.workbench.flex_pi.training_assets import _hydra_overrides
 
     register_default_resolvers()
-    overrides = _hydra_overrides(assets) + [
-        f"output_dir={root}",
-        "batch_size=1",
-        "gradient_accumulation_steps=24",
-        "num_epochs=1",
-        "max_steps=null",
-        "mixed_precision=bf16",
-        "learning_rate=1e-4",
-        "weight_decay=0.01",
-        "seed=42",
-        "model.mot_checkpoint_mixed_attn=true",
-        "wandb.enabled=false",
-        f"model.action_dit_pretrained_path={assets / 'ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt'}",
-        f"num_workers={plan['execution']['num_workers']}",
-        "data.train._target_=npa.workbench.flex_pi.training_engine.ExactTrainingDataset",
-        "data.val._target_=npa.workbench.flex_pi.training_engine.ExactTrainingDataset",
-        "+npa_optimizer=" + plan["execution"]["optimizer"],
-        "+npa_prefetch_factor=" + str(plan["execution"]["prefetch_factor"]),
-    ]
+    microbatch = plan["execution"].get("microbatch_per_rank", 1)
+    overrides = (
+        _hydra_overrides(assets)
+        + normalization_overrides(plan, root)
+        + [
+            f"output_dir={root}",
+            f"batch_size={microbatch}",
+            f"gradient_accumulation_steps={24 // microbatch}",
+            "num_epochs=1",
+            "max_steps=null",
+            "mixed_precision=bf16",
+            "learning_rate=1e-4",
+            "weight_decay=0.01",
+            "seed=42",
+            "model.mot_checkpoint_mixed_attn=true",
+            "wandb.enabled=false",
+            f"model.action_dit_pretrained_path={assets / 'ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt'}",
+            f"num_workers={plan['execution']['num_workers']}",
+            "data.train._target_=npa.workbench.flex_pi.training_engine.ExactTrainingDataset",
+            "data.val._target_=npa.workbench.flex_pi.training_engine.ExactTrainingDataset",
+            "+npa_optimizer=" + plan["execution"]["optimizer"],
+            "+npa_compile_mode=" + plan["execution"].get("compile_mode", "off"),
+            "+npa_deterministic_training=true",
+            "+npa_ddp_bucket_policy=fixed_find_unused",
+            "+npa_prefetch_factor=" + str(plan["execution"]["prefetch_factor"]),
+        ]
+    )
     if plan.get("resume_directory"):
         overrides.append("resume=" + plan["resume_directory"])
+    return _compose_configuration(assets, overrides)
+
+
+def _compose_configuration(assets, overrides):
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
     with initialize_config_dir(
         config_dir=str(assets / "upstream/configs"), version_base=None
     ):
@@ -47,7 +62,6 @@ def _configuration(plan, root, assets):
 
 
 def _rank_main(request_path):
-    import numpy as np
     import torch
     from hydra.utils import instantiate
     from omegaconf import OmegaConf
@@ -57,14 +71,7 @@ def _rank_main(request_path):
 
     plan = json.loads(request_path.read_text())
     root = Path(plan["work_directory"])
-    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    torch.distributed.init_process_group("nccl")
-    if torch.distributed.get_world_size() != 4:
-        raise RuntimeError("the frozen public contract requires exactly four ranks")
-    random.seed(42)
-    np.random.seed(42)
-    torch.manual_seed(42)
-    torch.cuda.manual_seed_all(42)
+    _initialize_rank()
     misc.register_work_dir(str(root))
     cfg = OmegaConf.create(plan["configuration"])
     start = time.perf_counter()
@@ -78,13 +85,31 @@ def _rank_main(request_path):
         cfg=cfg, model=model, train_dataset=train_ds, val_dataset=val_ds
     )
     initialized = time.perf_counter() - start
-    result = trainer.execute(plan["execution"]["mode"])
+    result = trainer.execute(
+        plan["execution"]["mode"],
+        profile_resume=plan.get("resume_probe_kind") == "profile",
+    )
     result["initialization_seconds"] = initialized
     result["runtime"] = _runtime_receipt()
     if torch.distributed.get_rank() == 0:
         (root / "phase-result.json").write_text(json.dumps(result, allow_nan=False))
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()
+
+
+def _initialize_rank():
+    import numpy as np
+    import torch
+
+    _configure_determinism()
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    torch.distributed.init_process_group("nccl")
+    if torch.distributed.get_world_size() != 4:
+        raise RuntimeError("the frozen public contract requires exactly four ranks")
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
 
 
 def _runtime_receipt():
@@ -101,8 +126,23 @@ def _runtime_receipt():
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
         "compute_capability": torch.cuda.get_device_capability(),
         "world_size": torch.distributed.get_world_size(),
+        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+        "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled(),
+        "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
         "nccl_environment": _nccl_environment(),
     }
+
+
+def _configure_determinism():
+    import torch
+
+    if os.environ.get("CUBLAS_WORKSPACE_CONFIG") != ":4096:8":
+        raise RuntimeError(
+            "deterministic training requires the pinned cuBLAS workspace"
+        )
+    torch.use_deterministic_algorithms(True, warn_only=False)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 def _nccl_environment():
@@ -136,6 +176,7 @@ def _worker_environment(assets, root):
     )
     env["TOKENIZERS_PARALLELISM"] = "false"
     env["OMP_NUM_THREADS"] = "1"
+    env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     env["NCCL_DEBUG_FILE"] = str(root / "nccl.%p.log")
     return env
 
@@ -172,7 +213,10 @@ def _parent_main(request_path):
 
 
 def _finalize_phase(plan, root, assets, receipt, capability, request_path):
-    from npa.workbench.flex_pi.training_metrics import summarize_measurements
+    from npa.workbench.flex_pi.training_metrics import (
+        PROFILE_UPDATES,
+        summarize_measurements,
+    )
 
     result = json.loads((root / "phase-result.json").read_text())
     if plan["execution"]["mode"] != "resume":
@@ -182,6 +226,8 @@ def _finalize_phase(plan, root, assets, receipt, capability, request_path):
         ]
         if plan["execution"]["mode"] == "train":
             rows = rows[:1205]
+        elif plan["execution"]["mode"] == "profile-resume":
+            rows = rows[:PROFILE_UPDATES]
         result["throughput"] = summarize_measurements(rows)
     result.update(receipt)
     result["capability"] = capability
@@ -273,6 +319,7 @@ def _workload_identity(plan, root, assets):
     from npa.workbench.flex_pi.training_artifacts import sha256_file
 
     configuration = dict(plan["configuration"])
+    configuration = _canonical_normalization(configuration)
     for key in (
         "output_dir",
         "resume",
@@ -300,7 +347,30 @@ def _workload_identity(plan, root, assets):
     return {
         "normalization_sha256": normalization,
         "workload_sha256": hashlib.sha256(payload).hexdigest(),
+        "semantic_workload_sha256": _semantic_workload_digest(workload),
     }
+
+
+def _canonical_normalization(configuration):
+    configuration = json.loads(json.dumps(configuration))
+    for dataset in ("train", "val"):
+        selected = configuration.get("data", {}).get(dataset, {})
+        selected["pretrained_norm_stats"] = "<verified-normalization>"
+    return configuration
+
+
+def _semantic_workload_digest(workload):
+    configuration = dict(workload["configuration"])
+    compile_mode = configuration.pop("npa_compile_mode", "off")
+    if compile_mode not in {"off", "rmsnorm"}:
+        raise RuntimeError("semantic workload requires qualified compilation scope")
+    microbatch = configuration.pop("batch_size", 1)
+    accumulation = configuration.pop("gradient_accumulation_steps", 24)
+    if microbatch not in {1, 3} or microbatch * accumulation * 4 != 96:
+        raise RuntimeError("semantic workload requires a supported effective batch")
+    configuration["global_batch_size"] = 96
+    body = {**workload, "configuration": configuration}
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
 def main():

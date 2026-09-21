@@ -268,8 +268,12 @@ exactly four GPUs. The same implementation is available through
 `workbench.flex_pi.train`. Use
 `workflows/testing/flex-pi-b200-public-training.yaml` with the current NPA source
 overlay, the standard `--runtime` submission mode, and the immutable r2 image.
-Its single-node NCCL configuration retains NVLink peer transfers while disabling
-NVLS and cuMem allocation paths that can stall an unprivileged four-GPU subset.
+For an operator-authorized run without a wait deadline, include
+`--max-wait-seconds 0 --no-cancel-on-timeout` on workflow submission; the
+runtime's default wait is shorter than a complete epoch of this workload.
+Its single-node NCCL configuration retains NVLink peer transfers with socket
+bootstrap, NVLS disabled, and cuMem allocation disabled. The r2 NCCL library
+JIT-compiles Blackwell kernels on a cold cache; report that startup separately.
 Three verified collectives run before any asset downloads or training.
 Training hardware qualification is separate
 from the existing one-GPU inference qualification below.
@@ -292,6 +296,16 @@ BF16 native DDP, AdamW with a peak learning rate of `1e-4`, and effective batch
 gradient checkpointing is enabled. Model, tokenizer, VAE, DINOv3, and dataset
 bytes are fetched only at runtime under their separate upstream terms. The
 bundled manifests pin source revisions and every downloaded content hash.
+Training uses strict deterministic PyTorch algorithms, deterministic cuDNN and
+the pinned `:4096:8` cuBLAS workspace. Unsupported nondeterministic operators
+fail before they can produce accepted results. This is necessary because the
+default memory-efficient attention backward can use nondeterministic split-key
+reductions. Compare baseline and candidate runs under this same execution
+policy; earlier profiles without it are diagnostic only.
+The adapter also fixes DDP bucket partitioning with unused-parameter discovery
+enabled and static graphs disabled. Its guarded Accelerate 1.12.0 integration
+runs before model preparation, preventing a fresh reducer from using different
+first-iteration buckets than the uninterrupted run.
 
 This public task is **non-comparable** to the private 5.66 samples/s reference:
 dataset identity, split, source dimensions, task mix, initialization, action
@@ -301,7 +315,19 @@ representation and I/O layout differ. Its results always retain
 `--mode profile` performs 30 optimizer updates. The first six startup/profiler
 updates are excluded; three subsequent eight-update windows report sustained
 throughput. `--num-workers`, `--prefetch-factor`, and `--optimizer` expose
-execution choices for controlled comparisons. Compare the sample-order and
+execution choices for controlled comparisons. `--microbatch-per-rank 3` uses
+eight accumulation steps and automatically qualifies the decomposition before
+timing. It captures the stochastic inputs for 96 real anchors and the 36-anchor
+tail, requires exact microbatch-one replay, then compares every gradient,
+applied update and optimizer moment against microbatch three. Zero-reference
+tensors require exact agreement; other tensors allow at most 5% relative L2
+error, with gradient cosine at least 0.999 and norm error at most 2%. Losses
+must agree within 1%. The gate restores model state and RNG before training;
+its artifact contains summaries and hashes, never the input tensors. A failed
+gate rejects the candidate. Microbatch two is unsupported because the exact
+split would produce uneven rank batches. Semantic workload hashes normalize
+the supported decomposition and compilation scope, while checkpoint resume keeps its stricter
+execution identity. Compare the sample-order and
 initial/final model digests and numerical losses before accepting a candidate;
 the same settings alone do not prove parity. Full training requires a complete
 epoch, both complete initial/final validation passes, finite losses/gradients,
@@ -311,6 +337,34 @@ must match the uninterrupted update, including its model digest and scheduler.
 The checkpoint also carries all four rank RNG files. Restored optimizer, RNG,
 accumulation and cursor fingerprints must match before continuation; normalization
 and workload hashes establish identity across separate processes and paths.
+The checkpoint includes the original `dataset_stats.json`; fresh resume loads
+those verified bytes instead of recomputing parallel statistics. For independent
+baseline and candidate jobs, pass the same `--normalization-path` S3 object and
+`--normalization-sha256`. The options must be supplied together. Both training
+and validation load the verified phase-local file. Workload hashing canonicalizes
+its location while retaining its exact content hash. Nondefault optimizer modes
+require a separate comparison against default AdamW before selection; the
+microbatch and RMSNorm gates compare execution under the selected optimizer.
 Cold preparation, initialization, checkpointing and validation are reported
 separately from update throughput. No throughput or training acceptance is
 claimed until the real target completes these gates.
+
+Use `--mode profile-resume` before a complete epoch to exercise the same
+30-update real-data profile plus full checkpoint upload, byte readback and
+fresh-process continuation. Both continuations must use exactly the next 96
+anchors from the frozen permutation, and their complete loaded state and next
+update must match. The probe update is excluded from throughput. Its separate
+`profile_checkpoint_resume_verified` result never claims a complete epoch or
+full validation; `--mode train` retains the final epoch-boundary resume gate.
+
+`--compile-mode rmsnorm` compiles only the 240 pinned Wan query/key RMSNorm
+modules, retaining their FP32 normalization, BF16 cast, learned scales and
+parameter identities. It uses in-place Inductor compilation with full graphs
+and the default mode; the stochastic loss and attention masks stay unchanged.
+The same 96-anchor and 36-anchor parity checks compare it with eager microbatch
+one before timing. Every rank records compiler graph counts and outer compile
+duration. Graph breaks or compilation during steady windows reject the result;
+the first six updates remain separately reported startup. Compilation is also
+enabled in the fresh resume process, which must pass the same checkpoint and
+continuation checks. This is an optional candidate until full target acceptance
+is recorded, and it defaults to `off`.

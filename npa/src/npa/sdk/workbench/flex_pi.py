@@ -63,6 +63,10 @@ def train(
     *,
     output_path: str,
     mode: str = "train",
+    microbatch_per_rank: int = 1,
+    compile_mode: str = "off",
+    normalization_path: str = "",
+    normalization_sha256: str = "",
     num_workers: int = 4,
     prefetch_factor: int = 4,
     optimizer: str = "default",
@@ -75,6 +79,10 @@ def train(
     Args:
         output_path: Authorized run-scoped S3 destination.
         mode: Train with full validation/resume, or profile.
+        microbatch_per_rank: One anchor, or automatically qualified groups of three.
+        compile_mode: Off, or automatically qualified RMSNorm compilation.
+        normalization_path: Original run's statistics as an exact S3 object.
+        normalization_sha256: Required content hash when reusing statistics.
         num_workers: Data loader workers per GPU.
         prefetch_factor: Prefetched batches per worker.
         optimizer: Default, foreach or fused AdamW execution.
@@ -86,20 +94,13 @@ def train(
     Raises:
         FlexPiError: An input, execution, or acceptance gate fails.
     """
+    return _run_training_options(locals())
+
+
+def _run_training_options(options):
     from npa.workbench.flex_pi.training import TrainingRequest, run_training
 
-    return run_training(
-        TrainingRequest(
-            output_path=output_path,
-            mode=mode,
-            num_workers=num_workers,
-            prefetch_factor=prefetch_factor,
-            optimizer=optimizer,
-            run_id=run_id,
-            runtime_image=runtime_image,
-            dry_run=dry_run,
-        )
-    )
+    return run_training(TrainingRequest(**options))
 
 
 __all__ = ["FlexPiRequest", "infer", "train"]
