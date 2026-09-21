@@ -23,6 +23,7 @@ from rich.console import Console
 from rich.text import Text
 
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.cli.workbench.workflow.absence_recovery import register as register_absence
 from npa.cli.workbench.workflow.controller_recovery import (
     register as register_controller_recovery,
 )
@@ -7993,3 +7994,4 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 app.add_typer(trigger_app, name="trigger")
 register_controller_recovery(app)
+register_absence(app)
