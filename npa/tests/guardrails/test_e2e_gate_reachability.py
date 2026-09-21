@@ -16,6 +16,9 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_BEHAVIOR_RUNTIME_CACHE_LIVE_CONFIG": (
+        "CPU runtime cache transport checks write temporary objects in an operator-selected private storage prefix"
+    ),
     "NPA_LIVE_MANAGED_JOB_POD_DIAGNOSTICS": (
         "read-only pod identity checks require an operator-selected existing controller, "
         "job, task, context, kubeconfig, and SkyPilot binary"

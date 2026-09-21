@@ -394,7 +394,7 @@ def _reuse_ready(
     actual = _load_json(ready_path, "runtime ready receipt")
     if actual != expected:
         raise ValueError("Runtime ready receipt identity differs")
-    _restore_python(python_target, python_cache, expected["python_base_sha256"])
+    _ensure_python_target(python_target, python_cache, expected["python_base_sha256"])
     return actual
 
 

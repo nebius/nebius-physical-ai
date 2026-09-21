@@ -119,6 +119,29 @@ Live coverage is in `npa/tests/e2e/test_behavior_challenge_live.py`. Set
 arguments in an authorized simulator runtime. The test executes or recovers
 that exact partition and checks every assigned case has a completion receipt.
 
+### Repeated runtime preparation
+
+Simulator and policy preparation may both request the same runtime in one
+worker. `prepare_runtime` reuses an existing Python base only when its complete
+file tree, contents, and permissions match the verified cache. It preserves
+those files and rejects changed contents or symlinks. A fresh worker restores
+the base from the cache; placing a virtual environment on a persistent volume
+does not also persist its base interpreter outside that volume.
+
+The CPU-only live transport test uses real S3 uploads and downloads with small
+cache fixtures; it does not execute a policy or substitute for GPU evaluation.
+Set `NPA_BEHAVIOR_RUNTIME_CACHE_LIVE_CONFIG` to a private JSON file with
+`project` (a configured project alias) and `prefix` (an owned `s3://` test
+prefix). The test creates a unique child prefix, checks unchanged reuse, rejects
+tampering, restores a missing base, and removes its own uploaded objects:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_BEHAVIOR_RUNTIME_CACHE_LIVE_CONFIG=/private/runtime-cache-test.json \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_behavior_runtime_cache_live.py -q
+```
+
 Use the read-only internal `campaign-status` command with the same `--panel-uri`
 and `--output-path` to inspect durable case counts while a workflow runs. It
 distinguishes unclaimed, claimed, started, and complete records. A started record

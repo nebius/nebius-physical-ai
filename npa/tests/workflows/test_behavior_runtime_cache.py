@@ -164,13 +164,45 @@ def test_prepare_runtime_restores_verified_archives_and_reuses_clean_base(
     assert len(archive_storage.calls) == 2
 
 
-def test_prepare_runtime_refuses_to_overlay_existing_python(tmp_path: Path) -> None:
+def test_prepare_runtime_reuses_identical_python_without_replacing_it(
+    tmp_path: Path,
+) -> None:
+    objects, manifest = _runtime_objects()
+    receipt, manifest_storage, archive_storage, home, workspace = _run(
+        tmp_path, objects, manifest
+    )
+    python = home / ".local/python/bin/python"
+    original = python.stat()
+
+    repeated = prepare_runtime(
+        manifest_storage, archive_storage, MANIFEST_URI, _sha(manifest), home, workspace
+    )
+
+    assert repeated == receipt
+    assert python.stat().st_ino == original.st_ino
+    assert python.stat().st_mtime_ns == original.st_mtime_ns
+    assert python.read_bytes() == b"immutable-python"
+    assert len(archive_storage.calls) == 2
+
+
+@pytest.mark.parametrize("change", ["bytes", "mode", "symlink"])
+def test_prepare_runtime_rejects_changed_existing_python(
+    tmp_path: Path, change: str
+) -> None:
     objects, manifest = _runtime_objects()
     _, manifest_storage, archive_storage, home, workspace = _run(
         tmp_path, objects, manifest
     )
+    python = home / ".local/python/bin/python"
+    if change == "bytes":
+        python.write_bytes(b"different-python")
+    elif change == "mode":
+        python.chmod(python.stat().st_mode ^ 0o100)
+    else:
+        python.unlink()
+        python.symlink_to(workspace / "runtime.txt")
 
-    with pytest.raises(ValueError, match="unexpectedly occupied"):
+    with pytest.raises(ValueError, match="identity differs|cannot contain symlinks"):
         prepare_runtime(
             manifest_storage,
             archive_storage,
