@@ -65,6 +65,15 @@ def row():
     }
 
 
+def rrd_scale_rows(count: int) -> list[dict]:
+    rows = []
+    for index in range(count):
+        problem = copy.deepcopy(row())
+        problem["problem_id"] = f"scale-{index:06d}"
+        rows.append(problem)
+    return rows
+
+
 def plan_row():
     result = row()
     result["dataset"] = "operator"
@@ -603,7 +612,10 @@ def test_factual_rrd_round_trip(tmp_path):
     assert result["run_id"] == "unit-rrd"
     assert result["journal_sha256"] == hashlib.sha256(journal.read_bytes()).hexdigest()
     assert result["goal_markers"] == 1
+    assert result["metric_samples"] == 1
     assert result["trajectory_samples"] == 2
+    assert result["rrd_layout"] == "npa.curobo.problem-index.v1"
+    assert result["entity_path_count"] == 15
     decoded_path = tmp_path / "rrd-print.txt"
     decoded = decode_rrd(
         target, rows=[row()], run_id="unit-rrd", decoded_output=decoded_path
@@ -612,7 +624,7 @@ def test_factual_rrd_round_trip(tmp_path):
     assert decoded["print"] == "passed"
     assert decoded["print_bytes"] == decoded_path.stat().st_size
     assert decoded["chunk_mismatches"] == []
-    assert decoded["decoded_chunk_rows"] == 23
+    assert decoded["decoded_chunk_rows"] == 24
     import sys
 
     executable = Path(sys.executable).with_name("rerun")
@@ -633,18 +645,65 @@ def test_factual_rrd_round_trip(tmp_path):
         "trajectory_time",
         "tool_path",
         "tool_quaternion/w",
-        "problems/000000/goal",
+        "problems/goal",
         "joints/0/position",
     ):
         assert entity in printed
+    assert "problems/000000" not in printed
+
+
+def test_decoded_rrd_rejects_truncated_recording(tmp_path):
+    journal = tmp_path / "problems.jsonl"
+    journal.write_bytes(canonical(row()) + b"\n")
+    target = tmp_path / "planning.rrd"
+    build_rrd(journal, target, run_id="truncated-run")
+    target.write_bytes(target.read_bytes()[:-128])
+
+    with pytest.raises(CuroboError, match="Rerun rejected"):
+        decode_rrd(target, rows=[row()], run_id="truncated-run")
+
+
+def test_rrd_layout_decodes_full_matrix_scale_with_bounded_paths(tmp_path):
+    rows = rrd_scale_rows(5200)
+    journal = tmp_path / "scale.jsonl"
+    journal.write_bytes(b"".join(canonical(problem) + b"\n" for problem in rows))
+    target = tmp_path / "scale.rrd"
+
+    result = build_rrd(journal, target, run_id="scale-run")
+    decoded = decode_rrd(
+        target,
+        rows=rows,
+        run_id="scale-run",
+        decoded_output=tmp_path / "scale-print.txt",
+    )
+
+    assert result["problem_count"] == 5200
+    assert result["entity_path_count"] == 15
+    assert decoded["required_chunk_count"] == 15
+    assert decoded["status_entities"] == 5200
+    assert decoded["goal_entities"] == 5200
+    assert decoded["metric_samples"] == 5200
+    assert decoded["trajectory_entities"] == 5200
+    assert decoded["trajectory_samples"] == 10400
+    assert decoded["decoded_chunk_rows"] == 119601
 
 
 @pytest.mark.parametrize(
-    "mutation", ["joint", "tool", "quaternion", "timeline", "metric"]
+    "mutation",
+    [
+        "joint",
+        "tool",
+        "quaternion",
+        "trajectory_time",
+        "problem_index",
+        "goal",
+        "status",
+        "metric",
+    ],
 )
 def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation):
     import rerun as rr
-    from npa.workbench.curobo.artifacts import log_trajectory_columns
+    from npa.workbench.curobo.artifacts import _RRD_LAYOUT, log_trajectory_columns
 
     original = row()
     journal_bytes = canonical(original) + b"\n"
@@ -661,28 +720,31 @@ def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation
                     "dataset_revision": None,
                     "run_id": "semantic-run",
                     "journal_sha256": hashlib.sha256(journal_bytes).hexdigest(),
+                    "rrd_layout": _RRD_LAYOUT,
                     "limitations": "FK tool paths and joint traces; no rendered robot meshes or independent collision certification.",
                 }
             )
         ),
         static=True,
     )
-    recording.set_time("problem_index", sequence=0)
+    problem_index = 1 if mutation == "problem_index" else 0
+    recording.set_time("problem_index", sequence=problem_index)
+    status = {
+        key: original[key] for key in ("problem_id", "mode", "dataset", "status")
+    }
+    if mutation == "status":
+        status["problem_id"] = "tampered"
     recording.log(
-        "problems/000000/status",
-        rr.TextDocument(
-            json.dumps(
-                {
-                    key: original[key]
-                    for key in ("problem_id", "mode", "dataset", "status")
-                }
-            )
-        ),
+        "problems/status",
+        rr.TextDocument(json.dumps(status)),
     )
+    goal_position = copy.deepcopy(original["query"]["goal_pose"]["position_xyz"])
+    if mutation == "goal":
+        goal_position[0] += 0.25
     recording.log(
-        "problems/000000/goal",
+        "problems/goal",
         rr.Points3D(
-            [original["query"]["goal_pose"]["position_xyz"]],
+            [goal_position],
             radii=0.015,
             colors=[0, 255, 0],
         ),
@@ -695,21 +757,23 @@ def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation
         changed["tool_position"][1][0] += 0.25
     elif mutation == "quaternion":
         changed["tool_quaternion"][1] = [0.0, 1.0, 0.0, 0.0]
-    elif mutation == "timeline":
+    elif mutation == "trajectory_time":
         changed["dt"] = 0.2
     elif mutation == "metric":
         metrics["wall_plan_seconds"] += 0.25
     for name, value in metrics.items():
         recording.log(f"metrics/{name}", rr.Scalars(value))
     recording.log(
-        "problems/000000/joint_names",
+        "trajectory/joint_names",
         rr.TextDocument(json.dumps(original["trajectory"]["joint_names"])),
     )
     recording.log(
-        "problems/000000/tool_path",
+        "trajectory/tool_path",
         rr.LineStrips3D([changed["tool_position"]]),
     )
-    log_trajectory_columns(recording, "problems/000000", changed, problem_index=0)
+    log_trajectory_columns(
+        recording, "trajectory", changed, problem_index=problem_index
+    )
     recording.flush()
     del recording
 
@@ -731,14 +795,14 @@ def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_chunk(tmp_pa
     decoded = tmp_path / "truncated-print.txt"
     lines = [b'npa.curobo "coverage-run"']
     for entity, count in expected.items():
-        if entity == "problems/000000/joints/0/position":
+        if entity == "trajectory/joints/0/position":
             continue
         lines.append(f"Chunk(x) with {count} rows (1 B) - /{entity} -".encode())
     decoded.write_bytes(b"\n".join(lines) + b"\n")
     _digest, _size, mismatches = _scan_decoded_chunks(
         decoded, expected, run_id="coverage-run"
     )
-    assert mismatches == ["problems/000000/joints/0/position: expected 2, decoded 0"]
+    assert mismatches == ["trajectory/joints/0/position: expected 2, decoded 0"]
 
 
 def test_functional_smoke_retains_complete_positive_and_failure_evidence(

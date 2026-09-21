@@ -314,6 +314,11 @@ def read_journal(path: Path) -> list[dict[str, Any]]:
         raise CuroboError("invalid planner journal") from exc
 
 
+_RRD_LAYOUT = "npa.curobo.problem-index.v1"
+_RRD_PROBLEM_ROOT = "problems"
+_RRD_TRAJECTORY_ROOT = "trajectory"
+
+
 def log_trajectory_columns(
     recording, root: str, trajectory: dict[str, Any], *, problem_index: int
 ) -> None:
@@ -352,78 +357,67 @@ def log_trajectory_columns(
             )
 
 
-def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
-    """Log actual joint, FK and problem-status facts, without robot-mesh claims."""
+def _rrd_provenance(
+    rows: list[dict[str, Any]], journal: Path, *, run_id: str
+) -> dict[str, Any]:
+    return {
+        "producer": "npa.workbench.curobo",
+        "source_revision": SOURCE_REVISION,
+        "dataset_revision": DATASET_REVISION
+        if any(row["dataset"] != "operator" for row in rows)
+        else None,
+        "run_id": run_id,
+        "journal_sha256": hashlib.sha256(journal.read_bytes()).hexdigest(),
+        "rrd_layout": _RRD_LAYOUT,
+        "limitations": "FK tool paths and joint traces; no rendered robot meshes or independent collision certification.",
+    }
+
+
+def _log_rrd_problem(recording, row: dict[str, Any], *, problem_index: int) -> None:
     import rerun as rr
 
-    rows = read_journal(journal)
-    recording = rr.RecordingStream("npa.curobo", recording_id=run_id)
-    recording.save(str(output))
-    try:
+    recording.set_time("problem_index", sequence=problem_index)
+    status = {key: row[key] for key in ("problem_id", "mode", "dataset", "status")}
+    recording.log(
+        f"{_RRD_PROBLEM_ROOT}/status", rr.TextDocument(json.dumps(status))
+    )
+    if row["status"] != "invalid":
         recording.log(
-            "provenance",
-            rr.TextDocument(
-                json.dumps(
-                    {
-                        "producer": "npa.workbench.curobo",
-                        "source_revision": SOURCE_REVISION,
-                        "dataset_revision": DATASET_REVISION
-                        if any(r["dataset"] != "operator" for r in rows)
-                        else None,
-                        "run_id": run_id,
-                        "journal_sha256": hashlib.sha256(
-                            journal.read_bytes()
-                        ).hexdigest(),
-                        "limitations": "FK tool paths and joint traces; no rendered robot meshes or independent collision certification.",
-                    }
-                )
+            f"{_RRD_PROBLEM_ROOT}/goal",
+            rr.Points3D(
+                [row["query"]["goal_pose"]["position_xyz"]],
+                radii=0.015,
+                colors=[0, 255, 0],
             ),
-            static=True,
         )
-        for index, row in enumerate(rows):
-            root = f"problems/{index:06d}"
-            recording.set_time("problem_index", sequence=index)
-            recording.log(
-                root + "/status",
-                rr.TextDocument(
-                    json.dumps(
-                        {k: row[k] for k in ("problem_id", "mode", "dataset", "status")}
-                    )
-                ),
-            )
-            if row["status"] != "invalid":
-                recording.log(
-                    root + "/goal",
-                    rr.Points3D(
-                        [row["query"]["goal_pose"]["position_xyz"]],
-                        radii=0.015,
-                        colors=[0, 255, 0],
-                    ),
-                )
-            for name, value in row.get("metrics", {}).items():
-                recording.log(f"metrics/{name}", rr.Scalars(value))
-            if row["status"] != "success":
-                continue
-            trajectory = row["trajectory"]
-            recording.log(
-                root + "/joint_names",
-                rr.TextDocument(json.dumps(trajectory["joint_names"])),
-            )
-            recording.log(
-                root + "/tool_path", rr.LineStrips3D([trajectory["tool_position"]])
-            )
-            log_trajectory_columns(recording, root, trajectory, problem_index=index)
-    finally:
-        recording.flush()
-        del recording
-    if not output.is_file() or output.stat().st_size == 0:
-        raise CuroboError("RRD writer produced no bytes")
+    for name, value in row.get("metrics", {}).items():
+        recording.log(f"metrics/{name}", rr.Scalars(value))
+    if row["status"] != "success":
+        return
+    trajectory = row["trajectory"]
+    recording.log(
+        f"{_RRD_TRAJECTORY_ROOT}/joint_names",
+        rr.TextDocument(json.dumps(trajectory["joint_names"])),
+    )
+    recording.log(
+        f"{_RRD_TRAJECTORY_ROOT}/tool_path",
+        rr.LineStrips3D([trajectory["tool_position"]]),
+    )
+    log_trajectory_columns(
+        recording, _RRD_TRAJECTORY_ROOT, trajectory, problem_index=problem_index
+    )
+
+
+def _rrd_manifest(
+    rows: list[dict[str, Any]], journal: Path, output: Path, *, run_id: str
+) -> dict[str, Any]:
     status_counts = {
         status: sum(row["status"] == status for row in rows)
         for status in ("success", "failed", "invalid")
     }
     journal_sha256 = hashlib.sha256(journal.read_bytes()).hexdigest()
     rrd_sha256 = hashlib.sha256(output.read_bytes()).hexdigest()
+    expected_chunks = _expected_rrd_chunks(rows)
     return {
         "schema_version": "npa.curobo.rrd-manifest.v1",
         "run_id": run_id,
@@ -432,11 +426,14 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
         if any(row["dataset"] != "operator" for row in rows)
         else None,
         "journal_sha256": journal_sha256,
+        "rrd_layout": _RRD_LAYOUT,
+        "entity_path_count": len(expected_chunks),
         "problem_count": len(rows),
         "status_counts": status_counts,
         "successful_trajectories": status_counts["success"],
         "status_entities": len(rows),
         "goal_markers": sum(row["status"] != "invalid" for row in rows),
+        "metric_samples": sum(len(row.get("metrics", {})) for row in rows),
         "trajectory_samples": sum(
             len(row["trajectory"]["position"])
             for row in rows
@@ -447,30 +444,68 @@ def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
     }
 
 
+def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
+    """Log actual joint, FK and problem-status facts, without robot-mesh claims."""
+    import rerun as rr
+
+    rows = read_journal(journal)
+    recording = rr.RecordingStream("npa.curobo", recording_id=run_id)
+    recording.save(str(output))
+    try:
+        recording.log(
+            "provenance",
+            rr.TextDocument(json.dumps(_rrd_provenance(rows, journal, run_id=run_id))),
+            static=True,
+        )
+        for index, row in enumerate(rows):
+            _log_rrd_problem(recording, row, problem_index=index)
+    finally:
+        recording.flush()
+        del recording
+    if not output.is_file() or output.stat().st_size == 0:
+        raise CuroboError("RRD writer produced no bytes")
+    return _rrd_manifest(rows, journal, output, run_id=run_id)
+
+
 _RRD_CHUNK_HEADER = re.compile(
     rb"Chunk\([^)]*\) with ([0-9]+) rows \([^)]*\) - /([^ ]+) -"
 )
 
 
+def _add_expected_rows(
+    expected: dict[str, int], entity_path: str, row_count: int = 1
+) -> None:
+    expected[entity_path] = expected.get(entity_path, 0) + row_count
+
+
 def _expected_rrd_chunks(rows: list[dict[str, Any]]) -> dict[str, int]:
     expected: dict[str, int] = {"provenance": 1}
-    for index, row in enumerate(rows):
-        root = f"problems/{index:06d}"
-        expected[f"{root}/status"] = 1
+    for row in rows:
+        _add_expected_rows(expected, f"{_RRD_PROBLEM_ROOT}/status")
         if row["status"] != "invalid":
-            expected[f"{root}/goal"] = 1
+            _add_expected_rows(expected, f"{_RRD_PROBLEM_ROOT}/goal")
+        for name in row.get("metrics", {}):
+            _add_expected_rows(expected, f"metrics/{name}")
         if row["status"] != "success":
             continue
         trajectory = row["trajectory"]
         samples = len(trajectory["position"])
-        expected[f"{root}/joint_names"] = 1
-        expected[f"{root}/tool_path"] = 1
-        expected[f"{root}/tool"] = samples
+        _add_expected_rows(expected, f"{_RRD_TRAJECTORY_ROOT}/joint_names")
+        _add_expected_rows(expected, f"{_RRD_TRAJECTORY_ROOT}/tool_path")
+        _add_expected_rows(expected, f"{_RRD_TRAJECTORY_ROOT}/tool", samples)
         for component in ("w", "x", "y", "z"):
-            expected[f"{root}/tool_quaternion/{component}"] = samples
+            _add_expected_rows(
+                expected,
+                f"{_RRD_TRAJECTORY_ROOT}/tool_quaternion/{component}",
+                samples,
+            )
         for joint in range(len(trajectory["joint_names"])):
             for field in ("position", "velocity", "acceleration", "jerk"):
-                expected[f"{root}/joints/{joint}/{field}"] = samples
+                _add_expected_rows(
+                    expected,
+                    f"{_RRD_TRAJECTORY_ROOT}/joints/{joint}/{field}",
+                    samples,
+                )
     return expected
 
 
@@ -506,6 +541,49 @@ def _scan_decoded_chunks(
     return digest.hexdigest(), size, sorted(mismatches)
 
 
+def _require_rrd_command(command: list[str]) -> None:
+    completed = subprocess.run(command, capture_output=True, check=False)
+    if completed.returncode:
+        raise CuroboError("Rerun could not normalize factual recording")
+
+
+def _normalize_rrd_for_compare(
+    source: Path, output: Path, *, rerun: str
+) -> None:
+    filtered_output = output.with_name(output.stem + "-filtered.rrd")
+    _require_rrd_command(
+        [
+            rerun,
+            "rrd",
+            "filter",
+            "--drop-timeline",
+            "log_tick",
+            "--drop-timeline",
+            "log_time",
+            "--output",
+            str(filtered_output),
+            str(source),
+        ]
+    )
+    _require_rrd_command(
+        [
+            rerun,
+            "rrd",
+            "compact",
+            "--max-rows",
+            "1000000",
+            "--max-rows-if-unsorted",
+            "1000000",
+            "--max-bytes",
+            "134217728",
+            "--output",
+            str(output),
+            str(filtered_output),
+        ]
+    )
+    filtered_output.unlink()
+
+
 def _semantic_compare_rrd(
     path: Path, *, rows: list[dict[str, Any]], run_id: str, rerun: str
 ) -> str:
@@ -519,24 +597,7 @@ def _semantic_compare_rrd(
         normalized = []
         for name, source in (("observed", path), ("expected", expected)):
             output = root / f"{name}-normalized.rrd"
-            filtered = subprocess.run(
-                [
-                    rerun,
-                    "rrd",
-                    "filter",
-                    "--drop-timeline",
-                    "log_tick",
-                    "--drop-timeline",
-                    "log_time",
-                    "--output",
-                    str(output),
-                    str(source),
-                ],
-                capture_output=True,
-                check=False,
-            )
-            if filtered.returncode:
-                raise CuroboError("Rerun could not normalize factual recording")
+            _normalize_rrd_for_compare(source, output, rerun=rerun)
             normalized.append(output)
         compared = subprocess.run(
             [rerun, "rrd", "compare", "--unordered", *(str(p) for p in normalized)],
@@ -589,12 +650,14 @@ def _decode_rrd_to(
         "print": "passed",
         "semantic_compare": "passed",
         "semantic_reference_sha256": reference_sha256,
+        "rrd_layout": _RRD_LAYOUT,
         "print_sha256": digest,
         "print_bytes": size,
         "required_chunk_count": len(expected),
         "decoded_chunk_rows": sum(expected.values()),
         "status_entities": len(rows),
         "goal_entities": sum(row["status"] != "invalid" for row in rows),
+        "metric_samples": sum(len(row.get("metrics", {})) for row in rows),
         "trajectory_entities": sum(row["status"] == "success" for row in rows),
         "trajectory_samples": sum(
             len(row["trajectory"]["position"])
