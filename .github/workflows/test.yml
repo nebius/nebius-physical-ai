@@ -491,7 +491,7 @@ jobs:
           npa/.venv/bin/python -m pip install "coverage[toml]==7.16.0"
 
       - name: Download coverage shards
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: coverage-*
           path: npa/coverage-data
@@ -506,7 +506,7 @@ jobs:
           .venv/bin/python -m coverage report --show-missing --fail-under=60
 
       - name: Download Python 3.12 timing shards
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ci-timings-*
           path: npa/ci-timing-data
