@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import gzip
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -12,7 +11,7 @@ import re
 import stat
 import sys
 import tarfile
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -50,19 +49,34 @@ def _path(value: str) -> str:
     return str(path)
 
 
-def _hash_stream(stream: BinaryIO) -> tuple[str, int]:
+def _hash_stream(
+    stream: BinaryIO,
+    *,
+    limit: int | None = None,
+    failure_code: str = "docker_save_stream_limit",
+) -> tuple[str, int]:
     digest = hashlib.sha256()
     count = 0
     while chunk := stream.read(_CHUNK):
         digest.update(chunk)
         count += len(chunk)
+        W.require(limit is None or count <= limit, failure_code)
     return digest.hexdigest(), count
 
 
-def _decoded_layer(stream: BinaryIO) -> BinaryIO:
-    signature = stream.read(2)
-    stream.seek(0)
-    return gzip.GzipFile(fileobj=stream) if signature == b"\x1f\x8b" else stream
+@contextmanager
+def _decoded_layer(stream: BinaryIO) -> Iterator[BinaryIO]:
+    try:
+        signature = stream.read(2)
+        stream.seek(0)
+        if signature == b"\x1f\x8b":
+            W.gzip_header(stream)
+            stream.seek(0)
+            yield W.GzipReader(stream)
+        else:
+            yield stream
+    finally:
+        stream.close()
 
 
 def _config_digest(name: str, payload: bytes) -> str:
@@ -342,27 +356,40 @@ def _verify_layer(archive, members, layer_name, expected_diff_id, descriptor):
             "docker_save_oci_layer_codec",
         )
     with _decoded_layer(archive.extractfile(member)) as decoded:
-        diff_hash, _decoded_size = _hash_stream(decoded)
+        diff_hash, _decoded_size = _hash_stream(
+            decoded,
+            limit=W.DOCKER_SAVE_DECODED_LAYER_LIMIT,
+            failure_code="docker_save_decoded_layer_limit",
+        )
     W.require(
         "sha256:" + diff_hash == expected_diff_id,
         "docker_save_layer_diff_id",
     )
     raw = archive.extractfile(member)
-    return _regular_population(_decoded_layer(raw))
+    with _decoded_layer(raw) as decoded:
+        return _regular_population(decoded)
 
 
 class _PopulationSink:
-    def data(self, _data, _kind, _context):
-        return None
+    def __init__(self):
+        self.zero_run = 0
 
-    def zeros(self, _data, _context):
-        return None
+    def data(self, _data, _kind, _context):
+        self.zero_run = 0
+
+    def zeros(self, data, _context):
+        W.require(not any(data), "docker_save_nonzero_zero_range")
+        self.zero_run += len(data)
+        W.require(
+            self.zero_run <= W.ZERO_RECORD_LIMIT,
+            "docker_save_zero_record_limit",
+        )
 
     def issue(self, code, _context):
         raise W.ScanError("docker_save_layer_" + code)
 
     def flush_zeros(self):
-        return None
+        self.zero_run = 0
 
 
 def _regular_population(layer):

@@ -186,6 +186,72 @@ def test_repeated_layer_member_is_physically_verified_once(
     assert calls == [True]
 
 
+def test_decoded_layer_limit_applies_during_first_diff_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_layer = _tar([("opt/result.txt", b"physical-ai")])
+    archive, image_id = _archive(tmp_path, compressed=True)
+    monkeypatch.setattr(core, "DOCKER_SAVE_DECODED_LAYER_LIMIT", len(raw_layer) - 1)
+    population_calls = []
+    monkeypatch.setattr(
+        VERIFIER,
+        "_regular_population",
+        lambda *_args: population_calls.append(True),
+    )
+
+    with pytest.raises(core.ScanError, match="docker_save_decoded_layer_limit"):
+        VERIFIER.verify(archive, image_id)
+
+    assert population_calls == []
+
+
+def test_verifier_rejects_concatenated_gzip_before_later_optional_header(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw_layer = _tar([("opt/result.txt", b"physical-ai")])
+    first_member = gzip.compress(raw_layer)
+    oversized_later_header = b"\x1f\x8b\x08\x08" + b"\0" * 4 + b"\0\xff" + b"A" * 32
+    archive, image_id = _archive(
+        tmp_path,
+        compressed=True,
+        layer_payload=first_member + oversized_later_header,
+        layer_entries=[("opt/result.txt", b"physical-ai")],
+    )
+    monkeypatch.setattr(core, "GZIP_HEADER_LIMIT", 16)
+    population_calls = []
+    monkeypatch.setattr(
+        VERIFIER,
+        "_regular_population",
+        lambda *_args: population_calls.append(True),
+    )
+
+    with pytest.raises(core.ScanError, match="gzip_trailing_member_or_bytes"):
+        VERIFIER.verify(archive, image_id)
+
+    assert population_calls == []
+
+
+def test_verifier_regular_file_limit_precedes_population_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, image_id = _archive(tmp_path, layer_entries=[("opt/result.txt", b"12345")])
+    monkeypatch.setattr(core, "TAR_REGULAR_FILE_LIMIT", 4)
+
+    with pytest.raises(core.ScanError, match="tar_regular_file_limit"):
+        VERIFIER.verify(archive, image_id)
+
+
+def test_verifier_zero_run_limit_is_incremental(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(core, "ZERO_RECORD_LIMIT", 512)
+    sink = VERIFIER._PopulationSink()
+    sink.zeros(b"\0" * 512, {})
+
+    with pytest.raises(core.ScanError, match="docker_save_zero_record_limit"):
+        sink.zeros(b"\0" * 512, {})
+
+
 def test_repeated_layer_member_limit_fails_before_layer_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -439,7 +505,6 @@ def test_preparation_accepts_bound_generic_verification(
 
 def test_cli_writes_owner_only_bound_report(tmp_path: Path) -> None:
     archive, image_id = _archive(tmp_path, oci_layout=True)
-    archive.chmod(0o600)
     output = tmp_path / "cli-output"
 
     result = subprocess.run(

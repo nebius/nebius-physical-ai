@@ -8,6 +8,7 @@ import sys
 import io
 import json
 import os
+import subprocess
 import tarfile
 from pathlib import Path
 from typing import ClassVar
@@ -29,6 +30,29 @@ def explicit_roots(tmp_path):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def test_detector_record_limit_is_derived_from_memory_budget():
+    assert (
+        W.DETECTOR_RECORD_LIMIT * W.DETECTOR_PAYLOAD_EXPANSION
+        + W.DETECTOR_MEMORY_HEADROOM
+        <= W.DETECTOR_MEMORY_LIMIT
+    )
+    assert (
+        (W.DETECTOR_RECORD_LIMIT + 1) * W.DETECTOR_PAYLOAD_EXPANSION
+        + W.DETECTOR_MEMORY_HEADROOM
+        > W.DETECTOR_MEMORY_LIMIT
+    )
+    assert W.TAR_REGULAR_FILE_LIMIT == W.DETECTOR_RECORD_LIMIT
+    assert W.CONFIDENTIALITY_RECORD_LIMIT == W.DETECTOR_RECORD_LIMIT
+    assert W.CONFIDENTIALITY_MEMORY_LIMIT == W.DETECTOR_MEMORY_LIMIT
+
+
+def test_schedulable_cpu_population_is_bounded(monkeypatch):
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: set(range(1000)))
+    assert W.schedulable_cpus() == W.MAX_DETECTION_WORKERS
+    monkeypatch.setattr(os, "sched_getaffinity", lambda _pid: set())
+    assert W.schedulable_cpus() == 1
 
 
 def write(path, data):
@@ -238,6 +262,7 @@ class FakeDetector:
         self.joined = False
         self.records = []
         self.current = None
+        self.outstanding = []
         self.instances.append(self)
 
     def begin(self, length):
@@ -247,13 +272,25 @@ class FakeDetector:
     def write(self, data):
         self.current.extend(data)
 
-    def end(self, length, value):
+    def submit(self, length, value):
         assert self.length == length == len(self.current)
         assert digest(self.current) == value
-        self.records.append(bytes(self.current))
+        self.outstanding.append(bytes(self.current))
+
+    def outstanding_records(self):
+        return len(self.outstanding)
+
+    def collect(self):
+        record = self.outstanding.pop(0)
+        self.records.append(record)
+        return self.findings_for(record)
+
+    def findings_for(self, record):
+        """Findings a subclass attributes to one collected record."""
         return []
 
     def finish(self):
+        assert not self.outstanding
         self.joined = True
         return {
             "type": "summary",
@@ -285,6 +322,187 @@ def run(tmp_path, authorization, *, real=False, detector_type=None):
 
 def findings(records, code):
     return [row for row in records if row.get("rule_id") == code]
+
+
+class PipelineDetector(FakeDetector):
+    """Framing oracle that also reports findings and observed pipeline depth."""
+
+    def __init__(self, authorization, stderr_path):
+        super().__init__(authorization, stderr_path)
+        self.max_outstanding = 0
+        self.reported = 0
+
+    def submit(self, length, value):
+        super().submit(length, value)
+        self.max_outstanding = max(self.max_outstanding, len(self.outstanding))
+
+    def findings_for(self, record):
+        if b"detector-marker" not in record:
+            return []
+        self.reported += 1
+        return [{"rule_id": "generic-api-key", "start_line": 1, "end_line": 1}]
+
+    def finish(self):
+        return {**super().finish(), "findings": self.reported}
+
+
+def pipelined_ledger(tmp_path, authorization, label, depth, held_bytes, monkeypatch):
+    """Scan one fixture at a chosen pipeline depth and return the ledger bytes.
+
+    Args:
+        tmp_path: Directory owning the fixture and the scan outputs.
+        authorization: The fixture authorization to scan.
+        label: Output directory name distinguishing this run.
+        depth: Records allowed to stay outstanding.
+        held_bytes: Held record bytes allowed to stay outstanding.
+        monkeypatch: Fixture used to select the depth for this run.
+
+    Returns:
+        A ``(ledger_bytes, detector)`` pair.
+
+    Raises:
+        None.
+    """
+    monkeypatch.setattr(W, "PIPELINE_RECORDS", depth)
+    monkeypatch.setattr(W, "PIPELINE_BYTES", held_bytes)
+    PipelineDetector.instances.clear()
+    output = tmp_path / label
+    output.mkdir(mode=0o700)
+    W._scan(authorization, output, detector_type=PipelineDetector)
+    return (output / "records.jsonl").read_bytes(), PipelineDetector.instances[-1]
+
+
+def test_pipeline_depth_does_not_change_ledger_bytes(tmp_path, monkeypatch):
+    # A scan that only exercises uniform records could keep its ordering by
+    # accident, so this archive mixes empty files, a multi-chunk body, literal
+    # matches, detector findings, a symlink and zero padding.
+    body = b"neutral material detector-marker\n" * (2 * W.CHUNK // 33 + 1)
+    entries = [
+        file("opt/empty"),
+        file("opt/literal", b"leading private-operator-marker trailing"),
+        file("opt/large", body),
+        file("opt/link", b"", kind=tarfile.SYMTYPE, link="literal"),
+        file("opt/zeros", b"\x00" * 4096),
+        file("opt/marked", b"short detector-marker body"),
+    ]
+    authorization = fixture(tmp_path, entries=entries, repeat=2)
+    serial, serial_detector = pipelined_ledger(
+        tmp_path, authorization, "serial", 0, 0, monkeypatch
+    )
+    pipelined, pipelined_detector = pipelined_ledger(
+        tmp_path, authorization, "pipelined", 8, 256 * 1024 * 1024, monkeypatch
+    )
+    assert serial_detector.max_outstanding == 1
+    assert pipelined_detector.max_outstanding > 1, "pipeline never overlapped records"
+    assert serial == pipelined
+    assert serial_detector.records == pipelined_detector.records
+
+
+def test_pipeline_record_bound_is_the_outstanding_limit(tmp_path, monkeypatch):
+    body = b"neutral material\n" * (W.CHUNK // 17)
+    entries = [file(f"opt/body-{index}", body) for index in range(8)]
+    authorization = fixture(tmp_path, entries=entries)
+    shallow, shallow_detector = pipelined_ledger(
+        tmp_path, authorization, "shallow", 3, 256 * 1024 * 1024, monkeypatch
+    )
+    assert shallow_detector.max_outstanding == 3
+    deep, deep_detector = pipelined_ledger(
+        tmp_path, authorization, "deep", 8, 256 * 1024 * 1024, monkeypatch
+    )
+    assert deep_detector.max_outstanding == 8
+    assert shallow == deep
+
+
+def confidential_ledger(tmp_path, detector):
+    """Build a ledger whose policy needs each complete record in memory.
+
+    Args:
+        tmp_path: Directory receiving the ledger stream.
+        detector: Detector the ledger submits records to.
+
+    Returns:
+        The configured :class:`Ledger`.
+
+    Raises:
+        None.
+    """
+    return W.Ledger(
+        tmp_path,
+        detector,
+        ["private-operator-marker"],
+        "exact-substring-v1",
+        policy_config={"customer_pattern": r"customer-[0-9]+"},
+    )
+
+
+def test_pipeline_byte_bound_is_checked_before_the_next_record_is_read(
+    tmp_path, monkeypatch
+):
+    # Held bytes only accumulate when confidentiality composition needs the
+    # complete record, so this ledger enables that policy to exercise the bound.
+    # Collecting after the read instead would let held bytes exceed the bound by
+    # a whole record, which is what makes the bound a real allocation limit.
+    bound = 3 * 4096
+    monkeypatch.setattr(W, "PIPELINE_RECORDS", 8)
+    monkeypatch.setattr(W, "PIPELINE_BYTES", bound)
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = confidential_ledger(tmp_path, detector)
+    record = b"x" * 4096
+    peak = 0
+    for index in range(6):
+        sink.send(
+            io.BytesIO(record),
+            len(record),
+            "synthetic",
+            {"scope": "outer", "tar_offset": index},
+        )
+        peak = max(peak, sink.held_bytes)
+        assert sink.held_bytes <= bound
+        assert detector.outstanding_records() <= 3
+    assert peak == bound, "the bound was never reached, so it was not exercised"
+    sink.flush_pending()
+    assert sink.held_bytes == 0 and not sink.pending
+    sink.stream.close()
+
+
+def test_record_larger_than_the_byte_bound_is_held_alone_and_kept_whole(
+    tmp_path, monkeypatch
+):
+    # Coverage never depends on a size threshold: an oversized record reduces the
+    # pipeline to one record rather than being skipped or truncated.
+    bound = 4096
+    monkeypatch.setattr(W, "PIPELINE_RECORDS", 8)
+    monkeypatch.setattr(W, "PIPELINE_BYTES", bound)
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = confidential_ledger(tmp_path, detector)
+    record = b"y" * (4 * bound)
+    for index in range(3):
+        sink.send(
+            io.BytesIO(record),
+            len(record),
+            "synthetic",
+            {"scope": "outer", "tar_offset": index},
+        )
+        assert len(sink.pending) == 1, "an oversized record was held alongside another"
+        assert sink.held_bytes == len(record)
+    sink.flush_pending()
+    assert sink.records == 3 and sink.held_bytes == 0
+    sink.stream.close()
+
+
+def test_unfinished_records_fail_closed(tmp_path):
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(
+        tmp_path, detector, ["private-operator-marker"], "exact-substring-v1"
+    )
+    sink.send(io.BytesIO(b"body"), 4, "synthetic", {"scope": "outer"})
+    assert sink.pending, "record was not held for later collection"
+    with pytest.raises(AssertionError):
+        detector.finish()
+    sink.flush_pending()
+    assert not sink.pending
+    detector.finish()
+    sink.stream.close()
 
 
 def test_complete_zero_length_and_large_file_are_one_record_each(tmp_path):
@@ -406,8 +624,8 @@ def test_accepted_character_count_and_binary_token_boundary_policy(literal):
     data = b"prefix_" + raw + b"_suffix /" + raw + b"/\x00" + raw + b"\x00"
     found = []
     for byte in data:
-        found.extend(matcher.feed(bytes([byte])))
-    found.extend(matcher.feed(b"", final=True))
+        found.extend(matcher.feed(bytes([byte]), finding_limit=100))
+    found.extend(matcher.feed(b"", final=True, finding_limit=100))
     expected = 2 if len(literal) < 6 else 3
     assert len(found) == expected
     assert all(data[row["byte_start"] : row["byte_end"]] == raw for row in found)
@@ -415,8 +633,82 @@ def test_accepted_character_count_and_binary_token_boundary_policy(literal):
 
 def test_strict_default_includes_short_substrings_and_boundaries():
     matcher = W.LiteralMatcher(["ab"], "exact-substring-v1")
-    found = matcher.feed(b"xaby /ab", final=True)
+    found = matcher.feed(b"xaby /ab", final=True, finding_limit=100)
     assert [(r["byte_start"], r["byte_end"]) for r in found] == [(1, 3), (6, 8)]
+
+
+@pytest.mark.parametrize(
+    ("payload", "limit", "expected"),
+    [(b"bbbb", 2, "literal_finding_limit"), (b"bbbb", 0, "literal_finding_limit")],
+)
+def test_literal_matcher_enforces_budget_before_materializing_population(
+    payload, limit, expected
+):
+    matcher = W.LiteralMatcher(["b"], "exact-substring-v1")
+    with pytest.raises(W.LiteralFindingLimit, match=expected):
+        matcher.feed(payload, final=True, finding_limit=limit)
+
+
+def test_zero_literal_budget_without_match_is_valid():
+    matcher = W.LiteralMatcher(["b"], "exact-substring-v1")
+    assert matcher.feed(b"aaaa", final=True, finding_limit=0) == []
+
+
+@pytest.mark.parametrize(
+    ("values", "code"),
+    [
+        (["a", "b"], "literal_inventory_pattern_limit"),
+        (["aa"], "literal_inventory_value_limit"),
+        (["a", "b"], "literal_inventory_total_limit"),
+    ],
+)
+def test_literal_inventory_population_and_bytes_are_bounded(monkeypatch, values, code):
+    monkeypatch.setattr(
+        W, "LITERAL_PATTERN_LIMIT", 1 if code.endswith("pattern_limit") else 10
+    )
+    monkeypatch.setattr(
+        W, "LITERAL_VALUE_BYTES_LIMIT", 1 if code.endswith("value_limit") else 10
+    )
+    monkeypatch.setattr(
+        W, "LITERAL_TOTAL_BYTES_LIMIT", 1 if code.endswith("total_limit") else 10
+    )
+    with pytest.raises(W.ScanError, match=code):
+        W.validate_literal_inventory(values)
+
+
+@pytest.mark.parametrize("consumer", ["scan", "adjudication"])
+def test_literal_inventory_json_is_bounded_before_consumer_parse(
+    tmp_path, monkeypatch, consumer
+):
+    authorization = fixture(tmp_path)
+    monkeypatch.setattr(W, "LITERAL_INVENTORY_JSON_LIMIT", 1)
+
+    with pytest.raises(W.ScanError, match="literal_inventory_json_limit"):
+        if consumer == "scan":
+            run(tmp_path, authorization)
+        else:
+            from image_byte_scan import adjudicate
+
+            adjudicate.policy_receipt(authorization)
+
+
+def test_descriptor_bytes_bounds_reads_when_file_grows_after_size_check(monkeypatch):
+    reads = iter((b"ab", b"c"))
+    requested = []
+
+    def growing_pread(_fd, amount, _offset):
+        requested.append(amount)
+        return next(reads)
+
+    monkeypatch.setattr(W.os, "pread", growing_pread)
+    with pytest.raises(W.ScanError, match="literal_inventory_json_limit"):
+        W.descriptor_bytes(
+            1,
+            byte_limit=2,
+            limit_code="literal_inventory_json_limit",
+        )
+
+    assert requested == [3, 1]
 
 
 def test_literal_crosses_stream_chunk_and_is_not_duplicated(tmp_path, monkeypatch):
@@ -625,8 +917,8 @@ def test_streaming_literals_match_independent_whole_file_regex(policy, chunk):
     matcher = W.LiteralMatcher(values, policy)
     actual = []
     for start in range(0, len(data), chunk):
-        actual.extend(matcher.feed(data[start : start + chunk]))
-    actual.extend(matcher.feed(b"", final=True))
+        actual.extend(matcher.feed(data[start : start + chunk], finding_limit=10_000))
+    actual.extend(matcher.feed(b"", final=True, finding_limit=10_000))
     assert sorted(
         (r["literal_index"], r["byte_start"], r["byte_end"]) for r in actual
     ) == sorted(expected)
@@ -638,6 +930,7 @@ def test_zero_ranges_scan_complete_contiguous_run_with_literal_continuity(tmp_pa
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0})
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 0, "tar_offset": 512})
     sink.flush_zeros()
+    sink.flush_pending()
     sink.stream.close()
     rows = [
         json.loads(line)
@@ -656,6 +949,7 @@ def test_zero_ranges_do_not_concatenate_across_distinct_layers(tmp_path):
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0})
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 1, "tar_offset": 0})
     sink.flush_zeros()
+    sink.flush_pending()
     sink.stream.close()
     assert sink.findings == 0
 
@@ -679,6 +973,7 @@ def test_zero_run_preserves_cross_chunk_scan_semantics(tmp_path, monkeypatch):
     }
 
     sink.flush_zeros()
+    sink.flush_pending()
     sink.stream.close()
     rows = [
         json.loads(line)
@@ -728,6 +1023,190 @@ def test_oversized_zero_run_fails_before_detector_or_policy_allocation(
 
     assert detector.records == []
     assert called == []
+
+
+def test_zero_run_limit_is_incremental_across_ranges(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "ZERO_RECORD_LIMIT", 512)
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(tmp_path, detector, [], "exact-substring-v1")
+    sink.zeros(
+        b"\0" * 512,
+        {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0},
+    )
+
+    with pytest.raises(W.ScanError, match="zero_record_complete_scan_limit"):
+        sink.zeros(
+            b"\0" * 512,
+            {"scope": "layer", "layer_ordinal": 0, "tar_offset": 512},
+        )
+    sink.stream.close()
+
+    assert detector.records == []
+
+
+def test_confidentiality_record_limit_precedes_buffering_and_policy(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(W, "CONFIDENTIALITY_RECORD_LIMIT", 4)
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(
+        tmp_path,
+        detector,
+        [],
+        "exact-substring-v1",
+        policy_config={
+            "customer_pattern": "absent-private-marker",
+            "infra_pattern": None,
+        },
+    )
+    called = []
+    monkeypatch.setattr(
+        W.C.ConfidentialityPolicy,
+        "scan_record",
+        lambda *_args, **_kwargs: called.append(True),
+    )
+
+    with pytest.raises(W.ScanError, match="confidentiality_record_limit"):
+        sink.send(
+            io.BytesIO(b"12345"),
+            5,
+            "layer_regular_content",
+            {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0},
+        )
+    sink.stream.close()
+
+    assert detector.records == []
+    assert called == []
+
+
+def test_literal_finding_limit_precedes_population_publication(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "RECORD_FINDING_LIMIT", 2)
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(
+        tmp_path,
+        detector,
+        ["aaaaaa"],
+        "exact-or-short-ascii-token-v1",
+    )
+
+    with pytest.raises(W.ScanError, match="record_finding_limit"):
+        sink.send(
+            io.BytesIO(b"aaaaaa" * 3),
+            18,
+            "layer_regular_content",
+            {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0},
+        )
+    sink.stream.close()
+    detector.abort()
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "records.jsonl").read_text().splitlines()
+    ]
+    assert rows == []
+    assert sink.findings == 2
+
+
+def test_confidentiality_worker_memory_exhaustion_fails_in_parent() -> None:
+    policy_config = {
+        "customer_pattern": "absent-private-marker",
+        "infra_pattern": None,
+    }
+    policy = W.C.compile_policy(**policy_config)
+
+    detector = W.ConfidentialityDetector(
+        policy_config,
+        None,
+        policy.policy_sha256,
+        memory_limit=1,
+    )
+    payload = b"x" * W.CHUNK
+    try:
+        detector.begin(len(payload))
+        with pytest.raises(
+            W.ScanError,
+            match="confidentiality_worker_failed|confidentiality_worker_failure",
+        ):
+            detector.write(payload)
+            detector.end(len(payload), digest(payload), [])
+    finally:
+        detector.abort()
+
+
+def test_confidentiality_worker_can_be_owned_before_process_start() -> None:
+    policy_config = {
+        "customer_pattern": "absent-private-marker",
+        "infra_pattern": None,
+    }
+    policy = W.C.compile_policy(**policy_config)
+    detector = W.ConfidentialityDetector(
+        policy_config,
+        None,
+        policy.policy_sha256,
+        autostart=False,
+    )
+
+    assert detector.process.pid is None
+    detector.start()
+    assert detector.process.pid is not None
+    detector.finish()
+    assert detector.joined
+
+
+@pytest.mark.parametrize(
+    ("soft", "hard", "expected"),
+    [
+        (W.resource.RLIM_INFINITY, W.resource.RLIM_INFINITY, 12),
+        (4, W.resource.RLIM_INFINITY, 4),
+        (8, 8, 8),
+        (16, 20, 12),
+    ],
+)
+def test_confidentiality_worker_never_raises_inherited_address_space_limit(
+    monkeypatch, soft, hard, expected
+):
+    applied = []
+    monkeypatch.setattr(W.resource, "getrlimit", lambda _kind: (soft, hard))
+    monkeypatch.setattr(
+        W.resource,
+        "setrlimit",
+        lambda kind, limits: applied.append((kind, limits)),
+    )
+
+    assert W._apply_address_space_limit(12) == expected
+    assert applied == [(W.resource.RLIMIT_AS, (expected, expected))]
+
+
+@pytest.mark.parametrize("mode", ["soft", "hard"])
+def test_confidentiality_limit_is_applied_in_fresh_process(mode):
+    code = """
+import json
+import resource
+from image_byte_scan import core
+
+soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+lower = 4 * 1024 * 1024 * 1024
+if hard != resource.RLIM_INFINITY:
+    lower = min(lower, hard)
+next_hard = lower if MODE == "hard" else hard
+resource.setrlimit(resource.RLIMIT_AS, (lower, next_hard))
+effective = core._apply_address_space_limit(core.CONFIDENTIALITY_MEMORY_LIMIT)
+print(json.dumps([effective, *resource.getrlimit(resource.RLIMIT_AS)]))
+""".replace("MODE", repr(mode))
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.defpath, "PYTHONPATH": str(SCRIPTS)},
+    )
+    effective, soft, hard = json.loads(result.stdout)
+    assert effective == soft == hard <= W.CONFIDENTIALITY_MEMORY_LIMIT
+
+
+def test_helper_response_line_is_bounded_before_json_parse() -> None:
+    with pytest.raises(W.ScanError, match="helper_response_limit"):
+        W.bounded_json_line(io.BytesIO(b'{"value":"oversized"}\n'), limit=8)
 
 
 def test_body_and_padding_offsets_refer_to_actual_physical_ranges(tmp_path):
@@ -798,7 +1277,7 @@ def test_exact_json_bytes_are_rehashed_after_the_earlier_binding_check(
     authorization = fixture(tmp_path)
     binding = authorization["literal_inventory"]
 
-    def changed_descriptor_bytes(fd):
+    def changed_descriptor_bytes(fd, **_kwargs):
         return b'{"literals":["changed private inventory"]}'
 
     monkeypatch.setattr(W, "descriptor_bytes", changed_descriptor_bytes)
@@ -937,11 +1416,57 @@ def test_optional_gzip_header_all_truncation_points_and_crc_corruption_rejected(
         W.gzip_header(io.BytesIO(corrupted))
 
 
+@pytest.mark.parametrize("field", ["name", "comment"])
+def test_optional_gzip_text_fields_are_bounded_before_terminator(monkeypatch, field):
+    monkeypatch.setattr(W, "GZIP_HEADER_LIMIT", 16)
+    kwargs = {"flags": 8, "name": b"A" * 7}
+    if field == "comment":
+        kwargs = {"flags": 16, "comment": b"A" * 7}
+    compressed, _ = optional_gzip(b"body", **kwargs)
+
+    with pytest.raises(W.ScanError, match="gzip_header_limit"):
+        W.gzip_header(io.BytesIO(compressed))
+
+
 @pytest.mark.parametrize("extra", [b"A", b"AB\x05\x00x", b"AB\0\0x"])
 def test_malformed_extra_subfield_lengths_rejected(extra):
     compressed, _ = optional_gzip(b"body", flags=4, extra=extra)
     with pytest.raises(W.ScanError, match="malformed_gzip_extra_subfield"):
         W.gzip_header(io.BytesIO(compressed))
+
+
+def test_inner_tar_member_limit_precedes_seen_path_growth(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "TAR_ENTRY_LIMIT", 2)
+    entries = [file(f"opt/{index}") for index in range(3)]
+
+    report, _ = run(tmp_path, fixture(tmp_path, entries=entries))
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_entry_limit"
+
+
+def test_layer_regular_file_limit_precedes_body_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "TAR_REGULAR_FILE_LIMIT", 4)
+
+    report, _ = run(
+        tmp_path,
+        fixture(tmp_path, entries=[file("opt/body", b"12345")]),
+    )
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_regular_file_limit"
+
+
+def test_layer_path_limit_precedes_seen_path_growth(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "TAR_PATH_LIMIT", 4)
+
+    report, _ = run(
+        tmp_path,
+        fixture(tmp_path, entries=[file("12345")]),
+    )
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_path_encoding"
 
 
 @pytest.mark.parametrize(
@@ -996,6 +1521,30 @@ def test_pending_pax_chain_is_bounded_before_next_body_read(tmp_path, monkeypatc
     assert second_size not in requested
 
 
+def test_global_pax_chain_is_bounded_before_next_body_read(tmp_path, monkeypatch):
+    first, first_size = raw_pax_entry(
+        [("SCHILY.xattr.first", b"a")], global_header=True
+    )
+    second, second_size = raw_pax_entry(
+        [("SCHILY.xattr.second", b"b" * 100)], global_header=True
+    )
+    raw = first + second + raw_tar_entry("opt/body", b"neutral") + b"\0" * 1024
+    monkeypatch.setattr(W, "TAR_EXTENSION_CHAIN_LIMIT", first_size)
+    requested = []
+    original = W.read_exact
+
+    def record_request(reader, count, *, eof=False):
+        requested.append(count)
+        return original(reader, count, eof=eof)
+
+    monkeypatch.setattr(W, "read_exact", record_request)
+    report, _ = run(tmp_path, fixture(tmp_path, entries=[], raw=raw, codec="raw"))
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_extension_chain_too_large"
+    assert second_size not in requested
+
+
 def test_pending_pax_key_population_is_bounded(tmp_path, monkeypatch):
     extension, _ = raw_pax_entry(
         [
@@ -1006,6 +1555,22 @@ def test_pending_pax_key_population_is_bounded(tmp_path, monkeypatch):
     )
     raw = extension + raw_tar_entry("opt/body", b"neutral") + b"\0" * 1024
     monkeypatch.setattr(W, "TAR_PAX_KEY_LIMIT", 2)
+
+    report, _ = run(tmp_path, fixture(tmp_path, entries=[], raw=raw, codec="raw"))
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_pax_key_limit"
+
+
+def test_pax_key_limit_wins_before_over_budget_value_decode(tmp_path, monkeypatch):
+    extension, _ = raw_pax_entry(
+        [
+            ("SCHILY.xattr.first", b"a"),
+            ("path", b"\xff"),
+        ]
+    )
+    raw = extension + raw_tar_entry("opt/body", b"neutral") + b"\0" * 1024
+    monkeypatch.setattr(W, "TAR_PAX_KEY_LIMIT", 1)
 
     report, _ = run(tmp_path, fixture(tmp_path, entries=[], raw=raw, codec="raw"))
 

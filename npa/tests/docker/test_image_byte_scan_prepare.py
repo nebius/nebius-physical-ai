@@ -162,6 +162,36 @@ def test_prepare_exact_image_and_policy_inputs_are_bound(tmp_path, monkeypatch):
         assert all(path.stat().st_mode & 0o077 == 0 for path in directory.iterdir())
 
 
+def test_prepare_bounds_literal_inventory_before_json_parse(tmp_path, monkeypatch):
+    from test_image_byte_scan import fixture
+
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        authorization = fixture(tmp_path)
+        monkeypatch.setattr(
+            P,
+            "tools_bindings",
+            lambda _: (authorization["helper"], authorization["config"]),
+        )
+        monkeypatch.setattr(
+            P, "native_engine", lambda _: {"kind": "synthetic-unexecuted-binding"}
+        )
+        monkeypatch.setattr(W, "LITERAL_INVENTORY_JSON_LIMIT", 1)
+        directory = tmp_path / "prepared"
+        directory.mkdir(mode=0o700)
+        args = SimpleNamespace(
+            tools_receipt=authorization["tools_receipt"]["path"],
+            native_receipt=None,
+            archive=authorization["archive"]["path"],
+            verification_report=authorization["verification_report"]["path"],
+            expected_image_id=authorization["expected_image_id"],
+            policy_mode="exact-literals",
+            literal_inventory=authorization["literal_inventory"]["path"],
+            literal_matching_policy="exact-substring-v1",
+        )
+        with pytest.raises(W.ScanError, match="literal_inventory_json_limit"):
+            P.authorize(args, directory)
+
+
 def test_no_secret_environment_is_inherited_by_detector_fixture(tmp_path, monkeypatch):
     from test_image_byte_scan import fixture
 
@@ -204,6 +234,21 @@ def test_explicit_native_command_fails_when_tools_are_missing(tmp_path, capsys):
     assert captured.out == "native image byte checks failed\n" and captured.err == ""
     result = json.loads((output / "native-checks-failure.json").read_bytes())
     assert result["passed"] is False and result["synthetic_only"] is True
+
+
+def test_native_cancellation_wrapper_is_spawn_safe(tmp_path):
+    from image_byte_scan import real_helper_checks as N
+
+    script = N.cancellation_wrapper(CHECKOUT, tmp_path / "marker.json")
+
+    assert script.count("W.main()") == 1
+    assert 'if __name__ == "__main__":\n raise SystemExit(W.main())' in script
+
+
+def test_native_duplex_fixture_stays_below_record_finding_limit():
+    from image_byte_scan import real_helper_checks as N
+
+    assert N.DUPLEX_LOUD_SECRETS == W.RECORD_FINDING_LIMIT - 1
 
 
 def test_cancellation_scope_restores_handler_and_marks_controlled_failure():

@@ -154,13 +154,18 @@ def authorize(args, directory):
     if args.literal_inventory is not None:
         literal_binding = binding(args.literal_inventory)
         literal_binding["matching_policy"] = args.literal_matching_policy
-        inventory = W.bound_json(literal_binding)
+        inventory = W.bound_json(
+            literal_binding,
+            byte_limit=W.LITERAL_INVENTORY_JSON_LIMIT,
+            limit_code="literal_inventory_json_limit",
+        )
         values = inventory.get("literals")
         W.require(
             isinstance(values, list)
             and all(type(value) is str and value for value in values),
             "literal_inventory_schema",
         )
+        W.validate_literal_inventory(values)
         W.require(
             args.policy_mode != "exact-literals" or bool(values),
             "nonempty_confidentiality_policy_required",
