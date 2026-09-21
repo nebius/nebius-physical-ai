@@ -37,19 +37,41 @@ COLUMN_OCCUPANCY = 0.005
 EDGE_BAND = 8
 
 
-def _pane_bounds(frame: np.ndarray) -> int:
+#: A divider's colour step has to clear this absolute floor and this multiple of the
+#: median step elsewhere in the row. Measured steps are 19 to 27 against a median near 1.
+DIVIDER_MIN_STEP = 8.0
+DIVIDER_DOMINANCE = 6.0
+
+
+def _pane_bounds(frame: np.ndarray) -> int | None:
     """Find the vertical divider between the scene pane and the tab column.
 
-    The divider is dark down the *whole* frame, which is what separates it from a dark
-    edge of the geometry. Scoring columns by their darkest pixel picked a geometry edge
-    instead and put the divider 62 pixels early on a 1024-wide capture, so this scores
-    them by the share of rows that are dark and takes the most consistent column.
+    This has been wrong twice, both times because it looked for something dark. Scoring
+    columns by their darkest pixel found a geometry edge and put the divider 62 pixels
+    early; scoring by the share of dark rows then worked on a green background and failed
+    on a purple one, putting it 54 pixels early and reporting a comfortably framed scene
+    as clipped against its right edge.
+
+    The signal that does not depend on the palette is that the two panes render two
+    independent scenes, so the background itself is discontinuous at the divider. Summing
+    the per-column colour step across a band of pure background puts the divider an order
+    of magnitude above the noise on every capture tried: about 20 to 27 against about 1.
+
+    Returns None when no candidate stands out, because a guessed divider is what produced
+    both wrong verdicts. A caller with no divider should decline to judge rather than
+    measure panes it has not actually located.
     """
 
     width = frame.shape[1]
-    dark = (frame.sum(axis=2) < 200).mean(axis=0)
-    lo, hi = int(width * 0.55), int(width * 0.75)
-    return lo + int(np.argmax(dark[lo:hi]))
+    band = frame[62:150].mean(axis=0)
+    step = np.abs(np.diff(band, axis=0)).sum(axis=1)
+    lo, hi = int(width * 0.15), width - int(width * 0.08)
+    window = step[lo:hi]
+    best = int(np.argmax(window))
+    rest = np.delete(window, best)
+    if window[best] < max(DIVIDER_MIN_STEP, DIVIDER_DOMINANCE * float(np.median(rest))):
+        return None
+    return lo + best
 
 
 def audit_pane(pane: np.ndarray) -> dict:
@@ -107,12 +129,24 @@ def audit(path: Path) -> dict:
     frame = np.asarray(Image.open(path).convert("RGB")).astype(int)
     height, width, _ = frame.shape
     split = _pane_bounds(frame)
+    # Before `_pane_body`, not after: that call does `split - 40`, so an abstention
+    # reached it as None and raised TypeError instead of the refusal declared below.
+    # A flat frame with no divider is exactly the input the abstention exists for.
+    if split is None:
+        return {
+            "frame": path.name,
+            "size": [width, height],
+            "pane_detection": "failed",
+            "why": "no column stood out as the divider between the two view panes; a guessed "
+            "divider is what produced two earlier wrong clipping verdicts, so none is "
+            "reported for this frame",
+        }
     body = _pane_body(frame, split)
     # Inset off the pane borders proportionally, for the same reason the row trim is
     # detected rather than fixed: a 60-pixel left inset suits a 2x screenshot and on a
     # 1x window grab it lands exactly where the geometry begins, which then reads as the
     # geometry touching the edge.
-    inset = max(int(round(width * 0.008)), 2)
+    inset = max(round(width * 0.008), 2)
     # Refuse to answer rather than answer wrongly. The viewer's chrome cannot take most of
     # the frame, so a body this short means the green-background detection found a stripe
     # instead of the pane -- which is what it does on the earlier comparison pair, where it

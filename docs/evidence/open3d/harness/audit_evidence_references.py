@@ -67,13 +67,30 @@ def digest(path: Path) -> str:
     return sha.hexdigest()
 
 
-def resolve(value: str) -> Path | None:
-    """Find the file a record names, whether it gave a path here or a bare filename."""
+def resolve(value: str, run_dir: str | None) -> Path | None:
+    """Find the file a record names, whether it gave a path here or a bare filename.
+
+    A record that commits its run's artifacts says where with `artifacts_committed_under`, and
+    only then do its within-run paths like `surface/result.json` resolve there. Matching such a
+    path against the whole tree looks helpful and is not: two runs have a `prepared/manifest.json`
+    with the same relative path and different bytes, so a free-floating suffix match bound one
+    run's recorded hashes to another run's files and reported five findings against records that
+    were correct.
+    """
 
     candidate = ROOT / value
     if candidate.is_file():
         return candidate
-    matches = [p for p in ROOT.rglob(value) if p.is_file()] if "/" not in value else []
+    if run_dir:
+        within = ROOT / run_dir / value
+        if within.is_file():
+            return within
+    if "/" in value or Path(value).name in RUN_ARTIFACT_NAMES:
+        # A bare `status.json` belongs to whichever run its record describes. Searching the tree
+        # for that name found a *different* run's file and called three correct records wrong.
+        # Run-artifact names resolve only through a declared run directory.
+        return None
+    matches = [p for p in ROOT.rglob(value) if p.is_file()]
     return matches[0] if len(matches) == 1 else None
 
 
@@ -133,14 +150,18 @@ def main() -> int:
             if not (ROOT / reference).exists():
                 findings.append(f"{record.name}: cites missing {reference}")
 
-        bound, unbound = bound_pairs(json.loads(text))
+        data = json.loads(text)
+        run_dir = data.get("artifacts_committed_under") if isinstance(data, dict) else None
+        bound, unbound = bound_pairs(data)
         unbound_total += [f"{record.name}:{w}" for w in unbound]
         for where, named, claimed in bound:
-            if Path(named).name in RUN_ARTIFACT_NAMES:
-                # A hash of a run's own artifact, which is not committed here to compare against.
+            # Resolve before exempting: a run's artifacts are often not committed here, but when
+            # a run directory *is* committed its hashes are checkable like anything else, and the
+            # exemption used to skip them before anything looked.
+            target = resolve(named, run_dir)
+            if target is None and Path(named).name in RUN_ARTIFACT_NAMES:
                 unresolvable.append(f"{record.name}:{where} -> {named} (run artifact)")
                 continue
-            target = resolve(named)
             if target is None:
                 unresolvable.append(
                     f"{record.name}:{where} -> {named} (not found here)"

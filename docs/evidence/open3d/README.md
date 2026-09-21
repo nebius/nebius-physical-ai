@@ -196,3 +196,88 @@ in a solid object by tracking the true surface, so there is almost nothing inven
 false-negative direction was eventually measured by a different construction, a polar-cap sweep in
 the review lane's harness, and the curve it produced is pinned as a regression test in
 `npa/tests/workbench/test_open3d.py`.
+
+## The run that links this source to the runtime
+
+`capability-record-workflow-replay.json`, with `replay-b18d-public-report.json` and the capture
+at `viewer-ui/ordinary-native-replay.png`.
+
+None of the run's own artifacts are committed. An earlier version of this section said they
+were, first as raw copies and then as sanitized ones, and both were published before the
+problem with them was found. A run's artifacts name their own object-store locations, its run,
+and the execution profile it was scheduled onto, and masking the bucket in them left every
+object key and the run identifier in place. So `replay-b18d-public-report.json` is derived from
+them rather than copied: `harness/derive_public_run_report.py` carries a field through only if
+its allowlist names that field, stops on a field it has never classified, and puts nothing in
+place of what it drops. 543 measured values, parameters and hashes came through exactly as the
+run wrote them; 63 fields did not, in five categories the report names.
+
+Everything else here was produced either by a local container or by a run that predates the
+semantic corrections. This is the six-stage `npa.workflow` going through the standard SkyPilot
+runtime on an image built from clean committed source, and the point of it is one field: the
+`surface/result.json` it shipped reads `far from any observation`, states its measured 73.0%
+rather than "Most", declines to explain why the area lies far out, and carries the cube
+counterexample as the reason. That is the retraction arriving in an artifact a real run produced,
+rather than in a test.
+
+The image binding is the byte kind, not the label kind: `runner.py` and the functional smoke
+inside the built image hash identically to those files at the commit. An earlier image in this
+program carried a build-arg revision label that named a commit whose source it did not contain.
+
+**That image did not pass its qualification.** Independent scanning of the image these stages
+ran on returned four fixable CRITICAL OS-package findings -- `libglib2.0-0t64` below
+`2.84.4-3~deb13u4` for CVE-2026-58016, and `perl-base` below `5.40.1-6+deb13u1` for
+CVE-2026-13221, CVE-2026-42496 and CVE-2026-8376 -- together with a licence-notice gap, since
+the installed `mcap` ships the MIT classifier and no grant text. The complete-byte scan was
+still running when that receipt was written. Correcting package pins in this repository does
+not retroactively qualify those bytes: a new image has to be built and scanned, and nothing
+recorded here transfers to it. What this run shows is that the six stages execute and that the
+corrected semantics reach a shipped artifact, not that the image is fit to publish.
+
+Two things in that record are worth reading even though they are not the capability:
+
+The first three provisioning attempts failed with `ErrImagePull: denied`, because a previous
+run's housekeeping had removed the pull secret -- correct hygiene that makes the next run fail
+looking like a scheduling problem, since the pod reports `Pending` until you read the container
+status in the provision log.
+
+And the pane audit was wrong for a third time, calling this capture's scene pane clipped when it
+was not, because it had put the divider 53 pixels early. Its previous fix keyed on darkness, which
+suited the green background of earlier captures and failed on this run's purple one. It now finds
+the divider by the one signal the palette cannot move -- the two panes render independent scenes,
+so the background itself steps there -- and returns no verdict at all when nothing stands out.
+Every clipping verdict it produced before this fix should be read as unproven.
+
+Then a fourth time, in the part that was supposed to be the fix. `audit()` computed the pane
+body from the divider before checking whether it had found one, so the frames it declared it
+would decline raised `TypeError` instead of declining. Nothing here is flat, so nothing had
+ever reached it. The refusal now runs before that use, and `pane-abstention-control.json`
+records both directions: a flat frame reaches the abstention and still reproduces the old
+`TypeError` under the old call order, and this capture still measures divider 681 with neither
+pane clipped.
+
+## A defect this evidence set found by trying to use the thing
+
+Submitting one run id more than once leaves its project unable to accept any new workflow
+submission, and the remedy the runtime advises launches another job under the same name before
+it fails, so each attempt deepens the ambiguity it is complaining about. Two guards that are
+each individually right point at each other, and nothing resolves an ambiguous name without
+adding to it. Re-submitting also does not skip completed stages: it re-executes all of them and
+overwrites their outputs.
+
+Two corrections to how that was first written down, both from independent evidence rather than
+from re-reading it. The `--resume-run` attempt returned `failed`/indeterminate with an empty
+job id, which reads as though nothing launched -- but the retained stderr says the job was
+submitted with ID 3, and the controller holds its timestamp and stage execution, so a third job
+really did start. And cleanup is not impossible: the first write-up concluded that a controller
+created under an isolated state root was unreachable because `cancel` has no isolated-config
+flag, and the documented environment-variable selection reaches it. Cancelling by logical run
+with the explicit job id drained only the active job, and the supported cleanup command then
+removed the owned controller, with its absence independently confirmed. One defect does remain
+there: cleanup reported degraded local metadata, because the ownership record it went to remove
+named a different cluster.
+
+`ATTRIBUTION.md` covers the data all of this is computed from. The published capture renders
+Open3D's `DemoICPPointClouds`, which is Redwood's augmented ICL-NUIM `living-room1` -- a
+synthetic scene, not a sensor capture -- under CC BY 3.0. That is a grant on the data and is
+not Open3D's MIT code licence.
