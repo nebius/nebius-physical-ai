@@ -182,7 +182,9 @@ successful `npa skypilot verify --cluster <exact-context>`:
   fields) is probed independently. NPA uses the first `KUBECONFIG` file because
   that is the file pinned SkyPilot 0.12 exposes in its isolated home.
   Both the creation response and the observed pod must preserve the requested
-  ServiceAccount, pull Secret references, and placement. When the pod requests
+  ServiceAccount, pull Secret references, placement, and the pull container's
+  `Always` image pull policy. Cached-image reuse cannot establish registry
+  credential access. When the pod requests
   no pull Secrets, preflight first reads that exact ServiceAccount in the same
   context and namespace and binds its inherited references; an unavailable or
   changed default cannot produce a verified result. Requested tolerations are

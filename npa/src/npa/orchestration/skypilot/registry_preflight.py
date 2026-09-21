@@ -1237,7 +1237,7 @@ def _target_pull_status_detail(status: str) -> str:
         "digest_unverified": "target runtime did not report an immutable image digest",
         "placement_invalid": "target pull placement could not be reproduced exactly",
         "placement_mismatch": "admitted pull probe placement differs from the request",
-        "authority_mismatch": "admitted pull probe credentials differ from the request",
+        "authority_mismatch": "admitted pull probe authority differs from the request",
         "service_account_unverified": (
             "the exact ServiceAccount's default pull Secrets could not be verified"
         ),
@@ -1795,6 +1795,19 @@ def _pull_probe_admission_status(
         not isinstance(observed, Mapping)
         or observed.get("serviceAccountName") != requested["serviceAccountName"]
         or observed.get("imagePullSecrets", []) != pull_secrets
+    ):
+        return "authority_mismatch"
+    containers = observed.get("containers")
+    if not isinstance(containers, list):
+        return "authority_mismatch"
+    pull_containers = [
+        item
+        for item in containers
+        if isinstance(item, Mapping) and item.get("name") == "pull"
+    ]
+    if (
+        len(pull_containers) != 1
+        or pull_containers[0].get("imagePullPolicy") != "Always"
     ):
         return "authority_mismatch"
     for field in _PULL_PLACEMENT_FIELDS.intersection(requested):

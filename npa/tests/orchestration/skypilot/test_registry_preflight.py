@@ -1613,7 +1613,9 @@ def _target_probe_runner(
             },
         },
         "spec": {
-            "containers": [{"name": "pull", "image": IMAGE}],
+            "containers": [
+                {"name": "pull", "image": IMAGE, "imagePullPolicy": "Always"}
+            ],
             "serviceAccountName": service_account_name,
             "imagePullSecrets": [{"name": name} for name in secret_names],
             "nodeSelector": {"kubernetes.io/os": "linux"},
@@ -1760,6 +1762,8 @@ def test_exact_target_pull_probe_reproduces_pod_placement() -> None:
         ("imagePullSecrets", [{"name": "different-secret"}], "authority_mismatch"),
         ("nodeSelector", {"kubernetes.io/os": "other"}, "placement_mismatch"),
         ("tolerations", [], "placement_mismatch"),
+        ("imagePullPolicy", "IfNotPresent", "authority_mismatch"),
+        ("imagePullPolicy", "Never", "authority_mismatch"),
     ],
 )
 @pytest.mark.parametrize("change_on_create", [True, False])
@@ -1772,7 +1776,10 @@ def test_admitted_probe_changes_reject_proof_but_preserve_owned_cleanup(
         result = run(command, **kwargs)
         if result.stdout.strip() and (change_on_create or "get" in command):
             payload = json.loads(result.stdout)
-            payload["spec"][field] = changed_value
+            if field == "imagePullPolicy":
+                payload["spec"]["containers"][0][field] = changed_value
+            else:
+                payload["spec"][field] = changed_value
             result.stdout = json.dumps(payload)
         return result
 
