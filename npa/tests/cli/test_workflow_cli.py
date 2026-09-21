@@ -339,6 +339,26 @@ def test_raw_sky_recovery_argv_replays_same_journal_and_launch_options(
     assert replay.kwargs["controller_backend"] == "kubernetes"
 
 
+def test_secret_shaped_var_fails_cleanly_before_launch(raw_recovery_case) -> None:
+    result = runner.invoke(
+        app,
+        [
+            *_raw_recovery_submit_args(
+                raw_recovery_case.yaml_path,
+                raw_recovery_case.isolated_dir,
+                raw_recovery_case.config_path,
+            ),
+            "--var",
+            "api_key=abc123",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "durable recovery command contains a secret-shaped option" in result.output
+    assert "--secret-env" in result.output
+    raw_recovery_case.submit.assert_not_called()
+    assert not list(raw_recovery_case.operation_root.glob("*/journal.json"))
+
+
 @pytest.mark.parametrize(
     ("runtime", "runtime_flag", "opposite_flag"),
     [(True, "--runtime", "--no-runtime"), (False, "--no-runtime", "--runtime")],
@@ -376,11 +396,11 @@ def test_recovery_serializer_accounts_for_every_submit_argument() -> None:
         "registry_password",  # Secrets must never enter durable recovery argv.
         "workflow_s3_prefix",  # Replaced by the exact resolved workflow_s3_uri.
     }
-    accounted_for = (
-        set(workflow._WORKFLOW_RECOVERY_ARGUMENT_NAMES)
-        | identity_arguments
-        | intentionally_omitted
-    )
+    serialized_arguments = set(workflow._WORKFLOW_RECOVERY_ARGUMENT_NAMES)
+    assert serialized_arguments.isdisjoint(identity_arguments)
+    assert serialized_arguments.isdisjoint(intentionally_omitted)
+    assert identity_arguments.isdisjoint(intentionally_omitted)
+    accounted_for = serialized_arguments | identity_arguments | intentionally_omitted
     assert parameters == accounted_for
 
     submit_command = (
@@ -389,30 +409,28 @@ def test_recovery_serializer_accounts_for_every_submit_argument() -> None:
         .commands["workflow"]
         .commands["submit"]
     )
-    cli_flags = {
-        flag
+    cli_flags_by_name = {
+        parameter.name: set(parameter.opts + parameter.secondary_opts)
         for parameter in submit_command.params
-        for flag in parameter.opts + parameter.secondary_opts
     }
-    serialized_flags = {
-        flag
-        for option_group in (
-            workflow._WORKFLOW_RECOVERY_VALUE_OPTIONS,
-            workflow._WORKFLOW_RECOVERY_REPEATABLE_OPTIONS,
-            workflow._WORKFLOW_RECOVERY_BOOLEAN_OPTIONS,
-            workflow._WORKFLOW_RECOVERY_ENABLED_FLAGS,
-        )
-        for _name, *flags in option_group
-        for flag in flags
-    } | {
-        "--project",
-        "--resume-run",
-        "--run-id",
-        "--resume",
-        "--runtime",
-        "--no-runtime",
+    option_groups = (
+        workflow._WORKFLOW_RECOVERY_VALUE_OPTIONS,
+        workflow._WORKFLOW_RECOVERY_REPEATABLE_OPTIONS,
+        workflow._WORKFLOW_RECOVERY_BOOLEAN_OPTIONS,
+        workflow._WORKFLOW_RECOVERY_ENABLED_FLAGS,
+    )
+    for option_group in option_groups:
+        for name, *flags in option_group:
+            assert set(flags) <= cli_flags_by_name[name]
+    special_flags = {
+        "project": {"--project"},
+        "resume_run": {"--resume-run"},
+        "run_id": {"--run-id"},
+        "resume": {"--resume"},
+        "runtime": {"--runtime", "--no-runtime"},
     }
-    assert serialized_flags <= cli_flags
+    for name, flags in special_flags.items():
+        assert flags <= cli_flags_by_name[name]
 
 
 def test_submit_missing_secret_fails_before_remote_setup(

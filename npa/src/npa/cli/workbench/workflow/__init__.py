@@ -461,7 +461,11 @@ def _workflow_submit_recovery_argv(
     is_npa_spec: bool,
     arguments: Mapping[str, object],
 ) -> list[str]:
-    """Serialize the secret-free effective submit contract for exact recovery."""
+    """Serialize the secret-free effective submit contract for exact recovery.
+
+    Values are captured after target/config resolution so replay pins the same
+    effective launch. Credential values remain outside the durable command.
+    """
 
     argv = [
         "npa",
@@ -984,6 +988,7 @@ def submit_cmd(
         write_manifest,
     )
 
+    recovery_yaml_path = yaml_path.resolve()
     requested_secret_env = tuple(secret_env)
     if submit_timeout <= 0:
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
@@ -2487,6 +2492,22 @@ def submit_cmd(
         recovery_arguments["secret_env"] = tuple(dict.fromkeys(requested_secret_env))
         if workflow_state is not None:
             recovery_arguments["workflow_s3_uri"] = workflow_state.uri
+        from npa.provisioning_journal import operation_contains_secret
+
+        alias = str(project).strip() or "default"
+        recovery_argv = _workflow_submit_recovery_argv(
+            recovery_yaml_path,
+            alias=alias,
+            run_id=resolved_run_id,
+            is_npa_spec=is_npa_spec,
+            arguments=recovery_arguments,
+        )
+        if operation_contains_secret(recovery_argv):
+            _fail(
+                "The durable recovery command contains a secret-shaped option "
+                "value. Pass credentials with --secret-env or configured NPA "
+                "credentials; do not pass secrets through --var or URLs."
+            )
 
         def _record_transaction(payload: dict[str, object]) -> None:
             if prepared_npa is None:
@@ -2503,7 +2524,7 @@ def submit_cmd(
             )
 
         def _launch() -> WorkflowResult:
-            from npa.clients.config import default_project_name, resolve_environment
+            from npa.clients.config import resolve_environment
             from npa.provisioning_journal import (
                 ProvisioningOperation,
                 current_operation,
@@ -2531,7 +2552,6 @@ def submit_cmd(
 
             if current_operation() is not None:
                 return submit()
-            alias = str(project or default_project_name()).strip() or "default"
             environment = resolve_environment(alias)
             operation = ProvisioningOperation.prepare(
                 command="npa workbench workflow submit",
@@ -2543,13 +2563,7 @@ def submit_cmd(
                 requested_name=resolved_run_id,
                 ownership_source="workflow-submit-cli",
                 resume_command="",
-                resume_argv=_workflow_submit_recovery_argv(
-                    yaml_path,
-                    alias=alias,
-                    run_id=resolved_run_id,
-                    is_npa_spec=is_npa_spec,
-                    arguments=recovery_arguments,
-                ),
+                resume_argv=recovery_argv,
                 destroy_argv=[
                     "npa",
                     "workbench",
