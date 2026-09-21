@@ -343,3 +343,31 @@ def test_unverified_tunnel_does_not_restart_after_login(monkeypatch, tmp_path):
     local_service.remove_service("com.nebius.codex-chat.tunnel")
     assert not path.exists()
     assert run.call_args.args[0][1] == "bootout"
+
+
+def test_desktop_gateway_origin_excludes_viewer_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(gateway_remote.Path, "home", lambda: tmp_path)
+    root = tmp_path / ".local/share/nebius-desktop"
+    root.mkdir(parents=True)
+    password = root / "public-password"
+    password.write_text("unit-test-password")
+    (root / "public-access.json").write_text(
+        json.dumps(
+            {
+                "url": "https://example.test:8443/desktop.html",
+                "username": "developer",
+                "password_file": str(password),
+            }
+        )
+    )
+    info = gateway_remote._inspect()
+    assert info["origin"] == "https://example.test:8443"
+    assert info["kind"] == "desktop"
+
+
+@pytest.mark.parametrize(
+    "url", ["http://example.test/", "https://user:password@example.test/"]
+)
+def test_managed_gateway_rejects_plaintext_or_embedded_login(url):
+    with pytest.raises(ValueError, match="HTTPS"):
+        gateway_remote._origin(url)

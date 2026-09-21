@@ -7,11 +7,24 @@ import subprocess
 import tempfile
 import time
 from urllib.error import URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 
 def _read_root(path):
     return subprocess.check_output(["sudo", "-n", "cat", path], text=True)
+
+
+def _origin(url):
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+    ):
+        raise ValueError("The managed gateway must use authenticated public HTTPS.")
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _inspect():
@@ -20,7 +33,7 @@ def _inspect():
         config = json.loads(desktop.read_text())
         return {
             "kind": "desktop",
-            "origin": config["url"].rstrip("/"),
+            "origin": _origin(config["url"]),
             "username": config["username"],
             "password": Path(config["password_file"]).read_text().strip(),
         }
@@ -29,7 +42,7 @@ def _inspect():
         config = json.loads(_read_root(str(mobile)))
         return {
             "kind": "mobile",
-            "origin": config["origin"],
+            "origin": _origin(config["origin"]),
             "username": config["username"],
             "salt": config["passwordSalt"],
             "password_hash": config["passwordHash"],
