@@ -87,6 +87,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         "LeRobotDataset",
         (
             "npa/demo/generate_observation.py",
+            "npa/src/npa/workflows/behavior_challenge/comet_training_data.py",
             "npa/src/npa/workflows/lerobot_dataset.py",
         ),
     ),

@@ -14,6 +14,8 @@ import pytest
 
 from npa.orchestration.skypilot.job_blockers import (
     CLUSTER_LABEL,
+    MANAGED_JOB_ID_ANNOTATION,
+    MANAGED_JOB_NAME_ANNOTATION,
     classify_pending_reason,
     inspect_job_blockers,
 )
@@ -239,13 +241,25 @@ def test_render_lists_each_blocked_pod() -> None:
 # --- lookup by job id ---------------------------------------------------------
 #
 # `sky jobs queue` reports cluster_name_on_cloud as null for a job that never
-# provisioned -- which is exactly the job worth diagnosing. SkyPilot labels its
-# pods `<task>-<job_id>-<user_hash>`, so the job id is enough to find them.
+# provisioned -- which is exactly the job worth diagnosing. Legacy callers use
+# the job id embedded in the label. Isolated workflow callers use SkyPilot's
+# exact managed-job annotations plus the controller owner.
 
 
-def _labelled_pod(label: str, reason: str) -> dict:
+def _labelled_pod(
+    label: str,
+    reason: str,
+    *,
+    managed_job_id: str = "",
+    managed_job_name: str = "",
+) -> dict:
     pod = _waiting_pod(f"{label}-head", reason)
     pod["metadata"]["labels"] = {CLUSTER_LABEL: label}
+    if managed_job_id or managed_job_name:
+        pod["metadata"]["annotations"] = {
+            MANAGED_JOB_ID_ANNOTATION: managed_job_id,
+            MANAGED_JOB_NAME_ANNOTATION: managed_job_name,
+        }
     return pod
 
 
@@ -262,6 +276,169 @@ def test_pods_are_found_by_job_id_when_the_queue_reports_no_cluster() -> None:
     assert [blocker.pod for blocker in report.blockers] == ["train-333-64ce57a0-head"]
     # A bare label selector, filtered client-side by the job id component.
     assert f"{CLUSTER_LABEL}" in _pod_call(runner)
+
+
+def test_workflow_task_and_isolated_controller_find_cpu_stage_pod() -> None:
+    task = "focused-tokenizer-discovery-cpu-r1-01-discover"
+    owner = "npa-fixture001"
+    runner = _runner(
+        _pods(
+            _labelled_pod(
+                f"focused-tokenizer-discov-27-{owner}",
+                "ImagePullBackOff",
+                managed_job_id="1",
+                managed_job_name=task,
+            )
+        )
+    )
+
+    report = inspect_job_blockers(
+        job_id="1",
+        expected_task_names=[task],
+        controller_user_id=owner,
+        runner=runner,
+    )
+
+    assert report.error == ""
+    assert [row.pod for row in report.blockers] == [
+        f"focused-tokenizer-discov-27-{owner}-head"
+    ]
+
+
+def test_same_owner_and_truncated_prefix_need_exact_task_annotation() -> None:
+    task = "focused-tokenizer-discovery-cpu-r1-01-discover"
+    owner = "npa-fixture001"
+    runner = _runner(
+        _pods(
+            _labelled_pod(
+                f"focused-tokenizer-discov-27-{owner}",
+                "ImagePullBackOff",
+                managed_job_id="1",
+                managed_job_name="focused-tokenizer-discovery-other-stage",
+            )
+        )
+    )
+
+    report = inspect_job_blockers(
+        job_id="1",
+        expected_task_names=[task],
+        controller_user_id=owner,
+        runner=runner,
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+
+
+def test_exact_task_annotation_from_another_controller_is_rejected() -> None:
+    task = "focused-tokenizer-discovery-cpu-r1-01-discover"
+    runner = _runner(
+        _pods(
+            _labelled_pod(
+                "focused-tokenizer-discov-27-npa-fixture002",
+                "ImagePullBackOff",
+                managed_job_id="1",
+                managed_job_name=task,
+            )
+        )
+    )
+
+    report = inspect_job_blockers(
+        job_id="1",
+        expected_task_names=[task],
+        controller_user_id="npa-fixture001",
+        runner=runner,
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_PODS_NOT_FOUND"
+
+
+def test_isolated_controller_without_queue_task_identity_fails_closed() -> None:
+    task = "focused-tokenizer-discovery-cpu-r1-01-discover"
+    owner = "npa-fixture001"
+    runner = _runner(
+        _pods(
+            _labelled_pod(
+                f"focused-tokenizer-discov-27-{owner}",
+                "ImagePullBackOff",
+                managed_job_id="1",
+                managed_job_name=task,
+            )
+        )
+    )
+
+    report = inspect_job_blockers(
+        job_id="1",
+        controller_user_id=owner,
+        runner=runner,
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_POD_IDENTITY_INCOMPLETE"
+
+
+def test_ambiguous_owned_workflow_pods_fail_closed() -> None:
+    task = "focused-tokenizer-discovery-cpu-r1-01-discover"
+    owner = "npa-fixture001"
+    runner = _runner(
+        _pods(
+            _labelled_pod(
+                f"focused-tokenizer-discov-27-{owner}",
+                "ErrImagePull",
+                managed_job_id="1",
+                managed_job_name=task,
+            ),
+            _labelled_pod(
+                f"focused-tokenizer-discov-28-{owner}",
+                "ErrImagePull",
+                managed_job_id="1",
+                managed_job_name=task,
+            ),
+        )
+    )
+
+    report = inspect_job_blockers(
+        job_id="1",
+        expected_task_names=[task],
+        controller_user_id=owner,
+        runner=runner,
+    )
+
+    assert report.blockers == []
+    assert report.error_code == "KUBERNETES_POD_IDENTITY_AMBIGUOUS"
+
+
+def test_multiple_pods_in_one_exact_owned_cluster_are_not_ambiguous() -> None:
+    task = "focused-tokenizer-discovery-cpu-r1-01-discover"
+    owner = "npa-fixture001"
+    cluster = f"focused-tokenizer-discov-27-{owner}"
+    head = _labelled_pod(
+        cluster,
+        "ErrImagePull",
+        managed_job_id="1",
+        managed_job_name=task,
+    )
+    worker = _labelled_pod(
+        cluster,
+        "ImagePullBackOff",
+        managed_job_id="1",
+        managed_job_name=task,
+    )
+    worker["metadata"]["name"] = f"{cluster}-worker"
+
+    report = inspect_job_blockers(
+        job_id="1",
+        expected_task_names=[task],
+        controller_user_id=owner,
+        runner=_runner(_pods(head, worker)),
+    )
+
+    assert report.error == ""
+    assert {blocker.pod for blocker in report.blockers} == {
+        f"{cluster}-head",
+        f"{cluster}-worker",
+    }
 
 
 def test_a_job_id_must_match_a_whole_label_component() -> None:

@@ -15,6 +15,7 @@ kubectl call away.
 from __future__ import annotations
 
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 import json
@@ -26,6 +27,8 @@ from typing import Any
 from npa.verification import sanitize_reason, utc_now
 
 CLUSTER_LABEL = "skypilot-cluster-name"
+MANAGED_JOB_ID_ANNOTATION = "skypilot-managed-job-id"
+MANAGED_JOB_NAME_ANNOTATION = "skypilot-managed-job-name"
 DEFAULT_TIMEOUT_SECONDS = 60
 
 # Container waiting reasons that Kubernetes will retry forever.
@@ -148,6 +151,8 @@ def inspect_job_blockers(
     context: str = "",
     kubeconfig: str | os.PathLike[str] | None = None,
     environment: Mapping[str, str] | None = None,
+    expected_task_names: Iterable[str] = (),
+    controller_user_id: str = "",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     runner: Runner | None = None,
 ) -> JobBlockerReport:
@@ -160,6 +165,26 @@ def inspect_job_blockers(
 
     A cluster whose pods cannot be listed is reported as an error rather than as
     "not blocked", so a missing kubectl is never mistaken for a healthy job.
+
+    Args:
+        job_id: Managed-job identity from the isolated controller queue.
+        cluster_name: Exact cluster name, when the queue has recorded one.
+        namespace: Kubernetes namespace to inspect, or all namespaces when empty.
+        context: Explicit kubeconfig context for kubectl.
+        kubeconfig: Exact controller-bound kubeconfig path.
+        environment: Environment passed to kubectl.
+        expected_task_names: Exact managed task names returned for ``job_id``.
+            These are checked against SkyPilot's untruncated pod annotation.
+        controller_user_id: Isolated controller owner appended to the pod's
+            cluster label.
+        timeout: Kubectl timeout in seconds.
+        runner: Optional subprocess-compatible runner for tests.
+
+    Returns:
+        Pod blockers or a fail-closed diagnostic error.
+
+    Raises:
+        None. Process and response failures are represented in the report.
     """
 
     report = JobBlockerReport(job_id=str(job_id), cluster_name=str(cluster_name))
@@ -216,7 +241,32 @@ def inspect_job_blockers(
 
     items = payload.get("items") or []
     if by_job_id:
-        items = [item for item in items if _pod_belongs_to_job(item, str(job_id))]
+        task_names = tuple(
+            name for raw in expected_task_names if (name := str(raw).strip())
+        )
+        user_id = str(controller_user_id).strip()
+        if user_id:
+            if not task_names:
+                report.error = (
+                    "the isolated controller did not return an exact managed task name"
+                )
+                report.error_code = "KUBERNETES_POD_IDENTITY_INCOMPLETE"
+                return report
+            items = [
+                item
+                for item in items
+                if _pod_belongs_to_owned_task(item, str(job_id), task_names, user_id)
+            ]
+            matching_clusters = {_pod_cluster_label(item) for item in items}
+            if len(matching_clusters) > 1:
+                report.error = (
+                    "multiple clusters match the exact managed task and isolated "
+                    "controller identity"
+                )
+                report.error_code = "KUBERNETES_POD_IDENTITY_AMBIGUOUS"
+                return report
+        else:
+            items = [item for item in items if _pod_belongs_to_job(item, str(job_id))]
         if not items:
             report.error = (
                 f"no pods found for managed job {job_id}; it is between tasks, or "
@@ -482,6 +532,35 @@ def _pod_belongs_to_job(item: object, job_id: str) -> bool:
     labels = _as_dict(_as_dict(item.get("metadata")).get("labels"))
     value = str(labels.get(CLUSTER_LABEL) or "")
     return bool(value) and job_id in value.split("-")
+
+
+def _pod_belongs_to_owned_task(
+    item: object,
+    job_id: str,
+    task_names: tuple[str, ...],
+    controller_user_id: str,
+) -> bool:
+    """Match SkyPilot's exact managed-job annotations and controller owner."""
+
+    if not isinstance(item, dict):
+        return False
+    metadata = _as_dict(item.get("metadata"))
+    cluster = _pod_cluster_label(item)
+    if not cluster.endswith(f"-{controller_user_id}"):
+        return False
+    annotations = _as_dict(metadata.get("annotations"))
+    if str(annotations.get(MANAGED_JOB_ID_ANNOTATION) or "") != job_id:
+        return False
+    task_name = str(annotations.get(MANAGED_JOB_NAME_ANNOTATION) or "")
+    return task_name in task_names
+
+
+def _pod_cluster_label(item: object) -> str:
+    """Return one pod's SkyPilot cluster label, or an empty string."""
+
+    metadata = _as_dict(_as_dict(item).get("metadata"))
+    labels = _as_dict(metadata.get("labels"))
+    return str(labels.get(CLUSTER_LABEL) or "")
 
 
 def _blockers_from_pods(items: list[object]) -> list[PodBlocker]:

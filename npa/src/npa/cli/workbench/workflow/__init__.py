@@ -5457,12 +5457,15 @@ def _stalled_job_blockers(
 
     diagnostic_environment = None
     diagnostic_kubeconfig = None
+    diagnostic_user_id = ""
     if isolated_config_dir is not None:
         controller_root = Path(isolated_config_dir).expanduser().resolve()
         diagnostic_kubeconfig = controller_root / "home" / ".kube" / "config"
-        diagnostic_environment = dict(os.environ)
-        diagnostic_environment["HOME"] = str(controller_root / "home")
-        diagnostic_environment["KUBECONFIG"] = str(diagnostic_kubeconfig)
+        diagnostic_environment, diagnostic_user_id = (
+            _isolated_controller_diagnostic_environment(
+                controller_root, diagnostic_kubeconfig
+            )
+        )
 
     try:
         rows = workflow_task_statuses(
@@ -5475,6 +5478,9 @@ def _stalled_job_blockers(
     clusters = sorted(
         {str(row.get("cluster_name") or "").strip() for row in rows} - {""}
     )
+    task_names = sorted(
+        {str(row.get("task_name") or "").strip() for row in rows} - {""}
+    )
     # `sky jobs queue` reports a null cluster for a job that never provisioned --
     # exactly the case worth diagnosing -- so fall back to the job id.
     reports = (
@@ -5484,6 +5490,8 @@ def _stalled_job_blockers(
                 cluster_name=cluster,
                 kubeconfig=diagnostic_kubeconfig,
                 environment=diagnostic_environment,
+                expected_task_names=task_names,
+                controller_user_id=diagnostic_user_id,
             )
             for cluster in clusters
         ]
@@ -5493,6 +5501,8 @@ def _stalled_job_blockers(
                 job_id=job_id,
                 kubeconfig=diagnostic_kubeconfig,
                 environment=diagnostic_environment,
+                expected_task_names=task_names,
+                controller_user_id=diagnostic_user_id,
             )
         ]
     )
@@ -5545,6 +5555,31 @@ def _stalled_job_blockers(
                 }
             )
     return reported
+
+
+def _isolated_controller_diagnostic_environment(
+    controller_root: Path, kubeconfig: Path
+) -> tuple[dict[str, str], str]:
+    """Build diagnostics environment with the controller's persisted owner."""
+
+    environment = dict(os.environ)
+    environment["HOME"] = str(controller_root / "home")
+    environment["KUBECONFIG"] = str(kubeconfig)
+    user_hash_file = controller_root / "home" / ".sky" / "user_hash"
+    recorded_user_id = ""
+    try:
+        if user_hash_file.is_file() and not user_hash_file.is_symlink():
+            recorded_user_id = user_hash_file.read_text().strip()
+    except OSError:
+        recorded_user_id = ""
+    controller_digest = hashlib.sha256(str(controller_root).encode()).hexdigest()
+    user_id = str(
+        recorded_user_id
+        or environment.get("SKYPILOT_USER_ID")
+        or f"npa-{controller_digest[:12]}"
+    )
+    environment["SKYPILOT_USER_ID"] = user_id
+    return environment, user_id
 
 
 def _aggregate_stage_status(
