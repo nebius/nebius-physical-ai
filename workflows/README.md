@@ -72,6 +72,34 @@ false; `NPA_SRC_OVERLAY=1` is an operator override. Keep the checkout available
 during submission. The [authoring guide](../docs/workbench/npa-workflow-guide.md)
 explains the full source and image contract.
 
+### Failed-attempt diagnostics
+
+Python stages that create useful local evidence before failing can publish an
+explicit allowlist with `npa.workflows.attempt_diagnostics.publish_failed_attempt`.
+The helper writes immutable, attempt-scoped originals, verifies their full-byte
+readback, and writes the `failed` receipt last. It never writes a success or
+qualification result.
+
+```python
+from npa.workflows.attempt_diagnostics import publish_failed_attempt
+
+publish_failed_attempt(
+    "s3://example-bucket/diagnostics",
+    run_id="demo",
+    stage="evaluate",
+    attempt_id="attempt-1",
+    exit_code=1,
+    files={"worker.log": "/workspace/run/worker.log"},
+)
+```
+
+Choose and redact every file explicitly. The helper does not discover a
+directory or decide whether a log can contain credentials. Use a new
+`attempt_id` for each execution; existing diagnostic objects are never
+overwritten. The helper includes `run_id` in the object prefix. An interrupted
+call may be retried with the same identifiers and exact file bytes; it accepts
+existing identical objects and rejects different bytes.
+
 ## Layout
 
 | Directory | Contents |

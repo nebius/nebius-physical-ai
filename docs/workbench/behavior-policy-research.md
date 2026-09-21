@@ -35,6 +35,29 @@ Reviewed September 16, 2026 using author papers, repositories and model releases
 These papers use different tasks, data, resets and evaluation protocols. Their
 reported percentages cannot be combined into an expected challenge score.
 
+### September 21 follow-up
+
+[HINT, revised September 6](https://arxiv.org/abs/2609.02653v2) separates sparse
+subtask decisions from continuous visual target tracking. A useful future
+ablation is to preserve the intended target through a manipulation stage and
+reconsider it only at a detected transition. Any tracker here would consume
+permitted onboard images; simulator object identities and global poses cannot
+supply its inference state. This is a proposed direction, not an implemented
+HINT reproduction or measured improvement.
+
+[PACE, August 15](https://arxiv.org/abs/2608.15026v1) learns phase-aware credit
+from trajectories and uses that credit for policy distillation. Applying this
+idea requires fresh training-instance interaction data containing both progress
+and failures. Development and reporting episodes remain evaluation evidence;
+they cannot be repurposed as training data for this comparison.
+
+NVIDIA also publishes a
+[GR00T-N1.6 BEHAVIOR checkpoint](https://huggingface.co/nvidia/GR00T-N1.6-BEHAVIOR1k).
+It is an additional released-baseline candidate to audit for exact task coverage,
+runtime compatibility, dependency access, and license scope. It has not been
+loaded or evaluated by this integration. Its existence does not establish a
+2026 Q score or change the identities of the already frozen RLC and Comet panels.
+
 ## First candidate: improve camera use during training
 
 The [camera evidence module](../../npa/src/npa/workflows/behavior_challenge/camera_evidence.py)
