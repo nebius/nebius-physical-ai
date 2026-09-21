@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
+    from npa.clients.token_factory import TokenFactoryChatProfile
 
 
 DEFAULT_BACKEND = "self-hosted"
@@ -1373,6 +1374,62 @@ def _ready_timeout_s() -> float:
     return value if value > 0 else DEFAULT_READY_TIMEOUT_S
 
 
+def _openai_content(prompt: str, frames: list[SelectedFrame]) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for frame in frames:
+        encoded = base64.b64encode(frame.data).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{frame.media_type};base64,{encoded}"},
+            }
+        )
+    return content
+
+
+def _openai_request(
+    *, backend: str, model: str, prompt: str, frames: list[SelectedFrame]
+) -> tuple[dict[str, Any], TokenFactoryChatProfile | None]:
+    request: dict[str, Any] = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "user", "content": _openai_content(prompt, frames)}],
+    }
+    if backend != "api":
+        return request, None
+    from npa.clients.token_factory import token_factory_chat_profile
+
+    profile = token_factory_chat_profile(model)
+    request.update(profile.default_extra())
+    if not profile.include_temperature:
+        request.pop("temperature")
+    if not profile.use_vlm_response_format:
+        request.pop("response_format")
+    return request, profile
+
+
+def _hosted_structured_response(
+    data: dict[str, Any],
+    message: Any,
+    *,
+    model: str,
+    profile: TokenFactoryChatProfile,
+) -> VlmStructuredResponse:
+    if data["choices"][0].get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "Hosted VLM response did not complete with finish_reason=stop"
+        )
+    served_model = data.get("model")
+    if not isinstance(served_model, str) or not served_model.strip():
+        raise VlmEvalError("Hosted VLM response must identify the served model")
+    if profile.require_exact_model and served_model != model:
+        raise VlmEvalError(
+            "Hosted VLM response model does not match the requested model"
+        )
+    return _parse_api_structured_response(message, served_model=served_model)
+
+
 def _call_openai_compatible(
     *,
     backend: str,
@@ -1386,37 +1443,13 @@ def _call_openai_compatible(
     url = _chat_completions_url(
         _resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url)
     )
-    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    for frame in frames:
-        encoded = base64.b64encode(frame.data).decode("ascii")
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{frame.media_type};base64,{encoded}"},
-            }
-        )
-
+    request, profile = _openai_request(
+        backend=backend, model=model, prompt=prompt, frames=frames
+    )
     headers = {"Content-Type": "application/json"}
     api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-
-    request = {
-        "model": model,
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-        "messages": [{"role": "user", "content": content}],
-    }
-    if backend == "api":
-        from npa.clients.token_factory import default_chat_extra
-
-        request.update(default_chat_extra(model))
-        if model == "MiniMaxAI/MiniMax-M3":
-            # Token Factory's constrained JSON decoding for this model emitted
-            # malformed prefixes in live validation. The prompt still requires
-            # JSON and the hosted parser validates the full contract;
-            # never repair malformed model scores or accept a free-text score.
-            request.pop("response_format")
     data = _post_with_readiness_retry(
         url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
     )
@@ -1428,19 +1461,8 @@ def _call_openai_compatible(
             "VLM backend response missing choices[0].message.content"
         ) from exc
     if backend == "api":
-        if data["choices"][0].get("finish_reason") != "stop":
-            raise VlmEvalError(
-                "Hosted VLM response did not complete with finish_reason=stop"
-            )
-        served_model = data.get("model")
-        if not isinstance(served_model, str) or not served_model.strip():
-            raise VlmEvalError("Hosted VLM response must identify the served model")
-        if model in {"nvidia/Nemotron-3_5-Lightning", "MiniMaxAI/MiniMax-M3"}:
-            if served_model != model:
-                raise VlmEvalError(
-                    "Hosted VLM response model does not match the requested model"
-                )
-        return _parse_api_structured_response(message, served_model=served_model)
+        assert profile is not None
+        return _hosted_structured_response(data, message, model=model, profile=profile)
     result = parse_structured_response(str(message))
     served_model = data.get("model")
     if served_model is not None:

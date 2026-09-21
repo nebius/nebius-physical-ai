@@ -517,6 +517,43 @@ def test_replacement_template_parameters_and_explicit_models(model, expected) ->
     assert requests[0].get("chat_template_kwargs") == expected
 
 
+def test_kimi_profile_uses_low_reasoning_without_fixed_sampling_fields() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    _client(handler).chat_completion_text(
+        model="moonshotai/Kimi-K3",
+        messages=[{"role": "user", "content": "task"}],
+        temperature=0.2,
+    )
+    assert requests[0]["reasoning_effort"] == "low"
+    assert "temperature" not in requests[0]
+    assert "max_tokens" not in requests[0]
+
+
+def test_explicit_kimi_extra_wins_over_direct_output_profile() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    _client(handler).chat_completion_text(
+        model="moonshotai/Kimi-K3",
+        messages=[{"role": "user", "content": "task"}],
+        extra={"reasoning_effort": "high", "temperature": 1.0},
+    )
+    assert requests[0]["reasoning_effort"] == "high"
+    assert requests[0]["temperature"] == 1.0
+
+
 def test_explicit_thinking_and_other_template_parameters_win() -> None:
     requests = []
 

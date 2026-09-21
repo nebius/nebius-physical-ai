@@ -7,6 +7,14 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Kimi-K3 direct-output requests preserve a visible answer
+
+- Token Factory and hosted VLM evaluation now share one model request profile.
+  Kimi-K3 defaults to its documented low reasoning effort and omits the ordinary
+  temperature field. Hosted VLM evaluation retains constrained JSON, requires
+  exact returned-model identity, and imposes no output-token cap. Existing
+  Lightning, MiniMax, unknown-model, and self-hosted behavior remains unchanged.
+
 ### GPU routing selects on workload, not just on the GPU
 
 - SONIC image resolution now intersects the GPU target with the workload. Each

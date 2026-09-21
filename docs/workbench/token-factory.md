@@ -120,6 +120,13 @@ preserve the requested `model` and separately report the actual `served_model`.
 The public replacement IDs must match the provider response exactly; explicit
 custom aliases may resolve to another nonempty model identity.
 
+When `moonshotai/Kimi-K3` is explicitly selected for hosted VLM evaluation, NPA
+requests low reasoning effort and leaves fixed sampling and output-token limits
+unset so the response allowance remains available for visible JSON. The
+returned model must match the requested Kimi-K3 ID exactly. Model availability
+remains key-scoped; verify it with `npa workbench token-factory models` before
+inference.
+
 ## Batch generation
 
 `batch-generate` submits text prompts asynchronously and writes the same JSONL
