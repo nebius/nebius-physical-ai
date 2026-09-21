@@ -49,10 +49,12 @@
   "what_is_still_true": "This is not window-independence and no static camera offers it. A window narrower than 1.2346 -- a portrait window, or one snapped to half a wide monitor -- still clips. The boundary is stated rather than claimed away.",
   "conservatism_found_in_the_viewer": "The naive pane model ignores the viewer's chrome, and ignoring it is safe: chrome only removes height, so the real pane is wider relative to its height than modelled. Measured on the 1024x768 capture, the scene pane is 0.972 against a modelled 0.889 and the tab is 0.476 against 0.444.",
   "corroborating_capture": {
-    "frame": "viewer-ui/ordinary-window-4x3.png",
+    "frame": "viewer-ui/ordinary-native.png",
     "window": "1024x768, the shape that clipped before this change",
     "measured": "viewer-ui/ordinary-window-audit.json",
-    "result": "both panes unclipped, touching no edge; geometry spans 83.3% of the scene pane's width and 80.1% of the tab's"
+    "provenance": "capability-record-provenance-bound-preview.json",
+    "result": "both panes unclipped, touching no edge; geometry spans 83.3% of the scene pane's width and 73.3% of the tab's",
+    "note": "An earlier frame, ordinary-window-4x3.png, showed the same result but was rendered from a recording with invented provenance and is retained only under viewer-ui/superseded-preview/. It should not be cited here."
   },
   "generator": "harness/pane_fit_window_aspect_sweep.py"
 }
