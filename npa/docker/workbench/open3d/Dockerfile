@@ -85,6 +85,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
            echo "$1 ${installed} is below the fixed $2" >&2; exit 1; }; \
        done \
     && install -d -m 0755 /run/sshd /workspace /opt/npa \
+      /usr/share/doc/npa-open3d /usr/share/doc/npa-open3d/notices \
     && rm -f /etc/ssh/ssh_host_* \
     && printf '%s\n' \
       'PasswordAuthentication no' \
@@ -106,10 +107,18 @@ COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/open3d/entrypoint.sh \
     /opt/npa/docker/workbench/open3d/entrypoint.sh
 # mcap is MIT but ships no licence file in either its wheel or its sdist, so the
 # grant only reaches a recipient if the image carries it. See THIRD_PARTY_NOTICES.md.
+#
+# `--chmod` applies to the directories a COPY *creates*, not only to its files, so
+# these once landed as `dr--r--r--`: unreadable to this image's own non-root user,
+# which is every recipient. What fixes that is creating them above with a
+# traversable mode, before anything is copied in; `--chmod` then only reaches the
+# files, which is all it was ever meant to do here. One file per COPY so the
+# grants that ship are named in source rather than implied by a directory listing;
+# a test fails if a retained notice has no COPY of its own.
 COPY --chmod=0444 docker/workbench/open3d/THIRD_PARTY_NOTICES.md \
     /usr/share/doc/npa-open3d/THIRD_PARTY_NOTICES.md
-COPY --chmod=0444 docker/workbench/open3d/notices/ \
-    /usr/share/doc/npa-open3d/notices/
+COPY --chmod=0444 docker/workbench/open3d/notices/mcap-LICENSE.txt \
+    /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt
 
 USER ubuntu
 WORKDIR /workspace
@@ -128,6 +137,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && npa workbench open3d --help > /dev/null \
     && echo "${MCAP_NOTICE_SHA256}  /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt" \
       | sha256sum --check --status \
+    && cat /usr/share/doc/npa-open3d/THIRD_PARTY_NOTICES.md > /dev/null \
     && python -c "import importlib.metadata as m; v = m.version('mcap'); assert v == '${MCAP_NOTICE_VERSION}', f'mcap {v} no longer matches the retained notice; refresh docker/workbench/open3d/notices/mcap-LICENSE.txt'" \
     && install -d -m 0700 /home/ubuntu/.cache/open3d
 

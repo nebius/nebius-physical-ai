@@ -213,10 +213,14 @@ def test_mcap_notice_is_delivered_and_bound_to_the_installed_package() -> None:
     assert "MIT License" in notice.read_text(encoding="utf-8")
 
     assert (
-        "COPY --chmod=0444 docker/workbench/open3d/notices/ "
-        "\\\n    /usr/share/doc/npa-open3d/notices/"
+        "COPY --chmod=0444 docker/workbench/open3d/notices/mcap-LICENSE.txt "
+        "\\\n    /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt"
     ) in text
     assert "/usr/share/doc/npa-open3d/THIRD_PARTY_NOTICES.md" in text
+    # Both notice paths have to exist with a traversable mode before anything is copied
+    # into them, or `--chmod` sets it on the directories too and the runtime user cannot
+    # read what it was given. Proved against real builds in test_open3d_notice_delivery.
+    assert "/usr/share/doc/npa-open3d /usr/share/doc/npa-open3d/notices" in text
     assert "sha256sum --check --status" in text
     # Bound to the package, not just present: a notice for a version the image no longer
     # installs reads as though someone checked.
