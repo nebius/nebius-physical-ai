@@ -268,7 +268,8 @@ def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
     assert "--scanners secret" in script
     assert "--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL" in script
     assert "--exit-code 1" in script
-    # A vulnerability ignorefile must never be able to suppress a secret.
+    # An ignorefile suppresses matching secret findings by rule ID whatever the
+    # severity filter says, so inheriting it here would reopen the hole.
     assert "--ignorefile" not in script
     assert "--ignore-unfixed" not in script
     assert names.index("Pre-publication all-severity secret scan") < names.index(

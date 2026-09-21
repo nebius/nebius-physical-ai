@@ -605,9 +605,11 @@ jobs:
       # option, so the CRITICAL policy scan above cannot fail on a private key:
       # Trivy ranks those HIGH, and it reports an empty secret section rather
       # than an error. Secrets are therefore rejected in their own scan at every
-      # severity, and deliberately without --ignorefile, which accepts
-      # vulnerability IDs and must not become a secret bypass. This is the split
-      # the NCore gate already uses, which is why NCore skips this step.
+      # severity. --ignorefile is omitted deliberately, and that omission is
+      # load-bearing: an ignorefile entry suppresses matching secret findings by
+      # rule ID regardless of severity, so inheriting the vulnerability
+      # ignorefile here would reopen the hole this step exists to close. This is
+      # the split the NCore gate already uses, which is why NCore skips it.
       - name: Pre-publication all-severity secret scan
         if: matrix.tool != 'ncore'
         env:
