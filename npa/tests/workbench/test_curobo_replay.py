@@ -13,6 +13,10 @@ import pytest
 from npa.workbench.curobo import replay
 
 
+def _x_rotation(angle: float) -> np.ndarray:
+    return np.asarray([np.cos(angle / 2.0), np.sin(angle / 2.0), 0.0, 0.0])
+
+
 def test_quaternion_replay_distance_is_sign_invariant():
     identity = np.asarray([1.0, 0.0, 0.0, 0.0])
     assert replay._quaternion_distance(identity, identity) == 0.0
@@ -20,6 +24,63 @@ def test_quaternion_replay_distance_is_sign_invariant():
     assert replay._quaternion_distance(
         identity, np.asarray([0.0, 1.0, 0.0, 0.0])
     ) == pytest.approx(np.pi)
+
+
+def test_quaternion_replay_distance_is_stable_for_retained_float32_boundary():
+    # Exact durable B200 row waypoint 48 from retained receipt e18cc395.
+    durable = np.asarray(
+        [
+            0.9929810762405396,
+            -0.016400041058659554,
+            -0.11199788004159927,
+            -0.03429362550377846,
+        ]
+    )
+    replayed = durable.astype(np.float32)
+    mixed_precision_acos = float(
+        2.0
+        * np.arccos(
+            np.clip(
+                abs(
+                    np.dot(
+                        replayed / np.linalg.norm(replayed),
+                        durable / np.linalg.norm(durable),
+                    )
+                ),
+                0.0,
+                1.0,
+            )
+        )
+    )
+    assert mixed_precision_acos > replay.QUATERNION_REPLAY_ATOL_RAD
+    assert replay._quaternion_comparison(replayed, durable) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    ("angle", "expected_pass"),
+    [(7.5e-6, True), (1.25e-5, False), (1e-3, False)],
+)
+def test_quaternion_replay_distance_preserves_angular_gate(angle, expected_pass):
+    identity = np.asarray([1.0, 0.0, 0.0, 0.0])
+    rotated = _x_rotation(angle)
+    measured = replay._quaternion_distance(identity, rotated)
+    assert replay.QUATERNION_REPLAY_ATOL_RAD == 1e-5
+    assert measured == pytest.approx(angle, abs=1e-15)
+    if expected_pass:
+        replayed_angle, component_delta = replay._require_quaternion_replay(
+            rotated[None, :], identity[None, :]
+        )
+        assert replayed_angle == pytest.approx(angle, abs=1e-15)
+        assert component_delta > 0.0
+    else:
+        with pytest.raises(
+            replay.ReplayError,
+            match=(
+                r"FK quaternion replay differs: max angular error .* rad; "
+                r"max sign-invariant raw component delta .*"
+            ),
+        ):
+            replay._require_quaternion_replay(rotated[None, :], identity[None, :])
 
 
 @pytest.mark.parametrize(
@@ -149,6 +210,7 @@ def test_replay_rows_executes_independent_fk_path(monkeypatch):
     }
     result = replay.replay_rows([row], {"kind": "plan"})
     assert result["fk_replay_count"] == 1
+    assert result["max_fk_quaternion_component_replay_error"] == 0.0
     assert result["terminal_goal_distance_m"]["max"] == 0.0
     assert result["terminal_goal_orientation_rad"]["max"] == 0.0
     assert destroyed == [True]

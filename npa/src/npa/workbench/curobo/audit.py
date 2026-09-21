@@ -138,6 +138,8 @@ def _query(row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
+    first = np.asarray(first, dtype=np.float64)
+    second = np.asarray(second, dtype=np.float64)
     first_norm = float(np.linalg.norm(first))
     second_norm = float(np.linalg.norm(second))
     if (
@@ -153,7 +155,18 @@ def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
         raise AuditError("quaternion evidence contains invalid values")
     first = first / first_norm
     second = second / second_norm
-    return float(2.0 * np.arccos(np.clip(abs(np.dot(first, second)), 0.0, 1.0)))
+    difference = min(
+        float(np.linalg.norm(first - second)),
+        float(np.linalg.norm(first + second)),
+    )
+    summation = max(
+        float(np.linalg.norm(first - second)),
+        float(np.linalg.norm(first + second)),
+    )
+    angle = float(4.0 * np.arctan2(difference, summation))
+    if not math.isfinite(angle):
+        raise AuditError("quaternion evidence contains invalid values")
+    return angle
 
 
 def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:

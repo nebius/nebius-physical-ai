@@ -6,11 +6,16 @@ import hashlib
 import inspect
 import json
 
+import numpy as np
 import pytest
 
 from npa.workbench.curobo import audit
 from npa.workbench.curobo.artifacts import canonical, summarize
 from npa.workbench.curobo.schemas import SOURCE_REVISION
+
+
+def _x_rotation(angle: float) -> np.ndarray:
+    return np.asarray([np.cos(angle / 2.0), np.sin(angle / 2.0), 0.0, 0.0])
 
 
 def plan_row():
@@ -81,6 +86,41 @@ def test_audit_recomputes_plan_metrics_and_terminal_consumer():
     assert result["terminal_goal_orientation_rad"] == {"max": 0.0, "mean": 0.0}
     assert result["result_sha256"] == hashlib.sha256(result_bytes).hexdigest()
     assert result["journal_sha256"] == hashlib.sha256(journal).hexdigest()
+
+
+def test_audit_quaternion_distance_is_stable_for_retained_float32_boundary():
+    # Exact durable B200 row waypoint 48 from retained receipt e18cc395.
+    durable = np.asarray(
+        [
+            0.9929810762405396,
+            -0.016400041058659554,
+            -0.11199788004159927,
+            -0.03429362550377846,
+        ]
+    )
+    replayed = durable.astype(np.float32)
+    assert audit._quaternion_distance(replayed, durable) == 0.0
+    assert audit._quaternion_distance(replayed, -durable) == 0.0
+
+
+@pytest.mark.parametrize("angle", [7.5e-6, 1.25e-5, 1e-3])
+def test_audit_quaternion_distance_preserves_small_rotations(angle):
+    assert audit._quaternion_distance(
+        np.asarray([1.0, 0.0, 0.0, 0.0]), _x_rotation(angle)
+    ) == pytest.approx(angle, abs=1e-15)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        np.asarray([np.nan, 0.0, 0.0, 0.0]),
+        np.asarray([0.0, 0.0, 0.0, 0.0]),
+        np.asarray([1.0, 0.0, 0.0]),
+    ],
+)
+def test_audit_quaternion_distance_rejects_invalid_values(invalid):
+    with pytest.raises(audit.AuditError, match="quaternion"):
+        audit._quaternion_distance(invalid, np.asarray([1.0, 0.0, 0.0, 0.0]))
 
 
 @pytest.mark.parametrize("mutation", ["path", "goal", "run_id", "journal_hash"])

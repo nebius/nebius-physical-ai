@@ -23,6 +23,9 @@ class ReplayError(RuntimeError):
     """Durable planner evidence cannot be independently replayed."""
 
 
+QUATERNION_REPLAY_ATOL_RAD = 1e-5
+
+
 def _runtime_source() -> Path:
     source = Path(os.environ.get("NPA_CUROBO_SOURCE", "/opt/curobo"))
     if (source / "NPA_SOURCE_REVISION").read_text().strip() != SOURCE_REVISION:
@@ -63,7 +66,11 @@ def _tensor_array(tensor) -> np.ndarray:
     return tensor.detach().cpu().reshape(-1, tensor.shape[-1]).numpy()
 
 
-def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
+def _quaternion_comparison(
+    first: np.ndarray, second: np.ndarray
+) -> tuple[float, float]:
+    first = np.asarray(first, dtype=np.float64)
+    second = np.asarray(second, dtype=np.float64)
     first_norm = float(np.linalg.norm(first))
     second_norm = float(np.linalg.norm(second))
     if (
@@ -77,9 +84,53 @@ def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
         or second_norm <= 1e-12
     ):
         raise ReplayError("quaternion replay contains invalid values")
+    component_delta = min(
+        float(np.max(np.abs(first - second))),
+        float(np.max(np.abs(first + second))),
+    )
     first = first / first_norm
     second = second / second_norm
-    return float(2.0 * np.arccos(np.clip(abs(np.dot(first, second)), 0.0, 1.0)))
+    difference = min(
+        float(np.linalg.norm(first - second)),
+        float(np.linalg.norm(first + second)),
+    )
+    summation = max(
+        float(np.linalg.norm(first - second)),
+        float(np.linalg.norm(first + second)),
+    )
+    angle = float(4.0 * np.arctan2(difference, summation))
+    if not math.isfinite(angle) or not math.isfinite(component_delta):
+        raise ReplayError("quaternion replay contains invalid values")
+    return angle, component_delta
+
+
+def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
+    return _quaternion_comparison(first, second)[0]
+
+
+def _require_quaternion_replay(
+    actual: np.ndarray, expected: np.ndarray
+) -> tuple[float, float]:
+    if (
+        actual.shape != expected.shape
+        or actual.ndim != 2
+        or actual.shape[1:] != (4,)
+        or not len(actual)
+    ):
+        raise ReplayError("FK quaternion replay shape differs")
+    comparisons = [
+        _quaternion_comparison(first, second) for first, second in zip(actual, expected)
+    ]
+    max_angle = max(item[0] for item in comparisons)
+    max_component_delta = max(item[1] for item in comparisons)
+    if max_angle > QUATERNION_REPLAY_ATOL_RAD:
+        raise ReplayError(
+            "FK quaternion replay differs: "
+            f"max angular error {max_angle:.17g} rad; "
+            "max sign-invariant raw component delta "
+            f"{max_component_delta:.17g}"
+        )
+    return max_angle, max_component_delta
 
 
 def _require_close(
@@ -126,6 +177,7 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
     dynamics_rows = 0
     max_position_replay_error = 0.0
     max_quaternion_replay_error = 0.0
+    max_quaternion_component_replay_error = 0.0
     max_torque_replay_error = 0.0
     terminal_position_errors = []
     terminal_orientation_errors = []
@@ -158,17 +210,19 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
                 ),
             )
             retained_quaternion = np.asarray(trajectory["tool_quaternion"], dtype=float)
-            if replay_quaternion.shape != retained_quaternion.shape:
-                raise ReplayError("FK quaternion replay shape differs")
-            quaternion_errors = [
-                _quaternion_distance(actual, expected)
-                for actual, expected in zip(replay_quaternion, retained_quaternion)
-            ]
-            max_quaternion_replay_error = max(
-                max_quaternion_replay_error, max(quaternion_errors)
+            row_max_quaternion_error, row_max_component_error = (
+                _require_quaternion_replay(
+                    replay_quaternion,
+                    retained_quaternion,
+                )
             )
-            if max(quaternion_errors) > 1e-5:
-                raise ReplayError("FK quaternion replay differs")
+            max_quaternion_replay_error = max(
+                max_quaternion_replay_error, row_max_quaternion_error
+            )
+            max_quaternion_component_replay_error = max(
+                max_quaternion_component_replay_error,
+                row_max_component_error,
+            )
             goal = row["query"]["goal_pose"]
             terminal_position_errors.append(
                 float(
@@ -239,6 +293,9 @@ def replay_rows(rows: list[dict[str, Any]], report: dict[str, Any]) -> dict[str,
         "dynamics_replay_count": dynamics_rows,
         "max_fk_position_replay_error_m": max_position_replay_error,
         "max_fk_quaternion_replay_error_rad": max_quaternion_replay_error,
+        "max_fk_quaternion_component_replay_error": (
+            max_quaternion_component_replay_error
+        ),
         "max_torque_replay_error_nm": max_torque_replay_error,
         "terminal_goal_distance_m": {
             "max": max(terminal_position_errors),
