@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 import pytest
 
@@ -240,3 +241,152 @@ def test_partial_retry_rejects_different_existing_original(tmp_path: Path) -> No
         )
 
     assert not any(uri.endswith("failure-diagnostic.json") for uri in storage.objects)
+
+
+def _arguments(tmp_path: Path, storage: MemoryStorage) -> dict:
+    source = tmp_path / "worker.log"
+    source.write_bytes(b"original bytes")
+    return dict(
+        diagnostic_root_uri="s3://bucket/diagnostics",
+        run_id="run-1",
+        stage="stage-1",
+        attempt_id="attempt-1",
+        exit_code=1,
+        files={"worker.log": source},
+        storage=storage,
+    )
+
+
+@pytest.mark.parametrize("suffix", ["\n", "\t", "\x00", "\x7f", " ", "?", "#"])
+def test_rejects_uri_parser_normalization(tmp_path: Path, suffix: str) -> None:
+    storage = MemoryStorage()
+    arguments = _arguments(tmp_path, storage)
+    arguments["diagnostic_root_uri"] += suffix
+    with pytest.raises(ValueError, match="canonical s3"):
+        publish_failed_attempt(**arguments)
+    assert storage.writes == []
+
+
+@pytest.mark.parametrize(
+    "bucket", ["bad..bucket", "bad.-bucket", "bad-.bucket", "127.0.0.1"]
+)
+def test_rejects_invalid_bucket_labels(tmp_path: Path, bucket: str) -> None:
+    storage = MemoryStorage()
+    arguments = _arguments(tmp_path, storage)
+    arguments["diagnostic_root_uri"] = f"s3://{bucket}/diagnostics"
+    with pytest.raises(ValueError, match="canonical s3"):
+        publish_failed_attempt(**arguments)
+    assert storage.writes == []
+
+
+@pytest.mark.parametrize("changed_field", ["files", "exit_code"])
+def test_completed_attempt_conflict_writes_nothing(
+    tmp_path: Path, changed_field: str
+) -> None:
+    storage = MemoryStorage()
+    arguments = _arguments(tmp_path, storage)
+    receipt = publish_failed_attempt(**arguments)
+    original_objects = dict(storage.objects)
+    original_writes = list(storage.writes)
+    assert publish_failed_attempt(**arguments) == receipt
+    if changed_field == "files":
+        arguments["files"]["extra.log"] = arguments["files"]["worker.log"]
+    else:
+        arguments["exit_code"] = 2
+    with pytest.raises(ValueError, match="completed diagnostic attempt differs"):
+        publish_failed_attempt(**arguments)
+    assert storage.objects == original_objects
+    assert storage.writes == original_writes
+
+
+def test_interrupted_manifest_reserves_entire_file_set(tmp_path: Path) -> None:
+    class InterruptedStorage(MemoryStorage):
+        interrupted = False
+
+        def put_bytes_conditional(self, payload, uri, *, if_none_match):
+            if "/originals/" in uri and not self.interrupted:
+                self.interrupted = True
+                raise ConnectionError("interrupted after manifest")
+            return super().put_bytes_conditional(
+                payload, uri, if_none_match=if_none_match
+            )
+
+    storage = InterruptedStorage()
+    arguments = _arguments(tmp_path, storage)
+    with pytest.raises(ConnectionError):
+        publish_failed_attempt(**arguments)
+    original_objects = dict(storage.objects)
+    assert len(original_objects) == 1
+    assert next(iter(original_objects)).endswith("attempt-manifest.json")
+    conflicting = {
+        **arguments,
+        "files": {"extra.log": arguments["files"]["worker.log"]},
+    }
+    with pytest.raises(ValueError, match="readback differs"):
+        publish_failed_attempt(**conflicting)
+    assert storage.objects == original_objects
+    receipt = publish_failed_attempt(**arguments)
+    assert receipt["status"] == "failed"
+    assert storage.writes[-1].endswith("failure-diagnostic.json")
+
+
+def test_competing_writer_cannot_add_different_originals(tmp_path: Path) -> None:
+    class CompetingStorage(MemoryStorage):
+        def put_bytes_conditional(self, payload, uri, *, if_none_match):
+            result = super().put_bytes_conditional(
+                payload, uri, if_none_match=if_none_match
+            )
+            if uri.endswith("attempt-manifest.json"):
+                competing = {
+                    **arguments,
+                    "files": {"extra.log": arguments["files"]["worker.log"]},
+                }
+                with pytest.raises(ValueError, match="readback differs"):
+                    publish_failed_attempt(**competing)
+            return result
+
+    storage = CompetingStorage()
+    arguments = _arguments(tmp_path, storage)
+    publish_failed_attempt(**arguments)
+    assert not any(uri.endswith("extra.log") for uri in storage.objects)
+
+
+def test_completed_receipt_requires_original_readback(tmp_path: Path) -> None:
+    storage = MemoryStorage()
+    arguments = _arguments(tmp_path, storage)
+    receipt = publish_failed_attempt(**arguments)
+    storage.corrupt_readback_for = receipt["files"]["worker.log"]["uri"]
+    original_writes = list(storage.writes)
+    with pytest.raises(ValueError, match="original readback differs"):
+        publish_failed_attempt(**arguments)
+    assert storage.writes == original_writes
+
+
+def test_file_swap_to_symlink_is_rejected(tmp_path: Path, monkeypatch) -> None:
+    storage = MemoryStorage()
+    arguments = _arguments(tmp_path, storage)
+    source = arguments["files"]["worker.log"]
+    target = tmp_path / "unselected"
+    target.write_text("not selected")
+    original_open = os.open
+
+    def swapped_open(path, flags):
+        source.unlink()
+        source.symlink_to(target)
+        return original_open(path, flags)
+
+    monkeypatch.setattr("npa.workflows.attempt_diagnostics.os.open", swapped_open)
+    with pytest.raises(ValueError, match="regular file"):
+        publish_failed_attempt(**arguments)
+    assert storage.writes == []
+
+
+def test_fifo_is_rejected_without_reading(tmp_path: Path) -> None:
+    storage = MemoryStorage()
+    arguments = _arguments(tmp_path, storage)
+    source = arguments["files"]["worker.log"]
+    source.unlink()
+    os.mkfifo(source)
+    with pytest.raises(ValueError, match="regular file"):
+        publish_failed_attempt(**arguments)
+    assert storage.writes == []

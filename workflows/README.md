@@ -98,7 +98,12 @@ directory or decide whether a log can contain credentials. Use a new
 `attempt_id` for each execution; existing diagnostic objects are never
 overwritten. The helper includes `run_id` in the object prefix. An interrupted
 call may be retried with the same identifiers and exact file bytes; it accepts
-existing identical objects and rejects different bytes.
+existing identical objects and rejects different bytes. An immutable attempt
+manifest reserves the full file set before any original is published, so competing
+retries cannot add files to the same attempt. A completed receipt is checked
+before any writes. Its original files must still pass readback verification.
+Publish closed files from caller-controlled directories: final-component symlinks
+and nonregular files are rejected, while parent directories are trusted.
 
 ## Layout
 

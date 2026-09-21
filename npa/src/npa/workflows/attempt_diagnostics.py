@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 import re
+import stat
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -14,6 +16,7 @@ from npa.clients.storage import StorageClient, StoragePreconditionFailed
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _S3_BUCKET = re.compile(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]")
+_BUCKET_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?")
 
 
 class _DiagnosticStorage(Protocol):
@@ -50,7 +53,9 @@ def _validated_name(value: str) -> str:
 
 
 def _validated_root_uri(value: str) -> str:
-    if not isinstance(value, str):
+    if not isinstance(value, str) or any(
+        ord(char) <= 32 or ord(char) == 127 for char in value
+    ):
         raise ValueError(
             "diagnostic_root_uri must be a canonical s3://bucket/prefix URI"
         )
@@ -61,7 +66,10 @@ def _validated_root_uri(value: str) -> str:
     if (
         parsed.scheme != "s3"
         or not _S3_BUCKET.fullmatch(parsed.netloc)
+        or any(not _BUCKET_LABEL.fullmatch(label) for label in parsed.netloc.split("."))
+        or re.fullmatch(r"\d+\.\d+\.\d+\.\d+", parsed.netloc)
         or parsed.hostname != parsed.netloc
+        or parsed.geturl() != value
         or parsed.query
         or parsed.fragment
         or "\\" in value
@@ -76,9 +84,15 @@ def _validated_root_uri(value: str) -> str:
 
 
 def _read_regular_file(path: Path) -> bytes:
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f"diagnostic input must be a regular file: {path}")
-    return path.read_bytes()
+    # Parent directories belong to the caller; the final component cannot redirect.
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except OSError as error:
+        raise ValueError(f"diagnostic input must be a regular file: {path}") from error
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError(f"diagnostic input must be a regular file: {path}")
+        return stream.read()
 
 
 def _verified_create(storage: _DiagnosticStorage, *, uri: str, payload: bytes) -> None:
@@ -100,16 +114,10 @@ def _prepared_files(
     }
 
 
-def _publish_files(
-    storage: _DiagnosticStorage,
-    *,
-    prefix: str,
-    files: Mapping[str, bytes],
-) -> dict[str, dict[str, object]]:
+def _file_manifest(prefix: str, files: Mapping[str, bytes]) -> dict:
     published: dict[str, dict[str, object]] = {}
     for name, payload in sorted(files.items()):
         uri = f"{prefix}/originals/{name}"
-        _verified_create(storage, uri=uri, payload=payload)
         published[name] = {
             "uri": uri,
             "sha256": hashlib.sha256(payload).hexdigest(),
@@ -120,6 +128,48 @@ def _publish_files(
 
 def _receipt_bytes(receipt: Mapping[str, object]) -> bytes:
     return (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode()
+
+
+def _attempt_prefix(root: str, run: str, stage: str, attempt: str) -> str:
+    root = _validated_root_uri(root)
+    identifiers = {"run_id": run, "stage": stage, "attempt_id": attempt}
+    suffix = "/".join(
+        _validated_identifier(value, label=key) for key, value in identifiers.items()
+    )
+    return f"{root}/failed-attempts/{suffix}"
+
+
+def _failure_receipt(prefix, run, stage, attempt, exit_code, files) -> dict:
+    return {
+        "schema": "npa.workflow.failed-attempt-diagnostic.v1",
+        "status": "failed",
+        "classification": "diagnostic_only_not_success_or_qualification",
+        "run_id": run,
+        "stage": stage,
+        "attempt_id": attempt,
+        "exit_code": exit_code,
+        "files": _file_manifest(prefix, files),
+    }
+
+
+def _publish_attempt(storage, prefix: str, receipt: dict, files: dict) -> dict:
+    receipt_uri = f"{prefix}/failure-diagnostic.json"
+    payload = _receipt_bytes(receipt)
+    existing = storage.read_bytes_with_etag(receipt_uri)
+    if existing is not None:
+        if existing[0] != payload:
+            raise ValueError("completed diagnostic attempt differs")
+        for name, identity in receipt["files"].items():
+            readback = storage.read_bytes_with_etag(identity["uri"])
+            if readback is None or readback[0] != files[name]:
+                raise ValueError("completed diagnostic original readback differs")
+        return {**receipt, "receipt_uri": receipt_uri}
+    # Freeze the entire attempt before originals, including competing writers.
+    _verified_create(storage, uri=f"{prefix}/attempt-manifest.json", payload=payload)
+    for name, identity in receipt["files"].items():
+        _verified_create(storage, uri=identity["uri"], payload=files[name])
+    _verified_create(storage, uri=receipt_uri, payload=payload)
+    return {**receipt, "receipt_uri": receipt_uri}
 
 
 def publish_failed_attempt(
@@ -140,7 +190,7 @@ def publish_failed_attempt(
         stage: Failed workflow stage name.
         attempt_id: Unique immutable identifier for this stage attempt.
         exit_code: Nonzero process exit code.
-        files: Mapping of safe relative destination names to local regular files.
+        files: Safe destination names mapped to closed files in trusted directories.
         storage: Optional storage client; defaults to the current environment.
 
     Returns:
@@ -154,27 +204,8 @@ def publish_failed_attempt(
         raise ValueError("failed-attempt diagnostics require a nonzero exit code")
     if not files:
         raise ValueError("failed-attempt diagnostics require at least one file")
-    resolved_root = _validated_root_uri(diagnostic_root_uri)
-    resolved_run = _validated_identifier(run_id, label="run_id")
-    resolved_stage = _validated_identifier(stage, label="stage")
-    resolved_attempt = _validated_identifier(attempt_id, label="attempt_id")
+    prefix = _attempt_prefix(diagnostic_root_uri, run_id, stage, attempt_id)
     prepared = _prepared_files(files)
     client = storage or StorageClient.from_environment()
-    prefix = (
-        f"{resolved_root}/failed-attempts/{resolved_run}/"
-        f"{resolved_stage}/{resolved_attempt}"
-    )
-    published = _publish_files(client, prefix=prefix, files=prepared)
-    receipt: dict[str, object] = {
-        "schema": "npa.workflow.failed-attempt-diagnostic.v1",
-        "status": "failed",
-        "classification": "diagnostic_only_not_success_or_qualification",
-        "run_id": resolved_run,
-        "stage": resolved_stage,
-        "attempt_id": resolved_attempt,
-        "exit_code": exit_code,
-        "files": published,
-    }
-    receipt_uri = f"{prefix}/failure-diagnostic.json"
-    _verified_create(client, uri=receipt_uri, payload=_receipt_bytes(receipt))
-    return {**receipt, "receipt_uri": receipt_uri}
+    receipt = _failure_receipt(prefix, run_id, stage, attempt_id, exit_code, prepared)
+    return _publish_attempt(client, prefix, receipt, prepared)
