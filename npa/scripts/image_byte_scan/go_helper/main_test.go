@@ -5,12 +5,16 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -277,6 +281,365 @@ func TestConfigPathCollisionIsBlocking(t *testing.T) {
 	var output, errors bytes.Buffer
 	if process(bytes.NewReader(framed([]byte(syntheticPAT()))), &output, &errors, d, fixtureReady) != 2 || !strings.Contains(errors.String(), "controlled_path_matches_config") {
 		t.Fatal("configuration path silently skipped fragment")
+	}
+}
+
+// rawProtocol returns the exact protocol bytes so concurrency can be compared
+// byte for byte rather than through a decoded and reordered view.
+func rawProtocol(t *testing.T, payload []byte) (int, []byte, string) {
+	t.Helper()
+	var output, errors bytes.Buffer
+	exit := process(bytes.NewReader(payload), &output, &errors, scanner(), fixtureReady)
+	return exit, output.Bytes(), errors.String()
+}
+
+// mixedCorpus builds records of several sizes and contents, including empty and
+// secret-bearing ones, so ordering bugs cannot hide behind uniform records.
+func mixedCorpus() [][]byte {
+	records := [][]byte{nil, []byte("plain"), []byte(syntheticPAT())}
+	for index := 0; index < 24; index++ {
+		size := 1 + index*4096
+		body := bytes.Repeat([]byte{byte(index), 'a', 0, 255}, size/4+1)[:size]
+		if index%5 == 0 {
+			body = append(body, []byte(syntheticPAT())...)
+		}
+		records = append(records, body)
+	}
+	return append(records, []byte(syntheticPrivateKey()), nil)
+}
+
+func TestConcurrentDetectionIsByteIdenticalToSequential(t *testing.T) {
+	payload := framed(mixedCorpus()...)
+	restore := runtime.GOMAXPROCS(1)
+	sequentialExit, sequentialOutput, sequentialErrors := rawProtocol(t, payload)
+	runtime.GOMAXPROCS(restore)
+	if sequentialErrors != "" {
+		t.Fatalf("sequential run failed: %s", sequentialErrors)
+	}
+	for _, procs := range []int{2, 4, 8} {
+		t.Run(fmt.Sprintf("procs-%d", procs), func(t *testing.T) {
+			previous := runtime.GOMAXPROCS(procs)
+			defer runtime.GOMAXPROCS(previous)
+			exit, output, errors := rawProtocol(t, payload)
+			if exit != sequentialExit || errors != sequentialErrors {
+				t.Fatalf("exit or stderr changed: exit=%d errors=%q", exit, errors)
+			}
+			if !bytes.Equal(output, sequentialOutput) {
+				t.Fatal("concurrent output differs from sequential output")
+			}
+		})
+	}
+}
+
+func TestRecordsAdmittedBeforeTruncationAreStillEmitted(t *testing.T) {
+	// A sequential scanner emits every complete record before reporting the
+	// truncation. Overlapping detection must not swallow that earlier output.
+	complete := framed([]byte(syntheticPAT()), []byte("second record"))
+	truncated := append(append([]byte(nil), complete...), 0, 0, 0, 0, 0, 0, 0, 9, 'x')
+	for _, procs := range []int{1, 8} {
+		previous := runtime.GOMAXPROCS(procs)
+		exit, output, errors := rawProtocol(t, truncated)
+		runtime.GOMAXPROCS(previous)
+		if exit != 2 || !strings.Contains(errors, "truncated_payload") {
+			t.Fatalf("truncation was not fail-closed at procs=%d", procs)
+		}
+		rows := bytes.Count(bytes.TrimRight(output, "\n"), []byte("\n")) + 1
+		if rows != 3 {
+			t.Fatalf("expected ready plus two results at procs=%d, got %d rows", procs, rows)
+		}
+		if bytes.Contains(output, []byte(`"type":"summary"`)) {
+			t.Fatal("a failed stream produced a summary")
+		}
+	}
+}
+
+func TestControlledPathGuardStopsAfterEarlierRecords(t *testing.T) {
+	detector := scanner()
+	detector.Config.Path = recordPath(2)
+	var output, errors bytes.Buffer
+	previous := runtime.GOMAXPROCS(8)
+	exit := process(bytes.NewReader(framed([]byte("first"), []byte("second"))), &output, &errors, detector, fixtureReady)
+	runtime.GOMAXPROCS(previous)
+	if exit != 2 || !strings.Contains(errors.String(), "controlled_path_matches_config") {
+		t.Fatal("configuration path collision was not fail-closed")
+	}
+	if !bytes.Contains(output.Bytes(), []byte(`"ordinal":1`)) {
+		t.Fatal("the record preceding the collision was not emitted")
+	}
+	if bytes.Contains(output.Bytes(), []byte(`"ordinal":2`)) {
+		t.Fatal("the colliding record was scanned anyway")
+	}
+}
+
+func TestByteBudgetAdmitsOversizedRecordAlone(t *testing.T) {
+	budget := newByteBudget(1024)
+	reserved, granted := budget.acquire(4096)
+	if !granted || reserved != 1024 {
+		t.Fatalf("oversized reservation was not clamped to capacity: %d %v", reserved, granted)
+	}
+	admitted := make(chan int64)
+	go func() {
+		amount, _ := budget.acquire(512)
+		admitted <- amount
+	}()
+	select {
+	case <-admitted:
+		t.Fatal("budget admitted a second record while it was fully reserved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	budget.release(reserved)
+	select {
+	case second := <-admitted:
+		if second != 512 {
+			t.Fatalf("unexpected second reservation: %d", second)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("released budget did not wake the waiting record")
+	}
+}
+
+func TestCancelledByteBudgetStopsAWaitingReader(t *testing.T) {
+	budget := newByteBudget(1024)
+	if _, granted := budget.acquire(1024); !granted {
+		t.Fatal("the whole capacity was not reservable")
+	}
+	waited := make(chan bool)
+	go func() {
+		_, granted := budget.acquire(512)
+		waited <- granted
+	}()
+	select {
+	case <-waited:
+		t.Fatal("budget admitted a record while it was fully reserved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	budget.cancel()
+	select {
+	case granted := <-waited:
+		if granted {
+			t.Fatal("a cancelled budget granted a reservation")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the budget did not release the waiting reader")
+	}
+}
+
+// openInput serves a fixed prefix and then parks, like a producer that is
+// waiting for a response before sending its next record. Tests use it to prove
+// the helper stops on its own rather than on end of input.
+type openInput struct {
+	data    []byte
+	mutex   sync.Mutex
+	offset  int
+	release chan struct{}
+}
+
+func (r *openInput) Read(destination []byte) (int, error) {
+	r.mutex.Lock()
+	if r.offset < len(r.data) {
+		count := copy(destination, r.data[r.offset:])
+		r.offset += count
+		r.mutex.Unlock()
+		return count, nil
+	}
+	r.mutex.Unlock()
+	<-r.release
+	return 0, io.EOF
+}
+
+func (r *openInput) consumed() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return r.offset
+}
+
+// brokenOutput accepts a fixed number of writes and then fails, which is how a
+// closed consumer looks to the helper.
+type brokenOutput struct{ remaining int }
+
+func (w *brokenOutput) Write(data []byte) (int, error) {
+	if w.remaining <= 0 {
+		return 0, errors.New("output closed")
+	}
+	w.remaining--
+	return len(data), nil
+}
+
+// runWhileInputStaysOpen runs one scan whose producer never sends EOF, and
+// fails the test if the scan does not return on its own.
+func runWhileInputStaysOpen(t *testing.T, detector *detect.Detector, output io.Writer) (int, string) {
+	t.Helper()
+	previous := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(previous)
+	input := &openInput{
+		data:    framed([]byte(syntheticPAT()), []byte("second record")),
+		release: make(chan struct{}),
+	}
+	defer close(input.release)
+	var errors bytes.Buffer
+	finished := make(chan int, 1)
+	go func() { finished <- process(input, output, &errors, detector, fixtureReady) }()
+	select {
+	case exit := <-finished:
+		return exit, errors.String()
+	case <-time.After(60 * time.Second):
+		t.Fatal("a contained failure waited for the producer to close its input")
+		return 0, ""
+	}
+}
+
+func TestOutputFailureStopsWhileProducerInputStaysOpen(t *testing.T) {
+	// The ready line is written, then the first record's result fails. A serial
+	// producer is still holding its input open awaiting that result, so the
+	// helper has to end the scan itself.
+	exit, errors := runWhileInputStaysOpen(t, scanner(), &brokenOutput{remaining: 1})
+	if exit != 2 || !strings.Contains(errors, "output_error") {
+		t.Fatalf("output failure was not fail-closed: exit=%d errors=%q", exit, errors)
+	}
+}
+
+func TestContainedWorkerPanicStopsWhileProducerInputStaysOpen(t *testing.T) {
+	detector := scanner()
+	// A nil allowlist is ignored by the admission path's PathAllowed check and
+	// dereferenced inside Detect, so exactly one detection worker panics.
+	detector.Config.Allowlists = append(detector.Config.Allowlists, nil)
+	var output bytes.Buffer
+	exit, errors := runWhileInputStaysOpen(t, detector, &output)
+	if exit != 2 || !strings.Contains(errors, "internal_panic") {
+		t.Fatalf("worker panic was not fail-closed: exit=%d errors=%q", exit, errors)
+	}
+	if bytes.Contains(output.Bytes(), []byte(`"type":"summary"`)) {
+		t.Fatal("a panicking scan produced a summary")
+	}
+}
+
+func TestAdmissionReservesBeforeReadingTheNextPayload(t *testing.T) {
+	// Nothing detects the admitted job, so its reservation stays held and the
+	// budget is exhausted while the reader looks at the next record.
+	const size = 64
+	budget := newByteBudget(size)
+	input := &openInput{
+		data:    framed(bytes.Repeat([]byte("a"), size), bytes.Repeat([]byte("b"), size)),
+		release: make(chan struct{}),
+	}
+	defer close(input.release)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	select {
+	case job := <-ordered:
+		if job.ordinal != 1 || len(job.payload) != size {
+			t.Fatalf("first record was not admitted whole: ordinal=%d bytes=%d", job.ordinal, len(job.payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first record was never admitted")
+	}
+	// The reader may have taken the second header, but must not have taken the
+	// second payload, which it has no room to allocate.
+	time.Sleep(200 * time.Millisecond)
+	if consumed := input.consumed(); consumed > 8+size+8 {
+		t.Fatalf("the next payload was read into memory while the budget was exhausted: %d bytes", consumed)
+	}
+	budget.cancel()
+	select {
+	case code := <-stopped:
+		if code != "" {
+			t.Fatalf("a cancelled budget reported a scan failure: %q", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the budget did not stop the reader")
+	}
+}
+
+func TestAdjacentOversizedRecordsRunAloneAndStayCovered(t *testing.T) {
+	// Each record is larger than the whole budget, so each is admitted alone and
+	// neither is skipped or truncated for its size.
+	const size = 128
+	budget := newByteBudget(size / 4)
+	first := bytes.Repeat([]byte("a"), size)
+	second := bytes.Repeat([]byte("b"), size)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	stopped := make(chan string, 1)
+	go func() {
+		input := bytes.NewReader(framed(first, second))
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	for ordinal, expected := range [][]byte{first, second} {
+		var job *scanJob
+		select {
+		case job = <-ordered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("record %d was never admitted", ordinal+1)
+		}
+		if !bytes.Equal(job.payload, expected) {
+			t.Fatalf("record %d was not admitted whole", ordinal+1)
+		}
+		select {
+		case <-ordered:
+			t.Fatalf("an oversized record was admitted alongside record %d", ordinal+1)
+		case <-time.After(100 * time.Millisecond):
+		}
+		budget.release(job.reserved)
+	}
+	select {
+	case code := <-stopped:
+		if code != "" {
+			t.Fatalf("oversized records reported a scan failure: %q", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reader did not finish the stream")
+	}
+}
+
+func TestFailedAdmissionReturnsItsReservation(t *testing.T) {
+	const capacity = 256
+	budget := newByteBudget(capacity)
+	truncated := append(framed(bytes.Repeat([]byte("a"), 8)), 0, 0, 0, 0, 0, 0, 0, 64, 'x')
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	input := bytes.NewReader(truncated)
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	first := <-ordered
+	budget.release(first.reserved)
+	if code := <-stopped; code != "truncated_payload" {
+		t.Fatalf("truncation was not fail-closed: %q", code)
+	}
+	// Only a reader that released the truncated record's reservation leaves the
+	// whole capacity free.
+	reclaimed := make(chan int64, 1)
+	go func() {
+		amount, _ := budget.acquire(capacity)
+		reclaimed <- amount
+	}()
+	select {
+	case amount := <-reclaimed:
+		if amount != capacity {
+			t.Fatalf("unexpected reservation after truncation: %d", amount)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the truncated record's reservation was never returned")
+	}
+}
+
+func TestEmptyRecordFloodStaysBounded(t *testing.T) {
+	// Empty records consume no byte budget, so only the job bound stops an
+	// unbounded number of them from being admitted at once.
+	empties := make([][]byte, 5000)
+	previous := runtime.GOMAXPROCS(8)
+	exit, output, errors := rawProtocol(t, framed(empties...))
+	runtime.GOMAXPROCS(previous)
+	if exit != 0 || errors != "" {
+		t.Fatalf("empty record flood failed: exit=%d errors=%s", exit, errors)
+	}
+	if !bytes.Contains(output, []byte(`"files":5000`)) {
+		t.Fatal("empty record flood lost records")
 	}
 }
 

@@ -7,6 +7,14 @@ Gitleaks 8.28.0 `Detector.Detect` API on each complete raw record, including bin
 and empty records. It does not use Gitleaks file discovery, MIME filtering,
 stdin chunking, a baseline, or image-authored ignore files.
 
+Distinct records are detected concurrently, one worker per schedulable CPU, and
+results are emitted in record order. Admission reserves payload bytes against a
+512 MiB budget before allocating them, so the bytes held for detection are bounded
+independently of archive size; a record larger than the whole budget is admitted
+alone rather than refused, so coverage never depends on a size threshold. The
+detector's own copies of an admitted record and the record currently being read
+are additional to that budget.
+
 ## Prepare the helper
 
 Run on **Linux amd64**, from an NPA checkout with its development environment
@@ -67,6 +75,14 @@ one JSON result per record, retaining every finding but returning only rule and
 line information, record ordinal, byte count and SHA-256. Clean EOF between
 records produces a final summary. A truncated header or payload is an error.
 The scanner process uses these exit codes:
+
+The caller may keep several records in flight; results are emitted strictly in
+record order, so the response bytes are identical at every depth. Both directions
+are live at once, so a caller must continue reading results while it writes
+records. A caller that blocks in a write without reading deadlocks against a
+helper that has filled its output pipe and stopped reading, which is why
+`core.Detector` transfers record bytes and collects results through one readiness
+wait rather than draining only before each write.
 
 | Code | Meaning |
 | --- | --- |

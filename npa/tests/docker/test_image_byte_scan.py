@@ -207,6 +207,7 @@ class FakeDetector:
         self.joined = False
         self.records = []
         self.current = None
+        self.outstanding = []
         self.instances.append(self)
 
     def begin(self, length):
@@ -216,13 +217,25 @@ class FakeDetector:
     def write(self, data):
         self.current.extend(data)
 
-    def end(self, length, value):
+    def submit(self, length, value):
         assert self.length == length == len(self.current)
         assert digest(self.current) == value
-        self.records.append(bytes(self.current))
+        self.outstanding.append(bytes(self.current))
+
+    def outstanding_records(self):
+        return len(self.outstanding)
+
+    def collect(self):
+        record = self.outstanding.pop(0)
+        self.records.append(record)
+        return self.findings_for(record)
+
+    def findings_for(self, record):
+        """Findings a subclass attributes to one collected record."""
         return []
 
     def finish(self):
+        assert not self.outstanding
         self.joined = True
         return {
             "type": "summary",
@@ -254,6 +267,187 @@ def run(tmp_path, authorization, *, real=False, detector_type=None):
 
 def findings(records, code):
     return [row for row in records if row.get("rule_id") == code]
+
+
+class PipelineDetector(FakeDetector):
+    """Framing oracle that also reports findings and observed pipeline depth."""
+
+    def __init__(self, authorization, stderr_path):
+        super().__init__(authorization, stderr_path)
+        self.max_outstanding = 0
+        self.reported = 0
+
+    def submit(self, length, value):
+        super().submit(length, value)
+        self.max_outstanding = max(self.max_outstanding, len(self.outstanding))
+
+    def findings_for(self, record):
+        if b"detector-marker" not in record:
+            return []
+        self.reported += 1
+        return [{"rule_id": "generic-api-key", "start_line": 1, "end_line": 1}]
+
+    def finish(self):
+        return {**super().finish(), "findings": self.reported}
+
+
+def pipelined_ledger(tmp_path, authorization, label, depth, held_bytes, monkeypatch):
+    """Scan one fixture at a chosen pipeline depth and return the ledger bytes.
+
+    Args:
+        tmp_path: Directory owning the fixture and the scan outputs.
+        authorization: The fixture authorization to scan.
+        label: Output directory name distinguishing this run.
+        depth: Records allowed to stay outstanding.
+        held_bytes: Held record bytes allowed to stay outstanding.
+        monkeypatch: Fixture used to select the depth for this run.
+
+    Returns:
+        A ``(ledger_bytes, detector)`` pair.
+
+    Raises:
+        None.
+    """
+    monkeypatch.setattr(W, "PIPELINE_RECORDS", depth)
+    monkeypatch.setattr(W, "PIPELINE_BYTES", held_bytes)
+    PipelineDetector.instances.clear()
+    output = tmp_path / label
+    output.mkdir(mode=0o700)
+    W._scan(authorization, output, detector_type=PipelineDetector)
+    return (output / "records.jsonl").read_bytes(), PipelineDetector.instances[-1]
+
+
+def test_pipeline_depth_does_not_change_ledger_bytes(tmp_path, monkeypatch):
+    # A scan that only exercises uniform records could keep its ordering by
+    # accident, so this archive mixes empty files, a multi-chunk body, literal
+    # matches, detector findings, a symlink and zero padding.
+    body = b"neutral material detector-marker\n" * (2 * W.CHUNK // 33 + 1)
+    entries = [
+        file("opt/empty"),
+        file("opt/literal", b"leading private-operator-marker trailing"),
+        file("opt/large", body),
+        file("opt/link", b"", kind=tarfile.SYMTYPE, link="literal"),
+        file("opt/zeros", b"\x00" * 4096),
+        file("opt/marked", b"short detector-marker body"),
+    ]
+    authorization = fixture(tmp_path, entries=entries, repeat=2)
+    serial, serial_detector = pipelined_ledger(
+        tmp_path, authorization, "serial", 0, 0, monkeypatch
+    )
+    pipelined, pipelined_detector = pipelined_ledger(
+        tmp_path, authorization, "pipelined", 8, 256 * 1024 * 1024, monkeypatch
+    )
+    assert serial_detector.max_outstanding == 1
+    assert pipelined_detector.max_outstanding > 1, "pipeline never overlapped records"
+    assert serial == pipelined
+    assert serial_detector.records == pipelined_detector.records
+
+
+def test_pipeline_record_bound_is_the_outstanding_limit(tmp_path, monkeypatch):
+    body = b"neutral material\n" * (W.CHUNK // 17)
+    entries = [file(f"opt/body-{index}", body) for index in range(8)]
+    authorization = fixture(tmp_path, entries=entries)
+    shallow, shallow_detector = pipelined_ledger(
+        tmp_path, authorization, "shallow", 3, 256 * 1024 * 1024, monkeypatch
+    )
+    assert shallow_detector.max_outstanding == 3
+    deep, deep_detector = pipelined_ledger(
+        tmp_path, authorization, "deep", 8, 256 * 1024 * 1024, monkeypatch
+    )
+    assert deep_detector.max_outstanding == 8
+    assert shallow == deep
+
+
+def confidential_ledger(tmp_path, detector):
+    """Build a ledger whose policy needs each complete record in memory.
+
+    Args:
+        tmp_path: Directory receiving the ledger stream.
+        detector: Detector the ledger submits records to.
+
+    Returns:
+        The configured :class:`Ledger`.
+
+    Raises:
+        None.
+    """
+    return W.Ledger(
+        tmp_path,
+        detector,
+        ["private-operator-marker"],
+        "exact-substring-v1",
+        policy_config={"customer_pattern": r"customer-[0-9]+"},
+    )
+
+
+def test_pipeline_byte_bound_is_checked_before_the_next_record_is_read(
+    tmp_path, monkeypatch
+):
+    # Held bytes only accumulate when confidentiality composition needs the
+    # complete record, so this ledger enables that policy to exercise the bound.
+    # Collecting after the read instead would let held bytes exceed the bound by
+    # a whole record, which is what makes the bound a real allocation limit.
+    bound = 3 * 4096
+    monkeypatch.setattr(W, "PIPELINE_RECORDS", 8)
+    monkeypatch.setattr(W, "PIPELINE_BYTES", bound)
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = confidential_ledger(tmp_path, detector)
+    record = b"x" * 4096
+    peak = 0
+    for index in range(6):
+        sink.send(
+            io.BytesIO(record),
+            len(record),
+            "synthetic",
+            {"scope": "outer", "tar_offset": index},
+        )
+        peak = max(peak, sink.held_bytes)
+        assert sink.held_bytes <= bound
+        assert detector.outstanding_records() <= 3
+    assert peak == bound, "the bound was never reached, so it was not exercised"
+    sink.flush_pending()
+    assert sink.held_bytes == 0 and not sink.pending
+    sink.stream.close()
+
+
+def test_record_larger_than_the_byte_bound_is_held_alone_and_kept_whole(
+    tmp_path, monkeypatch
+):
+    # Coverage never depends on a size threshold: an oversized record reduces the
+    # pipeline to one record rather than being skipped or truncated.
+    bound = 4096
+    monkeypatch.setattr(W, "PIPELINE_RECORDS", 8)
+    monkeypatch.setattr(W, "PIPELINE_BYTES", bound)
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = confidential_ledger(tmp_path, detector)
+    record = b"y" * (4 * bound)
+    for index in range(3):
+        sink.send(
+            io.BytesIO(record),
+            len(record),
+            "synthetic",
+            {"scope": "outer", "tar_offset": index},
+        )
+        assert len(sink.pending) == 1, "an oversized record was held alongside another"
+        assert sink.held_bytes == len(record)
+    sink.flush_pending()
+    assert sink.records == 3 and sink.held_bytes == 0
+    sink.stream.close()
+
+
+def test_unfinished_records_fail_closed(tmp_path):
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(
+        tmp_path, detector, ["private-operator-marker"], "exact-substring-v1"
+    )
+    sink.send(io.BytesIO(b"body"), 4, "synthetic", {"scope": "outer"})
+    assert sink.pending, "record was not held for later collection"
+    with pytest.raises(AssertionError):
+        detector.finish()
+    sink.flush_pending()
+    assert not sink.pending
+    detector.finish()
+    sink.stream.close()
 
 
 def test_complete_zero_length_and_large_file_are_one_record_each(tmp_path):
@@ -502,6 +696,7 @@ def test_zero_ranges_scan_complete_contiguous_run_with_literal_continuity(tmp_pa
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0})
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 0, "tar_offset": 512})
     sink.flush_zeros()
+    sink.flush_pending()
     sink.stream.close()
     rows = [
         json.loads(line)
@@ -520,6 +715,7 @@ def test_zero_ranges_do_not_concatenate_across_distinct_layers(tmp_path):
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0})
     sink.zeros(b"\x00" * 512, {"scope": "layer", "layer_ordinal": 1, "tar_offset": 0})
     sink.flush_zeros()
+    sink.flush_pending()
     sink.stream.close()
     assert sink.findings == 0
 
