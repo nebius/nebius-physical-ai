@@ -77,7 +77,9 @@ def test_cleanup_reports_local_leftovers_without_removing_them(npa_home: Path) -
     assert (npa_home / ".npa" / "skypilot-venv").exists()
 
 
-def test_cleanup_yes_removes_only_local_caches(monkeypatch: pytest.MonkeyPatch, npa_home: Path) -> None:
+def test_cleanup_yes_removes_only_local_caches(
+    monkeypatch: pytest.MonkeyPatch, npa_home: Path
+) -> None:
     venv = npa_home / ".npa" / "skypilot-venv"
     venv.mkdir()
     sky = npa_home / ".sky"
@@ -131,7 +133,9 @@ def test_destructive_global_sky_cleanup_still_verifies_queue(
     assert calls == [""]
 
 
-def test_cleanup_keep_sky_leaves_skypilot_state(monkeypatch: pytest.MonkeyPatch, npa_home: Path) -> None:
+def test_cleanup_keep_sky_leaves_skypilot_state(
+    monkeypatch: pytest.MonkeyPatch, npa_home: Path
+) -> None:
     venv = npa_home / ".npa" / "skypilot-venv"
     venv.mkdir()
     sky = npa_home / ".sky"
@@ -236,7 +240,9 @@ def _pdb(
 
 def _pdb_runner(payload: dict, *, returncode: int = 0, stderr: str = ""):
     def run(cmd, **kwargs):  # noqa: ANN001 - test stub
-        return subprocess.CompletedProcess(cmd, returncode, stdout=json.dumps(payload), stderr=stderr)
+        return subprocess.CompletedProcess(
+            cmd, returncode, stdout=json.dumps(payload), stderr=stderr
+        )
 
     return run
 
@@ -278,7 +284,9 @@ def test_no_blocking_budgets_produces_no_guidance() -> None:
 
 
 def test_an_unreachable_cluster_is_reported_not_assumed_clean() -> None:
-    blockers, issue = blocking_pod_disruption_budgets(runner=_pdb_runner({}, returncode=1, stderr="connection refused"))
+    blockers, issue = blocking_pod_disruption_budgets(
+        runner=_pdb_runner({}, returncode=1, stderr="connection refused")
+    )
 
     assert blockers == []
     assert issue is not None
@@ -353,7 +361,9 @@ def test_noninteractive_preview_disables_browser_auth_in_the_kubeconfig(
         )
         return subprocess.CompletedProcess(cmd, 0, stdout='{"items": []}', stderr="")
 
-    blockers, issue = blocking_pod_disruption_budgets(kubeconfig=str(kubeconfig), runner=run)
+    blockers, issue = blocking_pod_disruption_budgets(
+        kubeconfig=str(kubeconfig), runner=run
+    )
 
     assert blockers == []
     assert issue is None
@@ -397,7 +407,9 @@ def _pod(name: str, labels: dict[str, str], owner: str) -> dict:
             "namespace": "kube-system",
             "name": name,
             "labels": labels,
-            "ownerReferences": [{"kind": "Deployment", "name": owner, "controller": True}],
+            "ownerReferences": [
+                {"kind": "Deployment", "name": owner, "controller": True}
+            ],
         },
         "spec": {"nodeName": "cpu-0"},
         "status": {
@@ -433,7 +445,9 @@ def test_shared_inventory_finds_system_pdbs_on_one_node_cpu_pool() -> None:
 
     def run(cmd, **kwargs):  # noqa: ANN001 - subprocess test double
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(payload), stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
 
     inventory, issue = drain_inventory(runner=run)
 
@@ -469,7 +483,9 @@ def test_unhealthy_always_allow_pod_is_not_a_false_blocker() -> None:
     pdb = _selected_pdb("metrics-server", {"k8s-app": "metrics-server"}, 0)
     pdb["spec"]["unhealthyPodEvictionPolicy"] = "AlwaysAllow"
 
-    inventory, issue = drain_inventory(runner=_pdb_runner({"items": [_node("cpu-0"), pod, pdb]}))
+    inventory, issue = drain_inventory(
+        runner=_pdb_runner({"items": [_node("cpu-0"), pod, pdb]})
+    )
 
     assert issue is None
     assert inventory is not None
@@ -489,7 +505,9 @@ def test_unhealthy_if_healthy_budget_uses_reported_health() -> None:
     assert healthy_inventory.blockers == ()
 
     pdb["status"]["currentHealthy"] = 0
-    unhealthy_inventory, issue = drain_inventory(runner=_pdb_runner({"items": [_node("cpu-0"), pod, pdb]}))
+    unhealthy_inventory, issue = drain_inventory(
+        runner=_pdb_runner({"items": [_node("cpu-0"), pod, pdb]})
+    )
 
     assert issue is None
     assert unhealthy_inventory is not None
@@ -523,7 +541,9 @@ def test_cluster_down_preview_explains_when_the_cluster_is_unreachable(
         "npa.cluster.drain.drain_inventory",
         lambda **kwargs: (
             None,
-            DrainPreviewIssue(kind="api", summary="the Kubernetes API endpoint could not be reached"),
+            DrainPreviewIssue(
+                kind="api", summary="the Kubernetes API endpoint could not be reached"
+            ),
         ),
     )
 
@@ -592,7 +612,9 @@ def test_an_explicit_alias_is_reported_when_config_is_empty() -> None:
 
 
 def test_an_explicit_alias_that_exists_still_resolves() -> None:
-    section = _resolve_project_section({"projects": {"demo": {"project_id": "p1"}}}, "demo")
+    section = _resolve_project_section(
+        {"projects": {"demo": {"project_id": "p1"}}}, "demo"
+    )
 
     assert section == {"project_id": "p1"}
 
@@ -628,7 +650,9 @@ def test_status_explains_a_pending_job_whose_pod_cannot_start(
         lambda **kwargs: JobBlockerReport(
             job_id="2",
             cluster_name="sky-abc",
-            blockers=[PodBlocker(pod="worker-0", phase="Pending", reason="ImagePullBackOff")],
+            blockers=[
+                PodBlocker(pod="worker-0", phase="Pending", reason="ImagePullBackOff")
+            ],
         ),
     )
 
@@ -644,7 +668,9 @@ def test_a_running_job_is_not_probed(monkeypatch: pytest.MonkeyPatch) -> None:
     def explode(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202 - must not run
         raise AssertionError("a healthy job must not be probed")
 
-    monkeypatch.setattr("npa.orchestration.skypilot.workflow.workflow_task_statuses", explode)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses", explode
+    )
 
     assert workflow_cli._stalled_job_blockers("2", "RUNNING") == []
     assert workflow_cli._stalled_job_blockers("", "PENDING") == []
@@ -729,14 +755,18 @@ def test_node_flags_reach_the_cluster_up_call(monkeypatch: pytest.MonkeyPatch) -
     def fake_up(**kwargs):  # noqa: ANN003 - test stub
         seen.update(kwargs)
 
-    monkeypatch.setattr("npa.cli.cluster.terraform_lifecycle.up_cmd", fake_up, raising=False)
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd", fake_up, raising=False
+    )
     monkeypatch.setattr(
         provisioning,
         "_resolve_project_runtime",
         lambda project: (
             "demo",
             type("E", (), {"project_id": "p", "tenant_id": "t", "region": "r"})(),
-            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            type(
+                "S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""}
+            )(),
             "cr.example.invalid/reg",
         ),
     )
@@ -781,7 +811,15 @@ def test_nested_cluster_preflight_inherits_exact_outer_plan(
         "_resolve_project_runtime",
         lambda _project: (
             "demo",
-            type("E", (), {"project_id": "project-a", "tenant_id": "tenant-a", "region": "region-a"})(),
+            type(
+                "E",
+                (),
+                {
+                    "project_id": "project-a",
+                    "tenant_id": "tenant-a",
+                    "region": "region-a",
+                },
+            )(),
             type(
                 "S",
                 (),
@@ -835,7 +873,15 @@ def test_provisioning_rollback_uses_explicit_context(
         "_resolve_project_runtime",
         lambda _project: (
             "demo",
-            type("E", (), {"project_id": "project-a", "tenant_id": "tenant-a", "region": "region-a"})(),
+            type(
+                "E",
+                (),
+                {
+                    "project_id": "project-a",
+                    "tenant_id": "tenant-a",
+                    "region": "region-a",
+                },
+            )(),
             type(
                 "S",
                 (),
@@ -883,14 +929,20 @@ def test_dry_run_reports_the_requested_node_shape(
         lambda project: (
             "demo",
             type("E", (), {"project_id": "p", "tenant_id": "t"})(),
-            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            type(
+                "S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""}
+            )(),
             "cr.example.invalid/reg",
         ),
     )
 
-    result = provisioning.provision_if_absent(skip_s3=True, dry_run=True, gpu_nodes=2, cpu_nodes=1)
+    result = provisioning.provision_if_absent(
+        skip_s3=True, dry_run=True, gpu_nodes=2, cpu_nodes=1
+    )
 
-    assert any("gpu_nodes=2" in action and "cpu_nodes=1" in action for action in result.actions)
+    assert any(
+        "gpu_nodes=2" in action and "cpu_nodes=1" in action for action in result.actions
+    )
 
 
 def test_an_unavailable_capacity_api_does_not_advertise_the_dead_command(
@@ -1131,7 +1183,9 @@ def test_preemptible_reaches_terraform_as_a_var(
         lambda project: (
             "demo",
             type("E", (), {"project_id": "p", "tenant_id": "t", "region": "r"})(),
-            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            type(
+                "S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""}
+            )(),
             "cr.example.invalid/reg",
         ),
     )
@@ -1158,17 +1212,23 @@ def test_dry_run_reports_the_preemptible_choice(
         lambda project: (
             "demo",
             type("E", (), {"project_id": "p", "tenant_id": "t"})(),
-            type("S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""})(),
+            type(
+                "S", (), {"checkpoint_bucket": "b", "prefix": "p", "endpoint_url": ""}
+            )(),
             "cr.example.invalid/reg",
         ),
     )
 
-    result = provisioning.provision_if_absent(skip_s3=True, dry_run=True, preemptible=True)
+    result = provisioning.provision_if_absent(
+        skip_s3=True, dry_run=True, preemptible=True
+    )
 
     assert any("preemptible=true" in action for action in result.actions)
 
 
-def test_configure_show_leads_with_what_is_saved(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_configure_show_leads_with_what_is_saved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     # Leading with the blank template made an operator read `hf_REPLACE_ME` and
     # conclude nothing had been configured.
     monkeypatch.setattr("npa.clients.config.CONFIG_PATH", tmp_path / "config.yaml")
@@ -1176,4 +1236,6 @@ def test_configure_show_leads_with_what_is_saved(monkeypatch: pytest.MonkeyPatch
     result = runner.invoke(app, ["configure", "--show"])
 
     assert result.exit_code == 0, result.output
-    assert result.output.index("Current configuration") < result.output.index("Credential setup")
+    assert result.output.index("Current configuration") < result.output.index(
+        "Credential setup"
+    )

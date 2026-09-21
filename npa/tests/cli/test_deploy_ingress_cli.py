@@ -164,7 +164,11 @@ def _assert_private_fiftyone_deploy(result, ensure) -> None:
     assert "Network ingress confirmed" not in result.output
     assert "npa workbench fiftyone -p proj -n demo open" in result.output
     configurations = [
-        call.args[0].get("projects", {}).get("proj", {}).get("workbenches", {}).get("demo", {})
+        call.args[0]
+        .get("projects", {})
+        .get("proj", {})
+        .get("workbenches", {})
+        .get("demo", {})
         for call in fiftyone.write_config.call_args_list
     ]
     saved = next(config for config in configurations if "endpoint_strategy" in config)

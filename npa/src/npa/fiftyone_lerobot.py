@@ -55,7 +55,10 @@ def _refresh_fiftyone_collection_stats(dataset: Any) -> None:
         if frame_collection_name:
             conn.command({"validate": frame_collection_name})
     except Exception as exc:
-        print(f"Warning: could not refresh FiftyOne count metadata: {exc}", file=sys.stderr)
+        print(
+            f"Warning: could not refresh FiftyOne count metadata: {exc}",
+            file=sys.stderr,
+        )
 
 
 @dataclass
@@ -73,7 +76,9 @@ class LeRobotImportPlan:
     metadata_fields: list[str]
 
 
-def materialize_lerobot_source(source: str, name: str, datasets_dir: Path) -> tuple[Path, str]:
+def materialize_lerobot_source(
+    source: str, name: str, datasets_dir: Path
+) -> tuple[Path, str]:
     """Return a local LeRobotDataset directory for a local, S3, or HF source."""
     source = source.strip()
     if not source:
@@ -130,19 +135,27 @@ def build_lerobot_import_plan(root: Path, output_dir: Path) -> LeRobotImportPlan
     if episode_col:
         metadata_fields.append("episode_index")
     else:
-        warnings.append("LeRobot data parquet has no episode_index column; skipping episode_index field")
+        warnings.append(
+            "LeRobot data parquet has no episode_index column; skipping episode_index field"
+        )
     if frame_col:
         metadata_fields.append("frame_index")
     else:
-        warnings.append("LeRobot data parquet has no frame_index column; skipping frame_index field")
+        warnings.append(
+            "LeRobot data parquet has no frame_index column; skipping frame_index field"
+        )
     if timestamp_col:
         metadata_fields.append("timestamp")
     else:
-        warnings.append("LeRobot data parquet has no timestamp column; skipping timestamp field")
+        warnings.append(
+            "LeRobot data parquet has no timestamp column; skipping timestamp field"
+        )
     if frame_success_col or episode_success_col:
         metadata_fields.append("task_success")
     else:
-        warnings.append("LeRobot metadata has no success/failure column; skipping task_success field")
+        warnings.append(
+            "LeRobot metadata has no success/failure column; skipping task_success field"
+        )
 
     video_keys, image_keys = _discover_media_keys(root, info, columns)
     if not video_keys and not image_keys:
@@ -164,14 +177,27 @@ def build_lerobot_import_plan(root: Path, output_dir: Path) -> LeRobotImportPlan
 
     samples: list[LeRobotSampleSpec] = []
     for image_key in image_keys:
-        samples.extend(_build_image_samples(root, rows, image_key, metadata_fields, warnings))
+        samples.extend(
+            _build_image_samples(root, rows, image_key, metadata_fields, warnings)
+        )
     for video_key in video_keys:
         samples.extend(
-            _build_video_samples(root, output_dir, rows, episode_by_index, info, video_key, metadata_fields, warnings)
+            _build_video_samples(
+                root,
+                output_dir,
+                rows,
+                episode_by_index,
+                info,
+                video_key,
+                metadata_fields,
+                warnings,
+            )
         )
 
     if not samples:
-        raise RuntimeError("LeRobot metadata parsed successfully, but no media samples were found")
+        raise RuntimeError(
+            "LeRobot metadata parsed successfully, but no media samples were found"
+        )
 
     media_keys = [*image_keys, *video_keys]
     return LeRobotImportPlan(
@@ -182,7 +208,9 @@ def build_lerobot_import_plan(root: Path, output_dir: Path) -> LeRobotImportPlan
     )
 
 
-def import_lerobot_dataset(name: str, source: str, datasets_dir: Path) -> dict[str, Any]:
+def import_lerobot_dataset(
+    name: str, source: str, datasets_dir: Path
+) -> dict[str, Any]:
     """Materialize and import a LeRobotDataset into FiftyOne."""
     import fiftyone as fo
 
@@ -249,18 +277,26 @@ def _prepare_native_lerobot_source(source_root: Path, staging_parent: Path) -> P
     # LeRobot saves task text as the Pandas index; FiftyOne 1.22 expects a column.
     index_columns = (table.schema.pandas_metadata or {}).get("index_columns", [])
     if len(index_columns) != 1 or not isinstance(index_columns[0], str):
-        raise ValueError("LeRobot tasks metadata requires a task column or one named Pandas index")
+        raise ValueError(
+            "LeRobot tasks metadata requires a task column or one named Pandas index"
+        )
     index = index_columns[0]
     if index not in table.column_names or "task_index" not in table.column_names:
-        raise ValueError("LeRobot tasks metadata is missing task_index or its Pandas index")
-    if not pa.types.is_string(table[index].type) and not pa.types.is_large_string(table[index].type):
+        raise ValueError(
+            "LeRobot tasks metadata is missing task_index or its Pandas index"
+        )
+    if not pa.types.is_string(table[index].type) and not pa.types.is_large_string(
+        table[index].type
+    ):
         raise ValueError("LeRobot task names must be strings")
     if staging_parent.resolve().is_relative_to(source_root.resolve()):
         raise ValueError("Native LeRobot staging must be outside the source dataset")
     staging_parent.mkdir(parents=True, exist_ok=True)
     staged = Path(tempfile.mkdtemp(prefix="lerobot-native-", dir=staging_parent))
     shutil.copytree(source_root, staged, dirs_exist_ok=True)
-    pq.write_table(table.append_column("task", table[index]), staged / "meta/tasks.parquet")
+    pq.write_table(
+        table.append_column("task", table[index]), staged / "meta/tasks.parquet"
+    )
     return staged
 
 
@@ -304,7 +340,14 @@ def _import_native_lerobot_dataset(
         "format": "lerobot",
         "samples": len(dataset),
         "media_keys": media_keys,
-        "metadata_fields": ["episode_index", "task", "tasks", "length", "duration", "fps"],
+        "metadata_fields": [
+            "episode_index",
+            "task",
+            "tasks",
+            "length",
+            "duration",
+            "fps",
+        ],
         "seeded_subtask_segments": seeded_segments,
         "native_multimodal": True,
         "warnings": warnings,
@@ -319,8 +362,7 @@ def _seed_native_subtask_tags(dataset: Any, source_root: Path) -> int:
     if not segments:
         return 0
     sample_by_episode = {
-        int(sample["episode_index"]): sample
-        for sample in dataset.iter_samples()
+        int(sample["episode_index"]): sample for sample in dataset.iter_samples()
     }
     tags = []
     for segment in segments:
@@ -367,7 +409,11 @@ def _download_s3_source(uri: str, name: str, datasets_dir: Path) -> Path:
         shutil.rmtree(target_root)
     target_root.mkdir(parents=True, exist_ok=True)
 
-    endpoint = os.environ.get("NEBIUS_S3_ENDPOINT") or os.environ.get("AWS_ENDPOINT_URL") or None
+    endpoint = (
+        os.environ.get("NEBIUS_S3_ENDPOINT")
+        or os.environ.get("AWS_ENDPOINT_URL")
+        or None
+    )
     s3 = boto3.client("s3", endpoint_url=endpoint)
     paginator = s3.get_paginator("list_objects_v2")
 
@@ -377,7 +423,7 @@ def _download_s3_source(uri: str, name: str, datasets_dir: Path) -> Path:
             key = obj["Key"]
             if key.endswith("/"):
                 continue
-            rel = key[len(prefix):].lstrip("/") if prefix else key
+            rel = key[len(prefix) :].lstrip("/") if prefix else key
             if not rel:
                 continue
             relative = Path(rel)
@@ -418,7 +464,9 @@ def _download_huggingface_source(repo_id: str, name: str, datasets_dir: Path) ->
 def _read_info_json(root: Path, warnings: list[str]) -> dict[str, Any]:
     path = root / "meta" / "info.json"
     if not path.exists():
-        warnings.append("LeRobot meta/info.json not found; media features will be inferred from files")
+        warnings.append(
+            "LeRobot meta/info.json not found; media features will be inferred from files"
+        )
         return {}
     try:
         return json.loads(path.read_text())
@@ -580,7 +628,9 @@ def _normalize_rows(
         if frame_success_col:
             success = _coerce_success(row.get(frame_success_col), frame_success_col)
         if success is None and episode_success_col:
-            success = _coerce_success(episode_row.get(episode_success_col), episode_success_col)
+            success = _coerce_success(
+                episode_row.get(episode_success_col), episode_success_col
+            )
 
         normalized.append(
             {
@@ -615,7 +665,9 @@ def _build_image_samples(
             image_path = fallback_images[idx]
         if image_path is None or not image_path.exists():
             if idx == 0:
-                warnings.append(f"No image files found for LeRobot feature {image_key}; skipping feature")
+                warnings.append(
+                    f"No image files found for LeRobot feature {image_key}; skipping feature"
+                )
             continue
         samples.append(
             LeRobotSampleSpec(
@@ -643,9 +695,13 @@ def _build_video_samples(
         rows_by_episode.setdefault(int(row["_episode"]), []).append(row)
 
     for episode, episode_rows in sorted(rows_by_episode.items()):
-        video_path = _resolve_video_path(root, info, video_key, episode_by_index.get(episode, {}), episode)
+        video_path = _resolve_video_path(
+            root, info, video_key, episode_by_index.get(episode, {}), episode
+        )
         if video_path is None or not video_path.exists():
-            warnings.append(f"Video for feature {video_key}, episode {episode} was not found; skipping episode")
+            warnings.append(
+                f"Video for feature {video_key}, episode {episode} was not found; skipping episode"
+            )
             continue
 
         frame_dir = output_dir / _safe_name(video_key) / f"episode_{episode:06d}"
@@ -661,7 +717,9 @@ def _build_video_samples(
             if image_path is None and frame < len(extracted):
                 image_path = extracted[frame]
             if image_path is None:
-                warnings.append(f"Missing extracted frame {frame} for {video_key}, episode {episode}")
+                warnings.append(
+                    f"Missing extracted frame {frame} for {video_key}, episode {episode}"
+                )
                 continue
             samples.append(
                 LeRobotSampleSpec(
@@ -673,7 +731,9 @@ def _build_video_samples(
     return samples
 
 
-def _sample_fields(row: dict[str, Any], media_key: str, metadata_fields: list[str]) -> dict[str, Any]:
+def _sample_fields(
+    row: dict[str, Any], media_key: str, metadata_fields: list[str]
+) -> dict[str, Any]:
     fields: dict[str, Any] = {
         "source_video_key": media_key,
         "camera": _media_label(media_key),
@@ -732,7 +792,10 @@ def _resolve_video_path(
     if file_index is None:
         file_index = episode
 
-    template = info.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    template = (
+        info.get("video_path")
+        or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    )
     try:
         rel = template.format(
             video_key=video_key,
@@ -749,7 +812,9 @@ def _resolve_video_path(
     feature_dir = root / "videos" / video_key
     media = _sorted_media(feature_dir, VIDEO_EXTENSIONS)
     for path in media:
-        if path.stem.endswith(f"{file_index:03d}") or path.stem.endswith(str(file_index)):
+        if path.stem.endswith(f"{file_index:03d}") or path.stem.endswith(
+            str(file_index)
+        ):
             return path
     if 0 <= file_index < len(media):
         return media[file_index]
@@ -793,7 +858,9 @@ def _has_files(root: Path, extensions: set[str]) -> bool:
     return bool(_sorted_media(root, extensions, limit=1))
 
 
-def _sorted_media(root: Path, extensions: set[str], limit: int | None = None) -> list[Path]:
+def _sorted_media(
+    root: Path, extensions: set[str], limit: int | None = None
+) -> list[Path]:
     if not root.exists():
         return []
     paths = sorted(
@@ -844,7 +911,16 @@ def _coerce_success(value: Any, column: str) -> bool | None:
         result = bool(value)
     else:
         normalized = str(value).strip().lower()
-        if normalized in {"true", "1", "yes", "success", "succeeded", "pass", "passed", "done"}:
+        if normalized in {
+            "true",
+            "1",
+            "yes",
+            "success",
+            "succeeded",
+            "pass",
+            "passed",
+            "done",
+        }:
             result = True
         elif normalized in {"false", "0", "no", "failure", "failed", "fail"}:
             result = False

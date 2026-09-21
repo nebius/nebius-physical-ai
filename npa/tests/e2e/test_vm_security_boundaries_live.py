@@ -10,6 +10,7 @@ checks do not provision infrastructure or run model inference.
 Set native_fiftyone=true only for a freshly provisioned native FiftyOne target
 to additionally verify its initial service before any configurator replacement.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -39,21 +40,40 @@ pytestmark = [
 ]
 
 
-
 class _PodCommandClient:
     """Test-only transport into one UID-verified, isolated task-owned CPU Pod."""
 
     def __init__(self, cfg):
-        self.prefix = ["kubectl", "--kubeconfig", cfg["kubeconfig"], "--context", cfg["context"], "-n", cfg["namespace"]]
+        self.prefix = [
+            "kubectl",
+            "--kubeconfig",
+            cfg["kubeconfig"],
+            "--context",
+            cfg["context"],
+            "-n",
+            cfg["namespace"],
+        ]
         self.pod = cfg["pod"]
-        probe = subprocess.run([*self.prefix, "get", "pod", self.pod, "-o", "json"], capture_output=True, check=True)
+        probe = subprocess.run(
+            [*self.prefix, "get", "pod", self.pod, "-o", "json"],
+            capture_output=True,
+            check=True,
+        )
         actual = json.loads(probe.stdout)
         assert actual["metadata"]["uid"] == cfg["pod_uid"]
-        assert not any(actual["spec"].get(key, False) for key in ("hostPID", "hostIPC", "hostNetwork"))
+        assert not any(
+            actual["spec"].get(key, False)
+            for key in ("hostPID", "hostIPC", "hostNetwork")
+        )
         assert not any("hostPath" in item for item in actual["spec"].get("volumes", []))
 
     def run(self, command, **_kwargs):
-        result = subprocess.run([*self.prefix, "exec", self.pod, "--", "bash", "-c", command], capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            [*self.prefix, "exec", self.pod, "--", "bash", "-c", command],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         return result.returncode, result.stdout, result.stderr
 
     def run_or_raise(self, command, **kwargs):
@@ -64,13 +84,20 @@ class _PodCommandClient:
     def _upload(self, content, remote_path):
         parent = shlex.quote(str(Path(remote_path).parent))
         target = shlex.quote(remote_path)
-        command = ("set -eu; umask 077; "
-                   + f"stage=$(mktemp -d {parent}/.npa-stage.XXXXXXXX); "
-                   + "trap 'rm -rf -- \"$stage\"' EXIT; "
-                   + "install -m 0600 /dev/null \"$stage/payload\"; "
-                   + "cat > \"$stage/payload\"; "
-                   + f"mv -f \"$stage/payload\" {target}")
-        result = subprocess.run([*self.prefix, "exec", "-i", self.pod, "--", "bash", "-c", command], input=content, capture_output=True, check=False)
+        command = (
+            "set -eu; umask 077; "
+            + f"stage=$(mktemp -d {parent}/.npa-stage.XXXXXXXX); "
+            + "trap 'rm -rf -- \"$stage\"' EXIT; "
+            + 'install -m 0600 /dev/null "$stage/payload"; '
+            + 'cat > "$stage/payload"; '
+            + f'mv -f "$stage/payload" {target}'
+        )
+        result = subprocess.run(
+            [*self.prefix, "exec", "-i", self.pod, "--", "bash", "-c", command],
+            input=content,
+            capture_output=True,
+            check=False,
+        )
         assert result.returncode == 0, "private Pod upload failed"
         return remote_path
 
@@ -103,9 +130,14 @@ def vm():
     if cfg.get("transport") == "isolated-pod":
         ssh = _PodCommandClient(cfg)
     else:
-        ssh = SSHClient(SSHConfig(
-            host=cfg["host"], user=cfg["user"], key_path=cfg["key_path"],
-        ), known_hosts=cfg["known_hosts"])
+        ssh = SSHClient(
+            SSHConfig(
+                host=cfg["host"],
+                user=cfg["user"],
+                key_path=cfg["key_path"],
+            ),
+            known_hosts=cfg["known_hosts"],
+        )
     with ssh.temporary_directory() as remote:
         yield ssh, cfg, evidence, remote
 
@@ -124,19 +156,27 @@ def _private_run(vm, name, script, *, interpreter="bash", root=False):
     ssh.upload_private_text(script, path)
     command = ("sudo " if root else "") + shlex.join([interpreter, path])
     code, stdout, stderr = ssh.run(command)
-    _record(vm, name + "-execution", {
-        "exit_code": code,
-        "stdout": stdout,
-        "stderr": stderr,
-        "script_sha256": hashlib.sha256(script.encode()).hexdigest(),
-        "invocation_contains_script_bytes": script in command,
-    })
+    _record(
+        vm,
+        name + "-execution",
+        {
+            "exit_code": code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "script_sha256": hashlib.sha256(script.encode()).hexdigest(),
+            "invocation_contains_script_bytes": script in command,
+        },
+    )
     return code, stdout, stderr
 
 
 def _python(vm, name, source):
     code, out, _ = _private_run(
-        vm, name, textwrap.dedent(source), interpreter="python3", root=True,
+        vm,
+        name,
+        textwrap.dedent(source),
+        interpreter="python3",
+        root=True,
     )
     assert code == 0, f"{name}: private execution receipt records failure"
     result = json.loads(out)
@@ -147,7 +187,10 @@ def _python(vm, name, source):
 def test_native_fiftyone_cloud_init_listener_is_private(vm):
     if not vm[1].get("native_fiftyone", False):
         pytest.skip("requires a freshly provisioned native FiftyOne target")
-    result = _python(vm, "native-fiftyone", '''
+    result = _python(
+        vm,
+        "native-fiftyone",
+        """
         import hashlib,json,pathlib,socket,subprocess,urllib.request
         subprocess.run(['systemctl','is-active','--quiet','npa-fiftyone-app'],check=True)
         values = dict(line.split('=',1) for line in pathlib.Path('/etc/npa-fiftyone/env').read_text().splitlines() if '=' in line)
@@ -168,7 +211,8 @@ def test_native_fiftyone_cloud_init_listener_is_private(vm):
             except OSError:
                 pass
         print(json.dumps({'service_active':True,'status':status,'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest(),'loopback_only':loopback_only,'external_interfaces_closed':external_closed}))
-    ''')
+    """,
+    )
     assert result["service_active"] and result["status"] == 200 and result["bytes"] > 0
     assert result["loopback_only"] and result["external_interfaces_closed"]
 
@@ -181,7 +225,10 @@ def test_agent_bcrypt_private_staging_and_actual_nginx(vm):
     username = "security-validation"
     script_path = f"{remote}/auth-install.sh"
     ssh.upload_private_text(_agent_auth_setup_script(username, password), script_path)
-    result = _python(vm, "agent-auth", f'''
+    result = _python(
+        vm,
+        "agent-auth",
+        f"""
         import base64, hashlib, json, os, pathlib, socket, stat, subprocess, tempfile, threading, time
         import urllib.error, urllib.request
         password = {password!r}
@@ -275,13 +322,21 @@ def test_agent_bcrypt_private_staging_and_actual_nginx(vm):
                 else:
                     target.unlink(missing_ok=True)
         print(json.dumps(result))
-    ''')
+    """,
+    )
     assert result["htpasswd_observed"] and result["private_staging_observed"]
     assert "observer_error" not in result
-    assert not result["password_in_process_arguments"] and not result["staging_mode_violation"]
-    assert result["final_mode"] == "0o640" and result["root_owned"] and result["web_group"]
+    assert (
+        not result["password_in_process_arguments"]
+        and not result["staging_mode_violation"]
+    )
+    assert (
+        result["final_mode"] == "0o640" and result["root_owned"] and result["web_group"]
+    )
     assert result["bcrypt"] and result["staging_clean"]
-    assert [result[k] for k in ("anonymous_status", "incorrect_status", "correct_status")] == [401, 401, 200]
+    assert [
+        result[k] for k in ("anonymous_status", "incorrect_status", "correct_status")
+    ] == [401, 401, 200]
     assert result["response_bytes"] > 0
 
 
@@ -292,11 +347,16 @@ def test_cosmos_actual_systemd_environment_and_failed_atomic_update(vm):
     token = secrets.token_urlsafe(24) + " dollar$ quotes'\" slash\\ unicode-é"
     model = "validation/model quote'\" dollar$ slash\\ é"
     for name, value in (("valid", token), ("invalid", token + "\ninvalid")):
-        script = "set -euo pipefail\n" + render_shell_env_file({"HF_TOKEN": value}, export=True)
+        script = "set -euo pipefail\n" + render_shell_env_file(
+            {"HF_TOKEN": value}, export=True
+        )
         script += _build_service_env_script(model, 8123)
         ssh.upload_private_text(script, f"{remote}/cosmos-{name}.sh")
     expected = hashlib.sha256(token.encode()).hexdigest()
-    result = _python(vm, "cosmos-env", f'''
+    result = _python(
+        vm,
+        "cosmos-env",
+        f"""
         import hashlib, json, os, pathlib, stat, subprocess, tempfile, uuid
         target = pathlib.Path('/etc/npa-cosmos-server/env')
         remote = pathlib.Path({remote!r})
@@ -331,11 +391,16 @@ def test_cosmos_actual_systemd_environment_and_failed_atomic_update(vm):
             else:
                 target.unlink(missing_ok=True)
         print(json.dumps(result))
-    ''')
+    """,
+    )
     assert result["token_sha256"] == expected
     assert result["model_sha256"] == hashlib.sha256(model.encode()).hexdigest()
     assert result["final_mode"] == "0o600"
-    assert result["invalid_exit_code"] != 0 and result["old_bytes_preserved"] and result["staging_clean"]
+    assert (
+        result["invalid_exit_code"] != 0
+        and result["old_bytes_preserved"]
+        and result["staging_clean"]
+    )
 
 
 def test_literal_shared_env_matches_real_docker_and_private_override(vm):
@@ -353,25 +418,61 @@ def test_literal_shared_env_matches_real_docker_and_private_override(vm):
     assert code == 0
     shell_hashes = [line.split()[0] for line in out.splitlines()]
     docker_script = f"{remote}/docker-proof.sh"
-    ssh.upload_private_text("printf '%s' \"$VALIDATION_LITERAL\" | sha256sum\nprintf '%s' \"$VALIDATION_OVERRIDE\" | sha256sum\n", docker_script)
+    ssh.upload_private_text(
+        "printf '%s' \"$VALIDATION_LITERAL\" | sha256sum\nprintf '%s' \"$VALIDATION_OVERRIDE\" | sha256sum\n",
+        docker_script,
+    )
     image = cfg["caddy_image"]
     assert "@sha256:" in image
-    argv = ["sudo", "docker", "run", "--rm", "--network", "none", "--env-file", base, "--env-file", override, "-v", f"{docker_script}:/proof.sh:ro", "--entrypoint", "/bin/sh", image, "/proof.sh"]
+    argv = [
+        "sudo",
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--env-file",
+        base,
+        "--env-file",
+        override,
+        "-v",
+        f"{docker_script}:/proof.sh:ro",
+        "--entrypoint",
+        "/bin/sh",
+        image,
+        "/proof.sh",
+    ]
     assert value not in shlex.join(argv)
     code, out, _ = ssh.run(shlex.join(argv))
     assert code == 0
     docker_hashes = [line.split()[0] for line in out.splitlines()]
-    expected = [hashlib.sha256(value.encode()).hexdigest(), hashlib.sha256(b"second").hexdigest()]
+    expected = [
+        hashlib.sha256(value.encode()).hexdigest(),
+        hashlib.sha256(b"second").hexdigest(),
+    ]
     assert shell_hashes == docker_hashes == expected
     code, _, _ = ssh.run("test ! -e " + shlex.quote(marker))
     assert code == 0
-    result = _python(vm, "literal-env-modes", f'''
+    result = _python(
+        vm,
+        "literal-env-modes",
+        f"""
         import json,pathlib,stat
         files = [pathlib.Path({base!r}), pathlib.Path({override!r})]
         print(json.dumps({{'all_private': all(stat.S_IMODE(p.stat().st_mode)==0o600 for p in files), 'staging_clean': not list(files[0].parent.glob('.npa-install.*'))}}))
-    ''')
+    """,
+    )
     assert result["all_private"] and result["staging_clean"]
-    _record(vm, "literal-env-parity", {"literal_shell_and_docker_hashes_match": True, "override_order_preserved": True, "marker_absent": True, "credential_not_in_docker_argv": True})
+    _record(
+        vm,
+        "literal-env-parity",
+        {
+            "literal_shell_and_docker_hashes_match": True,
+            "override_order_preserved": True,
+            "marker_absent": True,
+            "credential_not_in_docker_argv": True,
+        },
+    )
 
 
 def test_lichtblick_real_mcap_range_and_loopback_binding(vm):
@@ -384,23 +485,50 @@ def test_lichtblick_real_mcap_range_and_loopback_binding(vm):
     remote_artifact = f"{remote}/recording.mcap"
     # Binary data uses the same private transfer helper's underlying SFTP API.
     ssh.upload_file(str(artifact), remote_artifact)
-    code, out, _ = ssh.run("python3 -c 'import socket;s=socket.socket();s.bind((\"127.0.0.1\",0));print(s.getsockname()[1]);s.close()'")
+    code, out, _ = ssh.run(
+        "python3 -c 'import socket;s=socket.socket();s.bind((\"127.0.0.1\",0));print(s.getsockname()[1]);s.close()'"
+    )
     assert code == 0
     port = int(out.strip())
-    plan = build_launch_plan(input_path=remote_artifact, port=port, image=cfg["caddy_image"])
+    plan = build_launch_plan(
+        input_path=remote_artifact, port=port, image=cfg["caddy_image"]
+    )
     assert plan.host == "127.0.0.1"
     container = "security-viewer-" + secrets.token_hex(8)
+
     def runner(argv):
         # The reviewed base is the production Caddy transport, with its exact
         # production command supplied explicitly; this does not claim UI build coverage.
-        code, _, _ = ssh.run(shlex.join(["sudo", *argv, "caddy", "file-server", "--root", "/srv", "--listen", ":8080"]))
+        code, _, _ = ssh.run(
+            shlex.join(
+                [
+                    "sudo",
+                    *argv,
+                    "caddy",
+                    "file-server",
+                    "--root",
+                    "/srv",
+                    "--listen",
+                    ":8080",
+                ]
+            )
+        )
         assert code == 0
+
     try:
         # Caddy's nobody user needs read access to the already staged artifact.
         code, _, _ = ssh.run("chmod 644 " + shlex.quote(remote_artifact))
         assert code == 0
-        launch_viewer(plan, local_artifact=remote_artifact, runner=runner, container_name=container)
-        result = _python(vm, "lichtblick-http", f'''
+        launch_viewer(
+            plan,
+            local_artifact=remote_artifact,
+            runner=runner,
+            container_name=container,
+        )
+        result = _python(
+            vm,
+            "lichtblick-http",
+            f"""
             import hashlib,json,socket,subprocess,time,urllib.error,urllib.request
             url = 'http://127.0.0.1:{port}/data/recording.mcap'
             while True:
@@ -427,9 +555,16 @@ def test_lichtblick_real_mcap_range_and_loopback_binding(vm):
                 except OSError:
                     pass
             print(json.dumps({{'external_interface_closed':external_closed,'status':status,'sha256':hashlib.sha256(payload).hexdigest(),'bytes':len(payload),'range_status':range_status,'range_sha256':hashlib.sha256(part).hexdigest(),'loopback_only':all(row['HostIp']=='127.0.0.1' for row in binding)}}))
-        ''')
-        assert result["status"] == 200 and result["sha256"] == hashlib.sha256(data).hexdigest()
-        assert result["range_status"] == 206 and result["range_sha256"] == hashlib.sha256(data[8:72]).hexdigest()
+        """,
+        )
+        assert (
+            result["status"] == 200
+            and result["sha256"] == hashlib.sha256(data).hexdigest()
+        )
+        assert (
+            result["range_status"] == 206
+            and result["range_sha256"] == hashlib.sha256(data[8:72]).hexdigest()
+        )
         assert result["loopback_only"] and result["external_interface_closed"]
     finally:
         code, _, _ = ssh.run(shlex.join(["sudo", "docker", "rm", "-f", container]))

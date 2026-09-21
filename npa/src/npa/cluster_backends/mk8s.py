@@ -134,7 +134,9 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
         "gpu_workload_profile": cluster.gpu_workload_profile,
         "gpu_graphics_smoke": cluster.gpu_graphics_smoke,
         "gpu_graphics_smoke_image": cluster.gpu_graphics_smoke_image,
-        "gpu_driver_repositories_configured": bool(cluster.gpu_driver_package_repositories),
+        "gpu_driver_repositories_configured": bool(
+            cluster.gpu_driver_package_repositories
+        ),
         "enable_filestore": cluster.enable_filestore,
         "filestore_disk_size_gibibytes": cluster.filestore_disk_size_gibibytes,
         "filestore_mount_path": cluster.filestore_mount_path,
@@ -178,10 +180,13 @@ class MK8sBackend:
                 raise ValueError("KubeRay preflight requires the selected recipe")
             validate_recipe_kuberay_compatibility(desired, recipe)
         if request.fleet_root is not None and request.project is not None:
-            from npa.cluster_backends.mk8s_execution import validate_kuberay_installation
+            from npa.cluster_backends.mk8s_execution import (
+                validate_kuberay_installation,
+            )
 
             validate_kuberay_installation(
-                desired, request.fleet_root / request.project.key() / desired.name,
+                desired,
+                request.fleet_root / request.project.key() / desired.name,
                 recipe_dir=recipe,
             )
         result: dict[str, Any] = {
@@ -269,13 +274,19 @@ class MK8sBackend:
                 raise ValueError(
                     "mk8s Terraform apply requires terraform_cwd and terraform_env"
                 )
-            from npa.cluster_backends.mk8s_execution import validate_kuberay_installation
+            from npa.cluster_backends.mk8s_execution import (
+                validate_kuberay_installation,
+            )
 
             guarded = validate_kuberay_installation(
-                desired, request.terraform_cwd.parent, environ=request.terraform_env,
+                desired,
+                request.terraform_cwd.parent,
+                environ=request.terraform_env,
             )
             if guarded.kuberay and guarded.kuberay.enabled:
-                raise ValueError("A KubeRay-managed installation requires native mk8s recipe execution")
+                raise ValueError(
+                    "A KubeRay-managed installation requires native mk8s recipe execution"
+                )
             from npa.cluster_backends.process import run_stream
 
             (request.command_runner or run_stream)(

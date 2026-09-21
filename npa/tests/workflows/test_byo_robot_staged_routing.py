@@ -48,12 +48,18 @@ def test_trainer_env_set_for_spec_uri():
 
 
 def test_trainer_env_set_for_preset_and_byo_source():
-    assert engine._byo_robot_env(
-        Sim2RealLoopConfig(run_id="r", robot_preset="ur10e")
-    )["NPA_BYO_ROBOT_TASK"] == "1"
-    assert engine._byo_robot_env(
-        Sim2RealLoopConfig(run_id="r", robot_source="byo_usd")
-    )["NPA_BYO_ROBOT_TASK"] == "1"
+    assert (
+        engine._byo_robot_env(Sim2RealLoopConfig(run_id="r", robot_preset="ur10e"))[
+            "NPA_BYO_ROBOT_TASK"
+        ]
+        == "1"
+    )
+    assert (
+        engine._byo_robot_env(Sim2RealLoopConfig(run_id="r", robot_source="byo_usd"))[
+            "NPA_BYO_ROBOT_TASK"
+        ]
+        == "1"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -140,8 +146,11 @@ def test_resolve_spec_from_uri_downloads_and_parses(monkeypatch, tmp_path):
 
     from npa.clients import storage
 
-    monkeypatch.setattr(storage.StorageClient, "from_environment",
-                        classmethod(lambda cls, *a, **k: _FakeClient()))
+    monkeypatch.setattr(
+        storage.StorageClient,
+        "from_environment",
+        classmethod(lambda cls, *a, **k: _FakeClient()),
+    )
     monkeypatch.setenv("NPA_SIM2REAL_ROBOT_SPEC_URI", "s3://b/kinova/robot-spec.json")
     monkeypatch.delenv("NPA_SIM2REAL_ROBOT_PRESET", raising=False)
     monkeypatch.delenv("NPA_SIM2REAL_ROBOT_SOURCE", raising=False)
@@ -182,7 +191,10 @@ def test_resolve_spec_uri_absent_falls_back_to_preset(monkeypatch):
 
 
 def test_resolve_no_robot_returns_none(monkeypatch):
-    for k in ("NPA_SIM2REAL_ROBOT_SPEC_URI", "NPA_SIM2REAL_ROBOT_PRESET",
-              "NPA_SIM2REAL_ROBOT_SOURCE"):
+    for k in (
+        "NPA_SIM2REAL_ROBOT_SPEC_URI",
+        "NPA_SIM2REAL_ROBOT_PRESET",
+        "NPA_SIM2REAL_ROBOT_SOURCE",
+    ):
         monkeypatch.delenv(k, raising=False)
     assert trainer._resolve_byo_robot_spec() is None

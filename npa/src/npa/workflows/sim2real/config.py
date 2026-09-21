@@ -63,9 +63,7 @@ def build_config_from_env(**overrides: Any) -> Sim2RealLoopConfig:
         or ""
     )
     registry = str(
-        overrides.get("registry")
-        or os.environ.get("NPA_SIM2REAL_REGISTRY")
-        or ""
+        overrides.get("registry") or os.environ.get("NPA_SIM2REAL_REGISTRY") or ""
     ).strip()
     if "s3_prefix" in overrides and overrides.get("s3_prefix") is not None:
         s3_prefix = str(overrides["s3_prefix"])

@@ -17,7 +17,8 @@ def test_dispatched_image_is_passed_as_data(tmp_path: Path) -> None:
         (root / ".github/workflows/image-security-scan.yml").read_text()
     )
     step = next(
-        step for step in workflow["jobs"]["omniverse-payload-scan"]["steps"]
+        step
+        for step in workflow["jobs"]["omniverse-payload-scan"]["steps"]
         if step["name"].startswith("Scan the public development image")
     )
     payload = 'example.invalid/image:tag$(touch injected)"; touch injected; #'
@@ -30,10 +31,17 @@ def test_dispatched_image_is_passed_as_data(tmp_path: Path) -> None:
         "pathlib.Path('arguments.json').write_text(json.dumps(sys.argv[1:]))\n"
     )
     executable.chmod(0o700)
-    environment = {**os.environ, "PATH": f"{tmp_path}:/usr/bin:/bin", "SCAN_IMAGE": payload}
+    environment = {
+        **os.environ,
+        "PATH": f"{tmp_path}:/usr/bin:/bin",
+        "SCAN_IMAGE": payload,
+    }
     result = subprocess.run(
         ["bash", "-e", "-c", step["run"].replace(expression, payload)],
-        cwd=tmp_path, env=environment, capture_output=True, text=True,
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads((tmp_path / "arguments.json").read_text())[1] == payload

@@ -48,28 +48,56 @@ def _emit(payload: dict[str, Any], *, output: OutputFormat, text: str) -> None:
 @app.command("curate-augmented")
 def curate_augmented_cmd(
     augment_uri: str = typer.Option(
-        ..., "--augment-uri", "--input-path", help="Augmented-variant prefix (cosmos_augmented/)."
+        ...,
+        "--augment-uri",
+        "--input-path",
+        help="Augmented-variant prefix (cosmos_augmented/).",
     ),
     curated_uri: str = typer.Option(
-        ..., "--curated-uri", "--output-path", help="Prefix for the curator's output tree."
+        ...,
+        "--curated-uri",
+        "--output-path",
+        help="Prefix for the curator's output tree.",
     ),
-    report_uri: str = typer.Option("", "--report-uri", help="Where to write the curation report."),
-    clip_len_s: float = typer.Option(10.0, "--clip-len-s", help="Fixed-stride clip length in seconds."),
-    min_clip_length_s: float = typer.Option(2.0, "--min-clip-length-s", help="Drop clips shorter than this."),
+    report_uri: str = typer.Option(
+        "", "--report-uri", help="Where to write the curation report."
+    ),
+    clip_len_s: float = typer.Option(
+        10.0, "--clip-len-s", help="Fixed-stride clip length in seconds."
+    ),
+    min_clip_length_s: float = typer.Option(
+        2.0, "--min-clip-length-s", help="Drop clips shorter than this."
+    ),
     motion_filter: MotionFilter = typer.Option(
-        MotionFilter.score_only, "--motion-filter", help="Motion stage mode: score only, filter, or skip."
+        MotionFilter.score_only,
+        "--motion-filter",
+        help="Motion stage mode: score only, filter, or skip.",
     ),
-    limit_clips: int = typer.Option(0, "--limit-clips", help="Clips per input video (0 = no limit)."),
-    max_variants: int = typer.Option(0, "--max-variants", help="Curate at most this many variants (0 = all)."),
+    limit_clips: int = typer.Option(
+        0, "--limit-clips", help="Clips per input video (0 = no limit)."
+    ),
+    max_variants: int = typer.Option(
+        0, "--max-variants", help="Curate at most this many variants (0 = all)."
+    ),
     require_curator: bool = typer.Option(
-        False, "--require-curator", help="Fail instead of reporting 'unavailable' when the curator cannot run."
+        False,
+        "--require-curator",
+        help="Fail instead of reporting 'unavailable' when the curator cannot run.",
     ),
-    verbose: bool = typer.Option(False, "--verbose", help="Log upstream stage progress."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    verbose: bool = typer.Option(
+        False, "--verbose", help="Log upstream stage progress."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Curate a run's augmented variants with the real Cosmos Curator stages."""
 
-    from npa.workbench.cosmos_curate import CosmosCurateError, curate_augmented, write_report
+    from npa.workbench.cosmos_curate import (
+        CosmosCurateError,
+        curate_augmented,
+        write_report,
+    )
 
     try:
         report = curate_augmented(
@@ -102,20 +130,40 @@ def curate_augmented_cmd(
 
 @app.command("curate-videos")
 def curate_videos_cmd(
-    input_dir: str = typer.Option(..., "--input-dir", help="Local directory of input videos."),
-    output_dir: str = typer.Option(..., "--output-dir", help="Local directory for the curator output tree."),
-    clip_len_s: float = typer.Option(10.0, "--clip-len-s", help="Fixed-stride clip length in seconds."),
-    min_clip_length_s: float = typer.Option(2.0, "--min-clip-length-s", help="Drop clips shorter than this."),
-    motion_filter: MotionFilter = typer.Option(
-        MotionFilter.score_only, "--motion-filter", help="Motion stage mode: score only, filter, or skip."
+    input_dir: str = typer.Option(
+        ..., "--input-dir", help="Local directory of input videos."
     ),
-    limit_clips: int = typer.Option(0, "--limit-clips", help="Clips per input video (0 = no limit)."),
-    verbose: bool = typer.Option(False, "--verbose", help="Log upstream stage progress."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    output_dir: str = typer.Option(
+        ..., "--output-dir", help="Local directory for the curator output tree."
+    ),
+    clip_len_s: float = typer.Option(
+        10.0, "--clip-len-s", help="Fixed-stride clip length in seconds."
+    ),
+    min_clip_length_s: float = typer.Option(
+        2.0, "--min-clip-length-s", help="Drop clips shorter than this."
+    ),
+    motion_filter: MotionFilter = typer.Option(
+        MotionFilter.score_only,
+        "--motion-filter",
+        help="Motion stage mode: score only, filter, or skip.",
+    ),
+    limit_clips: int = typer.Option(
+        0, "--limit-clips", help="Clips per input video (0 = no limit)."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", help="Log upstream stage progress."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Run the curator stages over a local directory of videos."""
 
-    from npa.workbench.cosmos_curate import CosmosCurateError, curate_videos, ingest_output
+    from npa.workbench.cosmos_curate import (
+        CosmosCurateError,
+        curate_videos,
+        ingest_output,
+    )
 
     try:
         run = curate_videos(
@@ -144,16 +192,28 @@ def curate_videos_cmd(
 
 @app.command("plan-pipeline")
 def plan_pipeline_cmd(
-    input_video_path: str = typer.Option(..., "--input-video-path", help="Upstream --input-video-path value."),
-    output_clip_path: str = typer.Option(..., "--output-clip-path", help="Upstream --output-clip-path value."),
+    input_video_path: str = typer.Option(
+        ..., "--input-video-path", help="Upstream --input-video-path value."
+    ),
+    output_clip_path: str = typer.Option(
+        ..., "--output-clip-path", help="Upstream --output-clip-path value."
+    ),
     splitting_algorithm: str = typer.Option(
         "fixed-stride", "--splitting-algorithm", help="fixed-stride or transnetv2."
     ),
-    captioning_algorithm: str = typer.Option("", "--captioning-algorithm", help="Upstream captioning algorithm."),
-    embedding_algorithm: str = typer.Option("", "--embedding-algorithm", help="Upstream embedding algorithm."),
-    generate_embeddings: bool = typer.Option(False, "--generate-embeddings", help="Keep embedding generation on."),
+    captioning_algorithm: str = typer.Option(
+        "", "--captioning-algorithm", help="Upstream captioning algorithm."
+    ),
+    embedding_algorithm: str = typer.Option(
+        "", "--embedding-algorithm", help="Upstream embedding algorithm."
+    ),
+    generate_embeddings: bool = typer.Option(
+        False, "--generate-embeddings", help="Keep embedding generation on."
+    ),
     limit: int = typer.Option(0, "--limit", help="Upstream --limit value."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Print upstream's `video-pipeline split` command for the curator container."""
 
@@ -183,8 +243,12 @@ def fetch_models_cmd(
         "-m",
         help="Model set or upstream model key; repeatable. Default: the split-annotate set.",
     ),
-    force: bool = typer.Option(False, "--force", help="Re-download models that are already complete."),
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    force: bool = typer.Option(
+        False, "--force", help="Re-download models that are already complete."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Download curator model weights with your own Hugging Face token.
 
@@ -216,7 +280,9 @@ def fetch_models_cmd(
 
 @app.command("models")
 def models_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Show the curator model sets, their upstream pins, and what is present."""
 
@@ -229,7 +295,9 @@ def models_cmd(
     ]
     for name, entry in sorted(payload.get("sets", {}).items()):
         present = sum(1 for model in entry["models"] if model["present"])
-        lines.append(f"{name}: {present}/{len(entry['models'])} present ({', '.join(entry['keys'])})")
+        lines.append(
+            f"{name}: {present}/{len(entry['models'])} present ({', '.join(entry['keys'])})"
+        )
     if payload.get("error"):
         lines.append(f"error: {payload['error']}")
     _emit(payload, output=output, text="\n".join(lines))
@@ -237,7 +305,9 @@ def models_cmd(
 
 @app.command("engine")
 def engine_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.json, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.json, "--output", help="Output format."
+    ),
 ) -> None:
     """Report whether the upstream curator can run in this environment."""
 

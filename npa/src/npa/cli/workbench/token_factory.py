@@ -11,6 +11,12 @@ from typing import Any
 import typer
 from rich.console import Console
 
+from npa.cli.path_contract import validate_read_path, validate_write_path
+from npa.lifecycle_intent import json_stdout_contract
+from npa.workbench.token_factory.sdg import SdgRequest, run_sdg
+from npa.workbench.token_factory.robot_sdg import RobotSdgRequest, run_robot_sdg
+from npa.clients.storage import StorageError
+
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
     DEFAULT_BATCH_MODEL,
@@ -61,6 +67,8 @@ console = Console(stderr=True)
 NPA_WORKFLOWS = Path("workflows/testing")
 CAPTION_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-caption.yaml"
 GENERATE_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-generate.yaml"
+SDG_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-sdg.yaml"
+ROBOT_SDG_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-robot-sdg.yaml"
 REASON_WORKFLOW_PATH = NPA_WORKFLOWS / "token-factory-cosmos-reason.yaml"
 VLM_EVAL_WORKFLOW_PATH = NPA_WORKFLOWS / "vlm-eval-token-factory.yaml"
 
@@ -69,20 +77,169 @@ class OutputFormat(str, Enum):
     text = "text"
     json = "json"
 
+    def __str__(self) -> str:
+        return self.value
+
+
+@app.command("robot-sdg")
+@json_stdout_contract
+def robot_sdg_cmd(
+    input_path: str = typer.Option(..., "--input-path", help="S3 JSONL scene seeds."),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="Empty S3 prefix for LeRobot data and recorded videos.",
+    ),
+    router: str = typer.Option(
+        "token_factory",
+        "--router",
+        help="Scene planning selector: token_factory or jev.",
+    ),
+    seed: int = typer.Option(0, "--seed", help="Initial simulator RNG seed."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate seeds without inference or simulation."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", "--output", help="Output format."
+    ),
+) -> None:
+    """Generate real simulated robot episodes with RGB and actions in LeRobot format.
+
+    Args:
+        input_path: S3 id/prompt scene seeds.
+        output_path: New S3 run prefix.
+        router: token_factory by default; jev requires a TypeSafe key.
+        seed: Reproducible initial simulation seed.
+        dry_run: Validate input without hosted inference or simulation.
+        output_format: Human-readable text or a single JSON result.
+    Returns:
+        None; emits the physics-checked dataset manifest.
+    Raises:
+        typer.Exit: Configuration, simulation, or publication failed.
+    """
+    try:
+        validate_read_path(input_path, tool="token-factory robot-sdg", allow_hf=False)
+        validate_write_path(output_path, tool="token-factory robot-sdg", required=True)
+        result = run_robot_sdg(
+            RobotSdgRequest(
+                input_path=input_path,
+                output_path=output_path,
+                router=router,
+                seed=seed,
+                dry_run=dry_run,
+            )
+        )
+    except (
+        ValueError,
+        OSError,
+        RuntimeError,
+        StorageError,
+        TokenFactoryToolError,
+        TokenFactoryError,
+    ) as exc:
+        _fail(str(exc))
+    _emit(result, output_format)
+    if result["status"] == "failed":
+        raise typer.Exit(1)
+
+
+@app.command("sdg")
+@json_stdout_contract
+def sdg_cmd(
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 JSONL file of id/prompt seeds."
+    ),
+    output_path: str = typer.Option(
+        ...,
+        "--output-path",
+        help="S3 prefix for dataset, rejections, provenance, and report.",
+    ),
+    context_path: str = typer.Option(
+        "",
+        "--context-path",
+        help="Optional S3 UTF-8 reference text shared across seeds.",
+    ),
+    router: str = typer.Option(
+        "token_factory", "--router", help="Automatic selector: token_factory or jev."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate input without inference or artifact writes."
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--output-format", "--output", help="Output format."
+    ),
+) -> None:
+    """Generate a reviewed instruction dataset using automatic open-weight routing.
+
+    Args:
+        input_path: S3 seed JSONL.
+        output_path: S3 output prefix.
+        context_path: Optional shared reference text in S3.
+        router: token_factory by default; jev additionally needs a TypeSafe key.
+        dry_run: Read and validate inputs without provider inference.
+        output_format: Human-readable text or one JSON document.
+    Returns:
+        None; emits the pipeline manifest.
+    Raises:
+        typer.Exit: Input is invalid or the run failed to produce a usable dataset.
+    """
+    try:
+        validate_read_path(input_path, tool="token-factory sdg", allow_hf=False)
+        validate_write_path(output_path, tool="token-factory sdg", required=True)
+        if context_path:
+            validate_read_path(
+                context_path,
+                tool="token-factory sdg",
+                option="--context-path",
+                allow_hf=False,
+            )
+        result = run_sdg(
+            SdgRequest(
+                input_path=input_path,
+                output_path=output_path,
+                context_path=context_path,
+                router=router,
+                dry_run=dry_run,
+            )
+        )
+    except (ValueError, OSError, TokenFactoryToolError, TokenFactoryError) as exc:
+        _fail(str(exc))
+    _emit(result, output_format)
+    if result["status"] == "failed":
+        raise typer.Exit(1)
+
 
 @app.command("caption")
 def caption_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 or local path to images."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for captions JSON."),
-    model: str = typer.Option(DEFAULT_VISION_MODEL, "--model", help="Token Factory vision model."),
-    instruction: str = typer.Option(
-        DEFAULT_CAPTION_INSTRUCTION, "--instruction", help="Captioning instruction prompt."
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 or local path to images."
     ),
-    max_images: int = typer.Option(DEFAULT_MAX_IMAGES, "--max-images", help="Maximum images to caption."),
-    max_tokens: int = typer.Option(DEFAULT_MAX_TOKENS, "--max-tokens", help="Max tokens per caption."),
-    temperature: float = typer.Option(0.2, "--temperature", help="Sampling temperature."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 or local path for captions JSON."
+    ),
+    model: str = typer.Option(
+        DEFAULT_VISION_MODEL, "--model", help="Token Factory vision model."
+    ),
+    instruction: str = typer.Option(
+        DEFAULT_CAPTION_INSTRUCTION,
+        "--instruction",
+        help="Captioning instruction prompt.",
+    ),
+    max_images: int = typer.Option(
+        DEFAULT_MAX_IMAGES, "--max-images", help="Maximum images to caption."
+    ),
+    max_tokens: int = typer.Option(
+        DEFAULT_MAX_TOKENS, "--max-tokens", help="Max tokens per caption."
+    ),
+    temperature: float = typer.Option(
+        0.2, "--temperature", help="Sampling temperature."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not write the result artifact."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Caption a folder of images with a hosted Token Factory vision model."""
 
@@ -99,7 +256,9 @@ def caption_cmd(
         payload = asdict(result)
         payload["dry_run"] = dry_run
         if not dry_run:
-            payload["written_uri"] = write_captions(payload, result_uri=result.result_uri)
+            payload["written_uri"] = write_captions(
+                payload, result_uri=result.result_uri
+            )
     except (TokenFactoryToolError, TokenFactoryError) as exc:
         _fail(str(exc))
         return
@@ -108,17 +267,35 @@ def caption_cmd(
 
 @app.command("generate")
 def generate_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 or local JSONL/text prompt file."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for generations JSONL."),
-    model: str = typer.Option(DEFAULT_TEXT_MODEL, "--model", help="Token Factory text model."),
-    system_prompt: str = typer.Option(
-        DEFAULT_GENERATE_SYSTEM_PROMPT, "--system-prompt", help="System prompt applied to every request."
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 or local JSONL/text prompt file."
     ),
-    max_prompts: int = typer.Option(0, "--max-prompts", help="Limit prompts processed (0 = all)."),
-    max_tokens: int = typer.Option(DEFAULT_MAX_TOKENS, "--max-tokens", help="Max tokens per completion."),
-    temperature: float = typer.Option(0.7, "--temperature", help="Sampling temperature."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 or local path for generations JSONL."
+    ),
+    model: str = typer.Option(
+        DEFAULT_TEXT_MODEL, "--model", help="Token Factory text model."
+    ),
+    system_prompt: str = typer.Option(
+        DEFAULT_GENERATE_SYSTEM_PROMPT,
+        "--system-prompt",
+        help="System prompt applied to every request.",
+    ),
+    max_prompts: int = typer.Option(
+        0, "--max-prompts", help="Limit prompts processed (0 = all)."
+    ),
+    max_tokens: int = typer.Option(
+        DEFAULT_MAX_TOKENS, "--max-tokens", help="Max tokens per completion."
+    ),
+    temperature: float = typer.Option(
+        0.7, "--temperature", help="Sampling temperature."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not write the result artifact."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Generate completions for each prompt in a JSONL/text file."""
 
@@ -136,7 +313,9 @@ def generate_cmd(
         payload["dry_run"] = dry_run
         if not dry_run:
             rows = [asdict(item) for item in result.generations]
-            payload["written_uri"] = write_generations(rows, result_uri=result.result_uri)
+            payload["written_uri"] = write_generations(
+                rows, result_uri=result.result_uri
+            )
     except (TokenFactoryToolError, TokenFactoryError) as exc:
         _fail(str(exc))
         return
@@ -145,31 +324,55 @@ def generate_cmd(
 
 @app.command("batch-generate")
 def batch_generate_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 or local JSONL/text prompt file."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for generations JSONL."),
-    model: str = typer.Option(DEFAULT_BATCH_MODEL, "--model", help="Batch-enabled Token Factory model."),
-    system_prompt: str = typer.Option(
-        DEFAULT_GENERATE_SYSTEM_PROMPT, "--system-prompt", help="System prompt applied to every request."
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 or local JSONL/text prompt file."
     ),
-    max_prompts: int = typer.Option(0, "--max-prompts", help="Limit prompts submitted (0 = all)."),
-    max_tokens: int = typer.Option(DEFAULT_MAX_TOKENS, "--max-tokens", help="Max tokens per completion."),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 or local path for generations JSONL."
+    ),
+    model: str = typer.Option(
+        DEFAULT_BATCH_MODEL, "--model", help="Batch-enabled Token Factory model."
+    ),
+    system_prompt: str = typer.Option(
+        DEFAULT_GENERATE_SYSTEM_PROMPT,
+        "--system-prompt",
+        help="System prompt applied to every request.",
+    ),
+    max_prompts: int = typer.Option(
+        0, "--max-prompts", help="Limit prompts submitted (0 = all)."
+    ),
+    max_tokens: int = typer.Option(
+        DEFAULT_MAX_TOKENS, "--max-tokens", help="Max tokens per completion."
+    ),
     completion_window: str = typer.Option(
-        DEFAULT_COMPLETION_WINDOW, "--completion-window", help="Deadline the batch must finish within."
+        DEFAULT_COMPLETION_WINDOW,
+        "--completion-window",
+        help="Deadline the batch must finish within.",
     ),
     wait: bool = typer.Option(
-        True, "--wait/--no-wait", help="Block until results are ready, or return the operation id."
+        True,
+        "--wait/--no-wait",
+        help="Block until results are ready, or return the operation id.",
     ),
     poll_interval: float = typer.Option(
-        DEFAULT_BATCH_POLL_INTERVAL_S, "--poll-interval", help="Seconds between status polls."
+        DEFAULT_BATCH_POLL_INTERVAL_S,
+        "--poll-interval",
+        help="Seconds between status polls.",
     ),
     timeout: float = typer.Option(
-        DEFAULT_BATCH_TIMEOUT_S, "--timeout", help="Seconds to wait before giving up on the poll."
+        DEFAULT_BATCH_TIMEOUT_S,
+        "--timeout",
+        help="Seconds to wait before giving up on the poll.",
     ),
     keep_datasets: bool = typer.Option(
         False, "--keep-datasets", help="Keep the server-side request/response datasets."
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not write the result artifact."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Generate completions for a prompt file through batch inference.
 
@@ -205,22 +408,36 @@ def batch_generate_cmd(
 
 @app.command("batch-status")
 def batch_status_cmd(
-    operation_id: str = typer.Option(..., "--operation-id", help="Batch operation id to collect."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for generations JSONL."),
+    operation_id: str = typer.Option(
+        ..., "--operation-id", help="Batch operation id to collect."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 or local path for generations JSONL."
+    ),
     wait: bool = typer.Option(
-        False, "--wait/--no-wait", help="Block until the operation finishes, or report status now."
+        False,
+        "--wait/--no-wait",
+        help="Block until the operation finishes, or report status now.",
     ),
     poll_interval: float = typer.Option(
-        DEFAULT_BATCH_POLL_INTERVAL_S, "--poll-interval", help="Seconds between status polls."
+        DEFAULT_BATCH_POLL_INTERVAL_S,
+        "--poll-interval",
+        help="Seconds between status polls.",
     ),
     timeout: float = typer.Option(
-        DEFAULT_BATCH_TIMEOUT_S, "--timeout", help="Seconds to wait before giving up on the poll."
+        DEFAULT_BATCH_TIMEOUT_S,
+        "--timeout",
+        help="Seconds to wait before giving up on the poll.",
     ),
     keep_datasets: bool = typer.Option(
         False, "--keep-datasets", help="Keep the server-side request/response datasets."
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not write the result artifact."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Check a batch operation and collect its generations once it has finished."""
 
@@ -274,20 +491,40 @@ def _batch_payload(result: BatchResult, *, dry_run: bool) -> dict[str, Any]:
 
 @app.command("reason")
 def reason_cmd(
-    input_path: str = typer.Option(..., "--input-path", help="S3 or local path to scene images."),
-    output_path: str = typer.Option(..., "--output-path", help="S3 or local path for the reasoning JSON."),
-    task: str = typer.Option(DEFAULT_REASON_TASK, "--task", help="Task / question for the reasoner."),
-    model: str = typer.Option(DEFAULT_REASONER_MODEL, "--model", help="Token Factory reasoning model."),
+    input_path: str = typer.Option(
+        ..., "--input-path", help="S3 or local path to scene images."
+    ),
+    output_path: str = typer.Option(
+        ..., "--output-path", help="S3 or local path for the reasoning JSON."
+    ),
+    task: str = typer.Option(
+        DEFAULT_REASON_TASK, "--task", help="Task / question for the reasoner."
+    ),
+    model: str = typer.Option(
+        DEFAULT_REASONER_MODEL, "--model", help="Token Factory reasoning model."
+    ),
     system_prompt: str = typer.Option(
-        DEFAULT_REASON_SYSTEM_PROMPT, "--system-prompt", help="System prompt for the reasoner."
+        DEFAULT_REASON_SYSTEM_PROMPT,
+        "--system-prompt",
+        help="System prompt for the reasoner.",
     ),
     max_images: int = typer.Option(
-        DEFAULT_REASON_MAX_IMAGES, "--max-images", help="Max scene images sent in one request."
+        DEFAULT_REASON_MAX_IMAGES,
+        "--max-images",
+        help="Max scene images sent in one request.",
     ),
-    max_tokens: int = typer.Option(DEFAULT_REASON_MAX_TOKENS, "--max-tokens", help="Max tokens in the answer."),
-    temperature: float = typer.Option(0.2, "--temperature", help="Sampling temperature."),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Do not write the result artifact."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    max_tokens: int = typer.Option(
+        DEFAULT_REASON_MAX_TOKENS, "--max-tokens", help="Max tokens in the answer."
+    ),
+    temperature: float = typer.Option(
+        0.2, "--temperature", help="Sampling temperature."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Do not write the result artifact."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Reason over scene images for physical understanding and a plan of action.
 
@@ -318,7 +555,9 @@ def reason_cmd(
 
 @app.command("models")
 def models_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List models available to the configured Token Factory API key."""
 
@@ -332,7 +571,9 @@ def models_cmd(
 
 @app.command("verify")
 def verify_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Verify Token Factory authentication with a live models call.
 
@@ -366,7 +607,9 @@ def verify_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show Token Factory connection status (no network call)."""
 
@@ -382,6 +625,8 @@ def status_cmd(
             "default_batch_model": DEFAULT_BATCH_MODEL,
             "caption_workflow": str(CAPTION_WORKFLOW_PATH),
             "generate_workflow": str(GENERATE_WORKFLOW_PATH),
+            "sdg_workflow": str(SDG_WORKFLOW_PATH),
+            "robot_sdg_workflow": str(ROBOT_SDG_WORKFLOW_PATH),
             "reason_workflow": str(REASON_WORKFLOW_PATH),
             "vlm_eval_workflow": str(VLM_EVAL_WORKFLOW_PATH),
         },
@@ -391,7 +636,9 @@ def status_cmd(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List Token Factory tool capabilities."""
 
@@ -399,15 +646,38 @@ def list_cmd(
         {
             "default_base_url": DEFAULT_BASE_URL,
             "capabilities": [
-                {"name": "caption", "kind": "vision", "default_model": DEFAULT_VISION_MODEL},
-                {"name": "generate", "kind": "text", "default_model": DEFAULT_TEXT_MODEL},
+                {
+                    "name": "caption",
+                    "kind": "vision",
+                    "default_model": DEFAULT_VISION_MODEL,
+                },
+                {
+                    "name": "generate",
+                    "kind": "text",
+                    "default_model": DEFAULT_TEXT_MODEL,
+                },
                 {
                     "name": "batch-generate",
                     "kind": "text-batch",
                     "default_model": DEFAULT_BATCH_MODEL,
                 },
+                {
+                    "name": "sdg",
+                    "kind": "synthetic-data",
+                    "default_router": "token_factory",
+                },
+                {
+                    "name": "robot-sdg",
+                    "kind": "robot-demonstrations",
+                    "default_router": "token_factory",
+                    "dataset_format": "LeRobotDataset v3.0",
+                },
                 {"name": "batch-status", "kind": "text-batch"},
-                {"name": "reason", "kind": "physical-reasoning", "default_model": DEFAULT_REASONER_MODEL},
+                {
+                    "name": "reason",
+                    "kind": "physical-reasoning",
+                    "default_model": DEFAULT_REASONER_MODEL,
+                },
                 {"name": "models", "kind": "discovery"},
             ],
         },
@@ -417,7 +687,9 @@ def list_cmd(
 
 @app.command("workflow")
 def workflow_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show the checked-in Token Factory npa.workflow specs."""
 
@@ -425,6 +697,8 @@ def workflow_cmd(
         {
             "caption_workflow": str(CAPTION_WORKFLOW_PATH),
             "generate_workflow": str(GENERATE_WORKFLOW_PATH),
+            "sdg_workflow": str(SDG_WORKFLOW_PATH),
+            "robot_sdg_workflow": str(ROBOT_SDG_WORKFLOW_PATH),
             "reason_workflow": str(REASON_WORKFLOW_PATH),
             "vlm_eval_workflow": str(VLM_EVAL_WORKFLOW_PATH),
         },

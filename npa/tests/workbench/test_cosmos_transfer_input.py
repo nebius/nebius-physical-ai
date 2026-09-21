@@ -154,9 +154,7 @@ def test_guardrail_nltk_download_failures_are_typed_and_leave_no_partial_cache(
         tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
 
     assert caught.value.category == category
-    destination = (
-        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
-    )
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
     assert not destination.exists()
     assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
 
@@ -186,10 +184,7 @@ def test_guardrail_nltk_copy_failure_is_atomic(
 ) -> None:
     hub = tmp_path / "hub"
     snapshot = (
-        hub
-        / "models--nvidia--Cosmos-Guardrail1"
-        / "snapshots"
-        / tx.GUARDRAIL_REVISION
+        hub / "models--nvidia--Cosmos-Guardrail1" / "snapshots" / tx.GUARDRAIL_REVISION
     )
     tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
     tokenizer.mkdir(parents=True)
@@ -215,9 +210,7 @@ def test_guardrail_nltk_copy_failure_is_atomic(
         tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path))
     assert caught.value.category == "materialization_failed"
 
-    destination = (
-        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
-    )
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
     assert not destination.exists()
     assert not list(destination.parent.glob(f".{tx.GUARDRAIL_REVISION}.*"))
 
@@ -227,10 +220,7 @@ def test_guardrail_nltk_corrupt_or_mismatched_cache_fails_closed_before_network(
 ) -> None:
     hub = tmp_path / "hub"
     snapshot = (
-        hub
-        / "models--nvidia--Cosmos-Guardrail1"
-        / "snapshots"
-        / tx.GUARDRAIL_REVISION
+        hub / "models--nvidia--Cosmos-Guardrail1" / "snapshots" / tx.GUARDRAIL_REVISION
     )
     tokenizer = snapshot / "blocklist" / "nltk_data" / "tokenizers" / "punkt_tab"
     tokenizer.mkdir(parents=True)
@@ -242,9 +232,7 @@ def test_guardrail_nltk_corrupt_or_mismatched_cache_fails_closed_before_network(
     )
     assert tx.prepare_guardrail_nltk_data(hf_home=str(tmp_path)) == 1
 
-    destination = (
-        tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
-    )
+    destination = tmp_path / tx.GUARDRAIL_NLTK_MATERIALIZED_DIR / tx.GUARDRAIL_REVISION
     payload = destination / "tokenizers" / "punkt_tab" / "collocations.tab"
     payload.chmod(0o644)
     payload.write_bytes(b"corrupt")
@@ -280,6 +268,7 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
         repo,
         input_video=str(clip),
         prompt="rainy night, wet asphalt",
+        negative_prompt="cyan cast, warped objects, repeated action",
         control="edge",
         control_weight=0.8,
         guidance=4,
@@ -290,6 +279,7 @@ def test_spec_for_input_video_builds_edge_control(tmp_path: Path) -> None:
     spec = json.loads((repo / rel).read_text())
     assert spec["video_path"] == str(clip.resolve())
     assert spec["prompt"] == "rainy night, wet asphalt"
+    assert spec["negative_prompt"] == "cyan cast, warped objects, repeated action"
     assert spec["edge"] == {"control_weight": 0.8}
     assert spec["guidance"] == 4
     assert spec["seed"] == 1234
@@ -361,6 +351,12 @@ def test_preserve_source_chroma_records_effective_provenance(
         "feather_pixels": 12,
         "luma_max_delta": 32,
         "frame_count": 7,
+        "output_color": {
+            "range": "tv",
+            "space": "bt709",
+            "primaries": "bt709",
+            "transfer": "bt709",
+        },
     }
 
 
@@ -454,9 +450,9 @@ def test_preserve_source_chroma_decodes_encoded_video_and_keeps_generated_luma(
 
     def ycbcr_means(frame: np.ndarray) -> tuple[float, float, float]:
         red, green, blue = frame[..., 0], frame[..., 1], frame[..., 2]
-        y = 0.299 * red + 0.587 * green + 0.114 * blue
-        cb = 128.0 - 0.168736 * red - 0.331264 * green + 0.5 * blue
-        cr = 128.0 + 0.5 * red - 0.418688 * green - 0.081312 * blue
+        y = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+        cb = 128.0 - 0.114572 * red - 0.385428 * green + 0.5 * blue
+        cr = 128.0 + 0.5 * red - 0.454153 * green - 0.045847 * blue
         return float(y.mean()), float(cb.mean()), float(cr.mean())
 
     source_y, source_cb, source_cr = ycbcr_means(first_rgb(source))
@@ -470,6 +466,30 @@ def test_preserve_source_chroma_decodes_encoded_video_and_keeps_generated_luma(
     assert abs(restored_cr - source_cr) < 5
     assert abs(restored_y - generated_y) > 40
     assert 20 < abs(restored_y - source_y) < 37
+    probe = subprocess.run(
+        [
+            ffmpeg.replace("ffmpeg", "ffprobe"),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=color_range,color_space,color_transfer,color_primaries",
+            "-of",
+            "json",
+            str(result["video_path"]),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    color = json.loads(probe.stdout)["streams"][0]
+    assert color == {
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+    }
 
 
 def test_frame_aligned_masks_protect_only_the_selected_pixels(
@@ -860,6 +880,7 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
             "input_video": "/tmp/robot_input.mp4",
             "conditioning_clip_uri": "s3://bkt/run1/input/conditioning.mp4",
             "control": "edge",
+            "negative_prompt": "cyan cast, warped objects",
             "content_guardrails_enabled": False,
             "protected_chroma": {"mode": "source-chroma", "region_count": 2},
             "refinement": {"attempt": 1},
@@ -876,6 +897,8 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert manifest["conditioned_input"] == "robot_input.mp4"
     assert manifest["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
     assert manifest["control"] == "edge"
+    assert manifest["negative_prompt"] == "cyan cast, warped objects"
+    assert manifest["variants"][0]["negative_prompt"] == ("cyan cast, warped objects")
     assert manifest["content_guardrails_enabled"] is False
     meta = json.loads(recorded["metadata"])
     assert meta["mode"] == "cosmos_transfer2.5_gpu"
@@ -883,6 +906,7 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert meta["conditioned_input"] == "robot_input.mp4"
     assert meta["content_guardrails_enabled"] is False
     assert meta["conditioning_clip_uri"] == "s3://bkt/run1/input/conditioning.mp4"
+    assert meta["negative_prompt"] == "cyan cast, warped objects"
     assert meta["protected_chroma"]["mode"] == "source-chroma"
     assert meta["refinement"]["attempt"] == 1
     assert meta["effective_control_weight"] == 1.5

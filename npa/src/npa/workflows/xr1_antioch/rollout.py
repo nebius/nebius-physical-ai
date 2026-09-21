@@ -22,7 +22,9 @@ def _receive(connection, size: int) -> bytes:
     while len(payload) < size:
         block = connection.recv(size - len(payload))
         if not block:
-            raise ConnectionError("XR1 policy disconnected during closed-loop evaluation")
+            raise ConnectionError(
+                "XR1 policy disconnected during closed-loop evaluation"
+            )
         payload.extend(block)
     return bytes(payload)
 
@@ -36,8 +38,15 @@ def _predict(path: Path, images: dict, state: dict, noise_seed: int) -> dict:
         if not ok:
             raise RuntimeError("Could not encode a policy camera observation")
         encoded[name] = base64.b64encode(png).decode()
-    request = json.dumps({"images": encoded, "state": state, "instruction": INSTRUCTION,
-                          "noise_seed": noise_seed}, allow_nan=False).encode()
+    request = json.dumps(
+        {
+            "images": encoded,
+            "state": state,
+            "instruction": INSTRUCTION,
+            "noise_seed": noise_seed,
+        },
+        allow_nan=False,
+    ).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.connect(str(path))
         connection.sendall(struct.pack(">I", len(request)) + request)
@@ -51,15 +60,24 @@ def _predict(path: Path, images: dict, state: dict, noise_seed: int) -> dict:
 
 
 def _target(chunk: dict, index: int) -> dict:
-    target = {name: np.asarray(values[index]).reshape(-1).tolist() for name, values in chunk.items()}
-    for side, base_y in (("left", .4), ("right", -.4)):
+    target = {
+        name: np.asarray(values[index]).reshape(-1).tolist()
+        for name, values in chunk.items()
+    }
+    for side, base_y in (("left", 0.4), ("right", -0.4)):
         position = np.asarray(target[f"{side}_ee_pos"])
         rotation = np.asarray(target[f"{side}_ee_rotm"]).reshape(3, 3)
         aperture = np.asarray(target[f"{side}_gripper_pos"])
-        if not all(np.isfinite(value).all() for value in (position, rotation, aperture)):
+        if not all(
+            np.isfinite(value).all() for value in (position, rotation, aperture)
+        ):
             raise ValueError("Policy produced a nonfinite actuator target")
-        if np.any(position < [.10, base_y - .35, .005]) or np.any(position > [.85, base_y + .35, .85]):
-            raise ValueError("Policy requested a Cartesian target outside the declared robot workspace")
+        if np.any(position < [0.10, base_y - 0.35, 0.005]) or np.any(
+            position > [0.85, base_y + 0.35, 0.85]
+        ):
+            raise ValueError(
+                "Policy requested a Cartesian target outside the declared robot workspace"
+            )
         if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-4):
             raise ValueError("Policy rotation is not orthonormal")
         if not np.isclose(np.linalg.det(rotation), 1, atol=1e-4):
@@ -74,7 +92,11 @@ def _control(cell: _Cell, cameras: _Cameras, policy_socket: Path, seed: int) -> 
         cameras.follow_wrists(cell.robots)
         cell.world.render()
         images, state = cameras.capture(), cell.state()
-        row = {"time": cell.world.current_time - started, "state": state, "measures": cell.measures()}
+        row = {
+            "time": cell.world.current_time - started,
+            "state": state,
+            "measures": cell.measures(),
+        }
         rows.append(row)
         try:
             if frame % 6 == 0:
@@ -83,13 +105,22 @@ def _control(cell: _Cell, cameras: _Cameras, policy_socket: Path, seed: int) -> 
         except ValueError as error:
             failure = str(error)
             break
-        row["gripper_saturated"] = any(not 0 <= row["requested_action"][f"{side}_gripper_pos"][0] <= .08
-                                         for side in ("left", "right"))
+        row["gripper_saturated"] = any(
+            not 0 <= row["requested_action"][f"{side}_gripper_pos"][0] <= 0.08
+            for side in ("left", "right")
+        )
         for _ in range(3):
             cell.policy_step(row["requested_action"])
-        if len(rows) >= 30 and _outcome([entry["measures"] for entry in rows])["success"]:
+        if (
+            len(rows) >= 30
+            and _outcome([entry["measures"] for entry in rows])["success"]
+        ):
             break
-    result = _outcome([row["measures"] for row in rows]) if len(rows) >= 21 else {"success": False}
+    result = (
+        _outcome([row["measures"] for row in rows])
+        if len(rows) >= 21
+        else {"success": False}
+    )
     if failure:
         result.update(success=False, failure_reason=failure)
     return {"trace": rows, "recorded_frames": len(rows), **result}
@@ -108,12 +139,24 @@ def _rollout(args) -> None:
             cameras.follow_wrists(cell.robots)
             cell.world.step(render=True)
         result = _control(cell, cameras, args.policy_socket, args.seed)
-        result.update(schema="npa.xr1-antioch.rollout.v1", seed=args.seed,
-                      checkpoint_sha256=args.checkpoint_sha256, control_hz=20,
-                      replan_every_frames=6, horizon_seconds=25, expert_fallback=False,
-                      grasp_mechanism="finger_contact", videos=cameras.frames)
-        (args.output_path / "rollout.json").write_text(json.dumps(result, allow_nan=False))
-        print(json.dumps({key: value for key, value in result.items() if key != "trace"}), flush=True)
+        result.update(
+            schema="npa.xr1-antioch.rollout.v1",
+            seed=args.seed,
+            checkpoint_sha256=args.checkpoint_sha256,
+            control_hz=20,
+            replan_every_frames=6,
+            horizon_seconds=25,
+            expert_fallback=False,
+            grasp_mechanism="finger_contact",
+            videos=cameras.frames,
+        )
+        (args.output_path / "rollout.json").write_text(
+            json.dumps(result, allow_nan=False)
+        )
+        print(
+            json.dumps({key: value for key, value in result.items() if key != "trace"}),
+            flush=True,
+        )
     finally:
         if cameras is not None:
             cameras.close()

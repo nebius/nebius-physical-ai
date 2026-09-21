@@ -80,7 +80,10 @@ def test_validate_render_rejects_datacenter_headless(gpu_target: str) -> None:
 def test_datacenter_blackwell_runs_headless_workloads(gpu_target: str) -> None:
     """No RT cores, but the compute path is fine for state-based training."""
 
-    assert validate_gpu_routing(workload="train", gpu_target=gpu_target) == DATACENTER_HEADLESS
+    assert (
+        validate_gpu_routing(workload="train", gpu_target=gpu_target)
+        == DATACENTER_HEADLESS
+    )
     assert is_rt_core_target(gpu_target) is False
     assert is_datacenter_headless_target(gpu_target) is True
 

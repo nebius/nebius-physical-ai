@@ -28,8 +28,13 @@ def _archive(path, rows):
                 stream.addfile(member, io.BytesIO(value))
 
 
-@pytest.mark.parametrize("change", [None, "source", "notice", "revision", "hook", "license-copy", "duplicate"])
-def test_component_source_map_authenticates_notices_generated_bytes_and_copies(tmp_path, monkeypatch, change):
+@pytest.mark.parametrize(
+    "change",
+    [None, "source", "notice", "revision", "hook", "license-copy", "duplicate"],
+)
+def test_component_source_map_authenticates_notices_generated_bytes_and_copies(
+    tmp_path, monkeypatch, change
+):
     paths = {
         "source": "opt/npa/src/npa/__init__.py",
         "notice": "usr/share/doc/npa-ncore/notices/NPA-LICENSE",
@@ -37,17 +42,32 @@ def test_component_source_map_authenticates_notices_generated_bytes_and_copies(t
         "hook": "opt/venv/lib/python3.12/site-packages/npa-source.pth",
         "license-copy": "usr/share/doc/npa-ncore/LICENSE-APACHE-2.0",
     }
-    values = [b"source", b"notice", (SHA + "\n").encode(), b"/opt/npa/src\n", b"upstream"]
+    values = [
+        b"source",
+        b"notice",
+        (SHA + "\n").encode(),
+        b"/opt/npa/src\n",
+        b"upstream",
+    ]
     files = [(paths[key], value) for key, value in zip(paths, values, strict=True)]
     if change in paths:
-        files = [(name, b"modified" if name == paths[change] else raw) for name, raw in files]
+        files = [
+            (name, b"modified" if name == paths[change] else raw) for name, raw in files
+        ]
     if change == "duplicate":
         files.append(files[0])
-    files += [("opt/npa/src/npa/workflows", None), ("opt/ncore/src/ncore/LICENSE", b"upstream")]
+    files += [
+        ("opt/npa/src/npa/workflows", None),
+        ("opt/ncore/src/ncore/LICENSE", b"upstream"),
+    ]
     _archive(tmp_path / "rootfs.tar", files)
-    expected = {ROOT / "npa/src/npa/__init__.py": W.sha(b"source"),
-                ROOT / "npa/docker/workbench/ncore/notices/NPA-LICENSE": W.sha(b"notice")}
-    monkeypatch.setattr(provenance, "_committed_digest", lambda path, sha: expected[path])
+    expected = {
+        ROOT / "npa/src/npa/__init__.py": W.sha(b"source"),
+        ROOT / "npa/docker/workbench/ncore/notices/NPA-LICENSE": W.sha(b"notice"),
+    }
+    monkeypatch.setattr(
+        provenance, "_committed_digest", lambda path, sha: expected[path]
+    )
     monkeypatch.setattr(provenance, "shipped_source", lambda *_: 43)
     if change is None:
         actual = components._committed_files(tmp_path / "rootfs.tar", SHA)
@@ -57,19 +77,35 @@ def test_component_source_map_authenticates_notices_generated_bytes_and_copies(t
             components._committed_files(tmp_path / "rootfs.tar", SHA)
 
 
-def test_component_evaluation_receives_exact_verified_graph_and_committed_locks(tmp_path, monkeypatch):
+def test_component_evaluation_receives_exact_verified_graph_and_committed_locks(
+    tmp_path, monkeypatch
+):
     from npa.deploy import ncore_component_scan
 
     calls = []
-    monkeypatch.setattr(components, "_committed_files", lambda path, sha: {"source": "b" * 64})
-    monkeypatch.setattr(ncore_component_scan, "scan_archive", lambda *args, **kwargs: calls.append((args, kwargs)))
-    graph = {"image_manifest_digest": "sha256:" + "c" * 64, "image_config_digest": "sha256:" + "d" * 64}
+    monkeypatch.setattr(
+        components, "_committed_files", lambda path, sha: {"source": "b" * 64}
+    )
+    monkeypatch.setattr(
+        ncore_component_scan,
+        "scan_archive",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    graph = {
+        "image_manifest_digest": "sha256:" + "c" * 64,
+        "image_config_digest": "sha256:" + "d" * 64,
+    }
     components.verify(tmp_path, "sha256:" + "e" * 64, graph, SHA)
     args, kwargs = calls[0]
     assert args == (tmp_path / "rootfs.tar", tmp_path / "components")
     assert kwargs["image_digest"] == "sha256:" + "e" * 64
     assert kwargs["platform_digest"] == graph["image_manifest_digest"]
     assert kwargs["config_digest"] == graph["image_config_digest"]
-    assert kwargs["source_sha"] == SHA and kwargs["committed_files"] == {"source": "b" * 64}
-    for name, file in (("base_lock", "base-source-lock.json"), ("source_lock", "source-lock.json")):
+    assert kwargs["source_sha"] == SHA and kwargs["committed_files"] == {
+        "source": "b" * 64
+    }
+    for name, file in (
+        ("base_lock", "base-source-lock.json"),
+        ("source_lock", "source-lock.json"),
+    ):
         assert kwargs[name] == (ROOT / "npa/docker/workbench/ncore" / file).read_bytes()

@@ -145,7 +145,10 @@ def test_path_guard_ignores_placeholders_and_prose(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    assert _referenced_paths(victim.read_text(encoding="utf-8"), ANY_REPO_PATH_PATTERN) == []
+    assert (
+        _referenced_paths(victim.read_text(encoding="utf-8"), ANY_REPO_PATH_PATTERN)
+        == []
+    )
 
 
 def test_first_party_pattern_leaves_upstream_layouts_alone(tmp_path: Path) -> None:
@@ -156,10 +159,15 @@ def test_first_party_pattern_leaves_upstream_layouts_alone(tmp_path: Path) -> No
         "`docs/inference.md`\n`scripts/train_tokenizer.py`\n", encoding="utf-8"
     )
 
-    assert _referenced_paths(victim.read_text(encoding="utf-8"), FIRST_PARTY_PATTERN) == []
-    assert len(
-        _referenced_paths(victim.read_text(encoding="utf-8"), ANY_REPO_PATH_PATTERN)
-    ) == 2
+    assert (
+        _referenced_paths(victim.read_text(encoding="utf-8"), FIRST_PARTY_PATTERN) == []
+    )
+    assert (
+        len(
+            _referenced_paths(victim.read_text(encoding="utf-8"), ANY_REPO_PATH_PATTERN)
+        )
+        == 2
+    )
 
 
 def test_first_party_pattern_still_checks_cross_skill_links(tmp_path: Path) -> None:
@@ -180,7 +188,10 @@ def test_path_guard_exempts_paths_that_are_meant_to_be_absent(tmp_path: Path) ->
         encoding="utf-8",
     )
 
-    assert _referenced_paths(victim.read_text(encoding="utf-8"), ANY_REPO_PATH_PATTERN) == []
+    assert (
+        _referenced_paths(victim.read_text(encoding="utf-8"), ANY_REPO_PATH_PATTERN)
+        == []
+    )
     assert not (REPO_ROOT / "npa/src/npa/workflows/skypilot").exists()
 
 

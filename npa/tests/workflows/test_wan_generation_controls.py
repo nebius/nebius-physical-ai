@@ -141,8 +141,13 @@ def test_distributed_wrapper_passes_requested_controls_as_upstream_argv() -> Non
 
 
 @pytest.mark.parametrize("filename", SPECS)
-def test_worker_image_and_byof_verifier_share_the_accepted_digest(filename: str) -> None:
-    from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+def test_worker_image_and_byof_verifier_share_the_accepted_digest(
+    filename: str,
+) -> None:
+    from npa.deploy.images import (
+        DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+        wan_accepted_image_manifest,
+    )
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
         render_skypilot_yaml,
@@ -158,7 +163,9 @@ def test_worker_image_and_byof_verifier_share_the_accepted_digest(filename: str)
     assert step.argv[step.argv.index("--base-image") + 1] == expected
     assert step.resources_profile["image"] == expected
     rendered = render_skypilot_yaml(
-        spec, plan, run_id="immutable-worker-image",
+        spec,
+        plan,
+        run_id="immutable-worker-image",
         options=SkypilotRenderOptions(
             registry="registry.example", materialize_registry_secrets=False
         ),

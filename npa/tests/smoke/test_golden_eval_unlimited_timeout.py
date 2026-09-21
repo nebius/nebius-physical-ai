@@ -49,7 +49,9 @@ def _spec(monkeypatch: pytest.MonkeyPatch, timeout: object) -> manifest.Containe
     return manifest.load_manifest.__wrapped__()["fixture-eval"]
 
 
-def test_explicit_unlimited_parses_and_validates(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_explicit_unlimited_parses_and_validates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     spec = _spec(monkeypatch, "unlimited")
     assert spec.golden_eval.timeout_seconds == math.inf
     assert spec.golden_eval.timeout_seconds > 0
@@ -69,7 +71,22 @@ def test_finite_timeout_keeps_existing_integer_conversion(
 
 @pytest.mark.parametrize(
     "value",
-    [math.nan, math.inf, -math.inf, "NaN", "Infinity", "inf", "Unlimited", "unlimited ", "none", None, True, False, [], {}],
+    [
+        math.nan,
+        math.inf,
+        -math.inf,
+        "NaN",
+        "Infinity",
+        "inf",
+        "Unlimited",
+        "unlimited ",
+        "none",
+        None,
+        True,
+        False,
+        [],
+        {},
+    ],
 )
 def test_implicit_or_invalid_unlimited_values_are_rejected(
     monkeypatch: pytest.MonkeyPatch, value: object
@@ -86,14 +103,18 @@ def test_nonpositive_numeric_timeout_still_fails_validation(
     monkeypatch.setattr(manifest, "load_manifest", lambda: {spec.name: spec})
     report = manifest.validate_manifest(check_paths=False, check_modules=False)
     assert not report.ok
-    assert any("timeout_seconds must be > 0" in issue.message for issue in report.issues)
+    assert any(
+        "timeout_seconds must be > 0" in issue.message for issue in report.issues
+    )
 
 
 def test_validator_rejects_nan_in_programmatically_supplied_spec(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     spec = _spec(monkeypatch, 45)
-    spec = replace(spec, golden_eval=replace(spec.golden_eval, timeout_seconds=math.nan))
+    spec = replace(
+        spec, golden_eval=replace(spec.golden_eval, timeout_seconds=math.nan)
+    )
     monkeypatch.setattr(manifest, "load_manifest", lambda: {spec.name: spec})
     assert not manifest.validate_manifest(check_paths=False, check_modules=False).ok
 
@@ -122,9 +143,13 @@ def test_cli_local_execution_passes_exact_deadline(
     monkeypatch.setattr(cli, "container", lambda _name: spec)
     run = Mock(return_value=subprocess.CompletedProcess(["fixture-capability"], 0))
     monkeypatch.setattr(cli.subprocess, "run", run)
-    result = CliRunner().invoke(app, ["workbench", "golden-eval", "run", spec.name, "--execute"])
+    result = CliRunner().invoke(
+        app, ["workbench", "golden-eval", "run", spec.name, "--execute"]
+    )
     assert result.exit_code == 0, result.output
-    run.assert_called_once_with(["fixture-capability", "--verify"], timeout=expected, check=False)
+    run.assert_called_once_with(
+        ["fixture-capability", "--verify"], timeout=expected, check=False
+    )
 
 
 @pytest.mark.parametrize("value, expected", [("unlimited", None), (45, 45)])
@@ -137,7 +162,9 @@ def test_batch_local_execution_passes_exact_deadline(
     monkeypatch.setattr(batch.subprocess, "run", run)
     result = batch.run_container_eval(spec.name, execute=True)
     assert result.ok
-    run.assert_called_once_with(["fixture-capability", "--verify"], timeout=expected, check=False)
+    run.assert_called_once_with(
+        ["fixture-capability", "--verify"], timeout=expected, check=False
+    )
 
 
 def test_unlimited_cli_serverless_fails_before_submission(
@@ -145,9 +172,13 @@ def test_unlimited_cli_serverless_fails_before_submission(
 ) -> None:
     spec = _spec(monkeypatch, "unlimited")
     monkeypatch.setattr(cli, "container", lambda _name: spec)
-    submit = Mock(side_effect=AssertionError("No cloud submission is authorized by this test"))
+    submit = Mock(
+        side_effect=AssertionError("No cloud submission is authorized by this test")
+    )
     monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
-    result = CliRunner().invoke(app, ["workbench", "golden-eval", "run", spec.name, "--serverless"])
+    result = CliRunner().invoke(
+        app, ["workbench", "golden-eval", "run", spec.name, "--serverless"]
+    )
     assert result.exit_code == 1
     assert "local --execute" in result.output
     assert "mk8s" in result.output
@@ -159,7 +190,9 @@ def test_unlimited_batch_serverless_fails_before_submission(
 ) -> None:
     spec = _spec(monkeypatch, "unlimited")
     monkeypatch.setattr(batch, "container", lambda _name: spec)
-    submit = Mock(side_effect=AssertionError("No cloud submission is authorized by this test"))
+    submit = Mock(
+        side_effect=AssertionError("No cloud submission is authorized by this test")
+    )
     monkeypatch.setattr(serverless_runner, "submit_golden_eval", submit)
     result = batch.run_container_eval(spec.name, serverless=True)
     assert not result.ok and result.exit_code == 1
@@ -185,8 +218,15 @@ def test_direct_unlimited_serverless_call_refuses_before_config_or_credentials(
     spec = _spec(monkeypatch, "unlimited")
     monkeypatch.setattr(serverless_runner, "container", lambda _name: spec)
     forbidden_calls = []
-    for name in ("_project_id", "resolve_golden_image", "load_credentials", "ServerlessClient"):
-        forbidden = Mock(side_effect=AssertionError(f"Unexpected access through {name}"))
+    for name in (
+        "_project_id",
+        "resolve_golden_image",
+        "load_credentials",
+        "ServerlessClient",
+    ):
+        forbidden = Mock(
+            side_effect=AssertionError(f"Unexpected access through {name}")
+        )
         monkeypatch.setattr(serverless_runner, name, forbidden)
         forbidden_calls.append(forbidden)
     with pytest.raises(RuntimeError, match="local --execute"):
@@ -201,7 +241,9 @@ def test_script_local_execution_passes_exact_deadline(
 ) -> None:
     spec = _spec(monkeypatch, value)
     script_path = Path(__file__).resolve().parents[2] / "scripts/run_golden_evals.py"
-    module_spec = importlib.util.spec_from_file_location("golden_eval_timeout_script", script_path)
+    module_spec = importlib.util.spec_from_file_location(
+        "golden_eval_timeout_script", script_path
+    )
     assert module_spec is not None and module_spec.loader is not None
     module = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(module)
@@ -210,4 +252,6 @@ def test_script_local_execution_passes_exact_deadline(
     monkeypatch.setattr(module.subprocess, "run", run)
     args = argparse.Namespace(container=spec.name, execute=True, serverless=False)
     assert module._cmd_run(args) == 0
-    run.assert_called_once_with(["fixture-capability", "--verify"], timeout=expected, check=False)
+    run.assert_called_once_with(
+        ["fixture-capability", "--verify"], timeout=expected, check=False
+    )

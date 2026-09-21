@@ -264,25 +264,49 @@ def test_runtime_ledger_recovers_exact_active_wave_identity(
     assert lookups == [(f"{run_id}-02-curate", "41")]
 
 
-def test_resume_planning_preserves_exact_runtime_location(resolver_env: ExactS3) -> None:
+def test_resume_planning_preserves_exact_runtime_location(
+    resolver_env: ExactS3,
+) -> None:
     from npa.orchestration.npa_workflow.submission_state import record_submission_plan
 
     run_id = "resumed-custom-prefix"
     prefix = f"custom/sim2real/{run_id}"
-    update_submission_state("demo", run_id, {"workflow": {
-        "name": "sim2real", "run_prefix_uri": f"s3://alias-bucket/{prefix}",
-    }})
-    resolver_env.put_json("alias-bucket", f"{prefix}/npa-workflow/runtime.json", {
-        "schema_version": "npa.workflow.runtime.v1", "workflow": "sim2real",
-        "run_id": run_id, "status": "failed", "waves": [{
-            "key": "wave-01", "states": ["trigger"], "status": "succeeded",
-            "job_id": "40", "job_name": f"{run_id}-01-trigger",
-        }],
-    })
+    update_submission_state(
+        "demo",
+        run_id,
+        {
+            "workflow": {
+                "name": "sim2real",
+                "run_prefix_uri": f"s3://alias-bucket/{prefix}",
+            }
+        },
+    )
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{prefix}/npa-workflow/runtime.json",
+        {
+            "schema_version": "npa.workflow.runtime.v1",
+            "workflow": "sim2real",
+            "run_id": run_id,
+            "status": "failed",
+            "waves": [
+                {
+                    "key": "wave-01",
+                    "states": ["trigger"],
+                    "status": "succeeded",
+                    "job_id": "40",
+                    "job_name": f"{run_id}-01-trigger",
+                }
+            ],
+        },
+    )
     # A failed preflight on resume must retain the pre-existing runtime location,
     # including for older receipts that did not record entry into the runtime.
     record_submission_plan(
-        "demo", run_id, workflow={"name": "sim2real"}, planning={"state": "durable"},
+        "demo",
+        run_id,
+        workflow={"name": "sim2real"},
+        planning={"state": "durable"},
     )
 
     resolved = resolve_run(run_id, project="demo", allow_local_not_submitted=True)
@@ -525,9 +549,7 @@ def test_explicit_nested_uri_must_contain_supplied_run_id(
 def test_explicit_uri_rejects_misleading_earlier_run_component_before_prefix_probe(
     resolver_env: ExactS3,
 ) -> None:
-    explicit = (
-        "s3://alias-bucket/archive/wanted-run/unrelated/other/npa-workflow"
-    )
+    explicit = "s3://alias-bucket/archive/wanted-run/unrelated/other/npa-workflow"
     resolver_env.objects[
         ("alias-bucket", "archive/wanted-run/unrelated/other/reports/partial.json")
     ] = b"{}"
@@ -559,8 +581,7 @@ def test_stale_planned_receipt_cannot_override_terminal_s3_manifest(
     manifest["status"] = "SUCCEEDED"
     manifest["sky_job_id"] = ""
     manifest["steps"] = [
-        {"state": f"wave-{index:02d}", "status": "SUCCEEDED"}
-        for index in range(1, 11)
+        {"state": f"wave-{index:02d}", "status": "SUCCEEDED"} for index in range(1, 11)
     ]
     resolver_env.put_json(
         "alias-bucket",
@@ -575,9 +596,7 @@ def test_stale_planned_receipt_cannot_override_terminal_s3_manifest(
             )
         ] = b"{}"
 
-    resolved = resolve_run(
-        run_id, project="paidf", allow_local_not_submitted=True
-    )
+    resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
     assert resolved.found is True
     assert resolved.not_submitted is False
     assert resolved.manifest is not None
@@ -599,8 +618,6 @@ def test_planned_receipt_is_not_not_submitted_when_later_evidence_unavailable(
     )
     resolver_env.failure = PermissionError("eventual consistency / auth outage")
 
-    resolved = resolve_run(
-        run_id, project="paidf", allow_local_not_submitted=True
-    )
+    resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
     assert resolved.not_submitted is False
     assert resolved.verification_unavailable is True

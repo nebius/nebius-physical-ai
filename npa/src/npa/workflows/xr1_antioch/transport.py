@@ -14,22 +14,41 @@ from npa.clients.storage import StorageClient
 
 def _worker(project: Path, request: dict) -> dict:
     command = [
-        "antioch", "service", "exec", "--no-stream", "--no-tty", "--",
-        "python", "-c", Path(__file__).with_name("artifact_worker.py").read_text(),
+        "antioch",
+        "service",
+        "exec",
+        "--no-stream",
+        "--no-tty",
+        "--",
+        "python",
+        "-c",
+        Path(__file__).with_name("artifact_worker.py").read_text(),
     ]
     result = subprocess.run(
-        command, cwd=project, input=json.dumps(request), text=True, capture_output=True,
+        command,
+        cwd=project,
+        input=json.dumps(request),
+        text=True,
+        capture_output=True,
         env=antioch_environment(),
     )
     if result.returncode:
-        raise RuntimeError(f"Antioch artifact worker failed with exit {result.returncode}")
+        raise RuntimeError(
+            f"Antioch artifact worker failed with exit {result.returncode}"
+        )
     return json.loads(result.stdout)
 
 
 def _destination(destination: str) -> tuple[str, str]:
     location = urlsplit(destination)
     prefix = location.path.strip("/")
-    if location.scheme != "s3" or not location.netloc or not prefix or location.query or location.fragment:
+    if (
+        location.scheme != "s3"
+        or not location.netloc
+        or not prefix
+        or location.query
+        or location.fragment
+    ):
         raise ValueError("Artifact destination must be a run-scoped S3 prefix")
     if ".." in PurePosixPath(prefix).parts:
         raise ValueError("Artifact destination cannot traverse its run prefix")
@@ -51,7 +70,9 @@ def _readback(client, bucket: str, prefix: str, manifest: dict) -> dict:
     return verified
 
 
-def publish_artifacts(project: Path, remote_root: str, destination: str, storage: StorageClient) -> dict:
+def publish_artifacts(
+    project: Path, remote_root: str, destination: str, storage: StorageClient
+) -> dict:
     """Upload native artifacts and verify their complete bytes from Nebius S3.
 
     Args:
@@ -71,17 +92,26 @@ def publish_artifacts(project: Path, remote_root: str, destination: str, storage
     manifest = _worker(project, {"operation": "manifest", "root": remote_root})
     pending = _pending_files(client, bucket, prefix, manifest)
     transfers = _presigned_transfers(client, bucket, prefix, pending)
-    result = _worker(project, {"operation": "upload", "root": remote_root, "transfers": transfers})
+    result = _worker(
+        project, {"operation": "upload", "root": remote_root, "transfers": transfers}
+    )
     if set(result["uploaded"]) != set(pending):
         raise ValueError("Antioch did not upload every artifact")
-    return {"files": _readback(client, bucket, prefix, manifest), "s3_readback_verified": True}
+    return {
+        "files": _readback(client, bucket, prefix, manifest),
+        "s3_readback_verified": True,
+    }
 
 
 def _pending_files(client, bucket: str, prefix: str, manifest: dict) -> dict:
     existing = set()
-    pages = client.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix + "/")
+    pages = client.get_paginator("list_objects_v2").paginate(
+        Bucket=bucket, Prefix=prefix + "/"
+    )
     for page in pages:
-        existing.update(row["Key"][len(prefix) + 1:] for row in page.get("Contents", []))
+        existing.update(
+            row["Key"][len(prefix) + 1 :] for row in page.get("Contents", [])
+        )
     if not existing.issubset(manifest):
         raise FileExistsError("S3 prefix contains files outside this artifact manifest")
     if existing:
@@ -94,15 +124,28 @@ def _presigned_transfers(client, bucket: str, prefix: str, manifest: dict) -> di
     for name, entry in manifest.items():
         if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts:
             raise ValueError("Remote manifest contains an out-of-root artifact")
-        parameters = {"Bucket": bucket, "Key": f"{prefix}/{name}", "Metadata": {"sha256": entry["sha256"]}}
+        parameters = {
+            "Bucket": bucket,
+            "Key": f"{prefix}/{name}",
+            "Metadata": {"sha256": entry["sha256"]},
+        }
         result[name] = {
-            **entry, "url": client.generate_presigned_url("put_object", Params=parameters, ExpiresIn=3600),
+            **entry,
+            "url": client.generate_presigned_url(
+                "put_object", Params=parameters, ExpiresIn=3600
+            ),
         }
     return result
 
 
-def fetch_inputs(project: Path, remote_root: str, source: str, manifest: dict,
-                 storage: StorageClient, source_bundle: str | None = None) -> dict:
+def fetch_inputs(
+    project: Path,
+    remote_root: str,
+    source: str,
+    manifest: dict,
+    storage: StorageClient,
+    source_bundle: str | None = None,
+) -> dict:
     """Make Antioch download and verify approved inputs directly from Nebius S3.
 
     Args:
@@ -123,17 +166,38 @@ def fetch_inputs(project: Path, remote_root: str, source: str, manifest: dict,
     for name, identity in manifest.items():
         if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts:
             raise ValueError("Input manifest contains an out-of-root path")
-        files[name] = {**identity, "url": storage.s3.generate_presigned_url(
-            "get_object", Params={"Bucket": bucket, "Key": f"{prefix}/{name}"}, ExpiresIn=3600)}
+        files[name] = {
+            **identity,
+            "url": storage.s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": f"{prefix}/{name}"},
+                ExpiresIn=3600,
+            ),
+        }
     request = {"root": remote_root, "files": files, "source_bundle": source_bundle}
     code = Path(__file__).with_name("bootstrap_worker.py").read_text()
     result = subprocess.run(
-        ["antioch", "service", "exec", "--no-stream", "--no-tty", "--", "python", "-c", code],
-        cwd=project, input=json.dumps(request), text=True, capture_output=True,
+        [
+            "antioch",
+            "service",
+            "exec",
+            "--no-stream",
+            "--no-tty",
+            "--",
+            "python",
+            "-c",
+            code,
+        ],
+        cwd=project,
+        input=json.dumps(request),
+        text=True,
+        capture_output=True,
         env=antioch_environment(),
     )
     if result.returncode:
-        raise RuntimeError(f"Antioch input verification failed with exit {result.returncode}")
+        raise RuntimeError(
+            f"Antioch input verification failed with exit {result.returncode}"
+        )
     receipt = json.loads(result.stdout)
     if receipt.get("files") != manifest or receipt.get("download_verified") is not True:
         raise ValueError("Antioch receipt differs from the approved input identities")

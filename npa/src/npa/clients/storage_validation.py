@@ -252,26 +252,38 @@ def classify_storage_failure(
 
     if normalized in {"signaturedoesnotmatch", "authorizationheadermalformed"}:
         kind = StorageFailureKind.SIGNING
-    elif normalized in {
-        "invalidaccesskeyid",
-        "invalidtoken",
-        "expiredtoken",
-        "unauthenticated",
-        "authfailure",
-    } or status == 401:
+    elif (
+        normalized
+        in {
+            "invalidaccesskeyid",
+            "invalidtoken",
+            "expiredtoken",
+            "unauthenticated",
+            "authfailure",
+        }
+        or status == 401
+    ):
         kind = StorageFailureKind.AUTHENTICATION
         retryability = StorageRetryability.PROPAGATION
-    elif normalized in {"accessdenied", "forbidden", "permissiondenied"} or status == 403:
+    elif (
+        normalized in {"accessdenied", "forbidden", "permissiondenied"} or status == 403
+    ):
         kind = StorageFailureKind.AUTHORIZATION
         retryability = StorageRetryability.PROPAGATION
-    elif normalized in {
-        "notimplemented",
-        "unsupportedheader",
-        "unsupportedargument",
-        "invalidrequestfeature",
-    } or status == 501:
+    elif (
+        normalized
+        in {
+            "notimplemented",
+            "unsupportedheader",
+            "unsupportedargument",
+            "invalidrequestfeature",
+        }
+        or status == 501
+    ):
         kind = StorageFailureKind.UNSUPPORTED_CAPABILITY
-    elif normalized in {"nosuchbucket", "nosuchkey", "notfound", "404"} or status == 404:
+    elif (
+        normalized in {"nosuchbucket", "nosuchkey", "notfound", "404"} or status == 404
+    ):
         kind = StorageFailureKind.NOT_FOUND
     elif normalized in {"slowdown", "throttling", "toomanyrequests"} or status == 429:
         kind = StorageFailureKind.THROTTLED
@@ -281,7 +293,10 @@ def classify_storage_failure(
         retryability = StorageRetryability.TRANSIENT
     elif status == 409:
         kind = StorageFailureKind.CONFLICT
-    elif normalized in {"invalidargument", "invalidrequest", "malformedxml"} or status == 400:
+    elif (
+        normalized in {"invalidargument", "invalidrequest", "malformedxml"}
+        or status == 400
+    ):
         kind = StorageFailureKind.MALFORMED_REQUEST
     elif type_name in {"EndpointConnectionError", "InvalidEndpointURL"}:
         kind = StorageFailureKind.ENDPOINT
@@ -355,11 +370,10 @@ def _apply_credential_context(
 ) -> StorageProbeError:
     """Use caller-proven request context when a provider returns ambiguous 403."""
 
-    if (
-        context is StorageCredentialContext.KNOWN_INVALID_DIAGNOSTIC
-        and error.kind
-        in {StorageFailureKind.AUTHENTICATION, StorageFailureKind.AUTHORIZATION}
-    ):
+    if context is StorageCredentialContext.KNOWN_INVALID_DIAGNOSTIC and error.kind in {
+        StorageFailureKind.AUTHENTICATION,
+        StorageFailureKind.AUTHORIZATION,
+    }:
         return replace(
             error,
             kind=StorageFailureKind.AUTHENTICATION,
@@ -372,7 +386,12 @@ def _apply_credential_context(
 def _missing_result(
     missing: list[str], *, profile: StorageCapabilityProfile, backend: bool = False
 ) -> StorageProbeResult:
-    message = ("Terraform backend" if backend else "S3 storage") + " is not configured; missing " + ", ".join(missing) + "."
+    message = (
+        ("Terraform backend" if backend else "S3 storage")
+        + " is not configured; missing "
+        + ", ".join(missing)
+        + "."
+    )
     error = StorageProbeError(
         StoragePhase.CONFIGURATION,
         StorageFailureKind.MISSING_CONFIGURATION,
@@ -382,11 +401,19 @@ def _missing_result(
 
 
 def _is_not_found(exc: BaseException) -> bool:
-    return classify_storage_failure(exc, phase=StoragePhase.HEAD).kind is StorageFailureKind.NOT_FOUND
+    return (
+        classify_storage_failure(exc, phase=StoragePhase.HEAD).kind
+        is StorageFailureKind.NOT_FOUND
+    )
 
 
 def _storage_client(
-    *, endpoint: str, access: str, secret: str, session_token: str, region: str,
+    *,
+    endpoint: str,
+    access: str,
+    secret: str,
+    session_token: str,
+    region: str,
     addressing_style: str,
 ) -> Any:
     import boto3
@@ -427,7 +454,8 @@ def _cleanup_probe(
 
 def _with_cleanup(
     primary: StorageProbeResult,
-    *, client: Any,
+    *,
+    client: Any,
     bucket: str,
     key: str,
 ) -> StorageProbeResult:
@@ -489,14 +517,34 @@ def probe_terraform_backend(
     endpoint = str(endpoint_url or "").strip()
     access = str(access_key_id or "").strip()
     secret = str(secret_access_key or "").strip()
-    missing = [label for label, value in (("bucket", name), ("state_key", key), ("endpoint", endpoint), ("AWS_ACCESS_KEY_ID", access), ("AWS_SECRET_ACCESS_KEY", secret)) if not value]
+    missing = [
+        label
+        for label, value in (
+            ("bucket", name),
+            ("state_key", key),
+            ("endpoint", endpoint),
+            ("AWS_ACCESS_KEY_ID", access),
+            ("AWS_SECRET_ACCESS_KEY", secret),
+        )
+        if not value
+    ]
     if missing:
         return _missing_result(missing, profile=profile, backend=True)
     if client is None:
         try:
-            client = _storage_client(endpoint=endpoint, access=access, secret=secret, session_token=str(session_token or "").strip(), region=str(region or "").strip(), addressing_style=str(addressing_style or "path").strip())
+            client = _storage_client(
+                endpoint=endpoint,
+                access=access,
+                secret=secret,
+                session_token=str(session_token or "").strip(),
+                region=str(region or "").strip(),
+                addressing_style=str(addressing_style or "path").strip(),
+            )
         except Exception as exc:  # noqa: BLE001
-            return _failure_result(classify_storage_failure(exc, phase=StoragePhase.CLIENT_SETUP), profile=profile)
+            return _failure_result(
+                classify_storage_failure(exc, phase=StoragePhase.CLIENT_SETUP),
+                profile=profile,
+            )
 
     actions: tuple[StorageAction, ...] = (StorageAction.HEAD,)
     existing_state = False
@@ -504,7 +552,11 @@ def probe_terraform_backend(
         client.head_object(Bucket=name, Key=key)
     except Exception as exc:  # noqa: BLE001
         if not _is_not_found(exc):
-            return _failure_result(classify_storage_failure(exc, phase=StoragePhase.HEAD), profile=profile, actions=actions)
+            return _failure_result(
+                classify_storage_failure(exc, phase=StoragePhase.HEAD),
+                profile=profile,
+                actions=actions,
+            )
     else:
         existing_state = True
         actions += (StorageAction.GET,)
@@ -513,17 +565,30 @@ def probe_terraform_backend(
             body = response.get("Body") if isinstance(response, dict) else None
             read = getattr(body, "read", None)
             parsed = json.loads((read() if callable(read) else body) or b"")
-            if not isinstance(parsed, dict) or not isinstance(parsed.get("version"), int):
+            if not isinstance(parsed, dict) or not isinstance(
+                parsed.get("version"), int
+            ):
                 raise ValueError("invalid Terraform state shape")
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
-            error = StorageProbeError(StoragePhase.READ, StorageFailureKind.INVALID_DATA, message="Terraform backend state exists but is not a readable Terraform JSON document.", cause=exc)
+            error = StorageProbeError(
+                StoragePhase.READ,
+                StorageFailureKind.INVALID_DATA,
+                message="Terraform backend state exists but is not a readable Terraform JSON document.",
+                cause=exc,
+            )
             return _failure_result(error, profile=profile, actions=actions)
         except Exception as exc:  # noqa: BLE001
-            return _failure_result(classify_storage_failure(exc, phase=StoragePhase.READ), profile=profile, actions=actions)
+            return _failure_result(
+                classify_storage_failure(exc, phase=StoragePhase.READ),
+                profile=profile,
+                actions=actions,
+            )
 
     prefix = key.rsplit("/", 1)[0] if "/" in key else ""
     token = (key_factory or (lambda: uuid4().hex))()
-    probe_key = "/".join(part for part in (prefix, ".npa-probes", f"backend-{token}.tmp") if part)
+    probe_key = "/".join(
+        part for part in (prefix, ".npa-probes", f"backend-{token}.tmp") if part
+    )
     created = False
     primary: StorageProbeResult
     try:
@@ -534,10 +599,20 @@ def probe_terraform_backend(
         created = True
         actions += (StorageAction.LIST,)
         listing = client.list_objects_v2(Bucket=name, Prefix=probe_key, MaxKeys=1)
-        listed = {str(item.get("Key") or "") for item in (listing.get("Contents") or []) if isinstance(item, dict)}
+        listed = {
+            str(item.get("Key") or "")
+            for item in (listing.get("Contents") or [])
+            if isinstance(item, dict)
+        }
         if probe_key not in listed:
-            error = StorageProbeError(StoragePhase.LIST, StorageFailureKind.INVALID_DATA, message="Terraform backend listing did not return its unique probe object.")
-            primary = _failure_result(error, profile=profile, key=probe_key, actions=actions)
+            error = StorageProbeError(
+                StoragePhase.LIST,
+                StorageFailureKind.INVALID_DATA,
+                message="Terraform backend listing did not return its unique probe object.",
+            )
+            primary = _failure_result(
+                error, profile=profile, key=probe_key, actions=actions
+            )
         else:
             actions += (StorageAction.GET,)
             response = client.get_object(Bucket=name, Key=probe_key)
@@ -545,14 +620,46 @@ def probe_terraform_backend(
             read = getattr(body, "read", None)
             raw = read() if callable(read) else body
             if raw != b"npa-backend-probe-v2":
-                error = StorageProbeError(StoragePhase.READ, StorageFailureKind.INVALID_DATA, message="Terraform backend probe did not round-trip exactly.")
-                primary = _failure_result(error, profile=profile, key=probe_key, actions=actions)
+                error = StorageProbeError(
+                    StoragePhase.READ,
+                    StorageFailureKind.INVALID_DATA,
+                    message="Terraform backend probe did not round-trip exactly.",
+                )
+                primary = _failure_result(
+                    error, profile=profile, key=probe_key, actions=actions
+                )
             else:
-                code = "existing_state_valid" if existing_state else "new_state_prefix_valid"
-                primary = StorageProbeResult(True, code, "Terraform backend create/list/read capabilities are verified.", probe_key=probe_key, profile=profile, required_actions=PROFILE_ACTIONS[profile], attempted_actions=actions)
+                code = (
+                    "existing_state_valid"
+                    if existing_state
+                    else "new_state_prefix_valid"
+                )
+                primary = StorageProbeResult(
+                    True,
+                    code,
+                    "Terraform backend create/list/read capabilities are verified.",
+                    probe_key=probe_key,
+                    profile=profile,
+                    required_actions=PROFILE_ACTIONS[profile],
+                    attempted_actions=actions,
+                )
     except Exception as exc:  # noqa: BLE001
-        phase = StoragePhase.WRITE if not created else (StoragePhase.LIST if StorageAction.LIST in actions and StorageAction.GET not in actions[-1:] else StoragePhase.READ)
-        primary = _failure_result(classify_storage_failure(exc, phase=phase), profile=profile, key=probe_key, actions=actions)
+        phase = (
+            StoragePhase.WRITE
+            if not created
+            else (
+                StoragePhase.LIST
+                if StorageAction.LIST in actions
+                and StorageAction.GET not in actions[-1:]
+                else StoragePhase.READ
+            )
+        )
+        primary = _failure_result(
+            classify_storage_failure(exc, phase=phase),
+            profile=profile,
+            key=probe_key,
+            actions=actions,
+        )
     if created:
         return _with_cleanup(primary, client=client, bucket=name, key=probe_key)
     return primary
@@ -581,18 +688,39 @@ def probe_storage_write(
     endpoint = str(endpoint_url or "").strip()
     access = str(access_key_id or "").strip()
     secret = str(secret_access_key or "").strip()
-    missing = [label for label, value in (("bucket", name), ("endpoint", endpoint), ("AWS_ACCESS_KEY_ID", access), ("AWS_SECRET_ACCESS_KEY", secret)) if not value]
+    missing = [
+        label
+        for label, value in (
+            ("bucket", name),
+            ("endpoint", endpoint),
+            ("AWS_ACCESS_KEY_ID", access),
+            ("AWS_SECRET_ACCESS_KEY", secret),
+        )
+        if not value
+    ]
     if missing:
         return _missing_result(missing, profile=profile)
     if client is None:
         try:
-            client = _storage_client(endpoint=endpoint, access=access, secret=secret, session_token="", region=str(region or "").strip(), addressing_style="path")
+            client = _storage_client(
+                endpoint=endpoint,
+                access=access,
+                secret=secret,
+                session_token="",
+                region=str(region or "").strip(),
+                addressing_style="path",
+            )
         except Exception as exc:  # noqa: BLE001
-            return _failure_result(classify_storage_failure(exc, phase=StoragePhase.CLIENT_SETUP), profile=profile)
+            return _failure_result(
+                classify_storage_failure(exc, phase=StoragePhase.CLIENT_SETUP),
+                profile=profile,
+            )
 
     clean_prefix = str(prefix or "").strip().strip("/")
     token = (key_factory or (lambda: uuid4().hex))()
-    key = "/".join(part for part in (clean_prefix, ".npa-probes", f"write-{token}.tmp") if part)
+    key = "/".join(
+        part for part in (clean_prefix, ".npa-probes", f"write-{token}.tmp") if part
+    )
     payload = b"npa-storage-probe-v2"
     actions: tuple[StorageAction, ...] = (StorageAction.PUT,)
     try:
@@ -602,7 +730,15 @@ def probe_storage_write(
         error = _apply_credential_context(error, credential_context)
         return _failure_result(error, profile=profile, key=key, actions=actions)
 
-    primary = StorageProbeResult(True, "ok", "Declared S3 capabilities are verified.", probe_key=key, profile=profile, required_actions=PROFILE_ACTIONS[profile], attempted_actions=actions)
+    primary = StorageProbeResult(
+        True,
+        "ok",
+        "Declared S3 capabilities are verified.",
+        probe_key=key,
+        profile=profile,
+        required_actions=PROFILE_ACTIONS[profile],
+        attempted_actions=actions,
+    )
     if StorageAction.GET in PROFILE_ACTIONS[profile]:
         actions += (StorageAction.GET,)
         try:
@@ -613,15 +749,30 @@ def probe_storage_write(
             if raw != payload:
                 raise ValueError("probe payload mismatch")
         except (ValueError, TypeError) as exc:
-            error = StorageProbeError(StoragePhase.READ, StorageFailureKind.INVALID_DATA, message="S3 probe did not round-trip exactly.", cause=exc)
+            error = StorageProbeError(
+                StoragePhase.READ,
+                StorageFailureKind.INVALID_DATA,
+                message="S3 probe did not round-trip exactly.",
+                cause=exc,
+            )
             primary = _failure_result(error, profile=profile, key=key, actions=actions)
         except Exception as exc:  # noqa: BLE001
-            primary = _failure_result(classify_storage_failure(exc, phase=StoragePhase.READ), profile=profile, key=key, actions=actions)
+            primary = _failure_result(
+                classify_storage_failure(exc, phase=StoragePhase.READ),
+                profile=profile,
+                key=key,
+                actions=actions,
+            )
         else:
             primary = replace(primary, attempted_actions=actions)
 
     if profile is StorageCapabilityProfile.WORKFLOW_SUBMISSION:
-        return replace(primary, retained_object=True, summary=primary.summary + " Append-only profile leaves its uniquely named probe object intact.")
+        return replace(
+            primary,
+            retained_object=True,
+            summary=primary.summary
+            + " Append-only profile leaves its uniquely named probe object intact.",
+        )
     return _with_cleanup(primary, client=client, bucket=name, key=key)
 
 

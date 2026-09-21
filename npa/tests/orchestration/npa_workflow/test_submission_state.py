@@ -21,13 +21,22 @@ def test_resume_planning_preserves_run_location_and_launch(tmp_path, monkeypatch
     monkeypatch.setenv("HOME", str(tmp_path))
     workflow = {"name": "sim2real", "run_prefix_uri": "s3://bucket/custom/run-1"}
     launch = {"status": "launching", "kind": "runtime"}
-    update_submission_state("demo", "run-1", {
-        "workflow": workflow, "launch": launch, "launch_state": "submitted",
-    })
+    update_submission_state(
+        "demo",
+        "run-1",
+        {
+            "workflow": workflow,
+            "launch": launch,
+            "launch_state": "submitted",
+        },
+    )
 
     receipt = record_submission_plan(
-        "demo", "run-1", workflow={"name": "sim2real"},
-        planning={"state": "durable"}, launch_state="reserved",
+        "demo",
+        "run-1",
+        workflow={"name": "sim2real"},
+        planning={"state": "durable"},
+        launch_state="reserved",
     )
 
     assert receipt["workflow"] == workflow
@@ -40,12 +49,18 @@ def test_resume_planning_preserves_run_location_and_launch(tmp_path, monkeypatch
 def test_new_plan_proves_no_launch_and_rejects_identity_change(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     receipt = record_submission_plan(
-        "demo", "run-1", workflow={"name": "sim2real"}, planning={"state": "durable"},
+        "demo",
+        "run-1",
+        workflow={"name": "sim2real"},
+        planning={"state": "durable"},
     )
     assert submission_proves_never_launched(receipt, project="demo", run_id="run-1")
     with pytest.raises(ValueError, match="workflow identity"):
         record_submission_plan(
-            "demo", "run-1", workflow={"name": "other"}, planning={"state": "durable"},
+            "demo",
+            "run-1",
+            workflow={"name": "other"},
+            planning={"state": "durable"},
         )
     assert load_submission_state("demo", "run-1") == receipt
 

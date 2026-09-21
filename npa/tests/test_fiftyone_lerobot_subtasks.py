@@ -68,7 +68,9 @@ def test_segments_from_temporal_tags_rejects_overlap() -> None:
         )
 
 
-def test_apply_subtask_segments_writes_training_columns_and_metadata(tmp_path: Path) -> None:
+def test_apply_subtask_segments_writes_training_columns_and_metadata(
+    tmp_path: Path,
+) -> None:
     root = _write_dataset(tmp_path / "dataset")
     segments = [
         SubtaskSegment(0, "approach", 0, 200_000_000),
@@ -98,7 +100,9 @@ def test_apply_subtask_segments_writes_training_columns_and_metadata(tmp_path: P
     assert report["unlabeled_frame_count"] == 0
 
 
-def test_apply_subtask_segments_fails_before_writing_when_frames_have_gaps(tmp_path: Path) -> None:
+def test_apply_subtask_segments_fails_before_writing_when_frames_have_gaps(
+    tmp_path: Path,
+) -> None:
     root = _write_dataset(tmp_path / "dataset")
     data_path = root / "data" / "chunk-000" / "file-000.parquet"
 
@@ -112,7 +116,9 @@ def test_apply_subtask_segments_fails_before_writing_when_frames_have_gaps(tmp_p
     assert not (root / "meta" / "subtasks.parquet").exists()
 
 
-def test_existing_subtask_segments_reconstructs_contiguous_intervals(tmp_path: Path) -> None:
+def test_existing_subtask_segments_reconstructs_contiguous_intervals(
+    tmp_path: Path,
+) -> None:
     root = _write_dataset(tmp_path / "dataset")
     apply_subtask_segments(
         root,

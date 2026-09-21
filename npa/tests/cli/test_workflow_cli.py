@@ -31,8 +31,14 @@ NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 def _execution_scope_boundary(monkeypatch):
     # This module tests CLI wiring against fake launch/storage backends; the
     # mandatory provider-scope gate is exercised by test_execution_preflight.
-    monkeypatch.setattr("npa.cli.workbench.workflow._execution_target_preflight", lambda *args, **kwargs: (None, {}))
-    monkeypatch.setattr("npa.cli.workbench.workflow._raw_execution_preflight", lambda *args, **kwargs: (None, {}, {}))
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        lambda *args, **kwargs: (None, {}),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._raw_execution_preflight",
+        lambda *args, **kwargs: (None, {}, {}),
+    )
 
 
 @pytest.mark.parametrize(
@@ -101,7 +107,8 @@ def _patch_workflow_s3(
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.submit_credentials.load_credentials",
         lambda **kwargs: CredentialsConfig(
-            s3_access_key_id="test-access", s3_secret_access_key="test-secret",
+            s3_access_key_id="test-access",
+            s3_secret_access_key="test-secret",
             s3_endpoint="https://storage.example",
         ),
     )
@@ -283,11 +290,15 @@ def test_submit_injects_configured_secret_without_printing_it(
 
     assert result.exit_code == 0, result.output
     assert secret not in result.output
-    from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
 
     assert submit_mock.call_args.kwargs["extra_env"] == {
         "HF_TOKEN": secret,
-        **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, "https://storage.eu-west1.nebius.cloud"),
+        **dict.fromkeys(
+            STORAGE_ENDPOINT_ENV_NAMES, "https://storage.eu-west1.nebius.cloud"
+        ),
     }
 
 
@@ -363,9 +374,13 @@ def test_runtime_source_refresh_preserves_daemon_configuration(monkeypatch, tmp_
         config.write_text(uri)
 
     monkeypatch.setattr("npa.clients.config.persist_workflow_src_s3_uri", persist)
-    assert workflow_cli._stage_npa_src_for_submit(
-        {"bucket": "bucket"}, persist=False,
-    ) == "s3://bucket/current/"
+    assert (
+        workflow_cli._stage_npa_src_for_submit(
+            {"bucket": "bucket"},
+            persist=False,
+        )
+        == "s3://bucket/current/"
+    )
     assert config.read_bytes() == original
 
 
@@ -1046,17 +1061,24 @@ def test_exact_npa_manifest_uri_reconciles_failed_job_and_accelerator(
 def _put_workflow_log_waves(fake_s3: FakeWorkflowS3, waves: list[dict]) -> str:
     prefix = "crashed-driver/npa-workflow"
     common = {
-        "workflow": "sim2real", "api_version": "npa.workflow/v0.0.1",
-        "run_id": "crashed-driver", "status": "running",
+        "workflow": "sim2real",
+        "api_version": "npa.workflow/v0.0.1",
+        "run_id": "crashed-driver",
+        "status": "running",
         "run_prefix_uri": "s3://bucket/crashed-driver",
     }
     documents = {
         "manifest": {**common, "schema_version": "npa.workflow.run.v1", "steps": []},
-        "runtime": {**common, "schema_version": "npa.workflow.runtime.v1", "waves": waves},
+        "runtime": {
+            **common,
+            "schema_version": "npa.workflow.runtime.v1",
+            "waves": waves,
+        },
     }
     for name, payload in documents.items():
         fake_s3.put_object(
-            Bucket="bucket", Key=f"{prefix}/{name}.json",
+            Bucket="bucket",
+            Key=f"{prefix}/{name}.json",
             Body=json.dumps(payload).encode(),
         )
     return f"s3://bucket/{prefix}/manifest.json"
@@ -1065,41 +1087,83 @@ def _put_workflow_log_waves(fake_s3: FakeWorkflowS3, waves: list[dict]) -> str:
 def _put_root_job_logs(fake_s3, states, runtime):
     prefix = "single-job/npa-workflow"
     manifest = {
-        "schema_version": "npa.workflow.run.v1", "workflow": "unit-video",
-        "api_version": "npa.workflow/v0.0.1", "run_id": "single-job",
-        "run_prefix_uri": "s3://bucket/single-job", "status": "RUNNING",
+        "schema_version": "npa.workflow.run.v1",
+        "workflow": "unit-video",
+        "api_version": "npa.workflow/v0.0.1",
+        "run_id": "single-job",
+        "run_prefix_uri": "s3://bucket/single-job",
+        "status": "RUNNING",
         "sky_job_id": "42",
         "steps": [{"state": state, "status": "RUNNING"} for state in states],
     }
     fake_s3.put_object(
-        Bucket="bucket", Key=f"{prefix}/manifest.json",
+        Bucket="bucket",
+        Key=f"{prefix}/manifest.json",
         Body=json.dumps(manifest).encode(),
     )
     if runtime:
         fake_s3.put_object(
-            Bucket="bucket", Key=f"{prefix}/runtime.json",
+            Bucket="bucket",
+            Key=f"{prefix}/runtime.json",
             Body=json.dumps({"run_id": "single-job", "waves": [], **runtime}).encode(),
         )
     return f"s3://bucket/{prefix}/manifest.json"
 
 
-@pytest.mark.parametrize(("states", "runtime", "selector"), [
-    (["generate"], {}, []),
-    (["generate", "review"], {}, ["generate"]),
-    (["generate"], {"stages": [{
-        "stage": "generate", "managed_job_id": "42", "sky_task_id": "7",
-    }]}, ["7"]),
-    (["generate"], {"stages": [{
-        "stage": "generate", "managed_job_id": "42",
-    }]}, ["generate"]),
-    (["generate"], {"waves": [{
-        "states": ["generate"], "job_id": "42",
-    }]}, ["generate"]),
-])
+@pytest.mark.parametrize(
+    ("states", "runtime", "selector"),
+    [
+        (["generate"], {}, []),
+        (["generate", "review"], {}, ["generate"]),
+        (
+            ["generate"],
+            {
+                "stages": [
+                    {
+                        "stage": "generate",
+                        "managed_job_id": "42",
+                        "sky_task_id": "7",
+                    }
+                ]
+            },
+            ["7"],
+        ),
+        (
+            ["generate"],
+            {
+                "stages": [
+                    {
+                        "stage": "generate",
+                        "managed_job_id": "42",
+                    }
+                ]
+            },
+            ["generate"],
+        ),
+        (
+            ["generate"],
+            {
+                "waves": [
+                    {
+                        "states": ["generate"],
+                        "job_id": "42",
+                    }
+                ]
+            },
+            ["generate"],
+        ),
+    ],
+)
 @pytest.mark.parametrize("follow", [False, True])
 @pytest.mark.parametrize("stage_args", [[], ["--stage", "generate"]])
 def test_workflow_logs_single_step_job_needs_no_task_selector(
-    tmp_path, monkeypatch, states, runtime, selector, follow, stage_args,
+    tmp_path,
+    monkeypatch,
+    states,
+    runtime,
+    selector,
+    follow,
+    stage_args,
 ):
     import sys
     from npa.orchestration.skypilot import _bin
@@ -1115,12 +1179,22 @@ def test_workflow_logs_single_step_job_needs_no_task_selector(
     monkeypatch.setattr(_bin, "CONFIG_PATH", tmp_path / "absent.yaml")
     monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda value: value)
     monkeypatch.setattr(
-        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: str(executable),
+        "npa.cli.workbench.workflow._resolve_sky_bin",
+        lambda value: str(executable),
     )
     mode = "--follow" if follow else "--no-follow"
-    result = runner.invoke(app, [
-        "workbench", "workflow", "logs", uri, *stage_args, "--json", mode,
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            uri,
+            *stage_args,
+            "--json",
+            mode,
+        ],
+    )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["stage"] == "generate"
@@ -1140,14 +1214,25 @@ def test_workflow_logs_single_step_job_needs_no_task_selector(
     ],
 )
 def test_workflow_logs_after_driver_crash_without_task_timeline(
-    monkeypatch, kind, states, tasks, duplicate_wave, expected_task,
+    monkeypatch,
+    kind,
+    states,
+    tasks,
+    duplicate_wave,
+    expected_task,
 ) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
     wave = {
-        "key": "wave-1", "kind": kind, "states": states,
-        "attempt": 1, "status": "running", "sky_status": "SUBMITTED",
-        "job_id": "42", "job_name": "crashed-driver-rollout", "tasks": tasks,
+        "key": "wave-1",
+        "kind": kind,
+        "states": states,
+        "attempt": 1,
+        "status": "running",
+        "sky_status": "SUBMITTED",
+        "job_id": "42",
+        "job_name": "crashed-driver-rollout",
+        "tasks": tasks,
     }
     uri = _put_workflow_log_waves(fake_s3, [wave, wave] if duplicate_wave else [wave])
     calls = []
@@ -1157,32 +1242,53 @@ def test_workflow_logs_after_driver_crash_without_task_timeline(
         return subprocess.CompletedProcess([], 0, "rendered rollout\n", "")
 
     monkeypatch.setattr(
-        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs", logs,
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
+        logs,
     )
     monkeypatch.setattr(
-        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: "synthetic-sky",
+        "npa.cli.workbench.workflow._resolve_sky_bin",
+        lambda value: "synthetic-sky",
     )
-    result = runner.invoke(app, [
-        "workbench", "workflow", "logs", uri,
-        "--stage", "rollout", "--json",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            uri,
+            "--stage",
+            "rollout",
+            "--json",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert calls == [("42", expected_task)]
     assert json.loads(result.output)["log"] == "rendered rollout\n"
 
 
 def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     import sys
     from npa.orchestration.skypilot import _bin
 
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
-    uri = _put_workflow_log_waves(fake_s3, [{
-        "key": "wave-1", "kind": "parallel", "states": ["rollout", "evaluate"],
-        "attempt": 1, "status": "running", "job_id": "42", "tasks": [],
-    }])
+    uri = _put_workflow_log_waves(
+        fake_s3,
+        [
+            {
+                "key": "wave-1",
+                "kind": "parallel",
+                "states": ["rollout", "evaluate"],
+                "attempt": 1,
+                "status": "running",
+                "job_id": "42",
+                "tasks": [],
+            }
+        ],
+    )
     diagnostic = (
         "SkyPilot: fetching task logs\n"
         "No task found matching 'rollout' in job 42. Valid task IDs are 0-1.\n"
@@ -1198,12 +1304,22 @@ def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
     # SDK tests cover compatibility; isolate this later log-subprocess failure.
     monkeypatch.setattr(_bin, "ensure_skypilot_version", lambda value: value)
     monkeypatch.setattr(
-        "npa.cli.workbench.workflow._resolve_sky_bin", lambda value: str(executable),
+        "npa.cli.workbench.workflow._resolve_sky_bin",
+        lambda value: str(executable),
     )
 
-    result = runner.invoke(app, [
-        "workbench", "workflow", "logs", uri, "--stage", "rollout", "--json",
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            uri,
+            "--stage",
+            "rollout",
+            "--json",
+        ],
+    )
 
     assert result.exit_code == 2, result.output
     payload = json.loads(result.output)
@@ -1302,10 +1418,7 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
     fake_s3.put_object(
         Bucket="bucket",
         Key=f"{prefix}/logs/stage-0/run.log",
-        Body=(
-            "cached progress "
-            f"AWS_SECRET_ACCESS_KEY={synthetic_secret}\n"
-        ).encode(),
+        Body=(f"cached progress AWS_SECRET_ACCESS_KEY={synthetic_secret}\n").encode(),
     )
     uri = f"s3://bucket/{prefix}/manifest.json"
 
@@ -1362,9 +1475,7 @@ def test_workflow_dns_failure_is_unavailable_and_eight_ledger_stages_remain_visi
 
     def unavailable_logs(**kwargs):  # noqa: ANN003, ANN202
         log_task_ids.append(kwargs["stage"])
-        return subprocess.CompletedProcess(
-            ["sky", "jobs", "logs"], 1, "", dns_error
-        )
+        return subprocess.CompletedProcess(["sky", "jobs", "logs"], 1, "", dns_error)
 
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",

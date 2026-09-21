@@ -48,9 +48,12 @@ def _flag(argv: list[str], flag: str) -> str:
 
 
 @pytest.mark.parametrize(
-    "spec_name", ["vlm-eval-single.yaml", "vlm-eval-benchmark.yaml", "vlm-eval-loop.yaml"]
+    "spec_name",
+    ["vlm-eval-single.yaml", "vlm-eval-benchmark.yaml", "vlm-eval-loop.yaml"],
 )
-def test_specs_ask_for_the_self_hosted_backend_the_templates_served(spec_name: str) -> None:
+def test_specs_ask_for_the_self_hosted_backend_the_templates_served(
+    spec_name: str,
+) -> None:
     """All three templates ran their own vLLM; the specs must still request that backend.
 
     `vlm-eval-benchmark.yaml` in particular used to say `stub`, which meant the twin never

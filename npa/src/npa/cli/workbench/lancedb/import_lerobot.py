@@ -70,14 +70,26 @@ def _numeric_vector(row: dict[str, Any]) -> list[float]:
 
 def import_lerobot_cmd(
     endpoint: str = typer.Option("", "--endpoint", help="LanceDB wrapper endpoint."),
-    dataset_path: str = typer.Option(..., "--dataset-path", help="Local LeRobot dataset path or s3:// prefix."),
+    dataset_path: str = typer.Option(
+        ..., "--dataset-path", help="Local LeRobot dataset path or s3:// prefix."
+    ),
     table: str = typer.Option(..., "--table", help="Destination table name."),
     mode: CreateMode = typer.Option(CreateMode.create, "--mode", help="Create mode."),
-    vector_column: str = typer.Option("vector", "--vector-column", help="Vector column to create or reuse."),
+    vector_column: str = typer.Option(
+        "vector", "--vector-column", help="Vector column to create or reuse."
+    ),
     id_column: str = typer.Option("id", "--id-column", help="Identifier column name."),
-    limit: int = typer.Option(0, "--limit", help="Maximum rows to import; 0 means all."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing wrapper token."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    limit: int = typer.Option(
+        0, "--limit", help="Maximum rows to import; 0 means all."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing wrapper token.",
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Import a LeRobot dataset into a LanceDB table."""
     if limit < 0:
@@ -85,11 +97,15 @@ def import_lerobot_cmd(
     resolved = resolve_endpoint(endpoint)
     table_name = validate_table_name(table)
     files = resolve_lerobot_dataset_files(dataset_path)
-    rows = [] if dataset_path.startswith("s3://") else _rows_from_lerobot_files(
-        files,
-        vector_column=vector_column,
-        id_column=id_column,
-        limit=limit,
+    rows = (
+        []
+        if dataset_path.startswith("s3://")
+        else _rows_from_lerobot_files(
+            files,
+            vector_column=vector_column,
+            id_column=id_column,
+            limit=limit,
+        )
     )
     payload = {
         "schema": None,
@@ -110,4 +126,8 @@ def import_lerobot_cmd(
     )
     result.setdefault("table", table_name)
     result.setdefault("rows", len(rows))
-    emit(result, output=output, text=f"imported: {result.get('rows', len(rows))}\ntable: {table_name}")
+    emit(
+        result,
+        output=output,
+        text=f"imported: {result.get('rows', len(rows))}\ntable: {table_name}",
+    )

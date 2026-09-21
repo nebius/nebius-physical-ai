@@ -23,7 +23,9 @@ from npa.workflows.lerobot_subtask_proof import (
     prove_lerobot_subtasks,
 )
 
-SPEC = Path(__file__).parents[3] / "workflows" / "testing" / "lerobot-subtask-proof.yaml"
+SPEC = (
+    Path(__file__).parents[3] / "workflows" / "testing" / "lerobot-subtask-proof.yaml"
+)
 
 
 def _write_lerobot_dataset(root: Path) -> Path:
@@ -102,9 +104,15 @@ def test_proof_reads_a_concrete_subtask_from_lerobot_parquet(tmp_path: Path) -> 
 
 @pytest.mark.parametrize(
     ("index", "message"),
-    [(99, "unknown subtask_index 99"), (-1, "nonnegative subtask_index"), (None, "invalid subtask fields")],
+    [
+        (99, "unknown subtask_index 99"),
+        (-1, "nonnegative subtask_index"),
+        (None, "invalid subtask fields"),
+    ],
 )
-def test_proof_rejects_invalid_subtask_indices(tmp_path: Path, index, message: str) -> None:
+def test_proof_rejects_invalid_subtask_indices(
+    tmp_path: Path, index, message: str
+) -> None:
     dataset = _reviewed_dataset(tmp_path / "reviewed")
     path = dataset / "data" / "chunk-000" / "file-000.parquet"
     table = pq.read_table(path)
@@ -124,8 +132,12 @@ def test_proof_rejects_invalid_subtask_indices(tmp_path: Path, index, message: s
 
 def test_missing_label_does_not_publish_a_proof(tmp_path: Path) -> None:
     dataset = _reviewed_dataset(tmp_path / "reviewed")
-    with pytest.raises(LeRobotSubtaskProofError, match="expected subtask label was not found"):
-        prove_lerobot_subtasks(str(dataset), str(tmp_path / "proof.json"), expected_label="lift")
+    with pytest.raises(
+        LeRobotSubtaskProofError, match="expected subtask label was not found"
+    ):
+        prove_lerobot_subtasks(
+            str(dataset), str(tmp_path / "proof.json"), expected_label="lift"
+        )
     assert not (tmp_path / "proof.json").exists()
 
 
@@ -146,18 +158,26 @@ def test_proof_cannot_overwrite_the_source_dataset(tmp_path: Path) -> None:
     assert path.read_bytes() == original
 
 
-@pytest.mark.parametrize("suffix", ["meta/info.json", "data/chunk-000/file-000.parquet"])
+@pytest.mark.parametrize(
+    "suffix", ["meta/info.json", "data/chunk-000/file-000.parquet"]
+)
 def test_s3_proof_cannot_overwrite_source_objects(suffix: str) -> None:
     with pytest.raises(LeRobotSubtaskProofError, match="outside the source dataset"):
-        prove_lerobot_subtasks("s3://example-bucket/reviewed/", f"s3://example-bucket/reviewed/{suffix}")
+        prove_lerobot_subtasks(
+            "s3://example-bucket/reviewed/", f"s3://example-bucket/reviewed/{suffix}"
+        )
 
 
 def test_rendered_yaml_arguments_execute_the_proof(tmp_path: Path, capsys) -> None:
     dataset = _reviewed_dataset(tmp_path / "reviewed")
     output = tmp_path / "proof.json"
-    spec = merge_config_overrides(load_spec(SPEC), {
-        "reviewed_dataset_uri": str(dataset), "proof_uri": str(output),
-    })
+    spec = merge_config_overrides(
+        load_spec(SPEC),
+        {
+            "reviewed_dataset_uri": str(dataset),
+            "proof_uri": str(output),
+        },
+    )
     step = build_plan(spec, run_id="local-proof").steps[0]
     assert main(step.argv[3:]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -165,14 +185,23 @@ def test_rendered_yaml_arguments_execute_the_proof(tmp_path: Path, capsys) -> No
     assert payload["proof"]["subtask"] == "grasp"
 
 
-def test_workflow_interpreter_executes_the_declared_module(tmp_path: Path, monkeypatch) -> None:
+def test_workflow_interpreter_executes_the_declared_module(
+    tmp_path: Path, monkeypatch
+) -> None:
     dataset = _reviewed_dataset(tmp_path / "reviewed")
     output = tmp_path / "proof.json"
-    monkeypatch.setenv("PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setenv(
+        "PATH",
+        str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", ""),
+    )
     monkeypatch.setenv("PYTHONPATH", str(SPEC.parents[2] / "npa" / "src"))
-    spec = merge_config_overrides(load_spec(SPEC), {
-        "reviewed_dataset_uri": str(dataset), "proof_uri": str(output),
-    })
+    spec = merge_config_overrides(
+        load_spec(SPEC),
+        {
+            "reviewed_dataset_uri": str(dataset),
+            "proof_uri": str(output),
+        },
+    )
 
     report = run_workflow(spec, run_id="local-subtask-proof", execute=True)
 
@@ -183,7 +212,9 @@ def test_workflow_interpreter_executes_the_declared_module(tmp_path: Path, monke
     assert proof["summary"]["labeled_frame_count"] == 8
 
 
-def test_s3_round_trip_only_downloads_label_metadata_and_frame_data(tmp_path: Path) -> None:
+def test_s3_round_trip_only_downloads_label_metadata_and_frame_data(
+    tmp_path: Path,
+) -> None:
     dataset = _reviewed_dataset(tmp_path / "reviewed")
     downloaded: list[str] = []
     published: dict[str, dict] = {}
@@ -204,12 +235,21 @@ def test_s3_round_trip_only_downloads_label_metadata_and_frame_data(tmp_path: Pa
 
     source = "s3://example-bucket/reviewed"
     output = "s3://example-bucket/evidence/proof.json"
-    payload = prove_lerobot_subtasks(source, output, expected_label="grasp", storage_client=Storage())
-    assert downloaded == [f"{source}/meta/info.json", f"{source}/meta/subtasks.parquet", f"{source}/data/"]
+    payload = prove_lerobot_subtasks(
+        source, output, expected_label="grasp", storage_client=Storage()
+    )
+    assert downloaded == [
+        f"{source}/meta/info.json",
+        f"{source}/meta/subtasks.parquet",
+        f"{source}/data/",
+    ]
     assert published[output] == payload
-    assert payload["source_catalog_sha256"] == hashlib.sha256(
-        (dataset / "meta" / "subtasks.parquet").read_bytes()
-    ).hexdigest()
+    assert (
+        payload["source_catalog_sha256"]
+        == hashlib.sha256(
+            (dataset / "meta" / "subtasks.parquet").read_bytes()
+        ).hexdigest()
+    )
 
 
 def test_workflow_runs_argv_safe_proof_module_and_is_live_registered() -> None:

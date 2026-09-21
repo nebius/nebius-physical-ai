@@ -94,16 +94,22 @@ def parse_oci_reference(image: str) -> OCIReference:
     if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         raise ImageBootstrapContractError("image digest is not a valid sha256 digest")
     if "/" not in named:
-        raise ImageBootstrapContractError("image must have a registry-qualified repository")
+        raise ImageBootstrapContractError(
+            "image must have a registry-qualified repository"
+        )
     registry, path = named.split("/", 1)
     if not registry or not path or path.startswith("/") or path.endswith("/"):
         raise ImageBootstrapContractError("image has an invalid registry or repository")
     if registry.startswith("["):
         close = registry.find("]")
-        if close < 2 or registry[close + 1 :] not in {""} and not re.fullmatch(
-            r":[0-9]+", registry[close + 1 :]
+        if (
+            close < 2
+            or registry[close + 1 :] not in {""}
+            and not re.fullmatch(r":[0-9]+", registry[close + 1 :])
         ):
-            raise ImageBootstrapContractError("image has an invalid IPv6 registry authority")
+            raise ImageBootstrapContractError(
+                "image has an invalid IPv6 registry authority"
+            )
     elif registry.count(":") > 1 or (
         ":" in registry and not registry.rsplit(":", 1)[1].isdigit()
     ):
@@ -204,12 +210,14 @@ def verify_attestation(
 def probe_name(digest: str, nonce: str = "") -> str:
     """Return a per-invocation name while retaining digest correlation."""
 
-    correlation = hashlib.sha256(
-        f"{digest}\0{CONTRACT_VERSION}".encode()
-    ).hexdigest()[:10]
+    correlation = hashlib.sha256(f"{digest}\0{CONTRACT_VERSION}".encode()).hexdigest()[
+        :10
+    ]
     unique = str(nonce or secrets.token_hex(8)).lower()
     if not re.fullmatch(r"[0-9a-f]{8,32}", unique):
-        raise ImageBootstrapContractError("probe nonce must be 8-32 hexadecimal characters")
+        raise ImageBootstrapContractError(
+            "probe nonce must be 8-32 hexadecimal characters"
+        )
     return f"npa-sky-image-probe-{correlation}-{unique}"[:63].rstrip("-")
 
 
@@ -344,10 +352,10 @@ def probe_image_capabilities(
         env["KUBECONFIG"] = kubeconfig
     script = (
         "set -eu; "
-        "test -w /tmp; test -w \"$HOME\"; "
+        'test -w /tmp; test -w "$HOME"; '
         "command -v rsync; command -v service; "
         "(command -v sshd || test -x /usr/sbin/sshd); "
-        "if [ \"$(id -u)\" != 0 ]; then command -v sudo; sudo -n true; fi; "
+        'if [ "$(id -u)" != 0 ]; then command -v sudo; sudo -n true; fi; '
         "test \"$(/bin/sh -c 'printf %s forwarded' sentinel)\" = forwarded"
     )
     command_override = ["--command"] if runtime_bootstrap else []
@@ -673,7 +681,10 @@ def _read_owned_probe_identity(
         or actual_image != immutable
         or (expected_uid and uid != expected_uid)
     ):
-        return None, "probe ownership or immutable pod identity did not match this caller"
+        return (
+            None,
+            "probe ownership or immutable pod identity did not match this caller",
+        )
     return uid, ""
 
 
