@@ -27,7 +27,15 @@ def _update_digest(digest, value):
     digest.update(type(value).__name__.encode() + b"\0")
     if isinstance(value, torch.Tensor):
         digest.update(str((value.dtype, tuple(value.shape))).encode())
-        digest.update(value.detach().contiguous().reshape(-1).view(torch.uint8).cpu().numpy().tobytes())
+        digest.update(
+            value.detach()
+            .contiguous()
+            .reshape(-1)
+            .view(torch.uint8)
+            .cpu()
+            .numpy()
+            .tobytes()
+        )
     elif isinstance(value, np.ndarray):
         digest.update(str((value.dtype, value.shape)).encode())
         digest.update(value.tobytes())
@@ -57,5 +65,11 @@ def rng_digest(*, cuda_only=False):
     """
     if cuda_only:
         return state_digest(torch.cuda.get_rng_state())
-    return state_digest({"python": random.getstate(), "numpy": np.random.get_state(),
-                         "torch": torch.get_rng_state(), "cuda": torch.cuda.get_rng_state_all()})
+    return state_digest(
+        {
+            "python": random.getstate(),
+            "numpy": np.random.get_state(),
+            "torch": torch.get_rng_state(),
+            "cuda": torch.cuda.get_rng_state_all(),
+        }
+    )

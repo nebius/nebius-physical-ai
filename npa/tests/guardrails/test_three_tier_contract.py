@@ -165,14 +165,26 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 CONTRACTS: tuple[CapabilityContract, ...] = (
     CapabilityContract(
         name="flex-pi/train",
-        cli_module="npa.cli.workbench.flex_pi", cli_callback="train_cmd",
-        sdk_module="npa.sdk.workbench.flex_pi", sdk_attr="train",
+        cli_module="npa.cli.workbench.flex_pi",
+        cli_callback="train_cmd",
+        sdk_module="npa.sdk.workbench.flex_pi",
+        sdk_attr="train",
         spec_path=SPECS / "flex-pi-b200-public-training.yaml",
-        tool_ref="workbench.flex_pi.train", spec_gap=("dry_run",),
-        params=tuple(_p(name, name, "--" + name.replace("_", "-")) for name in (
-            "output_path", "mode", "num_workers", "prefetch_factor", "optimizer",
-            "run_id", "runtime_image", "dry_run",
-        )),
+        tool_ref="workbench.flex_pi.train",
+        spec_gap=("dry_run",),
+        params=tuple(
+            _p(name, name, "--" + name.replace("_", "-"))
+            for name in (
+                "output_path",
+                "mode",
+                "num_workers",
+                "prefetch_factor",
+                "optimizer",
+                "run_id",
+                "runtime_image",
+                "dry_run",
+            )
+        ),
     ),
     CapabilityContract(
         name="flex-pi/infer",

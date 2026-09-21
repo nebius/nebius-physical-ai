@@ -20,17 +20,24 @@ def summarize_measurements(rows):
     steady = [row for row in rows[EXCLUDED_INITIAL_UPDATES:] if row["samples"] == 96]
     windows = []
     for offset in range(0, len(steady) - WINDOW_UPDATES + 1, WINDOW_UPDATES):
-        window = steady[offset:offset + WINDOW_UPDATES]
+        window = steady[offset : offset + WINDOW_UPDATES]
         samples = sum(row["samples"] for row in window)
         seconds = sum(row["seconds"] for row in window)
-        windows.append({"samples": samples, "seconds": seconds,
-                        "samples_per_second": samples / seconds})
+        windows.append(
+            {
+                "samples": samples,
+                "seconds": seconds,
+                "samples_per_second": samples / seconds,
+            }
+        )
     if len(windows) < 3:
         raise ValueError("at least three complete steady-state windows are required")
     rates = [row["samples_per_second"] for row in windows]
     return {
         "excluded_initial_updates": EXCLUDED_INITIAL_UPDATES,
-        "initial_seconds": sum(row["seconds"] for row in rows[:EXCLUDED_INITIAL_UPDATES]),
+        "initial_seconds": sum(
+            row["seconds"] for row in rows[:EXCLUDED_INITIAL_UPDATES]
+        ),
         "windows": windows,
         "median_samples_per_second": statistics.median(rates),
         "minimum_samples_per_second": min(rates),

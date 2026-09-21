@@ -47,8 +47,11 @@ class VerifiedTrainer(Wan22Trainer):
         mode = str(self.cfg.npa_optimizer)
         options = {} if mode == "default" else {mode: True}
         return torch.optim.AdamW(
-            parameters, lr=self.learning_rate, weight_decay=self.weight_decay,
-            betas=(0.9, 0.95), **options,
+            parameters,
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay,
+            betas=(0.9, 0.95),
+            **options,
         )
 
     def _build_loader(self, dataset, worker_init_fn=None):
@@ -61,20 +64,29 @@ class VerifiedTrainer(Wan22Trainer):
         if str(self.accelerator.distributed_type.value) != "MULTI_GPU":
             raise RuntimeError("the frozen optimizer contract requires native DDP")
         if self.accelerator.num_processes != 4 or self.batch_size != 1:
-            raise RuntimeError("the accepted contract requires four ranks and microbatch one")
+            raise RuntimeError(
+                "the accepted contract requires four ranks and microbatch one"
+            )
         if self.gradient_accumulation_steps != 24:
             raise RuntimeError("the accepted effective batch is 96")
-        if len(self.train_dataset) != TRAIN_FRAMES or len(self.val_dataset) != VALIDATION_FRAMES:
+        if (
+            len(self.train_dataset) != TRAIN_FRAMES
+            or len(self.val_dataset) != VALIDATION_FRAMES
+        ):
             raise RuntimeError("actual dataset lengths differ from the frozen split")
         if self.train_dataset is self.val_dataset:
             raise RuntimeError("validation must be the distinct held-out split")
         split = json.loads(Path(__file__).with_name("training_split.json").read_text())
-        for dataset, key in ((self.train_dataset, "train_episode_ids"),
-                             (self.val_dataset, "validation_episode_ids")):
+        for dataset, key in (
+            (self.train_dataset, "train_episode_ids"),
+            (self.val_dataset, "validation_episode_ids"),
+        ):
             children = dataset.lerobot_dataset.multi_dataset._datasets
             actual = [int(index) for child in children for index in child.episodes]
             if sorted(actual) != sorted(split[key]):
-                raise RuntimeError("selected episode membership differs from the immutable split")
+                raise RuntimeError(
+                    "selected episode membership differs from the immutable split"
+                )
         self.accelerator.even_batches = False
         self.train_loader.batch_sampler.even_batches = False
 
@@ -93,14 +105,21 @@ class VerifiedTrainer(Wan22Trainer):
             self.accelerator.backward(loss * (24 / divisor))
             if not self.accelerator.sync_gradients:
                 return float(loss.detach())
-            norm = self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+            norm = self.accelerator.clip_grad_norm_(
+                self.model.parameters(), self.max_grad_norm
+            )
             if not torch.isfinite(norm):
                 raise RuntimeError("nonfinite training gradient")
             if self.global_step == 0:
-                missing = [name for name, parameter in self.model.named_parameters()
-                           if parameter.requires_grad and parameter.grad is None]
+                missing = [
+                    name
+                    for name, parameter in self.model.named_parameters()
+                    if parameter.requires_grad and parameter.grad is None
+                ]
                 if missing:
-                    raise RuntimeError(f"trainable parameters have no distributed gradient: {missing}")
+                    raise RuntimeError(
+                        f"trainable parameters have no distributed gradient: {missing}"
+                    )
             self.optimizer.step()
             if self.accelerator.optimizer_step_was_skipped:
                 raise RuntimeError("optimizer update was skipped")
@@ -143,25 +162,39 @@ class VerifiedTrainer(Wan22Trainer):
 
     def _record_update(self, start, losses, loader_wait):
         torch.cuda.synchronize()
-        elapsed = torch.tensor(time.perf_counter() - start, device=self.accelerator.device)
+        elapsed = torch.tensor(
+            time.perf_counter() - start, device=self.accelerator.device
+        )
         torch.distributed.all_reduce(elapsed, op=torch.distributed.ReduceOp.MAX)
         elapsed = float(elapsed.item())
         count = len(losses) * 4
         loss_sum = torch.tensor(sum(losses), device=self.accelerator.device)
         torch.distributed.all_reduce(loss_sum)
-        self._record({"step": self.global_step, "samples": count,
-                      "seconds": elapsed, "samples_per_second": count / elapsed,
-                      "loss": float(loss_sum.item()) / count,
-                      "rank_zero_loader_wait_seconds": loader_wait})
+        self._record(
+            {
+                "step": self.global_step,
+                "samples": count,
+                "seconds": elapsed,
+                "samples_per_second": count / elapsed,
+                "loss": float(loss_sum.item()) / count,
+                "rank_zero_loader_wait_seconds": loader_wait,
+            }
+        )
 
     def _profile_updates(self, updates):
         if not self.accelerator.is_main_process:
             return self._train_updates(updates)
         with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
             schedule=torch.profiler.schedule(wait=3, warmup=1, active=1, repeat=1),
-            record_shapes=True, profile_memory=True,
-            on_trace_ready=lambda trace: trace.export_chrome_trace(str(Path(self.output_dir) / "profile.json")),
+            record_shapes=True,
+            profile_memory=True,
+            on_trace_ready=lambda trace: trace.export_chrome_trace(
+                str(Path(self.output_dir) / "profile.json")
+            ),
         ) as profiler:
             self._profiler = profiler
             indices = self._train_updates(updates)
@@ -173,7 +206,9 @@ class VerifiedTrainer(Wan22Trainer):
         torch.distributed.all_gather_object(gathered, local_indices)
         indices = [index for rank in gathered for index in rank]
         if len(indices) != expected or len(set(indices)) != expected:
-            raise RuntimeError("sample accounting detected dropped or duplicate anchors")
+            raise RuntimeError(
+                "sample accounting detected dropped or duplicate anchors"
+            )
         if expected == TRAIN_FRAMES and sorted(indices) != list(range(TRAIN_FRAMES)):
             raise RuntimeError("training epoch did not cover the complete split")
         return hashlib.sha256(json.dumps(indices).encode()).hexdigest()
@@ -185,12 +220,20 @@ class VerifiedTrainer(Wan22Trainer):
         model.eval()
         rank = self.accelerator.process_index
         subset = list(range(rank, VALIDATION_FRAMES, 4))
-        loader = DataLoader(self.val_dataset, batch_size=1, sampler=subset,
-                            num_workers=self.num_workers, pin_memory=True)
+        loader = DataLoader(
+            self.val_dataset,
+            batch_size=1,
+            sampler=subset,
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
         total = torch.zeros(2, dtype=torch.float64, device=self.accelerator.device)
         start = time.perf_counter()
         python_rng, numpy_rng = random.getstate(), np.random.get_state()
-        with torch.no_grad(), torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+        with (
+            torch.no_grad(),
+            torch.random.fork_rng(devices=[torch.cuda.current_device()]),
+        ):
             for sample in loader:
                 index = int(sample.pop("npa_sample_index").item())
                 torch.manual_seed(1000000 + index)
@@ -207,8 +250,11 @@ class VerifiedTrainer(Wan22Trainer):
         if int(total[1].item()) != VALIDATION_FRAMES:
             raise RuntimeError("full validation sample count mismatch")
         self._set_dit_only_train_mode()
-        return {"loss": float((total[0] / total[1]).item()),
-                "samples": VALIDATION_FRAMES, "seconds": time.perf_counter() - start}
+        return {
+            "loss": float((total[0] / total[1]).item()),
+            "samples": VALIDATION_FRAMES,
+            "seconds": time.perf_counter() - start,
+        }
 
     def _checkpoint(self):
         start = time.perf_counter()
@@ -223,19 +269,26 @@ class VerifiedTrainer(Wan22Trainer):
         torch.distributed.all_gather_object(gathered, digest)
         if len(set(gathered)) != 1:
             raise RuntimeError("distributed model parameters diverged")
-        return {"state_path": str(root), "model_sha256": digest,
-                "training_state": self._training_state_receipt(),
-                "seconds": time.perf_counter() - start, "step": self.global_step}
+        return {
+            "state_path": str(root),
+            "model_sha256": digest,
+            "training_state": self._training_state_receipt(),
+            "seconds": time.perf_counter() - start,
+            "step": self.global_step,
+        }
 
     def _training_state_receipt(self, *, continuation=False):
-        local = {"rank": self.accelerator.process_index,
-                 "rng_sha256": rng_digest(cuda_only=continuation),
-                 "rng_scope": "current_cuda" if continuation else "all_generators",
-                 "optimizer_sha256": state_digest(self.optimizer.state_dict()),
-                 "scheduler_sha256": state_digest(self.scheduler.state_dict()),
-                 "accelerator_step": self.accelerator.step,
-                 "global_step": self.global_step, "epoch": self.epoch,
-                 "batch_in_epoch": self.batch_in_epoch}
+        local = {
+            "rank": self.accelerator.process_index,
+            "rng_sha256": rng_digest(cuda_only=continuation),
+            "rng_scope": "current_cuda" if continuation else "all_generators",
+            "optimizer_sha256": state_digest(self.optimizer.state_dict()),
+            "scheduler_sha256": state_digest(self.scheduler.state_dict()),
+            "accelerator_step": self.accelerator.step,
+            "global_step": self.global_step,
+            "epoch": self.epoch,
+            "batch_in_epoch": self.batch_in_epoch,
+        }
         gathered = [None] * 4
         torch.distributed.all_gather_object(gathered, local)
         if len({row["optimizer_sha256"] for row in gathered}) != 1:
@@ -247,12 +300,20 @@ class VerifiedTrainer(Wan22Trainer):
         gathered = [None] * 4
         torch.distributed.all_gather_object(gathered, digest)
         if len(set(gathered)) != 1:
-            raise RuntimeError("distributed model states diverged after optimizer updates")
+            raise RuntimeError(
+                "distributed model states diverged after optimizer updates"
+            )
         return digest
 
     def _resume_probe(self):
-        if (self.epoch, self.batch_in_epoch, self.global_step) != (0, TRAIN_FRAMES // 4, 1205):
-            raise RuntimeError("checkpoint cursor does not identify the completed first epoch")
+        if (self.epoch, self.batch_in_epoch, self.global_step) != (
+            0,
+            TRAIN_FRAMES // 4,
+            1205,
+        ):
+            raise RuntimeError(
+                "checkpoint cursor does not identify the completed first epoch"
+            )
         self.epoch = 1
         self.batch_in_epoch = 0
         self.train_sampler.clear_resume_batch_offset()
@@ -279,18 +340,33 @@ class VerifiedTrainer(Wan22Trainer):
         """
         self._check_contract()
         self._set_dit_only_train_mode()
-        result = {"mode": mode, "world_size": 4,
-                  "initial_model_sha256": _state_digest(self.accelerator.unwrap_model(self.model))}
+        result = {
+            "mode": mode,
+            "world_size": 4,
+            "initial_model_sha256": _state_digest(
+                self.accelerator.unwrap_model(self.model)
+            ),
+        }
         if mode == "resume":
-            result["loaded_model_sha256"] = _state_digest(self.accelerator.unwrap_model(self.model))
+            result["loaded_model_sha256"] = _state_digest(
+                self.accelerator.unwrap_model(self.model)
+            )
             result["loaded_step"] = self.global_step
             result["loaded_training_state"] = self._training_state_receipt()
             result["resume_probe"] = self._resume_probe()
             return result
         if mode == "train":
             result["initial_validation"] = self._validation()
-        updates = PROFILE_UPDATES if mode == "profile" else math.ceil(TRAIN_FRAMES / GLOBAL_BATCH)
-        indices = self._profile_updates(updates) if mode == "profile" else self._train_updates(updates)
+        updates = (
+            PROFILE_UPDATES
+            if mode == "profile"
+            else math.ceil(TRAIN_FRAMES / GLOBAL_BATCH)
+        )
+        indices = (
+            self._profile_updates(updates)
+            if mode == "profile"
+            else self._train_updates(updates)
+        )
         expected = PROFILE_UPDATES * GLOBAL_BATCH if mode == "profile" else TRAIN_FRAMES
         result["sample_order_sha256"] = self._verify_indices(indices, expected)
         result["samples"] = expected
@@ -298,7 +374,10 @@ class VerifiedTrainer(Wan22Trainer):
         if mode == "train":
             result["checkpoint"] = self._checkpoint()
             result["final_validation"] = self._validation()
-            before, after = result["initial_validation"]["loss"], result["final_validation"]["loss"]
+            before, after = (
+                result["initial_validation"]["loss"],
+                result["final_validation"]["loss"],
+            )
             if after > before:
                 raise RuntimeError("full held-out validation loss regressed")
             result["full_epoch_completed"] = True

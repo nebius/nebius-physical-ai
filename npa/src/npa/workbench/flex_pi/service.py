@@ -149,14 +149,21 @@ def create_app(
 
         _, root, _ = config
         if not root.startswith("s3://"):
-            raise HTTPException(status_code=422, detail="training requires an operator-owned S3 output root")
+            raise HTTPException(
+                status_code=422,
+                detail="training requires an operator-owned S3 output root",
+            )
         try:
-            return run_training(TrainingRequest(
-                output_path=root + "/" + body.output_path + "-" + uuid4().hex,
-                **body.model_dump(exclude={"output_path"}),
-            ))
+            return run_training(
+                TrainingRequest(
+                    output_path=root + "/" + body.output_path + "-" + uuid4().hex,
+                    **body.model_dump(exclude={"output_path"}),
+                )
+            )
         except FlexPiError as exc:
-            raise HTTPException(status_code=422, detail="flex-pi training failed") from exc
+            raise HTTPException(
+                status_code=422, detail="flex-pi training failed"
+            ) from exc
 
     @service.get("/list", dependencies=[Depends(authorize)])
     def list_capabilities() -> list[dict[str, str]]:

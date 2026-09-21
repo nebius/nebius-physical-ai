@@ -25,7 +25,9 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def publish_checkpoint(directory: Path, destination: str, storage: StorageClient) -> dict:
+def publish_checkpoint(
+    directory: Path, destination: str, storage: StorageClient
+) -> dict:
     """Upload every training-state file, retaining hashes for read-after-write proof.
 
     Args:
@@ -43,22 +45,38 @@ def publish_checkpoint(directory: Path, destination: str, storage: StorageClient
         if not path.is_file():
             continue
         relative = path.relative_to(directory).as_posix()
-        row = {"path": relative, "size": path.stat().st_size, "sha256": sha256_file(path)}
+        row = {
+            "path": relative,
+            "size": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
         storage.upload_file(str(path), destination.rstrip("/") + "/" + relative)
         files.append(row)
     return {"schema": "npa.flex_pi.training_checkpoint.v1", "files": files}
 
 
 def _require_complete_state(directory):
-    required = {"trainer_state.json", "optimizer.bin", "scheduler.bin",
-                *(f"random_states_{rank}.pkl" for rank in range(4))}
-    missing = required.difference(path.name for path in directory.iterdir() if path.is_file())
-    if missing or not any((directory / name).is_file() for name in ("model.safetensors", "pytorch_model.bin")):
-        raise FlexPiError("checkpoint lacks complete model, optimizer, scheduler, cursor or four-rank RNG state")
+    required = {
+        "trainer_state.json",
+        "optimizer.bin",
+        "scheduler.bin",
+        *(f"random_states_{rank}.pkl" for rank in range(4)),
+    }
+    missing = required.difference(
+        path.name for path in directory.iterdir() if path.is_file()
+    )
+    if missing or not any(
+        (directory / name).is_file()
+        for name in ("model.safetensors", "pytorch_model.bin")
+    ):
+        raise FlexPiError(
+            "checkpoint lacks complete model, optimizer, scheduler, cursor or four-rank RNG state"
+        )
 
 
-def restore_checkpoint(manifest: dict, source: str, directory: Path,
-                       storage: StorageClient) -> None:
+def restore_checkpoint(
+    manifest: dict, source: str, directory: Path, storage: StorageClient
+) -> None:
     """Read back each expected state file and require exact byte identity.
 
     Args:

@@ -28,7 +28,9 @@ app = typer.Typer(
 @json_stdout_contract
 def train_cmd(
     output_path: str = typer.Option(..., "--output-path"),
-    mode: str = typer.Option("train", "--mode", help="Complete epoch and resume, or profile."),
+    mode: str = typer.Option(
+        "train", "--mode", help="Complete epoch and resume, or profile."
+    ),
     num_workers: int = typer.Option(4, "--num-workers", min=0),
     prefetch_factor: int = typer.Option(4, "--prefetch-factor", min=1),
     optimizer: str = typer.Option("default", "--optimizer"),
@@ -56,11 +58,19 @@ def train_cmd(
     """
     from npa.workbench.flex_pi.training import TrainingRequest
 
-    _execute_training_request(output_format, TrainingRequest(
-        output_path=output_path, mode=mode, num_workers=num_workers,
-        prefetch_factor=prefetch_factor, optimizer=optimizer, run_id=run_id,
-        runtime_image=runtime_image, dry_run=dry_run,
-    ))
+    _execute_training_request(
+        output_format,
+        TrainingRequest(
+            output_path=output_path,
+            mode=mode,
+            num_workers=num_workers,
+            prefetch_factor=prefetch_factor,
+            optimizer=optimizer,
+            run_id=run_id,
+            runtime_image=runtime_image,
+            dry_run=dry_run,
+        ),
+    )
 
 
 def _execute_training_request(output_format, request):

@@ -59,9 +59,17 @@ def infer(
     )
 
 
-def train(*, output_path: str, mode: str = "train", num_workers: int = 4,
-          prefetch_factor: int = 4, optimizer: str = "default", run_id: str = "",
-          runtime_image: str = "", dry_run: bool = False) -> dict[str, Any]:
+def train(
+    *,
+    output_path: str,
+    mode: str = "train",
+    num_workers: int = 4,
+    prefetch_factor: int = 4,
+    optimizer: str = "default",
+    run_id: str = "",
+    runtime_image: str = "",
+    dry_run: bool = False,
+) -> dict[str, Any]:
     """Execute the fixed public four-GPU training and checkpoint-resume contract.
 
     Args:
@@ -80,11 +88,18 @@ def train(*, output_path: str, mode: str = "train", num_workers: int = 4,
     """
     from npa.workbench.flex_pi.training import TrainingRequest, run_training
 
-    return run_training(TrainingRequest(
-        output_path=output_path, mode=mode, num_workers=num_workers,
-        prefetch_factor=prefetch_factor, optimizer=optimizer, run_id=run_id,
-        runtime_image=runtime_image, dry_run=dry_run,
-    ))
+    return run_training(
+        TrainingRequest(
+            output_path=output_path,
+            mode=mode,
+            num_workers=num_workers,
+            prefetch_factor=prefetch_factor,
+            optimizer=optimizer,
+            run_id=run_id,
+            runtime_image=runtime_image,
+            dry_run=dry_run,
+        )
+    )
 
 
 __all__ = ["FlexPiRequest", "infer", "train"]
