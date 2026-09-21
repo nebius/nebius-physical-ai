@@ -17,6 +17,17 @@ DOCKERFILE = (
 PIP_BOOTSTRAP = DOCKERFILE.with_name("pip-bootstrap.lock")
 RUNTIME_IMPORT_CHECK = DOCKERFILE.with_name("verify_runtime_imports.py")
 RUNTIME_PAYLOAD = DOCKERFILE.with_name("runtime-payload.json")
+SKYPILOT_CORE_BOOTSTRAP_PACKAGES = (
+    "curl",
+    "fuse",
+    "gcc",
+    "netcat-openbsd",
+    "openssh-server",
+    "patch",
+    "pciutils",
+    "rsync",
+    "wget",
+)
 IMPORT_SPEC = importlib.util.spec_from_file_location(
     "curobo_verify_runtime_imports", RUNTIME_IMPORT_CHECK
 )
@@ -39,6 +50,20 @@ def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
     assert text.index('RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]') < text.index(
         "RUN pip install"
     )
+
+
+def test_bakes_proved_skypilot_core_bootstrap_closure():
+    text = DOCKERFILE.read_text()
+    install_layer = text.split("apt-get install -y --no-install-recommends", 1)[
+        1
+    ].split("&& dpkg-query -W", 1)[0]
+    inventory_check = text.split("&& dpkg-query -W", 1)[1].split("&& rm -f", 1)[0]
+
+    # Reuse the SkyPilot 0.12.2 core closure proved by the OpenPI image contract.
+    for package in SKYPILOT_CORE_BOOTSTRAP_PACKAGES:
+        assert package in install_layer.split()
+        assert package in inventory_check.split()
+    assert "fuse3" not in install_layer.split()
 
 
 def test_pip_bootstrap_distribution_is_content_pinned():

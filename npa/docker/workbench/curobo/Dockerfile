@@ -43,9 +43,11 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
-       ca-certificates curl python3.12 python3.12-venv \
+       ca-certificates curl fuse gcc netcat-openbsd python3.12 python3.12-venv \
        libgomp1=14.2.0-4ubuntu2~24.04.1 \
-       openssh-server rsync sudo \
+       openssh-server patch pciutils rsync sudo wget \
+    && dpkg-query -W \
+       curl fuse gcc netcat-openbsd openssh-server patch pciutils rsync wget \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
