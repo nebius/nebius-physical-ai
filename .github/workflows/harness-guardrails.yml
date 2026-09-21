@@ -35,7 +35,7 @@ jobs:
           npa/.venv/bin/python -m pip install -e "npa[dev]"
 
       - name: Run guardrail tests
-        run: npa/.venv/bin/python -m pytest npa/tests/guardrails -q
+        run: npa/.venv/bin/python -m pytest npa/tests/guardrails -n auto --dist worksteal -q
 
       - name: Assert standard test collection is non-zero
         run: |

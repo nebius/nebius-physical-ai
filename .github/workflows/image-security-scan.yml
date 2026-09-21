@@ -77,6 +77,7 @@ jobs:
             npa/tests/docker/test_image_payload_scan.py \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \
+            npa/tests/guardrails/test_workbench_image_k8s_prereqs.py \
             -q
 
       - name: Exercise exact native complete-byte scanner dependencies
@@ -174,6 +175,13 @@ jobs:
         run: |
           bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
           echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
+
+      - name: Reclaim unused hosted-runner SDK space
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          # CUDA images and Trivy's exports must coexist on this disposable runner.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc
+          df -h /
 
       - name: Scan all pinned bases with three local workers
         if: steps.scope.outputs.deep == 'true'
@@ -279,7 +287,7 @@ jobs:
 
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: omniverse-payload-report
           path: omniverse-payload-report.json

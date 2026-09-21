@@ -562,13 +562,15 @@ def _write_episodes_parquet(
 
 def _write_tasks_parquet(task: str | list[str], output_path: Path) -> None:
     """Write the tasks.parquet metadata file."""
+    import pandas as pd
+
     tasks = [task] if isinstance(task, str) else task
-    table = pa.table(
-        {
-            "task_index": pa.array(list(range(len(tasks))), type=pa.int64()),
-            "task": pa.array(tasks, type=pa.string()),
-        }
+    frame = pd.DataFrame(
+        {"task_index": list(range(len(tasks)))},
+        index=pd.Index(tasks, name="task"),
     )
+    # Native LeRobot looks up the task text through the DataFrame index.
+    table = pa.Table.from_pandas(frame, preserve_index=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output_path, compression="snappy")
 
