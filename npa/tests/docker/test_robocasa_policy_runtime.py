@@ -284,6 +284,19 @@ def test_robocasa_copyleft_solver_sources_and_licenses_are_conveyed() -> None:
     assert "Preserve these source archives and notices" in notice
 
 
+def test_robocasa_readonly_copy_destinations_are_traversable() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    create = dockerfile.index(
+        "RUN install -d -m 0755 /opt/robocasa/locks /opt/robocasa/derivative"
+    )
+    locks_copy = dockerfile.index("docker/workbench/robocasa/build-requirements.lock")
+    derivative_copy = dockerfile.index(
+        "docker/workbench/robocasa/lerobot-npa-act.patch.b64"
+    )
+    assert create < locks_copy < derivative_copy
+
+
 def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     runtime_lock = RUNTIME_LOCK.read_text(encoding="utf-8")

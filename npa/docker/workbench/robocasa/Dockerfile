@@ -89,6 +89,11 @@ RUN apt-get update \
 
 WORKDIR /opt/robocasa
 
+# BuildKit applies COPY --chmod to destination directories it creates. Pre-create
+# these roots with execute bits so the non-root runtime can read the verifier and
+# retained build inputs.
+RUN install -d -m 0755 /opt/robocasa/locks /opt/robocasa/derivative
+
 # Install the reviewed CPython 3.12 linux/amd64 closure from hash locks generated
 # only against anonymous PyPI and PyTorch indexes. RoboCasa requires Gymnasium
 # 0.29.1. The exact upstream LeRobot revision is rebuilt as a locally versioned
