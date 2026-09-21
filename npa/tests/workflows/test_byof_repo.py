@@ -24,6 +24,11 @@ def _load_module():
     return module
 
 
+def _dockerfile_run_instructions(text: str) -> list[str]:
+    logical_lines = text.replace("\\\n", " ").splitlines()
+    return [line for line in logical_lines if line.startswith("RUN ")]
+
+
 def _accepted_wan_base_args(module) -> list[str]:
     digest = module.wan_accepted_image_manifest()["oci_digest"]
     return [
@@ -1192,6 +1197,15 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
+
+
+def test_dockerfile_removes_generated_ssh_keys_in_install_layer() -> None:
+    module = _load_module()
+    runs = _dockerfile_run_instructions(module._dockerfile_text())
+    install_run = next(run for run in runs if "openssh-server" in run)
+    cleanup_runs = [run for run in runs if "rm -f /etc/ssh/ssh_host_*" in run]
+
+    assert cleanup_runs == [install_run]
 
 
 def test_compat_shim_delegates_to_run_byof_repo() -> None:
