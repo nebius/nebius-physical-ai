@@ -1,0 +1,8 @@
+{
+  "scope": "Independent FFmpeg YUV SSIM over matching source frames0\u201399. Diagnostic only; differs from frozen skimage SSIM and does not replace that gate.",
+  "source_frames": 100,
+  "bicubic_ssim": 0.973306,
+  "restored_ssim": 0.961645,
+  "change": -0.011661,
+  "earlier_untrimmed_comparisons_excluded": true
+}

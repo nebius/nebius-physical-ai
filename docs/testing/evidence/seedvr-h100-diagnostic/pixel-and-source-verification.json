@@ -1,0 +1,74 @@
+{
+  "frame60": {
+    "dataset_card_url": "https://huggingface.co/datasets/Hoshipu/RoboPro/raw/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/README.md",
+    "dataset_card_sha256": "4839860a9f4a1c074a0127303f29f22783047982937c8c3eb719e432610b8d54",
+    "local_card_matches_pinned_public_card": true,
+    "frame60_sheet": [
+      {
+        "column": 0,
+        "role": "source",
+        "frame_index": 60,
+        "exact_pixels_match": true,
+        "maximum_channel_delta": 0,
+        "mean_channel_delta": 0.0
+      },
+      {
+        "column": 1,
+        "role": "bicubic",
+        "frame_index": 60,
+        "exact_pixels_match": true,
+        "maximum_channel_delta": 0,
+        "mean_channel_delta": 0.0
+      },
+      {
+        "column": 2,
+        "role": "restored",
+        "frame_index": 60,
+        "exact_pixels_match": true,
+        "maximum_channel_delta": 0,
+        "mean_channel_delta": 0.0
+      }
+    ]
+  },
+  "six_frames": {
+    "decoder": "FFmpeg RGB24 with scale480x360",
+    "tiles": [
+      {
+        "tile_index": 0,
+        "exact_matching_frame_indices": [
+          0
+        ]
+      },
+      {
+        "tile_index": 1,
+        "exact_matching_frame_indices": [
+          20
+        ]
+      },
+      {
+        "tile_index": 2,
+        "exact_matching_frame_indices": [
+          40
+        ]
+      },
+      {
+        "tile_index": 3,
+        "exact_matching_frame_indices": [
+          60
+        ]
+      },
+      {
+        "tile_index": 4,
+        "exact_matching_frame_indices": [
+          80
+        ]
+      },
+      {
+        "tile_index": 5,
+        "exact_matching_frame_indices": [
+          99
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "independent_restored_decode": {
+    "sha256": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b",
+    "ffprobe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 640,
+          "height": 480,
+          "r_frame_rate": "50/1",
+          "avg_frame_rate": "50/1",
+          "duration": "2.000000",
+          "nb_read_frames": "100"
+        }
+      ]
+    }
+  },
+  "published_media_sha256": {
+    "restored.mp4": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b",
+    "bicubic.mp4": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+    "restored-six-frames.png": "28ee12e8c4a3c7bc08323365f43d9cd38405cad749498ff520945d1b97cff457",
+    "frame60-source-bicubic-restored.png": "155e1275a33f2b9ec117e8e192efcf3f71d2cadebb5000162ef606010fccfe96"
+  },
+  "mp4_metadata_review": "Only standard codec/container tags were present; both outputs contain100 decoded H.264 frames,640\u00d7480,50fps,2seconds.",
+  "png_metadata_review": "Only an aspect metadata entry was present. No images were retouched for this publication."
+}

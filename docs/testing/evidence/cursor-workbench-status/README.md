@@ -2,24 +2,24 @@
 
 GitHub snapshot: **2026-09-21T02:07:59.226812+00:00**; targeted state refresh: **2026-09-21T02:13:01.884549+00:00**.
 
-**49 historically tracked PRs; 48 open; 13 candidates for the required merge queue.** Closed [#611](https://github.com/nebius/nebius-physical-ai/pull/611#issuecomment-5754494671) is wholly superseded by #614 and adds no delivered improvement. This audit performed no merge.
+**49 historically tracked PRs; 48 open; 14 candidates for the required merge queue.** Closed [#611](https://github.com/nebius/nebius-physical-ai/pull/611#issuecomment-5754494671) is wholly superseded by #614 and adds no delivered improvement. This audit performed no merge.
 
-Queue candidates: #581, #584, #594, #596, #607, #609, #613, #614, #616, #621, #628, #629, #640. They have accepted exact-source records and applicable checks green. The required merge queue still runs integration checks; new commits need renewed checks and review.
+Queue candidates: #579, #581, #584, #594, #596, #607, #609, #613, #614, #616, #621, #628, #629, #640. They have accepted exact-source records and applicable checks green. The required merge queue still runs integration checks; new commits need renewed checks and review.
 
 Fresh independent proof: [#640 filesystem-link behavior and 151 passing tests](independent-cpu-reviews/pr640/README.md), and [#644 selector mutation controls and 71 passing tests](independent-cpu-reviews/pr644/README.md). #640 joins the queue candidates. #644 remains dependent on #643 and is not directly ready for main.
 
-#579 at `dcc530d9adea4fbec2f656af6f64bddcc57d507c` and #615 at `eea74da2e0e084293e3facb4f2ed735b8c35b6d7` have exact independent acceptance and no observed conflict; current CI remains incomplete. #615 acceptance now matches its published successor, rather than its older conflicting head.
+#579 at `dcc530d9adea4fbec2f656af6f64bddcc57d507c` now has exact independent acceptance and terminal applicable CI green, verified at **2026-09-21T02:28:13.561616+00:00**; it joins the queue candidates. #615 at `eea74da2e0e084293e3facb4f2ed735b8c35b6d7` has exact independent acceptance and no observed conflict; CI was incomplete in the preceding snapshot and is not refreshed here.
 
-GPU acceptance remains incomplete for SeedVR2, RoboCasa and cuRobo. Open3D still needs the standard workflow runtime; AprilTag has failed visual calibration. CPU workflow and test-isolation changes use relevant fault-injection, storage and regression evidence. These CPU results make no new GPU, visual-quality or robot-safety claim.
+GPU acceptance remains incomplete for SeedVR2, RoboCasa and cuRobo. [Real SeedVR2 H100 diagnostic media and full numerical metrics](../seedvr-h100-diagnostic/README.md) are now public: LPIPS improvement and temporal consistency failed the frozen gates. The predecessor-image-plus-adapter result does not qualify the exact built image or shipped workflow. Open3D still needs the standard workflow runtime; AprilTag has failed visual calibration. CPU workflow and test-isolation changes use relevant fault-injection, storage and regression evidence. These CPU results make no new GPU, visual-quality or robot-safety claim.
 
 The [machine-readable record](readiness.json) includes full source hashes, dependency PRs and available public proof/review links. Failed evidence remains failed. This inventory reconciles retained independent reviews; it does not claim every earlier experiment was repeated.
 
 | PR | Exact source | Status | Depends on |
 | --- | --- | --- | --- |
-| [#579 — Bound Workbench I/O concurrency and preserve downloads on failure](https://github.com/nebius/nebius-physical-ai/pull/579) | `dcc530d9a` | Exact review accepted; current CI incomplete | — |
+| [#579 — Bound Workbench I/O concurrency and preserve downloads on failure](https://github.com/nebius/nebius-physical-ai/pull/579) | `dcc530d9a` | Ready for required merge queue | — |
 | [#581 — Report a group-writable checkout once instead of 428 scan failures](https://github.com/nebius/nebius-physical-ai/pull/581) | `f0e2ccfe8` | Ready for required merge queue | — |
 | [#584 — Add evo trajectory evaluation BYOF workflow](https://github.com/nebius/nebius-physical-ai/pull/584) | `8c6bb6b41` | Ready for required merge queue | — |
-| [#593 — feat(workbench): add SeedVR2 video restoration](https://github.com/nebius/nebius-physical-ai/pull/593) | `b8d9c9c56` | Full workload evidence incomplete | — |
+| [#593 — feat(workbench): add SeedVR2 video restoration](https://github.com/nebius/nebius-physical-ai/pull/593) | `b8d9c9c56` | H100 diagnostic ran; objective failed; full acceptance incomplete | — |
 | [#594 — Fail closed on corrupt workflow resume ledgers](https://github.com/nebius/nebius-physical-ai/pull/594) | `93d37b494` | Ready for required merge queue | — |
 | [#595 — Fix RoboCasa policy evidence alignment](https://github.com/nebius/nebius-physical-ai/pull/595) | `2a79cbd6e` | Full workload evidence incomplete | — |
 | [#596 — Retain verifiable provenance for VLM evaluations](https://github.com/nebius/nebius-physical-ai/pull/596) | `93e92802e` | Ready for required merge queue | — |

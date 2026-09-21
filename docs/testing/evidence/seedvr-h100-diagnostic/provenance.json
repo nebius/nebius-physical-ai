@@ -1,0 +1,97 @@
+{
+  "schema": "npa.seedvr-diagnostic-provenance/v1",
+  "acceptance": "FAILED_OBJECTIVE_GATES",
+  "hardware": "NVIDIA H100 80GB HBM3",
+  "execution_scope": "Official SeedVR2 3B main and light-input inference diagnostics using a predecessor image plus the reviewed adapter.",
+  "predecessor_image_digest": "sha256:c34783b2aed18553cbbcb43d870e6658ba423c105db6f376c41e115efbf3e366",
+  "predecessor_embedded_source_commit": "e2bae7ace62543b4f5d9c0cc97db6d563e381f1b",
+  "reviewed_adapter_commit": "b8d9c9c56d8adc2ec76a5a41fd37e97e0069e2f4",
+  "identity_limit": "The result report embeds the predecessor source identity. The adapter was overlaid for diagnosis; these results do not qualify an immutable image built from the reviewed adapter commit or the shipped standard workflow.",
+  "upstream_source": {
+    "repository": "https://github.com/ByteDance-Seed/SeedVR",
+    "revision": "e4de8c24441a67e1b7df56abea10645059bb1185"
+  },
+  "model": {
+    "repository": "ByteDance-Seed/SeedVR2-3B",
+    "revision": "37255ff8cccfb01071b87f635a5948ca8d53117c",
+    "files": {
+      "ema_vae.pth": {
+        "bytes": 1002691902,
+        "sha256": "c7df8a67e68b7f9aca3d5d2153d2ce8ab4373687741a0f9ce87cb356ace51cac"
+      },
+      "neg_emb.pt": {
+        "bytes": 656540,
+        "sha256": "6a43e5800ef2354f1c156d27535834da055cbec8248298b8923492bba2076581"
+      },
+      "pos_emb.pt": {
+        "bytes": 595100,
+        "sha256": "fa07a14844314772266b66c3b95deb0027696d8fe7065721263db5176f45d799"
+      },
+      "seedvr2_ema_3b.pth": {
+        "bytes": 13566090228,
+        "sha256": "6bcc5ac59447e97b100477480aebb01be2ec724c8340bb83faae21f64848604b"
+      }
+    },
+    "weights_baked": false
+  },
+  "runs": {
+    "main": {
+      "started_at": "2026-09-21T02:06:20.874695+00:00",
+      "finished_at": "2026-09-21T02:08:17.415997+00:00",
+      "seed": 666,
+      "input_sha256": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4",
+      "output_sha256": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b",
+      "output_media": {
+        "bytes": 238072,
+        "codec": "h264",
+        "duration_seconds": 2.0,
+        "fps": "50/1",
+        "frames": 100,
+        "height": 480,
+        "width": 640
+      },
+      "unique_decoded_frames": 100,
+      "generated_sensor_truth": false,
+      "color_fix": false,
+      "sequence_parallel_size": 1,
+      "upstream_log_sha256": "7ea1eb78e01a066bebdc21dcc644a2788a4d18ce30f1609000ccd1b7dcd7c493",
+      "artifact_verification_scope": "artifact_and_runtime_consistency_only",
+      "producer_execution_attested_by_artifact_verifier": false
+    },
+    "light_input": {
+      "started_at": "2026-09-21T02:09:48.785637+00:00",
+      "finished_at": "2026-09-21T02:11:43.036735+00:00",
+      "seed": 666,
+      "input_sha256": "44013573e65c7b64f92deac1acaeb4828abb860cad3696d99e6808ddee81149e",
+      "output_sha256": "538b93e9387c6f0633ecc6bc7b6456e625d63ffea2ff94a43e326b0814eb5e7d",
+      "output_media": {
+        "bytes": 110394,
+        "codec": "h264",
+        "duration_seconds": 0.5,
+        "fps": "50/1",
+        "frames": 25,
+        "height": 480,
+        "width": 640
+      },
+      "unique_decoded_frames": 25,
+      "generated_sensor_truth": false,
+      "color_fix": false,
+      "sequence_parallel_size": 1,
+      "upstream_log_sha256": "59b8389c32da574a53714eacae21010f5ac88701a6fd6501f2e54cef48a0b0e7",
+      "artifact_verification_scope": "artifact_and_runtime_consistency_only",
+      "producer_execution_attested_by_artifact_verifier": false
+    }
+  },
+  "retained_input_sha256": {
+    "source": "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198",
+    "degraded": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4",
+    "bicubic": "469e0fed0c9649d52e2d180801e178255678c12efd0e56ba781d10aa94720d53",
+    "restored": "aaad9cf15103cd1a69a7813e147bc6a9a8fe0697d44b2e207bd3c2179a5d9c7b"
+  },
+  "original_input_video_published": false,
+  "objective_report_sha256": "896caf266aae34e601e484b4378e61f304ee605719ac7144216ced184e427b05",
+  "restore_runtime_identity_is_self_reported": true,
+  "verifier_runtime_identity_rechecked_on_h100": true,
+  "candidate_hosted_vlm_review": "PENDING at this diagnostic snapshot; no final blinded preference or physical-correctness verdict.",
+  "ship_workflow_acceptance": false
+}
