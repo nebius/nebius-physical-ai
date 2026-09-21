@@ -1664,6 +1664,24 @@ def test_a_view_in_a_narrow_tab_is_fitted_for_that_tab_and_not_for_a_wide_pane()
     geometry = _sprawling_scene()
     cameras = _view_cameras(geometry, [0.0, 1.0, 0.0])
 
+    # The whole point of naming a window shape is that the real window is not that shape.
+    # Horizontal binds in narrow windows, so a window wider than the assumed one is safe
+    # and a narrower one clips, which is why the assumption has to be an ordinary window
+    # rather than a wide monitor. 4:3 is the narrowest ordinary landscape window.
+    assert CAMERA_WINDOW_ASPECT == 4.0 / 3.0, (
+        "the assumed window shape sets which real windows are safe; widening it "
+        "silently reintroduces clipping for everyone on a narrower one"
+    )
+    for view_name, spec in VIEW_GEOMETRY.items():
+        shown = np.vstack([geometry[key] for key in spec.geometry])
+        share = spec.aspect / CAMERA_WINDOW_ASPECT
+        for window in (4.0 / 3.0, 1.5, 1.6, 16.0 / 9.0, 21.0 / 9.0):
+            reach = _inside_frame(shown, cameras[view_name], window * share)
+            assert reach <= 1.0, (
+                f"{view_name!r} clips at {reach:.4f} in a {window:.3f} window, which is "
+                "at least as wide as the shape it was fitted for"
+            )
+
     # The tab column is half the width of the scene pane, so its views must sit
     # further back, not at the same distance.
     assert VIEW_GEOMETRY[SCAN_VIEW].aspect < VIEW_GEOMETRY[SCENE_VIEW].aspect

@@ -117,6 +117,33 @@ Open3D capability executing on a cluster node, and a six-state plan that renders
 `npa.workflow` runtime itself is not. A pod is not a substitute for the runtime, and the file says so
 rather than letting four cleared gates imply a fifth.
 
+## The viewer's error, and the window shapes the fit survives
+
+`viewer-wgpu-error-diagnosis.json` closes out the `40000x40000` validation error that appeared
+in the earlier captures and was recorded undiagnosed. It is upstream and has nothing to do with
+this tool's output: it reproduces on a recording holding one point and no blueprint, is
+unmoved by window size or screen size, appears nowhere in the window's X11 size hints, and
+scales with the X11 scale factor, so it is a constant in the viewer's own units. It fires once
+before the first frame, the surface is then configured correctly, and captures come out at full
+resolution. The operational part worth keeping is the separate exit-path panic that follows a
+*successful* capture, which means a capture script has to check the PNG rather than the exit
+status.
+
+`pane-fit-window-aspect-sweep.json` answers a question the earlier per-pane fix left open: the
+fit assumes a window shape, and the real window is never exactly that shape. Horizontal binds
+in every narrow window, so the safe set is everything at or above one boundary — which made the
+assumed shape the only thing deciding who gets a clipped view. At 16:10 the boundary sat at
+1.4815 and an ordinary 4:3 window fell 11.1% outside its own tabs. The assumed shape is now 4:3,
+the boundary is 1.2346, and `viewer-ui/ordinary-window-4x3.png` shows the previously-clipping
+window with both panes intact, measured in `ordinary-window-audit.json`.
+
+That audit is worth a caveat of its own. Pixel edge-contact testing reported every pane clipped
+on every edge until the threshold was raised past the viewer's floor grid, which spans the whole
+pane and had been counting as content. The distance distribution turns out to be sharply
+bimodal, so the corrected threshold is stable over a wide range rather than tuned. The harness
+now also declines to return a verdict when its pane detection produces an impossible pane shape,
+which is what it does on the two earlier comparison frames.
+
 ## A claim this evidence set got wrong, and the control that catches it
 
 `irregular-density-counterexample.json` and `capability-record-support-claim-correction.json` record a

@@ -884,7 +884,20 @@ REMOVED_VIEW = "Removed: unsupported surface"
 #: a per-pane aspect. Deliberately narrower than a wide monitor: a pane fitted for
 #: a shape narrower than the real one keeps a margin, and one fitted for a wider
 #: shape clips the sides. Only the first mistake is reviewable.
-CAMERA_WINDOW_ASPECT = 16.0 / 10.0
+#:
+#: 4:3 rather than 16:10 because horizontal is the binding direction in every narrow window
+#: measured, so the frame extent scales as the inverse of the window aspect and the safe set
+#: is everything at or above a single boundary. At 16:10 that boundary sat at 1.4815, which
+#: put an ordinary 4:3 window 11.1% outside its own tabs. At 4:3 it sits at 1.2346 and a 4:3
+#: window fits with 7.4% to spare. The price is emptier frames in wide windows: in 16:9 the
+#: geometry reaches 76% of the scene pane and 69% of a tab rather than 93% of both. Vertical
+#: takes over as the binding direction in the scene pane somewhere below 16:9, which is why
+#: its extent stops falling at 0.7603 however wide the window gets.
+#:
+#: This is not window-independence and no static camera can offer it: a window narrower than
+#: 1.2346, including one snapped to half of a wide monitor, still clips. Measured boundaries
+#: are in `evidence/open3d/pane-fit-window-aspect-sweep.json`.
+CAMERA_WINDOW_ASPECT = 4.0 / 3.0
 
 #: Horizontal share of the window each pane of the blueprint receives, matching the
 #: column_shares the layout below actually sets.

@@ -1,0 +1,24 @@
+{
+  "what_was_asked": "Diagnose the 40000x40000 wgpu validation error visible in the viewer captures.",
+  "recorded_utc": "2026-09-21T04:35:52Z",
+  "error": "In Surface::configure: `Surface` width and height must be within the maximum supported texture size. Requested was (40000, 40000), maximum extent for either dimension is 16384.",
+  "what_it_is_not": [
+    "Not caused by the Open3D output. It reproduces on a recording containing a single point and no blueprint at all.",
+    "Not caused by the requested window size. Identical request at 1024x768, 1280x800 and 1920x1200 windows.",
+    "Not caused by the virtual screen size. Identical request at 1280x800, 1920x1200 and 2400x1800 screens.",
+    "Not X11 size hints. The window's WM_NORMAL_HINTS carries a 320x450 minimum and no maximum at all; 40000 appears nowhere in them."
+  ],
+  "what_it_is": {
+    "occurrences_per_run": 1,
+    "when": "once during startup, before the first frame is presented",
+    "scales_with_the_x11_scale_factor": {
+      "WINIT_X11_SCALE_FACTOR=1": "Requested was (40000, 40000)",
+      "WINIT_X11_SCALE_FACTOR=2": "Requested was (20000, 20000)"
+    },
+    "reading": "A fixed constant in the viewer's own logical units, converted by the scale factor. It is not a measurement of anything in the scene, the window or the screen, all of which were varied without moving it.",
+    "recovery": "The surface is configured again at the real size and rendering proceeds. Captures come out at exactly the requested resolution -- 1024x768 requested, 2048x1536 written at the 2x scale factor -- and are fully legible."
+  },
+  "operational_consequence": "The viewer also panics on the way out, after the screenshot is written: 'Failed to take store hub from the Viewer' at re_viewer/src/app.rs:3694. So a capture script must verify the PNG rather than trust the exit status, which is non-zero on a successful capture. The error itself is upstream, harmless to the captures, and affects no measurement taken from them.",
+  "not_claimed": "The upstream line that supplies 40000 was not identified; that is inside the viewer/winit/eframe stack, whose source is not in this tree. What is established is that nothing this repository produces or configures influences it.",
+  "how_to_reproduce": "xvfb-run -a --server-args='-screen 0 1024x768x24' rerun --screenshot-to out.png --window-size 1024x768 <any>.rrd 2>&1 | grep 'Requested was'"
+}
