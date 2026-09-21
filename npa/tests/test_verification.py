@@ -507,9 +507,40 @@ def test_workflow_state_redactor_preserves_same_line_recovery_context() -> None:
 def test_workflow_state_redactor_preserves_token_counters() -> None:
     from npa.orchestration.skypilot.workflow_state import redact_text
 
-    message = "prompt_tokens=812 completion_tokens=133 total_tokens=945"
+    message = (
+        "prompt_tokens=812 completion_tokens=133 total_tokens=945 "
+        "tokens=4096 tokens_available=true tokenizer=synthetic"
+    )
 
     assert redact_text(message) == message
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "SecretAccessKey",
+        "secretKey",
+        "secretValue",
+        "tokenValue",
+        "token1",
+        "cookies",
+        "password1",
+        "passwd1",
+        "secret1",
+        "apikey1",
+        "secrets",
+        "AccessKeyId",
+        "privateKey",
+    ],
+)
+def test_workflow_state_redactor_covers_compound_credential_keys(key: str) -> None:
+    from npa.orchestration.skypilot.workflow_state import redact_text
+
+    credential = "SYNTHETIC-COMPOUND-CREDENTIAL"
+    sanitized = redact_text(f"{key}={credential}")
+
+    assert credential not in sanitized
+    assert sanitized == f"{key}=<redacted>"
 
 
 def test_workflow_state_redactor_covers_unencoded_at_in_url_userinfo() -> None:

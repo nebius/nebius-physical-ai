@@ -26,8 +26,10 @@ _SECRET_KEY_MARKERS = (
     "cookie",
     "private_key",
     "private-key",
+    "privatekey",
     "access_key",
     "access-key",
+    "accesskey",
 )
 _NON_SECRET_WORKFLOW_TOKEN_REFERENCES = tuple(
     (f"unknown {scope} ", f"{scope}.") for scope in ("config", "run", "state", "loop")
@@ -110,9 +112,13 @@ def _has_secret_key_marker(key: str) -> bool:
         search_from = 0
         while (start := key.find(marker, search_from)) >= 0:
             end = start + len(marker)
-            if end == len(key) or not (key[end].isascii() and key[end].isalnum()):
-                return True
-            search_from = start + 1
+            suffix = key[end:]
+            if marker == "token" and (
+                suffix == "s" or suffix.startswith(("s_", "s-", "izer"))
+            ):
+                search_from = start + 1
+                continue
+            return True
     return False
 
 
