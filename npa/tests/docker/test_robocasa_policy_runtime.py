@@ -1,5 +1,7 @@
 """Static contract for the combined RoboCasa + LeRobot ACT evaluation runtime."""
 
+import base64
+import hashlib
 import io
 import json
 import os
@@ -22,6 +24,7 @@ RUNTIME_INPUT = IMAGE_DIR / "requirements.in"
 RUNTIME_LOCK = IMAGE_DIR / "requirements.lock"
 BUILD_LOCK = IMAGE_DIR / "build-requirements.lock"
 LEROBOT_LOCK = IMAGE_DIR / "lerobot-requirements.lock"
+DEADSNAKES_KEY = IMAGE_DIR / "deadsnakes-ppa.gpg.b64"
 BASE_INVENTORY = IMAGE_DIR.parent / "base-image-security.json"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
 ROBOCASA_COMMIT = "8f3c96ec8d1bfcd8126cad2bca887da98d30e997"
@@ -246,6 +249,33 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
     assert "/var/lib/apt/lists/*" in cleanup_tokens
     assert install < venv < cleanup < absent_path < absent_symlink
     assert absent_symlink == len(commands) - 1
+
+
+def test_robocasa_python_repository_uses_pinned_scoped_signing_key() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    encoded = "".join(DEADSNAKES_KEY.read_text(encoding="ascii").split())
+    key = base64.b64decode(encoded, validate=True)
+    key_sha256 = hashlib.sha256(key).hexdigest()
+    assert key[0] == 0x99
+    packet_size = int.from_bytes(key[1:3], byteorder="big")
+    public_key_packet = key[3 : 3 + packet_size]
+    assert public_key_packet[0] == 4
+    key_fingerprint = hashlib.sha1(
+        b"\x99" + packet_size.to_bytes(2, byteorder="big") + public_key_packet
+    ).hexdigest()
+
+    assert key_sha256 == (
+        "5caefc9c4bb1dadde2e03579a1c9ac1ae0d3ae9c15350de361a89782f814c438"
+    )
+    assert key_fingerprint == "f23c5a6cf475977595c89f51ba6932366a755776"
+    assert "add-apt-repository" not in text
+    assert "software-properties-common" not in text
+    assert f"{key_sha256}  /etc/apt/keyrings/deadsnakes-ppa.gpg" in text
+    assert (
+        "deb [signed-by=/etc/apt/keyrings/deadsnakes-ppa.gpg] "
+        "https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy main"
+    ) in text
+    assert "rm -f /tmp/deadsnakes-ppa.gpg.b64" in text
 
 
 def test_robocasa_runtime_purges_vulnerable_builder_headers_before_smoke() -> None:

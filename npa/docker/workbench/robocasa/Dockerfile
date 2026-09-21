@@ -50,13 +50,24 @@ ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
 USER root
 
 # System deps for EGL rendering and the Python build toolchain.
+COPY --chmod=0644 docker/workbench/robocasa/deadsnakes-ppa.gpg.b64 \
+    /tmp/deadsnakes-ppa.gpg.b64
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3 python3-dev python3-pip python3-venv build-essential git \
-        software-properties-common ca-certificates curl \
+        ca-certificates curl \
         ffmpeg fuse netcat-openbsd pciutils procps wget \
         libegl1 libgl1 libglvnd0 libegl1-mesa-dev \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && install -d -m 0755 /etc/apt/keyrings \
+    && base64 --decode /tmp/deadsnakes-ppa.gpg.b64 \
+        > /etc/apt/keyrings/deadsnakes-ppa.gpg \
+    && echo \
+        "5caefc9c4bb1dadde2e03579a1c9ac1ae0d3ae9c15350de361a89782f814c438  /etc/apt/keyrings/deadsnakes-ppa.gpg" \
+        | sha256sum --check --strict - \
+    && printf '%s\n' \
+        "deb [signed-by=/etc/apt/keyrings/deadsnakes-ppa.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/deadsnakes-ubuntu-ppa-jammy.list \
+    && rm -f /tmp/deadsnakes-ppa.gpg.b64 \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3.12 python3.12-dev python3.12-venv \
