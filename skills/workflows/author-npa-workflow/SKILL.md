@@ -54,6 +54,7 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 | Check | When |
 | --- | --- |
 | Unknown `toolRef` / predicate | `validate-spec` |
+| Undefined `initial`, `next` or transition `goto` state | `validate-spec`, before planning |
 | Unbounded transition cycles | `validate-spec` (loops do **not** whitelist cycles) |
 | Missing `{{config.*}}`, bad loop max | `validate-spec` via token resolution |
 | Forward `{{state.*}}` refs | Allowed at validate; resolved during plan/execute |

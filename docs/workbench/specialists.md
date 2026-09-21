@@ -54,7 +54,13 @@ it does not cancel an already submitted external workload.
 Choose a specialist or automatic routing, enter a goal, and submit. The monitor
 shows durable task state, the actual responding model, token usage, tool
 receipts, failures, final answers and source patches. The CLI and Python SDK
-share exactly the same coordinator:
+share exactly the same coordinator.
+
+Worker process IDs make restarts visible. Model activity shows provider-reported
+cached prompt tokens, including an explicit zero; absent telemetry reads
+`cache unreported`. A cache hit is evidence of reused prompt computation, not a
+claim about a billing discount. Cache behavior and native tool-call support vary
+by model; a successful model-list request alone proves neither. For example:
 
 ```bash
 npa/.venv/bin/python -m npa workbench specialists --config "$TEAM_CONFIG" \
@@ -173,7 +179,9 @@ NPA_SPECIALISTS_LIVE=1 npa/.venv/bin/python -m pytest \
 ```
 
 The opt-in live test uses GLM and DeepSeek through Token Factory in separate
-worker processes. Each repairs a deliberately invalid copy of a public Workbench
-workflow and runs real validation and planning. It pauses and restarts both
-workers before completion. It does not submit GPU workloads. Exact operational
-evidence stays outside the repository; publish only reviewed aggregate results.
+worker processes. They repair deliberately broken transitions in copies of the
+public Cosmos3 PAIDF and Sim2Real workflows, then run real validation and planning.
+The test checks that each repaired file exactly matches its healthy original.
+It pauses and restarts both workers before completion. It does not submit GPU
+workloads. Exact operational evidence stays outside the repository; publish only
+reviewed aggregate results.

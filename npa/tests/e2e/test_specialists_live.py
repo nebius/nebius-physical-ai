@@ -8,7 +8,6 @@ from pathlib import Path
 import time
 
 import pytest
-import yaml
 
 from npa.agent_backend.specialists.config import Operation, Profile, TeamConfig
 from npa.agent_backend.specialists.team import SpecialistTeam
@@ -18,52 +17,67 @@ from npa.clients.token_factory import TokenFactoryClient
 pytestmark = [pytest.mark.token_factory_e2e]
 _ROOT = Path(__file__).resolve().parents[3]
 _MODELS = {"glm": "zai-org/GLM-5.3", "deepseek": "deepseek-ai/DeepSeek-V4-Pro-0813"}
+_WORKFLOWS = {
+    "glm": ("paidf-cosmos3.yaml", "generate-configs"),
+    "deepseek": ("sim2real.yaml", "stage-04-wave"),
+}
+
+
+def _operations(filename):
+    operations = {}
+    for verb in ("validate", "plan"):
+        argv = [
+            "{python}",
+            "-m",
+            "npa",
+            "workbench",
+            "workflow",
+            verb + "-spec",
+            "workflows/" + filename,
+            "--json",
+        ]
+        if filename == "sim2real.yaml" and verb == "plan":
+            argv += ["--assume-decision", "promote_checkpoint"]
+        operations[verb] = Operation(
+            argv=argv,
+            description=f"{verb} the real workflow using Workbench; nonzero exit means failure.",
+        )
+    return operations
+
+
+def _profile(tmp_path, name, model):
+    filename, transition = _WORKFLOWS[name]
+    source = (_ROOT / "workflows/main" / filename).read_text()
+    original = "next: " + transition + "\n"
+    assert source.count(original) == 1
+    workspace = tmp_path / name
+    (workspace / "workflows").mkdir(parents=True)
+    (workspace / "workflows" / filename).write_text(
+        source.replace(original, "next: " + transition + "-missing\n")
+    )
+    options = (
+        {"reasoning_effort": "none"}
+        if name == "deepseek"
+        else {"chat_template_kwargs": {"reasoning_effort": "low"}}
+    )
+    return Profile(
+        name=name,
+        model=model,
+        description="Repair and validate a Workbench workflow",
+        instructions="Run validate first to capture the defect, read the workflow, repair it, then run validate and plan. Do not stop before both pass.",
+        workspace=workspace,
+        read_paths=["workflows"],
+        write_paths=["workflows"],
+        model_options=options,
+        operations=_operations(filename),
+    )
 
 
 def _configuration(tmp_path):
-    source = (_ROOT / "workflows/testing/token-factory-generate.yaml").read_text()
-    profiles = []
-    for name, model in _MODELS.items():
-        workspace = tmp_path / name
-        (workspace / "workflows").mkdir(parents=True)
-        (workspace / "workflows/generate.yaml").write_text(
-            source.replace("initial: generate-text", "initial: missing-entry")
-        )
-        options = (
-            {"reasoning_effort": "none"}
-            if name == "deepseek"
-            else {"chat_template_kwargs": {"reasoning_effort": "low"}}
-        )
-        profiles.append(
-            Profile(
-                name=name,
-                model=model,
-                description="Repair and validate a Workbench workflow",
-                instructions="Run validate first to capture the defect, read the workflow, repair it, then run validate and plan. Do not stop before both pass.",
-                workspace=workspace,
-                read_paths=["workflows"],
-                write_paths=["workflows"],
-                model_options=options,
-                operations={
-                    verb: Operation(
-                        argv=[
-                            "{python}",
-                            "-m",
-                            "npa",
-                            "workbench",
-                            "workflow",
-                            verb + "-spec",
-                            "workflows/generate.yaml",
-                            "--json",
-                        ],
-                        description=f"{verb} the real workflow using Workbench; nonzero exit means failure.",
-                    )
-                    for verb in ("validate", "plan")
-                },
-            )
-        )
     return TeamConfig(
-        state_directory=tmp_path / "state", profiles=profiles, default_profile="glm"
+        state_directory=tmp_path / "state",
+        profiles=[_profile(tmp_path, name, model) for name, model in _MODELS.items()],
+        default_profile="glm",
     )
 
 
@@ -95,11 +109,10 @@ def _assert_results(team, config):
         assert {
             item["operation"] for item in operations if item["returncode"] == 0
         } >= {"validate", "plan"}
-        repaired = yaml.safe_load(
-            (profile.workspace / "workflows/generate.yaml").read_text()
-        )
-        assert repaired["initial"] == "generate-text"
-        assert "missing-entry" in team.patch(profile.name)
+        filename, transition = _WORKFLOWS[profile.name]
+        repaired = (profile.workspace / "workflows" / filename).read_bytes()
+        assert repaired == (_ROOT / "workflows/main" / filename).read_bytes()
+        assert transition + "-missing" in team.patch(profile.name)
         summary["models"].append(
             {
                 "model": profile.model,
@@ -123,7 +136,7 @@ def test_two_live_specialists_resume_and_repair_workflows(tmp_path):
     team = SpecialistTeam(config)
     for name in _MODELS:
         team.submit(
-            "Repair the invalid initial state in workflows/generate.yaml and prove validation and planning pass.",
+            f"Repair the broken transition in workflows/{_WORKFLOWS[name][0]} and prove validation and planning pass.",
             specialist=name,
             task_id=name,
         )

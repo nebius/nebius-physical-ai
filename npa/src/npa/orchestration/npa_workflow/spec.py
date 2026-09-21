@@ -377,6 +377,13 @@ def resolve_trigger_config(
     )
 
 
+def _validate_next_state(spec: NpaWorkflowSpec, state: StateSpec) -> None:
+    if state.next and state.next not in spec.states:
+        raise NpaWorkflowError(
+            f"state {state.name}: next references unknown state {state.next!r}"
+        )
+
+
 def validate_spec(spec: NpaWorkflowSpec) -> None:
     if spec.api_version not in SUPPORTED_API_VERSIONS:
         raise NpaWorkflowError(
@@ -389,6 +396,7 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
         raise NpaWorkflowError(f"initial state {spec.initial!r} is not defined")
 
     for state in spec.states.values():
+        _validate_next_state(spec, state)
         if state.loop and state.loop.until and state.loop.until not in PREDICATES:
             raise NpaWorkflowError(
                 f"state {state.name}: unknown loop.until {state.loop.until!r}"

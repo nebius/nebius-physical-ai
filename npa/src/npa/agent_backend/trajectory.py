@@ -59,10 +59,14 @@ _SECRET_TEXT_PATTERNS = (
         re.DOTALL,
     ),
     re.compile(r"(?i)data:[^\s,]*;base64,[^\s\"']*"),
+    # A YAML mapping header is not a credential scalar. Leave its child keys
+    # available to this matcher instead of consuming the first child as a value.
     re.compile(
         r"(?i)(?:[a-z0-9_]*)(api[_-]?key|(?:secret|access|private)[_-]?(?:access[_-]?)?key|"
         r"secret|password|passwd|token|authorization|credential)"
-        r"[a-z0-9_]*\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)"
+        r"[a-z0-9_]*\s*[:=]"
+        r"(?![ \t]*\r?\n[ \t]+[\"']?[a-z_][a-z0-9_-]*[\"']?[ \t]*:(?=[ \t\r\n]|$))"
+        r"\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)"
     ),
     re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"(?i)(?:AKIA|ASIA)[0-9A-Z]{16}"),

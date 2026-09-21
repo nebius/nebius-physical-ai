@@ -30,7 +30,8 @@ function profiles(items) {
     const card = node('article', '');
     card.append(node('h3', profile.name), node('p', profile.model, 'badge'), node('p', profile.description));
     const seen = profile.worker ? new Date(profile.worker.seen * 1000).toLocaleTimeString() : 'not observed';
-    card.append(node('p', 'Worker last seen: ' + seen, 'muted'));
+    const identity = profile.worker ? 'Worker ' + profile.worker.pid : 'Worker';
+    card.append(node('p', identity + ' · last seen: ' + seen, 'muted'));
     card.append(button(profile.paused ? 'Resume specialist' : 'Pause specialist', async () => {
       await api('profiles/' + encodeURIComponent(profile.name) + '/pause', {paused: !profile.paused}); await refresh();
     }));
@@ -75,7 +76,11 @@ function activity(events) {
   el('timeline').replaceChildren();
   for (const event of events) {
     let label = event.type;
-    if (event.type === 'model') label = event.model + ' · ' + (event.usage.total_tokens ?? 'unreported') + ' tokens';
+    if (event.type === 'model') {
+      const cached = event.usage.cached_tokens;
+      const cache = cached === undefined ? 'cache unreported' : cached + ' cached prompt tokens';
+      label = event.model + ' · ' + (event.usage.total_tokens ?? 'unreported') + ' tokens · ' + cache;
+    }
     if (event.type === 'tool') {
       const result = event.result;
       label = (result.operation || event.name) + ' · ' + (result.ok === false ? 'failed' : 'completed');

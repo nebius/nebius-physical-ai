@@ -4,12 +4,16 @@ describe('Workbench specialists', () => {
   const goal = '<img src=x onerror="window.injected=true"> inspect the pipeline';
   let paused;
   const task = () => ({id: 'inspect-one', profile: 'simulation', goal, status: 'completed', paused,
-    result: 'Validation passed', route: {status: 'explicit'}, calls: [], events: []});
+    result: 'Validation passed', route: {status: 'explicit'}, calls: [], events: [
+      {type: 'model', model: 'synthetic/model', usage: {total_tokens: 700, cached_tokens: 0}},
+      {type: 'model', model: 'synthetic/model', usage: {total_tokens: 750, cached_tokens: 512}},
+      {type: 'model', model: 'synthetic/model', usage: {total_tokens: 800}}
+    ]});
   beforeEach(() => {
     paused = false;
     cy.intercept('GET', '/api/status', request => {
       expect(request.headers.authorization).to.equal('Bearer ' + token);
-      request.reply({profiles: [{name: 'simulation', model: 'synthetic/model', description: 'Pipeline analysis', paused, worker: {seen: 1}}], tasks: [task()]});
+      request.reply({profiles: [{name: 'simulation', model: 'synthetic/model', description: 'Pipeline analysis', paused, worker: {pid: 123, seen: 1}}], tasks: [task()]});
     });
     cy.intercept('GET', '/api/tasks/inspect-one', request => request.reply(task()));
     cy.intercept('GET', '/api/tasks/inspect-one/patch', {headers: {'content-type': 'text/plain'}, body: '-broken\n+fixed\n'});
@@ -44,5 +48,11 @@ describe('Workbench specialists', () => {
     }).as('pause');
     cy.contains('button', 'Pause specialist').click(); cy.wait('@pause');
     cy.contains('button', 'Resume specialist').should('be.visible');
+  });
+  it('distinguishes observed cache hits, reported zero and missing counters', () => {
+    cy.get('#profiles').should('contain.text', 'Worker 123');
+    cy.get('.task').click();
+    cy.get('#timeline').should('contain.text', '0 cached prompt tokens')
+      .and('contain.text', '512 cached prompt tokens').and('contain.text', 'cache unreported');
   });
 });
