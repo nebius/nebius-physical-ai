@@ -156,3 +156,45 @@ Read the proposed scope before confirming. Cluster deletion does not mean all
 project storage or services are gone; follow the [teardown guide](../../docs/teardown.md)
 for those separately owned resources. Preserve Terraform state after an
 incomplete deletion so the exact operation can be resumed.
+
+
+### Terminal recovery after an already completed teardown
+
+`npa cluster reconcile-absent --evidence-file <private-manifest.json>` closes one
+failed standalone MK8s operation only after verifying its original producer
+records and fresh provider absence. It changes the exact local journal to
+`destroyed` and releases that operation's project lease. It never deletes,
+adopts, restores Terraform state, or relaunches a cloud resource. The original
+provisioning failure and original records remain retained.
+
+The version-1 private manifest pins the original journal, provision start/result,
+runner source and stdout/stderr, original key-backed profile binding, native
+backend archive, and cleanup-intent receipt by absolute path and SHA-256. It also
+selects the original producer repository and operation ID. The native archive
+must contain exactly one regular `.npa-fleet-env.json` and
+`k8s-training/terraform.tfstate`. The implementation binds the operation ID
+printed by the original NPA process, operation-generation timestamps, exact
+project/tenant/name, source revision and cleanup hash chain. It does not invent
+an `operation_id` missing from old native metadata. A newly authored summary
+cannot replace missing original records; incomplete legacy evidence is refused.
+
+Recovery verifies the same plain service-account config and credential bytes,
+the active project/tenant, typed absence of every recorded cluster, node group
+and application release, and complete paginated inventories. Unsupported managed
+resource instances, live resources, denied/unknown reads, ambiguous names,
+changed original bytes, active execution, and journal/lease races fail closed.
+Local leases serialize cooperating NPA writers, not external provider actors.
+The verification is a fresh observation, not a permanent guarantee of absence.
+
+Keep the manifest and raw records private. Successful recovery retains an
+owner-only audit under the original operation directory. Repeating the same
+terminal recovery verifies its recorded audit and returns `already-reconciled`
+without claiming fresh provider reads. A failed provision is never relabeled
+as a successful deployment or workload result.
+
+The opt-in `test_cluster_absence_recovery_live.py` accepts
+`NPA_ABSENCE_RECOVERY_LIVE_CONFIG` with the exact reviewed source, operation,
+manifest hash and `allow_terminal_reconciliation: true`. Run it only for the
+operator-owned operation after scoped cleanup and source review. Offline tests
+use synthetic original records and real separate processes to exercise locks,
+pagination, identity mismatches and hostile provider responses.
