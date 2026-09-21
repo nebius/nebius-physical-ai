@@ -1,0 +1,83 @@
+{
+  "schema_version": "npa.review.curobo-full-matrix-failure.v1",
+  "reviewed_at": "2026-09-21T10:10:43.406122+00:00",
+  "verdict": "BOTH_FULL_MATRICES_FAILED_NO_COMPLETE_ROWS",
+  "image_digest": "sha256:73d4ba23af61b3762200ee29fb2cdd153d6df6b75b4ada481ccb75b6c8ed2955",
+  "image_producer_commit": "b387643682271d867c816fba1a598295ffe57f37",
+  "image_source_binding_scope": "Producer identity is retained in the previously reviewed exact-image control proof; both failed-run plan records independently match its immutable digest.",
+  "attempts": [
+    {
+      "accelerator": "B200",
+      "workflow_status": "FAILED",
+      "stages": {
+        "prepare": "SUCCEEDED",
+        "benchmark": "FAILED"
+      },
+      "planned_problem_count": 5200,
+      "complete_problem_rows": 0,
+      "partial_journal_bytes": 0,
+      "durable_objects_verified": 19,
+      "durable_object_bytes_verified": 63086,
+      "all_retained_object_sizes_and_sha256_match": true,
+      "terminal_exit_code": 1,
+      "terminal_stream_hashes_match": true,
+      "failure_schema": "npa.curobo.failure.v1",
+      "failure_type": "subprocess_exit",
+      "benchmark_subprocess_exit_code": 1,
+      "error": "inverse-dynamics evidence shape or values are invalid",
+      "plan_image_digest": "sha256:73d4ba23af61b3762200ee29fb2cdd153d6df6b75b4ada481ccb75b6c8ed2955",
+      "source_receipt_sha256": {
+        "durable_readback": "a0283e98242b0d00f51f9390099994de81f2f15fa3f0bf0a1969850a10c42316",
+        "plan": "dfd0687eec11121b8a99aa1c6330216f83e126fce335cfcc8f917b19a401fde6",
+        "terminal": "a4b28f10e73e3a22fdfcad403e5c29fe6a274b84f76366666fbcf92b61b046c9",
+        "runtime_state": "ea6ea7912676390b2f1d3dda217f1c6982be42c970907a46e83e6ba7907e364f",
+        "failure": "831fb8b46a93b2a8dca86a95fa975b78a41228aa48815c2e688f18bb6ef559e9",
+        "runtime_log": "b4fa988ca47fd6087fc88df89b532bb38e281fc8fe44ae14e931e8e8a3efed72",
+        "empty_partial_journal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "accelerator": "RTX PRO 6000",
+      "workflow_status": "FAILED",
+      "stages": {
+        "prepare": "SUCCEEDED",
+        "benchmark": "FAILED"
+      },
+      "planned_problem_count": 5200,
+      "complete_problem_rows": 0,
+      "partial_journal_bytes": 0,
+      "durable_objects_verified": 20,
+      "durable_object_bytes_verified": 67811,
+      "all_retained_object_sizes_and_sha256_match": true,
+      "terminal_exit_code": 1,
+      "terminal_stream_hashes_match": true,
+      "failure_schema": "npa.curobo.failure.v1",
+      "failure_type": "subprocess_exit",
+      "benchmark_subprocess_exit_code": 1,
+      "error": "inverse-dynamics evidence shape or values are invalid",
+      "plan_image_digest": "sha256:73d4ba23af61b3762200ee29fb2cdd153d6df6b75b4ada481ccb75b6c8ed2955",
+      "source_receipt_sha256": {
+        "durable_readback": "86f4939c5e02c1185800ca3aece02c5763fbe0bca421fe02a8866100ab542460",
+        "plan": "20d38c8d4ac6e1c783ae17fecce276e639a605b91f168a58d3f8769f6c46905b",
+        "terminal": "190cb5d9476403815e4b7b16b39441c7f376b6f2dd06269524c73bd4ee1cf725",
+        "runtime_state": "41da973146790a0e38c8198a65f735cb58de60bac4d904509447bcdf35518be2",
+        "failure": "507bd97dff9e7b34f0c130f0d0d8cd66ef70310883b7bc777565dec1150c5a24",
+        "runtime_log": "b4fa988ca47fd6087fc88df89b532bb38e281fc8fe44ae14e931e8e8a3efed72",
+        "empty_partial_journal": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "preliminary_controls": "Separate positive, blocked-goal and malformed-input controls passed on both accelerators; they do not establish full benchmark acceptance.",
+  "rtx_bootstrap_scope": "The separate preliminary RTX control run used a disclosed ephemeral bootstrap repair. This full-matrix artifact audit does not itself establish the bootstrap repair history of the later full RTX run.",
+  "root_cause": "Unresolved. Retained runtime evidence does not expose actual live joint dimensions. A joint-mapping hypothesis is not a verified cause.",
+  "acceptance": {
+    "full_benchmark": false,
+    "final_image_qualification": false,
+    "physical_usefulness_or_robot_safety": false
+  },
+  "audit_scope": "Read-only independent verification of retained object bytes, runtime/failure states, image-plan binding and terminal stream hashes. No new GPU, provider or object-store operation was performed. Accelerator execution attribution is retained by the runtime operator; this audit did not re-query hardware.",
+  "public_controls": {
+    "B200": "https://github.com/nebius/nebius-physical-ai/blob/be95e537d8492d7ae38f737349f04982309639d2/docs/testing/evidence/curobo-b200-controls-b3876436/README.md",
+    "RTX_PRO_6000": "https://github.com/nebius/nebius-physical-ai/blob/3d63acfc0dd2ee2e496e2fe2994269b5696f6a11/docs/testing/evidence/curobo-rtx-controls-b3876436/README.md"
+  }
+}
