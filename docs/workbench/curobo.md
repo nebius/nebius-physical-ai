@@ -58,9 +58,23 @@ same run id. Each command accepts `--input-path` and `--output-path` S3 handoffs
 The SDK exposes the same operations. The optional API requires `CUROBO_TOKEN`
 and an explicit `CUROBO_ALLOWED_S3_ROOTS` allowlist.
 
+If the planner subprocess exits nonzero, the operation still fails but publishes
+read-back-verified diagnostics below `_failures/<run-id>/` in the requested
+output prefix. That namespace contains `runtime.log`, `failure.json`, and, when
+the runner created a partial journal, `partial-problems.jsonl`; the receipt binds
+the log and exact raw journal hash. It records physical lines separately from
+complete nonblank JSON-object records, so a blank, scalar, malformed, or
+truncated line is never reported as a completed record. It never contains an
+accepted `result.json`, and `validate` and `visualize` reject the failure
+namespace. If evidence publication fails, the subprocess failure remains
+primary and reports the secondary failure type without exposing its potentially
+sensitive message.
+
 The image is a publication candidate until exact-image scans and real hardware
 results are accepted. Source/robot assets and benchmark datasets have separate
-Apache-2.0/MIT/BSD notices; no model weights or gated data are required. See the
+Apache-2.0/MIT/BSD notices. Pinocchio's distro `libgomp1` runtime and matching
+GCC source/license identities are frozen with the Ubuntu snapshot; no model
+weights or gated data are required. See the
 [packaging record](../../npa/docker/workbench/curobo/REDISTRIBUTION.md) and
 [operator skill](../../skills/tools/curobo/SKILL.md) for exact revisions and limits.
 

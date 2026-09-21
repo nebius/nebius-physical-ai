@@ -12,7 +12,7 @@ ARG UBUNTU_SNAPSHOT=20260920T000000Z
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-b300-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause"
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND (GPL-3.0-or-later WITH GCC-exception-3.1)"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -44,6 +44,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl python3.12 python3.12-venv \
+       libgomp1=14.2.0-4ubuntu2~24.04.1 \
        openssh-server rsync sudo \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
@@ -57,6 +58,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.
 COPY docker/workbench/curobo/requirements.lock /opt/curobo-requirements.lock
 COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py
 COPY docker/workbench/curobo/remove_scikit_image_recipe.py /opt/remove_scikit_image_recipe.py
+COPY docker/workbench/curobo/verify_runtime_imports.py /opt/verify_runtime_imports.py
 # The current cuDNN supplement permits runtime-only redistribution. Use that
 # narrower boundary even though this wheel embeds older, broader header terms.
 # The non-cuDNN base contains none; filter the wheel in this SAME RUN before a
@@ -98,7 +100,11 @@ COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src \
     && python -c 'import torch; assert {"sm_100", "sm_120"} <= set(torch._C._cuda_getArchFlags().split())' \
-    && rm -rf /root/.cache /tmp/pip-*
+    && PYTHONDONTWRITEBYTECODE=1 \
+       MPLCONFIGDIR=/tmp/npa-curobo-import-cache/matplotlib \
+       XDG_CACHE_HOME=/tmp/npa-curobo-import-cache \
+       python /opt/verify_runtime_imports.py \
+    && rm -rf /root/.cache /tmp/pip-* /tmp/npa-curobo-import-cache
 
 COPY --chmod=0444 docker/workbench/curobo/REDISTRIBUTION.md /usr/share/doc/npa-curobo/REDISTRIBUTION.md
 COPY --chmod=0755 docker/workbench/curobo/entrypoint.sh /usr/local/bin/curobo-entrypoint

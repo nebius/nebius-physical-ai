@@ -181,32 +181,158 @@ def test_prepare_full_recipe_readback_and_hash_mismatch(monkeypatch):
         runtime.prepare(PrepareRequest(output_path="s3://example-bucket/recipe.json"))
 
 
-def test_gpu_subprocess_failure_retains_evidence_and_never_uploads(
+def test_gpu_subprocess_failure_preserves_interrupted_journal_and_receipt(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        runtime,
-        "read_bytes_uri",
-        lambda uri: canonical(BenchmarkManifest().model_dump()),
+    partial_journal = (
+        canonical(row())
+        + b"\n\n"
+        + b"42\n"
+        + b'{"status":"truncated"'
     )
-    monkeypatch.setattr(
-        runtime, "write_bytes_uri", lambda *a: pytest.fail("uploaded failed operation")
-    )
+    objects = {
+        request().input_path: canonical(BenchmarkManifest().model_dump(mode="json"))
+    }
+    events = []
     calls = []
+
+    def read(uri):
+        events.append(("read", uri))
+        return objects[uri]
+
+    def write(uri, payload):
+        events.append(("write", uri))
+        objects[uri] = payload
 
     def run(argv, **kwargs):
         calls.append(argv)
-        kwargs["stdout"].write(b"upstream failure")
+        kwargs["stdout"].write(b"upstream traceback\n")
+        output = Path(argv[argv.index("--output") + 1])
+        output.mkdir()
+        (output / "problems.jsonl").write_bytes(partial_journal)
+        (output / "result.json").write_bytes(b'{"status":"untrusted-partial"}')
         return SimpleNamespace(returncode=7)
 
+    monkeypatch.setattr(runtime, "read_bytes_uri", read)
+    monkeypatch.setattr(runtime, "write_bytes_uri", write)
     monkeypatch.setattr(runtime.subprocess, "run", run)
-    with pytest.raises(CuroboError, match="exit code 7"):
+    with pytest.raises(
+        CuroboError,
+        match=r"exit code 7; durable failure receipt: _failures/unit-run/failure.json",
+    ):
         runtime.benchmark(request())
+
+    namespace = request().output_path + "/_failures/unit-run"
+    log_uri = namespace + "/runtime.log"
+    partial_uri = namespace + "/partial-problems.jsonl"
+    receipt_uri = namespace + "/failure.json"
+    expected_log = b"upstream traceback\n"
+    receipt = json.loads(objects[receipt_uri])
+    assert receipt == {
+        "schema_version": "npa.curobo.failure.v1",
+        "status": "failed",
+        "failure_type": "subprocess_exit",
+        "kind": "benchmark",
+        "run_id": "unit-run",
+        "subprocess_exit_code": 7,
+        "artifacts": [
+            {
+                "role": "runtime_log",
+                "path": "runtime.log",
+                "bytes": len(expected_log),
+                "sha256": hashlib.sha256(expected_log).hexdigest(),
+            },
+            {
+                "role": "partial_journal",
+                "path": "partial-problems.jsonl",
+                "bytes": len(partial_journal),
+                "sha256": hashlib.sha256(partial_journal).hexdigest(),
+                "partial": True,
+                "physical_line_count": 4,
+                "complete_record_count": 1,
+            },
+        ],
+    }
+    assert objects[log_uri] == expected_log
+    assert objects[partial_uri] == partial_journal
+    assert events == [
+        ("read", request().input_path),
+        ("write", log_uri),
+        ("read", log_uri),
+        ("write", partial_uri),
+        ("read", partial_uri),
+        ("write", receipt_uri),
+        ("read", receipt_uri),
+    ]
+    assert not any(uri.endswith("/result.json") for uri in objects)
     assert len(calls) == 1
     logs = list(tmp_path.glob("*/runtime.log"))
-    assert len(logs) == 1 and logs[0].read_bytes() == b"upstream failure"
+    assert len(logs) == 1 and logs[0].read_bytes() == expected_log
+    assert (logs[0].parent / "output/result.json").is_file()
     assert logs[0].parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    ("failure", "secondary_type"),
+    [("write", "OSError"), ("readback", "CuroboError")],
+)
+def test_failure_publication_error_preserves_subprocess_failure(
+    monkeypatch, tmp_path, failure, secondary_type
+):
+    monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
+    objects = {
+        request().input_path: canonical(BenchmarkManifest().model_dump(mode="json"))
+    }
+
+    def read(uri):
+        payload = objects[uri]
+        if failure == "readback" and uri.endswith("/failure.json"):
+            return b"changed remote receipt"
+        return payload
+
+    def write(uri, payload):
+        if failure == "write" and uri.endswith("/failure.json"):
+            raise OSError("credential-shaped private storage diagnostic")
+        objects[uri] = payload
+
+    def run(argv, **kwargs):
+        kwargs["stdout"].write(b"primary runner failure\n")
+        output = Path(argv[argv.index("--output") + 1])
+        output.mkdir()
+        (output / "problems.jsonl").write_bytes(canonical(row()) + b"\n")
+        return SimpleNamespace(returncode=9)
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", read)
+    monkeypatch.setattr(runtime, "write_bytes_uri", write)
+    monkeypatch.setattr(runtime.subprocess, "run", run)
+    with pytest.raises(CuroboError) as raised:
+        runtime.benchmark(request())
+    message = str(raised.value)
+    assert message == (
+        "upstream cuRobo benchmark failed with exit code 9; "
+        f"failure evidence publication failed ({secondary_type})"
+    )
+    assert "credential-shaped" not in message
+    assert request().output_path + "/_failures/unit-run/runtime.log" in objects
+    assert (
+        request().output_path + "/_failures/unit-run/partial-problems.jsonl" in objects
+    )
+    assert not any(uri.endswith("/result.json") for uri in objects)
+
+
+@pytest.mark.parametrize("operation", [runtime.validate, runtime.visualize])
+def test_failure_namespace_is_never_an_accepted_result(operation, monkeypatch):
+    monkeypatch.setattr(
+        runtime, "read_bytes_uri", lambda *_: pytest.fail("read failure namespace")
+    )
+    failed = RunRequest(
+        input_path="s3://example-bucket/output/_failures/unit-run",
+        output_path="s3://example-bucket/review",
+        run_id="unit-run",
+    )
+    with pytest.raises(CuroboError, match="not an accepted cuRobo result"):
+        operation(failed)
 
 
 @pytest.fixture

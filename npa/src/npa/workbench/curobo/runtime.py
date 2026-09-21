@@ -32,6 +32,7 @@ from .schemas import BenchmarkManifest, PlanManifest, PrepareRequest, RunRequest
 
 
 _LOGGER = logging.getLogger(__name__)
+_FAILURE_NAMESPACE = "_failures"
 
 
 def _paths(request: RunRequest):
@@ -59,20 +60,19 @@ def prepare(request: PrepareRequest):
     }
 
 
-def _run(kind: str, request: RunRequest):
-    _paths(request)
-    manifest = json.loads(read_bytes_uri(request.input_path))
-    model = BenchmarkManifest if kind == "benchmark" else PlanManifest
-    manifest = model.model_validate(manifest).model_dump(mode="json")
+def _runtime_root(manifest: dict) -> Path:
     root = Path(
         tempfile.mkdtemp(
             prefix="npa-curobo-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
         )
     )
     root.chmod(0o700)
-    # Retain local facts on solver/upload failure; telemetry retries never replay a GPU run.
     (root / "input.json").write_bytes(canonical(manifest))
-    command = [
+    return root
+
+
+def _runner_command(kind: str, request: RunRequest, root: Path) -> list[str]:
+    return [
         os.environ.get("NPA_CUROBO_PYTHON", sys.executable),
         "-m",
         "npa.workbench.curobo.runner",
@@ -85,15 +85,102 @@ def _run(kind: str, request: RunRequest):
         "--run-id",
         request.run_id,
     ]
-    started = time.perf_counter()
+
+
+def _invoke_runner(kind: str, request: RunRequest, root: Path):
+    command = _runner_command(kind, request, root)
     with (root / "runtime.log").open("wb") as log:
-        completed = subprocess.run(
+        return subprocess.run(
             command, cwd=root, stdout=log, stderr=subprocess.STDOUT, check=False
         )
-    if completed.returncode:
+
+
+def _evidence_record(role: str, path: str, payload: bytes, **facts) -> dict:
+    return {
+        "role": role,
+        "path": path,
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        **facts,
+    }
+
+
+def _partial_journal(root: Path):
+    path = root / "output/problems.jsonl"
+    if not path.is_file() or path.is_symlink():
+        return None
+    payload = path.read_bytes()
+    physical_lines = payload.split(b"\n") if payload else []
+    if payload.endswith(b"\n"):
+        physical_lines.pop()
+    complete_record_count = 0
+    for line in physical_lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if isinstance(record, dict):
+            complete_record_count += 1
+    return payload, _evidence_record(
+        "partial_journal",
+        "partial-problems.jsonl",
+        payload,
+        partial=True,
+        physical_line_count=len(physical_lines),
+        complete_record_count=complete_record_count,
+    )
+
+
+def _publish_failure_evidence(
+    kind: str, request: RunRequest, root: Path, exit_code: int
+) -> str:
+    namespace = uri_join(request.output_path, _FAILURE_NAMESPACE, request.run_id)
+    runtime_log = (root / "runtime.log").read_bytes()
+    artifacts = [_evidence_record("runtime_log", "runtime.log", runtime_log)]
+    _publish(uri_join(namespace, "runtime.log"), runtime_log)
+    partial = _partial_journal(root)
+    if partial is not None:
+        payload, record = partial
+        _publish(uri_join(namespace, record["path"]), payload)
+        artifacts.append(record)
+    receipt = canonical(
+        {
+            "schema_version": "npa.curobo.failure.v1",
+            "status": "failed",
+            "failure_type": "subprocess_exit",
+            "kind": kind,
+            "run_id": request.run_id,
+            "subprocess_exit_code": exit_code,
+            "artifacts": artifacts,
+        }
+    )
+    _publish(uri_join(namespace, "failure.json"), receipt)
+    return f"{_FAILURE_NAMESPACE}/{request.run_id}/failure.json"
+
+
+def _raise_runner_failure(
+    kind: str, request: RunRequest, root: Path, exit_code: int
+) -> None:
+    primary = f"upstream cuRobo {kind} failed with exit code {exit_code}"
+    try:
+        receipt = _publish_failure_evidence(kind, request, root, exit_code)
+    except Exception as evidence_error:
+        error_type = type(evidence_error).__name__
         raise CuroboError(
-            f"upstream cuRobo {kind} failed with exit code {completed.returncode}; retained local journal and log"
-        )
+            f"{primary}; failure evidence publication failed ({error_type})"
+        ) from None
+    raise CuroboError(f"{primary}; durable failure receipt: {receipt}")
+
+
+def _completed_output(
+    kind: str,
+    request: RunRequest,
+    root: Path,
+    manifest: dict,
+    started: float,
+):
     rows = read_journal(root / "output/problems.jsonl")
     report = json.loads((root / "output/result.json").read_text())
     validate_report(report, rows, run_id=request.run_id)
@@ -115,19 +202,40 @@ def _run(kind: str, request: RunRequest):
     report["journal_sha256"] = hashlib.sha256(
         (root / "output/problems.jsonl").read_bytes()
     ).hexdigest()
-    for filename in ("problems.jsonl", "result.json"):
-        data = (
-            canonical(report)
-            if filename == "result.json"
-            else (root / "output" / filename).read_bytes()
-        )
+    return report
+
+
+def _publish_completed(request: RunRequest, root: Path, report: dict) -> None:
+    journal = (root / "output/problems.jsonl").read_bytes()
+    for filename, data in (
+        ("problems.jsonl", journal),
+        ("result.json", canonical(report)),
+    ):
         _publish(uri_join(request.output_path, filename), data)
-    # Both artifacts are durable and verified. Only remove this call's directory;
-    # cleanup failure must not turn successful GPU work into a replayable failure.
+
+
+def _cleanup_completed(root: Path) -> None:
     try:
         shutil.rmtree(root)
     except Exception:
         _LOGGER.warning("cuRobo artifacts verified; local working-file cleanup failed")
+
+
+def _run(kind: str, request: RunRequest):
+    _paths(request)
+    model = BenchmarkManifest if kind == "benchmark" else PlanManifest
+    manifest = model.model_validate(
+        json.loads(read_bytes_uri(request.input_path))
+    ).model_dump(mode="json")
+    root = _runtime_root(manifest)
+    # Telemetry retries must never replay GPU work, so every failure retains this root.
+    started = time.perf_counter()
+    completed = _invoke_runner(kind, request, root)
+    if completed.returncode:
+        _raise_runner_failure(kind, request, root, completed.returncode)
+    report = _completed_output(kind, request, root, manifest, started)
+    _publish_completed(request, root, report)
+    _cleanup_completed(root)
     return report
 
 
@@ -141,6 +249,8 @@ def plan(request: RunRequest):
 
 def _download_artifacts(request: RunRequest, root: Path):
     _paths(request)
+    if _FAILURE_NAMESPACE in request.input_path.rstrip("/").split("/"):
+        raise CuroboError("failure evidence is not an accepted cuRobo result")
     journal = read_bytes_uri(uri_join(request.input_path, "problems.jsonl"))
     result_bytes = read_bytes_uri(uri_join(request.input_path, "result.json"))
     report = json.loads(result_bytes)

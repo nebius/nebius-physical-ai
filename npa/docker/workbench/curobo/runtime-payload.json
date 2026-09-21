@@ -1,5 +1,80 @@
 {
   "schema_version": "npa.curobo.runtime-payload.v1",
+  "libgomp": {
+    "snapshot": "20260920T000000Z",
+    "license_expression": "GPL-3.0-or-later WITH GCC-exception-3.1",
+    "binary_packages": [
+      {
+        "name": "libgomp1",
+        "version": "14.2.0-4ubuntu2~24.04.1",
+        "architecture": "amd64",
+        "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/libgomp1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+        "sha256": "e8a95ec58125b4933597f30ff56c2ae10edf90f287262e366d4b6edea3019144",
+        "size": 148062
+      },
+      {
+        "name": "gcc-14-base",
+        "version": "14.2.0-4ubuntu2~24.04.1",
+        "architecture": "amd64",
+        "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14-base_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+        "sha256": "b95c172411a7fdae70307cf33a9f5320ba5e056b556454543dd5b679d5ce1c4f",
+        "size": 51014
+      }
+    ],
+    "runtime": {
+      "path": "usr/lib/x86_64-linux-gnu/libgomp.so.1.0.0",
+      "soname_path": "usr/lib/x86_64-linux-gnu/libgomp.so.1",
+      "soname_target": "libgomp.so.1.0.0",
+      "sha256": "135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1",
+      "size": 352304,
+      "kind": "libgomp_runtime"
+    },
+    "license_files": [
+      {
+        "path": "usr/share/doc/gcc-14-base/copyright",
+        "sha256": "20390f8a6f3b1e4d7cb45dd8652dabb259bbef688cbad839bcdb0b9ba7252f79",
+        "size": 69004,
+        "kind": "license"
+      },
+      {
+        "path": "usr/share/common-licenses/GPL-3",
+        "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+        "size": 35149,
+        "kind": "license"
+      }
+    ],
+    "source_package": {
+      "name": "gcc-14",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "delivery": "immutable_snapshot",
+      "artifacts": [
+        {
+          "filename": "gcc-14_14.2.0.orig.tar.gz",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0.orig.tar.gz",
+          "sha256": "768c314c11eeab56ccebb91eb42ec4a41122fa94f0d83400126401942622197b",
+          "size": 97158172
+        },
+        {
+          "filename": "gcc-14_14.2.0-4ubuntu2~24.04.1.debian.tar.xz",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0-4ubuntu2~24.04.1.debian.tar.xz",
+          "sha256": "cfece214c2fb790ef5f3baffb9a53e40618e7ae12d053610b251e94d77d08ade",
+          "size": 1950432
+        },
+        {
+          "filename": "gcc-14_14.2.0-4ubuntu2~24.04.1.dsc",
+          "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0-4ubuntu2~24.04.1.dsc",
+          "sha256": "50950080874a6ec6780dd60c243e21d9cda9d736bb32bca98d16095d27cc01b5",
+          "size": 46930
+        }
+      ]
+    }
+  },
+  "runtime_import_receipt": {
+    "path": "usr/share/doc/npa-curobo/runtime-import.json",
+    "sha256": "cbdeb7d37441d735cc7a408dca3b4875414da3f1de01b3ac444b11a847d1bc04",
+    "size": 180,
+    "kind": "build_check"
+  },
   "cudnn": {
     "name": "nvidia-cudnn-cu13",
     "version": "9.20.0.48",

@@ -1,7 +1,12 @@
 """The baked NPA interpreter and source identity survive SkyPilot setup."""
 
+import hashlib
+import importlib.util
+import json
 from pathlib import Path
 import subprocess
+import sys
+from types import ModuleType
 
 import pytest
 
@@ -10,6 +15,14 @@ DOCKERFILE = (
     Path(__file__).resolve().parents[3] / "npa/docker/workbench/curobo/Dockerfile"
 )
 PIP_BOOTSTRAP = DOCKERFILE.with_name("pip-bootstrap.lock")
+RUNTIME_IMPORT_CHECK = DOCKERFILE.with_name("verify_runtime_imports.py")
+RUNTIME_PAYLOAD = DOCKERFILE.with_name("runtime-payload.json")
+IMPORT_SPEC = importlib.util.spec_from_file_location(
+    "curobo_verify_runtime_imports", RUNTIME_IMPORT_CHECK
+)
+assert IMPORT_SPEC and IMPORT_SPEC.loader
+IMPORT_CHECK = importlib.util.module_from_spec(IMPORT_SPEC)
+IMPORT_SPEC.loader.exec_module(IMPORT_CHECK)
 
 
 def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
@@ -41,6 +54,73 @@ def test_pip_bootstrap_distribution_is_content_pinned():
     assert "COPY docker/workbench/curobo/pip-bootstrap.lock" in text
     assert "--require-hashes -r /opt/pip-bootstrap.lock" in text
     assert "pip install --no-cache-dir --upgrade 'pip==" not in text
+
+
+def test_image_build_imports_pinocchio_upstream_boundary_after_pinned_sources():
+    text = DOCKERFILE.read_text()
+    invocation = "python /opt/verify_runtime_imports.py"
+    assert "libgomp1=14.2.0-4ubuntu2~24.04.1" in text
+    assert (
+        "COPY docker/workbench/curobo/verify_runtime_imports.py "
+        "/opt/verify_runtime_imports.py"
+    ) in text
+    assert text.index("codeload.github.com/NVlabs/curobo") < text.index(invocation)
+    assert text.index("codeload.github.com/fishbotics/robometrics") < text.index(
+        invocation
+    )
+    assert text.index("pip install --no-deps") < text.index(invocation)
+    assert "PYTHONDONTWRITEBYTECODE=1" in text
+    assert "MPLCONFIGDIR=/tmp/npa-curobo-import-cache/matplotlib" in text
+
+
+def _install_dataset_modules(monkeypatch, *, motion_rows=800, mpinets_rows=1800):
+    package = ModuleType("robometrics")
+    package.__path__ = []
+    datasets = ModuleType("robometrics.datasets")
+    datasets.motion_benchmaker_raw = lambda: {
+        f"motion-{index}": range(motion_rows // 8) for index in range(8)
+    }
+    datasets.mpinets_raw = lambda: {
+        f"mpinets-{index}": range(mpinets_rows // 12) for index in range(12)
+    }
+    package.datasets = datasets
+    monkeypatch.setitem(sys.modules, "robometrics", package)
+    monkeypatch.setitem(sys.modules, "robometrics.datasets", datasets)
+
+
+def test_runtime_import_check_records_exact_real_boundary_receipt(monkeypatch, tmp_path):
+    from npa.workbench.curobo import runner
+
+    calls = []
+    monkeypatch.setattr(runner, "_benchmark_module", lambda: calls.append("imported"))
+    _install_dataset_modules(monkeypatch)
+    receipt_path = tmp_path / "runtime-import.json"
+    monkeypatch.setattr(IMPORT_CHECK, "_RECEIPT_PATH", receipt_path)
+
+    IMPORT_CHECK.main()
+
+    payload = receipt_path.read_bytes()
+    contract = json.loads(RUNTIME_PAYLOAD.read_text())["runtime_import_receipt"]
+    assert calls == ["imported"]
+    assert len(payload) == contract["size"]
+    assert hashlib.sha256(payload).hexdigest() == contract["sha256"]
+    assert json.loads(payload)["datasets"] == {
+        "motion_benchmaker": {"groups": 8, "rows": 800},
+        "mpinets": {"groups": 12, "rows": 1800},
+    }
+
+
+def test_runtime_import_check_rejects_dataset_population_drift(monkeypatch, tmp_path):
+    from npa.workbench.curobo import runner
+
+    monkeypatch.setattr(runner, "_benchmark_module", lambda: object())
+    _install_dataset_modules(monkeypatch, motion_rows=792)
+    receipt_path = tmp_path / "runtime-import.json"
+    monkeypatch.setattr(IMPORT_CHECK, "_RECEIPT_PATH", receipt_path)
+
+    with pytest.raises(RuntimeError, match="population changed"):
+        IMPORT_CHECK.main()
+    assert not receipt_path.exists()
 
 
 @pytest.mark.parametrize("sha", ["", "a" * 39, "a" * 41, "g" * 40, "a" * 40])

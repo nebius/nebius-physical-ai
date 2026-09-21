@@ -102,10 +102,20 @@ a separate upload receipt. Workload failures upload partial artifacts and a
 redacted failure receipt; partial upload failures are retained locally and the
 receipt is published when S3 remains reachable.
 
-On a GPU or upload failure the runtime retains a mode-0700 working directory
-and the already flushed problem journal. Inspect that evidence before any
-retry. Do not repeat a successful GPU run to repair telemetry. CUDA/Warp caches
-are node-local ephemeral state unless explicitly mounted by the workflow.
+On a nonzero planner exit the standard runtime publishes a read-back-verified
+failure receipt and `runtime.log` under
+`<output>/_failures/<run-id>/`. If the runner flushed
+`output/problems.jsonl`, it is published there as
+`partial-problems.jsonl` with its exact raw hash, physical-line count, and
+complete nonblank JSON-object record count. Blank, scalar, malformed, and
+truncated lines remain in the raw evidence but never count as complete records.
+That reserved namespace never receives `result.json`, and
+validation/visualization reject it.
+Failure-evidence publication errors remain secondary to the original subprocess
+failure. The mode-0700 local working directory is also retained. Inspect this
+evidence before any retry. Do not repeat a successful GPU run to repair
+telemetry. CUDA/Warp caches are node-local ephemeral state unless explicitly
+mounted by the workflow.
 After both result artifacts pass S3 readback verification, the runtime removes
 only that call's working directory. A cleanup failure emits a fixed warning and
 preserves the successful result; it must not trigger another GPU run.
