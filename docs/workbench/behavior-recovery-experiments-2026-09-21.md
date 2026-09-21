@@ -53,9 +53,8 @@ discards the remaining actions and inpainting prefix produced for the old stage,
 then performs one bounded resample from the new stage. A second transition during
 that resample fails closed instead of recursing. The intervention uses the
 policy's stage state and permitted observations; it does not read simulator goal
-state, reward, instance segmentation, or report identifiers. Its first rollout
-is experimental and cannot be described as an official score or an established
-improvement.
+state, reward, instance segmentation, or report identifiers. Its completed
+fresh-process comparison is reported below; it is not an official submission.
 
 [AAC](https://arxiv.org/abs/2604.04161) adapts chunk size using action entropy.
 [DEHP](https://arxiv.org/abs/2606.11408), revised July 2026, learns a horizon
@@ -161,21 +160,33 @@ across all 100 challenge tasks.
 ## Fresh-process trash comparison
 
 The new campaign starts a separate policy process for every episode. Its frozen
-short-horizon RLC baseline completed all ten development instances, 311–320:
+short-horizon RLC baseline and transition-refresh candidate each completed all
+ten development instances, 311–320:
 
 | Policy | Mean Q | Full successes | Mean simulator steps |
 | --- | ---: | ---: | ---: |
 | Stock checkpoint with shorter late-stage chunks | 0.333333 | 1/10 | 7,608.7 |
+| Same checkpoint and chunks, refresh on accepted stage transitions | 0.500000 | 1/10 | 7,673.6 |
 
 The aggregation stage downloaded and hashed every original metrics file and
 video, and fully decoded all ten videos. The Workbench runner is pinned to
 `8921f8f252d24485c4dfdde72c87bcc38eb4db70`, and the unchanged upstream evaluator
 to `b1979916ec1549b10a4e65e630bc6504a9af1b00`. The panel is
-`183e6e38981444fe9523a80edf5daff4c724c6e3cd8a20982f01b2108ebfb9cf`.
+`183e6e38981444fe9523a80edf5daff4c724c6e3cd8a20982f01b2108ebfb9cf`;
+the candidate panel is
+`feb9f776bf28a3c4755c63f5273b7c8f49b698549b4bb779ea8f6b02519d3a26`.
+
+The complete paired comparison improves mean Q by 0.166667: six cases improve,
+three tie, and one regresses. Full successes do not increase; the baseline
+succeeds on instance 314 and the candidate on 315. Every original from both
+panels was hash-verified, and all twenty videos were fully decoded before
+comparison. The reusable comparison receipt digest is
+`bc2aedc8083144631eada819d14ef4eaf22ca171319a47f8ec10ad55890755e5`.
 
 This baseline includes an execution modification; it is not a measurement of
 native RLC. Its score is separate from the historical 0.50 result above, whose
-policy process lifecycle differed. The transition-refresh candidate is running.
+policy process lifecycle differed. These ten development cases are reused;
+this result does not demonstrate generalization or a reliable full-success gain.
 Native RLC and both released Comet checkpoints still need the same evaluation
 before the baseline tournament and independent reporting gate can be completed.
 
