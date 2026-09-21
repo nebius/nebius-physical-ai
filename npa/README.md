@@ -259,6 +259,24 @@ PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
   make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
 ```
 
+To recheck checkpoint selection from a completed GPU validation job, set
+`NPA_E2E_CHECKPOINT_SELECTION_EVIDENCE_CONFIG` to an owner-only JSON file and run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py -q
+```
+
+There is no default evidence target; the live check skips without the variable.
+The [test module](tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py)
+documents the required provider identity, digest-pinned image, source archive,
+GPU platform/count, training-output prefix, and minimum episode count. It reads
+existing resources, verifies checkpoint and source bytes, recomputes distances
+from recorded final positions, and reruns selection in both candidate orders.
+The input bundle must come from real policy rollouts; this check does not launch
+training, establish policy quality, or claim a complete Sim2Real pipeline run.
+Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
@@ -287,6 +305,11 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
+Mocked browser checks require Google Chrome and run with
+`bash npa/scripts/run_agent_cypress.sh --mock` from the repository root.
+They use Chrome's software WebGL renderer for real canvas capture coverage;
+Cypress 16's deprecated Electron browser cannot provide that context in CI.
+
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
 --update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
@@ -306,8 +329,10 @@ parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
 Application and CI dependency scans reject known vulnerabilities even when the
 same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
-requirements. `.github/dependabot.yml` schedules daily update proposals for
-Python, browser-test npm, and GitHub Actions dependencies. Reproduce the scan
+requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
+GitHub Actions dependencies daily and groups version updates into one
+`dependencies` PR. Review package declarations and generated locks together,
+regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
 
 The required [security check](../docs/security/merge-security-gate.md) is the
@@ -335,6 +360,13 @@ to an operator-owned S3 prefix; it has no default. The check requires an existin
 authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
+
+For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
+plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
+`NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the
+configured bucket and storage service account for real. See
+[`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
+for the full env contract and safety preconditions.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).

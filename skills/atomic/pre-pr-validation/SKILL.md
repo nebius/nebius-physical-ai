@@ -20,6 +20,9 @@ audit after every merge. Independent validation jobs use available GitHub runner
 capacity without job-level concurrency locks or matrix `max-parallel` caps.
 Preserve per-PR supersession on the parent and distinct workflow group prefixes
 for reusable children. Merge candidates use their own SHA-specific groups.
+The aggregate gate uses `!cancelled()` to report failed dependencies while
+allowing obsolete runs to terminate; `always()` can keep their final job queued
+ahead of the replacement candidate.
 `test_ci_concurrency` rejects shared validation locks and matrix caps;
 `test_ci_workflows` guards cancellation and required results. See the contributor
 concurrency guide for organization runner limits and rollout behavior. Refresh
@@ -49,6 +52,11 @@ absolute path:
 ```bash
 make test PYTHON=/workspace/npa/.venv/bin/python
 ```
+
+If that venv is shared across checkouts (worktree, agent sandbox) rather than
+installed fresh in this one, `make test`/`test-smoke`/`test-guardrails` fail
+fast via `make check-env` before running anything, rather than silently
+testing a different checkout's code — see `testing-conventions` for why.
 
 ## The Ladder
 
@@ -154,6 +162,12 @@ cd npa
 .venv/bin/python -m pytest tests/ -v --tb=short --cov=src/npa --cov-report=term-missing --cov-fail-under=60
 ```
 
+Dependabot groups daily version updates across Python, npm, and GitHub Actions
+into one `dependencies` PR. Review overlapping package declarations together;
+a bot edit of `npa/ci/requirements.txt` does not prove its input fingerprint is
+current. Regenerate the CI pins after Python declaration changes and run the
+combined candidate through the same required gates.
+
 Keep the coverage source scoped to `src/npa`. Selecting the import name with
 `--cov=npa` can also trace temporary test modules that deliberately impersonate
 that package, and those files no longer exist when CI merges shard data. From the
@@ -175,11 +189,22 @@ Before investigating a failure, check whether it is one of these:
   venv: `PATH="$PWD/npa/.venv/bin:$PATH"`.
 
 When a failure looks unrelated to your change, confirm it against a clean base
-before spending time on it:
+before spending time on it. `git worktree add` never brings an untracked
+`npa/.venv` (it is gitignored), so the new worktree needs one of:
 
 ```bash
 git worktree add /tmp/main-check origin/main
-cd /tmp/main-check && npa/.venv/bin/python -m pytest <the failing test> -q
+
+# Option A: this worktree's own venv (works standalone, costs an install).
+python3 -m venv /tmp/main-check/npa/.venv
+/tmp/main-check/npa/.venv/bin/pip install -e "/tmp/main-check/npa[dev,adapter]"
+/tmp/main-check/npa/.venv/bin/python -m pytest /tmp/main-check/npa/tests/<the failing test> -q
+
+# Option B: reuse this checkout's already-installed venv, corrected with
+# PYTHONPATH so it resolves `main-check`'s source, not this checkout's
+# (see "Use The Repo Virtualenv" above for why the correction is required).
+PYTHONPATH=/tmp/main-check/npa/src npa/.venv/bin/python -m pytest \
+  /tmp/main-check/npa/tests/<the failing test> -q
 ```
 
 The shared dev/operator VM has both of those binaries, so the full suite passes

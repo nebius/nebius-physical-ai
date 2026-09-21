@@ -47,7 +47,6 @@ from npa.clients.credentials import apply_shared_credential_env, shared_credenti
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.serverless import (
     EndpointNotFoundError,
-    JobInfo,
     ServerlessClient,
     ServerlessClientError,
 )
@@ -59,6 +58,7 @@ from npa.deploy.images import (
 from npa.serverless_common import (
     MissingS3CredentialsError,
     SubnetResolutionError,
+    job_status_payload,
     require_s3_credentials,
     resolve_subnet,
 )
@@ -226,36 +226,6 @@ def _fail_serverless(
 ) -> None:
     typer.echo(format_error_for_user(exc, output_format=output.value), err=True)
     raise typer.Exit(1)
-
-
-def _serverless_job_status_payload(
-    client: ServerlessClient,
-    info: JobInfo,
-    *,
-    platform: str = "",
-    gpu_count: int = 0,
-) -> dict[str, Any]:
-    status = client.classify_queue_state(info)
-    payload: dict[str, Any] = {
-        "job_id": info.id,
-        "job_name": info.name,
-        "status": status,
-        "raw_status": info.status,
-        "output_uris": list(info.output_uris),
-    }
-    if info.status == "queued":
-        payload["queue_state_classification"] = (
-            "capacity" if status == "waiting_for_capacity" else "scheduled"
-        )
-        payload["queued_for_seconds"] = info.queued_for_seconds
-        payload["platform"] = platform or info.platform
-        payload["gpu_count"] = gpu_count or info.gpu_count
-        payload["hint"] = (
-            "Platform may be at capacity. Retry status in a few minutes."
-            if status == "waiting_for_capacity"
-            else "Job is scheduled and waiting to start."
-        )
-    return payload
 
 
 def _get_config(**overrides):
@@ -522,7 +492,7 @@ def status(
                 info = client.get_job(job_ref, project_id)
             except ServerlessClientError as exc:
                 _fail_serverless(exc, output)
-            result = _serverless_job_status_payload(
+            result = job_status_payload(
                 client,
                 info,
                 platform=str(getattr(job_cfg, "gpu_type", "")),

@@ -74,8 +74,10 @@ The AnyIO floor is 4.14.2 for ordinary installs and the application lock, coveri
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
 `.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
-dependencies daily and proposes updates for review. After changing Python
-dependency declarations, regenerate the CI pins with
+dependencies daily and proposes version updates in one cross-ecosystem
+`dependencies` PR, so overlapping manifests and generated locks are reviewed
+and tested together. After changing Python dependency declarations, regenerate
+the CI pins with
 `npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
 Dependabot security-update enablement is a separate repository setting; the
 version-update configuration does not enable it or merge its PRs automatically.
@@ -104,6 +106,12 @@ Use a fresh private directory outside the repository for each run. Install the
 scanner requirements into a separate virtual environment and put its `bin`
 directory on `PATH`; keep `npa/.venv/bin/python` for repository validation.
 The installer supports Linux x86-64 and verifies the Trivy archive's SHA-256.
+Trivy and gitleaks release downloads retry transient HTTP failures, including
+429 and 504, with curl's exponential backoff. Downloads still require their
+exact pinned SHA-256 before extraction; permanent HTTP failures, exhausted
+retries, checksum mismatches, and scanner findings fail the gate. When a hosted
+run fails during tool download, inspect that step and rerun only the failed
+jobs after the release host recovers.
 
 ```bash
 umask 077
