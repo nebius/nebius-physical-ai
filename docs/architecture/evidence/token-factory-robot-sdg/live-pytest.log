@@ -1,0 +1,10 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.12, pytest-9.1.1, pluggy-1.6.0
+rootdir: /private/tmp/npa-jev-evaluation-20260919/npa
+configfile: pyproject.toml
+plugins: mock-3.15.1, cov-7.1.0, xdist-3.8.0, timeout-2.4.0, anyio-4.15.1, langsmith-0.13.0
+collected 2 items
+
+npa/tests/e2e/test_token_factory_robot_sdg_live.py ..                    [100%]
+
+========================= 2 passed in 83.21s (0:01:23) =========================

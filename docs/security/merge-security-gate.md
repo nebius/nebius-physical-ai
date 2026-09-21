@@ -30,7 +30,7 @@ download and three isolated worker caches inside one runner. Deep candidates blo
 on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their
 [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
-are checked separately from the differential application-dependency scan.
+are checked separately from the application-dependency scan.
 Failed, skipped, or cancelled required work cannot produce a passing result.
 Main, scheduled, and manual image scans additionally generate and upload SARIF
 with the established per-image identities. A new finding fails the scanner job
@@ -55,8 +55,27 @@ expression or package version. Moving lines does not create a finding; adding a
 second occurrence or moving vulnerable code to another file does. Existing
 findings remain visible in private reports and are not silently accepted through
 a committed baseline file. A fix followed by a later reintroduction fails against
-the now-fixed base. A new advisory affecting unchanged dependencies appears in
-both scans; this gate measures regressions, not outstanding security debt.
+the now-fixed base.
+
+Application and CI dependencies additionally have an absolute gate: every
+candidate finding blocks, including a newly published advisory that affects an
+unchanged pin on both branches. This covers `npa/requirements-lock.txt`,
+`npa/ci/requirements.txt`, `npa/pyproject.toml` and its resolved core/development
+closure, the browser test npm lock, and `scripts/security-requirements.txt`.
+Deleting either required application/CI requirements file fails scanning.
+The private summary separates new regressions from all blocking findings.
+Vendor and tool-runtime inventories retain differential checks and their
+separate image validation requirements.
+
+The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
+[TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
+and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
+`.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
+dependencies daily and proposes updates for review. After changing Python
+dependency declarations, regenerate the CI pins with
+`npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
+Dependabot security-update enablement is a separate repository setting; the
+version-update configuration does not enable it or merge its PRs automatically.
 
 Candidate Bandit/zizmor ignore comments and configuration are disabled. Trivy
 receives isolated empty configuration and ignore files, so the image scan's
@@ -102,6 +121,9 @@ CI prints only actionable finding summaries and does not upload raw artifacts.
 The real regression workload generates inert Python, workflow and vulnerable
 dependency fixtures, scans them with the actual binaries/database, and verifies
 rejection. It never launches the fixtures.
+The workload also verifies that an unchanged vulnerable application pin fails
+and that the patched AnyIO pin passes. Unit regressions cover each protected
+manifest, duplicate findings, removals, required inventories, and gate exit codes.
 
 The customer confidentiality scan retains every raw redacted finding and reports
 raw, dispositioned, and unresolved counts separately. One NCore-specific source
