@@ -1,6 +1,8 @@
 """Missing SDK deadlines must not shorten the existing apply operation budget."""
 
 import json
+import shutil
+import subprocess
 
 import hcl2
 import pytest
@@ -154,3 +156,45 @@ def test_existing_materialized_deadlines_survive_new_outer_budget(tmp_path):
     materialized = path.read_bytes()
     assert rpc.configure_provider_rpc_deadlines(tmp_path, 10)["inserted_defaults"] == {}
     assert path.read_bytes() == materialized
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        'provider "nebius" {}\n',
+        "provider nebius {}\n",
+        'provider "neb\\u0069us" {}\n',
+        'provider "nebius" {} # closing brace } comment\n',
+        'provider "nebius" { domain = "api.example.invalid/{value}" }\n',
+        'provider "nebius" { timeout = null }\n',
+        'provider "nebius" { timeout = var.operator_deadline }\n',
+        'locals {\n sample = <<-EOT\nprovider "nebius" {}\nEOT\n}\nprovider "nebius" {}\n',
+        'provider "nebius" { alias = "other" }\nprovider "nebius" {}\n',
+        'provider "other" { timeout = "2s" }\nprovider "nebius" {}\n',
+        'provider "nebius" /* brace { } */ { timeout = null }\n',
+    ],
+)
+def test_native_terraform_accepts_materialized_syntax(tmp_path, content):
+    terraform = shutil.which("terraform")
+    if not terraform:
+        pytest.skip("native Terraform syntax control requires a local Terraform binary")
+    path = tmp_path / "provider.tf"
+    path.write_text(content)
+    for phase in ("input", "output"):
+        result = subprocess.run(
+            [terraform, "fmt", "-write=false", "-no-color", str(path)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (phase, result.stderr)
+        if phase == "input":
+            rpc.configure_provider_rpc_deadlines(tmp_path, 73)
+
+
+def test_unsupported_comment_before_label_refuses_without_writes(tmp_path):
+    path = tmp_path / "provider.tf"
+    original = 'provider /* brace { } */ "nebius" {}\n'
+    path.write_text(original)
+    with pytest.raises(ValueError, match="Invalid Terraform HCL"):
+        rpc.configure_provider_rpc_deadlines(tmp_path, 120)
+    assert path.read_text() == original

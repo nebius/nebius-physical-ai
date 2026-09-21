@@ -175,3 +175,23 @@ Destroy retains those materialized provider settings so the recorded KubeRay
 input digest and recovery provenance remain valid. Its own NPA outer deadline
 and cancellation still apply. Existing installations without these generated
 defaults retain their original settings until an ordinary supported reapply.
+
+
+The provider inspection uses `python-hcl2` 8.x and supports the pinned NPA
+recipes, ordinary block/line comments, heredocs, aliases and Terraform JSON.
+It refuses syntax the parser cannot represent before writing or running
+Terraform. One known valid-Terraform limitation is a block comment between the
+`provider` keyword and its label, such as `provider /* note */ "nebius" {}`.
+Such a custom recipe must move that comment outside the block header; NPA does
+not attempt a text/regex rewrite or silently run with uninspected defaults.
+
+For live verification, set `NPA_MK8S_RPC_LIVE_CONFIG` to a private JSON evidence
+configuration and run `npa/tests/e2e/test_mk8s_provider_rpc_live.py` with
+`NPA_INTEGRATION_E2E=1`. Run its `live` phase after a supported owned provision,
+and its `cleanup` phase after supported teardown. The verifier is read-only:
+it binds the producing source/start/result, exact state and deployment
+sidecar, materialized provider hash, and actual provider identities. Cleanup
+requires typed NotFound for the exact cluster and each recorded node group.
+It does not adopt or destroy resources, and a failed provision cannot be
+reported as a successful lifecycle. Keep all configuration and receipts
+private because they contain operational identifiers.

@@ -18,6 +18,7 @@ class _Provider:
     path: Path
     attributes: set[str]
     insertion: int | None = None
+    opening: int | None = None
     json_block: dict[str, Any] | None = None
 
 
@@ -59,7 +60,14 @@ def _hcl_providers(path: Path, text: str) -> list[_Provider]:
             if getattr(child, "data", "") == "attribute"
         }
         if "alias" not in attributes:
-            providers.append(_Provider(path, attributes, block.meta.end_pos - 1))
+            opening = next(
+                child
+                for child in block.children
+                if getattr(child, "type", "") == "LBRACE"
+            )
+            providers.append(
+                _Provider(path, attributes, block.meta.end_pos - 1, opening.end_pos)
+            )
     return providers
 
 
@@ -123,6 +131,30 @@ def _replace(path: Path, text: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _materialized_text(
+    provider: _Provider,
+    original: str,
+    defaults: dict[str, str],
+    documents: dict[Path, Any],
+) -> str:
+    if not defaults:
+        return original
+    if provider.json_block is not None:
+        provider.json_block.update(defaults)
+        return json.dumps(documents[provider.path], indent=2) + "\n"
+    assert provider.insertion is not None and provider.opening is not None
+    insertion = "\n" + "".join(
+        f'  {key} = "{value}"\n' for key, value in defaults.items()
+    )
+    return (
+        original[: provider.opening]
+        + "\n"
+        + original[provider.opening : provider.insertion]
+        + insertion
+        + original[provider.insertion :]
+    )
+
+
 def configure_provider_rpc_deadlines(
     workdir: Path, timeout_minutes: int
 ) -> dict[str, Any]:
@@ -142,18 +174,7 @@ def configure_provider_rpc_deadlines(
     provider, attributes, texts, documents = _inspect(workdir)
     defaults = {key: f"{timeout_minutes}m" for key in sorted(_FIELDS - attributes)}
     original = texts[provider.path]
-    changed = original
-    if defaults and provider.json_block is not None:
-        provider.json_block.update(defaults)
-        changed = json.dumps(documents[provider.path], indent=2) + "\n"
-    elif defaults:
-        assert provider.insertion is not None
-        insertion = "\n" + "".join(
-            f'  {key} = "{value}"\n' for key, value in defaults.items()
-        )
-        changed = (
-            original[: provider.insertion] + insertion + original[provider.insertion :]
-        )
+    changed = _materialized_text(provider, original, defaults, documents)
     if any(_read(path) != text for path, text in texts.items()):
         raise ValueError(
             "Terraform configuration changed during RPC deadline inspection"
