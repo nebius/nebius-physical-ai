@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import multiprocessing
 import os
@@ -2778,6 +2779,13 @@ class _TransactionalFakeS3:
             "Metadata": dict(metadata),
         }
 
+    def get_object(self, *, Key, **_kwargs):
+        try:
+            body, _metadata = self.objects[Key]
+        except KeyError as exc:
+            raise _S3NotFound() from exc
+        return {"Body": io.BytesIO(body)}
+
     def upload_file(self, local_path, _bucket, key, *, ExtraArgs):
         self.objects[key] = (
             Path(local_path).read_bytes(),
@@ -2921,6 +2929,23 @@ def test_upload_output_rechecks_complete_prefix_ownership(
         capabilities.upload_output(tmp_path, uri, result)
 
 
+def test_upload_output_rechecks_committed_object_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+    s3 = _TransactionalFakeS3()
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    result = {"ok": True}
+    uri = "s3://bucket/runs/corrupt"
+    capabilities.upload_output(tmp_path, uri, result)
+    body, metadata = s3.objects["runs/corrupt/artifact.bin"]
+    s3.objects["runs/corrupt/artifact.bin"] = (b"x" * len(body), metadata)
+
+    with pytest.raises(RoboCasaError, match="object bytes changed"):
+        capabilities.upload_output(tmp_path, uri, result)
+
+
 def test_upload_output_rejects_nonempty_destination_before_staging(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2992,6 +3017,19 @@ def test_upload_output_rejects_result_symlink_before_overwrite(
         )
 
     assert outside.read_text(encoding="utf-8") == "do-not-overwrite\n"
+
+
+def test_result_rewrite_rejects_hardlink_before_truncate(tmp_path: Path) -> None:
+    output_root = tmp_path / "output"
+    output_root.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("do-not-truncate\n", encoding="utf-8")
+    os.link(outside, output_root / "result.json")
+
+    with pytest.raises(RoboCasaError, match="identity is unsafe"):
+        capabilities._rewrite_result_file(output_root, b"replacement\n")
+
+    assert outside.read_text(encoding="utf-8") == "do-not-truncate\n"
 
 
 def test_upload_output_rejects_reserved_completion_marker(

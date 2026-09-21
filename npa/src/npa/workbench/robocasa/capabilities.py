@@ -2452,7 +2452,7 @@ def _rewrite_result_file(root: Path, payload: bytes) -> None:
         try:
             result_fd = os.open(
                 "result.json",
-                os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW,
+                os.O_WRONLY | os.O_NOFOLLOW,
                 dir_fd=root_fd,
             )
         except FileNotFoundError:
@@ -2465,6 +2465,7 @@ def _rewrite_result_file(root: Path, payload: bytes) -> None:
                 or info.st_nlink != 1
             ):
                 raise RoboCasaError("RoboCasa result.json identity is unsafe")
+            os.ftruncate(result_fd, 0)
             remaining = memoryview(payload)
             while remaining:
                 written = os.write(result_fd, remaining)
@@ -2509,6 +2510,7 @@ def _require_s3_object(
     *,
     digest_key: str,
     digest: str,
+    content_sha256: str,
     byte_count: int,
 ) -> None:
     head = _s3_head_object(s3, bucket, key)
@@ -2520,6 +2522,30 @@ def _require_s3_object(
         or int(head.get("ContentLength", -1)) != byte_count
     ):
         raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        stream = response["Body"]
+    except (KeyError, TypeError) as exc:
+        raise RoboCasaError(f"RoboCasa S3 object body is unavailable: {key}") from exc
+    hasher = hashlib.sha256()
+    observed = 0
+    try:
+        while True:
+            data = stream.read(min(1024 * 1024, byte_count + 1 - observed))
+            if not data:
+                break
+            if not isinstance(data, bytes):
+                raise RoboCasaError(f"RoboCasa S3 object body is invalid: {key}")
+            observed += len(data)
+            if observed > byte_count:
+                raise RoboCasaError(f"RoboCasa S3 object bytes changed: {key}")
+            hasher.update(data)
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
+    if observed != byte_count or hasher.hexdigest() != content_sha256:
+        raise RoboCasaError(f"RoboCasa S3 object bytes changed: {key}")
 
 
 def _s3_prefix_keys(
@@ -2566,6 +2592,7 @@ def _require_committed_s3_tree(
         complete_key,
         digest_key="commit-sha256",
         digest=commit_sha256,
+        content_sha256=commit_sha256,
         byte_count=commit_bytes,
     )
     for key, item in final_keys.items():
@@ -2575,6 +2602,7 @@ def _require_committed_s3_tree(
             key,
             digest_key="content-sha256",
             digest=str(item["sha256"]),
+            content_sha256=str(item["sha256"]),
             byte_count=int(item["bytes"]),
         )
 
@@ -2609,6 +2637,7 @@ def _put_s3_once(
         key,
         digest_key=digest_key,
         digest=digest,
+        content_sha256=hashlib.sha256(body).hexdigest(),
         byte_count=len(body),
     )
     return False
@@ -2711,6 +2740,7 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
             claim_key,
             digest_key="commit-sha256",
             digest=commit_sha256,
+            content_sha256=hashlib.sha256(claim_body).hexdigest(),
             byte_count=len(claim_body),
         )
         _require_committed_s3_tree(
@@ -2779,6 +2809,7 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
                 final_key,
                 digest_key="content-sha256",
                 digest=str(item["sha256"]),
+                content_sha256=str(item["sha256"]),
                 byte_count=int(item["bytes"]),
             )
         _put_s3_once(
