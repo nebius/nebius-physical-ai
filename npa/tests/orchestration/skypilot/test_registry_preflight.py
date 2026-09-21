@@ -480,6 +480,7 @@ def _docker_secret_result(registry: str, *, name: str = "pull-secret"):
 def _verified_target_pull(**kwargs) -> KubernetesPullCheck:  # noqa: ANN003
     assert kwargs["namespace"] == "default"
     assert kwargs["context"] == "target-context"
+    assert kwargs["service_account_name"] == "skypilot-service-account"
     return KubernetesPullCheck(status="verified", digest=DIGEST)
 
 
@@ -1086,6 +1087,7 @@ def test_effective_target_uses_selected_context_namespace() -> None:
 
     assert target.namespace == "team-workloads"
     assert target.pull_secret_names == ()
+    assert target.service_account_name == "skypilot-service-account"
 
 
 def test_effective_target_applies_secret_override_in_kubeconfig_namespace(
@@ -1098,14 +1100,17 @@ kubernetes:
   namespace: global-namespace
   pod_config:
     spec:
+      serviceAccountName: global-pod-service-account
       imagePullSecrets:
         - name: global-secret
         - name: global-fallback
   context_configs:
     target-context:
       namespace: team-namespace
+      remote_identity: workload-service-account
       pod_config:
         spec:
+          serviceAccountName: context-pod-service-account
           imagePullSecrets:
             - name: context-secret
 """,
@@ -1145,6 +1150,44 @@ kubernetes:
 
     assert target.namespace == "kubeconfig-namespace"
     assert target.pull_secret_names == ("context-secret", "global-fallback")
+    assert target.service_account_name == "context-pod-service-account"
+
+
+def test_effective_target_selects_context_from_global_remote_identity_map(
+    tmp_path,
+) -> None:
+    config = tmp_path / "sky.yaml"
+    config.write_text(
+        """
+kubernetes:
+  remote_identity:
+    target-context: exact-service-account
+    another-context: another-service-account
+""",
+        encoding="utf-8",
+    )
+
+    target = resolve_kubernetes_pull_target(
+        context="target-context",
+        global_config_path=config,
+        runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "contexts": [
+                        {
+                            "name": "target-context",
+                            "context": {"namespace": "team-namespace"},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    assert target.service_account_name == "exact-service-account"
 
 
 @pytest.mark.parametrize(
@@ -1319,10 +1362,10 @@ def test_every_distinct_kubernetes_secret_set_is_probed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_private_registry(monkeypatch)
-    probed: list[tuple[str, ...]] = []
+    probed: list[tuple[tuple[str, ...], str]] = []
 
     def target_pull(**kwargs):
-        probed.append(kwargs["secret_names"])
+        probed.append((kwargs["secret_names"], kwargs["service_account_name"]))
         return KubernetesPullCheck(status="verified", digest=DIGEST)
 
     checks = check_image_pulls_with_credentials(
@@ -1332,6 +1375,9 @@ def test_every_distinct_kubernetes_secret_set_is_probed(
             manifest_headers={"docker-content-digest": DIGEST},
         ),
         pull_secret_sets_by_image={IMAGE: (("path-a-secret",), ("path-b-secret",))},
+        service_account_names_by_image={
+            IMAGE: ("service-account-a", "service-account-b")
+        },
         operator_images=set(),
         kubernetes_images={IMAGE},
         namespace="team-namespace",
@@ -1341,6 +1387,10 @@ def test_every_distinct_kubernetes_secret_set_is_probed(
     )
 
     assert checks[0].ok
+    assert probed == [
+        (("path-a-secret",), "service-account-a"),
+        (("path-b-secret",), "service-account-b"),
+    ]
     assert checks[0].target_status == "verified_target_paths"
     assert probed == [("path-a-secret",), ("path-b-secret",)]
 
@@ -1387,6 +1437,7 @@ def _target_probe_runner(
         if "create" in cmd:
             manifest = json.loads(kwargs["input"])
             assert manifest["spec"]["imagePullSecrets"] == [{"name": "pull-secret"}]
+            assert manifest["spec"]["serviceAccountName"] == "skypilot-service-account"
             assert manifest["spec"]["tolerations"] == [
                 {
                     "key": "nvidia.com/gpu",
@@ -1550,6 +1601,7 @@ def test_target_pull_probe_uses_sky_tasks_default_namespace() -> None:
         if "create" in cmd:
             manifest = json.loads(kwargs["input"])
             assert manifest["metadata"]["namespace"] == "default"
+            assert manifest["spec"]["serviceAccountName"] == "exact-service-account"
         return run(cmd, **kwargs)
 
     check = verify_kubernetes_image_pull(
@@ -1558,6 +1610,7 @@ def test_target_pull_probe_uses_sky_tasks_default_namespace() -> None:
         namespace="default",
         context="target-context",
         timeout_seconds=30,
+        service_account_name="exact-service-account",
         runner=recording_runner,
         nonce_factory=lambda: "abc123",
     )
@@ -1628,6 +1681,37 @@ def test_cleanup_retries_owned_deletion_after_keyboard_interrupt(
     assert interrupted
     assert operation_attempts >= 2
     assert sum("delete" in command for command in calls) == 1
+
+
+def test_cleanup_interrupt_reports_unverified_owned_probe() -> None:
+    run, _calls = _target_probe_runner()
+    cleanup_reads = 0
+
+    def interrupt_then_timeout_cleanup(cmd, **kwargs):  # noqa: ANN001
+        nonlocal cleanup_reads
+        is_cleanup_read = "get" in cmd and "--ignore-not-found=true" in cmd
+        if is_cleanup_read:
+            cleanup_reads += 1
+            if cleanup_reads == 1:
+                raise KeyboardInterrupt
+            raise subprocess.TimeoutExpired(cmd, 30)
+        return run(cmd, **kwargs)
+
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        verify_kubernetes_image_pull(
+            image=IMAGE,
+            secret_names=("pull-secret",),
+            namespace="target-namespace",
+            context="target-context",
+            timeout_seconds=30,
+            runner=interrupt_then_timeout_cleanup,
+            nonce_factory=lambda: "abc123",
+        )
+
+    assert cleanup_reads == 4
+    assert "target pull probe cleanup=unverified" in "\n".join(
+        getattr(exc_info.value, "__notes__", ())
+    )
 
 
 def test_malformed_probe_labels_fail_closed_without_uncaught_exception() -> None:

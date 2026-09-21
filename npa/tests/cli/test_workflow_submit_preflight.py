@@ -1184,6 +1184,30 @@ def test_effective_pull_secret_sets_do_not_union_distinct_paths() -> None:
     }
 
 
+def test_effective_pull_paths_preserve_service_account_authority() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("shared",), ("shared",)),
+            service_account_names=("service-account-a", "service-account-b"),
+        )
+    }
+
+    effective = workflow_cli._image_pull_paths(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+        inherited_service_account_name="base-service-account",
+    )
+
+    assert effective == {
+        "image": (
+            (("shared",), "service-account-a"),
+            (("shared",), "service-account-b"),
+        )
+    }
+
+
 def test_effective_pull_secret_sets_reject_invalid_multi_entry_override() -> None:
     from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
 
@@ -1259,7 +1283,7 @@ def test_effective_pull_secret_sets_accept_initial_multi_entry_task_list() -> No
     assert effective == {"image": (("task-a", "task-b"),)}
 
 
-def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
+def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(mocker) -> None:
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
 
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
@@ -1300,19 +1324,21 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
     result = runner.invoke(app, args)
 
     assert result.exit_code == 0, result.output
-    assert checks.call_args.kwargs["pull_secrets_by_image"] == {
-        digest_image: ("operator-registry",)
-    }
+    assert checks.call_args.kwargs["pull_secrets_by_image"] == {digest_image: ()}
     assert checks.call_args.kwargs["context"] == "target-context"
     assert checks.call_args.kwargs["namespace"] == "target-namespace"
-    assert checks.call_args.kwargs["pull_secret_sets_by_image"] == {
-        digest_image: (("operator-registry",),)
+    assert checks.call_args.kwargs["pull_secret_sets_by_image"] == {digest_image: ((),)}
+    assert checks.call_args.kwargs["service_account_names_by_image"] == {
+        digest_image: ("skypilot-service-account",)
     }
     assert checks.call_args.kwargs["operator_images"] == set()
     assert checks.call_args.kwargs["kubernetes_images"] == {digest_image}
     assert checks.call_args.kwargs["target_pull_timeout_seconds"] == 1800
     assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
         digest_image: ("operator-registry",)
+    }
+    assert contracts.call_args.kwargs["service_accounts_by_image"] == {
+        digest_image: "skypilot-service-account"
     }
     assert contracts.call_args.kwargs["context"] == "target-context"
 

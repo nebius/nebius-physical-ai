@@ -34,6 +34,10 @@ import urllib.request
 import yaml
 
 DEFAULT_TIMEOUT_SECONDS = 30
+SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME = "skypilot-service-account"
+_SKYPILOT_REMOTE_IDENTITY_SENTINELS = frozenset(
+    {"LOCAL_CREDENTIALS", "SERVICE_ACCOUNT", "NO_UPLOAD"}
+)
 MANIFEST_ACCEPT = ", ".join(
     (
         "application/vnd.docker.distribution.manifest.v2+json",
@@ -126,6 +130,7 @@ class KubernetesPullTarget:
     namespace: str
     pull_secret_names: tuple[str, ...] = ()
     pull_secret_names_configured: bool = False
+    service_account_name: str = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
 
 
 def merge_skypilot_pull_secret_names(
@@ -709,6 +714,8 @@ def check_image_pulls_with_credentials(
     pull_secret_sets_by_image: (
         Mapping[str, tuple[tuple[str, ...], ...]] | None
     ) = None,
+    service_account_name: str = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME,
+    service_account_names_by_image: Mapping[str, tuple[str, ...]] | None = None,
     operator_images: Collection[str] | None = None,
     kubernetes_images: Collection[str] | None = None,
     namespace: str = "",
@@ -755,6 +762,14 @@ def check_image_pulls_with_credentials(
             requires_operator = not requires_kubernetes
         if requires_kubernetes and not image_secret_sets:
             image_secret_sets = ((),)
+        image_service_account_names = (
+            tuple(
+                str(name).strip()
+                for name in service_account_names_by_image.get(image, ())
+            )
+            if service_account_names_by_image is not None
+            else tuple(service_account_name for _ in image_secret_sets)
+        )
         if pull_secret_sets_by_image is not None:
             image_secret_names = tuple(
                 dict.fromkeys(name for names in image_secret_sets for name in names)
@@ -816,9 +831,22 @@ def check_image_pulls_with_credentials(
                 target_detail = (
                     "an exact Kubernetes context and effective namespace are required"
                 )
+            elif len(image_service_account_names) != len(image_secret_sets) or any(
+                not _KUBERNETES_NAME_RE.fullmatch(name)
+                for name in image_service_account_names
+            ):
+                target_verified = False
+                target_status = "service_account_invalid"
+                target_detail = (
+                    "every Kubernetes pull path requires its exact ServiceAccount"
+                )
             else:
                 target_verified = True
-                for path_secret_names in image_secret_sets:
+                for path_secret_names, path_service_account_name in zip(
+                    image_secret_sets,
+                    image_service_account_names,
+                    strict=True,
+                ):
                     if not path_secret_names and not (
                         operator_verified and not username and not password
                     ):
@@ -854,6 +882,7 @@ def check_image_pulls_with_credentials(
                             namespace=namespace,
                             context=context,
                             timeout_seconds=target_pull_timeout_seconds,
+                            service_account_name=path_service_account_name,
                         )
                     except (
                         OSError,
@@ -1000,6 +1029,9 @@ def _target_pull_status_detail(status: str) -> str:
         "digest_mismatch": "host and target resolved different immutable image bytes",
         "target_probe_failed": "target probe could not start after pulling the image",
         "pull_secret_required": "private Kubernetes path requires an imagePullSecret",
+        "service_account_invalid": (
+            "exact target ServiceAccount authority is unavailable"
+        ),
     }
     if status in known:
         return known[status]
@@ -1039,6 +1071,7 @@ def resolve_kubernetes_pull_target(
         raise RegistryPreflightError("an exact Kubernetes context is required")
     secret_names: tuple[str, ...] = ()
     secret_names_configured = False
+    service_account_name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
     if global_config_path is not None:
         try:
             document = (
@@ -1073,6 +1106,20 @@ def resolve_kubernetes_pull_target(
         )
         secret_names_configured = (
             base_secret_names is not None or override_secret_names is not None
+        )
+        service_account_name = _configured_service_account_name(
+            kubernetes,
+            context_config,
+            context=selected_context,
+        )
+        base_service_account = _configured_pod_service_account_name(kubernetes)
+        context_service_account = _configured_pod_service_account_name(context_config)
+        service_account_name = (
+            context_service_account
+            if context_service_account is not None
+            else base_service_account
+            if base_service_account is not None
+            else service_account_name
         )
     execute = runner or subprocess.run
     try:
@@ -1134,7 +1181,72 @@ def resolve_kubernetes_pull_target(
         namespace=namespace,
         pull_secret_names=secret_names,
         pull_secret_names_configured=secret_names_configured,
+        service_account_name=service_account_name,
     )
+
+
+def _configured_service_account_name(
+    kubernetes: Mapping[str, Any],
+    context_config: Mapping[str, Any],
+    *,
+    context: str,
+) -> str:
+    """Resolve the ServiceAccount rendered by pinned SkyPilot 0.12.2."""
+
+    if "remote_identity" in context_config:
+        remote_identity: Any = context_config["remote_identity"]
+    else:
+        remote_identity = kubernetes.get("remote_identity", "SERVICE_ACCOUNT")
+    if isinstance(remote_identity, Mapping):
+        if context not in remote_identity:
+            raise RegistryPreflightError(
+                "selected SkyPilot remote_identity has no exact context entry"
+            )
+        remote_identity = remote_identity[context]
+    if not isinstance(remote_identity, str):
+        raise RegistryPreflightError(
+            "selected SkyPilot remote_identity must resolve to a ServiceAccount name"
+        )
+    service_account_name = remote_identity.strip()
+    if service_account_name in _SKYPILOT_REMOTE_IDENTITY_SENTINELS:
+        service_account_name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    if not _KUBERNETES_NAME_RE.fullmatch(service_account_name):
+        raise RegistryPreflightError(
+            "selected SkyPilot remote_identity is not a valid ServiceAccount name"
+        )
+    return service_account_name
+
+
+def _configured_pod_service_account_name(
+    config: Mapping[str, Any],
+) -> str | None:
+    """Read one config layer's pod-level ServiceAccount override."""
+
+    pod_config = config.get("pod_config")
+    if pod_config is None:
+        return None
+    if not isinstance(pod_config, Mapping):
+        raise RegistryPreflightError("selected SkyPilot pod_config must be a mapping")
+    pod_spec = pod_config.get("spec")
+    if pod_spec is None:
+        return None
+    if not isinstance(pod_spec, Mapping):
+        raise RegistryPreflightError(
+            "selected SkyPilot pod_config spec must be a mapping"
+        )
+    if "serviceAccountName" not in pod_spec:
+        return None
+    raw_name = pod_spec["serviceAccountName"]
+    if not isinstance(raw_name, str):
+        raise RegistryPreflightError(
+            "selected SkyPilot pod ServiceAccount must be a string"
+        )
+    name = raw_name.strip() or "default"
+    if not _KUBERNETES_NAME_RE.fullmatch(name):
+        raise RegistryPreflightError(
+            "selected SkyPilot pod ServiceAccount is not a valid Kubernetes name"
+        )
+    return name
 
 
 def _configured_pull_secret_names(
@@ -1373,6 +1485,7 @@ def verify_kubernetes_image_pull(
     namespace: str,
     context: str,
     timeout_seconds: int,
+    service_account_name: str = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME,
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     poll_interval_seconds: float = 1.0,
     monotonic: Callable[[], float] = time.monotonic,
@@ -1388,6 +1501,7 @@ def verify_kubernetes_image_pull(
     if (
         not str(context or "").strip()
         or not _KUBERNETES_NAME_RE.fullmatch(namespace)
+        or not _KUBERNETES_NAME_RE.fullmatch(service_account_name)
         or any(not _KUBERNETES_NAME_RE.fullmatch(name) for name in secret_names)
         or timeout_seconds < 0
     ):
@@ -1412,6 +1526,7 @@ def verify_kubernetes_image_pull(
         },
         "spec": {
             "restartPolicy": "Never",
+            "serviceAccountName": service_account_name,
             "terminationGracePeriodSeconds": 0,
             # Nebius GPU-only pools use this expected taint. The probe requests
             # no GPU; tolerating the taint lets kubelet test registry delivery
@@ -1528,6 +1643,17 @@ def verify_kubernetes_image_pull(
                 creation_confirmed=creation_confirmed,
             )
             if cleanup_interrupt is not None:
+                if cleanup_status != "verified":
+                    note = f"target pull probe cleanup={cleanup_status}"
+                    add_note = getattr(cleanup_interrupt, "add_note", None)
+                    if callable(add_note):
+                        add_note(note)
+                    else:
+                        setattr(
+                            cleanup_interrupt,
+                            "__npa_cleanup_note__",
+                            note,
+                        )
                 raise cleanup_interrupt
     return KubernetesPullCheck(
         status=status, digest=digest, cleanup_status=cleanup_status

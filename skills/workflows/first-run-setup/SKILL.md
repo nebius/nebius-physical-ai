@@ -170,12 +170,16 @@ GHCR mirror by default. If you explicitly select a custom/private registry,
 Kubernetes retries pulls forever — so an unpullable image silently burns cluster
 time in `ImagePullBackOff`. The check uses the selected kubeconfig context
 namespace (the namespace source used by SkyPilot 0.12), falling back to
-`default`, and proves every distinct rendered `imagePullSecret` set after
-applying SkyPilot 0.12's first-entry context/task override semantics. An initial
-empty or multi-entry list is valid; once a base list exists, the override must
-have exactly one entry and the base cannot be empty. For `deployIfAbsent`,
-`submit` checks definitive public manifests before provisioning and runs the
-exact target pod proof immediately after the cluster exists.
+`default`, and proves every distinct rendered `imagePullSecret` plus
+ServiceAccount path after applying SkyPilot 0.12's context/task overrides.
+ServiceAccount identity comes from the context-effective
+`kubernetes.remote_identity`, followed by config-level and task pod-config
+overrides; admission may attach additional pull Secrets, so a probe under
+another ServiceAccount is not equivalent. An initial empty or multi-entry
+Secret list is valid; once a base list exists, the override must have exactly
+one entry and the base cannot be empty. For `deployIfAbsent`, `submit` checks
+definitive public manifests before provisioning and runs the exact target pod
+proof immediately after the cluster exists.
 
 ## Step 9 — Submit
 

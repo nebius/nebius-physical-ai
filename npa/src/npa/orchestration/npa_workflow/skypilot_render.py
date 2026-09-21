@@ -592,6 +592,7 @@ def render_pip_extra_setup(extra: str) -> str:
 #: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
 #: arbitrary cluster configuration.
 TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
+_KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
 
 
 def normalize_task_config(resources: Mapping[str, Any]) -> dict[str, Any]:
@@ -1900,6 +1901,7 @@ class ImagePullRequirements:
     requires_operator: bool = False
     requires_kubernetes: bool = False
     pull_secret_name_sets: tuple[tuple[str, ...] | None, ...] = ()
+    service_account_names: tuple[str | None, ...] = ()
 
     @property
     def pull_secret_names(self) -> tuple[str, ...]:
@@ -1939,6 +1941,27 @@ def _task_pull_secret_names(
     return tuple(names)
 
 
+def _task_service_account_name(pod_spec: Mapping[str, Any]) -> str | None:
+    """Read a task ServiceAccount override, preserving an absent key."""
+
+    if "serviceAccountName" not in pod_spec:
+        return None
+    raw_name = pod_spec["serviceAccountName"]
+    if not isinstance(raw_name, str):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task serviceAccountName must be a string"
+        )
+    name = raw_name.strip()
+    if not name:
+        # Kubernetes admission defaults an explicitly empty field to `default`.
+        return "default"
+    if not _KUBERNETES_NAME_RE.fullmatch(name):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task serviceAccountName is not a valid Kubernetes name"
+        )
+    return name
+
+
 def plan_image_pull_requirements(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
@@ -1948,7 +1971,10 @@ def plan_image_pull_requirements(
 ) -> dict[str, ImagePullRequirements]:
     """Preserve VM and Kubernetes pull requirements for each exact image."""
 
-    paths: dict[str, list[tuple[str, tuple[str, ...] | None]]] = {}
+    paths: dict[
+        str,
+        list[tuple[str, tuple[str, ...] | None, str | None]],
+    ] = {}
     for step in steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
         resources = task.get("resources") or {}
@@ -1962,7 +1988,7 @@ def plan_image_pull_requirements(
             continue
         cloud = str(resources.get("cloud") or "").strip().casefold()
         if cloud not in {"kubernetes", "k8s"}:
-            paths.setdefault(image, []).append(("operator", None))
+            paths.setdefault(image, []).append(("operator", None, None))
             continue
         kubernetes = resources.get("kubernetes")
         kubernetes = kubernetes if isinstance(kubernetes, dict) else {}
@@ -1971,14 +1997,26 @@ def plan_image_pull_requirements(
         pod_spec = pod_config.get("spec")
         pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
         names = _task_pull_secret_names(pod_spec)
-        paths.setdefault(image, []).append(("kubernetes", names))
+        service_account_name = _task_service_account_name(pod_spec)
+        paths.setdefault(image, []).append(("kubernetes", names, service_account_name))
     return {
         image: ImagePullRequirements(
-            requires_operator=any(kind == "operator" for kind, _ in authorities),
-            requires_kubernetes=any(kind == "kubernetes" for kind, _ in authorities),
+            requires_operator=any(kind == "operator" for kind, _, _ in authorities),
+            requires_kubernetes=any(kind == "kubernetes" for kind, _, _ in authorities),
             pull_secret_name_sets=tuple(
-                dict.fromkeys(
-                    names for kind, names in authorities if kind == "kubernetes"
+                names
+                for names, _ in dict.fromkeys(
+                    (names, service_account_name)
+                    for kind, names, service_account_name in authorities
+                    if kind == "kubernetes"
+                )
+            ),
+            service_account_names=tuple(
+                service_account_name
+                for _, service_account_name in dict.fromkeys(
+                    (names, service_account_name)
+                    for kind, names, service_account_name in authorities
+                    if kind == "kubernetes"
                 )
             ),
         )

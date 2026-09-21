@@ -753,6 +753,11 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
             "k8s": {
                 "cloud": "kubernetes",
                 "image": image,
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {"serviceAccountName": "task-service-account"}
+                    }
+                },
             }
         },
         "initial": "only",
@@ -766,10 +771,11 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
     }
     path = tmp_path / "single-state.yaml"
     path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-    checked: list[list[str]] = []
+    checked: list[tuple[list[str], dict[str, object]]] = []
+    bootstrap_service_accounts: list[dict[str, str]] = []
 
     def check_images(images, **kwargs):  # noqa: ANN001
-        checked.append(images)
+        checked.append((images, kwargs))
         return [ImagePullCheck(image=item, status="ok") for item in images]
 
     monkeypatch.setattr(
@@ -778,14 +784,20 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
     )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
-        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
+        lambda **_kwargs: KubernetesPullTarget(
+            namespace="target-namespace",
+            service_account_name="base-service-account",
+        ),
     )
+
+    def bootstrap_contracts(*, images, service_accounts_by_image, **_kwargs):
+        bootstrap_service_accounts.append(service_accounts_by_image)
+        return [{"image": item, "state": "compatible"} for item in images]
+
     monkeypatch.setattr(
         workflow_cli,
         "_preflight_image_bootstrap_contracts",
-        lambda *, images, **_kwargs: [
-            {"image": item, "state": "compatible"} for item in images
-        ],
+        bootstrap_contracts,
     )
 
     workflow_cli._preflight_submit_image_manifests(
@@ -803,7 +815,11 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
         infra="k8s/target-context",
     )
 
-    assert checked == [[image], [image]]
+    assert [images for images, _ in checked] == [[image], [image]]
+    assert checked[1][1]["service_account_names_by_image"] == {
+        image: ("task-service-account",)
+    }
+    assert bootstrap_service_accounts == [{image: "task-service-account"}]
     assert result == {image: image}
 
 
@@ -845,6 +861,62 @@ def test_submit_preflight_preserves_explicit_empty_inherited_secret_layer(
         workflow_cli._preflight_submit_images(
             spec_path,
             options=object(),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/target-context",
+        )
+
+    assert exc_info.type.__name__ == "Exit"
+
+
+@pytest.mark.parametrize("gate", ["manifest", "target"])
+def test_invalid_task_pull_secret_fails_closed_at_both_image_gates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    gate: str,
+) -> None:
+    image = "registry.example/customer/private:latest"
+    document = {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "invalid-task-pull-secret"},
+        "config": {"bucket": "demo-bucket", "prefix": "demo"},
+        "resources": {
+            "k8s": {
+                "cloud": "kubernetes",
+                "image": image,
+                "kubernetes": {
+                    "pod_config": {"spec": {"imagePullSecrets": [{"name": ""}]}}
+                },
+            }
+        },
+        "initial": "only",
+        "states": {
+            "only": {
+                "resources": "k8s",
+                "run": {"shell": "true"},
+                "terminal": True,
+            }
+        },
+    }
+    path = tmp_path / "invalid-task-pull-secret.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: pytest.fail(
+            "invalid task delivery must fail before registry access"
+        ),
+    )
+    selected_gate = (
+        workflow_cli._preflight_submit_image_manifests
+        if gate == "manifest"
+        else workflow_cli._preflight_submit_images
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        selected_gate(
+            path,
+            options=SkypilotRenderOptions(),
             assume_decision="",
             enabled=True,
             infra="k8s/target-context",

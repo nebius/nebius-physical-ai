@@ -362,6 +362,7 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
         digest=DIGEST,
         context="ctx-exact",
         image_pull_secrets=("operator-registry-secret", "operator-registry-secret"),
+        service_account_name="exact-service-account",
         runner=_successful_runner(calls),
         terminal_observer=_terminal_observer(),
         nonce_factory=lambda: "c" * 16,
@@ -373,9 +374,9 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
         for item in calls[0]
         if item.startswith("--overrides=")
     )
-    assert json.loads(raw_overrides)["spec"]["imagePullSecrets"] == [
-        {"name": "operator-registry-secret"}
-    ]
+    override_spec = json.loads(raw_overrides)["spec"]
+    assert override_spec["imagePullSecrets"] == [{"name": "operator-registry-secret"}]
+    assert override_spec["serviceAccountName"] == "exact-service-account"
 
 
 def test_probe_rejects_invalid_image_pull_secret_name_before_creation() -> None:

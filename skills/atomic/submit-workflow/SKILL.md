@@ -173,7 +173,11 @@ successful `npa skypilot verify --cluster <exact-context>`:
   `--infra k8s/<context>` and resolves the same effective namespace SkyPilot
   0.12 uses: the selected kubeconfig context namespace, otherwise `default`.
   SkyPilot config-level `kubernetes.namespace` keys are not namespace
-  overrides. Every distinct rendered Secret set is probed independently.
+  overrides. The probe also uses the exact rendered ServiceAccount: the
+  context-effective `kubernetes.remote_identity`, with any config-level or task
+  `pod_config.spec.serviceAccountName` override applied. This matters because
+  ServiceAccount admission can attach additional pull Secrets. Every distinct
+  rendered Secret-and-ServiceAccount path is probed independently.
   SkyPilot 0.12 replaces the first
   `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
   that effective set instead of unioning overridden Secrets. An initial empty

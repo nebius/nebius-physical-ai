@@ -576,7 +576,10 @@ def test_mixed_image_preserves_vm_and_kubernetes_pull_requirements() -> None:
             "cloud": "kubernetes",
             "kubernetes": {
                 "pod_config": {
-                    "spec": {"imagePullSecrets": [{"name": "target-secret"}]}
+                    "spec": {
+                        "imagePullSecrets": [{"name": "target-secret"}],
+                        "serviceAccountName": "task-service-account",
+                    }
                 }
             },
         },
@@ -597,6 +600,7 @@ def test_mixed_image_preserves_vm_and_kubernetes_pull_requirements() -> None:
     assert requirement.requires_kubernetes is True
     assert requirement.pull_secret_names == ("target-secret",)
     assert requirement.pull_secret_name_sets == (("target-secret",),)
+    assert requirement.service_account_names == ("task-service-account",)
     assert set(
         plan_image_pull_secrets(
             spec, [kubernetes, operator], run_id="demo", options=options
@@ -634,6 +638,49 @@ def test_same_image_preserves_each_kubernetes_pull_secret_set() -> None:
         ("secret-b",),
     )
     assert requirement.pull_secret_names == ("secret-a", "secret-b")
+
+
+def test_same_secret_preserves_distinct_service_account_paths() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_service_account(state: str, name: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "imagePullSecrets": [{"name": "shared-secret"}],
+                            "serviceAccountName": name,
+                        }
+                    }
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [
+            with_service_account("path-a", "service-account-a"),
+            with_service_account("path-b", "service-account-b"),
+        ],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("shared-secret",),
+        ("shared-secret",),
+    )
+    assert requirement.service_account_names == (
+        "service-account-a",
+        "service-account-b",
+    )
 
 
 def test_pull_requirements_preserve_explicit_empty_task_pull_secrets() -> None:

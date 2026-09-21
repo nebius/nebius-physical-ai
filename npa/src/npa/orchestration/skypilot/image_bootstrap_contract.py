@@ -307,6 +307,7 @@ def probe_image_capabilities(
     namespace: str,
     kubeconfig: str = "",
     image_pull_secrets: tuple[str, ...] = (),
+    service_account_name: str = "skypilot-service-account",
     runtime_bootstrap: bool = False,
     observation_timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS,
     runner: Runner = _run,
@@ -319,6 +320,7 @@ def probe_image_capabilities(
         image, digest: Registry reference and immutable bytes to inspect.
         context, namespace, kubeconfig: Exact Kubernetes target and credentials file.
         image_pull_secrets: Existing registry authentication Secret names.
+        service_account_name: Exact ServiceAccount SkyPilot renders for the task.
         runtime_bootstrap: Reproduce SkyPilot's shell override and package
             installation for vendor images; first-party byte probes stay strict.
         observation_timeout_seconds: Watch deadline; zero waits indefinitely.
@@ -341,6 +343,10 @@ def probe_image_capabilities(
     if not _KUBERNETES_NAME_RE.fullmatch(str(namespace or "")):
         raise ImageBootstrapContractError(
             "an exact valid Kubernetes namespace is required"
+        )
+    if not _KUBERNETES_NAME_RE.fullmatch(str(service_account_name or "")):
+        raise ImageBootstrapContractError(
+            "an exact valid Kubernetes ServiceAccount is required"
         )
     pull_secret_names = tuple(
         dict.fromkeys(str(name or "").strip() for name in image_pull_secrets)
@@ -493,23 +499,20 @@ def probe_image_capabilities(
             f"npa.nebius.com/probe-id={probe_id}"
         )
         try:
-            overrides = []
+            override_spec: dict[str, Any] = {
+                "serviceAccountName": service_account_name,
+            }
             if pull_secret_names:
-                overrides = [
-                    "--overrides="
-                    + json.dumps(
-                        {
-                            "apiVersion": "v1",
-                            "spec": {
-                                "imagePullSecrets": [
-                                    {"name": secret_name}
-                                    for secret_name in pull_secret_names
-                                ]
-                            },
-                        },
-                        separators=(",", ":"),
-                    )
+                override_spec["imagePullSecrets"] = [
+                    {"name": secret_name} for secret_name in pull_secret_names
                 ]
+            overrides = [
+                "--overrides="
+                + json.dumps(
+                    {"apiVersion": "v1", "spec": override_spec},
+                    separators=(",", ":"),
+                )
+            ]
             create = runner(
                 [
                     *common,
