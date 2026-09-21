@@ -1741,7 +1741,7 @@ def test_a_missing_workbench_image_carries_its_build_command(
                 return (
                     401,
                     {
-                        "www-authenticate": 'Bearer realm="https://cr.x/v2/token/",service="cr.x"'
+                        "www-authenticate": 'Bearer realm="https://registry.example/v2/token/",service="registry.example"'
                     },
                     b"",
                 )

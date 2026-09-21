@@ -265,6 +265,7 @@ def test_token_challenge_preserves_existing_realm_query_parameters() -> None:
 @pytest.mark.parametrize(
     "realm",
     [
+        f"{REGISTRY}/token",
         f"http://{REGISTRY}/token",
         "https://token.attacker.invalid/mint",
         f"https://operator:secret@{REGISTRY}/token",
@@ -297,7 +298,12 @@ def test_untrusted_token_realm_never_receives_basic_credentials(realm: str) -> N
     assert "Authorization" not in calls[0][1]
 
 
-def test_metadata_fetch_rejects_cross_origin_token_realm_before_credentials() -> None:
+@pytest.mark.parametrize(
+    "realm", [f"{REGISTRY}/token", "https://token.attacker.invalid/mint"]
+)
+def test_metadata_fetch_rejects_untrusted_token_realm_before_credentials(
+    realm: str,
+) -> None:
     calls = 0
 
     def registry(url: str, headers: dict[str, str], timeout: int):
@@ -308,11 +314,7 @@ def test_metadata_fetch_rejects_cross_origin_token_realm_before_credentials() ->
             pytest.fail("cross-origin realm must fail before credential forwarding")
         return (
             401,
-            {
-                "www-authenticate": (
-                    'Bearer realm="https://token.attacker.invalid/mint"'
-                )
-            },
+            {"www-authenticate": f'Bearer realm="{realm}"'},
             b"",
         )
 
@@ -427,9 +429,29 @@ def test_a_public_image_is_pullable_without_credentials() -> None:
 def test_credentials_are_still_sent_when_present() -> None:
     registry = AnonymousRegistry()
 
-    check_image_pull(IMAGE, username="iam", password="tok", fetcher=registry)
+    check = check_image_pull(
+        "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2",
+        username="operator",
+        password="synthetic-registry-token",
+        fetcher=registry,
+    )
 
+    assert check.ok
     assert "Authorization" in (registry.token_auth_headers or {})
+
+
+def test_foreign_registry_challenge_does_not_receive_supplied_credentials() -> None:
+    registry = AnonymousRegistry()
+
+    check = check_image_pull(
+        IMAGE,
+        username="operator",
+        password="synthetic-registry-token",
+        fetcher=registry,
+    )
+
+    assert check.status == "unauthorized"
+    assert registry.token_auth_headers is None
 
 
 def test_public_registry_never_receives_foreign_nebius_credentials(
@@ -1211,6 +1233,10 @@ kubernetes:
         topology.kubernetes.io/zone: global-zone
       tolerations:
         - {key: global-taint, operator: Exists}
+      topologySpreadConstraints:
+        - topologyKey: topology.kubernetes.io/zone
+          maxSkew: 1
+          whenUnsatisfiable: ScheduleAnyway
   context_configs:
     target-context:
       namespace: team-namespace
@@ -1226,6 +1252,12 @@ kubernetes:
           runtimeClassName: nvidia
           tolerations:
             - {key: context-taint, operator: Exists}
+          topologySpreadConstraints:
+            - topologyKey: topology.kubernetes.io/zone
+              maxSkew: 2
+            - topologyKey: topology.kubernetes.io/rack
+              maxSkew: 1
+              whenUnsatisfiable: DoNotSchedule
 """,
         encoding="utf-8",
     )
@@ -1274,6 +1306,18 @@ kubernetes:
         "tolerations": [
             {"key": "global-taint", "operator": "Exists"},
             {"key": "context-taint", "operator": "Exists"},
+        ],
+        "topologySpreadConstraints": [
+            {
+                "maxSkew": 2,
+                "topologyKey": "topology.kubernetes.io/zone",
+                "whenUnsatisfiable": "ScheduleAnyway",
+            },
+            {
+                "maxSkew": 1,
+                "topologyKey": "topology.kubernetes.io/rack",
+                "whenUnsatisfiable": "DoNotSchedule",
+            },
         ],
     }
 
@@ -1551,6 +1595,7 @@ def _target_probe_runner(
     waiting_reason: str = "",
     active_deadline_seconds: int | None = 30,
     pod_placement: dict[str, object] | None = None,
+    service_account_name: str = "skypilot-service-account",
 ):
     calls: list[list[str]] = []
     deleted = False
@@ -1587,7 +1632,7 @@ def _target_probe_runner(
         if "create" in cmd:
             manifest = json.loads(kwargs["input"])
             assert manifest["spec"]["imagePullSecrets"] == [{"name": "pull-secret"}]
-            assert manifest["spec"]["serviceAccountName"] == "skypilot-service-account"
+            assert manifest["spec"]["serviceAccountName"] == service_account_name
             expected_tolerations = [
                 {
                     "key": "nvidia.com/gpu",
@@ -1775,7 +1820,7 @@ def test_indeterminate_create_still_uses_uid_preconditioned_cleanup() -> None:
 
 def test_target_pull_probe_uses_sky_tasks_default_namespace() -> None:
     commands: list[list[str]] = []
-    run, _calls = _target_probe_runner()
+    run, _calls = _target_probe_runner(service_account_name="exact-service-account")
 
     def recording_runner(cmd, **kwargs):  # noqa: ANN001
         commands.append(cmd)

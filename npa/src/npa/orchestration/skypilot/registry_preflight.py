@@ -178,17 +178,52 @@ def merge_skypilot_pull_secret_names(
     return (override_names[0], *base_names[1:])
 
 
-def _merge_kubernetes_config_value(base: Any, override: Any) -> Any:
+def _merge_kubernetes_config_value(
+    base: Any,
+    override: Any,
+    *,
+    field_name: str = "",
+) -> Any:
     if isinstance(base, Mapping) and isinstance(override, Mapping):
         merged = dict(base)
         for key, value in override.items():
             merged[key] = (
-                _merge_kubernetes_config_value(merged[key], value)
+                _merge_kubernetes_config_value(
+                    merged[key],
+                    value,
+                    field_name=str(key),
+                )
                 if key in merged
                 else value
             )
         return merged
     if isinstance(base, list) and isinstance(override, list):
+        if field_name == "topologySpreadConstraints":
+            merged_list = list(base)
+            for override_item in override:
+                topology_key = (
+                    str(override_item.get("topologyKey") or "")
+                    if isinstance(override_item, Mapping)
+                    else ""
+                )
+                existing_index = next(
+                    (
+                        index
+                        for index, base_item in enumerate(merged_list)
+                        if topology_key
+                        and isinstance(base_item, Mapping)
+                        and str(base_item.get("topologyKey") or "") == topology_key
+                    ),
+                    None,
+                )
+                if existing_index is None:
+                    merged_list.append(override_item)
+                else:
+                    merged_list[existing_index] = _merge_kubernetes_config_value(
+                        merged_list[existing_index],
+                        override_item,
+                    )
+            return merged_list
         return [*base, *override]
     return override
 
@@ -479,6 +514,7 @@ def _registry_token_url(
     )
     if (
         realm_authority is None
+        or parsed_realm.scheme.casefold() != "https"
         or parsed_realm.fragment
         or realm_authority not in source_authorities | trusted_cross_origin
     ):
