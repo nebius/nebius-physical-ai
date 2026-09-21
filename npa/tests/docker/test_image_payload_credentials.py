@@ -351,6 +351,15 @@ CHUNK = credentials.CONTENT_CHUNK
         (b"aws_secret_access_key=abcdefgh", "credential_assignment"),
         (b"hf_token: abcdefghij", "credential_assignment"),
     ],
+    ids=[
+        "quoted-value-two-chunks",
+        "quoted-value-three-chunks",
+        "whitespace-over-one-chunk",
+        "assignment-name-crosses-boundary",
+        "short-quoted-value",
+        "aws-assignment",
+        "hf-assignment",
+    ],
 )
 def test_assignments_match_across_any_number_of_chunks(
     sample: bytes, kind: str
@@ -374,6 +383,14 @@ def test_assignments_match_across_any_number_of_chunks(
         b"hf_token=abc",
         # The name appears, but never as an assignment.
         b"see the password policy document for details",
+    ],
+    ids=[
+        "repeated-benign-code",
+        "unterminated-two-chunk-value",
+        "shell-reference",
+        "template-placeholder",
+        "short-token",
+        "mention-without-assignment",
     ],
 )
 def test_streaming_matcher_has_negative_controls(sample: bytes) -> None:
