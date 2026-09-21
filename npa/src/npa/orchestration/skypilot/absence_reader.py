@@ -131,7 +131,8 @@ def _get(
             _return_http_data_only=True,
         )
     except ApiException as exc:
-        status, body = exc.status, str(exc.body or "").encode()
+        status = exc.status
+        body = exc.body if isinstance(exc.body, bytes) else str(exc.body or "").encode()
     else:
         try:
             body, status = response.data, response.status

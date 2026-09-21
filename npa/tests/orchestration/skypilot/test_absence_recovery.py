@@ -470,18 +470,22 @@ def test_live_ambiguous_and_incomplete_reads_refuse(sample, tmp_path, kind, mode
 
 
 @contextmanager
-def metadata_server(foreign):
+def metadata_server(foreign, fixed=None):
     calls = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             calls.append(self.path)
             payload = (
-                page([foreign], "")
-                if "continue=" in self.path
-                else page(token="second")
+                fixed[1]
+                if fixed
+                else (
+                    page([foreign], "")
+                    if "continue=" in self.path
+                    else page(token="second")
+                )
             )
-            self.send_response(200)
+            self.send_response(fixed[0] if fixed else 200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps(payload).encode())
@@ -521,6 +525,34 @@ def test_real_kubernetes_http_client_reads_all_pages_and_preserves_foreign(
         assert calls == ["/api/v1/pods", "/api/v1/pods?continue=second"]
         assert len(records) == 2
         assert all(record["method"] == "GET" for record in records)
+
+
+def test_real_kubernetes_http_404_preserves_original_response_bytes(tmp_path):
+    from kubernetes.client import ApiClient, Configuration
+
+    payload = {
+        "kind": "Status",
+        "reason": "NotFound",
+        "details": {"name": "example-head"},
+    }
+    original = json.dumps(payload).encode()
+    with metadata_server(None, fixed=(404, payload)) as (port, calls):
+        config = Configuration(host=f"http://127.0.0.1:{port}")
+        records = []
+        with ApiClient(config) as client:
+            status, body = reader._get(
+                client,
+                "/api/v1/namespaces/default/pods/example-head",
+                [],
+                tmp_path,
+                records,
+            )
+        assert status == 404
+        assert body == original
+        assert json.loads(body) == payload
+        assert (tmp_path / records[0]["file"]).read_bytes() == original
+        assert records[0]["sha256"] == digest(original)
+        assert calls == ["/api/v1/namespaces/default/pods/example-head"]
 
 
 def test_new_naming_source_bytes_cannot_extend_the_contract():
