@@ -671,7 +671,7 @@ def test_status_blocker_probe_uses_exact_isolated_controller_kubeconfig(
     monkeypatch.setattr(
         workflow_cli,
         "_resolve_sky_bin",
-        lambda sky_bin="": "/tmp/sky",
+        lambda sky_bin="": str(tmp_path / "sky"),
     )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow.workflow_task_statuses",

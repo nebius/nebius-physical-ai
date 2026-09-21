@@ -138,9 +138,35 @@ asserting equality, then compares independent loads using those same observation
 bytes. It retains the historical mismatch explicitly. Passing that repeatability
 check alone would not recover the missing historical native-output evidence.
 
+The first attempt at that diagnostic stopped before recording observations:
+NumPy cannot directly serialize a typed JAX random key. Its four original
+diagnostic files were recovered and hash-verified. This is a harness failure;
+it supplies no new action-repeatability or export-parity result.
+
 Development indices 10–19 are reused and are not unseen data. Reporting indices
 0–9 remain separate until the choice is fixed. Keep interrupted panels and failed
 runs visible; do not select lucky reruns. The official evaluator supplies Q under
 the [challenge rules](https://behavior.stanford.edu/challenge/evaluation.html).
 Neither this small panel nor lower held-out loss establishes a competitive score
 across all 100 challenge tasks.
+
+## Fresh-process trash comparison
+
+The new campaign starts a separate policy process for every episode. Its frozen
+short-horizon RLC baseline completed all ten development instances, 311–320:
+
+| Policy | Mean Q | Full successes | Mean simulator steps |
+| --- | ---: | ---: | ---: |
+| Stock checkpoint with shorter late-stage chunks | 0.333333 | 1/10 | 7,608.7 |
+
+The aggregation stage downloaded and hashed every original metrics file and
+video, and fully decoded all ten videos. The Workbench runner is pinned to
+`8921f8f252d24485c4dfdde72c87bcc38eb4db70`, and the unchanged upstream evaluator
+to `b1979916ec1549b10a4e65e630bc6504a9af1b00`. The panel is
+`183e6e38981444fe9523a80edf5daff4c724c6e3cd8a20982f01b2108ebfb9cf`.
+
+This baseline includes an execution modification; it is not a measurement of
+native RLC. Its score is separate from the historical 0.50 result above, whose
+policy process lifecycle differed. The transition-refresh candidate is running.
+Native RLC and both released Comet checkpoints still need the same evaluation
+before the baseline tournament and independent reporting gate can be completed.
