@@ -15,16 +15,14 @@ lint, guardrails, and every security gate. The test selector comes from the
 trusted base commit and uses its merge-candidate policy for both events,
 including when an older base still has a narrower PR policy. Missing policy
 keeps full validation and invalid comparisons fail. The full three-interpreter
-test audit runs daily instead of immediately after each merge. Repository-wide
-job concurrency
-limits validation to seven PR jobs, nine merge-candidate jobs, and three background
-audit jobs. Each candidate pool has a separate slot for the short test-scope
-selector, coverage, and the final required check. Shards can start without
-waiting for long docs and guardrail jobs. Optional timing reports use the audit
-pool. These groups bound repository demand but cannot reserve organization
-runners. See the
+test audit runs daily instead of immediately after each merge. Independent
+validation jobs use available GitHub runner capacity without shared job queues.
+The parent workflow still cancels superseded PR work; distinct candidate groups
+keep unrelated PRs and merge candidates independent. Scope selection, coverage,
+and final checks wait for their declared dependencies and an available runner.
+Organization runner limits can still cause waiting. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
-for queue retention, superseded-commit cancellation, and rollout limits.
+for cancellation and rollout behavior, including refreshing older PR branches.
 
 The image workflow has no top-level path filter. Its two automatic jobs always
 report an internal, fail-closed scope decision. Image, packaging, workflow, and

@@ -514,8 +514,8 @@ is combined before enforcing the 60% floor on both events.
 
 Full suites collect smoke tests and run the CLI install check in the shards,
 avoiding duplicate smoke and subsystem jobs. Cypress runs once in its own job,
-never inside a pytest shard. Cached constrained installs, xdist workers, and the
-existing merge-priority runner pools retain fast feedback without deferring
+never inside a pytest shard. Cached constrained installs, xdist workers, and
+independent job scheduling retain fast feedback without deferring
 coverage until queue admission. Scheduled and manual audits retain four shards
 on each of Python 3.10, 3.12, and 3.14.
 
@@ -584,43 +584,34 @@ of the parent workflow can interrupt reporting.
 
 ### Validation concurrency
 
-Runner jobs share repository-wide concurrency slots across the validation
-workflows. Adding PRs therefore adds waiting work without multiplying active
-jobs. The pools are independent:
+Independent validation jobs use GitHub's available runner capacity. Validation
+workflows have no job-level concurrency locks or matrix `max-parallel` caps:
+all five pytest shards and browser checks can run together, and unrelated PRs,
+merge candidates, and audits do not serialize through repository-wide slots.
+Scope selection, coverage aggregation, and the final required check wait only
+for their declared dependencies and an available runner.
 
-| Pool | Maximum active runner jobs | Shared slots |
-|---|---:|---|
-| PR checks | 7 | metadata, docs/guardrails, policy, runtime, two test slots, scope/completion |
-| Merge candidates | 9 | metadata/docs/guardrails, policy, runtime, five test slots, scope/completion |
-| Main, scheduled, and manual audits | 3 | metadata, security, tests |
+The parent workflow retains a concurrency group per PR so a newer commit
+cancels that PR's superseded validation, including its reusable child workflows.
+Merge candidates have distinct groups keyed by candidate SHA. Main pushes
+supersede older main runs. Reusable workflows use distinct group prefixes so
+they cannot hold or cancel their parent's group. Publication and live-workload
+concurrency controls have separate purposes and remain independent of this policy.
 
-These are shared totals for each pool, not per-PR or per-candidate allowances.
-PR shards 1/3/5 share one test slot; shards 2/4 and browser checks share the
-other. Merge shards keep five slots, with browser checks sharing shard 5's slot.
-Each candidate pool has a completion slot for the short test-scope selector,
-coverage, and the final required check. Test selection can start the shards
-without waiting behind long docs or guardrail jobs, and completed suites can
-report their result promptly.
-This also lets a superseded PR report its unsuccessful final check promptly
-and release its workflow lock for the replacement commit.
-Optional timing reports use the audit metadata slot even for candidate runs.
+The former shared pools limited every PR's tests to two active jobs across the
+repository. A dependency-update batch filled their 100-job pending queues and
+caused jobs to be rejected before tests ran. Removing those shared locks avoids
+that concurrency-group queue limit; GitHub plan limits and organization-wide
+runner availability can still cause waiting. Separate concurrency groups do
+not reserve runners or guarantee merge priority. Use the CI timing report to
+distinguish runner waiting from execution, and inspect organization runner
+capacity if waiting persists. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 
-Each job uses `queue: max` and `cancel-in-progress: false`. GitHub retains up to
-100 waiting jobs per slot; additional jobs are cancelled when that platform
-queue is full. Do not omit `queue: max`: the default replaces an already waiting
-job when another arrives. The parent workflow still cancels superseded commits
-of the same PR. Reusable workflow callers must not hold runner slots while their
-children wait for those slots. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
-
-The 19-job ceiling applies to these validation workflows once they use this
-configuration. Older branches/runs and publication workflows are outside it;
-refresh an old branch when its PR checks need the new scheduling policy.
-Merge candidates receive the policy from the combined commit after it lands on
-`main`. Separate groups limit this repository's demand; they do not reserve
-physical runners against other repositories in the organization. Busy PRs can
-wait longer to leave capacity for merges. Use the timing report to check the
-tradeoff against actual runner capacity before increasing the pools. Required
-checks and the merge queue timeout remain unchanged.
+Already queued runs keep the workflow configuration from their original commit.
+After this policy lands on `main`, refresh older PR branches to create runs with
+the new configuration; rerunning an old commit does not adopt it. Merge
+candidates receive it through their combined commit. Required checks, coverage,
+and the merge queue timeout retain their existing behavior.
 
 ### Merge readiness and queue rejections
 
