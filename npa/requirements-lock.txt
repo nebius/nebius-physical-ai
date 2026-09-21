@@ -9,7 +9,7 @@ cffi==2.0.0
 click==8.3.3
 coverage==7.13.5
 cryptography==50.0.0
-fastapi==0.136.1
+fastapi==0.141.1
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1

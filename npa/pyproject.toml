@@ -62,7 +62,7 @@ dependencies = [
     # (`npa rerun`, sim-viz adapters).
     "rerun-sdk==0.31.4",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
-    "fastapi~=0.136.1",
+    "fastapi>=0.136.1,<0.142.0",
     "python-multipart>=0.0.31",
 ]
 
@@ -156,7 +156,7 @@ dev = [
     "uvicorn>=0.52.4",
     "websockets>=10,<16",
     "google-cloud-storage==3.13.1",
-    "fastapi~=0.136.1",
+    "fastapi>=0.136.1,<0.142.0",
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
     "h5py==3.16.0",
