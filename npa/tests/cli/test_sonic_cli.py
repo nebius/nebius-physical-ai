@@ -792,19 +792,8 @@ def test_sonic_status_endpoint_required() -> None:
     assert "requires --project-id" in result.output
 
 
-def test_sonic_status_serverless_reports_waiting_for_capacity_with_hint(mocker) -> None:
-    client = mocker.MagicMock()
-    client.get_job.return_value = JobInfo(
-        id="job-1",
-        name="train-1",
-        project_id="project-1",
-        status="queued",
-        queued_for_seconds=492,
-    )
-    client.classify_queue_state.return_value = "waiting_for_capacity"
-    mocker.patch("npa.cli.workbench.sonic.status.ServerlessClient", return_value=client)
-
-    result = runner.invoke(
+def _sonic_serverless_status_result():
+    return runner.invoke(
         app,
         [
             "workbench",
@@ -821,11 +810,40 @@ def test_sonic_status_serverless_reports_waiting_for_capacity_with_hint(mocker) 
         ],
     )
 
+
+@pytest.mark.parametrize(
+    ("queue_status", "classification", "seconds", "hint_prefix"),
+    [
+        ("waiting_for_capacity", "capacity", 492, "Platform may be at capacity"),
+        ("scheduled", "scheduled", 5, "Job is scheduled and waiting to start"),
+    ],
+)
+def test_sonic_status_serverless_preserves_queued_status_and_classification(
+    mocker,
+    queue_status,
+    classification,
+    seconds,
+    hint_prefix,
+) -> None:
+    """Existing status pollers keep seeing queued; queue details remain additive."""
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="queued",
+        queued_for_seconds=seconds,
+    )
+    client.classify_queue_state.return_value = queue_status
+    mocker.patch("npa.cli.workbench.sonic.status.ServerlessClient", return_value=client)
+    result = _sonic_serverless_status_result()
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["status"] == "waiting_for_capacity"
-    assert payload["queue_state_classification"] == "capacity"
-    assert payload["queued_for_seconds"] == 492
+    assert payload["status"] == "queued"
+    assert payload["raw_status"] == "queued"
+    assert payload["queue_state_classification"] == classification
+    assert payload["queued_for_seconds"] == seconds
+    assert payload["hint"].startswith(hint_prefix)
     assert payload["project_id"] == "project-1"
     assert payload["runtime"] == "serverless"
 
