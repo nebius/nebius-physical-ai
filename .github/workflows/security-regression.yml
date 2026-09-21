@@ -16,6 +16,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
+  # Runner jobs share repository-wide slots; keep reusable callers slot-free.
+  # See CONTRIBUTING.md#validation-concurrency for the pool sizes and queue rules.
   test-gate:
     if: github.event_name != 'push'
     uses: ./.github/workflows/test.yml
@@ -32,6 +34,10 @@ jobs:
   # become main-only audits. Existing branch protection remains fail closed
   # throughout the rollout and the parent concurrency cancels them atomically.
   gitleaks:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-checks
+      queue: max
+      cancel-in-progress: false
     if: github.event_name != 'push'
     name: gitleaks
     runs-on: ubuntu-latest
@@ -63,6 +69,10 @@ jobs:
             --log-opts="${BASE_SHA}..HEAD"
 
   scan:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-checks
+      queue: max
+      cancel-in-progress: false
     if: github.event_name != 'push'
     name: scan
     runs-on: ubuntu-latest
@@ -117,6 +127,10 @@ jobs:
       security-events: write
 
   security-scanners:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'policy' || 'security' }}
+      queue: max
+      cancel-in-progress: false
     name: security-scanners
     runs-on: ubuntu-latest
     steps:
@@ -169,6 +183,10 @@ jobs:
             --output-dir "$RUNNER_TEMP/security-report"
 
   security-runtime:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'runtime' || 'security' }}
+      queue: max
+      cancel-in-progress: false
     name: hostile-input-runtime
     runs-on: ubuntu-latest
     env:
@@ -222,6 +240,10 @@ jobs:
             -q
 
   security-regression:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'completion' || 'checks' }}
+      queue: max
+      cancel-in-progress: false
     name: security-regression
     needs:
       - test-gate
@@ -260,6 +282,10 @@ jobs:
           fi
 
   ci-timing-report:
+    concurrency:
+      group: npa-validation-audit-checks
+      queue: max
+      cancel-in-progress: false
     name: ci-timing-report
     needs: security-regression
     # Failed validation is useful evidence; superseded runs release their runners.
