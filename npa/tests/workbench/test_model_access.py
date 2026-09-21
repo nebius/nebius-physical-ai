@@ -6,6 +6,8 @@ import pytest
 
 from npa.workbench.model_access import (
     HF_GATING_LAST_VERIFIED,
+    NGC,
+    UnknownAccessCapabilityError,
     WORKBENCH_ASSETS,
     access_note,
     all_capabilities,
@@ -37,7 +39,7 @@ def _public_asset():
 
 
 def test_catalog_matches_current_nvidia_hf_gating() -> None:
-    assert HF_GATING_LAST_VERIFIED == "2026-08-31"
+    assert HF_GATING_LAST_VERIFIED == "2026-09-04"
     repos = {a.repo for a in WORKBENCH_ASSETS}
     assert "nvidia/GR00T-N1.7-3B" in repos
     assert "nvidia/Alpamayo2-Super" in repos
@@ -74,15 +76,166 @@ def test_assets_for_filters_by_capability() -> None:
     assert assets_for([]) == WORKBENCH_ASSETS
 
 
-def test_paidf_access_is_scoped_to_the_gated_transfer_model() -> None:
+def test_assets_for_unknown_capability_fails_closed() -> None:
+    with pytest.raises(UnknownAccessCapabilityError, match="unknown access capability"):
+        assets_for(["paidf-dig", "catalog-drift"])
+
+
+def test_every_catalog_access_capability_has_an_asset_contract() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    capabilities = {
+        capability
+        for entry in TOOL_CATALOG.values()
+        for capability in entry.access_capabilities
+    }
+    assert capabilities
+    for capability in sorted(capabilities):
+        assert assets_for([capability]), capability
+
+
+def test_paidf_capability_combinations_are_stable_and_deduplicated() -> None:
+    capabilities = (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    )
+    combined = assets_for((*capabilities, "paidf-dig", "paidf-iaa"))
+    identities = [
+        (asset.provider, asset.repo, asset.repo_type, asset.revision)
+        for asset in combined
+    ]
+    assert len(identities) == len(set(identities))
+    assert {
+        capability
+        for asset in combined
+        for capability in asset.capabilities
+        if capability in capabilities
+    } == set(capabilities)
+    assert {asset.repo for asset in combined if asset.provider == NGC} == {
+        asset.repo
+        for asset in WORKBENCH_ASSETS
+        if asset.provider == NGC and set(asset.capabilities).intersection(capabilities)
+    }
+
+
+@pytest.mark.parametrize(
+    ("capability", "expected_repos"),
+    [
+        (
+            "paidf-dig",
+            {
+                "nvidia/Cosmos3-Nano",
+                "nvidia/Cosmos3-Edge",
+                "nvidia/Cosmos-Guardrail1",
+                "facebook/dinov2-large",
+                "nvidia/C-RADIOv3-B",
+                "Wan-AI/Wan2.2-TI2V-5B",
+                "facebook/sam2.1-hiera-large",
+                "Qwen/Qwen3Guard-Gen-0.6B",
+                "Qwen/Qwen3-VL-8B-Instruct",
+            },
+        ),
+        ("paidf-iaa", {"Qwen/Qwen-Image-Edit-2511"}),
+        (
+            "paidf-evg",
+            {
+                "nvidia/Cosmos3-Super-Image2Video",
+                "Qwen/Qwen3Guard-Gen-0.6B",
+                "nvidia/Cosmos-1.0-Guardrail",
+            },
+        ),
+        (
+            "paidf-label-detection",
+            {
+                "nvcr.io/nvidia/paidf-detection-and-tracking-rfdetr-service@sha256:6b35e63b95cab7cd772906bcb08be978de7526427f0d1925ab84439dd4a9561e"
+            },
+        ),
+        (
+            "paidf-label-captioning",
+            {
+                "nvcr.io/nvidia/paidf-captioning-service@sha256:17e1e3f53cc66342183f7d0b6eed76907993bb325a13db90c46d9a8cf664d804"
+            },
+        ),
+        (
+            "paidf-label-visual-qa",
+            {
+                "nvcr.io/nvidia/paidf-visual-qa-service@sha256:e681c8dee849c7ac9fc5b182f51e9efd0da460972b08850d40f00aa9d5e3c97c"
+            },
+        ),
+        (
+            "paidf-label-attribute-search",
+            {
+                "nvcr.io/nvidia/paidf-event-and-person-attribute-search-service@sha256:0f581ff6d92efd391281e5787a8b1fda76556443ade47c1f5d59d4c345a01f6a"
+            },
+        ),
+    ],
+)
+def test_paidf_specific_capability_resolves_exact_runtime_assets(
+    capability: str, expected_repos: set[str]
+) -> None:
+    assert {asset.repo for asset in assets_for([capability])} == expected_repos
+
+
+def test_paidf_umbrella_alias_contains_every_specific_capability_asset() -> None:
+    umbrella = set(assets_for(["paidf"]))
+    specific_capabilities = (
+        "paidf-dig",
+        "paidf-iaa",
+        "paidf-evg",
+        "paidf-label-detection",
+        "paidf-label-captioning",
+        "paidf-label-visual-qa",
+        "paidf-label-attribute-search",
+    )
+    assert umbrella
+    for capability in specific_capabilities:
+        assert set(assets_for([capability])).issubset(umbrella), capability
+
+
+def test_paidf_umbrella_probes_every_ngc_artifact() -> None:
+    observed: list[str] = []
+
+    results = check_workbench_access(
+        hf_token="hf_x",
+        ngc_key="nvapi-x",
+        hf_validator=lambda *args: _HFResult(ok=True),
+        ngc_validator=lambda _key, *, image: observed.append(image) or "reachable",
+        capabilities=["paidf"],
+        gated_only=True,
+    )
+
+    expected = {asset.repo for asset in assets_for(["paidf"]) if asset.provider == NGC}
+    assert expected
+    assert set(observed) == expected
+    assert len(observed) == len(expected)
+    ngc = next(result for result in results if result.name == "ngc")
+    assert ngc.status == PASS
+    assert f"all {len(expected)} selected NGC artifact(s)" in ngc.summary
+
+
+def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> None:
     from npa.workbench.cosmos.control_contract import COSMOS_TRANSFER_CHECKPOINTS
 
     assets = assets_for(["paidf"])
-    assert {asset.repo for asset in assets} == {"nvidia/Cosmos-Transfer2.5-2B"}
-    assert {asset.revision for asset in assets} == {
+    transfer_assets = [
+        asset for asset in assets if asset.repo == "nvidia/Cosmos-Transfer2.5-2B"
+    ]
+    assert {asset.revision for asset in transfer_assets} == {
         checkpoint.revision for checkpoint in COSMOS_TRANSFER_CHECKPOINTS.values()
     }
-    assert all(asset.gated for asset in assets)
+    by_repo = {asset.repo: asset for asset in assets}
+    assert by_repo["Qwen/Qwen-Image-Edit-2511"].revision == (
+        "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9"
+    )
+    assert by_repo["nvidia/Cosmos3-Super-Image2Video"].revision == (
+        "4f847566f3d3388fbf0ac07b99dd1a6432db9ecd"
+    )
+    assert by_repo["nvidia/Cosmos-Guardrail1"].gated
 
 
 def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None:
@@ -390,7 +543,7 @@ def test_access_note_all_ok_is_one_positive_line() -> None:
         hf_token="hf_x",
         ngc_key="nvapi-x",
         hf_validator=lambda *args: _HFResult(ok=True),
-        ngc_validator=lambda key: "reachable",
+        ngc_validator=lambda key, *, image: "reachable",
         gated_only=True,
     )
     note = access_note(results)
@@ -437,7 +590,7 @@ def test_access_note_distinguishes_ngc_credential_rejection() -> None:
         hf_token="hf_synthetic",
         ngc_key="nvapi-synthetic",
         hf_validator=lambda *args: _HFResult(ok=True),
-        ngc_validator=lambda key: "auth-401",
+        ngc_validator=lambda key, *, image: "auth-401",
         gated_only=True,
     )
 

@@ -20,15 +20,63 @@ function agentReq(path, options = {}) {
   });
 }
 
+function exactSourceQuery(entry) {
+  return new URLSearchParams({
+    project_id: String(entry.project_id || ""),
+    resource_bucket: String(entry.bucket || ""),
+    resolved_prefix: String(entry.resolved_prefix || ""),
+    source_selected: "1",
+  }).toString();
+}
+
+function discoverExactRun(id, cursor = "", found = [], seenCursors = new Set()) {
+  const params = new URLSearchParams({ q: id, limit: "100" });
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(`/api/artifacts/runs?${params.toString()}`).then((resp) => {
+    expect(resp.status, "training run discovery status").to.eq(200);
+    const matches = (resp.body.runs || []).filter(
+      (entry) => String(entry.run_id || "") === id,
+    );
+    const all = [...found, ...matches];
+    const nextCursor = String(resp.body.next_cursor || "");
+    if (!nextCursor) return all;
+    expect(seenCursors.has(nextCursor), "run discovery cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return discoverExactRun(id, nextCursor, all, seenCursors);
+  });
+}
+
+function collectRunArtifacts(source, cursor = "", artifacts = [], seenCursors = new Set()) {
+  const params = new URLSearchParams(exactSourceQuery(source));
+  if (cursor) params.set("cursor", cursor);
+  return agentReq(
+    `/api/artifacts/run/${encodeURIComponent(source.run_ref)}?${params.toString()}`,
+  ).then((resp) => {
+    expect(resp.status, "training artifact inventory status").to.eq(200);
+    const body = resp.body || {};
+    const merged = [...artifacts, ...(body.artifacts || [])];
+    const nextCursor = String(body.next_cursor || "");
+    if (!nextCursor) return merged;
+    expect(seenCursors.has(nextCursor), "artifact inventory cursor must advance").to.eq(false);
+    seenCursors.add(nextCursor);
+    return collectRunArtifacts(source, nextCursor, merged, seenCursors);
+  });
+}
+
 function resolveRecording(suffix) {
   const id = runId();
   expect(id, "explicit live GR00T run id").to.not.equal("");
-  return agentReq(`/api/artifacts/run/${id}`).then((resp) => {
-    expect(resp.status).to.eq(200);
-    const artifacts = (resp.body && resp.body.artifacts) || [];
-    const artifact = artifacts.find((item) => String(item.key || "").endsWith(suffix));
-    expect(artifact, `${suffix} artifact for ${id}`).to.exist;
-    return cy.wrap({ id, artifact }, { log: false });
+  return discoverExactRun(id).then((matches) => {
+    expect(matches, "one unambiguous server-issued training source").to.have.length(1);
+    const source = matches[0];
+    expect(String(source.run_ref || ""), "source-qualified run reference").to.match(/^npa1_/);
+    expect(String(source.project_id || ""), "source project identity").not.to.eq("");
+    expect(String(source.bucket || ""), "source bucket identity").not.to.eq("");
+    return collectRunArtifacts(source).then((artifacts) => {
+      const artifact = artifacts.find((item) => String(item.key || "").endsWith(suffix));
+      expect(artifact, `${suffix} artifact for ${id}`).to.exist;
+      return cy.wrap({ id, artifact, source }, { log: false });
+    });
   });
 }
 
@@ -53,10 +101,18 @@ describe("GR00T training RRD and MCAP against the live agent", () => {
   });
 
   it("loads the exact RRD and renders it in the real Rerun browser viewer", () => {
-    resolveRecording("/reports/groot-training.rrd").then(({ id, artifact }) => {
+    resolveRecording("/reports/groot-training.rrd").then(({ id, artifact, source }) => {
       agentReq("/api/sim-viz/load-artifact", {
         method: "POST",
-        body: { run_id: id, key: artifact.key },
+        body: {
+          run_id: id,
+          run_ref: String(source.run_ref || ""),
+          key: String(artifact.key || ""),
+          project_id: String(source.project_id || ""),
+          resource_bucket: String(source.bucket || ""),
+          resolved_prefix: String(source.resolved_prefix || ""),
+          source_selected: true,
+        },
       }).then((resp) => {
         expect(resp.status).to.eq(200);
         expect(resp.body.render).to.eq("rerun");

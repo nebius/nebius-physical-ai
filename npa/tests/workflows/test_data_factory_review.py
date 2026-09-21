@@ -200,6 +200,44 @@ def test_candidate_lookup_precedes_display_redaction(tmp_path, private_field):
     assert "candidate-a" not in review.text("The runtime host is candidate-a.")
 
 
+def test_failed_candidate_keeps_rejected_heading_in_accepted_run(tmp_path):
+    evaluator = {
+        "status": "completed",
+        "clips": [
+            {
+                "clip_id": "candidate-a",
+                "score": 0.74,
+                "passed": False,
+                "hallucination": {"passed": True},
+                "attribute_verification": {
+                    "passed": False,
+                    "checks": [{"variable": "surface_finish", "passed": False}],
+                },
+            }
+        ],
+    }
+    _write_json(
+        tmp_path,
+        "grade/iteration-1/ranking/cosmos_evaluator.json",
+        evaluator,
+    )
+    review = _PaidfReview(tmp_path, ROOT)
+    document = viz._candidate_disposition_document(
+        tmp_path,
+        iteration=1,
+        clip="candidate-a",
+        candidate_id="iteration-1/candidate-a",
+        quality_status="ACCEPTED",
+        disposition={"quality_status": "accepted"},
+        review=review,
+    )
+
+    assert document.startswith("# REJECTED — candidate `iteration-1/candidate-a`")
+    evidence = _json_document(document)
+    assert evidence["candidate_disposition"] == "rejected"
+    assert evidence["promotion_eligible"] is False
+
+
 @pytest.mark.parametrize(
     "identity",
     [
@@ -260,6 +298,7 @@ def _quality_fixture(run):
         "status": "completed",
         "score": 0.82,
         "threshold": 0.75,
+        "attribute_evidence_mode": "source-relative-change",
         "clips": [clip],
         "result_uri": ROOT + "/grade/iteration-1/ranking/cosmos_evaluator.json",
         "upstream": {
@@ -311,6 +350,14 @@ def _recording_fixture(run):
         check=True,
         capture_output=True,
     )
+    source = run / "input/source.mp4"
+    source.parent.mkdir(parents=True)
+    shutil.copyfile(candidate / "augmented_video.mp4", source)
+    conditioning = run / "input/conditioning.mp4"
+    shutil.copyfile(candidate / "augmented_video.mp4", conditioning)
+    control = run / "cosmos_control/candidate-a/control_edge.mp4"
+    control.parent.mkdir(parents=True)
+    shutil.copyfile(candidate / "augmented_video.mp4", control)
     _write_json(
         run,
         "input/provenance.json",
@@ -322,6 +369,20 @@ def _recording_fixture(run):
             "timeline_uri": ROOT + "/input/timeline.json",
             "hostname": "private-worker",
             "media": {"duration_seconds": 3.38, "decoded_frames": 169},
+            "derivation": {
+                "policy": "source-fidelity-v3",
+                "temporal_alignment": {
+                    "loop_count": 0,
+                    "frame_map": [
+                        {
+                            "output_index": index,
+                            "output_timestamp_seconds": index / 16,
+                            "source_index": index,
+                        }
+                        for index in range(5)
+                    ],
+                },
+            },
         },
     )
     _write_json(
@@ -344,7 +405,10 @@ def _recording_fixture(run):
                     "variant_index": 0,
                     "augmented_video_uri": ROOT
                     + "/cosmos_augmented/iteration-1/candidate-a/augmented_video.mp4",
-                    "control_uris": {},
+                    "control_uris": {
+                        "control_edge": ROOT
+                        + "/cosmos_control/candidate-a/control_edge.mp4"
+                    },
                     "seed": 42,
                     "steps": 10,
                 }
@@ -495,6 +559,11 @@ def test_real_rrd_preserves_review_evidence_and_omits_private_locations(
         ROOT, ROOT + "/reports/review.rrd", storage_client=object()
     )
     assert result["augmented_video_components"] == 1
+    assert result["source_video_components"] == 2
+    assert result["presentation"]["source_video_entities"] == [
+        "source/original",
+        "conditioning/derived",
+    ]
     subprocess.run(
         [str(Path(sys.executable).with_name("rerun")), "rrd", "verify", str(out)],
         check=True,
@@ -525,6 +594,11 @@ def test_real_rrd_preserves_review_evidence_and_omits_private_locations(
         and "Qwen/Qwen2.5-VL-72B-Instruct" in text
     )
     assert "https://github.com/nvidia-cosmos/cosmos-evaluator" in text
+    assert "npa.paidf.vda.media-evidence.v1" in docs["/pipeline/2_media_metadata"][0]
+    assert (
+        '"attribute_evidence_mode": "source-relative-change"'
+        in docs["/pipeline/3_grade"][0]
+    )
     if overlapping_hostname:
         caption = docs["/captions/labeled_augmented"][0]
         assert '"model": "example/candidate-a"' in caption
@@ -570,11 +644,19 @@ def _assert_recorded_facts(run, candidate, chunks, docs):
         name for chunk in chunks for name in chunk.to_record_batch().schema.names
     }
     assert {"frame", "video_time", "EncodedImage:blob", "AssetVideo:blob"} <= columns
-    videos = [
-        bytes(row[0])
+    videos = {
+        str(chunk.entity_path): [
+            bytes(row[0])
+            for row in chunk.to_record_batch().to_pydict().get("AssetVideo:blob", [])
+            if row
+        ]
         for chunk in chunks
         if str(chunk.entity_path).endswith("/video")
-        for row in chunk.to_record_batch().to_pydict().get("AssetVideo:blob", [])
-        if row
+    }
+    expected_video = (candidate / "augmented_video.mp4").read_bytes()
+    assert videos["/source/original/video"] == [expected_video]
+    assert videos["/conditioning/derived/video"] == [expected_video]
+    assert videos["/control/iteration-1/candidate-a/control_edge/video"] == [
+        expected_video
     ]
-    assert videos == [(candidate / "augmented_video.mp4").read_bytes()]
+    assert videos["/augmented/iteration-1/candidate-a/video"] == [expected_video]
