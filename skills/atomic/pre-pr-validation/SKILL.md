@@ -159,6 +159,12 @@ cd npa
 .venv/bin/python -m pytest tests/ -v --tb=short --cov=src/npa --cov-report=term-missing --cov-fail-under=60
 ```
 
+Dependabot groups daily version updates across Python, npm, and GitHub Actions
+into one `dependencies` PR. Review overlapping package declarations together;
+a bot edit of `npa/ci/requirements.txt` does not prove its input fingerprint is
+current. Regenerate the CI pins after Python declaration changes and run the
+combined candidate through the same required gates.
+
 Keep the coverage source scoped to `src/npa`. Selecting the import name with
 `--cov=npa` can also trace temporary test modules that deliberately impersonate
 that package, and those files no longer exist when CI merges shard data. From the
