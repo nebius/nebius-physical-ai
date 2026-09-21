@@ -573,12 +573,27 @@ def wait_for_api_stability(
                     streak,
                     stable_for,
                 )
-        elif sample.state is EvidenceState.TRANSIENT_UNAVAILABLE:
+        elif sample.state in (
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            EvidenceState.AMBIGUOUS,
+        ):
+            # This readiness wait runs before any managed-job POST and probes an
+            # idempotent read (`kubectl get --raw=/readyz`), so retrying it is
+            # always safe. Ambiguous evidence means the failure was not proven
+            # terminal; keep probing within the deadline rather than failing the
+            # launch on a one-off the pattern lists do not enumerate (a cold
+            # exec-credential token mint, a transient IAM 5xx, or a novel kubectl
+            # message). Only proven-terminal evidence short-circuits the wait.
             streak = 0
             streak_started = 0.0
             if progress is not None:
+                unproven = (
+                    "transient"
+                    if sample.state is EvidenceState.TRANSIENT_UNAVAILABLE
+                    else "unproven"
+                )
                 progress(
-                    "Kubernetes API stability streak reset after transient "
+                    f"Kubernetes API stability streak reset after {unproven} "
                     f"{sample.category.value}"
                 )
         else:

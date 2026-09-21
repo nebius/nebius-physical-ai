@@ -154,6 +154,58 @@ def test_terminal_readiness_fails_immediately_without_sleep() -> None:
     assert clock.sleeps == []
 
 
+def test_ambiguous_readiness_retries_until_ready() -> None:
+    # A one-off ambiguous observation (e.g. a cold exec-credential token mint or
+    # a kubectl message the pattern lists do not enumerate) on an idempotent
+    # pre-launch read must reset the streak and keep probing, not fail the wait.
+    clock = FakeClock()
+    probe = SequenceProbe(
+        clock,
+        [
+            EvidenceState.AMBIGUOUS,
+            EvidenceState.READY,
+            EvidenceState.READY,
+            EvidenceState.READY,
+        ],
+    )
+    result = wait_for_api_stability(
+        probe,
+        policy=StabilityPolicy(3, 4, 2, 30),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    assert result.ready
+    assert result.consecutive_successes == 3
+    assert len(result.samples) == 4
+
+
+def test_ambiguous_readiness_exhausts_deadline_as_retryable_transient() -> None:
+    # Sustained ambiguity must surface as a retryable transient outcome ("resume
+    # the same run"), never as an indeterminate/unknown terminal launch failure.
+    clock = FakeClock()
+
+    def probe() -> ProbeObservation:
+        now = clock.now
+        return ProbeObservation(
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+            f"t{now:g}",
+            now,
+            "Kubernetes API /readyz did not provide ready evidence",
+        )
+
+    result = wait_for_api_stability(
+        probe,
+        policy=StabilityPolicy(3, 2, 1, 3),
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    assert result.state is EvidenceState.TRANSIENT_UNAVAILABLE
+    assert clock.now == 3
+    assert "within 3s" in result.error
+
+
+
 def test_readiness_interruption_is_prompt_and_typed() -> None:
     clock = FakeClock()
 
