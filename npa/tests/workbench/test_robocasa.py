@@ -1246,6 +1246,34 @@ def test_non_object_asset_receipt_is_invalid(tmp_path: Path, payload: str) -> No
     )
 
 
+def test_recursive_asset_receipt_is_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets_root = tmp_path / "assets"
+    state_root = assets_root / ".npa_asset_fetch"
+    archive = capabilities._AssetArchive(
+        "example/assets",
+        "a" * 40,
+        "assets.zip",
+        ".",
+        "assets",
+        "assets",
+    )
+    receipt = capabilities._asset_receipt_path(state_root, archive)
+    receipt.write_text("{}\n", encoding="utf-8")
+
+    def reject_recursive_json(_payload: str):
+        raise RecursionError("injected recursive JSON")
+
+    monkeypatch.setattr(capabilities.json, "loads", reject_recursive_json)
+
+    assert not capabilities._asset_receipt_is_valid(
+        receipt,
+        archive,
+        assets_root,
+    )
+
+
 def test_parent_asset_receipt_ignores_separately_receipted_nested_mounts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
