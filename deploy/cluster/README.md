@@ -156,3 +156,22 @@ Read the proposed scope before confirming. Cluster deletion does not mean all
 project storage or services are gone; follow the [teardown guide](../../docs/teardown.md)
 for those separately owned resources. Preserve Terraform state after an
 incomplete deletion so the exact operation can be resumed.
+
+### Provider request deadlines
+
+The shared MK8s backend supplies omitted Nebius provider `timeout`,
+`per_retry_timeout`, and `auth_timeout` attributes from the existing NPA apply
+`--timeout` budget, expressed in minutes. This avoids the provider SDK's shorter
+request default ending a create RPC before its resource identity is returned.
+These are request deadlines; they are not a guarantee that asynchronous resource
+creation succeeds or that GPU capacity is available.
+
+NPA edits only the owned materialized provider block. Explicit operator values,
+expressions, nulls, retry counts, aliases, and override-file settings remain
+unchanged. The source recipe remains unchanged. The deployment sidecar records
+the inserted defaults and materialized source hashes before Terraform runs.
+
+Destroy retains those materialized provider settings so the recorded KubeRay
+input digest and recovery provenance remain valid. Its own NPA outer deadline
+and cancellation still apply. Existing installations without these generated
+defaults retain their original settings until an ordinary supported reapply.
