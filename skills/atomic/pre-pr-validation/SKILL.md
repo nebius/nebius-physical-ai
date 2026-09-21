@@ -119,7 +119,7 @@ The security job exercises hostile inputs and supported paths, including real
 CPU checkpoint decoding, authenticated transports, private staging, storage
 containment, and isolated controller cleanup. Use the clone's own development
 virtualenv with `npa[dev,adapter]`. CI additionally installs the official CPU
-`torch==2.13.0` wheel and asserts the version and CPU runtime before testing, so
+`torch==2.14.0` wheel and asserts the version and CPU runtime before testing, so
 checkpoint cases cannot silently skip. Its exact test command from the repo root
 is:
 
