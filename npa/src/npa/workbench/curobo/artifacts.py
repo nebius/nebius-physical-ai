@@ -391,9 +391,7 @@ def _log_rrd_problem(recording, row: dict[str, Any], *, problem_index: int) -> N
     recording.set_time("problem_index", sequence=problem_index)
     _clear_rrd_problem_state(recording)
     status = {key: row[key] for key in ("problem_id", "mode", "dataset", "status")}
-    recording.log(
-        f"{_RRD_PROBLEM_ROOT}/status", rr.TextDocument(json.dumps(status))
-    )
+    recording.log(f"{_RRD_PROBLEM_ROOT}/status", rr.TextDocument(json.dumps(status)))
     if row["status"] != "invalid":
         recording.log(
             f"{_RRD_PROBLEM_ROOT}/goal",
@@ -565,9 +563,7 @@ def _require_rrd_command(command: list[str]) -> None:
         raise CuroboError("Rerun could not normalize factual recording")
 
 
-def _normalize_rrd_for_compare(
-    source: Path, output: Path, *, rerun: str
-) -> None:
+def _normalize_rrd_for_compare(source: Path, output: Path, *, rerun: str) -> None:
     filtered_output = output.with_name(output.stem + "-filtered.rrd")
     _require_rrd_command(
         [

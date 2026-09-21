@@ -947,9 +947,7 @@ def test_decoded_rrd_rejects_same_cardinality_wrong_semantics(tmp_path, mutation
     recording.log("problems/goal", rr.Clear(recursive=True))
     recording.log("metrics", rr.Clear(recursive=True))
     recording.log("trajectory", rr.Clear(recursive=True))
-    status = {
-        key: original[key] for key in ("problem_id", "mode", "dataset", "status")
-    }
+    status = {key: original[key] for key in ("problem_id", "mode", "dataset", "status")}
     if mutation == "status":
         status["problem_id"] = "tampered"
     recording.log(
