@@ -1,7 +1,6 @@
 """Install Mac chat controls while keeping existing VS Code sessions and credentials."""
 
 import hashlib
-import base64
 import hmac
 import json
 import os
@@ -15,8 +14,8 @@ import sys
 import webbrowser
 import uuid
 import fcntl
-from urllib.request import Request, urlopen
 
+from .gateway_remote import _local_state
 from .local_gateway import gateway_operation
 from .local_service import (
     install_service,
@@ -312,15 +311,7 @@ def _check_upgrade(config, runtime):
     if not service_running(_LABEL) or config.get("runtime_path") == str(runtime):
         return
     password = Path(config["password_file"]).read_text().strip()
-    authorization = base64.b64encode(
-        f"{config['username']}:{password}".encode()
-    ).decode()
-    request = Request(
-        f"http://127.0.0.1:{config['port']}/chat/api/state",
-        headers={"Authorization": "Basic " + authorization},
-    )
-    with urlopen(request) as response:
-        state = json.load(response)
+    state = _local_state(config["port"], config["username"], password)
     if state.get("runtime", {}).get("ownedActive"):
         raise RuntimeError(
             "Wait for mobile-owned turns to finish before updating local chat."

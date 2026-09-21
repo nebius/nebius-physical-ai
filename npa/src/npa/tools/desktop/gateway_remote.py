@@ -2,13 +2,12 @@
 
 import json
 import base64
+from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 import subprocess
 import tempfile
 import time
-from urllib.error import URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
 
 
 def _read_root(path):
@@ -178,23 +177,35 @@ def _replace_and_reload(path, original, candidate, service):
         raise
 
 
+def _local_state(port, username, password):
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise ValueError("Invalid local chat port")
+    authorization = base64.b64encode(f"{username}:{password}".encode()).decode()
+    # A direct connection cannot follow redirects or use an environment proxy.
+    connection = HTTPConnection("127.0.0.1", port, timeout=2)
+    try:
+        connection.request(
+            "GET",
+            "/chat/api/state",
+            headers={"Authorization": "Basic " + authorization},
+        )
+        response = connection.getresponse()
+        if response.status != 200:
+            raise RuntimeError("The local chat service did not authenticate its state.")
+        return json.load(response)
+    finally:
+        connection.close()
+
+
 def _verify_tunnel(config):
     port = config["port"]
-    authorization = base64.b64encode(
-        f"{config['username']}:{config['password']}".encode()
-    ).decode()
-    request = Request(
-        f"http://127.0.0.1:{port}/chat/api/state",
-        headers={"Authorization": "Basic " + authorization},
-    )
     for attempt in range(30):
         try:
-            with urlopen(request, timeout=2) as response:
-                state = json.load(response)
+            state = _local_state(port, config["username"], config["password"])
             if state.get("installationId") != config["installation_id"]:
                 raise RuntimeError("The gateway port belongs to another installation.")
             break
-        except URLError:
+        except (OSError, HTTPException):
             if attempt == 29:
                 raise RuntimeError(
                     "The authenticated Mac tunnel did not become ready."

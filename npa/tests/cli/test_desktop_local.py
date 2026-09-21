@@ -4,7 +4,9 @@ import json
 import base64
 import hashlib
 import hmac
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
+import threading
 from unittest.mock import Mock
 import uuid
 
@@ -180,13 +182,11 @@ def test_existing_gateway_cookie_requires_signature_and_expiry(monkeypatch):
 
 
 def test_active_mobile_turn_blocks_runtime_upgrade(monkeypatch, tmp_path):
-    import io
-
     monkeypatch.setattr(local_runtime, "service_running", lambda _: True)
     monkeypatch.setattr(
         local_runtime,
-        "urlopen",
-        lambda _: io.BytesIO(b'{"runtime":{"ownedActive":true}}'),
+        "_local_state",
+        lambda *args: {"runtime": {"ownedActive": True}},
     )
     password = tmp_path / "password"
     password.write_text("unit-test-password")
@@ -244,12 +244,10 @@ def test_adopting_gateway_does_not_replace_running_server_password(
 
 @pytest.mark.parametrize("address", ["0.0.0.0:7002", "*:7002", "[::]:7002"])
 def test_gateway_rejects_public_tunnel_listener(monkeypatch, address):
-    import io
-
     monkeypatch.setattr(
         gateway_remote,
-        "urlopen",
-        lambda *args, **kwargs: io.BytesIO(b'{"installationId":"test-installation"}'),
+        "_local_state",
+        lambda *args: {"installationId": "test-installation"},
     )
     monkeypatch.setattr(
         gateway_remote.subprocess,
@@ -268,14 +266,10 @@ def test_gateway_rejects_public_tunnel_listener(monkeypatch, address):
 
 
 def test_gateway_rejects_another_installation_before_routing(monkeypatch):
-    import io
-
     monkeypatch.setattr(
         gateway_remote,
-        "urlopen",
-        lambda *args, **kwargs: io.BytesIO(
-            b'{"installationId":"different-installation"}'
-        ),
+        "_local_state",
+        lambda *args: {"installationId": "different-installation"},
     )
     with pytest.raises(RuntimeError, match="another installation"):
         gateway_remote._verify_tunnel(
@@ -371,3 +365,62 @@ def test_desktop_gateway_origin_excludes_viewer_path(monkeypatch, tmp_path):
 def test_managed_gateway_rejects_plaintext_or_embedded_login(url):
     with pytest.raises(ValueError, match="HTTPS"):
         gateway_remote._origin(url)
+
+
+@pytest.fixture
+def state_probe_server():
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.path, self.headers.get("Authorization")))
+            status = self.server.probe_status if self.path == "/chat/api/state" else 200
+            self.send_response(status)
+            self.send_header(
+                "Location", f"http://127.0.0.1:{self.server.server_port}/redirected"
+            )
+            self.end_headers()
+            self.wfile.write(b'{"installationId":"test-installation"}')
+
+        def log_message(self, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        yield server, requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
+
+
+@pytest.mark.parametrize("status", [200, 302, 307, 401, 500])
+def test_state_probe_keeps_credentials_on_loopback(
+    monkeypatch, state_probe_server, status
+):
+    server, requests = state_probe_server
+    server.probe_status = status
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:1")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(name, "")
+    if status == 200:
+        assert gateway_remote._local_state(
+            server.server_port, "test", "test-password"
+        ) == {"installationId": "test-installation"}
+    else:
+        with pytest.raises(RuntimeError, match="authenticate"):
+            gateway_remote._local_state(server.server_port, "test", "test-password")
+    expected = "Basic " + base64.b64encode(b"test:test-password").decode()
+    assert requests == [("/chat/api/state", expected)]
+
+
+@pytest.mark.parametrize("port", [True, 80, 65536, "7001/redirect"])
+def test_state_probe_rejects_invalid_port_before_connecting(monkeypatch, port):
+    connection = Mock(side_effect=AssertionError("must not connect"))
+    monkeypatch.setattr(gateway_remote, "HTTPConnection", connection)
+    with pytest.raises(ValueError, match="port"):
+        gateway_remote._local_state(port, "test", "test-password")
+    connection.assert_not_called()
