@@ -89,7 +89,6 @@ def _hydra_overrides(root):
 
 
 def _prepare_derived(root, input_identity):
-    source = root / "upstream"
     action = root / "ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt"
     receipt = root / "derived-initialization.json"
     env = os.environ.copy()
@@ -115,28 +114,32 @@ def _prepare_derived(root, input_identity):
             raise RuntimeError(
                 "unreceipted derived ActionDiT cache requires a fresh asset directory"
             )
-        subprocess.run(
-            [
-                sys.executable,
-                str(source / "scripts/preprocess_action_dit_backbone.py"),
-                "--model-config",
-                str(source / "configs/model/flexpi.yaml"),
-                "--output",
-                str(action),
-                "--device",
-                "cpu",
-                "--dtype",
-                "bfloat16",
-            ],
-            check=True,
-            env=env,
-        )
+        _derive_action_backbone(root / "upstream", action, env)
         receipt.write_text(
             json.dumps(
                 {"sha256": _sha256(action), "source_manifest_sha256": input_identity}
             )
         )
     _prepare_text(root, input_identity, env)
+
+
+def _derive_action_backbone(source, action, env):
+    subprocess.run(
+        [
+            sys.executable,
+            str(source / "scripts/preprocess_action_dit_backbone.py"),
+            "--model-config",
+            str(source / "configs/model/flexpi.yaml"),
+            "--output",
+            str(action),
+            "--device",
+            "cpu",
+            "--dtype",
+            "bfloat16",
+        ],
+        check=True,
+        env=env,
+    )
 
 
 def _prepare_text(root, input_identity, env):

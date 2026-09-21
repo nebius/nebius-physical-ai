@@ -142,7 +142,6 @@ def _worker_environment(assets, root):
 
 def _parent_main(request_path):
     from npa.workbench.flex_pi.training_assets import prepare_assets
-    from npa.workbench.flex_pi.training_metrics import summarize_measurements
 
     plan = json.loads(request_path.read_text())
     root = Path(plan["work_directory"])
@@ -169,6 +168,12 @@ def _parent_main(request_path):
         str(rank_request),
     ]
     subprocess.run(command, check=True, env=_worker_environment(assets, root))
+    _finalize_phase(plan, root, assets, receipt, capability, request_path)
+
+
+def _finalize_phase(plan, root, assets, receipt, capability, request_path):
+    from npa.workbench.flex_pi.training_metrics import summarize_measurements
+
     result = json.loads((root / "phase-result.json").read_text())
     if plan["execution"]["mode"] != "resume":
         rows = [
@@ -241,21 +246,27 @@ def _capability_rank_main(output):
             raise RuntimeError("four-rank NCCL collective produced incorrect values")
     torch.cuda.synchronize()
     if rank == 0:
-        result = {
-            "world_size": 4,
-            "collectives_verified": 3,
-            "bytes_per_rank_per_collective": tensor.numel() * tensor.element_size(),
-            "seconds": time.perf_counter() - started,
-            "nccl_version": torch.cuda.nccl.version(),
-            "peer_access": [
-                [i == j or torch.cuda.can_device_access_peer(i, j) for j in range(4)]
-                for i in range(4)
-            ],
-        }
+        result = _collective_receipt(tensor, started)
         output.write_text(json.dumps(result))
         print(json.dumps({"capability_preflight": result}), flush=True)
     torch.distributed.barrier()
     torch.distributed.destroy_process_group()
+
+
+def _collective_receipt(tensor, started):
+    import torch
+
+    return {
+        "world_size": 4,
+        "collectives_verified": 3,
+        "bytes_per_rank_per_collective": tensor.numel() * tensor.element_size(),
+        "seconds": time.perf_counter() - started,
+        "nccl_version": torch.cuda.nccl.version(),
+        "peer_access": [
+            [i == j or torch.cuda.can_device_access_peer(i, j) for j in range(4)]
+            for i in range(4)
+        ],
+    }
 
 
 def _workload_identity(plan, root, assets):
@@ -295,6 +306,8 @@ def _workload_identity(plan, root, assets):
 def main():
     """Dispatch a prepared parent process or a torchrun rank.
 
+    Args:
+        None; requests are supplied through command-line arguments.
     Returns:
         None; the parent writes a JSON phase result.
     Raises:

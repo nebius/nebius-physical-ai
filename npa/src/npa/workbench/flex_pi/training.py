@@ -21,7 +21,22 @@ GLOBAL_BATCH = 96
 
 @dataclass(frozen=True)
 class TrainingRequest:
-    """Execution controls that leave the public training objective unchanged."""
+    """Execution controls that leave the public training objective unchanged.
+
+    Args:
+        output_path: Run-scoped S3 destination for results and checkpoints.
+        mode: Profile or complete training with fresh-process resume verification.
+        num_workers: Data loader workers per rank.
+        prefetch_factor: Queued batches per worker.
+        optimizer: Default, foreach, or fused AdamW implementation.
+        run_id: Caller-assigned provenance identifier.
+        runtime_image: Exact runtime image reference for provenance.
+        dry_run: Return the frozen plan without executing it.
+    Returns:
+        An immutable request.
+    Raises:
+        None; run_training validates requests before execution.
+    """
 
     output_path: str
     mode: str = "train"
@@ -184,6 +199,15 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
         "execution": {**plan["execution"], "mode": "resume"},
     }
     resumed = _run_phase(resume_plan, root)
+    _assert_resume_parity(result, resumed)
+    checkpoint.pop("state_path")
+    result["checkpoint_resume_verified"] = True
+    result["checkpoint_read_after_write_verified"] = True
+    result["resume"] = resumed
+
+
+def _assert_resume_parity(result, resumed):
+    checkpoint = result["checkpoint"]
     for key in ("workload_sha256", "normalization_sha256"):
         if resumed[key] != result[key]:
             raise FlexPiError("fresh resume changed the workload or normalization")
@@ -200,7 +224,3 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
         raise FlexPiError(
             "fresh checkpoint continuation differs from uninterrupted continuation"
         )
-    checkpoint.pop("state_path")
-    result["checkpoint_resume_verified"] = True
-    result["checkpoint_read_after_write_verified"] = True
-    result["resume"] = resumed

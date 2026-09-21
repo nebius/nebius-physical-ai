@@ -20,7 +20,15 @@ from npa.workbench.flex_pi.training_state import rng_digest, state_digest
 
 
 class ExactTrainingDataset(RobotVideoDataset):
-    """Keep the upstream transforms but reject decode errors without substitution."""
+    """Keep upstream transforms and reject decode errors without substitution.
+
+    Args:
+        **kwargs: Upstream RobotVideoDataset configuration.
+    Returns:
+        A dataset whose samples include their exact anchor indices.
+    Raises:
+        RuntimeError: Sampling requests replacement of padded anchors.
+    """
 
     def __getitem__(self, index):
         base_lerobot_dataset.MAX_GETITEM_ATTEMPT = 1
@@ -41,7 +49,18 @@ def _state_digest(model):
 
 
 class VerifiedTrainer(Wan22Trainer):
-    """Add exact accounting, complete validation and strict checkpoint gates."""
+    """Add exact accounting, complete validation and strict checkpoint gates.
+
+    Args:
+        cfg: Resolved upstream training configuration.
+        model: Initialized upstream Flex-Pi model.
+        train_dataset: Complete frozen training split.
+        val_dataset: Complete frozen held-out split.
+    Returns:
+        An upstream trainer with acceptance checks.
+    Raises:
+        RuntimeError: Execution fails a distributed or workload acceptance check.
+    """
 
     def _build_optimizer(self, parameters):
         mode = str(self.cfg.npa_optimizer)
@@ -218,15 +237,7 @@ class VerifiedTrainer(Wan22Trainer):
 
         model = self.accelerator.unwrap_model(self.model)
         model.eval()
-        rank = self.accelerator.process_index
-        subset = list(range(rank, VALIDATION_FRAMES, 4))
-        loader = DataLoader(
-            self.val_dataset,
-            batch_size=1,
-            sampler=subset,
-            num_workers=self.num_workers,
-            pin_memory=True,
-        )
+        loader = self._validation_loader()
         total = torch.zeros(2, dtype=torch.float64, device=self.accelerator.device)
         start = time.perf_counter()
         python_rng, numpy_rng = random.getstate(), np.random.get_state()
@@ -255,6 +266,16 @@ class VerifiedTrainer(Wan22Trainer):
             "samples": VALIDATION_FRAMES,
             "seconds": time.perf_counter() - start,
         }
+
+    def _validation_loader(self):
+        rank = self.accelerator.process_index
+        return DataLoader(
+            self.val_dataset,
+            batch_size=1,
+            sampler=list(range(rank, VALIDATION_FRAMES, 4)),
+            num_workers=self.num_workers,
+            pin_memory=True,
+        )
 
     def _checkpoint(self):
         start = time.perf_counter()
@@ -340,21 +361,14 @@ class VerifiedTrainer(Wan22Trainer):
         """
         self._check_contract()
         self._set_dit_only_train_mode()
+        initial_digest = _state_digest(self.accelerator.unwrap_model(self.model))
         result = {
             "mode": mode,
             "world_size": 4,
-            "initial_model_sha256": _state_digest(
-                self.accelerator.unwrap_model(self.model)
-            ),
+            "initial_model_sha256": initial_digest,
         }
         if mode == "resume":
-            result["loaded_model_sha256"] = _state_digest(
-                self.accelerator.unwrap_model(self.model)
-            )
-            result["loaded_step"] = self.global_step
-            result["loaded_training_state"] = self._training_state_receipt()
-            result["resume_probe"] = self._resume_probe()
-            return result
+            return self._resume_result(result)
         if mode == "train":
             result["initial_validation"] = self._validation()
         updates = (
@@ -372,15 +386,27 @@ class VerifiedTrainer(Wan22Trainer):
         result["samples"] = expected
         result["final_model_sha256"] = self._synchronized_digest()
         if mode == "train":
-            result["checkpoint"] = self._checkpoint()
-            result["final_validation"] = self._validation()
-            before, after = (
-                result["initial_validation"]["loss"],
-                result["final_validation"]["loss"],
-            )
-            if after > before:
-                raise RuntimeError("full held-out validation loss regressed")
-            result["full_epoch_completed"] = True
-            result["validation_completed"] = True
-            result["resume_probe"] = self._resume_probe()
+            self._finish_epoch(result)
         return result
+
+    def _resume_result(self, result):
+        result["loaded_model_sha256"] = _state_digest(
+            self.accelerator.unwrap_model(self.model)
+        )
+        result["loaded_step"] = self.global_step
+        result["loaded_training_state"] = self._training_state_receipt()
+        result["resume_probe"] = self._resume_probe()
+        return result
+
+    def _finish_epoch(self, result):
+        result["checkpoint"] = self._checkpoint()
+        result["final_validation"] = self._validation()
+        before, after = (
+            result["initial_validation"]["loss"],
+            result["final_validation"]["loss"],
+        )
+        if after > before:
+            raise RuntimeError("full held-out validation loss regressed")
+        result["full_epoch_completed"] = True
+        result["validation_completed"] = True
+        result["resume_probe"] = self._resume_probe()
