@@ -16,8 +16,9 @@ import sys
 import threading
 import time
 import types
+import zipfile
 from pathlib import Path
-from zipfile import ZIP_BZIP2, ZIP_LZMA, ZipFile, ZipInfo
+from zipfile import BadZipFile, ZIP_BZIP2, ZIP_LZMA, ZipFile, ZipInfo
 
 import httpx
 import numpy as np
@@ -1929,6 +1930,40 @@ def test_asset_zip_bounds_central_directory_before_member_allocation(
     with pytest.raises(RoboCasaError, match="central-directory size limit"):
         capabilities._extract_validated_zip(source_zip, destination)
     assert list(destination.iterdir()) == []
+
+
+def _write_zip64_member_count_archive(path: Path) -> None:
+    with ZipFile(path, "w") as archive:
+        for index in range(zipfile.ZIP_FILECOUNT_LIMIT + 1):
+            archive.writestr(f"{index:05x}", b"")
+
+
+def test_asset_zip_accepts_zip64_central_directory(tmp_path: Path) -> None:
+    source_zip = tmp_path / "zip64.zip"
+    _write_zip64_member_count_archive(source_zip)
+
+    with ZipFile(source_zip) as archive:
+        assert len(archive.infolist()) == zipfile.ZIP_FILECOUNT_LIMIT + 1
+    with source_zip.open("rb") as archive_file:
+        capabilities._preflight_asset_zip(archive_file, source_zip)
+        assert archive_file.tell() == 0
+
+
+def test_asset_zip_rejects_malformed_zip64_central_directory(tmp_path: Path) -> None:
+    source_zip = tmp_path / "malformed-zip64.zip"
+    _write_zip64_member_count_archive(source_zip)
+    with source_zip.open("r+b") as archive_file:
+        end_record = zipfile._EndRecData(archive_file)
+        assert end_record is not None
+        start = int(end_record[zipfile._ECD_LOCATION]) - int(
+            end_record[zipfile._ECD_SIZE]
+        )
+        archive_file.seek(start)
+        archive_file.write(b"FAIL")
+
+    with source_zip.open("rb") as archive_file:
+        with pytest.raises(BadZipFile, match="central-directory record signature"):
+            capabilities._preflight_asset_zip(archive_file, source_zip)
 
 
 def test_asset_zip_rejects_forged_eocd_member_count(

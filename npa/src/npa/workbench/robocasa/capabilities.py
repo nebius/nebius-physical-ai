@@ -755,10 +755,6 @@ def _preflight_asset_zip(archive_file: BinaryIO, zip_path: Path) -> None:
         - central_directory_size
         - central_directory_offset
     )
-    if end_record[zipfile._ECD_SIGNATURE] == zipfile.stringEndArchive64:  # noqa: SLF001
-        concatenated_prefix -= (
-            zipfile.sizeEndCentDir64 + zipfile.sizeEndCentDir64Locator
-        )
     start = central_directory_offset + concatenated_prefix
     if (
         start < 0
