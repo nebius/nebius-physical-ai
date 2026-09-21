@@ -10,6 +10,7 @@ Workbench tool; small fixes can go directly to the relevant section.
 | Add a tool and container | [End-to-end contribution skill](skills/workflows/add-workbench-tool/SKILL.md) |
 | Add or adapt a workflow | [Workflow authoring](skills/workflows/author-npa-workflow/SKILL.md) |
 | Prepare a pull request | [Validation gates](skills/atomic/pre-pr-validation/SKILL.md) and [PR conventions](#commit-and-pr-conventions) |
+| Merge a pull request from mobile | [Auto-merge and the merge queue](#auto-merge-and-the-merge-queue) |
 
 ## Contribution quality
 
@@ -888,6 +889,52 @@ runs use scope-specific commit lock directories under `/tmp/npa-commit-lock/`;
 remove the lock after commit and push.
 
 Run Claude Code reviews only when explicitly requested by the operator.
+
+## Auto-merge and the merge queue
+
+Keep **Settings → General → Pull Requests → Allow auto-merge** enabled for this
+repository. This repository setting is separate from the merge-queue rule on
+`main`; committing workflow YAML does not enable it. Maintainers can inspect and
+restore it with GitHub CLI:
+
+```bash
+gh api repos/nebius/nebius-physical-ai --jq '.allow_auto_merge'
+gh api --method PATCH repos/nebius/nebius-physical-ai -F allow_auto_merge=true \
+  --jq '.allow_auto_merge'
+```
+
+The readback should be `true`. Enabling the repository setting lets contributors
+request auto-merge for individual PRs; it preserves required checks, signatures,
+and the merge queue. See [GitHub's repository auto-merge settings](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-auto-merge-for-pull-requests-in-your-repository).
+
+On a phone, use the PR's auto-merge control when available. If the app does not
+offer it or fails to save the request, open the PR on GitHub.com in the phone's
+browser, select **Merge when ready**, and confirm. GitHub adds the PR to the
+queue after its requirements pass, then validates the combined candidate before
+merging. The queue controls the merge method. See [GitHub's merge-queue guide](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request-with-a-merge-queue).
+
+To diagnose a request from a terminal, set `pr_number` to the affected PR:
+
+```bash
+: "${pr_number:?Set pr_number to the affected pull request number}"
+gh pr view "$pr_number" --repo nebius/nebius-physical-ai \
+  --json autoMergeRequest,mergeStateStatus,statusCheckRollup
+gh pr checks "$pr_number" --repo nebius/nebius-physical-ai --required
+```
+
+A non-null `autoMergeRequest` means GitHub saved the request. Pending checks can
+still leave the PR `BLOCKED` and outside the queue; inspect the linked Actions
+run for waiting runners or failures. A green component job does not mean the
+aggregate required `security-regression` check has finished. Resolve failed
+checks or merge conflicts before requesting queue entry again. If no request
+was saved, the [CLI fallback](https://cli.github.com/manual/gh_pr_merge) is:
+
+```bash
+gh pr merge "$pr_number" --repo nebius/nebius-physical-ai --auto
+```
+
+Use this only for a PR you intend to merge. It waits for requirements or queues
+an already eligible PR. Do not use `--admin` to work around a waiting check.
 
 ## Design Principles
 The core promise is to remove glue code. Contributions should avoid bespoke

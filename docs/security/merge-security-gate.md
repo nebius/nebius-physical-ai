@@ -164,6 +164,10 @@ the exact latest-main candidate without requiring every open PR branch to be
 bulk-refreshed. Preserve other required checks and branch protections. Workflow
 configuration alone does not enable merge enforcement; administrators must
 verify the required contexts and active merge-queue rule.
+Keep the repository's **Allow auto-merge** setting enabled as well so contributors
+can request automatic merging through clients that use that setting. It does
+not replace or bypass queue validation. See the contributor guide for
+[mobile recovery and pending-check diagnosis](../../CONTRIBUTING.md#auto-merge-and-the-merge-queue).
 Repository administrators and configured bypass actors may still bypass checks.
 Keep the component workflows enabled as reusable candidate gates and
 superseding main audits. Secret and confidentiality checks also run for merge
