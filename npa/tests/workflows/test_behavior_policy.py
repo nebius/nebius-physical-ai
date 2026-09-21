@@ -11,7 +11,12 @@ import zipfile
 
 import pytest
 
-from npa.workflows.behavior_challenge import policy, policy_server, protocol
+from npa.workflows.behavior_challenge import (
+    comet_policy,
+    policy,
+    policy_server,
+    protocol,
+)
 
 
 @dataclass
@@ -197,6 +202,54 @@ def test_partial_policy_configuration_refuses(prepared):
     args, plan, output = prepared
     args.policy_archive = None
     with pytest.raises(ValueError, match="all four"):
+        with policy.managed_policy(args, plan, output):
+            pytest.fail("must refuse")
+
+
+def test_comet_policy_dispatch_is_native_and_task_bound(prepared, monkeypatch):
+    args, plan, output = prepared
+    args.policy_kind = "comet12"
+    args.policy_execution_variant = "native"
+    args.policy_task_name = "turning_on_radio"
+    command = ["/runtime/python", "comet_server.py"]
+    prepare = Mock(return_value=command)
+    monkeypatch.setattr(comet_policy, "prepare_policy", prepare)
+    monkeypatch.setattr(policy, "_healthy", lambda port: False)
+
+    assert policy._prepare_policy(args, plan, output) == command
+    prepare.assert_called_once_with(args, plan, output)
+
+    args.policy_execution_variant = "final-stage-backtrack"
+    with pytest.raises(ValueError, match="Unsupported comet12"):
+        with policy.managed_policy(args, plan, output):
+            pytest.fail("must refuse")
+
+
+def test_comet_policy_requires_task_name_and_rejects_it_for_other_kinds(prepared):
+    args, plan, output = prepared
+    args.policy_kind = "comet12"
+    args.policy_execution_variant = "native"
+    args.policy_task_name = None
+    with pytest.raises(ValueError, match="requires --policy-task-name"):
+        with policy.managed_policy(args, plan, output):
+            pytest.fail("must refuse")
+
+    args.policy_kind = "official"
+    args.policy_task_name = "turning_on_radio"
+    with pytest.raises(ValueError, match="requires --policy-kind comet12"):
+        with policy.managed_policy(args, plan, output):
+            pytest.fail("must refuse")
+
+
+def test_comet_policy_cannot_silently_skip_without_managed_paths(prepared):
+    args, plan, output = prepared
+    args.policy_kind = "comet12"
+    args.policy_execution_variant = "native"
+    args.policy_task_name = "turning_on_radio"
+    for field in policy.POLICY_FIELDS:
+        setattr(args, field, None)
+
+    with pytest.raises(ValueError, match="requires all four policy paths"):
         with policy.managed_policy(args, plan, output):
             pytest.fail("must refuse")
 

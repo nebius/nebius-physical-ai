@@ -79,6 +79,37 @@ def _write_original(case, output):
         container.mux(stream.encode())
 
 
+def test_each_case_gets_a_fresh_managed_policy_context(fixture):
+    panel, partition, store, workspace = fixture
+    events = []
+
+    @contextmanager
+    def prepare(case, output):
+        del output
+        events.append(("start", case["instance_id"]))
+        try:
+            yield
+        finally:
+            events.append(("stop", case["instance_id"]))
+
+    def execute(case, output):
+        events.append(("evaluate", case["instance_id"]))
+        _write_original(case, output)
+
+    campaign_runner.run_partition(
+        panel, partition, 0, store, workspace, execute, prepare_case=prepare
+    )
+
+    assert events == [
+        ("start", 311),
+        ("evaluate", 311),
+        ("stop", 311),
+        ("start", 316),
+        ("evaluate", 316),
+        ("stop", 316),
+    ]
+
+
 def test_resume_reuses_completed_case_and_never_repeats_started_case(fixture):
     panel, partition, store, workspace = fixture
     calls = []
@@ -203,6 +234,17 @@ def test_serving_identity_binds_configuration_and_adapter_bytes(tmp_path, monkey
     args.policy_execution_variant = "native"
     monkeypatch.setattr(serving_identity, "_SERVING_FILES", ("policy.py",))
     assert serving_identity.serving_artifact(args) != native
+
+
+def test_serving_identity_binds_comet_task_name():
+    args = SimpleNamespace(
+        policy_kind="comet12",
+        policy_execution_variant="native",
+        policy_task_name="turning_on_radio",
+    )
+    first = serving_identity.serving_artifact(args)
+    args.policy_task_name = "picking_up_trash"
+    assert serving_identity.serving_artifact(args) != first
 
 
 def test_provenance_failure_preserves_primary_evaluator_error(

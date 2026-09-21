@@ -21,6 +21,9 @@ _SERVING_FILES = (
     "rlc_correlation.py",
     "rlc_selected_server.py",
     "rlc-checkpoints.json",
+    "comet_policy.py",
+    "comet_server.py",
+    "comet12-checkpoint.json",
 )
 _INPUT_FIELDS = (
     "policy_selected_export_receipt",
@@ -56,6 +59,7 @@ def serving_artifact(args) -> dict:
         "stock_correlation_sha256": getattr(
             args, "policy_stock_correlation_sha256", None
         ),
+        "task_name": getattr(args, "policy_task_name", None),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return {"sha256": hashlib.sha256(encoded).hexdigest(), "bytes": len(encoded)}

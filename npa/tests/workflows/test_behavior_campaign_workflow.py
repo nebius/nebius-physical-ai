@@ -110,6 +110,22 @@ def test_generator_builds_valid_parallel_runtime_workflow(tmp_path):
     assert "{{run.id}}" in spec.config["worker_receipts_prefix"]
 
 
+def test_comet_task_name_reaches_each_campaign_worker():
+    document = _workflow(
+        runtime=_runtime(
+            policy_kind="comet12",
+            policy_execution_variant="native",
+            policy_task_name="task_1",
+        )
+    )
+
+    assert document["config"]["policy_task_name"] == "task_1"
+    for name in document["states"]["campaign-workers"]["parallel"]:
+        argv = document["states"][name]["run"]["argv"]
+        index = argv.index("--policy-task-name")
+        assert argv[index + 1] == "{{config.policy_task_name}}"
+
+
 def test_each_partition_worker_appears_once_with_stable_receipt_and_state_prefix():
     document = _workflow()
     members = document["states"]["campaign-workers"]["parallel"]

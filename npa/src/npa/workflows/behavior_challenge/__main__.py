@@ -13,7 +13,7 @@ from .protocol import make_plan, verify_upstream
 def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--policy-kind",
-        choices=("official", "rlc", "rlc-selected"),
+        choices=("official", "rlc", "rlc-selected", "comet12"),
         default="official",
     )
     for field in ("root", "python", "checkpoint", "archive"):
@@ -26,6 +26,7 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(f"--policy-{field}", type=Path)
     parser.add_argument("--policy-stock-correlation-asset", type=Path)
     parser.add_argument("--policy-stock-correlation-sha256")
+    parser.add_argument("--policy-task-name")
     parser.add_argument(
         "--policy-execution-variant",
         choices=(
