@@ -1898,7 +1898,17 @@ class ImagePullRequirements:
 
     requires_operator: bool = False
     requires_kubernetes: bool = False
-    pull_secret_names: tuple[str, ...] = ()
+    pull_secret_name_sets: tuple[tuple[str, ...], ...] = ()
+
+    @property
+    def pull_secret_names(self) -> tuple[str, ...]:
+        """Return the compatibility union without erasing per-path authority."""
+
+        return tuple(
+            dict.fromkeys(
+                name for names in self.pull_secret_name_sets for name in names
+            )
+        )
 
 
 def plan_image_pull_requirements(
@@ -1944,12 +1954,9 @@ def plan_image_pull_requirements(
         image: ImagePullRequirements(
             requires_operator=any(kind == "operator" for kind, _ in authorities),
             requires_kubernetes=any(kind == "kubernetes" for kind, _ in authorities),
-            pull_secret_names=tuple(
+            pull_secret_name_sets=tuple(
                 dict.fromkeys(
-                    name
-                    for kind, names in authorities
-                    if kind == "kubernetes"
-                    for name in names
+                    names for kind, names in authorities if kind == "kubernetes"
                 )
             ),
         )

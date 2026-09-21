@@ -156,8 +156,9 @@ successful `npa skypilot verify --cluster <exact-context>`:
   `ok`/`not_found`/`forbidden` and prints the build command for the tag
   `npa/src/npa/deploy/images.py` pins (the guide's tags are pinned to those by
   `tests/guardrails/test_paidf_image_tags_match_code.py`). `submit` runs the same
-  check **before `deployIfAbsent`**, so a missing release costs no
-  cluster time.
+  public-manifest check **before `deployIfAbsent`**, so a missing release costs
+  no cluster time. The exact target-pod proof follows provisioning because it
+  cannot exist before the selected cluster does.
 - **Multi-tool validation images stay distinct.** Repeat
   `--image-override TOOL_REF=IMAGE` on preflight and submit. Exact tool refs take
   precedence over the optional global `--image`; preflight resolves each selected
@@ -169,9 +170,13 @@ successful `npa skypilot verify --cluster <exact-context>`:
   execution path independently: VM paths use the exact host-scoped registry
   credential, while private Kubernetes paths use an owned pull-probe pod and the
   declared `imagePullSecret`. Kubernetes verification requires the exact
-  `--infra k8s/<context>` and targets SkyPilot's documented `default` task
-  namespace; it never falls back to the ambient context or mints a Secret. Run
-  it standalone with `npa workbench workflow preflight-images <spec.yaml>` plus
+  `--infra k8s/<context>` and resolves the same effective namespace SkyPilot
+  uses: a context-specific/global SkyPilot override, otherwise the selected
+  kubeconfig context namespace, otherwise `default`. Every distinct rendered
+  Secret set is probed independently; anonymous host access never substitutes
+  for a target pull. It never falls back to the ambient context or mints a
+  Secret. Run it standalone with
+  `npa workbench workflow preflight-images <spec.yaml>` plus
   `--infra k8s/<context>`, or skip with `--no-preflight-images`.
 - **A large authenticated cold pull is not an access failure.** Bootstrap probes
   default to a 30-minute observation window. Use

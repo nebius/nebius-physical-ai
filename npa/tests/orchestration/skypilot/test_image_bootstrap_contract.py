@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import threading
+from functools import partial
 
 import pytest
 
@@ -22,7 +23,7 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
     _runtime_bootstrap_script,
     load_cached_evidence,
     parse_oci_reference,
-    probe_image_capabilities,
+    probe_image_capabilities as _probe_image_capabilities,
     store_cached_evidence,
     verify_attestation,
 )
@@ -30,6 +31,22 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
 
 DIGEST = "sha256:" + "a" * 64
 IMAGE = "registry.example/npa-fiftyone:validation"
+probe_image_capabilities = partial(
+    _probe_image_capabilities, namespace="target-namespace"
+)
+
+
+def _verb(argv: list[str]) -> str:
+    return next(item for item in ("run", "get", "delete") if item in argv)
+
+
+def _pod_name_from_command(argv: list[str]) -> str:
+    action = _verb(argv)
+    if action == "run":
+        return argv[argv.index("run") + 1]
+    if action == "get":
+        return argv[argv.index("pod") + 1]
+    return argv[argv.index("--raw") + 1].rsplit("/", 1)[-1]
 
 
 def _pod_payload(
@@ -84,18 +101,26 @@ def _pod_payload(
 def _successful_runner(
     calls: list[list[str]], *, wait_error: str = "", delete_error: str = ""
 ):
+    deleted_names: set[str] = set()
+
     def runner(argv, _env):
         calls.append(argv)
-        action = argv[3]
-        if action == "run":
+        if "run" in argv:
             return subprocess.CompletedProcess(argv, 0, "", "")
-        if action == "get":
-            name = argv[5]
+        if "get" in argv:
+            name = argv[argv.index("pod") + 1]
+            if name in deleted_names and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
             probe_id = name.rsplit("-", 1)[-1]
             return subprocess.CompletedProcess(
                 argv, 0, _pod_payload(name, probe_id, failed=wait_error), ""
             )
-        if action == "delete":
+        if "delete" in argv:
+            options_path = Path(argv[argv.index("-f") + 1])
+            options = json.loads(options_path.read_text())
+            assert options["preconditions"]["uid"] == "uid-owned"
+            if not delete_error:
+                deleted_names.add(_pod_name_from_command(argv))
             return subprocess.CompletedProcess(
                 argv, int(bool(delete_error)), "", delete_error
             )
@@ -160,13 +185,15 @@ def test_root_and_compliant_non_root_probe_share_exact_contract() -> None:
     assert "command -v service" in calls[0][-1]
     assert "test -w /tmp" in calls[0][-1]
     assert "--command" not in calls[0]  # entrypoint must forward pod args
-    assert calls[-1][-5:] == [
-        "delete",
-        "pod",
-        calls[0][4],
-        "--ignore-not-found=true",
-        "--wait=true",
+    assert calls[0][:5] == [
+        "kubectl",
+        "--context",
+        "ctx-exact",
+        "--namespace",
+        "target-namespace",
     ]
+    delete = next(command for command in calls if _verb(command) == "delete")
+    assert _pod_name_from_command(delete) == _pod_name_from_command(calls[0])
 
 
 def test_probe_allows_cold_workbench_image_pull_to_finish() -> None:
@@ -354,6 +381,7 @@ def test_probe_rejects_invalid_image_pull_secret_name_before_creation() -> None:
         "rsync: not found",
         "service: not found",
         "entrypoint rejected arguments",
+        "Authorization: Bearer synthetic-bootstrap-secret",
     ],
 )
 def test_missing_capability_or_bad_entrypoint_fails_closed(failure: str) -> None:
@@ -368,7 +396,8 @@ def test_missing_capability_or_bad_entrypoint_fails_closed(failure: str) -> None
     )
     assert evidence.state == "incompatible"
     assert evidence.cleanup == "verified"
-    assert failure in evidence.detail
+    assert failure not in evidence.detail
+    assert "reason=Error" in evidence.detail
     assert "exitCode=17" in evidence.detail
 
 
@@ -386,9 +415,10 @@ def test_terminal_timeout_is_indeterminate_and_still_cleans_up() -> None:
     )
 
     assert evidence.state == "indeterminate"
-    assert "timed out" in evidence.detail
+    assert "without a terminal pod phase" in evidence.detail
+    assert "timed out" not in evidence.detail
     assert evidence.cleanup == "verified"
-    assert any(argv[3] == "delete" for argv in calls)
+    assert any(_verb(argv) == "delete" for argv in calls)
 
 
 def test_probe_transport_and_cleanup_failures_are_indeterminate() -> None:
@@ -402,6 +432,7 @@ def test_probe_transport_and_cleanup_failures_are_indeterminate() -> None:
         nonce_factory=lambda: "c" * 16,
     )
     assert create_failure.state == "indeterminate"
+    assert "connection refused" not in create_failure.detail
 
     calls: list[list[str]] = []
     cleanup_failure = probe_image_capabilities(
@@ -535,10 +566,11 @@ def test_embedded_digest_must_match_resolved_digest() -> None:
 def test_same_digest_concurrent_probes_have_unique_owned_pods() -> None:
     calls: list[list[str]] = []
     lock = threading.Lock()
+    base_runner = _successful_runner(calls)
 
     def runner(argv, env):
         with lock:
-            return _successful_runner(calls)(argv, env)
+            return base_runner(argv, env)
 
     results = []
 
@@ -564,8 +596,10 @@ def test_same_digest_concurrent_probes_have_unique_owned_pods() -> None:
         thread.join()
 
     assert len(results) == 2 and all(item.ok for item in results)
-    created = {argv[4] for argv in calls if argv[3] == "run"}
-    deleted = {argv[5] for argv in calls if argv[3] == "delete"}
+    created = {_pod_name_from_command(argv) for argv in calls if _verb(argv) == "run"}
+    deleted = {
+        _pod_name_from_command(argv) for argv in calls if _verb(argv) == "delete"
+    }
     assert len(created) == 2
     assert deleted == created
 
@@ -573,14 +607,15 @@ def test_same_digest_concurrent_probes_have_unique_owned_pods() -> None:
 def test_probe_retries_already_exists_with_a_new_nonce() -> None:
     calls: list[list[str]] = []
     nonces = iter(("3" * 16, "4" * 16))
+    base_runner = _successful_runner(calls)
 
     def runner(argv, env):
-        if argv[3] == "run" and argv[4].endswith("3" * 16):
+        if _verb(argv) == "run" and _pod_name_from_command(argv).endswith("3" * 16):
             calls.append(argv)
             return subprocess.CompletedProcess(
                 argv, 1, "", "Error from server (AlreadyExists)"
             )
-        return _successful_runner(calls)(argv, env)
+        return base_runner(argv, env)
 
     evidence = probe_image_capabilities(
         image=IMAGE,
@@ -591,7 +626,7 @@ def test_probe_retries_already_exists_with_a_new_nonce() -> None:
         nonce_factory=lambda: next(nonces),
     )
     assert evidence.ok
-    assert len([argv for argv in calls if argv[3] == "run"]) == 2
+    assert len([argv for argv in calls if _verb(argv) == "run"]) == 2
 
 
 def test_replacement_identity_is_refused_and_never_deleted() -> None:
@@ -601,11 +636,11 @@ def test_replacement_identity_is_refused_and_never_deleted() -> None:
     def runner(argv, env):
         nonlocal reads
         calls.append(argv)
-        if argv[3] == "run" or argv[3] == "wait":
+        if _verb(argv) == "run":
             return subprocess.CompletedProcess(argv, 0, "", "")
-        if argv[3] == "get":
+        if _verb(argv) == "get":
             reads += 1
-            name = argv[5]
+            name = _pod_name_from_command(argv)
             probe_id = name.rsplit("-", 1)[-1]
             return subprocess.CompletedProcess(
                 argv, 0, _pod_payload(name, probe_id, uid=f"uid-{reads}"), ""
@@ -622,14 +657,15 @@ def test_replacement_identity_is_refused_and_never_deleted() -> None:
     )
     assert evidence.state == "indeterminate"
     assert evidence.cleanup == "refused_identity_mismatch"
-    assert not any(argv[3] == "delete" for argv in calls)
+    assert not any(_verb(argv) == "delete" for argv in calls)
 
 
 def test_operator_interruption_cleans_only_the_owned_probe() -> None:
     calls: list[list[str]] = []
+    base_runner = _successful_runner(calls)
 
     def runner(argv, env):
-        return _successful_runner(calls)(argv, env)
+        return base_runner(argv, env)
 
     def interrupt(argv, _env):
         calls.append(argv)
@@ -644,9 +680,9 @@ def test_operator_interruption_cleans_only_the_owned_probe() -> None:
             terminal_observer=interrupt,
             nonce_factory=lambda: "6" * 16,
         )
-    deletes = [argv for argv in calls if argv[3] == "delete"]
+    deletes = [argv for argv in calls if _verb(argv) == "delete"]
     assert len(deletes) == 1
-    assert deletes[0][5].endswith("6" * 16)
+    assert _pod_name_from_command(deletes[0]).endswith("6" * 16)
 
 
 def test_operator_interruption_preserves_primary_when_cleanup_fails() -> None:
@@ -670,29 +706,35 @@ def test_operator_interruption_preserves_primary_when_cleanup_fails() -> None:
         )
     notes = getattr(caught.value, "__notes__", [])
     fallback = getattr(caught.value, "__npa_cleanup_note__", "")
-    assert "cleanup denied" in " ".join([*notes, fallback])
+    detail = " ".join([*notes, fallback])
+    assert "cleanup denied" not in detail
+    assert "probe deletion was rejected (exit 1)" in detail
 
 
 def test_interruption_during_cleanup_identity_read_retries_exact_cleanup() -> None:
     calls: list[list[str]] = []
     reads = 0
+    deleted = False
 
     def runner(argv, _env):
-        nonlocal reads
+        nonlocal deleted, reads
         calls.append(argv)
-        action = argv[3]
+        action = _verb(argv)
         if action == "run":
             return subprocess.CompletedProcess(argv, 0, "", "")
         if action == "get":
             reads += 1
             if reads == 2:
                 raise KeyboardInterrupt
-            name = argv[5]
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
             probe_id = name.rsplit("-", 1)[-1]
             return subprocess.CompletedProcess(
                 argv, 0, _pod_payload(name, probe_id), ""
             )
         if action == "delete":
+            deleted = True
             return subprocess.CompletedProcess(argv, 0, "", "")
         raise AssertionError(argv)
 
@@ -706,5 +748,5 @@ def test_interruption_during_cleanup_identity_read_retries_exact_cleanup() -> No
             nonce_factory=lambda: "8" * 16,
         )
 
-    assert reads == 3
-    assert len([argv for argv in calls if argv[3] == "delete"]) == 1
+    assert reads == 4
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1

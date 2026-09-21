@@ -693,6 +693,8 @@ def test_workflow_gpus_resolves_templated_accelerator_config(
 def _stub_pull(
     monkeypatch: pytest.MonkeyPatch, checks: list[ImagePullCheck]
 ) -> dict[str, object]:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
     observed: dict[str, object] = {}
 
     def check_images(images, **kwargs):  # noqa: ANN001
@@ -703,6 +705,10 @@ def _stub_pull(
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         check_images,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
     )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.skypilot_render.plan_images",
@@ -730,6 +736,69 @@ def _stub_pull(
 
 
 NEBIUS_IMAGE = "registry-us.example/u000/npa-cosmos2-transfer:2.5.1"
+
+
+def test_public_manifest_failure_blocks_before_target_exists(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-cosmos-curate:0.1.2"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images",
+        lambda *args, **kwargs: [image],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            image: ImagePullRequirements(requires_kubernetes=True)
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: [
+            ImagePullCheck(image=image, status="not_found", http_status=404)
+        ],
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        workflow_cli._preflight_submit_image_manifests(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/not-created-yet",
+        )
+
+    assert exc_info.type.__name__ == "Exit"
+
+
+def test_private_kubernetes_manifest_failure_defers_to_exact_target(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    image = "private.example/team/image:tag"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images",
+        lambda *args, **kwargs: [image],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            image: ImagePullRequirements(requires_kubernetes=True)
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: [
+            ImagePullCheck(image=image, status="no_credentials", http_status=401)
+        ],
+    )
+
+    workflow_cli._preflight_submit_image_manifests(
+        spec_path,
+        options=object(),
+        assume_decision="",
+        enabled=True,
+        infra="k8s/not-created-yet",
+    )
 
 
 def test_a_forbidden_nebius_image_blocks_submit(
@@ -798,6 +867,8 @@ def test_pullable_images_pass(
     assert observed["operator_images"] == set()
     assert observed["kubernetes_images"] == {NEBIUS_IMAGE}
     assert observed["context"] == "target-context"
+    assert observed["namespace"] == "target-namespace"
+    assert observed["pull_secret_sets_by_image"] == {NEBIUS_IMAGE: ((),)}
     assert observed["target_pull_timeout_seconds"] == 321
 
 
@@ -838,6 +909,8 @@ def test_image_preflight_plans_with_submit_config_overrides(
 def test_image_preflight_includes_reject_only_image_without_provider_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
     reject_image = "registry.example.invalid/operator/npa-cosmos3:reject-only"
     spec_path = tmp_path / "dynamic.yaml"
     spec_path.write_text(
@@ -893,6 +966,10 @@ states:
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         check,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
     )
     monkeypatch.setattr(
         workflow_cli,
@@ -952,6 +1029,7 @@ def test_first_party_image_without_attestation_fails_instead_of_probing(
                 )
             ],
             context="exact-context",
+            namespace="target-namespace",
         )
     assert excinfo.type.__name__ == "Exit"
 
@@ -973,6 +1051,7 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
         images=[image],
         pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
         context="exact-context",
+        namespace="target-namespace",
     )
 
     assert result == []
@@ -994,6 +1073,8 @@ def test_cached_capability_preserves_the_selected_image_repository(
     source: str,
 ) -> None:
     """Identical mirrored bytes must not redirect a verified pull to another registry."""
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
     digest = "sha256:" + "7" * 64
     cached_image = "registry.example.invalid/previous/npa-cosmos-curate@" + digest
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -1028,6 +1109,10 @@ def test_cached_capability_preserves_the_selected_image_repository(
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         pull,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
     )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
@@ -1122,6 +1207,7 @@ def test_image_bootstrap_probe_paths_share_observing_progress_helper(
         images=[image],
         pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
         context="exact-context",
+        namespace="target-namespace",
         observation_timeout_seconds=1800,
     )
 
@@ -1192,6 +1278,7 @@ def test_groot_label_and_label_backed_cache_cannot_bypass_runtime_probe(
             )
         ],
         context="exact-context",
+        namespace="target-namespace",
     )
 
     assert calls == [(image, digest, "exact-context")]
@@ -1236,6 +1323,7 @@ def test_runtime_bootstrap_probe_receives_declared_image_pull_secrets(
         images=[image],
         pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
         context="exact-context",
+        namespace="target-namespace",
         pull_secrets_by_image={image: ("operator-registry",)},
     )
 
@@ -1280,6 +1368,7 @@ def test_runtime_bootstrap_probe_receives_no_deadline_observation(
         images=[image],
         pull_checks=[ImagePullCheck(image=image, status="ok", digest=digest)],
         context="exact-context",
+        namespace="target-namespace",
         observation_timeout_seconds=0,
     )
 
@@ -1339,20 +1428,21 @@ def test_catalog_helper_reports_max_per_node() -> None:
 
 
 def test_image_and_capacity_checks_run_before_any_provisioning() -> None:
-    """A registry missing the workbench images must cost no cluster time.
+    """Definitive manifests fail free; exact target proof follows provisioning.
 
-    The check only needs the registry and the --image overrides, never the
-    cluster, so it belongs ahead of deployIfAbsent.
+    A Kubernetes pull pod cannot exist until deployIfAbsent has produced the
+    selected cluster. Public release manifests and VM paths remain a free gate.
     """
 
     import inspect
 
     source = inspect.getsource(workflow_cli.submit_cmd)
     capacity_at = source.index("resolved_deploy_plans = plan_infra_present(")
-    image_at = source.index("_preflight_submit_images(")
+    manifest_at = source.index("_preflight_submit_image_manifests(")
     mutation_at = source.index("records = ensure_infra_present(")
+    target_at = source.rindex("image_digest_pins = _preflight_submit_images(")
 
-    assert capacity_at < image_at < mutation_at
+    assert capacity_at < manifest_at < mutation_at < target_at
 
 
 def test_a_missing_workbench_image_carries_its_build_command(

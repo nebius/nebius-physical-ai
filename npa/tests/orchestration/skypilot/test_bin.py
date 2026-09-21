@@ -22,6 +22,7 @@ from npa.orchestration.skypilot._bin import (
     clear_skypilot_version_cache,
     ensure_skypilot_version,
     resolve_config,
+    resolve_global_config_path,
     resolve_isolated_config_dir,
     resolve_sky_bin,
 )
@@ -160,6 +161,20 @@ def test_resolve_isolated_config_dir_does_not_require_sky_bin(
 
     monkeypatch.delenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR")
     assert resolve_isolated_config_dir() == config_isolated
+
+
+def test_resolve_global_config_path_does_not_require_sky_bin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    configured = tmp_path / "sky-global.yaml"
+    npa_config = tmp_path / "config.yaml"
+    npa_config.write_text(
+        f"skypilot:\n  global_config_path: {configured}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(bin_module, "CONFIG_PATH", npa_config)
+
+    assert resolve_global_config_path() == configured
 
 
 def test_resolve_isolated_config_dir_defaults_to_shared_state(

@@ -18,6 +18,7 @@ from npa.orchestration.skypilot.registry_preflight import (
     check_image_pulls_with_credentials,
     fetch_image_config_metadata,
     parse_image_reference,
+    resolve_kubernetes_pull_target,
     resolve_registry_credentials,
     verify_kubernetes_image_pull,
     verify_kubernetes_pull_secret,
@@ -551,6 +552,7 @@ def test_host_credentials_bound_target_lookup_diagnostics(
         fetcher=FakeRegistry(manifest_status=200),
         pull_secret_names=("unreadable-secret",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
             cmd,
             1,
@@ -603,6 +605,7 @@ def test_host_credentials_require_declared_secret_to_have_docker_config_type(
         ),
         pull_secret_names=("wrong-type",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
             cmd, 0, stdout=json.dumps(payload), stderr=""
         ),
@@ -623,6 +626,7 @@ def test_host_credentials_require_declared_secret_to_cover_image_registry(
         fetcher=FakeRegistry(manifest_status=200),
         pull_secret_names=("wrong-registry",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda *args, **kwargs: _docker_secret_result(
             "oci.example.test", name="wrong-registry"
         ),
@@ -651,6 +655,7 @@ def test_host_and_declared_target_authorities_are_both_verified(
         ),
         pull_secret_names=("pull-secret",),
         context="target-context",
+        namespace="default",
         secret_runner=valid_target,
         target_pull_verifier=_verified_target_pull,
     )
@@ -682,6 +687,7 @@ def test_verified_target_pull_secret_can_satisfy_private_foreign_registry(
         fetcher=operator_unreachable,
         pull_secret_names=("pull-secret",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda *args, **kwargs: _docker_secret_result(registry),
         target_pull_verifier=_verified_target_pull,
     )
@@ -705,6 +711,7 @@ def test_missing_or_rbac_denied_pull_secret_is_not_target_pull_proof() -> None:
         fetcher=operator_unreachable,
         pull_secret_names=("missing-secret",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
             cmd, 1, stdout="", stderr="forbidden: cannot get secret"
         ),
@@ -797,6 +804,7 @@ def test_kubernetes_private_path_without_secret_fails_closed(
         operator_images=set(),
         kubernetes_images={IMAGE},
         context="target-context",
+        namespace="default",
         target_pull_verifier=lambda **kwargs: pytest.fail(
             "private Kubernetes paths need declared delivery before probing"
         ),
@@ -821,6 +829,7 @@ def test_host_and_target_must_resolve_the_same_immutable_bytes(
         ),
         pull_secret_names=("pull-secret",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda *args, **kwargs: _docker_secret_result(REGISTRY),
         target_pull_verifier=lambda **kwargs: KubernetesPullCheck(
             status="verified", digest=other_digest
@@ -842,6 +851,7 @@ def test_target_pull_and_cleanup_failures_are_both_reported(
         fetcher=FakeRegistry(manifest_status=200),
         pull_secret_names=("pull-secret",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda *args, **kwargs: _docker_secret_result(REGISTRY),
         target_pull_verifier=lambda **kwargs: KubernetesPullCheck(
             status="image_pull_failed",
@@ -894,6 +904,7 @@ def test_declared_secret_requires_exact_context_before_inventory() -> None:
         [IMAGE],
         fetcher=FakeRegistry(manifest_status=200),
         pull_secret_names=("pull-secret",),
+        namespace="default",
         secret_runner=lambda *args, **kwargs: pytest.fail(
             "ambient kubectl context must never be queried"
         ),
@@ -901,7 +912,10 @@ def test_declared_secret_requires_exact_context_before_inventory() -> None:
 
     assert checks[0].status == "target_pull_unverified"
     assert checks[0].target_status == "exact_context_required"
-    assert "exact Kubernetes context is required" in checks[0].detail
+    assert (
+        "exact Kubernetes context and effective namespace are required"
+        in checks[0].detail
+    )
 
 
 def test_non_base64_auth_field_is_not_target_credential_proof() -> None:
@@ -918,6 +932,7 @@ def test_non_base64_auth_field_is_not_target_credential_proof() -> None:
         fetcher=FakeRegistry(manifest_status=200),
         pull_secret_names=("stale-secret",),
         context="target-context",
+        namespace="default",
         secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
             cmd, 0, stdout=json.dumps(secret), stderr=""
         ),
@@ -978,6 +993,144 @@ def test_config_metadata_fetch_bounds_transport_exception_text() -> None:
     assert secret not in str(exc_info.value)
 
 
+def test_effective_target_uses_selected_context_namespace() -> None:
+    def kubectl(cmd, **kwargs):  # noqa: ANN001
+        assert cmd == [
+            "kubectl",
+            "--context",
+            "target-context",
+            "config",
+            "view",
+            "--minify",
+            "-o",
+            "json",
+        ]
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "contexts": [
+                        {
+                            "name": "target-context",
+                            "context": {"namespace": "team-workloads"},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+    target = resolve_kubernetes_pull_target(context="target-context", runner=kubectl)
+
+    assert target.namespace == "team-workloads"
+    assert target.pull_secret_names == ()
+
+
+def test_effective_target_merges_global_and_context_config(tmp_path) -> None:
+    config = tmp_path / "sky.yaml"
+    config.write_text(
+        """
+kubernetes:
+  namespace: global-namespace
+  pod_config:
+    spec:
+      imagePullSecrets:
+        - name: global-secret
+  context_configs:
+    target-context:
+      namespace: team-namespace
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: context-secret
+""",
+        encoding="utf-8",
+    )
+
+    target = resolve_kubernetes_pull_target(
+        context="target-context",
+        global_config_path=config,
+        runner=lambda *args, **kwargs: pytest.fail(
+            "explicit SkyPilot namespace must not consult ambient context"
+        ),
+    )
+
+    assert target.namespace == "team-namespace"
+    assert target.pull_secret_names == ("global-secret", "context-secret")
+
+
+def test_target_namespace_lookup_never_renders_kubectl_diagnostics() -> None:
+    marker = "Authorization: Bearer synthetic-namespace-secret"
+
+    with pytest.raises(RegistryPreflightError) as exc_info:
+        resolve_kubernetes_pull_target(
+            context="target-context",
+            runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr=marker
+            ),
+        )
+
+    assert marker not in str(exc_info.value)
+    assert str(exc_info.value).endswith("(exit 1)")
+
+
+def test_anonymous_host_success_still_requires_exact_target_probe() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def target_pull(**kwargs):
+        calls.append(kwargs["secret_names"])
+        return KubernetesPullCheck(status="verified", digest=DIGEST)
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(
+            manifest_status=200,
+            manifest_headers={"docker-content-digest": DIGEST},
+        ),
+        pull_secret_sets_by_image={IMAGE: ((),)},
+        operator_images=set(),
+        kubernetes_images={IMAGE},
+        namespace="team-namespace",
+        context="target-context",
+        target_pull_verifier=target_pull,
+    )
+
+    assert calls == [()]
+    assert checks[0].ok
+    assert checks[0].authority == "kubernetes_target_pull"
+
+
+def test_every_distinct_kubernetes_secret_set_is_probed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+    probed: list[tuple[str, ...]] = []
+
+    def target_pull(**kwargs):
+        probed.append(kwargs["secret_names"])
+        return KubernetesPullCheck(status="verified", digest=DIGEST)
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(
+            manifest_status=200,
+            manifest_headers={"docker-content-digest": DIGEST},
+        ),
+        pull_secret_sets_by_image={IMAGE: (("path-a-secret",), ("path-b-secret",))},
+        operator_images=set(),
+        kubernetes_images={IMAGE},
+        namespace="team-namespace",
+        context="target-context",
+        secret_runner=lambda *args, **kwargs: _docker_secret_result(REGISTRY),
+        target_pull_verifier=target_pull,
+    )
+
+    assert checks[0].ok
+    assert checks[0].target_status == "verified_target_paths"
+    assert probed == [("path-a-secret",), ("path-b-secret",)]
+
+
 def _target_probe_runner(
     *,
     delete_exit: int = 0,
@@ -986,6 +1139,7 @@ def _target_probe_runner(
     active_deadline_seconds: int | None = 30,
 ):
     calls: list[list[str]] = []
+    deleted = False
     name = f"npa-pull-{hashlib.sha256(IMAGE.encode()).hexdigest()[:12]}-abc123"
     payload = {
         "metadata": {
@@ -1014,6 +1168,7 @@ def _target_probe_runner(
     }
 
     def run(cmd, **kwargs):  # noqa: ANN001
+        nonlocal deleted
         calls.append(cmd)
         if "create" in cmd:
             manifest = json.loads(kwargs["input"])
@@ -1036,7 +1191,13 @@ def _target_probe_runner(
                 cmd, 0, stdout=json.dumps(payload), stderr=""
             )
         if "delete" in cmd:
+            options = json.loads(kwargs["input"])
+            assert options["preconditions"]["uid"] == "probe-uid"
+            if delete_exit == 0:
+                deleted = True
             return subprocess.CompletedProcess(cmd, delete_exit, stdout="", stderr="")
+        if deleted and "--ignore-not-found=true" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(
             cmd, 0, stdout=json.dumps(payload), stderr=""
         )
@@ -1108,9 +1269,34 @@ def test_target_pull_probe_bounds_create_exception_text() -> None:
     )
 
     assert check == KubernetesPullCheck(
-        status="create_rejected", cleanup_status="not_applicable"
+        status="create_rejected", cleanup_status="unverified"
     )
     assert secret not in repr(check)
+
+
+def test_indeterminate_create_still_uses_uid_preconditioned_cleanup() -> None:
+    run, _calls = _target_probe_runner()
+    create_attempted = False
+
+    def timeout_after_create(cmd, **kwargs):  # noqa: ANN001
+        nonlocal create_attempted
+        if "create" in cmd and not create_attempted:
+            create_attempted = True
+            raise subprocess.TimeoutExpired(cmd, 30, output="opaque")
+        return run(cmd, **kwargs)
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=timeout_after_create,
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check.status == "create_rejected"
+    assert check.cleanup_status == "verified"
 
 
 def test_target_pull_probe_uses_sky_tasks_default_namespace() -> None:

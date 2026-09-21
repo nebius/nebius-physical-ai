@@ -596,11 +596,44 @@ def test_mixed_image_preserves_vm_and_kubernetes_pull_requirements() -> None:
     assert requirement.requires_operator is True
     assert requirement.requires_kubernetes is True
     assert requirement.pull_secret_names == ("target-secret",)
+    assert requirement.pull_secret_name_sets == (("target-secret",),)
     assert set(
         plan_image_pull_secrets(
             spec, [kubernetes, operator], run_id="demo", options=options
         ).values()
     ) == {()}
+
+
+def test_same_image_preserves_each_kubernetes_pull_secret_set() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_secret(state: str, name: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {"spec": {"imagePullSecrets": [{"name": name}]}}
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [with_secret("path-a", "secret-a"), with_secret("path-b", "secret-b")],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("secret-a",),
+        ("secret-b",),
+    )
+    assert requirement.pull_secret_names == ("secret-a", "secret-b")
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:

@@ -111,6 +111,29 @@ def resolve_sky_bin(sky_bin: SkyBin = None) -> Path:
     return resolve_config(sky_bin=sky_bin).sky_bin
 
 
+def resolve_global_config_path(
+    global_config_path: str | os.PathLike[str] | None = None,
+    *,
+    npa_config_path: str | os.PathLike[str] | None = None,
+) -> Path | None:
+    """Resolve SkyPilot's selected global config without requiring its binary."""
+
+    config_path = Path(npa_config_path) if npa_config_path is not None else CONFIG_PATH
+    file_config = _load_skypilot_file_config(config_path)
+    global_value, _ = _first_config_value(
+        (global_config_path, "explicit config_path"),
+        (
+            os.environ.get("SKYPILOT_GLOBAL_CONFIG", "").strip(),
+            "SKYPILOT_GLOBAL_CONFIG",
+        ),
+        (
+            file_config.get("global_config_path"),
+            f"{config_path}: skypilot.global_config_path",
+        ),
+    )
+    return _optional_path(global_value)
+
+
 def resolve_isolated_config_dir(
     isolated_config_dir: str | os.PathLike[str] | None = None,
     *,

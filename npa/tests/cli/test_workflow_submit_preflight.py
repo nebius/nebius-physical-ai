@@ -1087,6 +1087,8 @@ def test_runtime_fetch_sonic_image_requires_staged_npa_source() -> None:
 
 def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
     """An empty canonical image input must be overridable before pull probes."""
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
@@ -1096,6 +1098,10 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
         return_value=[],
     )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
     args = [
         "workbench",
         "workflow",
@@ -1103,6 +1109,8 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         str(SIM2REAL_SPEC),
         "--assume-decision",
         "promote_checkpoint",
+        "--infra",
+        "k8s/target-context",
     ]
     for name in (
         "controller_image",
@@ -1153,7 +1161,27 @@ def test_image_pull_execution_paths_preserve_each_rendered_target(
     assert kubernetes == expected_kubernetes
 
 
+def test_effective_pull_secret_sets_do_not_union_distinct_paths() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("path-a",), ("path-b",)),
+        )
+    }
+
+    effective = workflow_cli._image_pull_secret_sets(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+        inherited_pull_secrets=("global",),
+    )
+
+    assert effective == {"image": (("global", "path-a"), ("global", "path-b"))}
+
+
 def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
@@ -1162,6 +1190,10 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
     contracts = mocker.patch(
         "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
         return_value=[],
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
     )
     args = [
         "workbench",
@@ -1192,6 +1224,10 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
         digest_image: ("operator-registry",)
     }
     assert checks.call_args.kwargs["context"] == "target-context"
+    assert checks.call_args.kwargs["namespace"] == "target-namespace"
+    assert checks.call_args.kwargs["pull_secret_sets_by_image"] == {
+        digest_image: (("operator-registry",),)
+    }
     assert checks.call_args.kwargs["operator_images"] == set()
     assert checks.call_args.kwargs["kubernetes_images"] == {digest_image}
     assert checks.call_args.kwargs["target_pull_timeout_seconds"] == 1800
@@ -1647,6 +1683,7 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     _mock_sky_bin_ok(monkeypatch)
     planned_targets = []
     provisioned_targets = []
+    phases: list[str] = []
 
     def plan(targets, *, mutation):
         assert mutation is True
@@ -1654,6 +1691,7 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
         return {"submit-context": mocker.Mock()}
 
     def ensure(targets, **_kwargs):
+        phases.append("provision")
         provisioned_targets.extend(targets)
         return []
 
@@ -1665,9 +1703,16 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
         "npa.orchestration.npa_workflow.deploy.plan_infra_present",
         side_effect=plan,
     )
-    # Registry pull semantics are covered independently; this test reaches the
-    # deploy-if-absent delegation path.
-    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_image_manifests",
+        side_effect=lambda *args, **kwargs: phases.append("manifest"),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        side_effect=lambda *args, **kwargs: phases.append("target") or {},
+    )
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
     mocker.patch(
         "npa.orchestration.npa_workflow.submit.prepare_npa_workflow_for_submit",
         side_effect=RuntimeError("stop after deployIfAbsent"),
@@ -1699,3 +1744,4 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     assert all(target.project == "submit-project" for target in planned_targets)
     assert all(target.cluster_name == "submit-context" for target in planned_targets)
     assert all(target.context == "submit-context" for target in planned_targets)
+    assert phases == ["manifest", "provision", "target"]
