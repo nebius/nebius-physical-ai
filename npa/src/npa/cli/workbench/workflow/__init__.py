@@ -110,6 +110,19 @@ def _bounded_log_streams(
     return bounded_stdout, bounded_stderr, metadata
 
 
+def _live_log_contract(stdout: str, stderr: str) -> dict[str, str]:
+    """Describe byte availability separately from live-query verification."""
+
+    return {
+        "live_log_state": "available" if stdout or stderr else "empty",
+        "live_verification_scope": "query_transport_only",
+        "live_verification_note": (
+            "A successful live log query verifies transport only; live_log_state "
+            "records whether the query returned log bytes."
+        ),
+    }
+
+
 def _emit_log_truncation(metadata: Mapping[str, object]) -> None:
     if metadata.get("log_truncated"):
         typer.echo(
@@ -6092,7 +6105,7 @@ def logs_cmd(
                                 "run_id": resolution.run_id,
                                 "stage": selected_stage,
                                 "manifest_state": "pending",
-                                "live_log_state": "available",
+                                **_live_log_contract(safe_stdout, safe_stderr),
                                 "log": safe_stdout,
                                 "stderr": safe_stderr,
                                 **log_metadata,
@@ -6404,7 +6417,7 @@ def logs_cmd(
                     )
                     source_payload.update(
                         {
-                            "live_log_state": "available",
+                            **_live_log_contract(safe_stdout, safe_stderr),
                             "log": safe_stdout,
                             "stderr": safe_stderr,
                             **log_metadata,
@@ -6430,12 +6443,29 @@ def logs_cmd(
                 safe_stdout, safe_stderr, log_metadata = _bounded_log_streams(
                     safe_stdout, safe_stderr, max_output_chars
                 )
-                if safe_stdout:
+                if safe_stdout and not json_output:
                     typer.echo(safe_stdout, nl=False)
-                if safe_stderr:
+                if safe_stderr and not json_output:
                     typer.echo(safe_stderr, err=True, nl=False)
-                _emit_log_truncation(log_metadata)
+                if not json_output:
+                    _emit_log_truncation(log_metadata)
                 if live.returncode == 0:
+                    if json_output:
+                        typer.echo(
+                            json.dumps(
+                                {
+                                    "run_id": resolution.run_id,
+                                    "stage": selected_stage,
+                                    "manifest_state": "available",
+                                    **_live_log_contract(safe_stdout, safe_stderr),
+                                    "log": safe_stdout,
+                                    "stderr": safe_stderr,
+                                    **log_metadata,
+                                },
+                                indent=2,
+                                sort_keys=True,
+                            )
+                        )
                     return
             cached_text, log_metadata = _bounded_log_text(
                 redact_text(read_stage_log(state, selected_stage)), max_output_chars

@@ -968,6 +968,14 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     fake_s3.put_object(
         Bucket="bucket", Key="run-1/artifacts/train/model.bin", Body=b"model"
     )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
+        lambda **kwargs: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin",
+        lambda value: "synthetic-sky",
+    )
 
     status_result = runner.invoke(
         app,
@@ -976,6 +984,19 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     logs_result = runner.invoke(
         app,
         ["workbench", "workflow", "logs", "s3://bucket/run-1", "--stage", "train"],
+    )
+    live_logs_result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "logs",
+            "s3://bucket/run-1",
+            "--stage",
+            "train",
+            "--follow",
+            "--json",
+        ],
     )
     artifacts_result = runner.invoke(
         app,
@@ -990,6 +1011,11 @@ def test_durable_workflow_status_logs_and_artifacts_read_s3(monkeypatch) -> None
     assert "training complete" in logs_result.output
     assert "durable-secret-value" not in logs_result.output
     assert "AWS_SECRET_ACCESS_KEY=<redacted>" in logs_result.output
+    assert live_logs_result.exit_code == 0, live_logs_result.output
+    live_logs = json.loads(live_logs_result.output)
+    assert live_logs["live_log_state"] == "empty"
+    assert live_logs["live_verification_scope"] == "query_transport_only"
+    assert live_logs["log"] == live_logs["stderr"] == ""
     assert artifacts_result.exit_code == 0
     assert "s3://bucket/run-1/artifacts/train/model.bin" in artifacts_result.output
 
@@ -1263,7 +1289,51 @@ def test_workflow_logs_after_driver_crash_without_task_timeline(
     )
     assert result.exit_code == 0, result.output
     assert calls == [("42", expected_task)]
-    assert json.loads(result.output)["log"] == "rendered rollout\n"
+    payload = json.loads(result.output)
+    assert payload["log"] == "rendered rollout\n"
+    assert payload["live_log_state"] == "available"
+    assert payload["live_verification_scope"] == "query_transport_only"
+
+
+def test_workflow_logs_json_reports_successful_empty_runtime_tail(monkeypatch) -> None:
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
+    uri = _put_workflow_log_waves(
+        fake_s3,
+        [
+            {
+                "key": "wave-1",
+                "kind": "serial",
+                "states": ["rollout"],
+                "attempt": 1,
+                "status": "running",
+                "job_id": "42",
+                "tasks": [{"task_id": 0}],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
+        lambda **kwargs: subprocess.CompletedProcess([], 0, "", ""),
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._resolve_sky_bin",
+        lambda value: "synthetic-sky",
+    )
+
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "logs", uri, "--stage", "rollout", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["verification_status"] == "VERIFIED"
+    assert payload["live_verified"] is True
+    assert payload["live_log_state"] == "empty"
+    assert payload["live_verification_scope"] == "query_transport_only"
+    assert "transport only" in payload["live_verification_note"]
+    assert payload["log"] == payload["stderr"] == ""
 
 
 def test_workflow_logs_reports_remote_task_not_found_as_unavailable(
@@ -2339,12 +2409,17 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
     logs_result = runner.invoke(
         app, ["workbench", "workflow", "logs", *common, "--stage", "curate"]
     )
+    logs_json_result = runner.invoke(
+        app,
+        ["workbench", "workflow", "logs", *common, "--stage", "curate", "--json"],
+    )
     cancel_result = runner.invoke(
         app, ["workbench", "workflow", "cancel", *common, "--json"]
     )
 
     assert status_result.exit_code == artifacts_result.exit_code == 0
     assert logs_result.exit_code == 0, logs_result.output
+    assert logs_json_result.exit_code == 0, logs_json_result.output
     assert cancel_result.exit_code == 0, cancel_result.output
     status = json.loads(status_result.output)
     artifacts = json.loads(artifacts_result.output)
@@ -2370,7 +2445,11 @@ def test_manifest_pending_status_logs_artifacts_and_cancel_share_resolution(
     assert artifacts["manifest_pending"] is True
     assert f"s3://bucket/{run_prefix}/curate/output.json" in artifacts["artifacts"]
     assert "live curate log" in logs_result.output
-    assert log_calls == [("81", "curate")]
+    live_logs = json.loads(logs_json_result.output)
+    assert live_logs["live_log_state"] == "available"
+    assert live_logs["live_verification_scope"] == "query_transport_only"
+    assert live_logs["log"] == "live curate log\n"
+    assert log_calls == [("81", "curate"), ("81", "curate")]
     assert cancelled["outcome"] == "cancelled"
     assert cancelled["sky_job_id"] == "81"
     assert cleanup_calls == ["81"]
