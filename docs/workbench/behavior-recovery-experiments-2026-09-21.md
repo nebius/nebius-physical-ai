@@ -143,6 +143,14 @@ NumPy cannot directly serialize a typed JAX random key. Its four original
 diagnostic files were recovered and hash-verified. This is a harness failure;
 it supplies no new action-repeatability or export-parity result.
 
+The corrected diagnostic completed both fresh-process inference phases and
+preserved all 16 original files. The saved and independently reconstructed
+observation archives are byte-identical. Same-load repeats passed, but action
+bytes differed between independent loads, so final qualification failed.
+Raw action arrays, typed random-key records, model-state inventories, and logs
+are retained for numerical analysis. This narrows the failure beyond input
+reconstruction; it does not resolve its cause or qualify the export.
+
 Development indices 10–19 are reused and are not unseen data. Reporting indices
 0–9 remain separate until the choice is fixed. Keep interrupted panels and failed
 runs visible; do not select lucky reruns. The official evaluator supplies Q under
@@ -170,3 +178,27 @@ native RLC. Its score is separate from the historical 0.50 result above, whose
 policy process lifecycle differed. The transition-refresh candidate is running.
 Native RLC and both released Comet checkpoints still need the same evaluation
 before the baseline tournament and independent reporting gate can be completed.
+
+### Released Comet checkpoint qualification
+
+The shared Comet12/Comet50 adapter at Workbench commit
+`13f07569cd95207147be6c5ed5f166236c88b1d6` passed a B200 synthetic-action check.
+Each checkpoint produced identical finite 23-action vectors across two fresh
+processes on the same frozen observation. Comet12 also reproduced its earlier
+reference action bytes. All 33 original output files were downloaded and
+hash-verified against the published manifest.
+
+This establishes loader and adapter repeatability. It does not run the
+simulator, measure task Q, or prove the official 24GB policy-GPU requirement.
+The next comparison uses the complete task panels described above.
+
+### Sampled video observations
+
+Eight evenly spaced frames from each of two hash-verified original videos show
+different execution paths. In instance 311 (Q=0), early frames show the robot
+near an open refrigerator; later frames show a can still held outside the bin.
+Instance 314 (Q=1) reaches the living room earlier and completes the task.
+These sampled views suggest inspecting navigation, initial-state disambiguation,
+and depositing objects. They do not establish a causal failure classification.
+Training should retain full demonstration trajectories; neither these development
+videos nor their cases enter the training dataset.

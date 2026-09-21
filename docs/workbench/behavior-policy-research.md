@@ -45,6 +45,13 @@ permitted onboard images; simulator object identities and global poses cannot
 supply its inference state. This is a proposed direction, not an implemented
 HINT reproduction or measured improvement.
 
+HINT also fine-tunes its policy on highlighted observations with the same
+attention prior used at deployment. Its lack of additional trainable parameters
+does not make highlighting a training-free intervention. Any reproduction must
+match that training input distribution; adding overlays only to an unchanged
+Comet policy would be a different experiment. See the
+[training details](https://arxiv.org/html/2609.02653v2).
+
 [PACE, August 15](https://arxiv.org/abs/2608.15026v1) learns phase-aware credit
 from trajectories and uses that credit for policy distillation. Applying this
 idea requires fresh training-instance interaction data containing both progress

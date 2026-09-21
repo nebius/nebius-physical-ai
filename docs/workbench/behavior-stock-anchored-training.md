@@ -3,9 +3,10 @@
 This page records a supervised fine-tuning ablation for the public BEHAVIOR
 policy work. A private pinned-runtime trial completed the frozen 2,400-update
 recipe and offline checkpoint scoring. The repository publishes the reusable
-objective and paired NNX helper, but does not yet publish the complete native
-trainer wiring. Export parity and simulator evaluation remain pending, so the
-offline result does not establish a rollout-quality improvement.
+objective, paired NNX helper, filtered native trainer wiring, compiled preflight,
+and complete-panel checkpoint selector. Export parity and simulator evaluation
+remain pending, so the offline result does not establish a rollout-quality
+improvement.
 
 ## Objective
 
@@ -57,6 +58,30 @@ flow-velocity output. Differentiate and donate only the student model; do not
 put `parent_action_state` in optimizer state, checkpoints, EMA updates, donated
 arguments, or differentiated argument numbers. The helper does not patch a
 third-party model or choose the 23 trainable leaves.
+
+### Native trainer wiring
+
+[`native_trainer.py`](../../workflows/implementations/behavior-anchored-training/native_trainer.py)
+turns those pieces into an executable update contract. `NativeTrainer.initialize`
+requires the filter-selected paths to equal the declared allowlist, captures the
+parent after correlation installation, and rejects invalid flow-sample counts or
+anchor weights. Its compiled value-and-gradient call uses `nnx.DiffState` for
+the same filter used by `nnx.Optimizer`. Each update inventories all state bytes,
+rejects non-finite loss or gradients, and fails if a changed leaf falls outside
+the allowlist. `parent_input_sharding` selects and verifies the independently
+passed parent state's exact sharding paths.
+
+[`anchor_preflight.py`](../../workflows/implementations/behavior-anchored-training/anchor_preflight.py)
+checks the paired compiled topology before training. It requires exact zero
+initial anchor loss, zero student and parent anchor gradients, a finite nonzero
+demonstration gradient, and byte-stable parent state. A separate-call topology
+measurement is retained as a diagnostic and cannot authorize training.
+
+`preserve_frozen_state` provides the corresponding EMA operation: keep new
+values only at the 23 allowed paths and restore every other leaf from the prior
+state. The model-specific adapter remains responsible for calling this helper
+where its native train state applies EMA and for keeping the parent out of
+checkpoint and optimizer state.
 
 ### Explicit canonical correlation state
 
@@ -136,6 +161,12 @@ Each candidate checkpoint must keep every task's uniform held-out flow loss at
 or below `1.02 ×` stock and its non-late proxy at or below `1.005 ×` stock.
 Eligible checkpoints rank by equal-task late-proxy improvement, with the earlier
 step winning an exact tie. If no checkpoint passes, the policy remains stock.
+The prespecified historical rule does not require that late-proxy improvement
+be positive: if one or more checkpoints pass every no-drift gate, it selects the
+highest-ranked eligible checkpoint even when all late proxies are slightly
+worse than stock. This behavior is explicit in the public selection receipt and
+is preserved for reproducibility rather than silently replaced by a new stock
+fallback rule.
 
 Development evaluation reuses cases 311–320 for tasks 0, 1, and 22. The
 candidate is selected only for a strict gain in complete-three-task equal-task
@@ -149,14 +180,23 @@ The public tests use a real small Flax NNX module under `nnx.jit` and
 `nnx.value_and_grad`. They cover bit-exact zero anchor loss and gradients at
 initialization, a finite nonzero demonstration gradient, positive anchor loss
 after known student drift, independent parent storage after a donated student
-update, and fail-closed path/type/shape/dtype checks. They also reject a custom
-variable class that merely calls itself `Intermediate`.
+update, and fail-closed path/type/shape/dtype checks. The operative wiring test
+runs two optimizer updates over the real 23-path filter, requires all 23 leaves
+to change on each update, verifies parent-input sharding, preserves frozen and
+correlation bytes, and exercises the EMA-style frozen-state restoration. Tests
+also reject a custom variable class that merely calls itself `Intermediate`.
 
-The repository does not yet publish the pinned native trainer wiring or the
-model seam that returns flow velocity. A release-ready native integration still
-needs the real 23-leaf two-update test, parent and EMA byte checks, input
-sharding verification, and the accelerator regression for paired versus
-separate compiler contexts.
+The export diagnostics serialize typed JAX PRNG keys through `key_data` and
+`wrap_key_data`, preserve extension dtypes such as `bfloat16` through NPZ, and
+compare raw post-transform observations, actions, and task-aware stage outputs
+across independent loads. These checks prove loader repeatability only. Without
+retained historical native raw outputs, they cannot establish native/export
+parity or authorize rollout evaluation.
+
+A third-party integration must still supply the pinned model initializer,
+detailed-loss seam, data loader, schedule, canonical correlation bytes, and its
+accelerator qualification. Those runtime-specific inputs are intentionally not
+embedded in the reusable implementation.
 
 A private GPU trial completed 2,400 updates and scored stock plus all six
 candidate checkpoints on 102,403 held-out flow-loss rows. The frozen rule chose
