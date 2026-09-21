@@ -19,3 +19,7 @@ qualified NPA service remain declared and resolver-checked.
 Only the repository's matched RoboCasa ACT rollout path is qualified. This does not
 claim upstream support for LeRobot 0.6.1 or qualify other RoboCasa policy, training,
 benchmark, or deployment paths.
+
+The normal resolver closure includes qpsolvers 4.13.0 under LGPL-3.0 and
+quadprog 0.1.13 under GPL-2.0-or-later. Their exact official source archives,
+license texts, hashes, and redistribution notice are retained in the image.

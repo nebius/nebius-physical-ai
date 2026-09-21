@@ -29,6 +29,7 @@ LEROBOT_VERIFY = IMAGE_DIR / "verify_lerobot_act_derivative.py"
 ROBOCASA_ADAPTER_VERIFY = IMAGE_DIR / "verify_robocasa_act_adapter.py"
 ROBOCASA_PATCH = IMAGE_DIR / "robocasa-npa-act.patch.b64"
 ROBOCASA_NOTICE = IMAGE_DIR / "robocasa-npa-act.NOTICE"
+COPYLEFT_NOTICE = IMAGE_DIR / "THIRD-PARTY-COPYLEFT-NOTICE"
 DEADSNAKES_KEY = IMAGE_DIR / "deadsnakes-ppa.gpg.b64"
 BASE_INVENTORY = IMAGE_DIR.parent / "base-image-security.json"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
@@ -249,6 +250,38 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
         in dockerfile
     )
     assert "/usr/share/doc/robocasa-npa-act/LICENSE.upstream" in dockerfile
+
+
+def test_robocasa_copyleft_solver_sources_and_licenses_are_conveyed() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    notice = COPYLEFT_NOTICE.read_text(encoding="utf-8")
+
+    expected = {
+        "qpsolvers-4.13.0.tar.gz": (
+            "LGPL-3.0",
+            "e86c4c16bf7c16fdbb8e6c0e4050bc1bfef72a25755211be66a492ac4c939a1c",
+            "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118",
+        ),
+        "quadprog-0.1.13.tar.gz": (
+            "GPL-2.0-or-later",
+            "9d6dd32f2762f29b840fb83741d11e527ddf48745f63b79caad0e530b4a6a0ff",
+            "c03cea027b4b40e4402fabd08557736727ec3d5bc54ad64ab6472de432198cad",
+        ),
+    }
+    for archive, (license_id, archive_sha256, license_sha256) in expected.items():
+        assert archive in dockerfile
+        assert f"/usr/share/source/robocasa-npa-act/{archive}" in dockerfile
+        assert archive_sha256 in dockerfile
+        assert license_id in notice
+        assert archive_sha256 in notice
+        assert license_sha256 in dockerfile
+        assert license_sha256 in notice
+
+    assert "/usr/share/doc/qpsolvers/LICENSE" in dockerfile
+    assert "/usr/share/doc/qpsolvers/GPL-3.0" in dockerfile
+    assert "/usr/share/doc/quadprog/LICENSE" in dockerfile
+    assert "/usr/share/doc/robocasa-npa-act/THIRD-PARTY-COPYLEFT-NOTICE" in dockerfile
+    assert "Preserve these source archives and notices" in notice
 
 
 def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:

@@ -202,9 +202,13 @@ images:
       7e241bd630a3719a56157a497ce5d08f244784f1. LeRobot is rebuilt as the
       locally versioned 0.6.1+npa1 NPA ACT derivative; its reviewed patch changes
       packaging metadata only so normal dependency resolution accepts the fixed
-      Torch 2.13, RoboCasa Gymnasium, and OpenCV closure. The RoboCasa
-      derivative omits tianshou because exact-source inspection found it only in
-      the unqualified upstream vectorized speed-benchmark script; the NPA service
+      Torch 2.13, RoboCasa Gymnasium, and OpenCV closure. The closure includes
+      qpsolvers 4.13.0 under LGPL-3.0 and quadprog 0.1.13 under
+      GPL-2.0-or-later; their exact official source archives and license texts
+      are shipped in the image to preserve corresponding-source obligations.
+      The RoboCasa derivative omits tianshou because exact-source inspection
+      found it only in the unqualified upstream vectorized speed-benchmark
+      script; the NPA service
       and matched ACT rollout path do not import it. Other RoboCasa benchmark and
       LeRobot policy and training paths remain unqualified. The image uses a
       uv-generated,

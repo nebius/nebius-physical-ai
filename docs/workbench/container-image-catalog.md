@@ -430,8 +430,10 @@ historical evidence.
 - **`npa-robocasa`** is a validation candidate, not yet in the public publishing
   plan. It is licence-eligible for public redistribution (MIT RoboCasa, whose
   license includes a separate Apache-2.0 notice for partial DeepMind MuJoCo, and
-  Apache-2.0 robosuite), but its built-image payload scan and real GPU
-  capability validation have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
+  Apache-2.0 robosuite). Its resolved closure also includes LGPL-3.0
+  qpsolvers and GPL-2.0-or-later quadprog, whose exact source archives and
+  license texts must remain in every distributed image. Its built-image payload
+  scan and real GPU capability validation have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
   via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
   digest and GPU evidence are recorded.
   It is a non-root service image with no passwordless-sudo grant; workflow

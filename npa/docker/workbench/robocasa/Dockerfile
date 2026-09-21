@@ -10,7 +10,8 @@
 #   * RoboCasa source at the pinned commit (MIT, with its bundled Apache-2.0
 #     notice for partial DeepMind MuJoCo)
 #   * robosuite at the pinned commit (Apache-2.0)
-#   * MuJoCo 3.3.1, Gymnasium 0.29.1, and the OSS Python closure
+#   * MuJoCo 3.3.1, Gymnasium 0.29.1, and the OSS Python closure. The
+#     qpsolvers/quadprog LGPL/GPL components retain exact source and licenses.
 #
 # What is NOT baked:
 #   * Kitchen assets (textures, fixtures, objects) — downloaded at run time by
@@ -102,6 +103,7 @@ COPY --chmod=0644 \
     docker/workbench/robocasa/lerobot-npa-act.NOTICE \
     docker/workbench/robocasa/robocasa-npa-act.patch.b64 \
     docker/workbench/robocasa/robocasa-npa-act.NOTICE \
+    docker/workbench/robocasa/THIRD-PARTY-COPYLEFT-NOTICE \
     docker/workbench/robocasa/verify_lerobot_act_derivative.py \
     docker/workbench/robocasa/verify_robocasa_act_adapter.py \
     /opt/robocasa/derivative/
@@ -117,6 +119,45 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --extra-index-url https://download.pytorch.org/whl/cu129 \
         --require-hashes --no-build-isolation \
         -r /opt/robocasa/locks/requirements.lock \
+    && mkdir -p /usr/share/source/robocasa-npa-act \
+    && curl --fail --silent --show-error --location \
+        https://files.pythonhosted.org/packages/d1/aa/4d60a7065de30f07d7ead935eed364cf94fb0ad5607ddf1461f2bdf7ba17/qpsolvers-4.13.0.tar.gz \
+        --output /tmp/qpsolvers-4.13.0.tar.gz \
+    && curl --fail --silent --show-error --location \
+        https://files.pythonhosted.org/packages/9e/60/fb9b56d425c5b3495bb92683c28f954aedb609ae62f14c81a1b5621ad759/quadprog-0.1.13.tar.gz \
+        --output /tmp/quadprog-0.1.13.tar.gz \
+    && echo \
+        "e86c4c16bf7c16fdbb8e6c0e4050bc1bfef72a25755211be66a492ac4c939a1c  /tmp/qpsolvers-4.13.0.tar.gz" \
+        | sha256sum --check --strict - \
+    && echo \
+        "9d6dd32f2762f29b840fb83741d11e527ddf48745f63b79caad0e530b4a6a0ff  /tmp/quadprog-0.1.13.tar.gz" \
+        | sha256sum --check --strict - \
+    && install -m 0644 /tmp/qpsolvers-4.13.0.tar.gz \
+        /usr/share/source/robocasa-npa-act/qpsolvers-4.13.0.tar.gz \
+    && install -m 0644 /tmp/quadprog-0.1.13.tar.gz \
+        /usr/share/source/robocasa-npa-act/quadprog-0.1.13.tar.gz \
+    && tar --extract --gzip --to-stdout --file /tmp/qpsolvers-4.13.0.tar.gz \
+        qpsolvers-4.13.0/LICENSE > /tmp/qpsolvers.LICENSE \
+    && tar --extract --gzip --to-stdout --file /tmp/quadprog-0.1.13.tar.gz \
+        quadprog-0.1.13/LICENSE > /tmp/quadprog.LICENSE \
+    && echo \
+        "e3a994d82e644b03a792a930f574002658412f62407f5fee083f2555c5f23118  /tmp/qpsolvers.LICENSE" \
+        | sha256sum --check --strict - \
+    && echo \
+        "c03cea027b4b40e4402fabd08557736727ec3d5bc54ad64ab6472de432198cad  /tmp/quadprog.LICENSE" \
+        | sha256sum --check --strict - \
+    && install -D -m 0644 /tmp/qpsolvers.LICENSE \
+        /usr/share/doc/qpsolvers/LICENSE \
+    && install -m 0644 /usr/share/common-licenses/GPL-3 \
+        /usr/share/doc/qpsolvers/GPL-3.0 \
+    && test -s /usr/share/doc/qpsolvers/GPL-3.0 \
+    && install -D -m 0644 /tmp/quadprog.LICENSE \
+        /usr/share/doc/quadprog/LICENSE \
+    && install -D -m 0644 \
+        /opt/robocasa/derivative/THIRD-PARTY-COPYLEFT-NOTICE \
+        /usr/share/doc/robocasa-npa-act/THIRD-PARTY-COPYLEFT-NOTICE \
+    && rm -f /tmp/qpsolvers-4.13.0.tar.gz /tmp/quadprog-0.1.13.tar.gz \
+        /tmp/qpsolvers.LICENSE /tmp/quadprog.LICENSE \
     && curl --fail --silent --show-error --location \
         "https://github.com/huggingface/lerobot/archive/${LEROBOT_SOURCE_COMMIT}.tar.gz" \
         --output /tmp/lerobot-source.tar.gz \
