@@ -57,7 +57,7 @@ dependencies = [
     "scipy>=1.10",
     # Formerly the `lancedb` extra: LanceDB workbench tool (local server,
     # BDD100K import, materialized views).
-    "lancedb==0.30.2",
+    "lancedb==0.39.0",
     # Formerly the `viz` extra: Rerun viewer/recording integration
     # (`npa rerun`, sim-viz adapters).
     "rerun-sdk==0.31.4",
