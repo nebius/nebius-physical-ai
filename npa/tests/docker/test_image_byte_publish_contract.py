@@ -37,6 +37,14 @@ def curobo_block(name):
     return script[start:end]
 
 
+def robocasa_block(name):
+    script = named(name)["run"]
+    opening = 'if [ "$TOOL" = robocasa ]; then\n'
+    start = script.index(opening)
+    end = script.index("\nfi", start) + len("\nfi")
+    return script[start:end]
+
+
 @pytest.fixture
 def shell_environment(tmp_path):
     checkout = tmp_path / "checkout"
@@ -61,6 +69,15 @@ if script == "verify_image.py":
     assert pathlib.Path(option("--docker-save")).read_bytes() == b"saved image"
     assert option("--expected-image-id") == "sha256:" + "a" * 64
     pathlib.Path(option("--json")).write_text(json.dumps({"valid": True, "expected_image_id": option("--expected-image-id")}))
+elif script == "docker_save_verification.py":
+    archive = pathlib.Path(option("--archive"))
+    assert archive.read_bytes() == b"saved image"
+    assert archive.is_relative_to(pathlib.Path(option("--analysis-root")))
+    assert option("--trusted-root") == os.environ["GITHUB_WORKSPACE"]
+    assert option("--expected-image-id") == "sha256:" + "a" * 64
+    out = pathlib.Path(option("--output-dir"))
+    out.mkdir(mode=0o700)
+    (out / "verification.json").write_text(json.dumps({"valid": True, "expected_image_id": option("--expected-image-id")}))
 elif operation == "authorize":
     root = pathlib.Path(option("--analysis-root"))
     archive = pathlib.Path(option("--archive"))
@@ -82,8 +99,12 @@ elif script == "scan_image_bytes.py":
     assert option("--trusted-root") == os.environ["GITHUB_WORKSPACE"]
     out = pathlib.Path(option("--output-dir"))
     out.mkdir(mode=0o700)
-    assert option("--public-native-policy") == os.environ["GITHUB_WORKSPACE"] + "/npa/scripts/image_byte_scan/public_policies/curobo-v2.json"
-    assert option("--public-native-policy-sha256") == os.environ["CUROBO_PUBLIC_NATIVE_POLICY_SHA256"]
+    if os.environ["TOOL"] == "curobo":
+        assert option("--public-native-policy") == os.environ["GITHUB_WORKSPACE"] + "/npa/scripts/image_byte_scan/public_policies/curobo-v2.json"
+        assert option("--public-native-policy-sha256") == os.environ["CUROBO_PUBLIC_NATIVE_POLICY_SHA256"]
+    else:
+        assert "--public-native-policy" not in args
+        assert "--public-native-policy-sha256" not in args
     (out / "report.json").write_text('{"complete":true,"valid":false,"findings":1}')
     (out / "public-policy-acceptance.json").write_text('{"accepted":true,"raw_scan_valid":false,"accepted_native_occurrences":1}')
 else:
@@ -208,11 +229,65 @@ def test_other_images_do_not_enter_curobo_policy_or_native_scan(
     assert not Path(env["GATE_LOG"]).exists()
 
 
+@pytest.mark.parametrize(
+    "step_name,phase,suffix", [(PRE, "pre", ""), (POST, "post", "-pushed")]
+)
+@pytest.mark.parametrize(
+    "failure",
+    ["", "docker_save_verification.py", "authorize", "scan_image_bytes.py"],
+)
+def test_robocasa_complete_byte_gate_is_pre_and_post_push_and_fail_closed(
+    shell_environment, step_name, phase, suffix, failure
+):
+    checkout, runtime, analysis, env = shell_environment
+    env.update(
+        {
+            "TOOL": "robocasa",
+            "ROBOCASA_BYTE_GATE_ROOT": str(analysis),
+            "CUSTOMER_DENYLIST": "customer-pattern",
+            "INFRA_DENYLIST": "infra-pattern",
+            "FAIL_OPERATION": failure,
+        }
+    )
+    del env["CUROBO_BYTE_GATE_ROOT"]
+    original = runtime / f"robocasa{suffix}.tar"
+    original.write_bytes(b"saved image")
+    script = 'set -euo pipefail\nexact="local-image@sha256:fixture"\n'
+    script += robocasa_block(step_name) + '\nprintf "gate completed\\n"\n'
+    result = subprocess.run(
+        ["bash", "-c", script],
+        cwd=checkout,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = [
+        json.loads(line) for line in Path(env["GATE_LOG"]).read_text().splitlines()
+    ]
+    expected = ["docker_save_verification.py", "authorize", "scan_image_bytes.py"]
+    if failure:
+        assert result.returncode == 17, result.stderr
+        assert "gate completed" not in result.stdout
+        assert [call["operation"] for call in calls] == expected[
+            : expected.index(failure) + 1
+        ]
+        assert (analysis / phase / "image.tar").read_bytes() == b"saved image"
+    else:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "gate completed\n"
+        assert [call["operation"] for call in calls] == expected
+        assert not original.exists()
+        assert not (analysis / phase / "image.tar").exists()
+
+
 def test_required_policy_precedes_build_and_secret_environment_is_scoped():
     all_steps = steps()
     names = [step.get("name") for step in all_steps]
     check = "Validate required cuRobo confidentiality policy before building"
     prepare = "Prepare and test the cuRobo complete-byte scanner"
+    robocasa_check = "Validate required RoboCasa confidentiality policy before building"
+    robocasa_prepare = "Prepare and test the RoboCasa complete-byte scanner"
     build = "Build immutable development image locally"
     push = "Push only after every pre-publication gate passes"
     assert (
@@ -221,9 +296,17 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
         < names.index(build)
         < names.index(PRE)
     )
+    assert (
+        names.index(robocasa_check)
+        < names.index(robocasa_prepare)
+        < names.index(build)
+        < names.index(PRE)
+    )
     assert names.index(PRE) < names.index(push) < names.index(POST)
     assert named(check)["if"] == "matrix.tool == 'curobo'"
     assert named(prepare)["if"] == "matrix.tool == 'curobo'"
+    assert named(robocasa_check)["if"] == "matrix.tool == 'robocasa'"
+    assert named(robocasa_prepare)["if"] == "matrix.tool == 'robocasa'"
     ncore_steps = {
         "Prepare NCore native scanners and separate source inputs",
         "Build NCore committed attested OCI archive",
@@ -232,16 +315,18 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
     for step in all_steps:
         env = step.get("env", {})
         if "CUSTOMER_DENYLIST" in env or "INFRA_DENYLIST" in env:
-            assert step["name"] in {check, PRE, POST} | ncore_steps
+            assert step["name"] in {check, robocasa_check, PRE, POST} | ncore_steps
             assert {"CUSTOMER_DENYLIST", "INFRA_DENYLIST"} <= env.keys()
             if step["name"] in ncore_steps:
                 assert step["if"] == "matrix.tool == 'ncore'"
-            elif step["name"] != check:
+            elif step["name"] not in {check, robocasa_check}:
                 assert all(
                     "matrix.tool == 'curobo'" in env[key]
+                    and "matrix.tool == 'robocasa'" in env[key]
                     for key in ("CUSTOMER_DENYLIST", "INFRA_DENYLIST")
                 )
     assert "--policy-mode ci-regex" in named(check)["run"]
+    assert "--policy-mode ci-regex" in named(robocasa_check)["run"]
     assert "--build-arg" in named(build)["run"]
     assert "DENYLIST" not in named(build)["run"]
 
@@ -257,7 +342,7 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     )
     assert (
         setup["with"]["python-version"]
-        == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}"
+        == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robocasa') && '3.12' || '3.11' }}"
     )
     for name, job in publish["jobs"].items():
         if name == "build-development":
@@ -276,6 +361,7 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
     for step in [
         native_step,
         named("Prepare and test the cuRobo complete-byte scanner"),
+        named("Prepare and test the RoboCasa complete-byte scanner"),
     ]:
         assert not step.get("continue-on-error")
         script = step["run"]

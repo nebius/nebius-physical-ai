@@ -254,9 +254,10 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     post_push = text[text.index("Verify pushed bytes") :]
 
     assert 'docker pull "$exact"' in post_push
-    # Two calls bind the pulled digest to the local image; the third binds the
-    # independent cuRobo archive verifier to that same inspected remote image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
+    # Two calls bind the pulled digest to the local image; the remaining calls
+    # bind the independent cuRobo and RoboCasa archive verifiers to that same
+    # inspected remote image.
+    assert post_push.count("docker image inspect --format '{{.Id}}'") == 4
     assert (
         'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
         '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
