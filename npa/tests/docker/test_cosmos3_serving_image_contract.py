@@ -359,3 +359,38 @@ def test_built_payload_scanner_rejects_old_vendor_base_and_license(
     assert (
         scanner.scan_tarball(baked_closure)["verdict"] == "restricted-payload-detected"
     )
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "etc/ssh/ssh_host_ed25519_key",
+        "root/.ssh/id_rsa",
+        "home/ubuntu/.ssh/id_ed25519",
+        "root/.netrc",
+    ],
+)
+def test_payload_scan_rejects_credential_paths(tmp_path: Path, member: str) -> None:
+    # Before the shared rules landed this scanner detected no credential of any
+    # kind, while the image it guards is published with a zero-payload claim.
+    scanner = _module(
+        "cosmos3_payload_scanner_credentials",
+        NPA_ROOT / "scripts/scan_image_cosmos3_serving_payload.py",
+    )
+    archive = tmp_path / "image.tar"
+    _docker_save(archive, layer_paths=[member])
+    report = scanner.scan_tarball(archive)
+    assert report["verdict"] == "restricted-payload-detected"
+    assert report["credential_hits"]
+
+
+def test_payload_scan_credential_check_has_a_negative_control(tmp_path: Path) -> None:
+    scanner = _module(
+        "cosmos3_payload_scanner_clean",
+        NPA_ROOT / "scripts/scan_image_cosmos3_serving_payload.py",
+    )
+    archive = tmp_path / "clean.tar"
+    _docker_save(archive, layer_paths=["usr/local/bin/curl"])
+    report = scanner.scan_tarball(archive)
+    assert report["verdict"] == "clean"
+    assert report["credential_hits"] == []
