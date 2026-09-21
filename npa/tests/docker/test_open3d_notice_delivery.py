@@ -107,13 +107,24 @@ def _build(dockerfile_body: str) -> tuple[int, str]:
         context = Path(workspace)
         staged = context / "docker" / "workbench" / "open3d"
         (staged / "notices").mkdir(parents=True)
-        shutil.copy2(IMAGE / "THIRD_PARTY_NOTICES.md", staged / "THIRD_PARTY_NOTICES.md")
         shutil.copy2(
-            IMAGE / "notices" / "mcap-LICENSE.txt", staged / "notices" / "mcap-LICENSE.txt"
+            IMAGE / "THIRD_PARTY_NOTICES.md", staged / "THIRD_PARTY_NOTICES.md"
+        )
+        shutil.copy2(
+            IMAGE / "notices" / "mcap-LICENSE.txt",
+            staged / "notices" / "mcap-LICENSE.txt",
         )
         (context / "Dockerfile").write_text(dockerfile_body)
         finished = subprocess.run(
-            ["docker", "build", "--no-cache", "--progress=plain", "--output", "type=cacheonly", "."],
+            [
+                "docker",
+                "build",
+                "--no-cache",
+                "--progress=plain",
+                "--output",
+                "type=cacheonly",
+                ".",
+            ],
             cwd=context,
             capture_output=True,
             text=True,
@@ -133,7 +144,9 @@ def _prepare() -> str:
 
     joined = _dockerfile().replace("\\\n", " ")
     match = re.search(r"install -d -m 0755((?:\s+/\S+)+)", joined)
-    assert match, "the Dockerfile no longer creates its directories with an explicit mode"
+    assert match, (
+        "the Dockerfile no longer creates its directories with an explicit mode"
+    )
     directories = match.group(1).split()
     return (
         "RUN useradd -m -s /bin/bash -u 1000 ubuntu"
@@ -147,7 +160,14 @@ def test_notices_are_readable_by_the_user_the_image_runs_as(read: str):
     # The Dockerfile's own COPY lines, not a paraphrase of them, so editing those lines
     # changes what this test exercises.
     status, output = _build(
-        "\n".join([f"FROM {_base_image()}", _prepare(), *_notice_copies(), _run_as_ubuntu(read)])
+        "\n".join(
+            [
+                f"FROM {_base_image()}",
+                _prepare(),
+                *_notice_copies(),
+                _run_as_ubuntu(read),
+            ]
+        )
     )
     assert status == 0, output[-3000:]
 
@@ -202,7 +222,9 @@ def test_every_retained_notice_has_its_own_copy_instruction():
     copied = " ".join(_notice_copies())
     for notice in sorted((IMAGE / "notices").iterdir()):
         relative = f"docker/workbench/open3d/notices/{notice.name}"
-        assert relative in copied, f"{notice.name} is retained but never copied into the image"
+        assert relative in copied, (
+            f"{notice.name} is retained but never copied into the image"
+        )
     assert "docker/workbench/open3d/notices/ " not in copied, (
         "the notices directory is being copied as a directory again; "
         "--chmod would make it untraversable"

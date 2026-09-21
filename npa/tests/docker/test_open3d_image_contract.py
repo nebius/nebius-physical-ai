@@ -114,7 +114,9 @@ def compare_debian_versions(left: str, right: str) -> int:
     """Negative, zero or positive, as `dpkg --compare-versions` would order them."""
 
     def split(version: str) -> tuple[int, str, str]:
-        epoch, _, rest = version.rpartition(":") if ":" in version else ("0", "", version)
+        epoch, _, rest = (
+            version.rpartition(":") if ":" in version else ("0", "", version)
+        )
         upstream, _, revision = rest.rpartition("-") if "-" in rest else (rest, "", "")
         return int(epoch), upstream, revision
 
@@ -185,7 +187,7 @@ def test_the_floor_is_enforced_at_build_time_by_dpkg() -> None:
     assert "apt-get upgrade -y --no-install-recommends" in text
     # The check has to run against what was installed, using dpkg's ordering. A grep of
     # the snapshot timestamp, or an equality check, would pass while shipping the CVEs.
-    assert 'dpkg-query --show --showformat=' in text
+    assert "dpkg-query --show --showformat=" in text
     assert 'dpkg --compare-versions "${installed}" ge "$2"' in text
     assert '"libglib2.0-0t64 ${MIN_LIBGLIB_VERSION}"' in text
     assert '"perl-base ${MIN_PERL_BASE_VERSION}"' in text

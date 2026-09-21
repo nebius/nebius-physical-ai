@@ -32,10 +32,14 @@ npa workbench workflow submit workflows/testing/open3d-registration.yaml \
 ```
 
 The shipped spec starts from `stage-demo`, which downloads the upstream
-`open3d.data` `DemoICPPointClouds` scans (release `20220301-data`) — real captured
-indoor scans, so the run needs no operator capture to produce a real result. To
-register your own data, replace that stage with `prepare` and point
-`--input-path` at a prefix holding at least two `.pcd`/`.ply` files.
+`open3d.data` `DemoICPPointClouds` scans (release `20220301-data`) — fragments of
+the Redwood augmented ICL-NUIM benchmark (CC BY 3.0), depth frames rendered from
+a modelled indoor scene with simulated sensor noise rather than real captures.
+They carry the overlap and noise the pipeline expects, so the run needs no
+operator capture to produce a real result, but nothing measured against them is
+a statement about real-sensor accuracy. To register your own data, replace that
+stage with `prepare` and point `--input-path` at a prefix holding at least two
+`.pcd`/`.ply` files.
 
 `voxel_size` is the single scale knob. The normal, FPFH and correspondence radii
 are all multiples of it, exactly as the upstream Global-registration and

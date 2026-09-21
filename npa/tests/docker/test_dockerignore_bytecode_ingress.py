@@ -48,7 +48,9 @@ SYNTHETIC_CONTEXT = {
     "__pycache__/root.cpython-312.pyc": "root-bytecode-sentinel\n",
 }
 
-NESTED_BYTECODE = "ctx/src/npa/cli/cluster/__pycache__/terraform_lifecycle.cpython-312.pyc"
+NESTED_BYTECODE = (
+    "ctx/src/npa/cli/cluster/__pycache__/terraform_lifecycle.cpython-312.pyc"
+)
 ROOT_BYTECODE = "ctx/__pycache__/root.cpython-312.pyc"
 NESTED_SOURCE = "ctx/src/npa/cli/cluster/terraform_lifecycle.py"
 PACKAGED_DATA = "ctx/src/npa/smoke/golden_evals.yaml"
@@ -141,7 +143,9 @@ def test_committed_rules_still_admit_source_and_packaged_data(under_committed_ru
 
 
 @requires_docker
-def test_the_fix_changes_only_the_nested_bytecode(under_old_rules, under_committed_rules):
+def test_the_fix_changes_only_the_nested_bytecode(
+    under_old_rules, under_committed_rules
+):
     # Scope, measured rather than asserted: the two builds differ by exactly the file
     # the scan found, so nothing else was quietly dropped from the context.
     assert under_old_rules - under_committed_rules == {NESTED_BYTECODE}
