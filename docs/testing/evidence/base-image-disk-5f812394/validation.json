@@ -1,0 +1,50 @@
+{
+  "schema": "npa.public.ci_disk_validation.v1",
+  "source_commit": "5f8123940b8e631a934c34ce22f113b4b5713338",
+  "source_tree": "7bf3676d68c6ec27a0b6e02f02c71e5f822afef0",
+  "source_author": "Codex",
+  "source_scope": "Base-image CI planning, scan-owned disk cleanup and fail-closed aggregate. No application-image or GPU workload change.",
+  "focused_tests": {
+    "passed": 68,
+    "failed": 0,
+    "root_independent_passed": 68,
+    "failed_exec_cleanup_reproduced_before_fix": true,
+    "failed_exec_cleanup_retains_receipt_after_fix": true
+  },
+  "full_suite": {
+    "command": "make test with repository Python",
+    "passed": 25534,
+    "skipped": 155,
+    "xpassed": 1,
+    "failed": 0,
+    "exit_code": 0,
+    "pytest_seconds": 574.92,
+    "wrapper_seconds": 577.3887724640081,
+    "started_at": "2026-09-21T17:10:56.892057+00:00",
+    "finished_at": "2026-09-21T17:20:34.280820+00:00",
+    "source_unchanged": true,
+    "log_sha256": "4d9e388463fd5a8793cb288c59c0df97c35c522d4d71920e520a2323534b306e",
+    "original_result_sha256": "3879b3827522035edb5711cb97eb4facb1fa9b7928b574bcfd531f102c8e7f34"
+  },
+  "native_security": {
+    "trusted_base": "9505f1ff0184cbf39a4c5845d4ddcc07b5e938c8",
+    "head": "5f8123940b8e631a934c34ce22f113b4b5713338",
+    "base_findings": 607,
+    "candidate_findings": 607,
+    "new_regressions": 0,
+    "blocking_findings": 0,
+    "real_scanner_regression_controls": "PASS",
+    "candidate_application_installed_in_scanner_environment": false,
+    "original_result_sha256": "2a4968cce0a9c4f1720aadb6e48c97ca3cdfe3423f501e7da0e5cdcb62297354"
+  },
+  "mutation_scope": "Three cleanup mutants detected on retained prototype; one subsequently reproduced failed-exec cleanup bug was repaired and independently controlled. No larger mutation count claimed.",
+  "remaining": [
+    "Actual ordinary hosted-runner free-space measurements and all8 matrix results",
+    "Hosted required CI and merge-queue integration"
+  ],
+  "nonclaims": [
+    "No measured throughput improvement",
+    "No hosted-runner disk-fit acceptance yet",
+    "No GPU, VLM or complete application-image qualification"
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "schema": "npa.public.base_image_native_scan.v1",
+  "scope": "Eight actual digest-pinned public base scans on a development host; frozen scanner prototype, not hosted-CI runner fit or an application-image qualification.",
+  "scanner_prototype_sha256": "d57b0201f169a29978801e02faa3cfe12fd913d98e555f8b9b47ef9556401059",
+  "inventory_sha256": "be5d89a863ad1b957d461df935849914418e5b9a48c2e61516304dab90247a59",
+  "started_at": "2026-09-21T16:29:06.749349+00:00",
+  "finished_at": "2026-09-21T16:36:56.652072+00:00",
+  "returncode": 0,
+  "concurrent_workers": 3,
+  "entries": [
+    {
+      "name": "nvidia-cuda-12-4-1-devel-ubuntu22-04",
+      "returncode": 0,
+      "seconds": 239.46967234800104,
+      "started_at": "2026-09-21T16:29:06.818302+00:00",
+      "finished_at": "2026-09-21T16:33:06.287993+00:00",
+      "archive_bytes": 4112527360,
+      "builder_container_absent": true,
+      "builder_volume_absent": true
+    },
+    {
+      "name": "nvidia-cuda-12-6-3-devel-ubuntu22-04",
+      "returncode": 0,
+      "seconds": 252.21750550201978,
+      "started_at": "2026-09-21T16:29:06.818661+00:00",
+      "finished_at": "2026-09-21T16:33:19.036192+00:00",
+      "archive_bytes": 4064757760,
+      "builder_container_absent": true,
+      "builder_volume_absent": true
+    },
+    {
+      "name": "nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04",
+      "returncode": 0,
+      "seconds": 253.43031009600963,
+      "started_at": "2026-09-21T16:29:06.819198+00:00",
+      "finished_at": "2026-09-21T16:33:20.249528+00:00",
+      "archive_bytes": 5849380864,
+      "builder_container_absent": true,
+      "builder_volume_absent": true
+    },
+    {
+      "name": "nvidia-cuda-13-0-2-base-ubuntu24-04",
+      "returncode": 0,
+      "seconds": 3.7798019320180174,
+      "started_at": "2026-09-21T16:33:20.277077+00:00",
+      "finished_at": "2026-09-21T16:33:24.056898+00:00",
+      "archive_bytes": null
+    },
+    {
+      "name": "python-3-11-slim-trixie",
+      "returncode": 0,
+      "seconds": 38.26296803599689,
+      "started_at": "2026-09-21T16:33:24.068002+00:00",
+      "finished_at": "2026-09-21T16:34:02.330988+00:00",
+      "archive_bytes": 59571712,
+      "builder_container_absent": true,
+      "builder_volume_absent": true
+    },
+    {
+      "name": "nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04",
+      "returncode": 0,
+      "seconds": 139.92185603801045,
+      "started_at": "2026-09-21T16:33:19.068768+00:00",
+      "finished_at": "2026-09-21T16:35:38.990642+00:00",
+      "archive_bytes": 4323250688,
+      "builder_container_absent": true,
+      "builder_volume_absent": true
+    },
+    {
+      "name": "nvidia-cuda-13-0-1-cudnn-devel-ubuntu22-04",
+      "returncode": 0,
+      "seconds": 125.87454317099764,
+      "started_at": "2026-09-21T16:34:02.331245+00:00",
+      "finished_at": "2026-09-21T16:36:08.205795+00:00",
+      "archive_bytes": 4287662592,
+      "builder_container_absent": true,
+      "builder_volume_absent": true
+    },
+    {
+      "name": "nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04",
+      "returncode": 0,
+      "seconds": 230.36229808698408,
+      "started_at": "2026-09-21T16:33:06.288210+00:00",
+      "finished_at": "2026-09-21T16:36:56.650515+00:00",
+      "archive_bytes": 5865711104,
+      "builder_container_absent": true,
+      "builder_volume_absent": true
+    }
+  ],
+  "cleanup": {
+    "unrelated_sentinel_preserved": true,
+    "remaining_entry_directory_count": 0,
+    "owned_builder_count": 7
+  },
+  "storage": {
+    "sample_interval_seconds": 2,
+    "sampled_peak_owned_bytes": 54829871104,
+    "sampled_peak_private_working_bytes": 17261469696,
+    "method": "Samples sum private cache/archive/TMPDIR disk use and only task-owned BuildKit container state. These are sampled observations, not worst-case bounds.",
+    "hosted_single_entry_fit_verified": false
+  },
+  "original_receipt_sha256": "5d93310bc92f9c5e8207992d2a9ecd13661a79c14f6d6880a1c2c7dad2705f28",
+  "original_log_sha256": "3352d1c6e124b3165a20ef300381c61ce2febfd21c9d15b85897782c0f68615f",
+  "final_source_binding": "Final commit5f8123940 retains this scan path plus strict matrix/entry CLI and a reviewed failed-exec cleanup repair. It did not rerun all8 images; final source has separate focused/full/security gates."
+}
