@@ -313,11 +313,11 @@ also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
 For queue rejections, follow the
 [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
-The shared [validation concurrency pools](../CONTRIBUTING.md#validation-concurrency)
-allow seven PR jobs, nine merge-candidate jobs, and three background audit jobs at
-once across the repository. Each candidate pool has a separate slot for coverage
-and the final required check. Waiting jobs are retained up to GitHub's queue limit,
-while superseded commits of the same PR still cancel their old checks.
+The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
+lets independent jobs use available GitHub runner capacity without shared
+repository-wide job queues. Newer commits still cancel older checks of the same
+PR. Organization runner limits can cause waiting; already queued runs retain
+their original workflow configuration until their branches are refreshed.
 Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
 parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
 
