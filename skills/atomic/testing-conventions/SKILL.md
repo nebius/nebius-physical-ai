@@ -167,6 +167,22 @@ and you report numeric results from running it.
   Terraform provider (`PermissionDenied`/`Unauthenticated` even though the CLI
   works); `provisioner._run` scrubs it, but when reproducing by hand
   `unset NEBIUS_IAM_TOKEN NPA_NEBIUS_IAM_TOKEN` first.
+- **`npa storage bucket delete` / `service-account delete` / `npa configure
+  --forget-project` changes:** run
+  `npa/tests/e2e/test_config_storage_cleanup_live_e2e.py` against one
+  disposable project:
+  ```bash
+  NPA_INTEGRATION_E2E=1 NPA_STORAGE_CLEANUP_LIVE_E2E=1 \
+    NPA_E2E_PROJECT=<alias> \
+    NPA_CONFIG_DIR=/private/path/to/config \
+    NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR=/private/path/to/evidence \
+    npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_config_storage_cleanup_live_e2e.py -q -s
+  ```
+  The hermetic safety-contract tests in the same file run under plain
+  `pytest` with no env vars and never touch the network. See
+  `tests/cli/test_cleanup_teardown.py` for the separate credential-pruning
+  failure and concurrent-write checks.
 - If a full live run is genuinely infeasible in the environment, say so
   explicitly and still commit the `plan_only` live-matrix entry — never silently
   ship smoke-only.
