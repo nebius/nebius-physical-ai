@@ -59,8 +59,8 @@ def _batch(*, state_width: int = 16) -> dict[str, torch.Tensor]:
     }
 
 
-def main() -> None:
-    """Validate metadata, inference, shape rejection, and checkpoint integrity."""
+def _validate_metadata() -> None:
+    """Require the derivative's declared runtime closure."""
     assert version("lerobot") == "0.6.1+npa1"
     requirements = [
         Requirement(raw) for raw in (metadata("lerobot").get_all("Requires-Dist") or [])
@@ -75,6 +75,9 @@ def main() -> None:
         requirement.name == "opencv-python-headless" for requirement in requirements
     )
 
+
+def _validate_inference() -> tuple[ACTPolicy, torch.Tensor, str]:
+    """Run one valid ACT action and reject a malformed state width."""
     torch.manual_seed(595)
     policy = ACTPolicy(_config()).eval()
     with torch.inference_mode():
@@ -89,7 +92,11 @@ def main() -> None:
         shape_failure = type(exc).__name__
     else:
         raise AssertionError("ACT accepted a 15-wide state for a 16-wide configuration")
+    return policy, first, shape_failure
 
+
+def _validate_checkpoint(policy: ACTPolicy) -> str:
+    """Require exact checkpoint reload and reject missing model weights."""
     with tempfile.TemporaryDirectory() as directory:
         checkpoint = Path(directory) / "checkpoint"
         policy.save_pretrained(checkpoint)
@@ -113,6 +120,14 @@ def main() -> None:
             corrupt_failure = type(exc).__name__
         else:
             raise AssertionError("ACT accepted a checkpoint with missing weights")
+    return corrupt_failure
+
+
+def main() -> None:
+    """Validate metadata, inference, shape rejection, and checkpoint integrity."""
+    _validate_metadata()
+    policy, first, shape_failure = _validate_inference()
+    corrupt_failure = _validate_checkpoint(policy)
 
     print(
         json.dumps(
