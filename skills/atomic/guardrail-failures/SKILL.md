@@ -124,6 +124,7 @@ the current surface, never to recreate the old one.
 
 | Guardrail | Fix when it fails |
 |---|---|
+| `test_ci_concurrency` | A validation job bypasses the shared runner pools, evicts waiting PR work, occupies merge completion capacity, or holds a child slot from a reusable caller. Restore the slot and queue contract documented in `CONTRIBUTING.md`. |
 | `test_ci_workflows` | A workflow lacks the shared concurrency template, duplicates feature-branch runs, drops a PR Python compatibility version or its early regression check, or makes mypy blocking. Restore those contracts. |
 | `test_daily_vm_network` | Daily SSH access loses host-key verification or isolated staging cleanup, requests unnecessary identity permissions, or adds a PR trigger. Restore pinned host keys, direct SSH, per-run private directories, and cleanup on failure. |
 | `test_e2e_gate_reachability` | A new `NPA_*` e2e gate has no runner mapping. Wire it into `scripts/dev-vm-daily-tests.sh` or record a reviewed manual reason. |
