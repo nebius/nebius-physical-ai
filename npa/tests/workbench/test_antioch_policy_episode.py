@@ -159,6 +159,88 @@ def test_droid_binds_observed_joints_by_name_and_excludes_passive_joints(modules
         robot.get_joint_positions()
 
 
+def test_droid_physics_converts_angular_units_and_scopes_gravity_to_robot(modules, monkeypatch):
+    from droid_scene import MODEL_JOINT_NAMES, _configure_native_dynamics
+
+    class Prim:
+        def __init__(self, path, kind, **attributes):
+            self.path, self.kind, self.attributes = path, kind, attributes
+
+        def GetPath(self):
+            return self.path
+
+        def GetName(self):
+            return self.path.rsplit("/", 1)[-1]
+
+        def HasAPI(self, kind):
+            return self.kind == kind
+
+        def IsA(self, kind):
+            return self.kind == kind
+
+    class Writer:
+        def __init__(self, prim):
+            self.prim = prim
+
+        def __getattr__(self, key):
+            return lambda value: self.prim.attributes.__setitem__(key, value)
+
+    api = SimpleNamespace(Apply=lambda prim, *_args: Writer(prim))
+    monkeypatch.setitem(sys.modules, "pxr", SimpleNamespace(
+        PhysxSchema=SimpleNamespace(PhysxRigidBodyAPI=api, PhysxArticulationAPI=api, PhysxJointAPI=api),
+        UsdPhysics=SimpleNamespace(RigidBodyAPI="body", ArticulationRootAPI="root",
+                                  RevoluteJoint="joint", DriveAPI=api)))
+    root = Prim("/World/Franka/root_joint", "root")
+    bodies = [Prim(f"/World/Franka/link_{i}", "body") for i in range(9)]
+    joints = [Prim(f"/World/Franka/joints/{name}", "joint") for name in MODEL_JOINT_NAMES]
+    cube = Prim("/World/Cube", "body", gravity_enabled=True)
+    other = Prim("/World/FrankaOther/link", "body", gravity_enabled=True)
+    report = _configure_native_dynamics(SimpleNamespace(Traverse=lambda: [root, *bodies, *joints, cube, other]))
+    assert all(body.attributes["CreateDisableGravityAttr"] is True for body in bodies)
+    assert cube.attributes == other.attributes == {"gravity_enabled": True}
+    # Independently convert authored per-degree gains back to effective per-radian gains.
+    for joint in joints[:7]:
+        assert joint.attributes["CreateStiffnessAttr"] * 57.29577951308232 == pytest.approx(400)
+        assert joint.attributes["CreateDampingAttr"] * 57.29577951308232 == pytest.approx(80)
+    assert "CreateStiffnessAttr" not in joints[-1].attributes
+    assert joints[-1].attributes["CreateMaxJointVelocityAttr"] / 57.29577951308232 == pytest.approx(5)
+    assert root.attributes["CreateSolverPositionIterationCountAttr"] == 64
+    assert root.attributes["CreateSolverVelocityIterationCountAttr"] == 0
+    assert report["gravity_compensated_robot_links"] == 9
+
+
+@pytest.mark.parametrize("bad_field,bad_value", [(None, None), ("stiffness", 22918.3125),
+                                               ("damping", 4583.6626), ("maxVelocity", 124.6183),
+                                               ("maxEffort", 8700.0)])
+def test_droid_verifies_effective_controller_units_after_reset(modules, bad_field, bad_value):
+    from droid_scene import DroidRobot, MODEL_JOINT_NAMES
+
+    names = ("passive_finger", *reversed(MODEL_JOINT_NAMES))
+    properties = np.zeros(len(names), dtype=[(name, float) for name in
+                          ["stiffness", "damping", "maxVelocity", "maxEffort"]])
+    for index, name in enumerate(MODEL_JOINT_NAMES):
+        properties[names.index(name)] = (400, 80, 2.175 if index < 4 else 2.61,
+                                        87 if index < 4 else 12)
+    properties[names.index("finger_joint")] = (171.887, 0.01146, 5, 26)
+    if bad_field:
+        properties[names.index("panda_joint3")][bad_field] = bad_value
+    articulation = SimpleNamespace(dof_names=names, dof_properties=properties,
+        get_solver_position_iteration_count=lambda: 64,
+        get_solver_velocity_iteration_count=lambda: 0,
+        get_enabled_self_collisions=lambda: False)
+    robot = DroidRobot(articulation, None, {"profile": "robolab_droid_jointpos_v1"})
+    if bad_field:
+        with pytest.raises(RuntimeError, match=bad_field):
+            robot.verify_dynamics()
+    else:
+        result = robot.verify_dynamics()
+        assert result["verified"]
+        assert result["effective_joint_properties"]["stiffness"] == [400] * 7
+        articulation.get_solver_position_iteration_count = lambda: 32
+        with pytest.raises(RuntimeError, match="solver"):
+            robot.verify_dynamics()
+
+
 @pytest.mark.parametrize("angle,position", [(0.0, 0.0), (np.pi / 8, 0.5), (np.pi / 4, 1.0)])
 def test_droid_observation_normalizes_measured_master_joint(modules, angle, position):
     scenario, _episode = modules
@@ -520,6 +602,10 @@ def _install_fake_camera_scene(scenario, monkeypatch, world):
             body.actions.append(body.joints.copy())
 
         body.apply_policy_target = apply_target
+        def verify_dynamics():
+            assert world.reset_complete, "Read PhysX drive units only after reset"
+            return {"profile": "robolab_droid_jointpos_v1", "verified": True}
+        body.verify_dynamics = verify_dynamics
         return body
 
     monkeypatch.setattr(droid_scene, "create_robot", create_droid)
@@ -701,6 +787,7 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         assert world.camera_mounts == [camera_mounts, camera_mounts]
         assert run.results["policy_camera_mounts"] == camera_mounts
         assert run.results["policy_camera_calibration"] == camera_calibration(camera_mounts)
+        assert run.results["policy_robot_dynamics"]["verified"]
     if initial_posture == "pregrasp":
         from droid_scene import PREGRASP_RESET_JOINTS
 

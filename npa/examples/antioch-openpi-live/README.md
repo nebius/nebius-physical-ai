@@ -96,6 +96,15 @@ The camera transforms and focal lengths are calibrated for Isaac's native
 Robotiq accessory, rather than copied across different asset frames.
 No RoboLab robot assets are redistributed. The camera diagnostics establish
 framing only; pickup success still requires the complete live policy run.
+The robot uses the reference gravity compensation, 64/0 solver iterations,
+400 Nm/rad arm stiffness, 80 Nm·s/rad damping, and named joint effort/velocity
+limits. Angular gains are converted when authored in USD because USD uses degrees;
+the effective PhysX gains and limits are independently read back after reset and
+persisted as `policy_robot_dynamics`. A mismatch stops execution before inference.
+Gravity compensation applies only to the robot links. The cube retains normal
+gravity, and native gripper drive gains, contact checks, and lift thresholds remain
+unchanged. Replaying saved targets diagnoses mechanics but never counts as a new
+policy pickup.
 Both cameras must initially contain the target and grasp region geometrically,
 and both must visibly resolve the red target before inference.
 

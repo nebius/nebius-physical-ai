@@ -380,6 +380,14 @@ separate from the explicit communication-only proof. Never describe cube pickup 
 measurements actually meet their declared thresholds. Action issuance alone is not
 task success.
 
+The DROID robot explicitly matches the reference controller's 400 Nm/rad
+stiffness, 80 Nm·s/rad damping, joint effort and velocity limits, robot gravity
+compensation, and 64/0 solver iterations. USD angular gains are converted from
+the reference's radian units before authoring; effective PhysX properties are
+read back after reset and saved in `policy_robot_dynamics`. Incorrect units or
+solver settings stop inference. Gravity compensation is scoped to the robot;
+the cube retains normal gravity and the same measured grasp/lift acceptance.
+
 ## Policy data contract
 
 Arbitrary logs or telemetry are not training data. Every collected `.npz` episode

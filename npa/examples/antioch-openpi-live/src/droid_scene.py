@@ -27,6 +27,10 @@ GRIPPER_BASE = f"{GRIPPER_ROOT}/base_link"
 CONTACT_BODIES = tuple(f"{GRIPPER_ROOT}/{side}_inner_finger" for side in ("left", "right"))
 CAMERA_PATHS = {"exterior": "/World/ExteriorDroid", "wrist": f"{GRIPPER_BASE}/wrist_cam"}
 NATIVE_POLICY_RESOLUTION = (180, 320)
+ARM_STIFFNESS_NM_PER_RAD = 400.0
+ARM_DAMPING_NM_S_PER_RAD = 80.0
+ARM_EFFORT_LIMITS_NM = (87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0)
+JOINT_VELOCITY_LIMITS_RAD_S = (2.175, 2.175, 2.175, 2.175, 2.61, 2.61, 2.61, 5.0)
 CAMERA_CALIBRATION = {
     "exterior": {
         # Low side view keeps the target clear of the forearm across recorded
@@ -103,9 +107,36 @@ def joint_indices(names):
 class DroidRobot:
     """Expose measured policy joints while PhysX owns the passive finger joints."""
 
-    def __init__(self, articulation, end_effector):
+    def __init__(self, articulation, end_effector, dynamics=None):
         self.articulation = articulation
         self.end_effector = end_effector
+        self.dynamics = dynamics
+
+    def verify_dynamics(self):
+        """Read effective PhysX units after reset and reject incompatible drives."""
+        import numpy as np
+
+        if self.dynamics is None:
+            raise RuntimeError("DROID physics profile was not configured")
+        indices = np.asarray(joint_indices(self.articulation.dof_names))
+        properties = self.articulation.dof_properties[indices]
+        expected = {
+            "stiffness": np.full(7, ARM_STIFFNESS_NM_PER_RAD),
+            "damping": np.full(7, ARM_DAMPING_NM_S_PER_RAD),
+            "maxEffort": np.asarray(ARM_EFFORT_LIMITS_NM),
+            "maxVelocity": np.asarray(JOINT_VELOCITY_LIMITS_RAD_S),
+        }
+        actual = {}
+        for key, wanted in expected.items():
+            values = np.asarray(properties[key][:len(wanted)], dtype=float)
+            if not np.isfinite(values).all() or not np.allclose(values, wanted, rtol=1e-5, atol=1e-5):
+                raise RuntimeError(f"DROID effective {key} differs from reference physics")
+            actual[key] = values.tolist()
+        if (self.articulation.get_solver_position_iteration_count() != 64
+                or self.articulation.get_solver_velocity_iteration_count() != 0
+                or self.articulation.get_enabled_self_collisions()):
+            raise RuntimeError("DROID effective solver settings differ from reference physics")
+        return {**self.dynamics, "effective_joint_properties": actual, "verified": True}
 
     def get_joint_positions(self):
         import numpy as np
@@ -154,9 +185,52 @@ def create_robot(world):
         raise RuntimeError("Installed Franka asset lacks the DROID gripper variant")
     if not variants.SetVariantSelection("Robotiq_2F_85"):
         raise RuntimeError("Could not select the DROID gripper variant")
+    dynamics = _configure_native_dynamics(world.stage)
     articulation = world.scene.add(SingleArticulation(prim_path="/World/Franka", name="franka"))
     end_effector = world.scene.add(SingleRigidPrim(prim_path=GRIPPER_BASE, name="droid_end_effector"))
-    return DroidRobot(articulation, end_effector)
+    return DroidRobot(articulation, end_effector, dynamics)
+
+
+def _configure_native_dynamics(stage):
+    """Match the reference DROID controller while preserving object gravity.
+
+    USD angular drives use torque per degree; PhysX and the reference actuator
+    expose torque per radian. Writing 400/80 directly to USD yields effective
+    gains of approximately 22918/4584, so convert before authoring the drives.
+    """
+    from pxr import PhysxSchema, UsdPhysics
+
+    prims = [prim for prim in stage.Traverse() if str(prim.GetPath()) == "/World/Franka"
+             or str(prim.GetPath()).startswith("/World/Franka/")]
+    bodies = [prim for prim in prims if prim.HasAPI(UsdPhysics.RigidBodyAPI)]
+    roots = [prim for prim in prims if prim.HasAPI(UsdPhysics.ArticulationRootAPI)]
+    if len(bodies) < 9 or len(roots) != 1:
+        raise RuntimeError("DROID physics requires one articulation and its rigid links")
+    for prim in bodies:
+        PhysxSchema.PhysxRigidBodyAPI.Apply(prim).CreateDisableGravityAttr(True)
+    root = PhysxSchema.PhysxArticulationAPI.Apply(roots[0])
+    root.CreateSolverPositionIterationCountAttr(64)
+    root.CreateSolverVelocityIterationCountAttr(0)
+    root.CreateEnabledSelfCollisionsAttr(False)
+    for index, name in enumerate(MODEL_JOINT_NAMES):
+        matches = [prim for prim in prims if prim.GetName() == name
+                   and prim.IsA(UsdPhysics.RevoluteJoint)]
+        if len(matches) != 1:
+            raise RuntimeError(f"DROID physics requires one revolute {name}")
+        prim = matches[0]
+        PhysxSchema.PhysxJointAPI.Apply(prim).CreateMaxJointVelocityAttr(
+            math.degrees(JOINT_VELOCITY_LIMITS_RAD_S[index]))
+        if index < len(ARM_JOINT_NAMES):
+            drive = UsdPhysics.DriveAPI.Apply(prim, "angular")
+            drive.CreateStiffnessAttr(math.radians(ARM_STIFFNESS_NM_PER_RAD))
+            drive.CreateDampingAttr(math.radians(ARM_DAMPING_NM_S_PER_RAD))
+            drive.CreateMaxForceAttr(ARM_EFFORT_LIMITS_NM[index])
+            drive.CreateTypeAttr("force")
+    return {"profile": "robolab_droid_jointpos_v1", "robot_gravity_compensation": True,
+            "gravity_compensated_robot_links": len(bodies),
+            "solver_position_iterations": 64, "solver_velocity_iterations": 0,
+            "self_collisions": False, "angular_drive_authoring_units": "degrees",
+            "effective_joint_units": "radians", "gripper_drive_gains": "native_asset"}
 
 
 def optical_config(view, mounts="native_wide"):

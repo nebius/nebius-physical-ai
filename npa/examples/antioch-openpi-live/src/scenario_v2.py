@@ -1844,6 +1844,7 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
     render_settings = _configure_policy_rendering(carb.settings.get_settings())
     world.reset()
     if droid:
+        run.add_result("policy_robot_dynamics", robot.verify_dynamics())
         reset = np.asarray([*reset_joints, 0.0])
         robot.set_joint_positions(reset)
         robot.apply_policy_target(reset)
