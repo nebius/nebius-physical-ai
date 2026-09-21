@@ -1,0 +1,199 @@
+{
+  "schema": "npa.public.base_image_hosted_inventory.v1",
+  "recorded_at": "2026-09-21T17:48:12.253692+00:00",
+  "source_commit": "5f8123940b8e631a934c34ce22f113b4b5713338",
+  "workflow_run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553",
+  "source_coverage": "Exact final scanner and workflow, one validated inventory entry per hosted job",
+  "entries": [
+    {
+      "name": "nvidia-cuda-12-4-1-devel-ubuntu22-04",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072300",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:29:29Z",
+      "completed_at": "2026-09-21T17:31:52Z",
+      "disk_before": {
+        "at": "2026-09-21T17:29:40.5658118Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62760570880,
+        "available_bytes": 92116840448
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:31:50.2274455Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64645144576,
+        "available_bytes": 90232266752
+      },
+      "original_log_sha256": "3e53a21388764e28b372d86e44f3001aa4c017d0bbaa9fee60c1913fbbc7372c"
+    },
+    {
+      "name": "nvidia-cuda-12-6-3-devel-ubuntu22-04",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072255",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:26:40Z",
+      "completed_at": "2026-09-21T17:29:52Z",
+      "disk_before": {
+        "at": "2026-09-21T17:26:56.2404869Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62760947712,
+        "available_bytes": 92116463616
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:29:48.8540553Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64645558272,
+        "available_bytes": 90231853056
+      },
+      "original_log_sha256": "e568a30b60e9aad96ae31a5b0f9afb462f51abbcdaa8b7aa2fa081217a36ce96"
+    },
+    {
+      "name": "nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072343",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:30:00Z",
+      "completed_at": "2026-09-21T17:33:26Z",
+      "disk_before": {
+        "at": "2026-09-21T17:30:11.4789416Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62760857600,
+        "available_bytes": 92116553728
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:33:24.5727745Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64645648384,
+        "available_bytes": 90231762944
+      },
+      "original_log_sha256": "2bdf52fa786a34a77dacb0efb63b265a1df6713dc28b687b17ef7ed1edda5bfd"
+    },
+    {
+      "name": "nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072497",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:31:17Z",
+      "completed_at": "2026-09-21T17:35:36Z",
+      "disk_before": {
+        "at": "2026-09-21T17:31:31.0184051Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62760722432,
+        "available_bytes": 92116688896
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:35:33.3165823Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64645279744,
+        "available_bytes": 90232131584
+      },
+      "original_log_sha256": "a0a195c20e6d6a36c2fa8feeae81cc6af0cbf7b3534c5d2a01285c2c59dfebb5"
+    },
+    {
+      "name": "nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072295",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:29:54Z",
+      "completed_at": "2026-09-21T17:32:15Z",
+      "disk_before": {
+        "at": "2026-09-21T17:30:06.8493997Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62761852928,
+        "available_bytes": 92115558400
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:32:12.2234831Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64646369280,
+        "available_bytes": 90231042048
+      },
+      "original_log_sha256": "03784390c41fa5bcfe95b7c950cc8c48f698fd695c84e257ac75e573f03faf77"
+    },
+    {
+      "name": "nvidia-cuda-13-0-2-base-ubuntu24-04",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072459",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:32:02Z",
+      "completed_at": "2026-09-21T17:32:26Z",
+      "disk_before": {
+        "at": "2026-09-21T17:32:14.2770613Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62760738816,
+        "available_bytes": 92116672512
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:32:24.2189634Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64394276864,
+        "available_bytes": 90483134464
+      },
+      "original_log_sha256": "8687bee099c0d911f7c48a88522ffd14c250b0fa4212e45dcd7690fb4552a1a2"
+    },
+    {
+      "name": "python-3-11-slim-trixie",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072378",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:29:05Z",
+      "completed_at": "2026-09-21T17:29:39Z",
+      "disk_before": {
+        "at": "2026-09-21T17:29:15.9679524Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62760583168,
+        "available_bytes": 92116828160
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:29:37.7933029Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64645226496,
+        "available_bytes": 90232184832
+      },
+      "original_log_sha256": "70638389a6ed30b8ba806f1c5a05dea4ff7c3d6215c19d5ef7b1ce45aad58416"
+    },
+    {
+      "name": "nvidia-cuda-13-0-1-cudnn-devel-ubuntu22-04",
+      "job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072501",
+      "result": "PASS",
+      "runner_label": "ubuntu-latest",
+      "runner_group": "GitHub Actions",
+      "runner_image": "ubuntu-24.04",
+      "started_at": "2026-09-21T17:30:18Z",
+      "completed_at": "2026-09-21T17:32:35Z",
+      "disk_before": {
+        "at": "2026-09-21T17:30:29.6058478Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 62760800256,
+        "available_bytes": 92116611072
+      },
+      "disk_after": {
+        "at": "2026-09-21T17:32:33.2215540Z",
+        "total_bytes": 154894188544,
+        "used_bytes": 64645373952,
+        "available_bytes": 90232037376
+      },
+      "original_log_sha256": "32f6eb31be39facd3a60240e930012515f58666a8cf500d6d6d1053cc01f276f"
+    }
+  ],
+  "all_eight_passed": true,
+  "limits": [
+    "The observed runners used ubuntu-latest with the recorded disk capacity; no claim is made about smaller runners.",
+    "Free-space readings are before and after the scan, not continuous peak measurements.",
+    "Inventory scan completion does not mean zero vulnerabilities or application/GPU qualification."
+  ]
+}

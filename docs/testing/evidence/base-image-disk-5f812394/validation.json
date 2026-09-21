@@ -39,12 +39,23 @@
   },
   "mutation_scope": "Three cleanup mutants detected on retained prototype; one subsequently reproduced failed-exec cleanup bug was repaired and independently controlled. No larger mutation count claimed.",
   "remaining": [
-    "Actual ordinary hosted-runner free-space measurements and all8 matrix results",
-    "Hosted required CI and merge-queue integration"
+    "Maintainer review and merge-queue integration"
   ],
   "nonclaims": [
     "No measured throughput improvement",
-    "No hosted-runner disk-fit acceptance yet",
+    "No fit guarantee for smaller runners",
     "No GPU, VLM or complete application-image qualification"
-  ]
+  ],
+  "hosted_ci": {
+    "source_commit": "5f8123940b8e631a934c34ce22f113b4b5713338",
+    "all_eight_inventory_entries_passed": true,
+    "successful_checks": 28,
+    "expected_skips": 2,
+    "evidence": "hosted-ci.json",
+    "actual_runner_label": "ubuntu-latest",
+    "filesystem_capacity_bytes": 154894188544,
+    "minimum_free_before_bytes": 92115558400,
+    "minimum_free_after_bytes": 90231042048,
+    "peak_measurement": false
+  }
 }

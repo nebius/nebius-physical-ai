@@ -8,4 +8,17 @@ Independent review reproduced a failed-Docker-execution cleanup bug, then verifi
 
 [Eight actual base-image scans](native-eight-images.json) passed on the retained scanner prototype. Seven isolated builders/cache volumes were absent before their archive scans; unrelated sentinel state survived. The three-worker trial sampled a **54,829,871,104-byte combined owned peak**. The final source adds the matrix/entry CLI and reviewed failed-exec repair; the native run is not relabeled as a final-source all-eight rerun.
 
-**Hosted-runner fit remains unproven.** The new workflow records actual free space before and after each image; all eight hosted outcomes and the required aggregate remain acceptance gates. These observations establish neither a throughput improvement nor GPU/VLM/application-image qualification.
+**Final-source hosted validation passed all eight image scans**, their required aggregate and the full CI gate: 28 successful checks and two expected skips. Every job used a separate GitHub Actions `ubuntu-latest` runner. The observed filesystem capacity was 154,894,188,544 bytes; the minimum available space was 92,115,558,400 bytes before a scan and 90,231,042,048 bytes afterward. These are before/after readings, not continuous peak measurements or a guarantee for smaller runners. See [hosted-ci.json](hosted-ci.json) for the complete measurements and original log hashes.
+
+| Image inventory entry | Final-source hosted result |
+| --- | --- |
+| nvidia-cuda-12-4-1-devel-ubuntu22-04 | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072300) |
+| nvidia-cuda-12-6-3-devel-ubuntu22-04 | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072255) |
+| nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04 | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072343) |
+| nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04 | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072497) |
+| nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04 | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072295) |
+| nvidia-cuda-13-0-2-base-ubuntu24-04 | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072459) |
+| python-3-11-slim-trixie | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072378) |
+| nvidia-cuda-13-0-1-cudnn-devel-ubuntu22-04 | [Passed](https://github.com/nebius/nebius-physical-ai/actions/runs/35631932553/job/106440072501) |
+
+These results establish scan completion on the recorded hosted runners. They do not mean zero vulnerabilities, a measured throughput improvement, or GPU/VLM/application-image qualification.
