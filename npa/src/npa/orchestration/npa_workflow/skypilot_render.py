@@ -1260,6 +1260,14 @@ def default_npa_setup() -> str:
         # Record where npa was installed from so a per-tool extra (see
         # TOOL_REF_PIP_EXTRAS) can be layered on top of the SAME source tree.
         "npa_record_src_root() { printf '%s' \"$1\" > /tmp/npa-src-root; }\n"
+        # Prefer the image's declared dependency-complete interpreter. Isaac images put an
+        # externally managed system python first on PATH while keeping the supported NPA
+        # runtime in NPA_BAKED_PYTHON. Falling back remains necessary for generic images.
+        'npa_setup_python="${NPA_BAKED_PYTHON:-}"\n'
+        'if [ -z "$npa_setup_python" ] || [ ! -x "$npa_setup_python" ] '
+        '|| ! "$npa_setup_python" -c "import sys" >/dev/null 2>&1; then\n'
+        '  npa_setup_python="$(command -v python3)"\n'
+        "fi\n"
         # Thin workbench images keep the installable project at /opt/npa rather than the
         # legacy /opt/nebius-physical-ai/npa path.  Record it even when the baked `npa`
         # launcher is already on PATH: vendor-interpreter setup still needs the source root
@@ -1280,17 +1288,16 @@ def default_npa_setup() -> str:
         # uv-created environments deliberately need not contain pip. GR00T's
         # image is one: `python3 -m pip` exits before the source overlay can be
         # staged even though the image ships uv. Let uv target the exact
-        # interpreter that `python3` resolves to; unlike activating another
-        # interpreter, this preserves the vendor environment and its pins.
-        '  npa_install_python="$(command -v python3)"\n'
-        '  if "$npa_install_python" -m pip --version >/dev/null 2>&1; then\n'
-        '    "$npa_install_python" -m pip install -q "$target" "$@" \\\n'
-        '      || "$npa_install_python" -m pip install -q "$target" "$@" --break-system-packages \\\n'
-        '      || "$npa_install_python" -m pip install -q "$target" "$@" --user\n'
+        # selected setup interpreter; unlike activating another interpreter,
+        # this preserves the supported baked environment and its pins.
+        '  if "$npa_setup_python" -m pip --version >/dev/null 2>&1; then\n'
+        '    "$npa_setup_python" -m pip install -q "$target" "$@" \\\n'
+        '      || "$npa_setup_python" -m pip install -q "$target" "$@" --break-system-packages \\\n'
+        '      || "$npa_setup_python" -m pip install -q "$target" "$@" --user\n'
         "  elif command -v uv >/dev/null 2>&1; then\n"
-        '    uv pip install -q --python "$npa_install_python" "$target" "$@"\n'
+        '    uv pip install -q --python "$npa_setup_python" "$target" "$@"\n'
         "  else\n"
-        '    echo "python3 has no pip and uv is unavailable: $npa_install_python" >&2\n'
+        '    echo "selected python has no pip and uv is unavailable: $npa_setup_python" >&2\n'
         "    return 1\n"
         "  fi\n"
         "}\n"
@@ -1309,8 +1316,10 @@ def default_npa_setup() -> str:
         "    npa_record_src_root /opt/nebius-physical-ai/npa\n"
         "  else\n"
         '    if [ ! -d /tmp/npa-src ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
-        "      npa_pip_install boto3\n"
-        "      python3 - <<'PY'\n"
+        "      if ! \"$npa_setup_python\" -c 'import boto3, botocore' >/dev/null 2>&1; then\n"
+        "        npa_pip_install boto3\n"
+        "      fi\n"
+        "      \"$npa_setup_python\" - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
         "import boto3\n"
@@ -1362,8 +1371,10 @@ def default_npa_setup() -> str:
         # baked workbench image so branch code (e.g. a new augment prompt path)
         # actually runs on GPU without rebuilding the image. Default off (no-op).
         'if [ "$NPA_SRC_OVERLAY" = "1" ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
-        "  npa_pip_install boto3\n"
-        "  python3 - <<'PY'\n"
+        "  if ! \"$npa_setup_python\" -c 'import boto3, botocore' >/dev/null 2>&1; then\n"
+        "    npa_pip_install boto3\n"
+        "  fi\n"
+        "  \"$npa_setup_python\" - <<'PY'\n"
         "import os, pathlib\n"
         "from urllib.parse import urlparse\n"
         "import boto3\n"
@@ -1410,15 +1421,19 @@ def default_npa_setup() -> str:
         "    PYTHONPATH=/tmp/npa-src-overlay/src\n"
         "  fi\n"
         "  export PYTHONPATH\n"
-        # --no-deps FIRST: the overlay is the same distribution the image already has, so
-        # resolving its requirements would only risk moving a pinned vendor stack.
-        "  if ! npa_pip_install -e /tmp/npa-src-overlay --no-deps; then\n"
-        "    echo 'using isolated non-root npa overlay environment' >&2\n"
-        "    python3 -m venv --system-site-packages /tmp/npa-overlay-venv\n"
-        "    /tmp/npa-overlay-venv/bin/python -m pip install -q -e "
+        # A source-first PYTHONPATH is sufficient when the baked interpreter already has
+        # the CLI dependency set. Avoid changing that environment merely to register the
+        # same distribution. If the import fails, preserve the safe --no-deps-first order.
+        "  if ! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
+        "    if ! npa_pip_install -e /tmp/npa-src-overlay --no-deps; then\n"
+        "      echo 'using isolated non-root npa overlay environment' >&2\n"
+        '      "$npa_setup_python" -m venv --system-site-packages /tmp/npa-overlay-venv\n'
+        "      /tmp/npa-overlay-venv/bin/python -m pip install -q -e "
         "/tmp/npa-src-overlay --no-deps\n"
-        '    PATH="/tmp/npa-overlay-venv/bin:$PATH"\n'
-        "    export PATH\n"
+        "      npa_setup_python=/tmp/npa-overlay-venv/bin/python\n"
+        '      PATH="/tmp/npa-overlay-venv/bin:$PATH"\n'
+        "      export PATH\n"
+        "    fi\n"
         "  fi\n"
         # ... and WITH deps if the CLI still will not import. An image that installed npa with
         # its own curated `--no-deps` list leaves the overlay short of whatever that list
@@ -1426,7 +1441,7 @@ def default_npa_setup() -> str:
         # tree that declares paramiko as a dependency. Probe the CLI, not `import npa` — npa
         # imported fine there; it was the command tree that could not load. Same
         # safe-then-sufficient order as the vendor-interpreter install.
-        "  if ! python3 -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
+        "  if ! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         "    echo 'npa CLI is not importable after the overlay; installing its dependencies'"
         " >&2\n"
         "    npa_pip_install -e /tmp/npa-src-overlay\n"
@@ -1442,20 +1457,20 @@ def default_npa_setup() -> str:
         # Record a python COMMAND that can import npa, so stage bodies can be pointed
         # at it. Three candidates are tried in order, because each of them is the right
         # answer on some real image:
-        #   1. NPA_BAKED_PYTHON - the image's declared, dependency-complete runtime;
-        #   2. sys.executable - correct on normal images;
+        #   1. npa_setup_python - the interpreter used and verified above;
+        #   2. NPA_BAKED_PYTHON - the image's declared, dependency-complete runtime;
         #   3. the alias target - the Isaac Lab image aliases python3 to
         #      /workspace/isaaclab/_isaac_sim/python.sh, and its embedded kit python
         #      cannot import its own site-packages unless launched through that
         #      wrapper (live run: "could not record a usable npa interpreter");
         #   4. `type -P python3` - the PATH binary, ignoring any alias.
-        "python3 -c 'import npa' >/dev/null 2>&1 || "
+        "\"$npa_setup_python\" -c 'import npa' >/dev/null 2>&1 || "
         "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
         'npa_python=""\n'
         'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
         '-e "s/^\'//" -e "s/\'$//")"\n'
-        'for candidate in "${NPA_BAKED_PYTHON:-}" '
-        "\"$(python3 -c 'import sys; print(sys.executable)' "
+        'for candidate in "$npa_setup_python" "${NPA_BAKED_PYTHON:-}" '
+        '"$("$npa_setup_python" -c \'import sys; print(sys.executable)\' '
         '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
         '|| true)"; do\n'
         '  if [ -n "$candidate" ] && [ -x "$candidate" ] && '
@@ -1479,9 +1494,9 @@ def default_npa_setup() -> str:
         # scripts dir — the judge stage died with `bash: npa: command not found` on an image
         # where that fallback fired (live job 260).
         "  for scripts_dir in "
-        '"$(python3 -c \'import sysconfig; print(sysconfig.get_path("scripts"))\' '
+        '"$("$npa_setup_python" -c \'import sysconfig; print(sysconfig.get_path("scripts"))\' '
         '2>/dev/null || true)" '
-        "\"$(python3 -c 'import sysconfig; "
+        '"$("$npa_setup_python" -c \'import sysconfig; '
         'print(sysconfig.get_path("scripts", scheme="posix_user"))\' 2>/dev/null || true)" '
         '"$HOME/.local/bin"; do\n'
         '    if [ -n "$scripts_dir" ] && [ -x "$scripts_dir/npa" ]; then\n'
