@@ -314,14 +314,16 @@ images:
     notes: >-
       MIT Open3D 0.20.0 from the official PyPI wheel plus the exact NPA source
       revision on the digest-pinned python:3.11-slim-trixie base shared with
-      npa-rerun-viewer. The application layer baked on top of that base, meaning
-      Open3D, the NPA source, and their Python dependency closure, is
-      MIT/BSD/Apache-2.0 or PSF. The Debian base underneath it carries the
-      ordinary distribution package set, which includes GPL, LGPL, and
-      Artistic licensed packages; each installed package ships its own copyright
-      notice in the image at /usr/share/doc/<package>/copyright. That is an
-      inventory statement about what is present and where its notices are, not
-      an exhaustive native-license certification. No model
+      npa-rerun-viewer. Open3D itself is MIT. Everything else baked here carries
+      its own component-specific license rather than any single family: the
+      Python dependency closure includes MPL-2.0 distributions, certifi among
+      them, and the Debian base carries the ordinary distribution package set,
+      which includes GPL, LGPL, and Artistic licensed packages. Each component
+      ships its own notice in the image, Python distributions through their
+      dist-info license files and OS packages at
+      /usr/share/doc/<package>/copyright, and the exact per-component inventory
+      is retained with the image scan. That records what is present and where
+      its notices are; it is not an exhaustive license certification. No model
       weights, datasets, credentials, or accepted terms are present. The upstream
       open3d.data demo scans are a run-time download into the runtime user's
       cache, not a baked payload. plotly and dash (and dash's Flask/Werkzeug
