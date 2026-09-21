@@ -1,0 +1,82 @@
+{
+  "viewer_version": "0.31.4",
+  "recordings_unchanged": true,
+  "camera_basis": "Union of 519 actual path vertices and declared goals in the three public recordings",
+  "records": [
+    {
+      "name": "b200-golden",
+      "viewer_url": "https://app.rerun.io/version/0.31.4/index.html?url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F2e8b31ac60c0d4614ee22008b502d8270571a379%2Fdocs%2Ftesting%2Fevidence%2Fcurobo-recorded-paths-0b0accdd%2Fb200-golden.rrd&url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F3ec222b7f08652a6082a1a56ecb5fbf7dc7f083f%2Fdocs%2Ftesting%2Fevidence%2Fcurobo-recorded-paths-0b0accdd%2Fcurobo-review-fit.rbl&persist=false",
+      "anonymous": true,
+      "artifact_fetches": {
+        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/2e8b31ac60c0d4614ee22008b502d8270571a379/docs/testing/evidence/curobo-recorded-paths-0b0accdd/b200-golden.rrd": {
+          "status": 200,
+          "bytes": 164514,
+          "sha256": "7e6a938d7e5d5c501782985a927068b0916d86dbdd245dfe914bd86889a73986"
+        },
+        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/3ec222b7f08652a6082a1a56ecb5fbf7dc7f083f/docs/testing/evidence/curobo-recorded-paths-0b0accdd/curobo-review-fit.rbl": {
+          "status": 200,
+          "bytes": 63173,
+          "sha256": "8f0fcb844fed7476770963ece55aa356ae4d910185d8a65c283c3cfc38767fd0"
+        }
+      },
+      "page_errors": 0,
+      "browser_cleanup": "completed",
+      "screenshot": "b200-golden-viewer-index-zero.png",
+      "screenshot_sha256": "4ae771fa0d74d8d225af9257ad9496d7e656dfe751aca3d89bfef85ee5dd2d73",
+      "ui_action": "Double-click the bottom-right problem index, select all, enter 0, press Enter",
+      "inspected_by": "Codex",
+      "visual_observation": "Problem index 0, success status, complete visible blue tool path and green declared goal; no robot or obstacle geometry is shown."
+    },
+    {
+      "name": "rtx-golden",
+      "viewer_url": "https://app.rerun.io/version/0.31.4/index.html?url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F2e8b31ac60c0d4614ee22008b502d8270571a379%2Fdocs%2Ftesting%2Fevidence%2Fcurobo-recorded-paths-0b0accdd%2Frtx-golden.rrd&url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F3ec222b7f08652a6082a1a56ecb5fbf7dc7f083f%2Fdocs%2Ftesting%2Fevidence%2Fcurobo-recorded-paths-0b0accdd%2Fcurobo-review-fit.rbl&persist=false",
+      "anonymous": true,
+      "artifact_fetches": {
+        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/2e8b31ac60c0d4614ee22008b502d8270571a379/docs/testing/evidence/curobo-recorded-paths-0b0accdd/rtx-golden.rrd": {
+          "status": 200,
+          "bytes": 164294,
+          "sha256": "571f9b7cd22e06b6789b5512795c1cecb68012732f74f3008f4a384c23c725a7"
+        },
+        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/3ec222b7f08652a6082a1a56ecb5fbf7dc7f083f/docs/testing/evidence/curobo-recorded-paths-0b0accdd/curobo-review-fit.rbl": {
+          "status": 200,
+          "bytes": 63173,
+          "sha256": "8f0fcb844fed7476770963ece55aa356ae4d910185d8a65c283c3cfc38767fd0"
+        }
+      },
+      "page_errors": 0,
+      "browser_cleanup": "completed",
+      "screenshot": "rtx-golden-viewer-index-zero.png",
+      "screenshot_sha256": "4ae771fa0d74d8d225af9257ad9496d7e656dfe751aca3d89bfef85ee5dd2d73",
+      "ui_action": "Double-click the bottom-right problem index, select all, enter 0, press Enter",
+      "inspected_by": "Codex",
+      "visual_observation": "Problem index 0, success status, complete visible blue tool path and green declared goal; no robot or obstacle geometry is shown."
+    },
+    {
+      "name": "b200-benchmark-selected",
+      "viewer_url": "https://app.rerun.io/version/0.31.4/index.html?url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F2e8b31ac60c0d4614ee22008b502d8270571a379%2Fdocs%2Ftesting%2Fevidence%2Fcurobo-recorded-paths-0b0accdd%2Fb200-benchmark-selected.rrd&url=https%3A%2F%2Fraw.githubusercontent.com%2Fnebius%2Fnebius-physical-ai%2F3ec222b7f08652a6082a1a56ecb5fbf7dc7f083f%2Fdocs%2Ftesting%2Fevidence%2Fcurobo-recorded-paths-0b0accdd%2Fcurobo-review-fit.rbl&persist=false",
+      "anonymous": true,
+      "artifact_fetches": {
+        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/2e8b31ac60c0d4614ee22008b502d8270571a379/docs/testing/evidence/curobo-recorded-paths-0b0accdd/b200-benchmark-selected.rrd": {
+          "status": 200,
+          "bytes": 636788,
+          "sha256": "c1136fea01d767c1e5790dd686d2b14d1193709d839a3bc30c3a976a955da76b"
+        },
+        "https://raw.githubusercontent.com/nebius/nebius-physical-ai/3ec222b7f08652a6082a1a56ecb5fbf7dc7f083f/docs/testing/evidence/curobo-recorded-paths-0b0accdd/curobo-review-fit.rbl": {
+          "status": 200,
+          "bytes": 63173,
+          "sha256": "8f0fcb844fed7476770963ece55aa356ae4d910185d8a65c283c3cfc38767fd0"
+        }
+      },
+      "page_errors": 0,
+      "browser_cleanup": "completed",
+      "screenshot": "b200-benchmark-selected-viewer-index-zero.png",
+      "screenshot_sha256": "5209e57ac752cbe18fc5e8fb2b756ff4a50d2e7560df32317274d386ee80a27d",
+      "ui_action": "Double-click the bottom-right problem index, select all, enter 0, press Enter",
+      "inspected_by": "Codex",
+      "visual_observation": "Problem index 0, success status, complete visible blue tool path and green declared goal; no robot or obstacle geometry is shown."
+    }
+  ],
+  "initial_cursor_limitation": "The hosted viewer opens at its default/last case. The screenshots select index 0 through the visible UI; they do not claim the URL selects it automatically.",
+  "vlm_acceptance": "The original failed VLM calibration results remain unchanged. These are browser access and presentation checks, not a new VLM quality pass.",
+  "retained_harness_failure": "An earlier UI-seek verifier stalled during browser close after capturing screenshots. That attempt remains incomplete; final verifiers persisted evidence and completed browser cleanup."
+}
