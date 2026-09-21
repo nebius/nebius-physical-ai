@@ -37,6 +37,7 @@ SLOTS = {
     "completion": "${{ " + CANDIDATE + " && 'completion' || 'checks' }}",
 }
 RUNNER_SLOTS = {
+    "merge-queue-report.yml": {"report": "report"},
     "security-regression.yml": {
         "gitleaks": "checks",
         "scan": "checks",

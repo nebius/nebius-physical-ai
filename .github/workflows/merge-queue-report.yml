@@ -1,0 +1,60 @@
+name: Merge queue feedback
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to diagnose
+        type: number
+        required: true
+      publish:
+        description: Publish the report as a PR comment
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  # A pending refresh replaces an older pending refresh; each reads current state.
+  group: merge-queue-feedback
+  cancel-in-progress: false
+
+jobs:
+  report:
+    concurrency:
+      # Reuse the audit metadata slot; reporting cannot delay queue completion.
+      group: npa-validation-audit-checks
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted reporting code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Explain the exact rejected merge candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_PR: ${{ inputs.pr }}
+          REPORT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          python -m venv npa/.venv
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            args=(--pr "$REPORT_PR")
+            if [ "$REPORT_PUBLISH" = true ]; then args+=(--publish); fi
+          else
+            args=(--scan-open --publish)
+          fi
+          npa/.venv/bin/python -I npa/scripts/merge_queue_report.py "${args[@]}"

@@ -439,6 +439,69 @@ def test_docs_drift_gate_matches_the_make_target() -> None:
     assert "scripts/build_docs.sh --check" in make_docs_check
 
 
+def test_docs_drift_uses_the_same_dependency_pins_as_tests() -> None:
+    """Keep docs setup cached and prevent unrelated floating dependency failures."""
+    steps = _load_workflow("lint.yml")["jobs"]["docs-drift"]["steps"]
+    setup = next(step for step in steps if "setup-uv@" in step.get("uses", ""))
+    assert setup["with"]["version"] == "0.12.5"
+    assert setup["with"]["enable-cache"] == "true"
+    assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
+    install = _step("lint.yml", "docs-drift", "constrained docs environment")["run"]
+    assert (
+        "uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e npa"
+        in install
+    )
+    assert _step("lint.yml", "docs-drift", "CLI reference drift")["env"][
+        "NPA_BIN"
+    ].endswith("/npa/.venv/bin/npa")
+
+
+def test_precheck_catches_cheap_ci_failures_before_expensive_checks() -> None:
+    """Ensure make check cannot start the full suite ahead of cheap validation."""
+    assert _make_prereqs("check") == ["precheck"]
+    precheck = "\n".join(_make_recipe("precheck"))
+    assert "ci_requirements.py --check" in precheck
+    assert "$(MAKE) lint format-check" in precheck
+    assert precheck.index("ci_requirements.py --check") < precheck.index("$(PYTEST)")
+    for name in (
+        "test_ci_workflows.py",
+        "test_ci_concurrency.py",
+        "test_ci_merge_precheck.py",
+        "test_merge_queue_report.py",
+    ):
+        assert name in precheck
+    assert "--check" in "\n".join(_make_recipe("format-check"))
+    assert "--fix" not in precheck
+    assert "$(MAKE) docs-check test" in _make_recipe("check")
+
+
+def test_queue_feedback_cannot_execute_candidate_code_with_write_access() -> None:
+    """Keep privileged reporting separate from candidate validation and artifacts."""
+    workflow = _load_workflow("merge-queue-report.yml")
+    assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
+    assert workflow["on"]["schedule"] == [{"cron": "*/5 * * * *"}]
+    assert workflow["permissions"] == {}
+    job = workflow["jobs"]["report"]
+    assert job["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "write",
+    }
+    checkout = job["steps"][0]
+    assert checkout["with"] == {
+        "ref": "${{ github.event.repository.default_branch }}",
+        "persist-credentials": "false",
+    }
+    commands = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "-I npa/scripts/merge_queue_report.py" in commands
+    assert "--scan-open --publish" in commands
+    assert "pip install" not in commands
+    assert all("download-artifact" not in step.get("uses", "") for step in job["steps"])
+    assert "github.event.pull_request.head" not in commands
+    assert "github.event.workflow_run.head_sha" not in commands
+    assert "GH_TOKEN" in job["steps"][-1]["env"]
+
+
 def test_guardrail_gate_matches_the_make_target() -> None:
     ci_guardrails = _step("harness-guardrails.yml", "guardrails", "guardrail tests")[
         "run"
