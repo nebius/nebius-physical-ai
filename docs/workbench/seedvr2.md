@@ -127,7 +127,10 @@ identities and validation gates.
 The final COPY instructions normalize license and source permissions so UID 1000
 can read them even when the source context was created with umask `077`.
 The native Docker regression creates disposable fixture images from an existing
-local immutable image; it does not pull images, use GPUs, or verify restoration.
+local SeedVR image that already has the runtime notice directory. The image
+must have a pre-existing tag, which is verified before and after temporary tag
+cleanup; untagged inputs are rejected before any Docker mutation. The check
+does not pull images, use GPUs, or verify restoration.
 Set `NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE` to that local `sha256:<64-hex>` image ID
 (no default), then run:
 

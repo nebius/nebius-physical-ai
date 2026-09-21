@@ -336,3 +336,30 @@ def test_seedvr2_golden_eval_runs_real_gpu_capability() -> None:
     assert golden.serverless_gpu == "h100"
     assert golden.module == "npa.smoke.test_seedvr2_functional"
     assert golden.status == "needs-image-update"
+
+
+@pytest.mark.parametrize("tags", [None, []])
+def test_seedvr_readability_rejects_untagged_input_before_mutation(
+    monkeypatch: pytest.MonkeyPatch, tags: list[str] | None
+) -> None:
+    path = ROOT / "npa/tests/e2e/test_seedvr2_image_readability.py"
+    spec = importlib.util.spec_from_file_location("seedvr_readability_control", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    image = "sha256:" + "a" * 64
+    monkeypatch.setenv("NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE", image)
+    calls = []
+
+    def inspect(argv):
+        calls.append(argv)
+        return json.dumps([{"Id": image, "RepoTags": tags}]).encode()
+
+    monkeypatch.setattr(module.subprocess, "check_output", inspect)
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("Unexpected Docker mutation"),
+    )
+    with pytest.raises(AssertionError, match="pre-existing tag"):
+        module._local_base()
+    assert calls == [["docker", "image", "inspect", image]]

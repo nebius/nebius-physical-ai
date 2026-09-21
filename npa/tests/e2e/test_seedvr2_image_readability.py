@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -16,15 +17,22 @@ DOCKERFILE = ROOT / "npa/docker/workbench/seedvr2/Dockerfile"
 NOTICE = "NVSHMEM-License-v3.4.5-0.txt"
 
 
-def _local_base() -> str:
+def _local_base() -> tuple[str, tuple[str, ...]]:
     image = os.environ.get("NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE", "")
     if not image:
         pytest.skip("Set NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE to a local image ID")
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", image), "Use an immutable local ID"
-    subprocess.run(
-        ["docker", "image", "inspect", image], check=True, capture_output=True
-    )
-    return image
+    rows = json.loads(subprocess.check_output(["docker", "image", "inspect", image]))
+    assert len(rows) == 1 and rows[0]["Id"] == image
+    tags = rows[0].get("RepoTags")
+    assert isinstance(tags, list) and tags, "Base image needs a pre-existing tag"
+    assert all(isinstance(tag, str) and tag != "<none>:<none>" for tag in tags)
+    return image, tuple(tags)
+
+
+def _assert_base_preserved(image: str, tags: tuple[str, ...]) -> None:
+    rows = json.loads(subprocess.check_output(["docker", "image", "inspect", *tags]))
+    assert len(rows) == len(tags) and all(row["Id"] == image for row in rows)
 
 
 def _context(root: Path, mask: int) -> None:
@@ -133,7 +141,7 @@ def test_seedvr_runtime_copies_are_readable_under_source_umask(
     tmp_path: Path, mask: int
 ) -> None:
     """Use native Docker COPY semantics and a non-root process, without a GPU."""
-    image = _local_base()
+    image, original_tags = _local_base()
     _context(tmp_path, mask)
     tag = "npa-seedvr-readability-test:" + uuid4().hex
     base_tag = tag + "-base"
@@ -147,6 +155,8 @@ def test_seedvr_runtime_copies_are_readable_under_source_umask(
         _build_fixture(tag, tmp_path)
         _verify_readable(tag)
     finally:
+        _assert_base_preserved(image, original_tags)
         subprocess.run(
             ["docker", "image", "rm", tag, base_tag], capture_output=True, check=False
         )
+        _assert_base_preserved(image, original_tags)

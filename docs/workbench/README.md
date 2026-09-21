@@ -32,7 +32,7 @@ Python and HTTP access follow each tool's documented contract.
 | Video restoration and generation | [SeedVR2](seedvr2.md) · [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
 
 SeedVR2 image maintainers can set `NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE` to an
-existing immutable local image ID for the [nonroot packaging check](seedvr2.md#check-nonroot-packaging-locally).
+existing tagged local SeedVR image ID for the [nonroot packaging check](seedvr2.md#check-nonroot-packaging-locally).
 
 ## Robotics and simulation
 
