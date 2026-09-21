@@ -26,6 +26,8 @@ BUILD_LOCK = IMAGE_DIR / "build-requirements.lock"
 LEROBOT_PATCH = IMAGE_DIR / "lerobot-npa-act.patch.b64"
 LEROBOT_NOTICE = IMAGE_DIR / "lerobot-npa-act.NOTICE"
 LEROBOT_VERIFY = IMAGE_DIR / "verify_lerobot_act_derivative.py"
+ROBOCASA_PATCH = IMAGE_DIR / "robocasa-npa-act.patch.b64"
+ROBOCASA_NOTICE = IMAGE_DIR / "robocasa-npa-act.NOTICE"
 DEADSNAKES_KEY = IMAGE_DIR / "deadsnakes-ppa.gpg.b64"
 BASE_INVENTORY = IMAGE_DIR.parent / "base-image-security.json"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
@@ -149,12 +151,19 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     ).decode("utf-8")
     notice = LEROBOT_NOTICE.read_text(encoding="utf-8")
     verifier = LEROBOT_VERIFY.read_text(encoding="utf-8")
+    robocasa_patch = base64.b64decode(
+        "".join(ROBOCASA_PATCH.read_text(encoding="ascii").split()), validate=True
+    ).decode("utf-8")
+    robocasa_notice = ROBOCASA_NOTICE.read_text(encoding="utf-8")
 
     for requirement in (
         "gymnasium==0.29.1",
         "draccus>=0.11.6,<0.12.0",
         "opencv-python>=4.9,<4.14",
         "setuptools==83.0.0",
+        "tianshou==0.4.10",
+        "qpsolvers[quadprog]>=4.3.1",
+        "pytest>=8,<10",
         "torch==2.13.0",
         "torchvision==0.28.0",
     ):
@@ -201,6 +210,27 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     assert "ACTPolicy.from_pretrained" in verifier
     assert "ACT accepted a 15-wide state" in verifier
     assert "ACT accepted a checkpoint with missing weights" in verifier
+
+    assert 'npa.robocasa.derivative="1.0.0+npa1"' in dockerfile
+    assert (
+        'npa.robocasa.patch.sha256="bb14ebc827b72d04cf462ef7c01ada10912f90587606c0778b57182c8bcf6608"'
+        in dockerfile
+    )
+    assert '"lerobot==0.6.1+npa1"' in robocasa_patch
+    assert 'version="1.0.0+npa1"' in robocasa_patch
+    assert robocasa_patch.count("diff --git") == 1
+    assert "diff --git a/setup.py b/setup.py" in robocasa_patch
+    assert "packaging metadata only" in robocasa_notice
+    assert "does not\nclaim upstream support" in robocasa_notice
+    robosuite_install = dockerfile.split(
+        '"robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git', 1
+    )[0].rsplit("python -m pip install", 1)[1]
+    robocasa_install = dockerfile.split("-e /opt/robocasa/source", 1)[0].rsplit(
+        "python -m pip install", 1
+    )[1]
+    assert "--no-deps" not in robosuite_install
+    assert "--no-deps" not in robocasa_install
+    assert "version('robocasa') == '1.0.0+npa1'" in dockerfile
 
 
 def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:
@@ -611,7 +641,8 @@ def test_robocasa_upstreams_use_verified_immutable_commits() -> None:
     robosuite_install = text.split('"robosuite @ git+', 1)[0].rsplit(
         "PIP_CONFIG_FILE=/dev/null", 1
     )[1]
-    assert "--no-build-isolation --no-deps" in robosuite_install
+    assert "--no-build-isolation" in robosuite_install
+    assert "--no-deps" not in robosuite_install
     assert "distribution('robosuite').read_text('direct_url.json')" in text
     assert "vcs.get('commit_id') == '${ROBOSUITE_SOURCE_COMMIT}'" in text
 
@@ -642,7 +673,15 @@ def test_robocasa_python_locks_are_hash_complete_and_target_specific() -> None:
 
     runtime_names = _locked_names(RUNTIME_LOCK)
     assert runtime_names & OPENCV_PROVIDERS == {"opencv-python"}
-    assert {"gymnasium", "torch", "torchvision"} <= runtime_names
+    assert {
+        "gymnasium",
+        "pytest",
+        "qpsolvers",
+        "quadprog",
+        "tianshou",
+        "torch",
+        "torchvision",
+    } <= runtime_names
 
 
 def test_robocasa_lock_generation_uses_only_anonymous_indexes() -> None:

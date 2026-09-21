@@ -1,0 +1,15 @@
+NPA RoboCasa ACT runtime derivative
+
+Upstream: RoboCasa commit 8f3c96ec8d1bfcd8126cad2bca887da98d30e997
+Upstream license: Apache-2.0
+Local version: 1.0.0+npa1
+
+The local patch changes setup.py packaging metadata only. It identifies the
+derivative and updates RoboCasa's LeRobot dependency from 0.3.3 to the separately
+reviewed 0.6.1+npa1 NPA ACT derivative. It changes no RoboCasa implementation,
+assets, task semantics, or simulator behavior. The pinned tianshou dependency and
+all other upstream runtime requirements remain declared and resolver-checked.
+
+Only the repository's matched RoboCasa ACT rollout path is qualified. This does not
+claim upstream support for LeRobot 0.6.1 or qualify other RoboCasa policy, training,
+or deployment paths.

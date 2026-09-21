@@ -26,6 +26,8 @@ LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.base_image="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
+      npa.robocasa.derivative="1.0.0+npa1" \
+      npa.robocasa.patch.sha256="bb14ebc827b72d04cf462ef7c01ada10912f90587606c0778b57182c8bcf6608" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
       npa.lerobot.derivative="0.6.1+npa1" \
@@ -96,6 +98,8 @@ COPY --chmod=0644 \
 COPY --chmod=0644 \
     docker/workbench/robocasa/lerobot-npa-act.patch.b64 \
     docker/workbench/robocasa/lerobot-npa-act.NOTICE \
+    docker/workbench/robocasa/robocasa-npa-act.patch.b64 \
+    docker/workbench/robocasa/robocasa-npa-act.NOTICE \
     docker/workbench/robocasa/verify_lerobot_act_derivative.py \
     /opt/robocasa/derivative/
 
@@ -148,7 +152,7 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
     && PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
         --index-url https://pypi.org/simple \
-        --no-build-isolation --no-deps \
+        --no-build-isolation \
         "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@${ROBOSUITE_SOURCE_COMMIT}" \
     && python -c "import json; from importlib.metadata import distribution; direct=json.loads(distribution('robosuite').read_text('direct_url.json')); vcs=direct.get('vcs_info', {}); assert vcs.get('vcs') == 'git' and vcs.get('commit_id') == '${ROBOSUITE_SOURCE_COMMIT}', direct" \
     && find /opt/robocasa/venv -type f \
@@ -169,7 +173,7 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
     && python -c "import itertools, tempfile; from pathlib import Path; import imageio.v2 as imageio; import numpy as np; tmp = tempfile.TemporaryDirectory(); video = Path(tmp.name) / 'probe.mp4'; imageio.mimsave(video, [np.zeros((64, 64, 3), dtype=np.uint8), np.full((64, 64, 3), 255, dtype=np.uint8)], fps=2); reader = imageio.get_reader(video); frames = list(itertools.islice(reader, 3)); reader.close(); assert len(frames) == 2 and frames[0].shape == (64, 64, 3); tmp.cleanup()" \
     && rm -rf /root/.cache/pip /tmp/pip-*
 
-# Install RoboCasa source (no deps; the closure above is pinned).
+# Install exact RoboCasa source with its packaging-only derivative and full closure.
 RUN git init /opt/robocasa/source \
     && git -C /opt/robocasa/source remote add origin \
       https://github.com/robocasa/robocasa.git \
@@ -178,9 +182,22 @@ RUN git init /opt/robocasa/source \
     && git -C /opt/robocasa/source checkout --detach FETCH_HEAD \
     && test "$(git -C /opt/robocasa/source rev-parse HEAD)" = \
       "${ROBOCASA_SOURCE_COMMIT}" \
+    && base64 --decode /opt/robocasa/derivative/robocasa-npa-act.patch.b64 \
+      > /tmp/robocasa-npa-act.patch \
+    && echo \
+      "bb14ebc827b72d04cf462ef7c01ada10912f90587606c0778b57182c8bcf6608  /tmp/robocasa-npa-act.patch" \
+      | sha256sum --check --strict - \
+    && git -C /opt/robocasa/source apply --check /tmp/robocasa-npa-act.patch \
+    && git -C /opt/robocasa/source apply /tmp/robocasa-npa-act.patch \
+    && rm -f /tmp/robocasa-npa-act.patch \
     && PIP_CONFIG_FILE=/dev/null python -m pip install \
       --disable-pip-version-check --no-cache-dir \
-      --no-build-isolation --no-deps -e /opt/robocasa/source \
+      --index-url https://pypi.org/simple \
+      --no-build-isolation -e /opt/robocasa/source \
+    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa1'" \
+    && python -m pip check \
+    && install -D -m 0644 /opt/robocasa/derivative/robocasa-npa-act.NOTICE \
+      /usr/share/doc/robocasa-npa-act/NOTICE \
     && rm -rf /opt/robocasa/source/.git /root/.cache/pip /tmp/pip-*
 
 # The pinned CUDA devel base retains stale userspace kernel headers. They are

@@ -196,7 +196,8 @@ images:
     notes: >-
       Bakes immutable Apache-2.0 RoboCasa source at
       8f3c96ec8d1bfcd8126cad2bca887da98d30e997 and robosuite at its pinned
-      commit plus exact Apache-2.0 LeRobot v0.6.1 source at
+      commit. RoboCasa is locally versioned 1.0.0+npa1 by a packaging-only
+      patch that binds its ACT path to exact Apache-2.0 LeRobot v0.6.1 source at
       7e241bd630a3719a56157a497ce5d08f244784f1. LeRobot is rebuilt as the
       locally versioned 0.6.1+npa1 NPA ACT derivative; its reviewed patch changes
       packaging metadata only so normal dependency resolution accepts the fixed

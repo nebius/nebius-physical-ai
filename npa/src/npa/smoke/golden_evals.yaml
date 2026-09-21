@@ -924,9 +924,11 @@ containers:
       notes: >-
         Bakes Apache-2.0 RoboCasa (v1.0) and robosuite (pinned commit) plus the
         exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / PyTorch 2.13 cu129 closure.
-        LeRobot v0.6.1 is rebuilt from an exact upstream revision as the
-        packaging-only 0.6.1+npa1 ACT derivative. Its declared dependency closure
-        matches the installed fixed runtime and passes pip-check plus real ACT
+        RoboCasa is rebuilt from its exact source as the packaging-only
+        1.0.0+npa1 ACT derivative, binding its declared LeRobot requirement to the
+        exact upstream LeRobot v0.6.1 source rebuilt as 0.6.1+npa1. Their
+        declared dependency closure matches the installed fixed runtime and passes
+        pip-check plus real ACT
         construction, inference, shape rejection, and checkpoint round trips.
         Other LeRobot policies and training paths are not qualified. Kitchen assets
         are NOT baked and download at run time. No model
