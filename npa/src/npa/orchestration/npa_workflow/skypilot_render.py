@@ -1911,6 +1911,33 @@ class ImagePullRequirements:
         )
 
 
+def _task_pull_secret_names(pod_spec: Mapping[str, Any]) -> tuple[str, ...]:
+    """Read a present nonempty SkyPilot imagePullSecrets task override."""
+
+    if "imagePullSecrets" not in pod_spec:
+        return ()
+    raw_names = pod_spec["imagePullSecrets"]
+    if not isinstance(raw_names, list):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task imagePullSecrets must be a list of name mappings"
+        )
+    if not raw_names:
+        raise NpaWorkflowRenderError("SkyPilot task imagePullSecrets must not be empty")
+    names: list[str] = []
+    for item in raw_names:
+        if not isinstance(item, Mapping):
+            raise NpaWorkflowRenderError(
+                "SkyPilot task imagePullSecrets must contain name mappings"
+            )
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise NpaWorkflowRenderError(
+                "SkyPilot task imagePullSecrets entries require a name"
+            )
+        names.append(name)
+    return tuple(names)
+
+
 def plan_image_pull_requirements(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
@@ -1942,13 +1969,7 @@ def plan_image_pull_requirements(
         pod_config = pod_config if isinstance(pod_config, dict) else {}
         pod_spec = pod_config.get("spec")
         pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
-        raw_names = pod_spec.get("imagePullSecrets")
-        raw_names = raw_names if isinstance(raw_names, list) else []
-        names = tuple(
-            str(item.get("name") or "").strip()
-            for item in raw_names
-            if isinstance(item, dict) and str(item.get("name") or "").strip()
-        )
+        names = _task_pull_secret_names(pod_spec)
         paths.setdefault(image, []).append(("kubernetes", names))
     return {
         image: ImagePullRequirements(

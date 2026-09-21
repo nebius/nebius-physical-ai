@@ -636,6 +636,29 @@ def test_same_image_preserves_each_kubernetes_pull_secret_set() -> None:
     assert requirement.pull_secret_names == ("secret-a", "secret-b")
 
 
+def test_pull_requirements_reject_explicit_empty_task_pull_secrets() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    kubernetes = replace(
+        step,
+        resources_profile={
+            **step.resources_profile,
+            "cloud": "kubernetes",
+            "kubernetes": {
+                "pod_config": {"spec": {"imagePullSecrets": []}},
+            },
+        },
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="must not be empty"):
+        plan_image_pull_requirements(
+            spec,
+            [kubernetes],
+            run_id="demo",
+            options=SkypilotRenderOptions(registry="registry.example/customer"),
+        )
+
+
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
     spec = load_spec(NPA_SPECS.parent / "main" / "nurec-reconstruct.yaml")
     plan = build_plan(spec, run_id="demo")

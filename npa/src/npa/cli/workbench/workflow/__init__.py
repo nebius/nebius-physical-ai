@@ -3457,7 +3457,8 @@ def _image_pull_secret_sets(
                 dict.fromkeys(
                     (
                         *merge_skypilot_pull_secret_names(
-                            inherited_pull_secrets, declared_names
+                            inherited_pull_secrets or None,
+                            declared_names or None,
                         ),
                         *additional_pull_secrets,
                     )

@@ -127,14 +127,20 @@ class KubernetesPullTarget:
 
 
 def merge_skypilot_pull_secret_names(
-    base_names: tuple[str, ...],
-    override_names: tuple[str, ...],
+    base_names: tuple[str, ...] | None,
+    override_names: tuple[str, ...] | None,
 ) -> tuple[str, ...]:
     """Apply SkyPilot 0.12's legacy imagePullSecrets override semantics."""
 
-    if not override_names:
-        return base_names
-    if not base_names:
+    if base_names is not None and not base_names:
+        raise RegistryPreflightError("SkyPilot imagePullSecrets base must not be empty")
+    if override_names is not None and not override_names:
+        raise RegistryPreflightError(
+            "SkyPilot imagePullSecrets override must not be empty"
+        )
+    if override_names is None:
+        return base_names or ()
+    if base_names is None:
         return override_names
     if len(override_names) != 1:
         raise RegistryPreflightError(
@@ -1046,8 +1052,8 @@ def resolve_kubernetes_pull_target(
                     )
                 namespace = raw_namespace.strip()
         secret_names = merge_skypilot_pull_secret_names(
-            tuple(_configured_pull_secret_names(kubernetes)),
-            tuple(_configured_pull_secret_names(context_config)),
+            _configured_pull_secret_names(kubernetes),
+            _configured_pull_secret_names(context_config),
         )
     if not namespace:
         execute = runner or subprocess.run
@@ -1112,18 +1118,24 @@ def resolve_kubernetes_pull_target(
     )
 
 
-def _configured_pull_secret_names(config: Mapping[str, Any]) -> list[str]:
+def _configured_pull_secret_names(
+    config: Mapping[str, Any],
+) -> tuple[str, ...] | None:
     pod_config = config.get("pod_config") or {}
     if not isinstance(pod_config, Mapping):
         raise RegistryPreflightError("SkyPilot pod_config must be a mapping")
     pod_spec = pod_config.get("spec") or {}
     if not isinstance(pod_spec, Mapping):
         raise RegistryPreflightError("SkyPilot pod_config.spec must be a mapping")
-    raw_names = pod_spec.get("imagePullSecrets") or []
+    if "imagePullSecrets" not in pod_spec:
+        return None
+    raw_names = pod_spec["imagePullSecrets"]
     if not isinstance(raw_names, list):
         raise RegistryPreflightError(
             "SkyPilot imagePullSecrets must be a list of name mappings"
         )
+    if not raw_names:
+        raise RegistryPreflightError("SkyPilot imagePullSecrets must not be empty")
     names: list[str] = []
     for item in raw_names:
         if not isinstance(item, Mapping):
@@ -1136,7 +1148,7 @@ def _configured_pull_secret_names(config: Mapping[str, Any]) -> list[str]:
                 "SkyPilot imagePullSecrets entries require a name"
             )
         names.append(name)
-    return names
+    return tuple(names)
 
 
 def verify_kubernetes_pull_secret(
@@ -1246,6 +1258,95 @@ def _docker_auth_entry_has_credential(entry: Any) -> bool:
         str(entry.get("username") or "").strip()
         and str(entry.get("password") or "").strip()
     )
+
+
+def _cleanup_pull_probe_iteration(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+    name: str,
+    namespace: str,
+    nonce: str,
+    image: str,
+    expected_uid: str,
+) -> tuple[str, str]:
+    """Inspect and UID-delete one owned probe, returning a bounded outcome."""
+
+    try:
+        current = run(["get", "pod", name, "--ignore-not-found=true", "-o", "json"])
+    except (OSError, subprocess.SubprocessError):
+        return "retry", expected_uid
+    if current.returncode != 0:
+        return "retry", expected_uid
+    if not current.stdout.strip():
+        return "absent", expected_uid
+    identity = _pull_probe_identity(
+        current.stdout,
+        name=name,
+        nonce=nonce,
+        image=image,
+        expected_uid=expected_uid,
+    )
+    if identity is None:
+        return "identity_mismatch", expected_uid
+    observed_uid = identity[0]
+    delete_options = {
+        "apiVersion": "meta.k8s.io/v1",
+        "kind": "DeleteOptions",
+        "gracePeriodSeconds": 0,
+        "preconditions": {"uid": observed_uid},
+    }
+    try:
+        deleted = run(
+            [
+                "delete",
+                "--raw",
+                f"/api/v1/namespaces/{namespace}/pods/{name}",
+                "-f",
+                "-",
+            ],
+            input_text=json.dumps(delete_options, separators=(",", ":")),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "retry", observed_uid
+    return ("deleted" if deleted.returncode == 0 else "retry"), observed_uid
+
+
+def _cleanup_kubernetes_pull_probe(
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+    name: str,
+    namespace: str,
+    nonce: str,
+    image: str,
+    expected_uid: str,
+    creation_confirmed: bool,
+) -> tuple[str, KeyboardInterrupt | None]:
+    """Finish bounded owned cleanup before propagating an operator interrupt."""
+
+    interrupted: KeyboardInterrupt | None = None
+    absent_observations = 0
+    for _attempt in range(4):
+        try:
+            outcome, expected_uid = _cleanup_pull_probe_iteration(
+                run=run,
+                name=name,
+                namespace=namespace,
+                nonce=nonce,
+                image=image,
+                expected_uid=expected_uid,
+            )
+        except KeyboardInterrupt as exc:
+            interrupted = interrupted or exc
+            continue
+        if outcome == "identity_mismatch":
+            return "identity_mismatch", interrupted
+        if outcome != "absent":
+            absent_observations = 0
+            continue
+        absent_observations += 1
+        if creation_confirmed or absent_observations >= 2:
+            return "verified", interrupted
+    return "unverified", interrupted
 
 
 def verify_kubernetes_image_pull(
@@ -1400,67 +1501,17 @@ def verify_kubernetes_image_pull(
                 status = "create_rejected"
     finally:
         if create_attempted:
-            cleanup_status = "unverified"
-            absent_observations = 0
-            for _attempt in range(4):
-                try:
-                    current = run(
-                        [
-                            "get",
-                            "pod",
-                            name,
-                            "--ignore-not-found=true",
-                            "-o",
-                            "json",
-                        ]
-                    )
-                except (OSError, subprocess.SubprocessError):
-                    cleanup_status = "unverified"
-                    continue
-                if current.returncode != 0:
-                    cleanup_status = "unverified"
-                    continue
-                if not current.stdout.strip():
-                    absent_observations += 1
-                    if creation_confirmed or absent_observations >= 2:
-                        cleanup_status = "verified"
-                        break
-                    continue
-                absent_observations = 0
-                identity = _pull_probe_identity(
-                    current.stdout,
-                    name=name,
-                    nonce=nonce,
-                    image=image,
-                    expected_uid=expected_uid,
-                )
-                if identity is None:
-                    cleanup_status = "identity_mismatch"
-                    break
-                expected_uid = identity[0]
-                delete_options = {
-                    "apiVersion": "meta.k8s.io/v1",
-                    "kind": "DeleteOptions",
-                    "gracePeriodSeconds": 0,
-                    "preconditions": {"uid": expected_uid},
-                }
-                try:
-                    delete = run(
-                        [
-                            "delete",
-                            "--raw",
-                            (f"/api/v1/namespaces/{namespace}/pods/{name}"),
-                            "-f",
-                            "-",
-                        ],
-                        input_text=json.dumps(delete_options, separators=(",", ":")),
-                    )
-                except (OSError, subprocess.SubprocessError):
-                    cleanup_status = "unverified"
-                    continue
-                if delete.returncode != 0:
-                    cleanup_status = "unverified"
-                    continue
+            cleanup_status, cleanup_interrupt = _cleanup_kubernetes_pull_probe(
+                run=run,
+                name=name,
+                namespace=namespace,
+                nonce=nonce,
+                image=image,
+                expected_uid=expected_uid,
+                creation_confirmed=creation_confirmed,
+            )
+            if cleanup_interrupt is not None:
+                raise cleanup_interrupt
     return KubernetesPullCheck(
         status=status, digest=digest, cleanup_status=cleanup_status
     )

@@ -1084,6 +1084,47 @@ kubernetes:
     assert target.pull_secret_names == ("context-secret", "global-fallback")
 
 
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        """
+kubernetes:
+  namespace: team-namespace
+  pod_config:
+    spec:
+      imagePullSecrets: []
+""",
+        """
+kubernetes:
+  namespace: team-namespace
+  pod_config:
+    spec:
+      imagePullSecrets:
+        - name: global-secret
+  context_configs:
+    target-context:
+      pod_config:
+        spec:
+          imagePullSecrets: []
+""",
+    ],
+)
+def test_effective_target_rejects_explicit_empty_pull_secret_lists(
+    tmp_path, config_text: str
+) -> None:
+    config = tmp_path / "sky.yaml"
+    config.write_text(config_text, encoding="utf-8")
+
+    with pytest.raises(RegistryPreflightError, match="must not be empty"):
+        resolve_kubernetes_pull_target(
+            context="target-context",
+            global_config_path=config,
+            runner=lambda *args, **kwargs: pytest.fail(
+                "explicit SkyPilot namespace must not consult ambient context"
+            ),
+        )
+
+
 def test_target_namespace_lookup_never_renders_kubectl_diagnostics() -> None:
     marker = "Authorization: Bearer synthetic-namespace-secret"
 
@@ -1398,6 +1439,45 @@ def test_operator_selected_unbounded_probe_still_cleans_up_on_interrupt() -> Non
             nonce_factory=lambda: "abc123",
         )
 
+    assert sum("delete" in command for command in calls) == 1
+
+
+@pytest.mark.parametrize("interrupted_operation", ["identity-read", "delete"])
+def test_cleanup_retries_owned_deletion_after_keyboard_interrupt(
+    interrupted_operation: str,
+) -> None:
+    run, calls = _target_probe_runner()
+    interrupted = False
+    operation_attempts = 0
+
+    def interrupt_cleanup_once(cmd, **kwargs):  # noqa: ANN001
+        nonlocal interrupted, operation_attempts
+        is_cleanup_read = "get" in cmd and "--ignore-not-found=true" in cmd
+        selected = (
+            is_cleanup_read
+            if interrupted_operation == "identity-read"
+            else "delete" in cmd
+        )
+        if selected:
+            operation_attempts += 1
+        if selected and not interrupted:
+            interrupted = True
+            raise KeyboardInterrupt
+        return run(cmd, **kwargs)
+
+    with pytest.raises(KeyboardInterrupt):
+        verify_kubernetes_image_pull(
+            image=IMAGE,
+            secret_names=("pull-secret",),
+            namespace="target-namespace",
+            context="target-context",
+            timeout_seconds=30,
+            runner=interrupt_cleanup_once,
+            nonce_factory=lambda: "abc123",
+        )
+
+    assert interrupted
+    assert operation_attempts >= 2
     assert sum("delete" in command for command in calls) == 1
 
 
