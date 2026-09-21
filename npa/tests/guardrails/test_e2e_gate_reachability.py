@@ -119,6 +119,9 @@ MANUAL_GATES = {
         "targets an operator-selected retained RTX cluster and creates live graphics validation pods"
     ),
     "NPA_TEST_GROOT_NGC_E2E": "gated NGC model access remains a product-specific manual test",
+    "NPA_E2E_INSIGHTS_BUCKET_ROOT": (
+        "bucket-root metadata listing requires an explicitly selected operator-owned validation bucket"
+    ),
     "NPA_E2E_CLEAR_WORKBENCH_IMAGES": "optional negative-path knob, not a suite gate",
     "NPA_SRC_S3_URI": "runtime source-staging prerequisite, not an authorization gate",
     "NPA_PREEMPTIBLE_E2E": "destructive preemptible VM suite remains operator-selected",
