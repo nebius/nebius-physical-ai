@@ -420,3 +420,23 @@ def test_mixed_or_interrupted_errors_do_not_prove_absence(code, stderr):
 
     with pytest.raises(AbsenceRecoveryError):
         require_absent(subprocess.CompletedProcess([], code, stdout="", stderr=stderr))
+
+
+@pytest.mark.parametrize("symlink", [True, False])
+def test_audit_directory_never_follows_links_or_changes_existing_permissions(
+    recovery, symlink
+):
+    path, _manifest, operation = recovery
+    directory = operation.path.parent / "absence-recovery"
+    foreign = path.parent / "unowned-directory"
+    foreign.mkdir(mode=0o755)
+    if symlink:
+        directory.symlink_to(foreign, target_is_directory=True)
+    else:
+        directory.mkdir(mode=0o755)
+    before = foreign.stat().st_mode if symlink else directory.stat().st_mode
+    result = _run(path)
+    assert result.returncode != 0
+    assert operation.read()["phase"] == "recovery-required"
+    assert (foreign.stat().st_mode if symlink else directory.stat().st_mode) == before
+    assert not (path.parent / "provider-calls.jsonl").exists()

@@ -67,6 +67,22 @@ def _audit(
     }
 
 
+def _audit_directory(operation) -> Path:
+    parent = operation.path.parent / "absence-recovery"
+    require(not parent.is_symlink(), "Recovery audit directory is a symlink")
+    parent.mkdir(mode=0o700, exist_ok=True)
+    metadata = parent.stat()
+    require(
+        parent.is_dir()
+        and metadata.st_uid == os.getuid()
+        and metadata.st_mode & 0o077 == 0,
+        "Existing recovery audit directory is not owner-private",
+    )
+    output = parent / uuid.uuid4().hex
+    output.mkdir(mode=0o700)
+    return output
+
+
 def reconcile_absent(evidence_file: Path) -> dict:
     require(
         evidence_file.is_file() and not evidence_file.is_symlink(),
@@ -81,9 +97,7 @@ def reconcile_absent(evidence_file: Path) -> dict:
         return completed
     expected = manifest["original_journal"]["sha256"]
     with recovery_lease(operation, expected) as lease:
-        output = operation.path.parent / "absence-recovery" / uuid.uuid4().hex
-        output.mkdir(mode=0o700, parents=True)
-        output.parent.chmod(0o700)
+        output = _audit_directory(operation)
         provider = AbsenceProvider(evidence["authority"], output)
         verify_absence(provider, evidence)
         require(evidence_file.read_bytes() == data, "Recovery manifest changed")
