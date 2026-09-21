@@ -607,7 +607,10 @@ def _execute_capability_in_worker(
             try:
                 _signal_worker(process, signal.SIGKILL, process_group=process_group)
             except Exception:
-                pass
+                LOGGER.debug(
+                    "RoboCasa fallback SIGKILL failed during worker cleanup",
+                    exc_info=True,
+                )
         if process_group is None:
             stopped = False
             protocol_error = protocol_error or (
