@@ -1,0 +1,294 @@
+{
+  "scope": "Independent CPU scanner review bound to the published commit and exact source file hashes below.",
+  "source_commit": "f93ddc316ede4951875776f6617a917407ad4408",
+  "baseline_commit": "753967cafaf231e3c325cdb13908c7685b5db54e",
+  "source_files": {
+    "npa/scripts/image_byte_scan/real_helper_checks.py": "33e034aadfd6cf47e90a688357773e845ac8602a48ad85e814ee56b5b28f0491",
+    "npa/scripts/image_byte_scan/core.py": "caa7a7051a8b522e98489d2a0e2617657d7c6775cac503db4e32791987f855b2",
+    "npa/scripts/image_byte_scan/go_helper/main.go": "088860a15d14e90b24d6e2bf5598d84fb413d3f4b1494c6091643aac23be011b",
+    "npa/scripts/image_byte_scan/go_helper/README.md": "1449e4cd02aa4321c7b252eb3a88f997f4acf12e129399c05ea8bdff78790614",
+    "npa/scripts/image_byte_scan/go_helper/main_test.go": "d62f4248c0edbf23b7299ddb908408b42a443b52bdcaf0b285ea8dd70aa7ae90"
+  },
+  "helper_binary_sha256": "941ceeec99c5b5e3fb4e4b624a5c630427ec02ae0f41d5c31d86e24346e3b89d",
+  "toolchain": {
+    "go_version": "1.27.1",
+    "archive_sha256": "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
+  },
+  "policy_equivalence": {
+    "readiness_bytes_identical": true,
+    "readiness_sha256": "57d07d57e8bc1bd84063817bade1c3bddd4e6259e9d4da582e87195fa0d0dbd4",
+    "trusted_config_bytes_identical": true,
+    "trusted_config_sha256": "4ae31a02bb25f4f1c94b024a5163f45f461692260d0656556635c98e663b9e4e"
+  },
+  "performance": {
+    "wall_medians_seconds": {
+      "baseline": 14.229,
+      "repaired": 5.977
+    },
+    "median_ratio": 2.3806257319725614,
+    "ledger_sha256": "5630cfe664dc4a2e928355f0a5d2628337ae516e452e95f722bb8dd0ad3a6091",
+    "input_archive_sha256": "3f9bae0d3ff9ec92a44389f868010dae8b0d118b1789536ee5c2768962b9e9a6",
+    "runs": [
+      {
+        "arm": "baseline",
+        "round": 1,
+        "wall_seconds": 14.229,
+        "records": 1108,
+        "scanned_bytes": 17007156,
+        "complete": true,
+        "helper_joined": true,
+        "literal_engine": {
+          "kind": "aho-corasick-v1",
+          "sealed_native_copy": true
+        },
+        "literal_count": 1
+      },
+      {
+        "arm": "repaired",
+        "round": 1,
+        "wall_seconds": 5.977,
+        "records": 1108,
+        "scanned_bytes": 17007156,
+        "complete": true,
+        "helper_joined": true,
+        "literal_engine": {
+          "kind": "aho-corasick-v1",
+          "sealed_native_copy": true
+        },
+        "literal_count": 1
+      },
+      {
+        "arm": "repaired",
+        "round": 2,
+        "wall_seconds": 5.85,
+        "records": 1108,
+        "scanned_bytes": 17007156,
+        "complete": true,
+        "helper_joined": true,
+        "literal_engine": {
+          "kind": "aho-corasick-v1",
+          "sealed_native_copy": true
+        },
+        "literal_count": 1
+      },
+      {
+        "arm": "baseline",
+        "round": 2,
+        "wall_seconds": 14.309,
+        "records": 1108,
+        "scanned_bytes": 17007156,
+        "complete": true,
+        "helper_joined": true,
+        "literal_engine": {
+          "kind": "aho-corasick-v1",
+          "sealed_native_copy": true
+        },
+        "literal_count": 1
+      },
+      {
+        "arm": "baseline",
+        "round": 3,
+        "wall_seconds": 13.509,
+        "records": 1108,
+        "scanned_bytes": 17007156,
+        "complete": true,
+        "helper_joined": true,
+        "literal_engine": {
+          "kind": "aho-corasick-v1",
+          "sealed_native_copy": true
+        },
+        "literal_count": 1
+      },
+      {
+        "arm": "repaired",
+        "round": 3,
+        "wall_seconds": 6.088,
+        "records": 1108,
+        "scanned_bytes": 17007156,
+        "complete": true,
+        "helper_joined": true,
+        "literal_engine": {
+          "kind": "aho-corasick-v1",
+          "sealed_native_copy": true
+        },
+        "literal_count": 1
+      }
+    ],
+    "limits": [
+      "single shared Linux host, 16 CPU affinity",
+      "three alternating rounds over same seeded 16 MiB synthetic OCI payload",
+      "full traversal and real sealed Go helper plus pinned sealed native literal engine",
+      "one harmless synthetic literal; no confidentiality regex policy in timing; dedicated native correctness gate separately covers policy findings",
+      "helper_max_rss_kb derives from RUSAGE_CHILDREN including fork/exec footprint; not whole process-tree simultaneous RSS",
+      "not a prediction of speedup on arbitrary images",
+      "synthetic fixture produces its graph-verification receipt; this measures actual scanner traversal and detection, not separate image graph verification"
+    ]
+  },
+  "native_integration": {
+    "passed": true,
+    "affinity_cpus": 1,
+    "literal_differential_cases": 200,
+    "archive_checks": [
+      {
+        "cancellation": {
+          "helper_joined": true,
+          "passed": true,
+          "unrelated_sibling_preserved": true
+        },
+        "complete": true,
+        "engine": "reference",
+        "findings": 3524,
+        "helper_findings": 6,
+        "helper_joined": true,
+        "records": 47,
+        "regular_files": 6
+      },
+      {
+        "cancellation": {
+          "helper_joined": true,
+          "passed": true,
+          "unrelated_sibling_preserved": true
+        },
+        "complete": true,
+        "engine": "native",
+        "findings": 3524,
+        "helper_findings": 6,
+        "helper_joined": true,
+        "records": 47,
+        "regular_files": 6
+      }
+    ],
+    "duplex_check": {
+      "caller_depth": 64,
+      "helper_findings": 12000,
+      "helper_workers": 1,
+      "passed": true,
+      "records": 98,
+      "scanned_bytes": 888422
+    }
+  },
+  "go_build_tests": {
+    "declared": 32,
+    "failed": 0,
+    "passed": 48,
+    "skipped": 0
+  },
+  "independent_race_controls": {
+    "passed": true,
+    "tests": [
+      "failure returns without producer EOF (output error and worker panic)",
+      "payload waits for reservation",
+      "truncated payload returns reservation",
+      "cancelled budget wakes admission without reading payload"
+    ]
+  },
+  "findings_equivalence": {
+    "baseline_candidate_ledgers_identical": true,
+    "canary_removal_detected": true,
+    "runs": [
+      {
+        "label": "baseline",
+        "removed_canary": false,
+        "core_sha256": "19c0ad08c3b1ac7ec810781010530adaba205ba18d31bc1b900004ce4b440939",
+        "helper_sha256": "6e4891bd5e423b9c7031770c8adc8b5ec89a65ae592a7fb3fd0e59aeaa96fced",
+        "report_sha256": "f00d0e0a9a9188749b89d98fc05fed124f25eca8da5a5abdb7f00cee38404ebe",
+        "records_sha256": "ee80563d4e37b5bc486627ca93ae74e33d150efa62312f9488a7ceda851b58bc",
+        "observer_sha256": "ee80563d4e37b5bc486627ca93ae74e33d150efa62312f9488a7ceda851b58bc",
+        "image_archive_sha256": "2492c5e797b5a448ebb280aad760d43ef2e089759b52afaf2e0de596ff674b6a",
+        "record_count": 47,
+        "scanned_bytes": 2118866,
+        "findings": 3524,
+        "helper_summary": {
+          "type": "summary",
+          "files": 47,
+          "bytes": 2118866,
+          "findings": 6
+        },
+        "complete": true,
+        "valid": false,
+        "helper_joined": true,
+        "literal_engine_kind": "aho-corasick-v1",
+        "row_count": 130,
+        "canary_plaintext_absent_from_report_and_ledger": true
+      },
+      {
+        "label": "repaired",
+        "removed_canary": false,
+        "core_sha256": "caa7a7051a8b522e98489d2a0e2617657d7c6775cac503db4e32791987f855b2",
+        "helper_sha256": "941ceeec99c5b5e3fb4e4b624a5c630427ec02ae0f41d5c31d86e24346e3b89d",
+        "report_sha256": "b91c5c9d18b55dcf65464b6944eb8d3842ef798e465d871a35977297ef73ea25",
+        "records_sha256": "ee80563d4e37b5bc486627ca93ae74e33d150efa62312f9488a7ceda851b58bc",
+        "observer_sha256": "ee80563d4e37b5bc486627ca93ae74e33d150efa62312f9488a7ceda851b58bc",
+        "image_archive_sha256": "2492c5e797b5a448ebb280aad760d43ef2e089759b52afaf2e0de596ff674b6a",
+        "record_count": 47,
+        "scanned_bytes": 2118866,
+        "findings": 3524,
+        "helper_summary": {
+          "type": "summary",
+          "files": 47,
+          "bytes": 2118866,
+          "findings": 6
+        },
+        "complete": true,
+        "valid": false,
+        "helper_joined": true,
+        "literal_engine_kind": "aho-corasick-v1",
+        "row_count": 130,
+        "canary_plaintext_absent_from_report_and_ledger": true
+      },
+      {
+        "label": "removed-canary",
+        "removed_canary": true,
+        "core_sha256": "caa7a7051a8b522e98489d2a0e2617657d7c6775cac503db4e32791987f855b2",
+        "helper_sha256": "941ceeec99c5b5e3fb4e4b624a5c630427ec02ae0f41d5c31d86e24346e3b89d",
+        "report_sha256": "11f376512bf841f950e568c5c6526239f349a138634073165e3fd2cbed3038b9",
+        "records_sha256": "b469e43b9c0bb700cfb14f28b69a68c80c07aa8564094e36c0ff5f82690083dc",
+        "observer_sha256": "b469e43b9c0bb700cfb14f28b69a68c80c07aa8564094e36c0ff5f82690083dc",
+        "image_archive_sha256": "f49a8926d85992044600c43423461b450f0fcf96c6427241f256cb73bb5942b6",
+        "record_count": 47,
+        "scanned_bytes": 2118893,
+        "findings": 3518,
+        "helper_summary": {
+          "type": "summary",
+          "files": 47,
+          "bytes": 2118893,
+          "findings": 0
+        },
+        "complete": true,
+        "valid": false,
+        "helper_joined": true,
+        "literal_engine_kind": "aho-corasick-v1",
+        "row_count": 130,
+        "canary_plaintext_absent_from_report_and_ledger": true
+      }
+    ]
+  },
+  "portability": {
+    "actual_macos_import": "passed",
+    "single_cpu_native_integration": "passed"
+  },
+  "original_private_receipt_sha256": {
+    "performance.json": "e55e7f5d689724cfc29d666fb4b2a3f1862fcd0be82790340974a6051e50aa03",
+    "native-checks.json": "3f213ff4137b8d48f20c00c62c4d6c886cd4327529e3dbd5fb6eece9bb4670ff",
+    "findings-equivalence.json": "533d96339c9157aec0a7e4e3b64f909d1df3899aaf101a947ec8a9a44f634078",
+    "helper-acceptance.json": "c6789bfd59978f250b26574c355306c5e637d275b22e927447d5288e6b51e76a"
+  },
+  "limitations": [
+    "Synthetic OCI fixture; no customer image/data/credentials.",
+    "Timing is specific to this workload and shared host, not a production-image speedup guarantee.",
+    "Payload admission budgets are not a hard whole-process RSS cap; a single oversized record is still scanned whole.",
+    "Controlled failure can leave the input-reading goroutine blocked until the owned helper process exits; all goroutines are not claimed joined.",
+    "No GPU or VLM acceptance claim. No image publication decision is implied.",
+    "The source commit and PR CI readiness must be checked separately.",
+    "Earlier production scan was cancelled/incomplete and remains unaccepted; it is not this benchmark baseline."
+  ],
+  "pr_url": "https://github.com/nebius/nebius-physical-ai/pull/681",
+  "review_observed_at_utc": "2026-09-21T05:11:38.974706+00:00",
+  "pr_state_at_review": "draft; CI pending; no merge-readiness claim",
+  "separate_owner_experiment": {
+    "reported_ratio_rounded": 2.14,
+    "payload_mib": 64,
+    "comparison": "serial depth versus depth 64 within the same final repaired scanner; not original-source versus final-source",
+    "independently_reproduced_in_this_pack": false
+  }
+}

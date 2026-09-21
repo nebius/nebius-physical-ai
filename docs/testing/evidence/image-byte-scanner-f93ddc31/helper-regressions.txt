@@ -1,0 +1,14 @@
+=== RUN   TestIndependentContainedFailureReturnsWithoutProducerEOF
+=== RUN   TestIndependentContainedFailureReturnsWithoutProducerEOF/collector
+=== RUN   TestIndependentContainedFailureReturnsWithoutProducerEOF/worker_panic
+--- PASS: TestIndependentContainedFailureReturnsWithoutProducerEOF (0.01s)
+    --- PASS: TestIndependentContainedFailureReturnsWithoutProducerEOF/collector (0.00s)
+    --- PASS: TestIndependentContainedFailureReturnsWithoutProducerEOF/worker_panic (0.00s)
+=== RUN   TestIndependentPayloadWaitsForReservation
+--- PASS: TestIndependentPayloadWaitsForReservation (0.11s)
+=== RUN   TestIndependentTruncatedPayloadReturnsReservation
+--- PASS: TestIndependentTruncatedPayloadReturnsReservation (0.01s)
+=== RUN   TestIndependentCancelledBudgetUnblocksAdmission
+--- PASS: TestIndependentCancelledBudgetUnblocksAdmission (0.01s)
+PASS
+ok  	github.com/nebius/nebius-physical-ai/npa/scripts/image_byte_scan/go_helper	1.285s
