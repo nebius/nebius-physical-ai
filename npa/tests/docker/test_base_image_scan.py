@@ -343,6 +343,32 @@ def test_disposable_mode_rejects_shared_or_remote_docker_before_mutation(
     assert len(calls) == (1 if endpoint.startswith("ssh:") else 0)
 
 
+def _record_disposable_trivy_scan(command, events, artifact_caches):
+    """Assert the isolated Trivy contract while recording its expected result.
+
+    Args:
+        command: The Trivy command under test.
+        events: Ordered scan and cleanup observations.
+        artifact_caches: Previously observed temporary artifact caches.
+    Returns:
+        A critical finding for the gate or success for report generation.
+    Raises:
+        AssertionError: Scan policy or cache isolation differs from the contract.
+    """
+
+    assert command[:2] == ["trivy", "image"]
+    entry_cache = Path(command[command.index("--cache-dir") + 1])
+    assert (entry_cache / "db/trivy.db").read_text() == "verified database"
+    assert all(not old.exists() or old == entry_cache for old in artifact_caches)
+    artifact_caches.add(entry_cache)
+    (entry_cache / "artifact").write_text("temporary image analysis")
+    report = "--format" in command
+    events.append(("report" if report else "scan", command[-1]))
+    assert command[command.index("--severity") + 1] == "CRITICAL"
+    assert command[command.index("--exit-code") + 1] == ("0" if report else "1")
+    return subprocess.CompletedProcess(command, 0 if report else 1)
+
+
 def _disposable_scan_recorder(cache, events, artifact_caches):
     """Model a critical finding while observing storage boundaries and reports."""
 
@@ -368,19 +394,7 @@ def _disposable_scan_recorder(cache, events, artifact_caches):
         elif command[:3] == ["docker", "image", "prune"]:
             events.append(("image-cleanup", None))
         else:
-            assert command[:2] == ["trivy", "image"]
-            entry_cache = Path(command[command.index("--cache-dir") + 1])
-            assert (entry_cache / "db/trivy.db").read_text() == "verified database"
-            assert all(
-                not old.exists() or old == entry_cache for old in artifact_caches
-            )
-            artifact_caches.add(entry_cache)
-            (entry_cache / "artifact").write_text("temporary image analysis")
-            report = "--format" in command
-            events.append(("report" if report else "scan", command[-1]))
-            assert command[command.index("--severity") + 1] == "CRITICAL"
-            assert command[command.index("--exit-code") + 1] == ("0" if report else "1")
-            return subprocess.CompletedProcess(command, 0 if report else 1)
+            return _record_disposable_trivy_scan(command, events, artifact_caches)
         assert arguments["check"] is True
         return subprocess.CompletedProcess(command, 0)
 

@@ -206,7 +206,7 @@ def _prune_build_cache() -> None:
 def _scan_disposable_entry(
     entry: dict[str, object], cache: Path, sarif_directory: Path | None
 ) -> int:
-    """Bound hosted-runner storage to one image and one temporary artifact cache."""
+    """Bound hosted-runner storage to one inventory entry and its artifact cache."""
 
     _require_disposable_runner(1)
     with tempfile.TemporaryDirectory(prefix="entry-", dir=cache) as temp:
@@ -277,6 +277,60 @@ def _create_worker_cache(database: Path, root: Path, index: int) -> Path:
     return worker_cache
 
 
+def _prepare_scan_storage(cache: Path, sarif_directory: Path | None) -> None:
+    """Create scan output directories and download the shared vulnerability database.
+
+    Args:
+        cache: Database and temporary worker-cache root.
+        sarif_directory: Optional SARIF output directory.
+    Returns:
+        None.
+    Raises:
+        OSError: A scan output directory cannot be created.
+        subprocess.CalledProcessError: The vulnerability database download fails.
+    """
+
+    cache.mkdir(parents=True, exist_ok=True)
+    if sarif_directory is not None:
+        sarif_directory.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["trivy", "image", "--cache-dir", str(cache), "--download-db-only"],
+        check=True,
+    )
+
+
+def _scan_prepared_caches(
+    entries: list[dict[str, object]],
+    worker_caches: list[Path],
+    sarif_directory: Path | None,
+    disposable_docker: bool,
+) -> list[int]:
+    """Scan a shared inventory queue using the prepared isolated caches.
+
+    Args:
+        entries: Inventory entries in their original order.
+        worker_caches: One prepared cache for each participating worker.
+        sarif_directory: Optional SARIF output directory.
+        disposable_docker: Enable the guarded disposable-runner cleanup mode.
+    Returns:
+        Blocking scan exit statuses in worker result order.
+    Raises:
+        subprocess.CalledProcessError: Preparation, reporting, or cleanup fails.
+    """
+
+    queue: Queue[dict[str, object]] = Queue()
+    for entry in entries:
+        queue.put(entry)
+    with ThreadPoolExecutor(max_workers=len(worker_caches)) as executor:
+        futures = [
+            executor.submit(
+                _scan_worker, queue, worker_cache, sarif_directory, disposable_docker
+            )
+            for worker_cache in worker_caches
+        ]
+        return [result for future in futures for result in future.result()]
+
+
 def scan_inventory(
     entries: list[dict[str, object]],
     cache: Path,
@@ -301,13 +355,7 @@ def scan_inventory(
 
     if disposable_docker:
         _require_disposable_runner(workers)
-    cache.mkdir(parents=True, exist_ok=True)
-    if sarif_directory is not None:
-        sarif_directory.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["trivy", "image", "--cache-dir", str(cache), "--download-db-only"],
-        check=True,
-    )
+    _prepare_scan_storage(cache, sarif_directory)
     worker_count = min(workers, len(entries))
     with tempfile.TemporaryDirectory(prefix="scan-workers-", dir=cache) as temp:
         root = Path(temp)
@@ -315,21 +363,9 @@ def scan_inventory(
             _create_worker_cache(cache / "db", root, index)
             for index in range(worker_count)
         ]
-        queue: Queue[dict[str, object]] = Queue()
-        for entry in entries:
-            queue.put(entry)
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [
-                executor.submit(
-                    _scan_worker,
-                    queue,
-                    worker_cache,
-                    sarif_directory,
-                    disposable_docker,
-                )
-                for worker_cache in worker_caches
-            ]
-            results = [result for future in futures for result in future.result()]
+        results = _scan_prepared_caches(
+            entries, worker_caches, sarif_directory, disposable_docker
+        )
     if any(result != 0 for result in results):
         raise RuntimeError("one or more base-image security scans failed")
 
