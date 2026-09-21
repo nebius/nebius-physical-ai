@@ -7,9 +7,17 @@ import io
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
+from packaging.requirements import Requirement
+from packaging.version import Version
 import pytest
 import yaml
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 
 
 @pytest.fixture
@@ -104,6 +112,158 @@ def test_comparison_rejects_changed_finding_identity(security_modules, field):
     gate, _ = security_modules
     changed = dict(_finding(), **{field: "changed"})
     assert gate.regressions([_finding()], [changed]) == [changed]
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+        "npa/pyproject.toml",
+        "npa/pyproject.toml (resolved core + dev)",
+        "npa/tests/browser/package-lock.json",
+        "scripts/security-requirements.txt",
+    ],
+)
+def test_unchanged_application_vulnerabilities_block(security_modules, manifest):
+    """Reject a newly disclosed advisory even when the pin is unchanged.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        manifest: Application or CI dependency input.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Baseline subtraction hides an outstanding vulnerability.
+    """
+    gate, _ = security_modules
+    finding = dict(_finding(manifest), scanner="trivy", rule="synthetic-advisory")
+    assert gate.regressions([finding], [finding]) == []
+    assert gate.blocking_findings([finding], [finding]) == [finding]
+    assert gate.blocking_findings([], [finding]) == [finding]
+    assert gate.blocking_findings([finding], [finding, finding]) == [finding, finding]
+    assert gate.blocking_findings([finding], []) == []
+
+
+def test_vendor_dependencies_keep_regression_enforcement(security_modules):
+    """Retain differential enforcement for separately validated tool runtimes.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A new vendor vulnerability passes or source policy changes.
+    """
+    gate, _ = security_modules
+    finding = dict(
+        _finding("npa/docker/workbench/tool/requirements.txt"), scanner="trivy"
+    )
+    assert gate.blocking_findings([finding], [finding]) == []
+    assert gate.blocking_findings([], [finding]) == [finding]
+    assert gate.blocking_findings([_finding()], [_finding()]) == []
+
+
+@pytest.mark.parametrize("patched", [False, True])
+def test_gate_exit_rejects_unchanged_application_vulnerability(
+    security_modules, monkeypatch, tmp_path, patched
+):
+    """Exercise the CLI decision and summary for unchanged and fixed dependencies.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        monkeypatch: Supplies completed scanner results and isolated snapshots.
+        tmp_path: Private source/report parent directory.
+        patched: Whether the candidate removed the vulnerable pin.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A vulnerable candidate returns success or misreports findings.
+    """
+    gate, _ = security_modules
+    output = tmp_path / "report"
+    arguments = SimpleNamespace(
+        repo_root=tmp_path / "repo", output_dir=output, base="base", head="head"
+    )
+    finding = dict(_finding("npa/requirements-lock.txt"), scanner="trivy")
+    reports = iter([[finding], [] if patched else [finding]])
+    monkeypatch.setattr(gate, "_arguments", lambda: arguments)
+    monkeypatch.setattr(
+        gate, "_snapshot_revision", lambda root, revision, destination: revision
+    )
+    monkeypatch.setattr(gate, "_scan", lambda *args: next(reports))
+    monkeypatch.setattr(gate.os, "umask", lambda mode: 0o077)
+    assert gate.main() == (0 if patched else 1)
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["regressions"] == []
+    assert summary["blocking_findings"] == ([] if patched else [finding])
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "npa/pyproject.toml",
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+    ],
+)
+def test_required_application_inventory_cannot_disappear(
+    security_modules, tmp_path, missing
+):
+    """Reject deletion of a required manifest before accepting scanner results.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        tmp_path: Isolated source directory.
+        missing: Required dependency input removed by the candidate.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Removing an inventory bypasses dependency scanning.
+    """
+    gate, _ = security_modules
+    for manifest in (
+        "npa/pyproject.toml",
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+    ):
+        if manifest != missing:
+            path = tmp_path / manifest
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("")
+    with pytest.raises(ValueError, match="manifest is missing"):
+        gate._scan(tmp_path, tmp_path / "report", tmp_path / "cache")
+
+
+def test_anyio_security_floor_and_checked_in_pins():
+    """Prevent ordinary installs or retained locks from selecting affected AnyIO.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: An install declaration or checked-in pin permits vulnerable AnyIO.
+    """
+    root = Path(__file__).resolve().parents[3]
+    project = tomllib.loads((root / "npa/pyproject.toml").read_text())["project"]
+    requirement = next(
+        Requirement(item)
+        for item in project["dependencies"]
+        if Requirement(item).name == "anyio"
+    )
+    assert not requirement.url
+    assert "4.14.1" not in requirement.specifier
+    assert "4.14.2" in requirement.specifier
+    for manifest in ("npa/requirements-lock.txt", "npa/ci/requirements.txt"):
+        pin = next(
+            line
+            for line in (root / manifest).read_text().splitlines()
+            if line.startswith("anyio==")
+        )
+        version = Version(pin.split("==")[1])
+        assert version >= Version("4.14.2")
+        assert version in requirement.specifier
 
 
 @pytest.mark.parametrize("nested", [False, True])

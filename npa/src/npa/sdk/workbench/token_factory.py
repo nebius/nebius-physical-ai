@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from npa._sdk import make_cli_wrapper
+from npa.workbench.token_factory.sdg import SdgRequest, run_sdg as sdg
+from npa.workbench.token_factory.robot_sdg import (
+    RobotSdgRequest,
+    run_robot_sdg as robot_sdg,
+)
 
 caption = make_cli_wrapper(
     "npa.cli.workbench.token_factory",
@@ -46,6 +51,8 @@ workflow = make_cli_wrapper(
 )
 
 __all__ = [
+    "RobotSdgRequest",
+    "SdgRequest",
     "batch_generate",
     "batch_status",
     "caption",
@@ -53,6 +60,8 @@ __all__ = [
     "list",
     "models",
     "reason",
+    "robot_sdg",
+    "sdg",
     "status",
     "verify",
     "workflow",

@@ -5,19 +5,24 @@ runs **Security regression / security-regression**. It is the only automatic PR
 workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
 source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
-PRs receive smoke and affected subsystem tests, with browser coverage for
-agent/UI changes and full tests for unknown/shared changes. Merge-queue candidates
-run browser and compatibility checks alongside the full duration-balanced
-coverage suite against the latest `main`. The narrow prose-only exception
-described in [the contributor CI guide](../../CONTRIBUTING.md) retains smoke,
-documentation, lint, guardrails, and every security gate. The test selector comes
-from the trusted base commit; missing policy keeps full validation and invalid
-comparisons fail. The full three-interpreter test audit runs
-daily instead of immediately after each merge. Repository-wide job concurrency
+PRs and merge-queue candidates run the same browser and focused Python
+compatibility checks alongside the complete duration-balanced Python 3.12
+coverage suite. This catches cross-subsystem failures before queue admission;
+the queue rechecks the combined candidate against the latest main revision.
+The narrow prose-only exception described in
+[the contributor CI guide](../../CONTRIBUTING.md) retains smoke, documentation,
+lint, guardrails, and every security gate. The test selector comes from the
+trusted base commit and uses its merge-candidate policy for both events,
+including when an older base still has a narrower PR policy. Missing policy
+keeps full validation and invalid comparisons fail. The full three-interpreter
+test audit runs daily instead of immediately after each merge. Repository-wide
+job concurrency
 limits validation to seven PR jobs, nine merge-candidate jobs, and three background
-audit jobs. Each candidate pool has a separate slot for coverage and the final
-required check; optional timing reports use the audit pool. These groups bound
-repository demand but cannot reserve organization runners. See the
+audit jobs. Each candidate pool has a separate slot for the short test-scope
+selector, coverage, and the final required check. Shards can start without
+waiting for long docs and guardrail jobs. Optional timing reports use the audit
+pool. These groups bound repository demand but cannot reserve organization
+runners. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
 for queue retention, superseded-commit cancellation, and rollout limits.
 
@@ -30,7 +35,7 @@ download and three isolated worker caches inside one runner. Deep candidates blo
 on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their
 [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
-are checked separately from the differential application-dependency scan.
+are checked separately from the application-dependency scan.
 Failed, skipped, or cancelled required work cannot produce a passing result.
 Main, scheduled, and manual image scans additionally generate and upload SARIF
 with the established per-image identities. A new finding fails the scanner job
@@ -55,8 +60,27 @@ expression or package version. Moving lines does not create a finding; adding a
 second occurrence or moving vulnerable code to another file does. Existing
 findings remain visible in private reports and are not silently accepted through
 a committed baseline file. A fix followed by a later reintroduction fails against
-the now-fixed base. A new advisory affecting unchanged dependencies appears in
-both scans; this gate measures regressions, not outstanding security debt.
+the now-fixed base.
+
+Application and CI dependencies additionally have an absolute gate: every
+candidate finding blocks, including a newly published advisory that affects an
+unchanged pin on both branches. This covers `npa/requirements-lock.txt`,
+`npa/ci/requirements.txt`, `npa/pyproject.toml` and its resolved core/development
+closure, the browser test npm lock, and `scripts/security-requirements.txt`.
+Deleting either required application/CI requirements file fails scanning.
+The private summary separates new regressions from all blocking findings.
+Vendor and tool-runtime inventories retain differential checks and their
+separate image validation requirements.
+
+The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
+[TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
+and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
+`.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
+dependencies daily and proposes updates for review. After changing Python
+dependency declarations, regenerate the CI pins with
+`npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
+Dependabot security-update enablement is a separate repository setting; the
+version-update configuration does not enable it or merge its PRs automatically.
 
 Candidate Bandit/zizmor ignore comments and configuration are disabled. Trivy
 receives isolated empty configuration and ignore files, so the image scan's
@@ -102,6 +126,9 @@ CI prints only actionable finding summaries and does not upload raw artifacts.
 The real regression workload generates inert Python, workflow and vulnerable
 dependency fixtures, scans them with the actual binaries/database, and verifies
 rejection. It never launches the fixtures.
+The workload also verifies that an unchanged vulnerable application pin fails
+and that the patched AnyIO pin passes. Unit regressions cover each protected
+manifest, duplicate findings, removals, required inventories, and gate exit codes.
 
 The customer confidentiality scan retains every raw redacted finding and reports
 raw, dispositioned, and unresolved counts separately. One NCore-specific source
@@ -137,6 +164,10 @@ the exact latest-main candidate without requiring every open PR branch to be
 bulk-refreshed. Preserve other required checks and branch protections. Workflow
 configuration alone does not enable merge enforcement; administrators must
 verify the required contexts and active merge-queue rule.
+Keep the repository's **Allow auto-merge** setting enabled as well so contributors
+can request automatic merging through clients that use that setting. It does
+not replace or bypass queue validation. See the contributor guide for
+[mobile recovery and pending-check diagnosis](../../CONTRIBUTING.md#auto-merge-and-the-merge-queue).
 Repository administrators and configured bypass actors may still bypass checks.
 Keep the component workflows enabled as reusable candidate gates and
 superseding main audits. Secret and confidentiality checks also run for merge
