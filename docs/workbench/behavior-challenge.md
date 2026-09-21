@@ -7,7 +7,11 @@ SkyPilot. A separately served policy receives RGB, depth, and robot
 proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; policy serving uses pinned upstream implementations.
 
-**Latest experiment, September 19:** both
+The [September 21 recovery experiment plan](behavior-recovery-experiments-2026-09-21.md)
+records the next fixed-weight execution comparisons and stock-anchored training
+recipe. Its GPU results are pending.
+
+**Latest completed training experiment, September 19:** both
 [matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
 updates, full holdout selection, and selected-model export. GPU validation found
 one native correlation-statistics precision difference, then proved the selected

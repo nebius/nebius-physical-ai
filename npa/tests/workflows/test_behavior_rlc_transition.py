@@ -182,6 +182,41 @@ def test_graceful_server_termination_flushes_final_episode_once(monkeypatch):
     policy.finalize_telemetry.assert_called_once_with()
 
 
+def test_selected_server_accepts_final_backtrack_and_defaults_native(monkeypatch):
+    path = Path(rlc_transition.__file__).with_name("rlc_selected_server.py")
+    selected = types.ModuleType("rlc_selected")
+    selected.load_selected_policy = mock.Mock()
+    selected.load_validated_correlation = mock.Mock()
+    monkeypatch.setitem(sys.modules, "rlc_selected", selected)
+    spec = importlib.util.spec_from_file_location("selected_server_parser_test", path)
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    common = [
+        "--source-root",
+        "/source",
+        "--adapter-root",
+        "/adapter",
+        "--checkpoint",
+        "/checkpoint",
+        "--selected-export-receipt",
+        "/export.json",
+        "--correlation-manifest",
+        "/manifest.json",
+        "--validation-receipt",
+        "/validation.json",
+        "--task-id",
+        "1",
+        "--port",
+        "8000",
+    ]
+
+    assert server.parser().parse_args(common).execution_variant == "native"
+    parsed = server.parser().parse_args(
+        [*common, "--execution-variant", "final-stage-backtrack"]
+    )
+    assert parsed.execution_variant == "final-stage-backtrack"
+
+
 def test_transition_provenance_binds_frozen_private_source_and_config():
     assert dict(rlc_transition.TRANSITION_REFRESH_PROVENANCE) == {
         "experiment_source_sha256": (

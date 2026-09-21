@@ -19,6 +19,10 @@ runtime must satisfy [`runtime-inputs.schema.json`](runtime-inputs.schema.json);
 [`runtime-inputs.example.json`](runtime-inputs.example.json) shows the expected
 path layout.
 
+The training guide also documents opt-in final-stage voting and adaptive
+short-chunk execution. Native execution remains the default, and these
+execution variants carry no aggregate-gain claim.
+
 The command sequence is:
 
 1. Run `gpu_preflight.py` on one B200.

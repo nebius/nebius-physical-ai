@@ -26,7 +26,12 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(f"--policy-{field}", type=Path)
     parser.add_argument(
         "--policy-execution-variant",
-        choices=("native", "transition-refresh"),
+        choices=(
+            "native",
+            "transition-refresh",
+            "final-stage-backtrack",
+            "adaptive-short-chunk",
+        ),
         default="native",
     )
 

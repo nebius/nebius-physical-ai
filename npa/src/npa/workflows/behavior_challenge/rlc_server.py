@@ -7,10 +7,13 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import signal
 import sys
 import tempfile
 
 from rlc_observations import policy_observation
+
+NATIVE_EXECUTION = "native"
 
 
 def _policy_source(root: Path, overlay: Path) -> None:
@@ -102,19 +105,72 @@ async def _serve(policy, port):
         await server.serve_forever()
 
 
+def parser() -> argparse.ArgumentParser:
+    """Build the stock-RLC server parser.
+
+    Args:
+        None.
+    Returns:
+        Configured argument parser with native execution as its default.
+    Raises:
+        None.
+    """
+    value = argparse.ArgumentParser(description=__doc__)
+    value.add_argument("--source-root", type=Path, required=True)
+    value.add_argument("--checkpoint", type=Path, required=True)
+    value.add_argument("--task-id", type=int, choices=range(50), required=True)
+    value.add_argument("--port", type=int, required=True)
+    value.add_argument(
+        "--execution-variant",
+        choices=(NATIVE_EXECUTION, "final-stage-backtrack", "adaptive-short-chunk"),
+        default=NATIVE_EXECUTION,
+    )
+    return value
+
+
+def _configure_execution(policy, variant: str):
+    if variant == NATIVE_EXECUTION:
+        return policy
+    from rlc_execution import configure_execution
+
+    return configure_execution(policy, variant)
+
+
+def _install_termination_handlers(policy):
+    original_handlers = {}
+
+    def terminate(signum, frame):
+        del frame
+        policy.finalize_telemetry()
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        original_handlers[signum] = signal.signal(signum, terminate)
+    return original_handlers
+
+
+def _serve_policy(policy, args) -> None:
+    if args.execution_variant == NATIVE_EXECUTION:
+        asyncio.run(_serve(policy, args.port))
+        return
+    original_handlers = _install_termination_handlers(policy)
+    try:
+        asyncio.run(_serve(policy, args.port))
+    finally:
+        policy.finalize_telemetry()
+        for signum, handler in original_handlers.items():
+            signal.signal(signum, handler)
+
+
 def _main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, required=True)
-    parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--task-id", type=int, choices=range(50), required=True)
-    parser.add_argument("--port", type=int, required=True)
-    args = parser.parse_args()
+    args = parser().parse_args()
     os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.5")
     os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
     logging.basicConfig(level=logging.INFO)
     with tempfile.TemporaryDirectory(prefix="npa-rlc-source-") as temporary:
         _policy_source(args.source_root, Path(temporary))
-        asyncio.run(_serve(_load_policy(args), args.port))
+        policy = _configure_execution(_load_policy(args), args.execution_variant)
+        _serve_policy(policy, args)
 
 
 if __name__ == "__main__":

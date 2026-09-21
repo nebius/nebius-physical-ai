@@ -16,6 +16,7 @@ from rlc_selected import load_selected_policy, load_validated_correlation
 
 NATIVE_EXECUTION = "native"
 TRANSITION_REFRESH = "transition-refresh"
+FINAL_STAGE_BACKTRACK = "final-stage-backtrack"
 
 
 def parser() -> argparse.ArgumentParser:
@@ -36,7 +37,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--port", type=int, required=True)
     value.add_argument(
         "--execution-variant",
-        choices=(NATIVE_EXECUTION, TRANSITION_REFRESH),
+        choices=(NATIVE_EXECUTION, TRANSITION_REFRESH, FINAL_STAGE_BACKTRACK),
         default=NATIVE_EXECUTION,
     )
     return value
@@ -45,6 +46,10 @@ def parser() -> argparse.ArgumentParser:
 def _configure_execution(policy, variant: str):
     if variant == NATIVE_EXECUTION:
         return policy
+    if variant == FINAL_STAGE_BACKTRACK:
+        from rlc_execution import configure_execution
+
+        return configure_execution(policy, variant)
     from rlc_transition import configure_selected_execution
 
     return configure_selected_execution(policy, variant)

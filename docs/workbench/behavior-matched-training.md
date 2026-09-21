@@ -239,6 +239,39 @@ update-3599-specific schemas and status only when their selected step is exactly
 3599. Generic receipts require a positive selected step, finite correlation
 values, exact exported-file inventory, and exact RLC serving-source identities.
 
+## Optional execution variants
+
+Native RLC execution remains the default. The runner also exposes two narrow,
+source-bound execution experiments through `--policy-execution-variant`:
+
+| Policy kind | Variant | Change from native execution |
+| --- | --- | --- |
+| `rlc` | `final-stage-backtrack` | After native voting, move from the final stage to the preceding stage only when all three retained votes select that preceding stage. |
+| `rlc` | `adaptive-short-chunk` | At a prediction boundary in either of the final two stages, request 10 actions, retain four inpainting actions, and replan after 10 actions. Earlier stages keep the native 26-to-20-plus-four settings. |
+| `rlc-selected` | `final-stage-backtrack` | Apply the same final-stage vote rule after the selected-state loader and its validation gates. |
+
+For example, add one of these pairs to the internal evaluation worker command:
+
+```text
+--policy-kind rlc --policy-execution-variant final-stage-backtrack
+--policy-kind rlc --policy-execution-variant adaptive-short-chunk
+--policy-kind rlc-selected --policy-execution-variant final-stage-backtrack
+```
+
+The adaptive option changes the horizon only when the native wrapper needs a
+new prediction. It does not clear queued actions when a stage changes. Both
+options retain the same weights, observations, stage predictions, correction
+rules, and evaluator. Their ordinal-only `RLC_FINAL_STAGE_*` and
+`RLC_HORIZON_*` log records describe interventions without embedding evaluator
+case identifiers.
+
+These options are experimental. The repository records their exact originating
+source and configuration hashes in `policy-provenance.json`, but does not claim
+an aggregate quality gain. Evaluate a complete predeclared development panel
+against the matching native policy before considering either option. The
+selected-only `transition-refresh` experiment remains a separate execution
+variant and is not combined with adaptive short chunks.
+
 ```bash
 for arm in teacher replay; do
   candidate=$(case $arm in

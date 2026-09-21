@@ -251,6 +251,39 @@ def test_source_adapter_preserves_original_checkout(tmp_path, server, monkeypatc
         assert patched.endswith("# frozen model code\n")
 
 
+def test_stock_server_execution_variant_parser_keeps_native_default(server):
+    common = [
+        "--source-root",
+        "/source",
+        "--checkpoint",
+        "/checkpoint",
+        "--task-id",
+        "1",
+        "--port",
+        "8000",
+    ]
+
+    assert server.parser().parse_args(common).execution_variant == "native"
+    for variant in ("final-stage-backtrack", "adaptive-short-chunk"):
+        parsed = server.parser().parse_args([*common, "--execution-variant", variant])
+        assert parsed.execution_variant == variant
+
+
+def test_adapter_inventory_stages_execution_module_for_both_weight_paths(tmp_path):
+    stock = tmp_path / "stock"
+    stock.mkdir()
+    selected = tmp_path / "selected"
+    selected.mkdir()
+
+    stock_files = rlc_policy._adapter_files(stock, selected=False)
+    selected_files = rlc_policy._adapter_files(selected, selected=True)
+
+    assert stock_files["rlc_execution.py"] == _digest(stock / "rlc_execution.py")
+    assert selected_files["rlc_execution.py"] == _digest(selected / "rlc_execution.py")
+    assert "rlc_selected_server.py" not in stock_files
+    assert "rlc_selected_server.py" in selected_files
+
+
 def test_connection_resets_memory_without_sending_reset_response(
     server, observation, monkeypatch
 ):
@@ -766,9 +799,36 @@ def test_selected_server_command_uses_explicit_receipts(tmp_path):
     published = rlc_policy._command(args, 22, tmp_path)
     assert published[1] == str(tmp_path / "rlc_server.py")
     assert "--adapter-root" not in published
+    assert published[-2:] == ["--execution-variant", "transition-refresh"]
 
 
-@pytest.mark.parametrize("variant", ["native", "transition-refresh"])
+def test_stock_provenance_records_experimental_execution_scope(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        rlc_policy,
+        "_adapter_files",
+        lambda output, selected: {"selected": str(selected)},
+    )
+    command = ["server", "--execution-variant", "adaptive-short-chunk"]
+    rlc_policy._record(
+        tmp_path,
+        command,
+        {"params": "a" * 64},
+        "checkpoint_2",
+        {"recipe": {"policy_checkpoint_sha256": "b" * 64}},
+    )
+
+    evidence = json.loads((tmp_path / "policy-provenance.json").read_text())
+    variant = evidence["execution_variant"]
+    assert variant["name"] == "adaptive-short-chunk"
+    assert (
+        variant["provenance"]["evaluation"]
+        == "experimental_no_aggregate_gain_established"
+    )
+
+
+@pytest.mark.parametrize(
+    "variant", ["native", "transition-refresh", "final-stage-backtrack"]
+)
 def test_selected_provenance_records_execution_validation_scope(
     tmp_path, monkeypatch, variant
 ):
@@ -801,10 +861,20 @@ def test_selected_provenance_records_execution_validation_scope(
     assert evidence["execution_variant"]["name"] == variant
     if variant == "native":
         assert module not in sys.modules
+        assert evidence["execution_variant"]["provenance"] is None
         assert evidence["execution_variant"]["transition_refresh_provenance"] is None
         assert evidence["status"] == "serving_validated_not_rollout_evaluated"
     else:
-        assert evidence["execution_variant"]["transition_refresh_provenance"]
+        assert evidence["execution_variant"]["provenance"]
+        expected_transition = (
+            evidence["execution_variant"]["provenance"]
+            if variant == "transition-refresh"
+            else None
+        )
+        assert (
+            evidence["execution_variant"]["transition_refresh_provenance"]
+            == expected_transition
+        )
         assert (
             evidence["status"]
             == "selected_state_validated_execution_variant_unevaluated"
@@ -834,4 +904,48 @@ def test_selected_policy_arguments_are_all_or_nothing(tmp_path):
         with policy.managed_policy(
             argparse.Namespace(**base), {"recipe": {}}, tmp_path / "output"
         ):
+            pass
+
+
+@pytest.mark.parametrize(
+    ("kind", "variant"),
+    [
+        ("official", "final-stage-backtrack"),
+        ("rlc", "transition-refresh"),
+        ("rlc-selected", "adaptive-short-chunk"),
+    ],
+)
+def test_execution_variant_rejects_wrong_policy_family(tmp_path, kind, variant):
+    args = argparse.Namespace(
+        policy_kind=kind,
+        policy_execution_variant=variant,
+        policy_root=None,
+        policy_python=None,
+        policy_checkpoint=None,
+        policy_archive=None,
+        policy_selected_export_receipt=None,
+        policy_correlation_manifest=None,
+        policy_validation_receipt=None,
+    )
+
+    with pytest.raises(ValueError, match="Unsupported"):
+        with policy.managed_policy(args, {"recipe": {}}, tmp_path):
+            pass
+
+
+def test_execution_variant_requires_managed_policy_paths(tmp_path):
+    args = argparse.Namespace(
+        policy_kind="rlc",
+        policy_execution_variant="final-stage-backtrack",
+        policy_root=None,
+        policy_python=None,
+        policy_checkpoint=None,
+        policy_archive=None,
+        policy_selected_export_receipt=None,
+        policy_correlation_manifest=None,
+        policy_validation_receipt=None,
+    )
+
+    with pytest.raises(ValueError, match="all four managed policy paths"):
+        with policy.managed_policy(args, {"recipe": {}}, tmp_path):
             pass

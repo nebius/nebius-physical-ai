@@ -73,7 +73,7 @@ def _verify_published_files(root: Path, checkpoint: str, files: dict) -> None:
 
 def _adapter_files(output: Path, *, selected: bool) -> dict[str, str]:
     adapters = {}
-    names = ["rlc_server.py", "rlc_observations.py"]
+    names = ["rlc_server.py", "rlc_observations.py", "rlc_execution.py"]
     if selected:
         names.extend(("rlc_selected.py", "rlc_selected_server.py", "rlc_transition.py"))
     for name in names:
@@ -99,6 +99,7 @@ def _record(output: Path, command: list[str], files: dict, checkpoint: str, plan
         "checkpoint_archive_sha256": plan["recipe"]["policy_checkpoint_sha256"],
         "adapters": adapters,
         "command": command,
+        "execution_variant": _execution_variant_record(command, selected=False),
         "normalization_asset": NORMALIZATION,
         "memory_compliance": "unverified",
         "control": "published stage voting, rolling inpainting, compression and recovery",
@@ -237,20 +238,40 @@ def _command(args, task_id, output, selected_artifacts=None):
                 str(selected_artifacts["correlation_manifest"]),
                 "--validation-receipt",
                 str(selected_artifacts["validation_receipt"]),
-                "--execution-variant",
-                getattr(args, "policy_execution_variant", "native"),
             ]
         )
+    command.extend(
+        [
+            "--execution-variant",
+            getattr(args, "policy_execution_variant", "native"),
+        ]
+    )
     return command
 
 
-def _record_selected(output, command, files, receipt, plan, staged):
+def _execution_variant_record(command: list[str], *, selected: bool) -> dict:
     variant = command[command.index("--execution-variant") + 1]
-    provenance = None
     if variant == "transition-refresh":
         from .rlc_transition import TRANSITION_REFRESH_PROVENANCE
 
         provenance = dict(TRANSITION_REFRESH_PROVENANCE)
+    else:
+        from .rlc_execution import execution_provenance
+
+        value = execution_provenance(variant, selected=selected)
+        provenance = dict(value) if value is not None else None
+    return {
+        "name": variant,
+        "transition_refresh_provenance": (
+            provenance if variant == "transition-refresh" else None
+        ),
+        "provenance": provenance,
+    }
+
+
+def _record_selected(output, command, files, receipt, plan, staged):
+    variant_record = _execution_variant_record(command, selected=True)
+    variant = variant_record["name"]
     adapters = _adapter_files(output, selected=True)
     shutil.copyfile(
         Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
@@ -270,10 +291,7 @@ def _record_selected(output, command, files, receipt, plan, staged):
         },
         "command": command,
         "normalization_asset": NORMALIZATION,
-        "execution_variant": {
-            "name": variant,
-            "transition_refresh_provenance": provenance,
-        },
+        "execution_variant": variant_record,
         "status": (
             "serving_validated_not_rollout_evaluated"
             if variant == "native"

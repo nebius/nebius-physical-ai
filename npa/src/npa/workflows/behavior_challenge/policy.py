@@ -219,10 +219,14 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
     selected_rlc = [bool(getattr(args, field, None)) for field in SELECTED_RLC_FIELDS]
     selected_kind = getattr(args, "policy_kind", "official") == "rlc-selected"
     execution_variant = getattr(args, "policy_execution_variant", "native")
-    if execution_variant not in {"native", "transition-refresh"}:
-        raise ValueError("Unsupported selected-RLC execution variant")
-    if execution_variant != "native" and not selected_kind:
-        raise ValueError("Execution variants require --policy-kind rlc-selected")
+    variants = {
+        "official": {"native"},
+        "rlc": {"native", "final-stage-backtrack", "adaptive-short-chunk"},
+        "rlc-selected": {"native", "transition-refresh", "final-stage-backtrack"},
+    }
+    policy_kind = getattr(args, "policy_kind", "official")
+    if execution_variant not in variants[policy_kind]:
+        raise ValueError(f"Unsupported {policy_kind} execution variant")
     if selected_kind and not all(selected_rlc):
         raise ValueError(
             "Selected RLC policy requires its export, correlation, and validation receipts"
@@ -231,6 +235,8 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         raise ValueError("Selected RLC receipts require --policy-kind rlc-selected")
     if selected_kind and not all(selected):
         raise ValueError("Selected RLC policy requires all four policy paths")
+    if execution_variant != "native" and not all(selected):
+        raise ValueError("Execution variant requires all four managed policy paths")
     if not any(selected):
         yield
         return
