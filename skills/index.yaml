@@ -825,7 +825,7 @@ skills:
         contains: "model-repo"
   - name: token-factory
     category: tools
-    when_to_use: "Zero-GPU hosted inference through Nebius Token Factory: captioning, batch text generation, and Cosmos physical-AI reasoning, plus key setup, model availability, and the CPU-only npa.workflow toolRefs that need no cluster."
+    when_to_use: "Hosted inference through Nebius Token Factory: captioning, text generation, physical-AI reasoning, and automatically routed robot SDG that records real MuJoCo camera/action demonstrations in LeRobot format."
     path: skills/tools/token-factory/SKILL.md
     smoke:
       - type: cli_help
@@ -833,6 +833,9 @@ skills:
         contains: "Token Factory"
       - type: cli_help
         args: ["workbench", "token-factory", "caption", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "token-factory", "robot-sdg", "--help"]
         contains: "input-path"
       - type: file_exists
         path: docs/workbench/token-factory.md

@@ -498,6 +498,26 @@ def seed_live_workflow_inputs(
         _seed_images(client, bucket=bucket, prefix=f"{marker}/images/", count=3)
         return
 
+    if spec_name == "token-factory-robot-sdg.yaml":
+        body = b'{"id":"robot-e2e","prompt":"Extract these scene values: red cube at (-0.10,-0.08), green target at (0.10,0.08), lighting=1.0."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
+        return
+
+    if spec_name == "token-factory-sdg.yaml":
+        body = b'{"id":"e2e-sdg","prompt":"Create a training example asking for a concise paraphrase of: put the red cube in the blue tray."}\n'
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/prompts.jsonl",
+            Body=body,
+            ContentType="application/x-ndjson",
+        )
+        return
+
     if spec_name == "token-factory-generate.yaml":
         body = b'{"id": "e2e-1", "prompt": "Reply with the single word: ready"}\n'
         client.put_object(

@@ -227,6 +227,28 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         requires_token_factory=True,
     ),
     SubmitLiveCase(
+        "token-factory-robot-sdg.yaml",
+        "cpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        notes="Runs real MuJoCo pick-and-place with two cameras and LeRobot export; requires current staged source and OSMesa setup.",
+    ),
+    SubmitLiveCase(
+        "token-factory-sdg.yaml",
+        "cpu",
+        secret_envs=(
+            "NEBIUS_TOKEN_FACTORY_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        requires_token_factory=True,
+        notes="Exercises hosted routing, generation, review and real dataset publication; requires current staged NPA source.",
+    ),
+    SubmitLiveCase(
         "token-factory-batch-generate.yaml",
         "cpu",
         secret_envs=(
