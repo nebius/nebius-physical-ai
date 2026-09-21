@@ -400,6 +400,25 @@ downloaded and hash-verified. Its maximum reported JAX allocator peak was
 that earlier adapter's loader and action schema, with no simulator, task score,
 or official 24 GB qualification. It does not qualify the changed shared adapter.
 
+### Read the 2026 demonstrations for Comet training
+
+The official 2026 demonstrations at revision
+`4f50b44796641a4d526a19d9aeadc8aa51e2f2c2` use packed LeRobot v3 metadata and
+files. The Comet training runtime pins Hugging Face LeRobot 0.3.4 at commit
+`577cd10974b84bea1f06b6472eb9e5e74e07f77a`, whose stock reader expects one
+legacy data and video path per episode. Relabeling the dataset as v2.1 or adding
+only `meta/episodes.jsonl` is invalid because many v3 episodes share each
+Parquet and video file.
+
+`CometTask1Dataset` reads the v3 episode Parquet rows directly. It verifies the
+task, episode frame ranges, packed data paths, shared RGB video paths, and each
+episode's video timestamp offset. It then uses the pinned runtime's Parquet and
+video decoders, clamps the 32-action horizon inside the episode, and preserves
+the reviewed training/holdout split. The source dataset remains read-only; the
+adapter does not rewrite metadata, observations, actions, videos, or global
+normalization statistics. Training must continue to bind the exact source and
+view inventories separately from this compatibility code.
+
 ## Freeze the evaluation selection
 
 Prepare `recipe.json` privately. Set `policy_checkpoint_sha256` to the SHA-256

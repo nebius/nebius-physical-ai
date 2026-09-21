@@ -187,9 +187,30 @@ This baseline includes an execution modification; it is not a measurement of
 native RLC. Its score is separate from the historical 0.50 result above, whose
 policy process lifecycle differed. These ten development cases are reused;
 this result does not demonstrate generalization or a reliable full-success gain.
-Native RLC and Comet12 still need the same evaluation before the baseline
-tournament and separate reporting gate can be completed. The reporting cases
+Comet12 still needs the same evaluation before the baseline tournament and
+separate reporting gate can be completed. The reporting cases
 are separate within this campaign but have some historical exposure.
+
+### Native RLC development result
+
+Native RLC completed the same ten development cases with mean **Q=0.466667**,
+**2/10 full successes**, and **7,206.1 mean simulator steps**. Instances 314 and
+320 succeeded; 312, 313, 316, and 319 scored Q=2/3; the other four scored zero.
+The policy starts a fresh process for each episode and uses the unchanged
+published execution settings and checkpoint 2.
+
+All ten episodes completed before the managed CPU aggregation stage encountered
+an image-pull failure. The owned CPU operator recovered the aggregate using the
+same pinned Workbench implementation and PyAV 17.1.0. It downloaded and hashed
+all original metrics and videos, fully decoded every video, and published the
+immutable aggregate. No episodes were rerun. The verified aggregate artifact
+SHA-256 is
+`c4de9b9a13b15382800b77445f1043779c00cc20034840c4629ee3b8ef47ec02`.
+
+The transition-refresh candidate has higher development Q (0.500000), but fewer
+full successes (1/10). It therefore has not met the local task target requiring
+both Q and full successes to match or exceed the strongest qualified baseline.
+Comet12 and the separate reporting gate remain outstanding.
 
 ### Native Comet50 development result
 
@@ -206,7 +227,7 @@ source is `13f07569cd95207147be6c5ed5f166236c88b1d6`. The verified aggregate
 artifact SHA-256 is
 `ceb168bd42c84894b12bc63a02b2a403985634a854b6fb2ebabe04770da6ba48`.
 This result ranks below the transition-refresh candidate on development Q and
-full successes. The remaining native baselines and reporting evaluation still
+full successes. The remaining Comet12 baseline and reporting evaluation still
 determine whether the candidate meets the local task target; this result does
 not establish challenge-wide competitiveness or the official policy-GPU limit.
 

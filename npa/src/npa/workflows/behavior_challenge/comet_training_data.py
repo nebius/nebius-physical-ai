@@ -6,7 +6,9 @@ its B1K state transform, normalization, model, and training loop.
 
 from __future__ import annotations
 
+import bisect
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -137,11 +139,304 @@ def _episode_lengths(metadata: Any, episodes: Sequence[int]) -> dict[int, int]:
 
 
 def _default_dataset_factory(*args, **kwargs):
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
     if kwargs.pop("return_uint8", None) is not True:
         raise ValueError("Comet dataset decoding must request uint8 RGB")
-    return _Uint8LeRobotDataset(LeRobotDataset(*args, **kwargs))
+    return _Uint8LeRobotDataset(_PackedV3Dataset(*args, **kwargs))
+
+
+@dataclass(frozen=True)
+class _EpisodeLocation:
+    episode: int
+    length: int
+    dataset_from: int
+    data_path: Path
+    video_paths: dict[str, Path]
+    video_offsets: dict[str, float]
+
+
+def _regular_json(path: Path) -> Any:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"LeRobot v3 metadata file is absent: {path.name}")
+    return json.loads(path.read_text())
+
+
+def _validate_v3_info(root: Path) -> dict[str, Any]:
+    info = _regular_json(root / "meta/info.json")
+    expected = {
+        "codebase_version": "v3.0",
+        "fps": FPS,
+        "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+        "video_path": (
+            "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+        ),
+    }
+    if not isinstance(info, dict) or any(
+        info.get(key) != value for key, value in expected.items()
+    ):
+        raise ValueError("LeRobot v3 info contract differs")
+    features = info.get("features", {})
+    required = {
+        "observation.state": ("float32", [STATE_DIMENSION]),
+        "action": ("float32", [ACTION_DIMENSION]),
+    }
+    if any(
+        (features.get(key) or {}).get("dtype") != dtype
+        or (features.get(key) or {}).get("shape") != shape
+        for key, (dtype, shape) in required.items()
+    ):
+        raise ValueError("LeRobot v3 state/action feature contract differs")
+    return info
+
+
+def _validate_task_metadata(root: Path) -> None:
+    tasks_path = root / "meta/tasks.jsonl"
+    if tasks_path.is_symlink() or not tasks_path.is_file():
+        raise ValueError("LeRobot v3 task metadata is absent")
+    rows = [json.loads(line) for line in tasks_path.read_text().splitlines()]
+    matches = [row for row in rows if row.get("task_index") == TASK_ID]
+    if len(matches) != 1 or matches[0].get("task_name") != TASK_NAME:
+        raise ValueError("LeRobot v3 task-1 identity differs")
+
+
+def _episode_metadata_rows(root: Path) -> list[dict[str, Any]]:
+    import pyarrow.parquet as parquet
+
+    path = root / f"meta/episodes/chunk-{TASK_ID:03d}/file-000.parquet"
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("LeRobot v3 task-1 episode metadata is absent")
+    rows = parquet.read_table(path).to_pylist()
+    if len(rows) != 200 or len({row.get("episode_index") for row in rows}) != 200:
+        raise ValueError("LeRobot v3 task-1 episode inventory differs")
+    return rows
+
+
+def _packed_path(
+    root: Path, template: str, row: Mapping[str, Any], prefix: str
+) -> Path:
+    chunk = row.get(f"{prefix}/chunk_index")
+    file = row.get(f"{prefix}/file_index")
+    if type(chunk) is not int or chunk < 0 or type(file) is not int or file < 0:
+        raise ValueError("LeRobot v3 packed file index differs")
+    relative = template.format(
+        video_key=prefix.removeprefix("videos/"),
+        chunk_index=chunk,
+        file_index=file,
+    )
+    path = root / relative
+    if not path.is_file():
+        raise ValueError(f"LeRobot v3 packed file is absent: {relative}")
+    return path
+
+
+def _episode_location(
+    root: Path, info: Mapping[str, Any], row: Mapping[str, Any]
+) -> _EpisodeLocation:
+    length = row.get("length")
+    start, stop = row.get("dataset_from_index"), row.get("dataset_to_index")
+    episode = row.get("episode_index")
+    if (
+        type(episode) is not int
+        or type(length) is not int
+        or length <= 0
+        or type(start) is not int
+        or start < 0
+        or type(stop) is not int
+        or stop - start != length
+    ):
+        raise ValueError("LeRobot v3 episode frame interval differs")
+    data = _packed_path(root, info["data_path"], row, "data")
+    videos, offsets = {}, {}
+    for camera in CAMERAS.values():
+        key = f"observation.rgb.{camera}_camera_0"
+        prefix = f"videos/{key}"
+        videos[key] = _packed_path(root, info["video_path"], row, prefix)
+        offsets[key] = _video_interval_start(row, prefix, length)
+    return _EpisodeLocation(episode, length, start, data, videos, offsets)
+
+
+def _video_interval_start(row: Mapping[str, Any], prefix: str, length: int) -> float:
+    begin = row.get(f"{prefix}/from_timestamp")
+    end = row.get(f"{prefix}/to_timestamp")
+    if (
+        not _is_numeric_scalar(begin)
+        or not _is_numeric_scalar(end)
+        or not np.isfinite([begin, end]).all()
+        or begin < 0
+        or not np.isclose(
+            end - begin,
+            length / FPS,
+            atol=ALIGNMENT_TOLERANCE_SECONDS,
+            rtol=0.0,
+        )
+    ):
+        raise ValueError("LeRobot v3 video interval differs from episode length")
+    return float(begin)
+
+
+def _is_numeric_scalar(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _load_locations(root: Path, episodes: Sequence[int]) -> dict[int, _EpisodeLocation]:
+    info = _validate_v3_info(root)
+    _validate_task_metadata(root)
+    _regular_json(root / "meta/stats.json")
+    requested = set(episodes)
+    rows = [
+        row
+        for row in _episode_metadata_rows(root)
+        if row.get("episode_index") in requested
+    ]
+    if {row.get("episode_index") for row in rows} != requested:
+        raise ValueError(
+            "Requested task-1 episodes are absent from LeRobot v3 metadata"
+        )
+    if any(
+        row.get("task_index") != TASK_ID or row.get("tasks") != [TASK_NAME]
+        for row in rows
+    ):
+        raise ValueError("LeRobot v3 episode task identity differs")
+    return {row["episode_index"]: _episode_location(root, info, row) for row in rows}
+
+
+class _PackedV3Metadata:
+    def __init__(self, locations: Mapping[int, _EpisodeLocation]) -> None:
+        self.episodes = {
+            episode: {"length": row.length} for episode, row in locations.items()
+        }
+
+
+class _PackedV3Dataset:
+    """Read immutable packed LeRobot v3 bytes through the pinned runtime APIs."""
+
+    def __init__(self, repo_id: str, **kwargs: Any) -> None:
+        if repo_id != DATASET_REPOSITORY:
+            raise ValueError("LeRobot repository identity differs")
+        root, episodes = Path(kwargs.pop("root")), tuple(kwargs.pop("episodes"))
+        self._validate_options(kwargs)
+        self.locations = _load_locations(root, episodes)
+        self.episodes = episodes
+        self.meta = _PackedV3Metadata(self.locations)
+        self._starts = self._episode_starts()
+        self._tables = self._load_tables()
+
+    @staticmethod
+    def _validate_options(options: Mapping[str, Any]) -> None:
+        expected = {
+            "revision": DATASET_REVISION,
+            "video_backend": "pyav",
+            "tolerance_s": ALIGNMENT_TOLERANCE_SECONDS,
+            "delta_timestamps": {
+                "action": [step / FPS for step in range(ACTION_HORIZON)]
+            },
+        }
+        if dict(options) != expected:
+            raise ValueError("LeRobot v3 compatibility options differ")
+
+    def _episode_starts(self) -> list[int]:
+        starts, total = [], 0
+        for episode in self.episodes:
+            starts.append(total)
+            total += self.locations[episode].length
+        starts.append(total)
+        return starts
+
+    def _load_tables(self) -> dict[Path, Any]:
+        from datasets import load_dataset
+
+        result = {}
+        for path in sorted({row.data_path for row in self.locations.values()}):
+            table = load_dataset("parquet", data_files=str(path), split="train")
+            _validate_packed_features(table.features)
+            table.set_format("numpy")
+            result[path] = table
+        return result
+
+    def __len__(self) -> int:
+        return self._starts[-1]
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        episode_position = bisect.bisect_right(self._starts, index) - 1
+        if episode_position < 0 or episode_position >= len(self.episodes):
+            raise IndexError(index)
+        episode = self.episodes[episode_position]
+        frame = index - self._starts[episode_position]
+        location = self.locations[episode]
+        sample = self._low_dimensional_sample(location, frame)
+        sample.update(self._rgb_sample(location, frame, float(sample["timestamp"])))
+        return sample
+
+    def _low_dimensional_sample(
+        self, location: _EpisodeLocation, frame: int
+    ) -> dict[str, Any]:
+        table = self._tables[location.data_path]
+        first_index = int(table[0]["index"])
+        local = location.dataset_from - first_index + frame
+        current = dict(table[local])
+        indices = [
+            local + min(frame + step, location.length - 1) - frame
+            for step in range(ACTION_HORIZON)
+        ]
+        action_rows = table[indices]
+        actions = np.asarray(action_rows["action"], dtype=np.float32)
+        if (
+            int(current["episode_index"]) != location.episode
+            or int(current["frame_index"]) != frame
+            or int(current["index"]) != location.dataset_from + frame
+        ):
+            raise ValueError("LeRobot v3 packed data interval differs")
+        expected_frames = [
+            min(frame + step, location.length - 1) for step in range(ACTION_HORIZON)
+        ]
+        if not np.array_equal(
+            action_rows["episode_index"],
+            np.full(ACTION_HORIZON, location.episode),
+        ) or not np.array_equal(action_rows["frame_index"], expected_frames):
+            raise ValueError("LeRobot v3 action horizon crosses an episode boundary")
+        if not np.isclose(
+            float(current["timestamp"]),
+            frame / FPS,
+            atol=ALIGNMENT_TOLERANCE_SECONDS,
+            rtol=0.0,
+        ):
+            raise ValueError("LeRobot v3 frame timestamp differs")
+        current["action"] = actions
+        return current
+
+    def _rgb_sample(
+        self, location: _EpisodeLocation, frame: int, timestamp: float
+    ) -> dict[str, Any]:
+        result = {}
+        for key, path in location.video_paths.items():
+            query = [location.video_offsets[key] + timestamp]
+            result[key] = _decode_rgb(path, query)
+        return result
+
+
+def _validate_packed_features(features: Mapping[str, Any]) -> None:
+    expected = {
+        "index": ("int64", None),
+        "episode_index": ("int64", None),
+        "frame_index": ("int64", None),
+        "timestamp": ("float32", None),
+        "observation.state": ("float32", STATE_DIMENSION),
+        "action": ("float32", ACTION_DIMENSION),
+    }
+    for name, (dtype, length) in expected.items():
+        feature = features.get(name)
+        leaf = getattr(feature, "feature", feature)
+        if getattr(leaf, "dtype", None) != dtype:
+            raise ValueError(f"LeRobot v3 packed feature differs: {name}")
+        declared_length = getattr(feature, "length", None)
+        if length is not None and declared_length not in {None, -1, length}:
+            raise ValueError(f"LeRobot v3 packed feature length differs: {name}")
+
+
+def _decode_rgb(path: Path, query: list[float]) -> Any:
+    from lerobot.datasets.video_utils import decode_video_frames
+
+    frames = decode_video_frames(path, query, ALIGNMENT_TOLERANCE_SECONDS, "pyav")
+    return frames.squeeze(0)
 
 
 class _Uint8LeRobotDataset:
