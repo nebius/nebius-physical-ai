@@ -106,6 +106,12 @@ Use a fresh private directory outside the repository for each run. Install the
 scanner requirements into a separate virtual environment and put its `bin`
 directory on `PATH`; keep `npa/.venv/bin/python` for repository validation.
 The installer supports Linux x86-64 and verifies the Trivy archive's SHA-256.
+Trivy and gitleaks release downloads retry transient HTTP failures, including
+429 and 504, with curl's exponential backoff. Downloads still require their
+exact pinned SHA-256 before extraction; permanent HTTP failures, exhausted
+retries, checksum mismatches, and scanner findings fail the gate. When a hosted
+run fails during tool download, inspect that step and rerun only the failed
+jobs after the release host recovers.
 
 ```bash
 umask 077
