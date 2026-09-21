@@ -27,7 +27,8 @@ installs VS Code and Codex on an existing Ubuntu VM, provides a sharp browser
 desktop with adjustable workspace size, and can enable authenticated HTTPS on a
 public IP. Its setup and operation commands live under `npa tools`.
 `npa tools desktop chat-setup --connect-vscode` adds authenticated mobile Codex
-chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it.
+chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it. Mobile
+and VS Code share conversations, model/reasoning selections, and live activity.
 `npa tools desktop optimize --ssh-host <alias>` reduces desktop effects for faster
 clicking and typing while preserving the running session and display resolution.
 

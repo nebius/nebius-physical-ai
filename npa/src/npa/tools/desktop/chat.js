@@ -13,6 +13,9 @@ const state = {
   generation: 0,
   connected: false,
   sending: false,
+  changingModel: false,
+  models: [],
+  statuses: new Map(),
 };
 const node = (tag, className, text) => {
   const el = document.createElement(tag);
@@ -70,7 +73,11 @@ function renderSessions() {
     button.setAttribute("aria-current", String(thread.id === state.id));
     button.append(node("span", "session-title", title(thread)));
     const meta = node("span", "session-meta");
-    if (thread.status?.type === "active") meta.append(node("span", "activity"));
+    if (state.statuses.get(thread.id)?.type === "active") {
+      const spinner = node("span", "spinner session-spinner");
+      spinner.setAttribute("aria-label", "Codex is working");
+      meta.append(spinner);
+    }
     meta.append(
       node("span", "workspace", workspace(thread.cwd)),
       node("time", "", relativeTime(thread.updatedAt)),
@@ -92,7 +99,10 @@ async function loadSessions(append = false) {
   const result = await api("threads?" + query);
   state.sessionCursor = result.nextCursor;
   state.sessions = append ? [...state.sessions, ...result.data] : result.data;
+  for (const thread of result.data)
+    state.statuses.set(thread.id, thread.status);
   renderSessions();
+  updateActivity();
 }
 function activeTurn() {
   return state.turns.find((turn) => turn.status === "inProgress");
@@ -104,6 +114,7 @@ function updateControls() {
     !state.id ||
     state.loading ||
     state.sending ||
+    state.changingModel ||
     state.externalOwner ||
     !$("#prompt").value.trim() ||
     !state.connected;
@@ -117,6 +128,15 @@ function updateControls() {
     "aria-label",
     active ? "Steer current turn" : "Send message",
   );
+  for (const id of ["#model", "#effort"])
+    $(id).disabled =
+      !state.id ||
+      state.loading ||
+      state.externalOwner ||
+      state.changingModel ||
+      !state.connected ||
+      !state.models.length;
+  updateActivity();
 }
 async function selectThread(id) {
   const generation = ++state.generation;
@@ -141,6 +161,7 @@ async function selectThread(id) {
       "This session is open in an older Codex client. You can read it here. Close it in that client, then reopen it here to continue safely.",
     );
   state.thread = resumed.thread;
+  renderModelControls();
   $("#title").textContent = title(state.thread);
   $("#project").textContent = state.thread.cwd || "VDI";
   await loadTurns(false, generation);
@@ -148,6 +169,167 @@ async function selectThread(id) {
   state.loading = false;
   renderRequests();
   updateControls();
+}
+
+function renderModelControls() {
+  const current = state.thread?.model;
+  const model = state.models.find((model) => model.model === current);
+  const select = $("#model");
+  select.replaceChildren();
+  for (const option of state.models) {
+    const element = node("option", "", option.displayName);
+    element.value = option.model;
+    select.append(element);
+  }
+  if (current && !model) {
+    const unavailable = node("option", "", current + " (current)");
+    unavailable.value = current;
+    select.append(unavailable);
+  }
+  select.value =
+    current || state.models.find((model) => model.isDefault)?.model || "";
+  const selected =
+    model || state.models.find((model) => model.model === select.value);
+  renderReasoning(selected);
+}
+
+function renderReasoning(selected) {
+  const effort = $("#effort");
+  effort.replaceChildren();
+  for (const option of selected?.supportedReasoningEfforts || []) {
+    const element = node("option", "", effortLabel(option.reasoningEffort));
+    element.value = option.reasoningEffort;
+    element.title = option.description;
+    effort.append(element);
+  }
+  effort.value =
+    state.thread?.reasoningEffort || selected?.defaultReasoningEffort || "";
+  $("#model-description").textContent =
+    selected?.supportedReasoningEfforts.find(
+      (option) => option.reasoningEffort === effort.value,
+    )?.description || "";
+}
+
+function effortLabel(value) {
+  return (
+    { xhigh: "Extra high", max: "Maximum", ultra: "Ultra" }[value] ||
+    value.charAt(0).toUpperCase() + value.slice(1)
+  );
+}
+
+async function changeModel(model, effort) {
+  if (!state.id || state.changingModel) return;
+  const generation = state.generation;
+  state.changingModel = true;
+  updateControls();
+  notice();
+  $("#settings-status").textContent = "Updating shared Codex settings…";
+  try {
+    await api("settings", { id: state.id, model, effort });
+    if (generation !== state.generation) return;
+    await refreshThread();
+    $("#settings-status").textContent =
+      "Saved to this conversation · applies to the next turn";
+  } catch (error) {
+    notice(error.message);
+    $("#settings-status").textContent =
+      "Could not confirm settings. Refresh before retrying.";
+  } finally {
+    state.changingModel = false;
+    renderModelControls();
+    updateControls();
+  }
+}
+
+async function refreshThread() {
+  if (!state.id) return;
+  const generation = state.generation;
+  const result = await api("thread?id=" + encodeURIComponent(state.id));
+  if (generation !== state.generation) return;
+  state.thread = result.thread;
+  state.statuses.set(state.id, result.thread.status);
+  $("#title").textContent = title(state.thread);
+  renderModelControls();
+  updateControls();
+}
+
+async function loadModels() {
+  state.models = (await api("models")).data;
+  renderModelControls();
+  updateControls();
+}
+
+let activityFrame = 0;
+function updateActivity() {
+  const selectedBusy =
+    !!activeTurn() || state.statuses.get(state.id)?.type === "active";
+  const working =
+    selectedBusy ||
+    [...state.statuses.values()].some((status) => status?.type === "active");
+  const waiting = state.pending.some(
+    (request) => request.params?.threadId === state.id,
+  );
+  const symbol = ["◐", "◓", "◑", "◒"][activityFrame % 4];
+  const label = state.thread
+    ? title(state.thread).slice(0, 70)
+    : "Your desktop";
+  const tabTitle =
+    (!state.connected
+      ? "Reconnecting · "
+      : working
+        ? waiting
+          ? "! Needs input · "
+          : symbol + " Working · "
+        : "") +
+    label +
+    " · Codex";
+  if (document.title !== tabTitle) document.title = tabTitle;
+  $("#header-activity").hidden = !selectedBusy;
+  renderTabIcon(working);
+}
+
+function renderTabIcon(working) {
+  const angle = working ? activityFrame * 90 : 0;
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#171717"/><circle cx="16" cy="16" r="10" fill="none" stroke="' +
+    (working ? "#9edbbd" : "#ececec") +
+    '" stroke-width="4" stroke-dasharray="' +
+    (working ? "44 19" : "63 0") +
+    '" transform="rotate(' +
+    angle +
+    ' 16 16)"/></svg>';
+  const icon = "data:image/svg+xml," + encodeURIComponent(svg);
+  if ($("#tab-icon").getAttribute("href") !== icon) $("#tab-icon").href = icon;
+}
+
+function sessionEvent(event) {
+  const params = event.params || {};
+  const id = params.threadId || params.thread?.id;
+  if (!id) return;
+  if (event.method === "thread/status/changed")
+    state.statuses.set(id, params.status);
+  if (event.method === "turn/started")
+    state.statuses.set(id, { type: "active" });
+  if (event.method === "turn/completed")
+    state.statuses.set(id, { type: "idle" });
+  if (event.method === "thread/closed")
+    state.statuses.set(id, { type: "notLoaded" });
+  if (
+    event.method === "thread/settings/updated" &&
+    id === state.id &&
+    state.thread
+  ) {
+    state.thread.model = params.threadSettings.model;
+    state.thread.reasoningEffort = params.threadSettings.effort;
+    renderModelControls();
+  }
+  if (
+    ["thread/status/changed", "turn/started", "turn/completed"].includes(
+      event.method,
+    )
+  )
+    renderSessions();
+  updateActivity();
 }
 async function loadTurns(older = false, generation = state.generation) {
   if (!state.id) return;
@@ -293,6 +475,7 @@ function eventTurn(params) {
   return turn;
 }
 function handleEvent(event) {
+  sessionEvent(event);
   const p = event.params || {},
     method = event.method;
   if (method === "thread/started" || method === "thread/name/updated")
@@ -506,7 +689,7 @@ $("#stop").addEventListener("click", async () => {
   }
 });
 $("#refresh").addEventListener("click", () =>
-  Promise.all([loadSessions(), loadTurns()]).catch((error) =>
+  Promise.all([loadSessions(), loadTurns(), refreshThread()]).catch((error) =>
     notice(error.message),
   ),
 );
@@ -548,6 +731,7 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     loadSessions().catch(() => {});
     loadTurns().catch(() => {});
+    refreshThread().catch(() => {});
   }
 });
 if (window.visualViewport) {
@@ -564,6 +748,7 @@ async function start() {
     state.instance = info.instance;
     state.pending = info.pending;
     state.connected = info.connected;
+    loadModels().catch((error) => notice("Model controls: " + error.message));
     $("#cwd").value = info.cwd;
     $("#connection").textContent = "● Connected to VDI";
     events();
@@ -579,3 +764,24 @@ async function start() {
   }
 }
 start();
+$("#model").addEventListener("change", () => {
+  const selected = state.models.find(
+    (model) => model.model === $("#model").value,
+  );
+  if (!selected) return;
+  const current = $("#effort").value;
+  const effort = selected.supportedReasoningEfforts.some(
+    (option) => option.reasoningEffort === current,
+  )
+    ? current
+    : selected.defaultReasoningEffort;
+  changeModel(selected.model, effort);
+});
+$("#effort").addEventListener("change", () =>
+  changeModel($("#model").value, $("#effort").value),
+);
+setInterval(() => {
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+    activityFrame++;
+  updateActivity();
+}, 750);

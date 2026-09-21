@@ -143,6 +143,18 @@ keyboard. It sends prompts, streams replies and tool activity, steers a running
 turn, stops a turn, and presents command/file approvals and questions. Specialized
 MCP and dynamic-tool requests remain in VS Code.
 
+Choose **Model** and **Reasoning** above the composer. Choices come from the
+signed-in Codex runtime and include only reasoning levels supported by that
+model. Changes apply to the next turn of the same conversation and update the
+connected VS Code picker. Changes made in VS Code update the mobile controls too.
+The browser tab, favicon, chat header, and session list show when Codex is working;
+an outstanding approval or question changes the tab title to **Needs input**.
+
+Open the same conversation in either client to see prompts and replies sent
+from the other. Mobile does not create a separate copy of the chat. The browser
+provides these Codex conversation controls; the full editor, extensions, file
+explorer, and terminal remain available through the desktop's VS Code window.
+
 The browser and VS Code share one Codex app-server through a private Unix
 socket. `--connect-vscode` backs up the existing VS Code settings and selects a
 local transport adapter using `chatgpt.cliExecutable`. Reload the VS Code window

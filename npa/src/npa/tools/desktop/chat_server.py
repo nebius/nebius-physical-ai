@@ -13,9 +13,11 @@ from urllib.parse import parse_qs, urlsplit
 try:
     from .chat_rpc import CodexConnection
     from .chat_history import owned_elsewhere
+    from .chat_models import available_models, model_selection
 except ImportError:
     from chat_rpc import CodexConnection
     from chat_history import owned_elsewhere
+    from chat_models import available_models, model_selection
 
 _SOURCES = [
     "cli",
@@ -34,6 +36,17 @@ _STATIC = {
     "/chat/chat.js": ("chat.js", "text/javascript"),
     "/chat/chat.css": ("chat.css", "text/css"),
 }
+
+
+def _update_created_threads(created, message):
+    params = message.get("params", {})
+    identifier = params.get("threadId")
+    if message["method"] in {"turn/started", "turn/completed"}:
+        created.pop(identifier, None)
+    thread = created.get(identifier)
+    if thread is not None and message["method"] == "thread/settings/updated":
+        settings = params["threadSettings"]
+        thread.update(model=settings["model"], reasoningEffort=settings["effort"])
 
 
 def _authorized(header, username, password):
@@ -162,25 +175,14 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def _get_api(self, path, query):
         rpc = self.server.rpc
+        if path == "/chat/api/models":
+            return {"data": available_models(rpc)}
         if path == "/chat/api/threads":
             return self._list_threads(query)
         if path == "/chat/api/thread":
-            return rpc.call(
-                "thread/read", {"threadId": query["id"], "includeTurns": False}
-            )
+            return {"thread": self._thread(query["id"])}
         if path == "/chat/api/turns":
-            if query["id"] in self.server.created:
-                return {"data": [], "nextCursor": None}
-            return rpc.call(
-                "thread/turns/list",
-                {
-                    "threadId": query["id"],
-                    "limit": 10,
-                    "sortDirection": "desc",
-                    "itemsView": "full",
-                    "cursor": query.get("cursor"),
-                },
-            )
+            return self._turns(query)
         if path == "/chat/api/events":
             return self._events(query)
         if path == "/chat/api/state":
@@ -192,6 +194,26 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "instance": rpc.instance,
             }
         raise ValueError("Unknown chat route.")
+
+    def _thread(self, identifier):
+        created = self.server.created.get(identifier)
+        if created is not None:
+            return created
+        return self.server.rpc.call(
+            "thread/read", {"threadId": identifier, "includeTurns": False}
+        )["thread"]
+
+    def _turns(self, query):
+        if query["id"] in self.server.created:
+            return {"data": [], "nextCursor": None}
+        return self.server.rpc.call(
+            "thread/turns/list",
+            {
+                "threadId": query["id"], "limit": 10,
+                "sortDirection": "desc", "itemsView": "full",
+                "cursor": query.get("cursor"),
+            },
+        )
 
     def _events(self, query):
         rpc = self.server.rpc
@@ -252,15 +274,11 @@ class ChatHandler(BaseHTTPRequestHandler):
         if path == "/chat/api/resume":
             return self._resume(body["id"])
         if path == "/chat/api/new":
-            cwd = Path(body.get("cwd") or self.server.config["cwd"]).expanduser()
-            if not cwd.is_dir():
-                raise ValueError("Choose an existing project directory on the VDI.")
-            result = rpc.call("thread/start", {"cwd": str(cwd.resolve())})
-            self.server.attached.add(result["thread"]["id"])
-            self.server.created[result["thread"]["id"]] = result["thread"]
-            return result
+            return self._new_thread(body)
         if path == "/chat/api/send":
             return self._send(body)
+        if path == "/chat/api/settings":
+            return self._settings(body)
         if path == "/chat/api/stop":
             return rpc.call(
                 "turn/interrupt", {"threadId": body["id"], "turnId": body["turnId"]}
@@ -276,9 +294,30 @@ class ChatHandler(BaseHTTPRequestHandler):
             return {"answered": True}
         raise ValueError("Unknown chat action.")
 
+    def _new_thread(self, body):
+        cwd = Path(body.get("cwd") or self.server.config["cwd"]).expanduser()
+        if not cwd.is_dir():
+            raise ValueError("Choose an existing project directory on the VDI.")
+        result = self.server.rpc.call("thread/start", {"cwd": str(cwd.resolve())})
+        self.server.attached.add(result["thread"]["id"])
+        self.server.created[result["thread"]["id"]] = result["thread"]
+        return result
+
+    def _settings(self, body):
+        resumed = self._resume(body["id"])
+        if resumed.get("externalOwner"):
+            raise ValueError("Close this session in the older Codex client first.")
+        params = model_selection(self.server.rpc, body, resumed["thread"])
+        self.server.rpc.call("thread/settings/update", params)
+        created = self.server.created.get(body["id"])
+        if created is not None:
+            created.update(model=params["model"], reasoningEffort=params["effort"])
+        return {"model": params["model"], "effort": params["effort"]}
+
     def _resume(self, identifier):
-        if identifier in self.server.created:
-            return {"thread": self.server.created[identifier]}
+        created = self.server.created.get(identifier)
+        if created is not None:
+            return {"thread": created}
         rpc = self.server.rpc
         thread = rpc.call(
             "thread/read", {"threadId": identifier, "includeTurns": False}
@@ -294,11 +333,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         return result
 
     def _send(self, body):
-        thread = self.server.created.get(body["id"])
-        if thread is None:
-            thread = self.server.rpc.call(
-                "thread/read", {"threadId": body["id"], "includeTurns": False}
-            )["thread"]
+        thread = self._thread(body["id"])
         if owned_elsewhere(thread, self.server.config["socket"]):
             raise ValueError(
                 "This session is open in an older Codex client. Close it there, then refresh to continue here."
@@ -331,7 +366,10 @@ def main(config_path):
     server.config = config
     server.attached = set()
     server.created = {}
-    server.rpc = CodexConnection(config["socket"])
+    server.rpc = CodexConnection(
+        config["socket"],
+        on_notification=lambda message: _update_created_threads(server.created, message),
+    )
 
     def disconnected():
         server.rpc.closed.wait()

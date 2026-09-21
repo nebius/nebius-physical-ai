@@ -15,6 +15,7 @@ class CodexConnection:
 
     Args:
         socket: Private app-server Unix socket.
+        on_notification: Optional callback for shared runtime notifications.
     Returns:
         None.
     Raises:
@@ -22,7 +23,7 @@ class CodexConnection:
         RuntimeError: Initialization fails.
     """
 
-    def __init__(self, socket):
+    def __init__(self, socket, on_notification=None):
         # Codex's Unix listener rejects a permessage-deflate negotiation.
         self.connection = unix_connect(
             socket, uri="ws://localhost", max_size=None, compression=None
@@ -37,6 +38,7 @@ class CodexConnection:
         self.sequence = 0
         self.counter = 0
         self.alive = True
+        self.on_notification = on_notification
         threading.Thread(target=self._read, daemon=True).start()
         self.call(
             "initialize",
@@ -108,6 +110,8 @@ class CodexConnection:
                 self.requests.pop(str(message["params"]["requestId"]), None)
             self.sequence += 1
             self.events.append((self.sequence, message))
+            if self.on_notification is not None:
+                self.on_notification(message)
             self.condition.notify_all()
 
     def answer(self, identifier, result):

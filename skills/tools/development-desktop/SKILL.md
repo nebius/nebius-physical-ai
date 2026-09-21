@@ -44,8 +44,11 @@ Implementation belongs in `npa/src/npa/tools/desktop`, independently of Workbenc
    on the same origin and uses the same desktop login. It shares a private
    Codex runtime with the VDI IDE; reload the IDE only when its work is idle.
    Keep sessions held by older independent Codex processes read-only until
-   their owner releases them. Test real prompts from both clients, reconnects,
-   active-turn steering/stopping, approvals, and phone-sized layouts. Preserve
+   their owner releases them. Test real prompts and replies in both directions
+   using the actual VS Code window and a phone-sized browser, plus reconnects,
+   active-turn steering/stopping, approvals, and working tab/session indicators.
+   Verify shared model/reasoning controls against the live runtime catalog;
+   restore test selections afterward. Preserve
    the existing account and model configuration. Never copy account tokens to
    the browser or restart a shared engine with active work during setup.
 

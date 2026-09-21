@@ -13,6 +13,7 @@
       content="black-translucent"
     />
     <title>Codex · Your desktop</title>
+    <link id="tab-icon" rel="icon" type="image/svg+xml" />
     <link rel="stylesheet" href="/chat/chat.css" />
     <script src="/chat/chat.js" defer></script>
   </head>
@@ -56,7 +57,15 @@
       <header>
         <button id="menu" class="icon" aria-label="Show sessions">☰</button>
         <div class="heading">
-          <h1 id="title">Your Codex workspace</h1>
+          <div class="chat-title">
+            <span
+              id="header-activity"
+              class="spinner"
+              aria-label="Codex is working"
+              hidden
+            ></span>
+            <h1 id="title">Your Codex workspace</h1>
+          </div>
           <p id="project">Continue from any screen</p>
         </div>
         <button id="refresh" class="icon" aria-label="Refresh chat">↻</button>
@@ -78,6 +87,21 @@
       <section id="requests" aria-label="Pending decisions"></section>
       <form id="composer">
         <div class="compose-box">
+          <div class="model-controls">
+            <label
+              >Model<select id="model" aria-label="Codex model" disabled>
+                <option>Loading models…</option>
+              </select></label
+            >
+            <label
+              >Reasoning<select
+                id="effort"
+                aria-label="Reasoning effort"
+                disabled
+              ></select
+            ></label>
+          </div>
+          <p id="model-description" class="model-description"></p>
           <textarea
             id="prompt"
             rows="1"
@@ -101,7 +125,9 @@
             </div>
           </div>
         </div>
-        <p class="composer-note">Same conversations. Work stays on your VDI.</p>
+        <p class="composer-note" id="settings-status" role="status">
+          Same conversations. Work stays on your VDI.
+        </p>
       </form>
     </main>
     <dialog id="new-dialog">

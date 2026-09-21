@@ -43,6 +43,7 @@ def _chat_assets():
         "chat_rpc.py",
         "chat_proxy.py",
         "chat_history.py",
+        "chat_models.py",
         "chat.html",
         "chat.css",
         "chat.js",

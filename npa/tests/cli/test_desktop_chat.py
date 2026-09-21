@@ -1,5 +1,6 @@
 """Exercise authenticated chat boundaries and shared Codex controls over real HTTP."""
 
+from collections import deque
 from http.server import ThreadingHTTPServer
 import threading
 from unittest.mock import Mock
@@ -7,8 +8,22 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
-from npa.tools.desktop.chat_server import ChatHandler, _answer_result
+from npa.tools.desktop.chat_server import (
+    ChatHandler, _answer_result, _update_created_threads,
+)
+from npa.tools.desktop.chat_rpc import CodexConnection
 from npa.tools.desktop.chat_history import owned_elsewhere
+from npa.tools.desktop.chat_models import available_models, model_selection
+
+_MODEL = {
+    "model": "example-model",
+    "displayName": "Example model",
+    "defaultReasoningEffort": "medium",
+    "supportedReasoningEfforts": [
+        {"reasoningEffort": "low", "description": "Quick"},
+        {"reasoningEffort": "medium", "description": "Balanced"},
+    ],
+}
 
 
 @pytest.fixture
@@ -54,6 +69,7 @@ def chat(tmp_path):
         "/chat/chat.css",
         "/chat/api/threads",
         "/chat/api/events",
+        "/chat/api/models",
     ],
 )
 def test_every_chat_route_requires_login(chat, path):
@@ -236,3 +252,101 @@ def test_new_thread_works_before_codex_materializes_its_history(chat):
         ).status_code
         == 200
     )
+
+
+def test_model_catalog_reads_all_pages_without_hardcoded_model_names():
+    rpc = Mock()
+    rpc.call.side_effect = [
+        {"data": [_MODEL], "nextCursor": "next-page"},
+        {"data": [{**_MODEL, "model": "another-model"}], "nextCursor": None},
+    ]
+    assert [model["model"] for model in available_models(rpc)] == [
+        "example-model", "another-model"
+    ]
+    rpc.call.assert_called_with(
+        "model/list", {"includeHidden": False, "cursor": "next-page"}
+    )
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ({"model": "unavailable"}, "available"),
+        ({"model": "example-model", "effort": "unsupported"}, "effort"),
+        ({"model": "example-model", "approvalPolicy": "never"}, "Only model"),
+        ({"model": "example-model", "cwd": "/different/project"}, "Only model"),
+    ],
+)
+def test_model_selection_rejects_unsupported_or_unrelated_overrides(body, message):
+    rpc = Mock()
+    rpc.call.return_value = {"data": [_MODEL]}
+    with pytest.raises(ValueError, match=message):
+        model_selection(rpc, {"id": "thread", **body}, {})
+
+
+def test_model_change_uses_supported_default_when_previous_effort_is_incompatible():
+    rpc = Mock()
+    rpc.call.return_value = {"data": [_MODEL]}
+    assert model_selection(
+        rpc, {"id": "thread", "model": "example-model"}, {"reasoningEffort": "ultra"}
+    ) == {"threadId": "thread", "model": "example-model", "effort": "medium"}
+
+
+def test_settings_change_updates_the_same_thread_without_starting_a_turn(chat):
+    client, rpc = chat
+    thread = {"id": "thread", "status": {"type": "idle"}, "model": "example-model"}
+
+    def upstream(method, params):
+        if method == "model/list":
+            return {"data": [_MODEL]}
+        if method in {"thread/read", "thread/resume"}:
+            return {"thread": thread}
+        return {}
+
+    rpc.call.side_effect = upstream
+    response = client.post(
+        "/chat/api/settings",
+        json={"id": "thread", "model": "example-model", "effort": "low"},
+    )
+    assert response.status_code == 200
+    rpc.call.assert_called_with(
+        "thread/settings/update",
+        {"threadId": "thread", "model": "example-model", "effort": "low"},
+    )
+    assert not {"turn/start", "thread/start", "thread/fork"} & {
+        call.args[0] for call in rpc.call.call_args_list
+    }
+
+
+def test_settings_change_rejects_a_foreign_origin(chat):
+    client, rpc = chat
+    response = client.post(
+        "/chat/api/settings", json={"id": "thread", "model": "example-model"},
+        headers={"Origin": "https://hostile.example.test"},
+    )
+    assert response.status_code == 403
+    rpc.call.assert_not_called()
+
+
+def test_native_first_turn_invalidates_unmaterialized_mobile_history():
+    created = {"new-thread": {"id": "new-thread", "model": "old-model"}}
+    rpc = object.__new__(CodexConnection)
+    rpc.condition = threading.Condition()
+    rpc.events = deque()
+    rpc.sequence = 0
+    rpc.on_notification = lambda message: _update_created_threads(created, message)
+    rpc._receive({
+        "method": "thread/settings/updated",
+        "params": {"threadId": "new-thread", "threadSettings": {
+            "model": "updated-model", "effort": "low",
+        }},
+    })
+    assert created["new-thread"]["model"] == "updated-model"
+    assert created["new-thread"]["reasoningEffort"] == "low"
+    rpc._receive({
+        "method": "turn/started",
+        "params": {"threadId": "new-thread", "turn": {"id": "native-turn"}},
+    })
+    assert "new-thread" not in created
+    assert rpc.sequence == 2
+    assert rpc.events[-1][1]["method"] == "turn/started"
