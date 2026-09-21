@@ -60,6 +60,7 @@ def _batch(*, state_width: int = 16) -> dict[str, torch.Tensor]:
 
 
 def main() -> None:
+    """Validate metadata, inference, shape rejection, and checkpoint integrity."""
     assert version("lerobot") == "0.6.1+npa1"
     requirements = [
         Requirement(raw) for raw in (metadata("lerobot").get_all("Requires-Dist") or [])
