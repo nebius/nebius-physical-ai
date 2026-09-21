@@ -15,7 +15,8 @@ a versioned heading when a release is cut.
   exact requests, provider provenance, strict structured verdicts, and typed
   errors. Errors, unresolved or low-confidence output, and order disagreement
   require escalation; even consistent preference does not establish geometry
-  accuracy, physical validity, or robot safety.
+  accuracy, physical validity, or robot safety. Requests leave the provider
+  response length uncapped rather than imposing a hidden token budget.
 
 ### VLM benchmarks expose calibration failures
 
