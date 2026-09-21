@@ -1,24 +1,12 @@
-"""Whether the licence notices are readable by the user the image actually runs as.
+"""Validate notice bytes and directory traversal as the image's non-root user.
 
-A real build of this image exited 1 with
+A retained image build failed to read its MCAP grant because a parent directory
+was not traversable. Root could still read it. The positive controls use the
+Dockerfile's actual notice-delivery instructions and retained licence bytes.
 
-    sha256sum: /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt: Permission denied
-
-after every other check in that step had passed. `COPY --chmod` applies the mode to the
-directories a copy creates, not only to its files, so copying the notices *directory* at
-`0444` produced `dr--r--r--`: readable in principle, impossible to traverse. Root would
-never have noticed, because root skips the permission check. The image runs as `ubuntu`,
-and so does every recipient.
-
-The static checks in `test_open3d_image_contract.py` could not have caught this. They
-read the Dockerfile as text, and the text was exactly what it claimed to be; the mode
-only exists once Docker has copied something. So this asks Docker, as uid 1000, using
-the Dockerfile's own notice-delivery lines and the real notice bytes, in a context that
-holds nothing else.
-
-The negative control matters more than the positive one here. It rebuilds the same
-notices under the shape that shipped, and requires that the read fails -- because a
-regression that passes against the bug it was written for is not a regression test.
+BuildKit versions differ in the parent-directory modes created by COPY --chmod.
+The negative controls therefore remove traversal permission explicitly, rather
+than requiring every builder to reproduce one historical COPY implementation.
 """
 
 from __future__ import annotations
@@ -173,24 +161,31 @@ def test_notices_are_readable_by_the_user_the_image_runs_as(read: str):
 
 
 @requires_docker
-@pytest.mark.parametrize("read", READS, ids=["mcap-grant-hash", "notices-index"])
-def test_copying_the_notices_directory_would_still_break_the_read(read: str):
-    # The shape that shipped: no pre-created directories, and the notices copied as a
-    # directory. If this ever starts passing, `--chmod` has changed meaning and the fix
-    # above is no longer what keeps the notices readable.
+@pytest.mark.parametrize(
+    ("directory", "read"),
+    [
+        (NOTICE_DIR, READS[0]),
+        (NOTICE_DIR, READS[1]),
+        (NOTICE_DIR / "notices", READS[0]),
+    ],
+    ids=["mcap-parent", "index-parent", "mcap-nested-parent"],
+)
+def test_nontraversable_notice_directory_blocks_runtime_user(
+    directory: Path, read: str
+):
+    # Start from valid delivery so a failed read is attributable to the one bad mode.
     status, output = _build(
         "\n".join(
             [
                 f"FROM {_base_image()}",
-                "RUN useradd -m -s /bin/bash -u 1000 ubuntu",
-                f"COPY --chmod=0444 docker/workbench/open3d/THIRD_PARTY_NOTICES.md {INDEX}",
-                "COPY --chmod=0444 docker/workbench/open3d/notices/ "
-                f"{NOTICE_DIR / 'notices'}/",
+                _prepare(),
+                *_notice_copies(),
+                f"RUN chmod 0444 {directory}",
                 _run_as_ubuntu(read),
             ]
         )
     )
-    assert status != 0, "the reproduction no longer reproduces the failure"
+    assert status != 0, "the runtime user read through a nontraversable directory"
     assert "Permission denied" in output, output[-3000:]
 
 
@@ -227,7 +222,7 @@ def test_every_retained_notice_has_its_own_copy_instruction():
         )
     assert "docker/workbench/open3d/notices/ " not in copied, (
         "the notices directory is being copied as a directory again; "
-        "--chmod would make it untraversable"
+        "--chmod can make its parents untraversable on some builders"
     )
 
 
