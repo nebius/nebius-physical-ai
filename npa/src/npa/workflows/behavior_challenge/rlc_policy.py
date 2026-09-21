@@ -73,7 +73,12 @@ def _verify_published_files(root: Path, checkpoint: str, files: dict) -> None:
 
 def _adapter_files(output: Path, *, selected: bool) -> dict[str, str]:
     adapters = {}
-    names = ["rlc_server.py", "rlc_observations.py", "rlc_execution.py"]
+    names = [
+        "rlc_server.py",
+        "rlc_observations.py",
+        "rlc_execution.py",
+        "rlc_correlation.py",
+    ]
     if selected:
         names.extend(("rlc_selected.py", "rlc_selected_server.py", "rlc_transition.py"))
     for name in names:
@@ -82,7 +87,14 @@ def _adapter_files(output: Path, *, selected: bool) -> dict[str, str]:
     return adapters
 
 
-def _record(output: Path, command: list[str], files: dict, checkpoint: str, plan: dict):
+def _record(
+    output: Path,
+    command: list[str],
+    files: dict,
+    checkpoint: str,
+    plan: dict,
+    stock_correlation: Path | None = None,
+):
     adapters = _adapter_files(output, selected=False)
     shutil.copyfile(
         Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
@@ -100,6 +112,7 @@ def _record(output: Path, command: list[str], files: dict, checkpoint: str, plan
         "adapters": adapters,
         "command": command,
         "execution_variant": _execution_variant_record(command, selected=False),
+        "stock_correlation": _stock_correlation_record(stock_correlation),
         "normalization_asset": NORMALIZATION,
         "memory_compliance": "unverified",
         "control": "published stage voting, rolling inpainting, compression and recovery",
@@ -108,6 +121,17 @@ def _record(output: Path, command: list[str], files: dict, checkpoint: str, plan
     (output / "policy-provenance.json").write_text(
         json.dumps(evidence, indent=2) + "\n"
     )
+
+
+def _stock_correlation_record(path: Path | None) -> dict | None:
+    if path is None:
+        return None
+    return {
+        "path": path.name,
+        "sha256": file_digest(path),
+        "bytes": path.stat().st_size,
+        "installation": "pre_policy_fp32_intermediate",
+    }
 
 
 def _verify_task(args, plan):
@@ -214,7 +238,13 @@ def _stage_selected_artifacts(args, output: Path) -> dict[str, Path]:
     return staged
 
 
-def _command(args, task_id, output, selected_artifacts=None):
+def _command(
+    args,
+    task_id,
+    output,
+    selected_artifacts=None,
+    stock_correlation: Path | None = None,
+):
     server = "rlc_selected_server.py" if selected_artifacts else "rlc_server.py"
     command = [
         str(args.policy_python),
@@ -229,15 +259,14 @@ def _command(args, task_id, output, selected_artifacts=None):
         str(args.port),
     ]
     if selected_artifacts:
-        command[4:4] = ["--adapter-root", str(output)]
+        _append_selected_arguments(command, output, selected_artifacts)
+    if stock_correlation is not None:
         command.extend(
             [
-                "--selected-export-receipt",
-                str(selected_artifacts["selected_export"]),
-                "--correlation-manifest",
-                str(selected_artifacts["correlation_manifest"]),
-                "--validation-receipt",
-                str(selected_artifacts["validation_receipt"]),
+                "--correlation-asset",
+                str(stock_correlation),
+                "--correlation-sha256",
+                getattr(args, "policy_stock_correlation_sha256"),
             ]
         )
     command.extend(
@@ -247,6 +276,39 @@ def _command(args, task_id, output, selected_artifacts=None):
         ]
     )
     return command
+
+
+def _append_selected_arguments(
+    command: list[str], output: Path, artifacts: dict
+) -> None:
+    command[4:4] = ["--adapter-root", str(output)]
+    command.extend(
+        [
+            "--selected-export-receipt",
+            str(artifacts["selected_export"]),
+            "--correlation-manifest",
+            str(artifacts["correlation_manifest"]),
+            "--validation-receipt",
+            str(artifacts["validation_receipt"]),
+        ]
+    )
+
+
+def _stage_stock_correlation(args, output: Path) -> Path | None:
+    source = getattr(args, "policy_stock_correlation_asset", None)
+    expected = getattr(args, "policy_stock_correlation_sha256", None)
+    if (source is None) != (expected is None):
+        raise ValueError("stock correlation requires both artifact and SHA-256")
+    if source is None:
+        return None
+    from .rlc_correlation import load_fp32_correlation
+
+    load_fp32_correlation(source, expected)
+    target = output / "stock-correlation.float32.bin"
+    shutil.copyfile(source, target)
+    if file_digest(target) != expected:
+        raise ValueError("staged stock correlation identity differs")
+    return target
 
 
 def _execution_variant_record(command: list[str], *, selected: bool) -> dict:
@@ -329,9 +391,10 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     ):
         raise ValueError("Managed RLC policy requires its own matching loopback port")
     staged = _stage_selected_artifacts(args, output) if selected else None
-    command = _command(args, task_id, output, staged)
+    stock_correlation = None if selected else _stage_stock_correlation(args, output)
+    command = _command(args, task_id, output, staged, stock_correlation)
     if selected:
         _record_selected(output, command, files, receipt, plan, staged)
     else:
-        _record(output, command, files, checkpoint, plan)
+        _record(output, command, files, checkpoint, plan, stock_correlation)
     return command

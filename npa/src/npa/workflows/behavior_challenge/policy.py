@@ -25,6 +25,10 @@ SELECTED_RLC_FIELDS = (
     "policy_correlation_manifest",
     "policy_validation_receipt",
 )
+STOCK_RLC_CORRELATION_FIELDS = (
+    "policy_stock_correlation_asset",
+    "policy_stock_correlation_sha256",
+)
 _POLICY_STARTUP_TIMEOUT_SECONDS = 600
 
 
@@ -217,6 +221,9 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
     """
     selected = [bool(getattr(args, field, None)) for field in POLICY_FIELDS]
     selected_rlc = [bool(getattr(args, field, None)) for field in SELECTED_RLC_FIELDS]
+    stock_correlation = [
+        bool(getattr(args, field, None)) for field in STOCK_RLC_CORRELATION_FIELDS
+    ]
     selected_kind = getattr(args, "policy_kind", "official") == "rlc-selected"
     execution_variant = getattr(args, "policy_execution_variant", "native")
     variants = {
@@ -233,6 +240,10 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         )
     if not selected_kind and any(selected_rlc):
         raise ValueError("Selected RLC receipts require --policy-kind rlc-selected")
+    if any(stock_correlation) and not all(stock_correlation):
+        raise ValueError("Stock RLC correlation requires its artifact and SHA-256")
+    if any(stock_correlation) and policy_kind != "rlc":
+        raise ValueError("Stock RLC correlation requires --policy-kind rlc")
     if selected_kind and not all(selected):
         raise ValueError("Selected RLC policy requires all four policy paths")
     if execution_variant != "native" and not all(selected):

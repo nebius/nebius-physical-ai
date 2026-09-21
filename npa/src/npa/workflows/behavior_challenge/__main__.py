@@ -24,6 +24,8 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
         "validation-receipt",
     ):
         parser.add_argument(f"--policy-{field}", type=Path)
+    parser.add_argument("--policy-stock-correlation-asset", type=Path)
+    parser.add_argument("--policy-stock-correlation-sha256")
     parser.add_argument(
         "--policy-execution-variant",
         choices=(

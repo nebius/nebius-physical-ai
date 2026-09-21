@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import builtins
+import contextlib
 import functools
 import hashlib
 import inspect
@@ -20,6 +21,7 @@ import pytest
 
 from npa.workflows.behavior_challenge import (
     policy,
+    rlc_correlation,
     rlc_observations,
     rlc_policy,
     rlc_selected,
@@ -263,10 +265,25 @@ def test_stock_server_execution_variant_parser_keeps_native_default(server):
         "8000",
     ]
 
-    assert server.parser().parse_args(common).execution_variant == "native"
+    native = server.parser().parse_args(common)
+    assert native.execution_variant == "native"
+    assert native.correlation_asset is None
+    assert native.correlation_sha256 is None
     for variant in ("final-stage-backtrack", "adaptive-short-chunk"):
         parsed = server.parser().parse_args([*common, "--execution-variant", variant])
         assert parsed.execution_variant == variant
+
+
+def test_stock_server_default_keeps_native_loader(server, monkeypatch):
+    native = object()
+    monkeypatch.setattr(server, "_load_policy", lambda args: native)
+
+    loaded, receipt = server._load_stock_policy(
+        SimpleNamespace(correlation_asset=None, correlation_sha256=None)
+    )
+
+    assert loaded is native
+    assert receipt is None
 
 
 def test_adapter_inventory_stages_execution_module_for_both_weight_paths(tmp_path):
@@ -280,8 +297,79 @@ def test_adapter_inventory_stages_execution_module_for_both_weight_paths(tmp_pat
 
     assert stock_files["rlc_execution.py"] == _digest(stock / "rlc_execution.py")
     assert selected_files["rlc_execution.py"] == _digest(selected / "rlc_execution.py")
+    assert stock_files["rlc_correlation.py"] == _digest(stock / "rlc_correlation.py")
+    assert selected_files["rlc_correlation.py"] == _digest(
+        selected / "rlc_correlation.py"
+    )
     assert "rlc_selected_server.py" not in stock_files
     assert "rlc_selected_server.py" in selected_files
+
+
+def test_fp32_correlation_loader_requires_exact_regular_bytes(tmp_path):
+    array = np.zeros(rlc_correlation.CORRELATION_SHAPE, dtype="<f4")
+    artifact = tmp_path / "correlation.float32.bin"
+    artifact.write_bytes(array.tobytes(order="C"))
+    expected = _digest(artifact)
+
+    loaded = rlc_correlation.load_fp32_correlation(artifact, expected)
+
+    assert loaded.shape == rlc_correlation.CORRELATION_SHAPE
+    assert loaded.dtype == np.dtype("float32")
+    assert rlc_correlation.correlation_identity(loaded)["sha256"] == expected
+    with pytest.raises(ValueError, match="SHA-256 differs"):
+        rlc_correlation.load_fp32_correlation(artifact, "1" * 64)
+    link = tmp_path / "link.bin"
+    link.symlink_to(artifact)
+    with pytest.raises(ValueError, match="regular file"):
+        rlc_correlation.load_fp32_correlation(link, expected)
+
+
+def test_stock_server_installs_explicit_correlation_before_policy(
+    tmp_path, server, monkeypatch
+):
+    artifact = tmp_path / "correlation.bin"
+    artifact.write_bytes(np.zeros(rlc_correlation.CORRELATION_SHAPE, dtype="<f4"))
+    expected = _digest(artifact)
+    active = {"value": False}
+
+    @contextlib.contextmanager
+    def install(policy_type, correlation, digest):
+        assert policy_type is FakePiBehavior
+        assert correlation.shape == rlc_correlation.CORRELATION_SHAPE
+        assert digest == expected
+        active["value"] = True
+        yield [{"installed": True}]
+        active["value"] = False
+
+    class FakePiBehavior:
+        pass
+
+    wrapper = SimpleNamespace(policy=SimpleNamespace(_model=object()))
+    monkeypatch.setattr(server, "_load_policy", lambda args: wrapper)
+    fake = SimpleNamespace(
+        load_fp32_correlation=lambda path, digest: np.zeros(
+            rlc_correlation.CORRELATION_SHAPE, dtype=np.float32
+        ),
+        pre_policy_fp32_correlation=install,
+        verify_captured_correlation=lambda value, digest: {
+            "sha256": digest,
+            "loaded_inside_context": active["value"] is False,
+        },
+    )
+    monkeypatch.setitem(sys.modules, "rlc_correlation", fake)
+    monkeypatch.setitem(sys.modules, "b1k", types.ModuleType("b1k"))
+    models = types.ModuleType("b1k.models")
+    pi_behavior = types.ModuleType("b1k.models.pi_behavior")
+    pi_behavior.PiBehavior = FakePiBehavior
+    monkeypatch.setitem(sys.modules, "b1k.models", models)
+    monkeypatch.setitem(sys.modules, "b1k.models.pi_behavior", pi_behavior)
+    args = SimpleNamespace(correlation_asset=artifact, correlation_sha256=expected)
+
+    loaded, receipt = server._load_stock_policy(args)
+
+    assert loaded is wrapper
+    assert receipt["installation"] == {"installed": True}
+    assert receipt["captured"]["sha256"] == expected
 
 
 def test_connection_resets_memory_without_sending_reset_response(
@@ -905,6 +993,60 @@ def test_selected_policy_arguments_are_all_or_nothing(tmp_path):
             argparse.Namespace(**base), {"recipe": {}}, tmp_path / "output"
         ):
             pass
+
+
+def test_stock_correlation_arguments_are_opt_in_and_all_or_nothing(tmp_path):
+    base = {
+        "policy_kind": "rlc",
+        "policy_execution_variant": "native",
+        "policy_root": None,
+        "policy_python": None,
+        "policy_checkpoint": None,
+        "policy_archive": None,
+        "policy_selected_export_receipt": None,
+        "policy_correlation_manifest": None,
+        "policy_validation_receipt": None,
+        "policy_stock_correlation_asset": tmp_path / "correlation.bin",
+        "policy_stock_correlation_sha256": None,
+    }
+    with pytest.raises(ValueError, match="artifact and SHA-256"):
+        with policy.managed_policy(
+            argparse.Namespace(**base), {"recipe": {}}, tmp_path / "output"
+        ):
+            pass
+
+    base["policy_stock_correlation_sha256"] = "1" * 64
+    base["policy_kind"] = "official"
+    with pytest.raises(ValueError, match="requires --policy-kind rlc"):
+        with policy.managed_policy(
+            argparse.Namespace(**base), {"recipe": {}}, tmp_path / "output"
+        ):
+            pass
+
+
+def test_stock_correlation_is_staged_and_added_to_server_command(tmp_path):
+    artifact = tmp_path / "canonical.bin"
+    artifact.write_bytes(np.zeros(rlc_correlation.CORRELATION_SHAPE, dtype="<f4"))
+    expected = _digest(artifact)
+    output = tmp_path / "output"
+    output.mkdir()
+    args = SimpleNamespace(
+        policy_stock_correlation_asset=artifact,
+        policy_stock_correlation_sha256=expected,
+        policy_python=Path("/runtime/python"),
+        policy_root=Path("/source"),
+        policy_checkpoint=Path("/checkpoint"),
+        policy_execution_variant="native",
+        port=8000,
+    )
+
+    staged = rlc_policy._stage_stock_correlation(args, output)
+    command = rlc_policy._command(args, 1, output, stock_correlation=staged)
+
+    assert staged == output / "stock-correlation.float32.bin"
+    assert _digest(staged) == expected
+    assert command[command.index("--correlation-asset") + 1] == str(staged)
+    assert command[command.index("--correlation-sha256") + 1] == expected
 
 
 @pytest.mark.parametrize(

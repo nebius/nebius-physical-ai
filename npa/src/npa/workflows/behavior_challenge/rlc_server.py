@@ -118,6 +118,8 @@ def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description=__doc__)
     value.add_argument("--source-root", type=Path, required=True)
     value.add_argument("--checkpoint", type=Path, required=True)
+    value.add_argument("--correlation-asset", type=Path)
+    value.add_argument("--correlation-sha256")
     value.add_argument("--task-id", type=int, choices=range(50), required=True)
     value.add_argument("--port", type=int, required=True)
     value.add_argument(
@@ -126,6 +128,29 @@ def parser() -> argparse.ArgumentParser:
         default=NATIVE_EXECUTION,
     )
     return value
+
+
+def _load_stock_policy(args):
+    asset = args.correlation_asset
+    expected_sha256 = args.correlation_sha256
+    if (asset is None) != (expected_sha256 is None):
+        raise ValueError("stock correlation requires both artifact and SHA-256")
+    if asset is None:
+        return _load_policy(args), None
+    from b1k.models.pi_behavior import PiBehavior
+    from rlc_correlation import (
+        load_fp32_correlation,
+        pre_policy_fp32_correlation,
+        verify_captured_correlation,
+    )
+
+    correlation = load_fp32_correlation(asset, expected_sha256)
+    with pre_policy_fp32_correlation(
+        PiBehavior, correlation, expected_sha256
+    ) as installation:
+        policy = _load_policy(args)
+    captured = verify_captured_correlation(policy, expected_sha256)
+    return policy, {"installation": installation[0], "captured": captured}
 
 
 def _configure_execution(policy, variant: str):
@@ -169,7 +194,8 @@ def _main():
     logging.basicConfig(level=logging.INFO)
     with tempfile.TemporaryDirectory(prefix="npa-rlc-source-") as temporary:
         _policy_source(args.source_root, Path(temporary))
-        policy = _configure_execution(_load_policy(args), args.execution_variant)
+        policy, _ = _load_stock_policy(args)
+        policy = _configure_execution(policy, args.execution_variant)
         _serve_policy(policy, args)
 
 

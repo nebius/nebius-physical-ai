@@ -33,6 +33,52 @@ That filter excludes non-parameter state, including the FP32 action-correlation
 intermediate, and freezes task and stage parameters. The frozen-parent buffers
 do not enter the optimizer or exponential moving average.
 
+### Explicit canonical correlation state
+
+The public adapter can consume a raw little-endian FP32 correlation matrix when
+a run has already established canonical bytes for its pinned model and
+normalization inputs. The file must contain exactly a `960 × 960` C-order
+matrix. Callers provide both its path and SHA-256; the repository does not ship
+or infer canonical matrix bytes.
+
+For training, install the artifact immediately after native state
+initialization and before copying the frozen teacher:
+
+```python
+from npa.workflows.behavior_challenge.rlc_correlation import (
+    install_training_correlation,
+)
+
+installations = install_training_correlation(
+    train_state,
+    correlation_artifact,
+    correlation_sha256,
+)
+# Capture the frozen teacher from train_state.params only after this call.
+```
+
+The helper requires the target leaf to carry the real `nnx.Intermediate` type,
+installs identical FP32 bytes in `params` and `ema_params` when EMA exists, and
+checks that all other state objects and values remain unchanged. It returns a
+device-readback identity for each state. The default native initializer remains
+unchanged when the helper is not called.
+
+For stock serving, pass the same explicit pair to the internal evaluation
+stage:
+
+```text
+--policy-kind rlc
+--policy-stock-correlation-asset /path/to/action-correlation.float32.bin
+--policy-stock-correlation-sha256 <64-lowercase-hex-digest>
+```
+
+Both flags are required together. The server installs the matrix during the
+single `PiBehavior.load_correlation_matrix` call, verifies the actual
+`nnx.Intermediate`, and checks the captured `Policy` model before inference.
+Without the flags, stock serving follows the existing native numerical loading
+path byte for byte. A matching digest proves artifact identity; it does not by
+itself prove that an artifact is canonical for another checkpoint or runtime.
+
 ## Frozen recipe
 
 [`recipe.json`](../../workflows/implementations/behavior-anchored-training/recipe.json)
