@@ -31,6 +31,9 @@ from . import confidentiality as C
 
 _ROOTS = ContextVar("image_byte_scan_authorized_roots", default=None)
 CHUNK = 1024 * 1024
+# PAX/GNU extension bodies are metadata, not file payloads. One MiB is well
+# above practical path/xattr limits while bounding attacker-directed allocation.
+TAR_EXTENSION_LIMIT = 1024 * 1024
 _CANCEL_REQUESTED = False
 _SPAWNING = False
 POLICY = "exact-or-short-ascii-token-v1"
@@ -340,6 +343,21 @@ class Slice:
         require(result, "archive_short_read")
         self.position += len(result)
         return result
+
+
+class ZeroReader:
+    """Generate a logical zero range without materializing the whole range."""
+
+    def __init__(self, length):
+        require(type(length) is int and length >= 0, "zero_reader_length")
+        self.remaining = length
+
+    def read(self, amount=-1):
+        require(type(amount) is int, "zero_reader_amount")
+        requested = self.remaining if amount < 0 else amount
+        count = min(requested, self.remaining, CHUNK)
+        self.remaining -= count
+        return bytes(count)
 
 
 class HashedReader:
@@ -1008,7 +1026,7 @@ class Ledger:
         if self.zero_run is not None:
             run, self.zero_run = self.zero_run, None
             self.send(
-                io.BytesIO(b"\0" * run["bytes"]),
+                ZeroReader(run["bytes"]),
                 run["bytes"],
                 "verified_zero_content",
                 run["context"],
@@ -1139,6 +1157,10 @@ def walk_tar(reader, sink, scope, file_handler):
             tarfile.GNUTYPE_LONGNAME,
             tarfile.GNUTYPE_LONGLINK,
         }:
+            require(
+                info.size <= TAR_EXTENSION_LIMIT,
+                "tar_extension_body_too_large",
+            )
             extension_context = {**context, "tar_offset": reader.tell()}
             data = read_exact(reader, info.size)
             sink.data(data, "raw_tar_extension", extension_context)

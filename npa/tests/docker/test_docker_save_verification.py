@@ -22,6 +22,13 @@ from image_byte_scan import docker_save_verification as VERIFIER  # noqa: E402
 from image_byte_scan import prepare  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def authorized_roots(tmp_path: Path):
+    tmp_path.chmod(0o700)
+    with core.authorized_roots(tmp_path, ROOT):
+        yield
+
+
 def _tar(entries: list[tuple[str, bytes]]) -> bytes:
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream, mode="w") as archive:
@@ -121,6 +128,7 @@ def _archive(
         image_id = "sha256:" + manifest_digest
     archive = tmp_path / "image.tar"
     archive.write_bytes(_tar(members))
+    archive.chmod(0o600)
     return archive, image_id
 
 
@@ -155,6 +163,114 @@ def test_verifier_binds_complete_layer_and_config(
     finally:
         os.close(fd)
     assert len(layers) == 1
+
+
+def test_verifier_opens_once_and_hashes_parses_rehashes_held_inode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, image_id = _archive(tmp_path, oci_layout=True)
+    opened = []
+    digested = []
+    duplicated = []
+    original_open = core.open_private_fd
+    original_digest = core.descriptor_digest
+    original_dup = os.dup
+    original_path_open = Path.open
+
+    def open_once(path, **kwargs):
+        result = original_open(path, **kwargs)
+        if Path(path) == archive:
+            opened.append(result[1])
+        return result
+
+    def digest_descriptor(fd):
+        digested.append(fd)
+        return original_digest(fd)
+
+    def duplicate_descriptor(fd):
+        duplicated.append(fd)
+        return original_dup(fd)
+
+    def reject_archive_reopen(path, *args, **kwargs):
+        if path == archive:
+            raise AssertionError("archive reopened by path")
+        return original_path_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(core, "open_private_fd", open_once)
+    monkeypatch.setattr(core, "descriptor_digest", digest_descriptor)
+    monkeypatch.setattr(os, "dup", duplicate_descriptor)
+    monkeypatch.setattr(Path, "open", reject_archive_reopen)
+
+    report = VERIFIER.verify(archive, image_id)
+
+    assert report["valid"]
+    assert len(opened) == 1
+    assert digested == [opened[0], opened[0]]
+    assert duplicated == [opened[0]]
+
+
+@pytest.mark.parametrize("replacement", ["permissions", "symlink"])
+def test_verifier_uses_private_nofollow_archive_contract(
+    tmp_path: Path, replacement: str
+) -> None:
+    archive, image_id = _archive(tmp_path)
+    candidate = archive
+    expected = "input_permissions"
+    if replacement == "permissions":
+        archive.chmod(0o640)
+    else:
+        candidate = tmp_path / "archive-link.tar"
+        candidate.symlink_to(archive)
+        expected = "input_symlink"
+
+    with pytest.raises(core.ScanError, match=expected):
+        VERIFIER.verify(candidate, image_id)
+
+
+def test_verifier_rehash_detects_same_inode_byte_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, image_id = _archive(tmp_path)
+    original = core.descriptor_digest
+    calls = 0
+
+    def mutate_before_rehash(fd):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            writer = os.open(archive, os.O_WRONLY | os.O_CLOEXEC)
+            try:
+                os.pwrite(writer, b"X", 0)
+            finally:
+                os.close(writer)
+        return original(fd)
+
+    monkeypatch.setattr(core, "descriptor_digest", mutate_before_rehash)
+
+    with pytest.raises(core.ScanError, match="docker_save_archive_changed"):
+        VERIFIER.verify(archive, image_id)
+    assert calls == 2
+
+
+def test_verifier_rejects_path_replacement_while_parsing_held_inode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, image_id = _archive(tmp_path)
+    original_bytes = archive.read_bytes()
+    original_graph = VERIFIER._graph
+
+    def replace_path(*args, **kwargs):
+        result = original_graph(*args, **kwargs)
+        replacement = tmp_path / "replacement.tar"
+        replacement.write_bytes(original_bytes)
+        replacement.chmod(0o600)
+        os.replace(replacement, archive)
+        return result
+
+    monkeypatch.setattr(VERIFIER, "_graph", replace_path)
+
+    with pytest.raises(core.ScanError, match="docker_save_archive_changed"):
+        VERIFIER.verify(archive, image_id)
 
 
 def test_verifier_rejects_wrong_inspected_image_id(tmp_path: Path) -> None:
@@ -270,3 +386,36 @@ def test_cli_writes_owner_only_bound_report(tmp_path: Path) -> None:
     report = json.loads((output / "verification.json").read_text())
     assert report["expected_image_id"] == image_id
     assert (output / "verification.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_cli_rejects_output_directory_replaced_before_held_fd_readback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    archive, image_id = _archive(tmp_path, oci_layout=True)
+    output = tmp_path / "cli-output"
+    original_write = core.write_private_json
+
+    def replace_after_write(directory, name, result):
+        identity = original_write(directory, name, result)
+        directory.rename(tmp_path / "displaced-output")
+        directory.mkdir(mode=0o700)
+        return identity
+
+    monkeypatch.setattr(core, "write_private_json", replace_after_write)
+    result = VERIFIER.main(
+        [
+            "--analysis-root",
+            str(tmp_path),
+            "--trusted-root",
+            str(ROOT),
+            "--archive",
+            str(archive),
+            "--expected-image-id",
+            image_id,
+            "--output-dir",
+            str(output),
+        ]
+    )
+
+    assert result == 1
+    assert capsys.readouterr().out == "Docker-save graph verification failed\n"

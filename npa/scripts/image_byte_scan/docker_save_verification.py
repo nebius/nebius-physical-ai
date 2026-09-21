@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import gzip
 import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import sys
 import tarfile
 from typing import BinaryIO
@@ -163,121 +165,25 @@ def _oci_graph(
     return manifest_digest, described_layers
 
 
-def verify(archive_path: Path, expected_image_id: str) -> dict[str, object]:
-    W.require(_DIGEST.fullmatch(expected_image_id) is not None, "expected_image_digest")
-    with archive_path.open("rb") as stream:
-        archive_sha256, _archive_size = _hash_stream(stream)
-
-    regular_files = 0
-    content_bytes = 0
-    entries_read = 0
-    with tarfile.open(archive_path, mode="r:*") as archive:
-        outer = archive.getmembers()
-        names = [_path(member.name) for member in outer]
-        W.require(len(names) == len(set(names)), "docker_save_duplicate_outer_entry")
-        members = dict(zip(names, outer, strict=True))
-
-        manifest_member = members.get("manifest.json")
-        W.require(
-            manifest_member is not None and manifest_member.isfile(),
-            "docker_save_manifest",
+def _verify_descriptor(fd: int, expected_image_id: str) -> dict[str, object]:
+    archive_sha256 = W.descriptor_digest(fd)
+    stream = os.fdopen(os.dup(fd), "rb")
+    with stream, tarfile.open(fileobj=stream, mode="r:*") as archive:
+        (
+            config_digest,
+            manifest_digest,
+            diff_ids,
+            layers,
+            layer_descriptors,
+            members,
+        ) = _graph(archive, expected_image_id)
+        entries_read, regular_files, content_bytes = _verify_layers(
+            archive, members, layers, diff_ids, layer_descriptors
         )
-        manifest = json.load(archive.extractfile(manifest_member))
-        W.require(
-            isinstance(manifest, list)
-            and len(manifest) == 1
-            and isinstance(manifest[0], dict),
-            "docker_save_image_population",
-        )
-        image = manifest[0]
-        config_name = _path(image.get("Config", ""))
-        config_member = members.get(config_name)
-        W.require(
-            config_member is not None and config_member.isfile(),
-            "docker_save_config",
-        )
-        config_bytes = archive.extractfile(config_member).read()
-        config_digest = _config_digest(config_name, config_bytes)
-        config = json.loads(config_bytes)
-        diff_ids = config.get("rootfs", {}).get("diff_ids")
-        layers = image.get("Layers")
-        W.require(
-            config.get("rootfs", {}).get("type") == "layers"
-            and isinstance(diff_ids, list)
-            and isinstance(layers, list)
-            and bool(layers)
-            and len(diff_ids) == len(layers)
-            and all(
-                isinstance(value, str) and _DIGEST.fullmatch(value)
-                for value in diff_ids
-            )
-            and all(isinstance(value, str) for value in layers),
-            "docker_save_layer_population",
-        )
-        manifest_digest, layer_descriptors = _oci_graph(
-            archive, members, config_member, config_digest, layers
-        )
-        W.require(
-            expected_image_id in {config_digest, manifest_digest},
-            "docker_save_expected_image",
-        )
-
-        for layer_index, (layer_name, expected_diff_id) in enumerate(
-            zip(layers, diff_ids, strict=True)
-        ):
-            normalized = _path(layer_name)
-            member = members.get(normalized)
-            W.require(
-                member is not None and member.isfile(), "docker_save_layer_member"
-            )
-            raw = archive.extractfile(member)
-            blob_hash, blob_size = _hash_stream(raw)
-            if normalized.startswith("blobs/sha256/"):
-                W.require(
-                    normalized == "blobs/sha256/" + blob_hash,
-                    "docker_save_layer_blob_digest",
-                )
-            if layer_descriptors is not None:
-                descriptor = layer_descriptors[layer_index]
-                W.require(
-                    descriptor["digest"] == "sha256:" + blob_hash
-                    and descriptor["size"] == blob_size,
-                    "docker_save_oci_layer_blob",
-                )
-                raw = archive.extractfile(member)
-                signature = raw.read(2)
-                W.require(
-                    (signature == b"\x1f\x8b") == _LAYER_TYPES[descriptor["mediaType"]],
-                    "docker_save_oci_layer_codec",
-                )
-
-            raw = archive.extractfile(member)
-            with _decoded_layer(raw) as decoded:
-                diff_hash, _decoded_size = _hash_stream(decoded)
-            W.require(
-                "sha256:" + diff_hash == expected_diff_id,
-                "docker_save_layer_diff_id",
-            )
-
-            raw = archive.extractfile(member)
-            with tarfile.open(fileobj=_decoded_layer(raw), mode="r|") as layer:
-                for entry in layer:
-                    _path(entry.name)
-                    entries_read += 1
-                    if not entry.isfile():
-                        continue
-                    body = layer.extractfile(entry)
-                    W.require(body is not None, "docker_save_regular_file")
-                    _digest, count = _hash_stream(body)
-                    W.require(count == entry.size, "docker_save_regular_file_size")
-                    regular_files += 1
-                    content_bytes += count
-
-    with archive_path.open("rb") as stream:
-        W.require(
-            _hash_stream(stream)[0] == archive_sha256,
-            "docker_save_archive_changed",
-        )
+    W.require(
+        W.descriptor_digest(fd) == archive_sha256,
+        "docker_save_archive_changed",
+    )
     result: dict[str, object] = {
         "schema_version": SCHEMA,
         "valid": True,
@@ -295,6 +201,179 @@ def verify(archive_path: Path, expected_image_id: str) -> dict[str, object]:
     return result
 
 
+def _outer_members(archive: tarfile.TarFile) -> dict[str, tarfile.TarInfo]:
+    outer = archive.getmembers()
+    names = [_path(member.name) for member in outer]
+    W.require(len(names) == len(set(names)), "docker_save_duplicate_outer_entry")
+    return dict(zip(names, outer, strict=True))
+
+
+def _saved_image(archive, members):
+    manifest_member = members.get("manifest.json")
+    W.require(
+        manifest_member is not None and manifest_member.isfile(),
+        "docker_save_manifest",
+    )
+    manifest = json.load(archive.extractfile(manifest_member))
+    W.require(
+        isinstance(manifest, list)
+        and len(manifest) == 1
+        and isinstance(manifest[0], dict),
+        "docker_save_image_population",
+    )
+    return manifest[0]
+
+
+def _configured_layers(archive, members, image):
+    config_name = _path(image.get("Config", ""))
+    config_member = members.get(config_name)
+    W.require(
+        config_member is not None and config_member.isfile(),
+        "docker_save_config",
+    )
+    config_bytes = archive.extractfile(config_member).read()
+    config_digest = _config_digest(config_name, config_bytes)
+    config = json.loads(config_bytes)
+    diff_ids = config.get("rootfs", {}).get("diff_ids")
+    layers = image.get("Layers")
+    W.require(
+        config.get("rootfs", {}).get("type") == "layers"
+        and isinstance(diff_ids, list)
+        and isinstance(layers, list)
+        and bool(layers)
+        and len(diff_ids) == len(layers)
+        and all(
+            isinstance(value, str) and _DIGEST.fullmatch(value) for value in diff_ids
+        )
+        and all(isinstance(value, str) for value in layers),
+        "docker_save_layer_population",
+    )
+    return config_digest, config_member, diff_ids, layers
+
+
+def _graph(
+    archive: tarfile.TarFile, expected_image_id: str
+) -> tuple[str, str | None, list[str], list[str], list[dict] | None, dict]:
+    members = _outer_members(archive)
+    image = _saved_image(archive, members)
+    config_digest, config_member, diff_ids, layers = _configured_layers(
+        archive, members, image
+    )
+    manifest_digest, descriptors = _oci_graph(
+        archive, members, config_member, config_digest, layers
+    )
+    W.require(
+        expected_image_id in {config_digest, manifest_digest},
+        "docker_save_expected_image",
+    )
+    return config_digest, manifest_digest, diff_ids, layers, descriptors, members
+
+
+def _verify_layers(archive, members, layers, diff_ids, descriptors):
+    entries_read = regular_files = content_bytes = 0
+    for index, (layer_name, expected_diff_id) in enumerate(
+        zip(layers, diff_ids, strict=True)
+    ):
+        descriptor = descriptors[index] if descriptors is not None else None
+        counts = _verify_layer(
+            archive,
+            members,
+            layer_name,
+            expected_diff_id,
+            descriptor,
+        )
+        entries_read += counts[0]
+        regular_files += counts[1]
+        content_bytes += counts[2]
+    return entries_read, regular_files, content_bytes
+
+
+def _verify_layer(archive, members, layer_name, expected_diff_id, descriptor):
+    normalized = _path(layer_name)
+    member = members.get(normalized)
+    W.require(member is not None and member.isfile(), "docker_save_layer_member")
+    raw = archive.extractfile(member)
+    blob_hash, blob_size = _hash_stream(raw)
+    if normalized.startswith("blobs/sha256/"):
+        W.require(
+            normalized == "blobs/sha256/" + blob_hash,
+            "docker_save_layer_blob_digest",
+        )
+    if descriptor is not None:
+        W.require(
+            descriptor["digest"] == "sha256:" + blob_hash
+            and descriptor["size"] == blob_size,
+            "docker_save_oci_layer_blob",
+        )
+        signature = archive.extractfile(member).read(2)
+        W.require(
+            (signature == b"\x1f\x8b") == _LAYER_TYPES[descriptor["mediaType"]],
+            "docker_save_oci_layer_codec",
+        )
+    with _decoded_layer(archive.extractfile(member)) as decoded:
+        diff_hash, _decoded_size = _hash_stream(decoded)
+    W.require(
+        "sha256:" + diff_hash == expected_diff_id,
+        "docker_save_layer_diff_id",
+    )
+    raw = archive.extractfile(member)
+    with tarfile.open(fileobj=_decoded_layer(raw), mode="r|") as layer:
+        return _regular_population(layer)
+
+
+def _regular_population(layer):
+    entries_read = regular_files = content_bytes = 0
+    for entry in layer:
+        _path(entry.name)
+        entries_read += 1
+        if not entry.isfile():
+            continue
+        body = layer.extractfile(entry)
+        W.require(body is not None, "docker_save_regular_file")
+        _digest, count = _hash_stream(body)
+        W.require(count == entry.size, "docker_save_regular_file_size")
+        regular_files += 1
+        content_bytes += count
+    return entries_read, regular_files, content_bytes
+
+
+def _require_archive_identity(path: Path, fd: int, initial: os.stat_result) -> None:
+    try:
+        current = os.fstat(fd)
+        named = path.lstat()
+    except OSError as error:
+        raise W.ScanError("docker_save_archive_changed") from error
+    W.require(
+        stat.S_ISREG(named.st_mode)
+        and W.stat_fingerprint(initial)
+        == W.stat_fingerprint(current)
+        == W.stat_fingerprint(named),
+        "docker_save_archive_changed",
+    )
+
+
+@contextmanager
+def _verified_archive(archive_path: Path, expected_image_id: str):
+    W.require(_DIGEST.fullmatch(expected_image_id) is not None, "expected_image_digest")
+    path, fd, initial = W.open_private_fd(archive_path)
+    try:
+        _require_archive_identity(path, fd, initial)
+        report = _verify_descriptor(fd, expected_image_id)
+        _require_archive_identity(path, fd, initial)
+        yield report
+    finally:
+        try:
+            _require_archive_identity(path, fd, initial)
+        finally:
+            os.close(fd)
+
+
+def verify(archive_path: Path, expected_image_id: str) -> dict[str, object]:
+    """Verify one owner-only Docker-save archive through a held descriptor."""
+    with _verified_archive(archive_path, expected_image_id) as report:
+        return report
+
+
 def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)
     held = None
@@ -307,10 +386,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parser.parse_args(argv)
         with W.authorized_roots(args.analysis_root, args.trusted_root):
-            W.private_path(args.archive)
-            report = verify(args.archive, args.expected_image_id)
-            directory, held = W.create_output(args.output_dir)
-            W.write_private_json(directory, "verification.json", report)
+            with _verified_archive(args.archive, args.expected_image_id) as report:
+                directory, held = W.create_output(args.output_dir)
+                identity = W.write_private_json(directory, "verification.json", report)
+                W.verify_private_json(
+                    directory,
+                    held,
+                    "verification.json",
+                    report,
+                    identity,
+                )
+                W.output_identity(directory, held)
         print("Docker-save graph verification completed")
         return 0
     except W.INPUT_ERRORS:

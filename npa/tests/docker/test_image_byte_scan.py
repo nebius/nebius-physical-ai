@@ -611,6 +611,33 @@ def test_zero_ranges_do_not_concatenate_across_distinct_layers(tmp_path):
     assert sink.findings == 0
 
 
+def test_large_logical_zero_run_uses_a_bounded_streaming_reader(tmp_path, monkeypatch):
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(tmp_path, detector, [], "exact-substring-v1")
+    logical_size = 2**40
+    sink.zero_run = {
+        "bytes": logical_size,
+        "context": {"scope": "layer", "layer_ordinal": 0, "tar_offset": 0},
+    }
+    observed = {}
+
+    def inspect(reader, length, kind, context):
+        observed.update(reader=reader, length=length, kind=kind, context=context)
+        block = reader.read(length)
+        observed["block_size"] = len(block)
+        observed["remaining"] = reader.remaining
+
+    monkeypatch.setattr(sink, "send", inspect)
+    sink.flush_zeros()
+    sink.stream.close()
+
+    assert isinstance(observed["reader"], W.ZeroReader)
+    assert observed["length"] == logical_size
+    assert observed["kind"] == "verified_zero_content"
+    assert observed["block_size"] == W.CHUNK < logical_size
+    assert observed["remaining"] == logical_size - W.CHUNK
+
+
 def test_body_and_padding_offsets_refer_to_actual_physical_ranges(tmp_path):
     report, rows = run(tmp_path, fixture(tmp_path, entries=[file("opt/file", b"x")]))
     assert report["valid"]
@@ -823,6 +850,38 @@ def test_malformed_extra_subfield_lengths_rejected(extra):
     compressed, _ = optional_gzip(b"body", flags=4, extra=extra)
     with pytest.raises(W.ScanError, match="malformed_gzip_extra_subfield"):
         W.gzip_header(io.BytesIO(compressed))
+
+
+@pytest.mark.parametrize(
+    "entry_type",
+    [
+        tarfile.XHDTYPE,
+        tarfile.XGLTYPE,
+        tarfile.GNUTYPE_LONGNAME,
+        tarfile.GNUTYPE_LONGLINK,
+    ],
+)
+def test_oversized_tar_extension_is_rejected_before_body_allocation(
+    tmp_path, monkeypatch, entry_type
+):
+    declared_size = W.TAR_EXTENSION_LIMIT + 1
+    extension = tarfile.TarInfo("hostile-extension")
+    extension.type = entry_type
+    extension.size = declared_size
+    raw = extension.tobuf(format=tarfile.GNU_FORMAT) + b"\0" * 1024
+    requested = []
+    original = W.read_exact
+
+    def record_request(reader, count, *, eof=False):
+        requested.append(count)
+        return original(reader, count, eof=eof)
+
+    monkeypatch.setattr(W, "read_exact", record_request)
+    report, _ = run(tmp_path, fixture(tmp_path, entries=[], raw=raw, codec="raw"))
+
+    assert not report["valid"] and not report["complete"]
+    assert report["failure_code"] == "tar_extension_body_too_large"
+    assert declared_size not in requested
 
 
 def test_empty_optional_fields_and_advisory_paths_are_never_extracted(tmp_path):
