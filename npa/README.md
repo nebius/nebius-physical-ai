@@ -319,6 +319,11 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
+Mocked browser checks require Google Chrome and run with
+`bash npa/scripts/run_agent_cypress.sh --mock` from the repository root.
+They use Chrome's software WebGL renderer for real canvas capture coverage;
+Cypress 16's deprecated Electron browser cannot provide that context in CI.
+
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
 --update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
@@ -338,8 +343,10 @@ parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
 Application and CI dependency scans reject known vulnerabilities even when the
 same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
-requirements. `.github/dependabot.yml` schedules daily update proposals for
-Python, browser-test npm, and GitHub Actions dependencies. Reproduce the scan
+requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
+GitHub Actions dependencies daily and groups version updates into one
+`dependencies` PR. Review package declarations and generated locks together,
+regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
 
 The required [security check](../docs/security/merge-security-gate.md) is the

@@ -73,6 +73,10 @@ the CLIP path.
 
 ## Gotchas
 
+- Dependency upgrades must exercise `npa/tests/workflows/test_ray_clip_archive.py`
+  on Linux. The archive validator checks exact Lance writer profiles before
+  opening a reader; new hints or storage formats require explicit validation and
+  hostile-metadata tests, plus compatibility with previously supported archives.
 - Do not document stale `launch` or `load-dataset` commands for LanceDB.
 - Inject detection-training label maps through workflow env vars such as
   `BDD100K_LABEL_MAP`; do not hardcode them in tool source.
