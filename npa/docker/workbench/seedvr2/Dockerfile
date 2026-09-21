@@ -10,6 +10,7 @@ ARG FLASH_ATTN_SHA256=55d5103ed846da8b56e0797acf4bde07dee4b1c7e8907fcfc6699c2030
 ARG FLASH_ATTN_MAX_JOBS=2
 ARG FLASH_ATTN_NVCC_THREADS=1
 ARG APEX_MAX_JOBS=2
+ARG TORCH_CUDA_ARCH_LIST=9.0
 
 LABEL npa.tool="seedvr2" \
       npa.version="0.1.0-cu130-unbuilt" \
@@ -19,6 +20,7 @@ LABEL npa.tool="seedvr2" \
       npa.build.flash-attn.max-jobs="${FLASH_ATTN_MAX_JOBS}" \
       npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
       npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
+      npa.build.torch.cuda-arch-list="${TORCH_CUDA_ARCH_LIST}" \
       org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -29,7 +31,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_SEEDVR2_WORK_DIR=/workspace/seedvr2-runs \
     NPA_SKIP_EAGER_IMPORTS=1 \
     NPA_LIGHT_WORKBENCH_TOOL=seedvr2 \
-    TORCH_CUDA_ARCH_LIST=9.0 \
+    TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
     PATH=/opt/npa-venv/bin:/opt/seedvr2-venv/bin:${PATH}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -65,6 +67,11 @@ RUN python3.12 -m venv /opt/seedvr2-venv \
       > /opt/seedvr2-build-reports/nvshmem-runtime.json
 
 ARG FLASH_ATTN_CUDA_ARCHS=90
+COPY --chmod=0555 docker/workbench/seedvr2/cuda_arches.py /opt/npa-tools/cuda_arches.py
+RUN /opt/seedvr2-venv/bin/python /opt/npa-tools/cuda_arches.py \
+      --flash-arches "${FLASH_ATTN_CUDA_ARCHS}" \
+      --torch-arches "${TORCH_CUDA_ARCH_LIST}" >/dev/null
+
 RUN curl --fail --location \
       "https://files.pythonhosted.org/packages/source/f/flash-attn/flash_attn-${FLASH_ATTN_VERSION}.tar.gz" \
       -o /tmp/flash-attn.tar.gz \
@@ -91,25 +98,34 @@ RUN curl --fail --location \
     && rm -rf /tmp/apex /tmp/apex.tar.gz
 
 RUN pip check && python - <<'PY'
+import os
 import torch
 import torchvision
 from apex.normalization import FusedLayerNorm, FusedRMSNorm
 from flash_attn import flash_attn_varlen_func
 assert torch.version.cuda == "13.0", torch.version.cuda
-assert "sm_90" in set(torch._C._cuda_getArchFlags().split())
+expected_arches = {
+    "sm_" + value.replace(".", "")
+    for value in os.environ["TORCH_CUDA_ARCH_LIST"].split(";")
+}
+assert expected_arches <= set(torch._C._cuda_getArchFlags().split())
 assert torchvision.__version__.startswith("0.28.0")
 assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
 PY
 
 COPY --chmod=0555 scripts/measure_extension_arches.py /opt/npa-tools/measure_extension_arches.py
-RUN install -d -m 0755 /usr/share/doc/npa-seedvr2/extension-arches \
+RUN ARCH_ARGS="$(/opt/seedvr2-venv/bin/python /opt/npa-tools/cuda_arches.py \
+      --flash-arches "${FLASH_ATTN_CUDA_ARCHS}" \
+      --torch-arches "${TORCH_CUDA_ARCH_LIST}")" \
+    && read -r -a ARCH_ARGS <<< "$ARCH_ARGS" \
+    && install -d -m 0755 /usr/share/doc/npa-seedvr2/extension-arches \
     && /opt/seedvr2-venv/bin/python /opt/npa-tools/measure_extension_arches.py \
       --distribution flash-attn \
-      --min-size-mb 0 --skip-no-fatbin --exact sm_90 --json \
+      --min-size-mb 0 --skip-no-fatbin "${ARCH_ARGS[@]}" --json \
       > /usr/share/doc/npa-seedvr2/extension-arches/flash-attn.json \
     && /opt/seedvr2-venv/bin/python /opt/npa-tools/measure_extension_arches.py \
       --distribution apex \
-      --min-size-mb 0 --skip-no-fatbin --exact sm_90 --json \
+      --min-size-mb 0 --skip-no-fatbin "${ARCH_ARGS[@]}" --json \
       > /usr/share/doc/npa-seedvr2/extension-arches/apex.json
 
 COPY --chmod=0444 docker/workbench/seedvr2/npa_seedvr2_video_io.py /opt/npa-tools/npa_seedvr2_video_io.py
@@ -164,6 +180,7 @@ ARG FLASH_ATTN_MAX_JOBS=2
 ARG FLASH_ATTN_NVCC_THREADS=1
 ARG FLASH_ATTN_CUDA_ARCHS=90
 ARG APEX_MAX_JOBS=2
+ARG TORCH_CUDA_ARCH_LIST=9.0
 
 LABEL npa.tool="seedvr2" \
       npa.version="0.1.0-cu130-unbuilt" \
@@ -174,6 +191,7 @@ LABEL npa.tool="seedvr2" \
       npa.build.flash-attn.nvcc-threads="${FLASH_ATTN_NVCC_THREADS}" \
       npa.build.flash-attn.cuda-archs="${FLASH_ATTN_CUDA_ARCHS}" \
       npa.build.apex.max-jobs="${APEX_MAX_JOBS}" \
+      npa.build.torch.cuda-arch-list="${TORCH_CUDA_ARCH_LIST}" \
       org.opencontainers.image.licenses="Apache-2.0 AND BSD-3-Clause AND LicenseRef-NVIDIA-CUDA-Toolkit"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -184,7 +202,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_SEEDVR2_WORK_DIR=/workspace/seedvr2-runs \
     NPA_SKIP_EAGER_IMPORTS=1 \
     NPA_LIGHT_WORKBENCH_TOOL=seedvr2 \
-    TORCH_CUDA_ARCH_LIST=9.0 \
+    TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
     PATH=/opt/npa-venv/bin:/opt/seedvr2-venv/bin:${PATH}
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -213,6 +231,7 @@ COPY --from=seedvr2-build /opt/npa-legal/NVSHMEM-License-v3.4.5-0.txt /usr/share
 
 RUN /opt/seedvr2-venv/bin/pip check \
     && /opt/seedvr2-venv/bin/python - <<'PY'
+import os
 import torch
 import torchvision
 import sys
@@ -222,7 +241,11 @@ sys.path.insert(0, "/opt/seedvr2")
 from npa_seedvr2_video_io import read_video
 from torchvision.io import read_image
 assert torch.version.cuda == "13.0", torch.version.cuda
-assert "sm_90" in set(torch._C._cuda_getArchFlags().split())
+expected_arches = {
+    "sm_" + value.replace(".", "")
+    for value in os.environ["TORCH_CUDA_ARCH_LIST"].split(";")
+}
+assert expected_arches <= set(torch._C._cuda_getArchFlags().split())
 assert torchvision.__version__.startswith("0.28.0")
 assert FusedLayerNorm and FusedRMSNorm and flash_attn_varlen_func
 assert read_video and read_image

@@ -224,7 +224,7 @@ def test_seedvr2_cuda_compilers_have_recorded_bounded_parallelism() -> None:
     )
     assert "MAX_JOBS=8" not in dockerfile
     assert "scripts/measure_extension_arches.py" in dockerfile
-    assert dockerfile.count("--skip-no-fatbin --exact sm_90 --json") == 2
+    assert dockerfile.count('--skip-no-fatbin "${ARCH_ARGS[@]}" --json') == 2
     assert "--distribution flash-attn" in dockerfile
     assert "--distribution apex" in dockerfile
     assert (

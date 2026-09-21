@@ -11,6 +11,7 @@ FLASH_ATTN_MAX_JOBS="${NPA_SEEDVR2_FLASH_ATTN_MAX_JOBS:-2}"
 FLASH_ATTN_NVCC_THREADS="${NPA_SEEDVR2_FLASH_ATTN_NVCC_THREADS:-1}"
 FLASH_ATTN_CUDA_ARCHS="${NPA_SEEDVR2_FLASH_ATTN_CUDA_ARCHS:-90}"
 APEX_MAX_JOBS="${NPA_SEEDVR2_APEX_MAX_JOBS:-2}"
+TORCH_CUDA_ARCH_LIST="${NPA_SEEDVR2_TORCH_CUDA_ARCH_LIST:-9.0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -18,10 +19,11 @@ while [[ $# -gt 0 ]]; do
     --flash-attn-max-jobs) FLASH_ATTN_MAX_JOBS="${2:?}"; shift 2 ;;
     --flash-attn-nvcc-threads) FLASH_ATTN_NVCC_THREADS="${2:?}"; shift 2 ;;
     --flash-attn-cuda-archs) FLASH_ATTN_CUDA_ARCHS="${2:?}"; shift 2 ;;
+    --torch-cuda-arch-list) TORCH_CUDA_ARCH_LIST="${2:?}"; shift 2 ;;
     --apex-max-jobs) APEX_MAX_JOBS="${2:?}"; shift 2 ;;
     --push) PUSH=1; shift ;;
     -h|--help)
-      echo "Usage: $0 [--registry HOST/PATH] [--flash-attn-max-jobs N] [--flash-attn-nvcc-threads N] [--flash-attn-cuda-archs LIST] [--apex-max-jobs N] [--push]"
+      echo "Usage: $0 [--registry HOST/PATH] [--flash-attn-max-jobs N] [--flash-attn-nvcc-threads N] [--flash-attn-cuda-archs LIST] [--apex-max-jobs N] [--torch-cuda-arch-list LIST] [--push]"
       exit 0
       ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
@@ -43,6 +45,14 @@ done
   echo "flash-attn-cuda-archs must be a semicolon-separated numeric list" >&2
   exit 2
 }
+
+[[ -x "$NPA_PYTHON" ]] || {
+  echo "Repository Python is required for architecture validation" >&2
+  exit 1
+}
+"$NPA_PYTHON" "$SCRIPT_DIR/cuda_arches.py" \
+  --flash-arches "$FLASH_ATTN_CUDA_ARCHS" \
+  --torch-arches "$TORCH_CUDA_ARCH_LIST" >/dev/null
 
 SOURCE_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
@@ -110,6 +120,7 @@ env -u HF_TOKEN -u NGC_API_KEY -u NVIDIA_API_KEY -u NEBIUS_IAM_TOKEN \
     --build-arg "FLASH_ATTN_NVCC_THREADS=$FLASH_ATTN_NVCC_THREADS" \
     --build-arg "FLASH_ATTN_CUDA_ARCHS=$FLASH_ATTN_CUDA_ARCHS" \
     --build-arg "APEX_MAX_JOBS=$APEX_MAX_JOBS" \
+    --build-arg "TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST" \
     --label "org.opencontainers.image.source=https://github.com/nebius/nebius-physical-ai" \
     --load --provenance=false "$BUILD_CONTEXT"
 

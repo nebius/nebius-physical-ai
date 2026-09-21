@@ -130,3 +130,19 @@ under heavy degradation or large motion, unpleasant generated detail, and
 oversharpening on light degradation or small inputs. Preserve and compare the
 source, use matched frame timing, and do not silently substitute restored clips
 for training ground truth or metrology.
+
+
+### Compiled CUDA extension targets
+
+The default build targets Hopper `sm_90` for both FlashAttention and Apex.
+To prepare an additive Hopper/B200 image, use
+`--flash-attn-cuda-archs '90;100' --torch-cuda-arch-list '9.0;10.0'`.
+The build rejects mismatched or duplicate targets and checks every CUDA-bearing
+extension against the exact selected SASS set. PyTorch wheel architecture flags
+alone do not prove extension compatibility. The historical Hopper-only image
+contains no extension PTX and cannot run those kernels on B200.
+
+These options prepare image bytes; they do not establish B200 functional
+acceptance. A successor still needs exact-image security, licensing, delivery,
+native kernel and complete workload validation on the selected GPU. Models,
+library versions, inference backends and evaluation thresholds stay unchanged.
