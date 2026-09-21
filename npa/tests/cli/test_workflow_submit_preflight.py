@@ -1122,7 +1122,7 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
 
 def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
-    mocker.patch(
+    checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         return_value=[],
     )
@@ -1139,6 +1139,8 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
         "promote_checkpoint",
         "--image-pull-secret",
         "operator-registry",
+        "--infra",
+        "k8s/target-context",
     ]
     for name in (
         "controller_image",
@@ -1153,9 +1155,14 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
     result = runner.invoke(app, args)
 
     assert result.exit_code == 0, result.output
+    assert checks.call_args.kwargs["pull_secrets_by_image"] == {
+        digest_image: ("operator-registry",)
+    }
+    assert checks.call_args.kwargs["context"] == "target-context"
     assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
         digest_image: ("operator-registry",)
     }
+    assert contracts.call_args.kwargs["context"] == "target-context"
 
 
 def test_image_none_automatically_plans_npa_source_staging() -> None:

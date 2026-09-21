@@ -7718,20 +7718,22 @@ def preflight_images_cmd(
         typer.echo("images: none pinned by this spec")
         return
 
+    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
+
+    target_context = context_from_infra(infra)
     checks = check_image_pulls_with_credentials(
         images,
         mint=True,
         pull_secrets_by_image=pull_secrets_by_image,
+        context=target_context,
     )
     failed = [check for check in checks if not check.ok]
     contract_checks: list[dict[str, object]] = []
     if not failed:
-        from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
-
         contract_checks = _preflight_image_bootstrap_contracts(
             images=images,
             pull_checks=checks,
-            context=context_from_infra(infra),
+            context=target_context,
             pull_secrets_by_image=pull_secrets_by_image,
             observation_timeout_seconds=image_bootstrap_timeout_seconds,
         )

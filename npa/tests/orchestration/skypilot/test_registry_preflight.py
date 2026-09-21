@@ -513,8 +513,60 @@ def test_host_credentials_do_not_replace_declared_target_pull_secret(
     assert checks[0].operator_status == "verified"
     assert checks[0].target_status == "unverified"
     assert checks[0].authority == "none"
+    assert checks[0].http_status == 200
     assert checks[0].digest == DIGEST
     assert "private-token" not in checks[0].render()
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    (
+        "Authorization: Bearer synthetic-review-secret",
+        '{"kind":"Secret","data":{".dockerconfigjson":"synthetic-review-secret"}}',
+        "NPA_REGISTRY_PASSWORD=synthetic-review-secret",
+        'error: "Bearer synthetic-review-secret"',
+    ),
+)
+def test_host_credentials_bound_target_lookup_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    diagnostic: str,
+) -> None:
+    _configure_private_registry(monkeypatch)
+    secret = "synthetic-review-secret"
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(manifest_status=200),
+        pull_secret_names=("unreadable-secret",),
+        secret_runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            1,
+            stdout="",
+            stderr=diagnostic,
+        ),
+    )
+
+    assert checks[0].status == "target_pull_unverified"
+    assert secret not in checks[0].render()
+    assert ".dockerconfigjson" not in checks[0].render()
+    assert "Kubernetes rejected the secret lookup (exit 1)" in checks[0].detail
+
+
+def test_target_lookup_exception_diagnostic_is_bounded() -> None:
+    secret = "synthetic-exception-secret"
+
+    def unavailable(*args, **kwargs):  # noqa: ANN001
+        raise OSError(f"transport rejected Bearer {secret}")
+
+    verified, detail = verify_kubernetes_pull_secret(
+        REGISTRY,
+        ("unreadable-secret",),
+        runner=unavailable,
+    )
+
+    assert verified is False
+    assert secret not in detail
+    assert "Kubernetes inventory unavailable (OSError)" in detail
 
 
 def test_host_credentials_require_declared_secret_to_have_docker_config_type(
@@ -591,6 +643,7 @@ def test_host_and_declared_target_authorities_are_both_verified(
     assert checks[0].operator_status == "verified"
     assert checks[0].target_status == "verified_pull_secret"
     assert checks[0].authority == "kubernetes_image_pull_secret"
+    assert checks[0].http_status == 200
     assert checks[0].digest == DIGEST
 
 
@@ -640,7 +693,7 @@ def test_missing_or_rbac_denied_pull_secret_is_not_target_pull_proof() -> None:
 
     assert checks[0].status == "target_pull_unverified"
     assert checks[0].target_status == "unverified"
-    assert "forbidden" in checks[0].detail
+    assert "Kubernetes rejected the secret lookup (exit 1)" in checks[0].detail
 
 
 def test_invalid_pull_secret_reference_runs_no_kubectl() -> None:
@@ -669,6 +722,26 @@ def test_target_secret_with_wrong_registry_is_unverified() -> None:
 
     assert verified is False
     assert "does not cover registry ghcr.io" in detail
+
+
+@pytest.mark.parametrize(
+    "docker_config_registry",
+    (
+        "docker.io",
+        "https://index.docker.io/v1/",
+        "registry-1.docker.io",
+    ),
+)
+def test_docker_hub_pull_secret_registry_aliases_are_equivalent(
+    docker_config_registry: str,
+) -> None:
+    verified, detail = verify_kubernetes_pull_secret(
+        "docker.io",
+        ("pull-secret",),
+        runner=lambda *args, **kwargs: _docker_secret_result(docker_config_registry),
+    )
+
+    assert verified is True, detail
 
 
 def test_target_secret_with_empty_auth_entry_is_unverified() -> None:

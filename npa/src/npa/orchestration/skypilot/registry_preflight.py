@@ -525,7 +525,10 @@ def _server_side_copy_hint(reference: ImageReference) -> str:
 def _registry_host(value: str) -> str:
     cleaned = str(value or "").strip().removeprefix("docker:")
     cleaned = cleaned.removeprefix("https://").removeprefix("http://")
-    return cleaned.split("/", 1)[0].rstrip("/")
+    host = cleaned.split("/", 1)[0].rstrip("/")
+    if host in {"docker.io", "index.docker.io", "registry-1.docker.io"}:
+        return "docker.io"
+    return host
 
 
 def resolve_registry_credentials(
@@ -761,13 +764,15 @@ def verify_kubernetes_pull_secret(
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
-            failures.append(f"{name}: Kubernetes inventory unavailable ({exc})")
+            failures.append(
+                f"{name}: Kubernetes inventory unavailable ({type(exc).__name__})"
+            )
             continue
         if result.returncode != 0:
-            detail = (
-                result.stderr or result.stdout or f"exit {result.returncode}"
-            ).strip()
-            failures.append(f"{name}: Kubernetes rejected the secret lookup ({detail})")
+            failures.append(
+                f"{name}: Kubernetes rejected the secret lookup "
+                f"(exit {result.returncode})"
+            )
             continue
         try:
             secret = json.loads(result.stdout or "{}")
