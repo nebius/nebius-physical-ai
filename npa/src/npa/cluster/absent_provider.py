@@ -122,11 +122,11 @@ class AbsenceProvider:
         )
 
     def inventory(
-        self, command: list[str], parent: str, *, absent_parent=False
+        self, command: list[str], parent: str, *, absent_parent=False, extra_args=()
     ) -> list[dict]:
         rows, token, seen = [], "", set()
         while True:
-            args = [*command, "list", "--parent-id", parent]
+            args = [*command, "list", "--parent-id", parent, *extra_args]
             if token:
                 args.extend(["--page-token", token])
             result = self.query(args)
@@ -136,10 +136,12 @@ class AbsenceProvider:
             require(result.returncode == 0, "Complete provider inventory unavailable")
             payload = json.loads(result.stdout)
             require(
-                isinstance(payload, dict) and isinstance(payload.get("items"), list),
+                isinstance(payload, dict)
+                and not (set(payload) - {"items", "next_page_token"})
+                and isinstance(payload.get("items", []), list),
                 "Incomplete provider inventory response",
             )
-            rows.extend(payload["items"])
+            rows.extend(payload.get("items", []))
             token = payload.get("next_page_token", "")
             require(
                 isinstance(token, str) and (not token or token not in seen),
@@ -189,16 +191,11 @@ def verify_absence(provider: AbsenceProvider, evidence: dict) -> None:
             "Owned cluster name or ID remains live or ambiguous",
         )
     releases = provider.inventory(
-        command_for("application-release"), journal["project_id"]
+        command_for("application-release"),
+        journal["project_id"],
+        extra_args=("--cluster-id", cluster["id"]),
     )
-    for item in releases:
-        parent = item["metadata"]["parent_id"]
-        cluster_id = item.get("spec", {}).get("cluster_id") or item.get("cluster_id")
-        require(
-            parent == journal["project_id"] and bool(cluster_id),
-            "Application inventory cannot establish cluster identity",
-        )
-        require(cluster_id != cluster["id"], "A cluster application remains live")
+    require(not releases, "Filtered cluster application inventory is not empty")
     children = provider.inventory(
         command_for("node-group"), cluster["id"], absent_parent=True
     )

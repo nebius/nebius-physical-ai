@@ -75,6 +75,12 @@ if "get" in args:
  print("rpc error: code = " + ("PermissionDenied" if mode=="denied" else
        "Unavailable" if mode=="unknown" else "NotFound"),file=sys.stderr);sys.exit(5)
 if "list" in args:
+ if "k8s-release" in args:
+  if "--cluster-id" not in args or args[args.index("--cluster-id")+1] != "cluster-example":
+   print("code = InvalidArgument",file=sys.stderr);sys.exit(3)
+  if mode=="application-live":
+   print(json.dumps({"items":[{"unexpected":"live or unbound row"}]}));sys.exit(0)
+ if mode=="empty-protobuf":print("{}");sys.exit(0)
  rows=[]
  if mode=="same-name" and "cluster" in args:
   rows=[{"metadata":{"id":"another-cluster","parent_id":"project-example", "name":"owned-example"}}]
@@ -579,3 +585,64 @@ def test_actual_project_status_contract_rejects_unknown_or_wrong_scope(
     )
     with pytest.raises(AbsenceRecoveryError, match="Wrong project authority"):
         provider.project()
+
+
+@pytest.mark.parametrize("mode", ["absent", "empty-protobuf"])
+def test_application_inventory_binds_cluster_on_every_page(recovery, monkeypatch, mode):
+    path, _manifest, operation = recovery
+    monkeypatch.setenv("ABSENCE_FAKE_MODE", mode)
+    result = _run(path)
+    assert result.returncode == 0, result.stderr
+    calls = [
+        json.loads(line)
+        for line in (path.parent / "provider-calls.jsonl").read_text().splitlines()
+    ]
+    pages = [args for args in calls if "k8s-release" in args and "list" in args]
+    assert len(pages) == (2 if mode == "absent" else 1)
+    for args in pages:
+        assert args[args.index("--cluster-id") + 1] == "cluster-example"
+        assert args[args.index("--parent-id") + 1] == "project-example"
+    assert operation.read()["phase"] == "destroyed"
+
+
+def test_any_filtered_application_row_refuses_terminal_transition(
+    recovery, monkeypatch
+):
+    path, _manifest, operation = recovery
+    monkeypatch.setenv("ABSENCE_FAKE_MODE", "application-live")
+    result = _run(path)
+    assert result.returncode != 0
+    assert operation.read()["phase"] == "recovery-required"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"error": "not an empty list response"},
+        {"items": None},
+        {"items": {}},
+        {"next_page_token": None},
+        {"next_page_token": 7},
+    ],
+)
+def test_unknown_or_malformed_inventory_response_is_not_absence(
+    recovery, monkeypatch, payload
+):
+    from npa.cluster.absent_provider import AbsenceProvider
+
+    path, manifest, _operation = recovery
+    evidence = load_legacy_evidence(manifest)
+    provider = AbsenceProvider(evidence["authority"], path.parent)
+    monkeypatch.setattr(
+        provider,
+        "query",
+        lambda args: subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+    with pytest.raises(AbsenceRecoveryError):
+        provider.inventory(
+            ["applications", "v1alpha1", "k8s-release"],
+            "project-example",
+            extra_args=("--cluster-id", "cluster-example"),
+        )
