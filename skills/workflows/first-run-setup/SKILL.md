@@ -168,10 +168,10 @@ npa workbench workflow preflight-images <spec.yaml> --project <alias> \
 GHCR mirror by default. If you explicitly select a custom/private registry,
 `not_found` means the image was never pushed there. A `403` does not fail a job —
 Kubernetes retries pulls forever — so an unpullable image silently burns cluster
-time in `ImagePullBackOff`. The check uses SkyPilot's configured namespace, or
-the selected kubeconfig context namespace when no override exists, and proves
-every distinct rendered `imagePullSecret` set after applying SkyPilot 0.12's
-first-entry context/task override semantics. An explicit empty
+time in `ImagePullBackOff`. The check uses the selected kubeconfig context
+namespace (the namespace source used by SkyPilot 0.12), falling back to
+`default`, and proves every distinct rendered `imagePullSecret` set after
+applying SkyPilot 0.12's first-entry context/task override semantics. An explicit empty
 `imagePullSecrets: []` layer is rejected instead of being mistaken for an absent
 override. For `deployIfAbsent`, `submit` checks definitive public manifests
 before provisioning and runs the exact target pod proof immediately after the

@@ -380,6 +380,7 @@ def probe_image_capabilities(
         require_stable_absence: bool = False,
     ) -> tuple[str, str]:
         absent_observations = 0
+        last_identity_read_error = ""
         for _attempt in range(4):
             current, current_error = _read_owned_probe_identity(
                 common=common,
@@ -396,6 +397,10 @@ def probe_image_capabilities(
                     absent_observations += 1
                     if not require_stable_absence or absent_observations >= 2:
                         return "verified", "exact probe is absent"
+                    continue
+                if current_error.startswith("probe identity read "):
+                    absent_observations = 0
+                    last_identity_read_error = current_error
                     continue
                 return "refused_identity_mismatch", current_error
             absent_observations = 0
@@ -433,7 +438,10 @@ def probe_image_capabilities(
                     "failed",
                     f"probe deletion was rejected (exit {delete.returncode})",
                 )
-        return "failed", "exact probe absence was not verified"
+        return (
+            "failed",
+            last_identity_read_error or "exact probe absence was not verified",
+        )
 
     for _attempt in range(3):
         probe_id = str(nonce_factory()).lower()

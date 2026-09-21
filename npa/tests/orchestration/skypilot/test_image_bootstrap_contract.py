@@ -338,6 +338,22 @@ def test_probe_rejects_negative_observation_timeout_before_creation() -> None:
         )
 
 
+def test_probe_rejects_empty_namespace_before_creation() -> None:
+    with pytest.raises(
+        ImageBootstrapContractError,
+        match="an exact valid Kubernetes namespace is required",
+    ):
+        _probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx-exact",
+            namespace="",
+            runner=lambda *args, **kwargs: pytest.fail(
+                "invalid target must fail before creation"
+            ),
+        )
+
+
 def test_probe_attaches_declared_image_pull_secrets() -> None:
     calls: list[list[str]] = []
 
@@ -748,5 +764,47 @@ def test_interruption_during_cleanup_identity_read_retries_exact_cleanup() -> No
             nonce_factory=lambda: "8" * 16,
         )
 
+    assert reads == 4
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+
+
+def test_cleanup_retries_transient_identity_read_failure() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+    deleted = False
+
+    def runner(argv, _env):
+        nonlocal deleted, reads
+        calls.append(argv)
+        action = _verb(argv)
+        if action == "run":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if action == "get":
+            reads += 1
+            if reads == 2:
+                raise subprocess.TimeoutExpired(argv, 30)
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            deleted = True
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx",
+        runner=runner,
+        terminal_observer=_terminal_observer(),
+        nonce_factory=lambda: "9" * 16,
+    )
+
+    assert evidence.ok
+    assert evidence.cleanup == "verified"
     assert reads == 4
     assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1

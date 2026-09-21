@@ -171,9 +171,10 @@ successful `npa skypilot verify --cluster <exact-context>`:
   credential, while private Kubernetes paths use an owned pull-probe pod and the
   declared `imagePullSecret`. Kubernetes verification requires the exact
   `--infra k8s/<context>` and resolves the same effective namespace SkyPilot
-  uses: a context-specific/global SkyPilot override, otherwise the selected
-  kubeconfig context namespace, otherwise `default`. Every distinct rendered
-  Secret set is probed independently. SkyPilot 0.12 replaces the first
+  0.12 uses: the selected kubeconfig context namespace, otherwise `default`.
+  SkyPilot config-level `kubernetes.namespace` keys are not namespace
+  overrides. Every distinct rendered Secret set is probed independently.
+  SkyPilot 0.12 replaces the first
   `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
   that effective set instead of unioning overridden Secrets. A present empty
   `imagePullSecrets: []` list is invalid and fails preflight rather than being

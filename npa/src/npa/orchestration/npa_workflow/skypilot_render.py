@@ -585,9 +585,9 @@ def render_pip_extra_setup(extra: str) -> str:
 
 
 #: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
-#: SkyPilot 0.12 accepts these inside a task's ``config:`` block, and it APPENDS
-#: (rather than replaces) lists inside ``kubernetes.pod_config`` -- so a spec can
-#: add an imagePullSecret or a volume without discarding the cluster-wide ones.
+#: SkyPilot 0.12 accepts these inside a task's ``config:`` block and recursively
+#: merges ``kubernetes.pod_config``. Most lists append, while imagePullSecrets
+#: keeps the base tail and replaces the first entry with the task override.
 #: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
 #: arbitrary cluster configuration.
 TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")

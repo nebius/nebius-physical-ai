@@ -1010,12 +1010,11 @@ def resolve_kubernetes_pull_target(
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> KubernetesPullTarget:
-    """Resolve the namespace and config-level Secrets SkyPilot will apply."""
+    """Resolve SkyPilot's kubeconfig namespace and config-level Secrets."""
 
     selected_context = str(context or "").strip()
     if not selected_context:
         raise RegistryPreflightError("an exact Kubernetes context is required")
-    namespace = ""
     secret_names: tuple[str, ...] = ()
     if global_config_path is not None:
         try:
@@ -1043,65 +1042,56 @@ def resolve_kubernetes_pull_target(
             raise RegistryPreflightError(
                 "selected SkyPilot context config must be a mapping"
             )
-        for config in (kubernetes, context_config):
-            raw_namespace = config.get("namespace")
-            if raw_namespace is not None:
-                if not isinstance(raw_namespace, str) or not raw_namespace.strip():
-                    raise RegistryPreflightError(
-                        "selected SkyPilot namespace must be a non-empty string"
-                    )
-                namespace = raw_namespace.strip()
         secret_names = merge_skypilot_pull_secret_names(
             _configured_pull_secret_names(kubernetes),
             _configured_pull_secret_names(context_config),
         )
-    if not namespace:
-        execute = runner or subprocess.run
-        try:
-            result = execute(
-                [
-                    "kubectl",
-                    "--context",
-                    selected_context,
-                    "config",
-                    "view",
-                    "--minify",
-                    "-o",
-                    "json",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise RegistryPreflightError(
-                f"Kubernetes context namespace is unavailable ({type(exc).__name__})"
-            ) from None
-        if result.returncode != 0:
-            raise RegistryPreflightError(
-                f"Kubernetes context namespace lookup failed (exit {result.returncode})"
-            )
-        try:
-            payload = json.loads(result.stdout or "{}")
-            contexts = payload["contexts"]
-            matches = [
-                item
-                for item in contexts
-                if isinstance(item, Mapping)
-                and str(item.get("name") or "") == selected_context
-            ]
-            if len(matches) != 1:
-                raise ValueError
-            context_payload = matches[0]["context"]
-            if not isinstance(context_payload, Mapping):
-                raise ValueError
-            namespace = str(context_payload.get("namespace") or "default").strip()
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            raise RegistryPreflightError(
-                "Kubernetes context namespace response is invalid"
-            ) from None
+    execute = runner or subprocess.run
+    try:
+        result = execute(
+            [
+                "kubectl",
+                "--context",
+                selected_context,
+                "config",
+                "view",
+                "--minify",
+                "-o",
+                "json",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RegistryPreflightError(
+            f"Kubernetes context namespace is unavailable ({type(exc).__name__})"
+        ) from None
+    if result.returncode != 0:
+        raise RegistryPreflightError(
+            f"Kubernetes context namespace lookup failed (exit {result.returncode})"
+        )
+    try:
+        payload = json.loads(result.stdout or "{}")
+        contexts = payload["contexts"]
+        matches = [
+            item
+            for item in contexts
+            if isinstance(item, Mapping)
+            and str(item.get("name") or "") == selected_context
+        ]
+        if len(matches) != 1:
+            raise ValueError
+        context_payload = matches[0]["context"]
+        if not isinstance(context_payload, Mapping):
+            raise ValueError
+        namespace = str(context_payload.get("namespace") or "default").strip()
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise RegistryPreflightError(
+            "Kubernetes context namespace response is invalid"
+        ) from None
     if not _KUBERNETES_NAME_RE.fullmatch(namespace):
         raise RegistryPreflightError("effective Kubernetes namespace is invalid")
     invalid_secret = next(

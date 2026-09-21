@@ -1050,7 +1050,9 @@ def test_effective_target_uses_selected_context_namespace() -> None:
     assert target.pull_secret_names == ()
 
 
-def test_effective_target_applies_context_secret_override(tmp_path) -> None:
+def test_effective_target_applies_secret_override_in_kubeconfig_namespace(
+    tmp_path,
+) -> None:
     config = tmp_path / "sky.yaml"
     config.write_text(
         """
@@ -1072,15 +1074,38 @@ kubernetes:
         encoding="utf-8",
     )
 
+    def kubectl(cmd, **kwargs):  # noqa: ANN001
+        assert cmd == [
+            "kubectl",
+            "--context",
+            "target-context",
+            "config",
+            "view",
+            "--minify",
+            "-o",
+            "json",
+        ]
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "contexts": [
+                        {
+                            "name": "target-context",
+                            "context": {"namespace": "kubeconfig-namespace"},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
     target = resolve_kubernetes_pull_target(
-        context="target-context",
-        global_config_path=config,
-        runner=lambda *args, **kwargs: pytest.fail(
-            "explicit SkyPilot namespace must not consult ambient context"
-        ),
+        context="target-context", global_config_path=config, runner=kubectl
     )
 
-    assert target.namespace == "team-namespace"
+    assert target.namespace == "kubeconfig-namespace"
     assert target.pull_secret_names == ("context-secret", "global-fallback")
 
 
