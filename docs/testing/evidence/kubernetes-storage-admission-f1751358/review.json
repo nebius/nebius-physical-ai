@@ -1,0 +1,72 @@
+{
+  "schema": "npa.kubernetes-storage-admission-review.v1",
+  "recorded_at": "2026-09-21T05:21:14.546397+00:00",
+  "source_commit": "f1751358cd21bf48384fd597550da4a29fbfebb4",
+  "source_file": "npa/src/npa/orchestration/skypilot/workflow.py",
+  "source_file_sha256": "83b0e706ea53ec42514f730d5292a11d3b9970f671a5495d6d3150c55cff09a0",
+  "pr": 659,
+  "source_review": "accepted exact commit; 301 focused workflow/storage/execution-preflight tests passed",
+  "original_focused_tests": 151,
+  "full_suite_status": "24949 passed, 4 failed because torch was absent; exact four passed after torch installation; original broad log remains red",
+  "ci_status_at_review": "pending; no merge-ready claim",
+  "live_scope": "Exact host launcher successfully admitted one managed Kubernetes job with declared Nebius durable storage; workload subsequently failed its separate numerical audit.",
+  "config": {
+    "allowed_clouds": [
+      "kubernetes",
+      "nebius"
+    ],
+    "nebius_capabilities": [
+      "storage"
+    ],
+    "submitted_client_and_server_config_sha256": "4104d77272b9fc1b2a4d43df74395e9ee2f76fc7c6e1ae3561d8c9ce9b4c58ad",
+    "compute_target": "explicit Kubernetes context retained",
+    "launch_sequence": 1
+  },
+  "runtime": {
+    "requested_accelerator": "B200:1",
+    "workload_image_manifest_digest": "sha256:6f3cb888e1a59e2e58ab5582851ab2d1a205928df7fd9b42266dd64f4781bb22",
+    "workload_image_source": "b12c1005198d0a1f58fe646db5214c9c75f5c59a",
+    "durable_manifest_matches_job": true,
+    "uploaded_object_count": 8,
+    "upload_receipt_errors": 0,
+    "readback_verified_in_retained_receipt": true,
+    "workload_terminal_state": "FAILED",
+    "workload_failure": "Strict cuRobo joint-path metric provenance check, after actual planning. This remains a failed workload; only launcher/storage admission is accepted here."
+  },
+  "cleanup": {
+    "cancel_cloud_calls": false,
+    "cancel_detected_state": "FAILED",
+    "cancel_outcome": "terminal",
+    "controller_cleanup_outcome": "cleaned",
+    "controller_remote_absence_verified": true,
+    "exact_image_pods_after": 0,
+    "local_api_pid_absent": true,
+    "local_api_state": "stopped",
+    "matching_kubernetes_objects_after": 0,
+    "partial_outputs_preserved": true,
+    "status": "cleanup_complete"
+  },
+  "independent_root_audit": {
+    "anonymous_source_file_hash_verified": true,
+    "retained_downloaded_originals_verified": 4,
+    "manifest_object_bindings_verified": 8,
+    "new_provider_query": false,
+    "new_object_store_readback": false,
+    "new_workload_run": false
+  },
+  "original_private_receipt_sha256": {
+    "exact-review-receipt.json": "478b55f20c9a9840451b77a533209c77f5cda9b6799eb7327fff4eaa643b79d2",
+    "independent-review.md": "22a41837362da562b2a63c44ba7eb58416093264c92d6d0bcf538795185b1baa",
+    "transport-binding.json": "cfc8681e86ce4ced2d28a7437bdea6881d453e52dcb96aa5e49136d1f66d28c2",
+    "cleanup-receipt.json": "126cc3de604c0cfacd1e60581490e71ae50cf47194c7acbf8900bbc785584aa7",
+    "partial-output-manifest.json": "4b12ecd2ba38823007c476fd2f6a5ae105f213b71c073ad706b5e84ef11dc5f4",
+    "upload-receipt.json": "a59af0ac08416d4632f07fa483c8d34036a2da4aeeebc35b341f267e633392ab"
+  },
+  "limitations": [
+    "A prior manual reconciliation of a no-launch local journal is excluded from product recovery acceptance.",
+    "Four retained downloaded originals were independently hash checked. The other four objects are bound only by the retained upload/readback manifest, not a new independent download.",
+    "No complete cuRobo benchmark or quaternion-repair acceptance is claimed by this host-launcher evidence.",
+    "No separate GPU/VLM quality test applies to the host-only configuration change; the actual B200 workload supplies the live transport/storage exercise.",
+    "Original broad-suite failure remains recorded. Required exact-head hosted checks still determine CI readiness."
+  ]
+}
