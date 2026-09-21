@@ -23,14 +23,16 @@ import platform
 import re
 import shutil
 import stat
+import struct
 import sys
 import tempfile
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
 import numpy as np
-from typing import Any, Callable
+from typing import Any, BinaryIO, Callable
 
 from npa.clients.storage import safe_s3_download_target
 from npa.workbench.robocasa.schemas import (
@@ -75,6 +77,18 @@ NVIDIA_KITCHEN_ASSET_REVISION = "420a04af939c34873e6839a586b70844baf28aab"
 DEPLOYED_SOURCE_SHA_ENV = "ROBOCASA_DEPLOYED_IMAGE_SOURCE_SHA"
 DEPLOYED_MANIFEST_DIGEST_ENV = "ROBOCASA_DEPLOYED_IMAGE_MANIFEST_DIGEST"
 TRAINING_PROVENANCE_FILENAME = "training_dataset_provenance.json"
+WORKER_TEMP_ROOT_ENV = "ROBOCASA_WORKER_TEMP_ROOT"
+WORKER_ASSET_TEMP_ROOT_ENV = "ROBOCASA_WORKER_ASSET_TEMP_ROOT"
+_ASSET_ARCHIVE_MEMBER_LIMIT = 100_000
+_ASSET_ARCHIVE_MEMBER_SIZE_LIMIT = 8 * 1024**3
+_ASSET_ARCHIVE_UNCOMPRESSED_LIMIT = 64 * 1024**3
+_ASSET_ARCHIVE_COMPRESSED_LIMIT = 66 * 1024**3
+_ASSET_ARCHIVE_CENTRAL_DIRECTORY_LIMIT = 128 * 1024**2
+_ASSET_ARCHIVE_DIRECTORY_LIMIT = 100_000
+_ASSET_ARCHIVE_PATH_LIMIT = 4096
+_ASSET_ARCHIVE_DEPTH_LIMIT = 64
+_ASSET_EXTRACT_CHUNK = 1024 * 1024
+_ASSET_RECEIPT_SIZE_LIMIT = 64 * 1024
 
 
 class RoboCasaError(RuntimeError):
@@ -525,8 +539,9 @@ def _stage_publish_and_receipt(
     assets_root: Path,
     receipt_path: Path,
 ) -> None:
+    temporary_parent = _asset_temporary_parent(receipt_path)
     with tempfile.TemporaryDirectory(
-        prefix="asset-", dir=receipt_path.parent
+        prefix="asset-", dir=temporary_parent
     ) as temporary:
         staging_root = Path(temporary)
         extract_root = (
@@ -535,42 +550,281 @@ def _stage_publish_and_receipt(
             else staging_root / archive.extract_to
         )
         extract_root.mkdir(parents=True, exist_ok=True)
-        _extract_validated_zip(zip_path, extract_root)
+        with _open_asset_archive(zip_path) as archive_file:
+            archive_sha256 = _sha256_open_file(archive_file)
+            _extract_validated_zip_file(archive_file, zip_path, extract_root)
+            if _sha256_open_file(archive_file) != archive_sha256:
+                raise RoboCasaError(
+                    f"RoboCasa asset archive changed while reading: {zip_path}"
+                )
         _validate_asset_tree(staging_root / archive.required_path, archive)
         staged_publish = staging_root / archive.publish_path
-        staged_digest = _sha256_tree(staged_publish)
-        file_count = sum(path.is_file() for path in staged_publish.rglob("*"))
+        staged_digest, file_count = _published_asset_identity(staged_publish, archive)
         _replace_asset_tree(staged_publish, assets_root / archive.publish_path)
-    receipt = _asset_receipt(archive, zip_path, staged_digest, file_count)
+    receipt = _asset_receipt(archive, archive_sha256, staged_digest, file_count)
     _write_json_atomic(receipt_path, receipt)
 
 
-def _extract_validated_zip(zip_path: Path, destination: Path) -> None:
+def _asset_temporary_parent(receipt_path: Path) -> Path:
+    configured = os.environ.get(WORKER_ASSET_TEMP_ROOT_ENV, "").strip()
+    if not configured:
+        return receipt_path.parent
+    state_root = receipt_path.parent.parent.resolve()
+    workers_root = (state_root / "workers").resolve()
+    candidate = Path(configured).resolve()
     try:
-        with ZipFile(zip_path) as archive:
+        candidate.relative_to(workers_root)
+    except ValueError as exc:
+        raise RoboCasaError(
+            f"{WORKER_ASSET_TEMP_ROOT_ENV} must stay under {workers_root}"
+        ) from exc
+    candidate.mkdir(parents=True, exist_ok=True)
+    return candidate
+
+
+def _extract_validated_zip(zip_path: Path, destination: Path) -> None:
+    with _open_asset_archive(zip_path) as archive_file:
+        _extract_validated_zip_file(archive_file, zip_path, destination)
+
+
+@contextlib.contextmanager
+def _open_asset_archive(zip_path: Path) -> Any:
+    try:
+        resolved = zip_path.resolve(strict=True)
+        descriptor = os.open(
+            resolved,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as exc:
+        raise RoboCasaError(
+            f"failed to open RoboCasa asset archive {zip_path}: {exc}"
+        ) from exc
+    try:
+        with os.fdopen(descriptor, "rb") as archive_file:
+            yield archive_file
+    except Exception:
+        raise
+
+
+def _extract_validated_zip_file(
+    archive_file: BinaryIO, zip_path: Path, destination: Path
+) -> None:
+    try:
+        _preflight_asset_zip(archive_file, zip_path)
+        with ZipFile(archive_file) as archive:
             members = archive.infolist()
             if not members:
                 raise RoboCasaError(f"RoboCasa asset archive is empty: {zip_path}")
+            if len(members) > _ASSET_ARCHIVE_MEMBER_LIMIT:
+                raise RoboCasaError(
+                    "RoboCasa asset archive exceeds the member limit: "
+                    f"{len(members)} > {_ASSET_ARCHIVE_MEMBER_LIMIT}"
+                )
+            total_declared = 0
+            paths: set[str] = set()
+            file_paths: set[tuple[str, ...]] = set()
+            directory_paths: set[tuple[str, ...]] = set()
             for member in members:
-                _validate_zip_member(member.filename, member.external_attr)
-            archive.extractall(destination)
+                relative = _validate_zip_member(member.filename, member.external_attr)
+                normalized = relative.as_posix().rstrip("/")
+                if normalized in paths:
+                    raise RoboCasaError(
+                        f"RoboCasa asset archive has duplicate path: {member.filename}"
+                    )
+                paths.add(normalized)
+                parts = relative.parts
+                parents = tuple(parts[:depth] for depth in range(1, len(parts)))
+                if any(parent in file_paths for parent in parents):
+                    raise RoboCasaError(
+                        "RoboCasa asset archive has a file/directory prefix "
+                        f"collision: {member.filename}"
+                    )
+                member_path = tuple(parts)
+                if not member.is_dir() and member_path in directory_paths:
+                    raise RoboCasaError(
+                        "RoboCasa asset archive has a file/directory collision: "
+                        f"{member.filename}"
+                    )
+                directories = parents + ((member_path,) if member.is_dir() else ())
+                for directory in directories:
+                    directory_paths.add(directory)
+                    if len(directory_paths) > _ASSET_ARCHIVE_DIRECTORY_LIMIT:
+                        raise RoboCasaError(
+                            "RoboCasa asset archive exceeds the directory limit"
+                        )
+                if not member.is_dir():
+                    file_paths.add(member_path)
+                if member.flag_bits & 0x1:
+                    raise RoboCasaError(
+                        f"RoboCasa asset archive has encrypted member: {member.filename}"
+                    )
+                if member.file_size > _ASSET_ARCHIVE_MEMBER_SIZE_LIMIT:
+                    raise RoboCasaError(
+                        "RoboCasa asset archive member exceeds the size limit: "
+                        f"{member.filename}"
+                    )
+                total_declared += member.file_size
+                if total_declared > _ASSET_ARCHIVE_UNCOMPRESSED_LIMIT:
+                    raise RoboCasaError(
+                        "RoboCasa asset archive exceeds the uncompressed size limit"
+                    )
+
+            total_extracted = 0
+            for member in members:
+                relative = _validate_zip_member(member.filename, member.external_attr)
+                target = destination.joinpath(*relative.parts)
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                extracted = 0
+                with archive.open(member, "r") as source, target.open("xb") as output:
+                    while chunk := source.read(_ASSET_EXTRACT_CHUNK):
+                        extracted += len(chunk)
+                        total_extracted += len(chunk)
+                        if (
+                            extracted > member.file_size
+                            or extracted > _ASSET_ARCHIVE_MEMBER_SIZE_LIMIT
+                            or total_extracted > _ASSET_ARCHIVE_UNCOMPRESSED_LIMIT
+                        ):
+                            raise RoboCasaError(
+                                "RoboCasa asset archive exceeded declared extraction "
+                                f"bounds: {member.filename}"
+                            )
+                        output.write(chunk)
+                if extracted != member.file_size:
+                    raise RoboCasaError(
+                        "RoboCasa asset archive member size disagrees with metadata: "
+                        f"{member.filename}"
+                    )
     except BadZipFile as exc:
         raise RoboCasaError(
             f"RoboCasa asset archive is not a valid zip: {zip_path}"
         ) from exc
+    except OSError as exc:
+        raise RoboCasaError(
+            f"failed to extract RoboCasa asset archive {zip_path}: {exc}"
+        ) from exc
 
 
-def _validate_zip_member(name: str, external_attr: int) -> None:
+def _preflight_asset_zip(archive_file: BinaryIO, zip_path: Path) -> None:
+    """Bound ZIP metadata before ``ZipFile`` allocates the central directory."""
+    archive_stat = os.fstat(archive_file.fileno())
+    if not stat.S_ISREG(archive_stat.st_mode):
+        raise RoboCasaError(f"RoboCasa asset archive is not a regular file: {zip_path}")
+    if archive_stat.st_size > _ASSET_ARCHIVE_COMPRESSED_LIMIT:
+        raise RoboCasaError("RoboCasa asset archive exceeds the compressed size limit")
+    # CPython's bounded EOCD reader also resolves ZIP64 records without loading
+    # central-directory entries. It reads at most the ZIP comment window plus
+    # fixed-size EOCD/ZIP64 records.
+    end_record = zipfile._EndRecData(archive_file)  # noqa: SLF001
+    if end_record is None:
+        raise BadZipFile("end-of-central-directory record is missing")
+    if (
+        int(end_record[zipfile._ECD_DISK_NUMBER]) != 0  # noqa: SLF001
+        or int(end_record[zipfile._ECD_DISK_START]) != 0  # noqa: SLF001
+    ):
+        raise BadZipFile("multi-disk RoboCasa asset archives are not supported")
+    declared_member_count = int(
+        end_record[zipfile._ECD_ENTRIES_TOTAL]  # noqa: SLF001
+    )
+    entries_this_disk = int(
+        end_record[zipfile._ECD_ENTRIES_THIS_DISK]  # noqa: SLF001
+    )
+    if entries_this_disk != declared_member_count:
+        raise BadZipFile("inconsistent central-directory entry counts")
+    central_directory_size = int(end_record[zipfile._ECD_SIZE])  # noqa: SLF001
+    central_directory_offset = int(end_record[zipfile._ECD_OFFSET])  # noqa: SLF001
+    if declared_member_count > _ASSET_ARCHIVE_MEMBER_LIMIT:
+        raise RoboCasaError(
+            "RoboCasa asset archive exceeds the member limit: "
+            f"{declared_member_count} > {_ASSET_ARCHIVE_MEMBER_LIMIT}"
+        )
+    if central_directory_size > _ASSET_ARCHIVE_CENTRAL_DIRECTORY_LIMIT:
+        raise RoboCasaError(
+            "RoboCasa asset archive exceeds the central-directory size limit"
+        )
+    concatenated_prefix = (
+        int(end_record[zipfile._ECD_LOCATION])  # noqa: SLF001
+        - central_directory_size
+        - central_directory_offset
+    )
+    if end_record[zipfile._ECD_SIGNATURE] == zipfile.stringEndArchive64:  # noqa: SLF001
+        concatenated_prefix -= (
+            zipfile.sizeEndCentDir64 + zipfile.sizeEndCentDir64Locator
+        )
+    start = central_directory_offset + concatenated_prefix
+    if (
+        start < 0
+        or central_directory_size < 0
+        or start + central_directory_size > archive_stat.st_size
+    ):
+        raise BadZipFile("invalid central-directory bounds")
+
+    archive_file.seek(start)
+    remaining = central_directory_size
+    actual_member_count = 0
+    while remaining:
+        if remaining < zipfile.sizeCentralDir:
+            raise BadZipFile("truncated central-directory record")
+        header = archive_file.read(zipfile.sizeCentralDir)
+        if len(header) != zipfile.sizeCentralDir:
+            raise BadZipFile("truncated central directory")
+        fields = struct.unpack(zipfile.structCentralDir, header)
+        if fields[zipfile._CD_SIGNATURE] != zipfile.stringCentralDir:  # noqa: SLF001
+            raise BadZipFile("invalid central-directory record signature")
+        variable_size = (
+            int(fields[zipfile._CD_FILENAME_LENGTH])  # noqa: SLF001
+            + int(fields[zipfile._CD_EXTRA_FIELD_LENGTH])  # noqa: SLF001
+            + int(fields[zipfile._CD_COMMENT_LENGTH])  # noqa: SLF001
+        )
+        record_size = zipfile.sizeCentralDir + variable_size
+        if record_size > remaining:
+            raise BadZipFile("central-directory record exceeds declared bounds")
+        actual_member_count += 1
+        if actual_member_count > _ASSET_ARCHIVE_MEMBER_LIMIT:
+            raise RoboCasaError(
+                "RoboCasa asset archive exceeds the actual member limit"
+            )
+        archive_file.seek(variable_size, os.SEEK_CUR)
+        remaining -= record_size
+    if actual_member_count != declared_member_count:
+        raise BadZipFile("declared and actual central-directory entry counts disagree")
+    archive_file.seek(0)
+
+
+def _validate_zip_member(name: str, external_attr: int) -> PurePosixPath:
     path = PurePosixPath(name)
     mode = external_attr >> 16
-    if path.is_absolute() or ".." in path.parts:
+    if (
+        not name
+        or "\x00" in name
+        or "\\" in name
+        or len(name.encode("utf-8")) > _ASSET_ARCHIVE_PATH_LIMIT
+        or len(path.parts) > _ASSET_ARCHIVE_DEPTH_LIMIT
+        or path.is_absolute()
+        or path == PurePosixPath(".")
+        or ".." in path.parts
+    ):
         raise RoboCasaError(f"RoboCasa asset archive has unsafe path: {name}")
     if stat.S_ISLNK(mode):
         raise RoboCasaError(f"RoboCasa asset archive has unsafe symlink: {name}")
+    file_type = stat.S_IFMT(mode)
+    if file_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
+        raise RoboCasaError(
+            f"RoboCasa asset archive has unsupported member type: {name}"
+        )
+    return path
 
 
 def _validate_asset_tree(path: Path, archive: _AssetArchive) -> None:
-    if not path.is_dir() or not any(item.is_file() for item in path.rglob("*")):
+    try:
+        _digest, file_count = _asset_tree_identity(path)
+    except (OSError, RoboCasaError) as exc:
+        raise RoboCasaError(
+            f"RoboCasa asset {archive.filename} has an unsafe tree: {exc}"
+        ) from exc
+    if file_count == 0:
         raise RoboCasaError(
             f"RoboCasa asset {archive.filename} lacks {archive.required_path}"
         )
@@ -598,7 +852,10 @@ def _asset_receipt_path(state_root: Path, archive: _AssetArchive) -> Path:
 
 
 def _asset_receipt(
-    archive: _AssetArchive, zip_path: Path, tree_sha256: str, file_count: int
+    archive: _AssetArchive,
+    archive_sha256: str,
+    tree_sha256: str,
+    file_count: int,
 ) -> dict[str, Any]:
     return {
         "schema": "npa.robocasa.asset_receipt.v1",
@@ -607,16 +864,46 @@ def _asset_receipt(
         "filename": archive.filename,
         "publish_path": archive.publish_path,
         "required_path": archive.required_path,
-        "archive_sha256": _sha256_file(zip_path),
+        "archive_sha256": archive_sha256,
         "tree_sha256": tree_sha256,
         "file_count": file_count,
     }
+
+
+def _published_asset_identity(
+    published: Path, archive: _AssetArchive
+) -> tuple[str, int]:
+    """Hash bytes owned by one archive while ignoring nested archive mounts."""
+    publish_path = PurePosixPath(archive.publish_path)
+    exclusions: list[PurePosixPath] = []
+    for candidate in _asset_archives():
+        if candidate == archive:
+            continue
+        try:
+            relative = PurePosixPath(candidate.publish_path).relative_to(publish_path)
+        except ValueError:
+            continue
+        if relative.parts:
+            exclusions.append(relative)
+    return _tree_identity(
+        published,
+        max_files=_ASSET_ARCHIVE_MEMBER_LIMIT,
+        max_bytes=_ASSET_ARCHIVE_UNCOMPRESSED_LIMIT,
+        max_directories=_ASSET_ARCHIVE_DIRECTORY_LIMIT,
+        excluded_paths=tuple(sorted(set(exclusions), key=lambda item: item.as_posix())),
+    )
 
 
 def _asset_receipt_is_valid(
     receipt_path: Path, archive: _AssetArchive, assets_root: Path
 ) -> bool:
     try:
+        receipt_stat = receipt_path.lstat()
+        if (
+            not stat.S_ISREG(receipt_stat.st_mode)
+            or receipt_stat.st_size > _ASSET_RECEIPT_SIZE_LIMIT
+        ):
+            return False
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
@@ -634,8 +921,18 @@ def _asset_receipt_is_valid(
         return False
     if not re.fullmatch(r"[0-9a-f]{64}", str(receipt.get("tree_sha256", ""))):
         return False
+    receipt_file_count = receipt.get("file_count")
+    if type(receipt_file_count) is not int or receipt_file_count <= 0:
+        return False
     required = assets_root / archive.required_path
-    return required.is_dir() and any(item.is_file() for item in required.rglob("*"))
+    published = assets_root / archive.publish_path
+    try:
+        if not required.is_dir() or required.is_symlink():
+            return False
+        tree_sha256, file_count = _published_asset_identity(published, archive)
+    except (OSError, RoboCasaError):
+        return False
+    return tree_sha256 == receipt["tree_sha256"] and file_count == receipt_file_count
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -1118,21 +1415,108 @@ def _parse_env_ids(value: str) -> list[str]:
 
 def _sha256_tree(root: Path) -> str:
     """Hash a tree with canonical path/content length framing."""
+    return _tree_identity(root)[0]
+
+
+def _asset_tree_identity(root: Path) -> tuple[str, int]:
+    return _tree_identity(
+        root,
+        max_files=_ASSET_ARCHIVE_MEMBER_LIMIT,
+        max_bytes=_ASSET_ARCHIVE_UNCOMPRESSED_LIMIT,
+        max_directories=_ASSET_ARCHIVE_DIRECTORY_LIMIT,
+    )
+
+
+def _tree_identity(
+    root: Path,
+    *,
+    max_files: int | None = None,
+    max_bytes: int | None = None,
+    max_directories: int | None = None,
+    excluded_paths: tuple[PurePosixPath, ...] = (),
+) -> tuple[str, int]:
+    """Return a canonical digest and count without following non-regular nodes."""
+    try:
+        root_stat = root.lstat()
+    except OSError as exc:
+        raise RoboCasaError(f"cannot inspect tree root {root}: {exc}") from exc
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise RoboCasaError(f"tree root must be a real directory: {root}")
+
+    def raise_walk_error(exc: OSError) -> None:
+        raise RoboCasaError(f"cannot walk tree {root}: {exc}") from exc
+
+    files: list[tuple[str, Path]] = []
+    declared_bytes = 0
+    directory_count = 0
+
+    def excluded(path: Path) -> bool:
+        relative = PurePosixPath(path.relative_to(root).as_posix())
+        return any(
+            relative == prefix or prefix in relative.parents
+            for prefix in excluded_paths
+        )
+
+    for directory, dirnames, filenames in os.walk(
+        root, followlinks=False, onerror=raise_walk_error
+    ):
+        directory_path = Path(directory)
+        dirnames.sort()
+        filenames.sort()
+        dirnames[:] = [name for name in dirnames if not excluded(directory_path / name)]
+        directory_count += len(dirnames)
+        if max_directories is not None and directory_count > max_directories:
+            raise RoboCasaError(
+                f"tree exceeds directory-count limit: {max_directories}"
+            )
+        for name in dirnames:
+            child = directory_path / name
+            child_stat = child.lstat()
+            if stat.S_ISLNK(child_stat.st_mode) or not stat.S_ISDIR(child_stat.st_mode):
+                raise RoboCasaError(f"tree contains unsafe directory node: {child}")
+        for name in filenames:
+            child = directory_path / name
+            if excluded(child):
+                continue
+            child_stat = child.lstat()
+            if stat.S_ISLNK(child_stat.st_mode) or not stat.S_ISREG(child_stat.st_mode):
+                raise RoboCasaError(f"tree contains unsafe file node: {child}")
+            if max_files is not None and len(files) >= max_files:
+                raise RoboCasaError(f"tree exceeds file-count limit: {max_files}")
+            declared_bytes += child_stat.st_size
+            if max_bytes is not None and declared_bytes > max_bytes:
+                raise RoboCasaError(f"tree exceeds byte limit: {max_bytes}")
+            files.append((child.relative_to(root).as_posix(), child))
+
+    files.sort()
     digest = hashlib.sha256()
     digest.update(_TREE_HASH_DOMAIN)
-    files = sorted(
-        (item.relative_to(root).as_posix(), item)
-        for item in root.rglob("*")
-        if item.is_file()
-    )
     digest.update(len(files).to_bytes(8, "big"))
     for relative_path, path in files:
         _update_length_frame(digest, relative_path.encode("utf-8"))
-        digest.update(path.stat().st_size.to_bytes(8, "big"))
-        with path.open("rb") as handle:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        )
+        with os.fdopen(descriptor, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise RoboCasaError(f"tree file changed type while hashing: {path}")
+            digest.update(before.st_size.to_bytes(8, "big"))
+            bytes_read = 0
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                bytes_read += len(chunk)
                 digest.update(chunk)
-    return digest.hexdigest()
+            after = os.fstat(handle.fileno())
+            if (
+                bytes_read != before.st_size
+                or before.st_dev != after.st_dev
+                or before.st_ino != after.st_ino
+                or before.st_size != after.st_size
+                or before.st_mtime_ns != after.st_mtime_ns
+            ):
+                raise RoboCasaError(f"tree file changed while hashing: {path}")
+    return digest.hexdigest(), len(files)
 
 
 def _update_length_frame(digest: Any, value: bytes) -> None:
@@ -1620,7 +2004,14 @@ def _evaluate_policy_checkpoint(
     output_dir: Path,
     download_assets: bool,
 ) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="robocasa-checkpoint-") as tmp:
+    configured_temp_root = os.environ.get(WORKER_TEMP_ROOT_ENV, "").strip()
+    temporary_parent = Path(configured_temp_root) if configured_temp_root else None
+    if temporary_parent is not None:
+        temporary_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="robocasa-checkpoint-",
+        dir=temporary_parent,
+    ) as tmp:
         checkpoint_root = _download_s3_tree(checkpoint_uri, Path(tmp))
         pretrained, checkpoint_sha256, artifact_tree_sha256 = _checkpoint_identity(
             checkpoint_root
@@ -1817,10 +2208,16 @@ def _write_video(frames: list[Any], path: Path) -> Path | None:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
+        return _sha256_open_file(handle)
+
+
+def _sha256_open_file(handle: BinaryIO) -> str:
+    handle.seek(0)
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: handle.read(65536), b""):
+        digest.update(chunk)
+    handle.seek(0)
     return digest.hexdigest()
 
 

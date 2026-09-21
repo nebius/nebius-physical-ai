@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import multiprocessing
+import os
+import struct
+import subprocess
 import sys
 import threading
+import time
 import types
-import json
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZipFile, ZipInfo
 
 import httpx
 import numpy as np
@@ -17,6 +22,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from npa.sdk.workbench import robocasa as robocasa_sdk
 from npa.workbench.robocasa import capabilities
 from npa.workbench.robocasa.capabilities import (
     RoboCasaError,
@@ -29,6 +35,66 @@ from npa.workbench.robocasa.capabilities import (
 from npa.workbench.robocasa.schemas import RoboCasaRunRequest
 from npa.workbench.robocasa.schemas import RoboCasaStatusResponse
 from npa.workbench.robocasa.service import RunRegistry, create_app
+
+
+def _blocking_robocasa_worker(sender, request_payload) -> None:
+    try:
+        os.setsid()
+        output_dir = Path(str(request_payload["_worker_output_dir"]))
+        (output_dir / "partial.bin").write_bytes(b"x" * 1024 * 1024)
+        asset_temp_root = str(request_payload.get("_worker_asset_temp_root") or "")
+        if asset_temp_root:
+            (Path(asset_temp_root) / "asset-partial.bin").write_bytes(
+                b"y" * 1024 * 1024
+            )
+        time.sleep(30)
+    finally:
+        sender.close()
+
+
+def _successful_robocasa_worker(sender, _request_payload) -> None:
+    try:
+        os.setsid()
+        sender.send_bytes(b'{"kind":"result","result":{"ok":true}}')
+        sender.recv_bytes(1)
+    except (EOFError, OSError):
+        pass
+    finally:
+        sender.close()
+
+
+def _robocasa_worker_with_term_ignoring_descendant(sender, _request_payload) -> None:
+    try:
+        os.setsid()
+        descendant = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import signal,time;"
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN);"
+                    "print('ready', flush=True);"
+                    "time.sleep(30)"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        assert descendant.stdout is not None
+        assert descendant.stdout.readline().strip() == "ready"
+        sender.send_bytes(
+            json.dumps(
+                {
+                    "kind": "result",
+                    "result": {"descendant_pid": descendant.pid},
+                }
+            ).encode("utf-8")
+        )
+        sender.recv_bytes(1)
+    except (EOFError, OSError):
+        pass
+    finally:
+        sender.close()
 
 
 def _install_deployed_runtime_identity(
@@ -240,6 +306,7 @@ def test_service_health() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["execution_available"] is True
 
 
 def test_service_system_info() -> None:
@@ -282,10 +349,10 @@ def test_service_system_info_does_not_block_event_loop(
 def test_service_run_and_status(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_robocasa(monkeypatch)
     source_sha, manifest_digest = _install_deployed_runtime_identity(monkeypatch)
-    monkeypatch.setattr(
-        "npa.workbench.robocasa.capabilities.upload_output", lambda *args: None
+    app = create_app(
+        auth_mode="none",
+        capability_executor=lambda *_args, **_kwargs: {"registration_ok": True},
     )
-    app = create_app(auth_mode="none")
     client = TestClient(app)
     response = client.post(
         "/run",
@@ -366,6 +433,69 @@ def test_service_run_invalid_capability() -> None:
     assert response.status_code == 422
 
 
+def test_sdk_service_mode_requires_exact_image_identity() -> None:
+    with pytest.raises(
+        robocasa_sdk.RoboCasaValidationError,
+        match="expected_image_source_sha is required",
+    ):
+        robocasa_sdk.run(
+            capability="kitchen_task_registration",
+            output_path="s3://bucket/output",
+            mode="service",
+            endpoint="http://robocasa.invalid",
+        )
+    with pytest.raises(
+        robocasa_sdk.RoboCasaValidationError,
+        match="expected_image_manifest_digest is required",
+    ):
+        robocasa_sdk.run(
+            capability="kitchen_task_registration",
+            output_path="s3://bucket/output",
+            mode="service",
+            endpoint="http://robocasa.invalid",
+            expected_image_source_sha="a" * 40,
+        )
+
+
+def test_sdk_service_mode_forwards_exact_image_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def request_json(method, endpoint, path, **kwargs):
+        observed.update(
+            method=method,
+            endpoint=endpoint,
+            path=path,
+            payload=kwargs["payload"],
+        )
+        return {
+            "run_id": "run-1",
+            "status": "queued",
+            "env_id": "robocasa/PickPlaceCounterToCabinet",
+            "capability": "kitchen_task_registration",
+            "output_uri": "s3://bucket/output",
+            "manifest_sha256": "c" * 64,
+        }
+
+    monkeypatch.setattr(robocasa_sdk, "_request_json", request_json)
+    source_sha = "a" * 40
+    manifest_digest = "sha256:" + "b" * 64
+
+    response = robocasa_sdk.run(
+        capability="kitchen_task_registration",
+        output_path="s3://bucket/output",
+        mode="service",
+        endpoint="http://robocasa.invalid",
+        expected_image_source_sha=source_sha,
+        expected_image_manifest_digest=manifest_digest,
+    )
+
+    assert response.run_id == "run-1"
+    assert observed["payload"]["expected_image_source_sha"] == source_sha
+    assert observed["payload"]["expected_image_manifest_digest"] == manifest_digest
+
+
 def test_service_auth_token() -> None:
     app = create_app(auth_mode="token", token="secret")
     client = TestClient(app)
@@ -430,12 +560,69 @@ def test_run_registry_size_evicts_oldest_terminal_without_evicting_active() -> N
     assert runs.get("new") is not None
 
 
-def test_run_registry_allows_temporary_overflow_when_every_run_is_active() -> None:
+def test_run_registry_rejects_overflow_when_every_slot_is_active() -> None:
     runs = RunRegistry(max_entries=1, ttl_seconds=100, clock=lambda: 1.0)
     runs["one"] = _status("one", "running")
-    runs["two"] = _status("two", "running")
 
-    assert {run.run_id for run in runs.values()} == {"one", "two"}
+    with pytest.raises(RoboCasaError, match="registry is full"):
+        runs["two"] = _status("two", "running")
+
+    assert {run.run_id for run in runs.values()} == {"one"}
+
+
+def test_service_returns_429_when_active_registry_is_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_sha, manifest_digest = _install_deployed_runtime_identity(monkeypatch)
+    runs = RunRegistry(max_entries=1)
+    runs["existing"] = _status("existing", "running")
+    client = TestClient(create_app(auth_mode="none", runs=runs))
+
+    response = client.post(
+        "/run", json=_service_run_payload(source_sha, manifest_digest)
+    )
+
+    assert response.status_code == 429
+    assert "registry is full" in response.json()["detail"]
+    assert {run.run_id for run in runs.values()} == {"existing"}
+
+
+def test_poisoned_gpu_gate_wakes_waiters_and_rejects_new_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.robocasa import service
+
+    gate = service.GpuExecutionGate()
+    assert gate.acquire() is True
+    attempting = threading.Event()
+    acquired: list[bool] = []
+
+    def wait_for_gate() -> None:
+        attempting.set()
+        acquired.append(gate.acquire())
+
+    waiter = threading.Thread(target=wait_for_gate)
+    waiter.start()
+    assert attempting.wait(timeout=1)
+    gate.poison()
+    waiter.join(timeout=1)
+
+    assert acquired == [False]
+    assert gate.available is False
+
+    source_sha, manifest_digest = _install_deployed_runtime_identity(monkeypatch)
+    runs = RunRegistry()
+    client = TestClient(create_app(auth_mode="none", runs=runs, execution_lock=gate))
+    health = client.get("/health")
+    response = client.post(
+        "/run", json=_service_run_payload(source_sha, manifest_digest)
+    )
+
+    assert health.status_code == 200
+    assert health.json()["status"] == "degraded"
+    assert health.json()["execution_available"] is False
+    assert response.status_code == 503
+    assert runs.values() == []
 
 
 def test_run_registry_concurrent_updates_are_safe() -> None:
@@ -463,6 +650,39 @@ def test_run_registry_concurrent_updates_are_safe() -> None:
 
     assert len(runs.values()) == 32
     assert all(run.status == "completed" for run in runs.values())
+
+
+def test_run_registry_concurrent_admission_never_exceeds_capacity() -> None:
+    runs = RunRegistry(max_entries=3, ttl_seconds=100)
+    barrier = threading.Barrier(10)
+    accepted: list[str] = []
+    rejected: list[str] = []
+    result_lock = threading.Lock()
+
+    def enqueue(index: int) -> None:
+        run_id = f"run-{index}"
+        barrier.wait()
+        try:
+            was_accepted, _status_record = runs.enqueue(
+                run_id, _status(run_id, "queued")
+            )
+        except RoboCasaError:
+            with result_lock:
+                rejected.append(run_id)
+        else:
+            assert was_accepted
+            with result_lock:
+                accepted.append(run_id)
+
+    threads = [threading.Thread(target=enqueue, args=(index,)) for index in range(10)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(accepted) == len(runs.values()) == 3
+    assert len(rejected) == 7
 
 
 def test_gpu_runs_are_serialized(
@@ -505,11 +725,11 @@ def test_gpu_runs_are_serialized(
     )
     first = threading.Thread(
         target=service._run_capability,
-        args=(request, "one", runs, execution_lock),
+        args=(request, "one", runs, execution_lock, fake_run),
     )
     second = threading.Thread(
         target=service._run_capability,
-        args=(request, "two", runs, execution_lock),
+        args=(request, "two", runs, execution_lock, fake_run),
     )
 
     first.start()
@@ -524,6 +744,138 @@ def test_gpu_runs_are_serialized(
     assert maximum_active == 1
     assert runs.get("one").status == "completed"
     assert runs.get("two").status == "completed"
+
+
+def test_capability_worker_timeout_stops_child_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.workbench.robocasa import service
+
+    output_root = tmp_path / "outputs"
+    output_root.mkdir()
+    assets_root = tmp_path / "assets"
+    assets_root.mkdir()
+    monkeypatch.setattr(service, "_assets_root", lambda: assets_root)
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=1,
+    )
+    started = time.monotonic()
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_blocking_robocasa_worker,
+        process_context=multiprocessing.get_context("spawn"),
+        output_root=output_root,
+    )
+
+    assert time.monotonic() - started < 6
+    assert outcome.timed_out is True
+    assert outcome.stopped is True
+    assert outcome.result is None
+    assert "timeout_seconds=1" in str(outcome.error)
+    assert list(output_root.iterdir()) == []
+    workers_root = assets_root / ".npa_asset_fetch" / "workers"
+    assert list(workers_root.iterdir()) == []
+
+
+def test_capability_worker_retains_result_before_group_cleanup() -> None:
+    from npa.workbench.robocasa import service
+
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=5,
+        download_assets=False,
+    )
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_successful_robocasa_worker,
+        process_context=multiprocessing.get_context("spawn"),
+    )
+
+    assert outcome == service._WorkerOutcome(result={"ok": True})
+
+
+def test_capability_worker_kills_term_ignoring_descendants() -> None:
+    from npa.workbench.robocasa import service
+
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=5,
+        download_assets=False,
+    )
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_robocasa_worker_with_term_ignoring_descendant,
+        process_context=multiprocessing.get_context("spawn"),
+    )
+
+    assert outcome.stopped is True
+    assert outcome.error is None
+    assert outcome.result is not None
+    descendant_pid = int(outcome.result["descendant_pid"])
+    with pytest.raises(ProcessLookupError):
+        os.kill(descendant_pid, 0)
+
+
+def test_worker_cleanup_exception_returns_fail_closed_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.robocasa import service
+
+    real_stop_worker = service._stop_worker
+
+    def stop_then_raise(process, *, terminate):
+        assert real_stop_worker(process, terminate=terminate)
+        raise OSError("injected cleanup failure")
+
+    monkeypatch.setattr(service, "_stop_worker", stop_then_raise)
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+        timeout_seconds=5,
+        download_assets=False,
+    )
+
+    outcome = service._execute_capability_in_worker(
+        request,
+        worker_target=_successful_robocasa_worker,
+        process_context=multiprocessing.get_context("spawn"),
+    )
+
+    assert outcome.stopped is False
+    assert outcome.result is None
+    assert "injected cleanup failure" in str(outcome.error)
+
+
+def test_unstopped_worker_poisons_execution_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workbench.robocasa import service
+
+    runs = RunRegistry()
+    runs["run"] = _status("run", "queued")
+    gate = service.GpuExecutionGate()
+    monkeypatch.setattr(
+        service,
+        "_execute_capability_in_worker",
+        lambda _body: service._WorkerOutcome(error="cleanup failed", stopped=False),
+    )
+    request = RoboCasaRunRequest(
+        capability="kitchen_task_registration",
+        output_uri="s3://example/output",
+    )
+
+    service._run_capability(request, "run", runs, gate)
+
+    assert gate.available is False
+    assert runs.get("run").status == "failed"
+    assert runs.get("run").error == "cleanup failed"
 
 
 class _FakeActionSpace:
@@ -717,6 +1069,248 @@ def test_asset_partial_fetch_retries_without_completion_receipt(tmp_path: Path) 
     receipt_payload = json.loads(receipt.read_text(encoding="utf-8"))
     assert receipt_payload["revision"] == capabilities.ROBOCASA_ASSET_REVISION
     assert receipt_payload["file_count"] == 1
+
+
+def test_asset_receipt_rejects_installed_tree_mutation_and_symlink(
+    tmp_path: Path,
+) -> None:
+    assets_root = tmp_path / "assets"
+    state_root = assets_root / ".npa_asset_fetch"
+    source_zip = tmp_path / "textures.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("textures/complete.txt", "complete")
+    archive = capabilities._AssetArchive(
+        capabilities.ROBOCASA_ASSET_REPOSITORY,
+        capabilities.ROBOCASA_ASSET_REVISION,
+        "textures.zip",
+        ".",
+        "textures",
+        "textures",
+    )
+    receipt = capabilities._asset_receipt_path(state_root, archive)
+    capabilities._stage_publish_and_receipt(archive, source_zip, assets_root, receipt)
+
+    assert capabilities._asset_receipt_is_valid(receipt, archive, assets_root)
+    installed = assets_root / "textures" / "complete.txt"
+    installed.write_text("mutated", encoding="utf-8")
+    assert not capabilities._asset_receipt_is_valid(receipt, archive, assets_root)
+
+    installed.unlink()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("complete", encoding="utf-8")
+    installed.symlink_to(outside)
+    assert not capabilities._asset_receipt_is_valid(receipt, archive, assets_root)
+
+
+def test_parent_asset_receipt_ignores_separately_receipted_nested_mounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = capabilities._AssetArchive(
+        "example/parent",
+        "a" * 40,
+        "fixtures.zip",
+        ".",
+        "fixtures",
+        "fixtures/accessories",
+    )
+    child = capabilities._AssetArchive(
+        "example/child",
+        "b" * 40,
+        "nested.zip",
+        "fixtures",
+        "fixtures/vendor",
+        "fixtures/vendor",
+    )
+    monkeypatch.setattr(capabilities, "_asset_archives", lambda: (parent, child))
+    source_zip = tmp_path / "fixtures.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("fixtures/accessories/core.txt", "core")
+    child_zip = tmp_path / "nested.zip"
+    with ZipFile(child_zip, "w") as archive_zip:
+        archive_zip.writestr("vendor/nested.txt", "nested")
+    assets_root = tmp_path / "assets"
+    state_root = assets_root / ".npa_asset_fetch"
+    parent_receipt = capabilities._asset_receipt_path(state_root, parent)
+    child_receipt = capabilities._asset_receipt_path(state_root, child)
+    capabilities._stage_publish_and_receipt(
+        parent, source_zip, assets_root, parent_receipt
+    )
+    capabilities._stage_publish_and_receipt(
+        child, child_zip, assets_root, child_receipt
+    )
+
+    assert capabilities._asset_receipt_is_valid(parent_receipt, parent, assets_root)
+    assert capabilities._asset_receipt_is_valid(child_receipt, child, assets_root)
+    (assets_root / "fixtures" / "accessories" / "core.txt").write_text(
+        "mutated", encoding="utf-8"
+    )
+    assert not capabilities._asset_receipt_is_valid(parent_receipt, parent, assets_root)
+
+    downloads: list[str] = []
+
+    def downloader(**kwargs):
+        downloads.append(str(kwargs["filename"]))
+        return str(source_zip if kwargs["filename"] == parent.filename else child_zip)
+
+    capabilities._fetch_asset_archive(
+        parent,
+        assets_root=assets_root,
+        state_root=state_root,
+        downloader=downloader,
+    )
+    assert not (assets_root / "fixtures" / "vendor").exists()
+    capabilities._fetch_asset_archive(
+        child,
+        assets_root=assets_root,
+        state_root=state_root,
+        downloader=downloader,
+    )
+
+    assert downloads == ["fixtures.zip", "nested.zip"]
+    assert capabilities._asset_receipt_is_valid(parent_receipt, parent, assets_root)
+    assert capabilities._asset_receipt_is_valid(child_receipt, child, assets_root)
+
+
+def test_asset_zip_rejects_traversal_symlinks_and_declared_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "destination"
+    destination.mkdir()
+
+    traversal = tmp_path / "traversal.zip"
+    with ZipFile(traversal, "w") as archive:
+        archive.writestr("../escape.txt", "escape")
+    with pytest.raises(RoboCasaError, match="unsafe path"):
+        capabilities._extract_validated_zip(traversal, destination)
+    assert not (tmp_path / "escape.txt").exists()
+
+    symlink = tmp_path / "symlink.zip"
+    with ZipFile(symlink, "w") as archive:
+        member = ZipInfo("unsafe-link")
+        member.create_system = 3
+        member.external_attr = (0o120777 << 16) | 0xA000
+        archive.writestr(member, "target")
+    with pytest.raises(RoboCasaError, match="unsafe symlink"):
+        capabilities._extract_validated_zip(symlink, destination)
+
+    oversized = tmp_path / "oversized.zip"
+    with ZipFile(oversized, "w") as archive:
+        archive.writestr("one.bin", b"1234")
+    monkeypatch.setattr(capabilities, "_ASSET_ARCHIVE_MEMBER_SIZE_LIMIT", 3)
+    with pytest.raises(RoboCasaError, match="member exceeds the size limit"):
+        capabilities._extract_validated_zip(oversized, destination)
+
+
+def test_asset_zip_bounds_central_directory_before_member_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_zip = tmp_path / "many.zip"
+    with ZipFile(source_zip, "w") as archive:
+        archive.writestr("one.txt", "one")
+        archive.writestr("two.txt", "two")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+
+    monkeypatch.setattr(capabilities, "_ASSET_ARCHIVE_MEMBER_LIMIT", 1)
+    with pytest.raises(RoboCasaError, match="exceeds the member limit"):
+        capabilities._extract_validated_zip(source_zip, destination)
+    assert list(destination.iterdir()) == []
+
+    monkeypatch.setattr(capabilities, "_ASSET_ARCHIVE_MEMBER_LIMIT", 100_000)
+    monkeypatch.setattr(capabilities, "_ASSET_ARCHIVE_CENTRAL_DIRECTORY_LIMIT", 1)
+    with pytest.raises(RoboCasaError, match="central-directory size limit"):
+        capabilities._extract_validated_zip(source_zip, destination)
+    assert list(destination.iterdir()) == []
+
+
+def test_asset_zip_rejects_forged_eocd_member_count(
+    tmp_path: Path,
+) -> None:
+    source_zip = tmp_path / "forged-count.zip"
+    with ZipFile(source_zip, "w") as archive:
+        archive.writestr("one.txt", "one")
+        archive.writestr("two.txt", "two")
+    payload = bytearray(source_zip.read_bytes())
+    eocd = payload.rfind(b"PK\x05\x06")
+    assert eocd >= 0
+    payload[eocd + 8 : eocd + 12] = struct.pack("<HH", 1, 1)
+    source_zip.write_bytes(payload)
+    destination = tmp_path / "destination"
+    destination.mkdir()
+
+    with pytest.raises(RoboCasaError, match="not a valid zip"):
+        capabilities._extract_validated_zip(source_zip, destination)
+
+    assert list(destination.iterdir()) == []
+
+
+def test_asset_zip_bounds_implicit_directories_and_prefix_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory_bomb = tmp_path / "directories.zip"
+    with ZipFile(directory_bomb, "w") as archive:
+        archive.writestr("one/two/three/file.txt", "payload")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    monkeypatch.setattr(capabilities, "_ASSET_ARCHIVE_DIRECTORY_LIMIT", 2)
+
+    with pytest.raises(RoboCasaError, match="directory limit"):
+        capabilities._extract_validated_zip(directory_bomb, destination)
+    assert list(destination.iterdir()) == []
+
+    monkeypatch.setattr(capabilities, "_ASSET_ARCHIVE_DIRECTORY_LIMIT", 100_000)
+    collision = tmp_path / "collision.zip"
+    with ZipFile(collision, "w") as archive:
+        archive.writestr("parent", "file")
+        archive.writestr("parent/child.txt", "child")
+
+    with pytest.raises(RoboCasaError, match="prefix collision"):
+        capabilities._extract_validated_zip(collision, destination)
+    assert list(destination.iterdir()) == []
+
+
+def test_asset_archive_path_replacement_cannot_change_opened_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_zip = tmp_path / "source.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("textures/complete.txt", "complete")
+    expected_archive_sha = hashlib.sha256(source_zip.read_bytes()).hexdigest()
+    replacement_source = tmp_path / "replacement.zip"
+    with ZipFile(replacement_source, "w") as archive_zip:
+        archive_zip.writestr("textures/replaced.txt", "replaced")
+    archive = capabilities._AssetArchive(
+        capabilities.ROBOCASA_ASSET_REPOSITORY,
+        capabilities.ROBOCASA_ASSET_REVISION,
+        "textures.zip",
+        ".",
+        "textures",
+        "textures",
+    )
+    assets_root = tmp_path / "assets"
+    state_root = assets_root / ".npa_asset_fetch"
+    receipt = capabilities._asset_receipt_path(state_root, archive)
+    original_preflight = capabilities._preflight_asset_zip
+    swapped = False
+
+    def preflight_then_swap(archive_file, display_path):
+        nonlocal swapped
+        original_preflight(archive_file, display_path)
+        if not swapped:
+            swapped = True
+            source_zip.replace(tmp_path / "original.zip")
+            replacement_source.replace(source_zip)
+
+    monkeypatch.setattr(capabilities, "_preflight_asset_zip", preflight_then_swap)
+
+    capabilities._stage_publish_and_receipt(archive, source_zip, assets_root, receipt)
+
+    assert (assets_root / "textures" / "complete.txt").is_file()
+    assert not (assets_root / "textures" / "replaced.txt").exists()
+    assert (
+        json.loads(receipt.read_text(encoding="utf-8"))["archive_sha256"]
+        == expected_archive_sha
+    )
 
 
 def test_kitchen_trajectory_export(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

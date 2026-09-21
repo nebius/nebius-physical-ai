@@ -153,9 +153,16 @@ the RoboCasa → MuJoCo execution path, exact image source revision, and hashes
 each generated MP4, with machine-readable `rrd: false` and `mcap: false` fields;
 this tool does not emit RRD or MCAP recordings.
 
-The service owns one GPU, so accepted runs execute under one process-wide GPU
-lock. A duplicate request for the same active deterministic run ID returns the
-existing queued/running record and does not enqueue a second copy.
+The service owns one GPU, so accepted runs execute through one process-wide GPU
+gate. Each run has a bounded registry slot and executes in a killable process
+group under its requested `timeout_seconds`; timeout cleanup removes parent-owned
+checkpoint, output, and asset-staging scratch. If the process group or scratch
+cannot be cleaned up, the gate stays poisoned and new runs receive HTTP 503
+instead of overlapping a possibly live GPU worker. A duplicate request for the
+same active deterministic run ID returns the existing queued/running record and
+does not enqueue a second copy. SDK service calls must pass
+`expected_image_source_sha` and `expected_image_manifest_digest`, just like CLI
+service calls.
 
 ## Gotchas
 
@@ -166,9 +173,11 @@ existing queued/running record and does not enqueue a second copy.
   `robocasa/robocasa-assets@1b92c3d02ca4354984fec961357db0bff7b32166`
   and
   `nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF@420a04af939c34873e6839a586b70844baf28aab`.
-  Population is locked, extracted into validated staging trees, and published
-  with per-archive completion receipts. A failed archive remains retryable and
-  fails the capability instead of being logged and ignored.
+  Population is locked, bounded before ZIP metadata allocation, extracted
+  without following links into validated staging trees, and published with
+  per-archive content-hash/file-count receipts. Installed bytes are rehashed
+  before a receipt can suppress a fetch. A failed or mutated archive remains
+  retryable and fails the capability instead of being logged and ignored.
 - **`--service` needs both a reachable `--endpoint` and the token variable set.**
   A missing token presents as an auth failure from the endpoint, not as a CLI
   validation error.

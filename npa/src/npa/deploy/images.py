@@ -827,6 +827,16 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
+    if tool in VALIDATION_CANDIDATE_TOOLS:
+        if not tag:
+            raise ValueError(
+                f"{tool} has no accepted default image. Supply an immutable image "
+                "override or explicitly select a dev-<full-source-sha> tag for validation."
+            )
+        if re.fullmatch(r"dev-[0-9a-f]{40}", tag) is None:
+            raise ValueError(
+                f"{tool} validation requires an exact dev-<full-source-sha> tag"
+            )
     if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
         raise ValueError(
             "NCore has no accepted release image. Supply the validated immutable "

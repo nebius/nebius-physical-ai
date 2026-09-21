@@ -160,6 +160,13 @@ EXPOSE 8791
 
 USER ubuntu
 
+# Exercise the final runtime user and real upstream registration before the
+# candidate can leave the build. Assets remain runtime-fetched; only the owned
+# destination's writability is checked here. The golden smoke also executes
+# registration through the production spawn/process-group boundary.
+RUN test "$(id -u)" != "0" \
+    && python /app/smoke_functional.py
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python3 -c "import os,urllib.request; p=os.environ.get('ROBOCASA_PORT','8791'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=3)" || exit 1
 

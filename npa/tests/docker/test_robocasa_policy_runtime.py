@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 IMAGE_DIR = ROOT / "npa" / "docker" / "workbench" / "robocasa"
 DOCKERFILE = IMAGE_DIR / "Dockerfile"
 BUILD_SCRIPT = DOCKERFILE.with_name("build.sh")
+SMOKE_SCRIPT = ROOT / "npa" / "src" / "npa" / "smoke" / "test_robocasa_functional.py"
 GENERATOR = IMAGE_DIR / "generate-locks.sh"
 RUNTIME_INPUT = IMAGE_DIR / "requirements.in"
 RUNTIME_LOCK = IMAGE_DIR / "requirements.lock"
@@ -169,6 +170,7 @@ def test_robocasa_system_install_layer_removes_builder_resolver_state() -> None:
 
 def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
+    smoke = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
     user_lines = [
         line.strip() for line in text.splitlines() if line.startswith("USER ")
@@ -178,6 +180,13 @@ def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     assert "openssh-server" not in text
     assert "rsync sudo" not in text
     assert "chown -R ubuntu:ubuntu /opt/robocasa/source/robocasa/models/assets" in text
+    assert 'RUN test "$(id -u)" != "0"' in text
+    assert "python /app/smoke_functional.py" in text
+    assert "os.geteuid() == 0" in smoke
+    assert 'NamedTemporaryFile(prefix=".npa-write-"' in smoke
+    assert "kitchen_task_registration(download_assets=False)" in smoke
+    assert "_execute_capability_in_worker(" in smoke
+    assert "registered_env_count" in smoke
     assert "chown -R ubuntu:ubuntu /app " not in text
     assert "chown -R ubuntu:ubuntu /opt/robocasa/source\n" not in text
     assert "chown -R ubuntu:ubuntu /app /opt/robocasa\n" not in text
