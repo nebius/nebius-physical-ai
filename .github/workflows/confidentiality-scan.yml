@@ -13,6 +13,10 @@ concurrency:
 
 jobs:
   scan:
+    concurrency:
+      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-checks
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     env:
       CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}

@@ -264,12 +264,12 @@ for aug_frame in aug_frames:
     src = src_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
     aug = aug_frame.reformat(width=width, height=height, format="rgb24").to_ndarray()
     srcf, augf = src.astype(np.float32), aug.astype(np.float32)
-    src_cb = 128.0 - 0.168736 * srcf[..., 0] - 0.331264 * srcf[..., 1] + 0.5 * srcf[..., 2]
-    src_cr = 128.0 + 0.5 * srcf[..., 0] - 0.418688 * srcf[..., 1] - 0.081312 * srcf[..., 2]
-    src_y = 0.299 * srcf[..., 0] + 0.587 * srcf[..., 1] + 0.114 * srcf[..., 2]
-    y = 0.299 * augf[..., 0] + 0.587 * augf[..., 1] + 0.114 * augf[..., 2]
-    aug_cb = 128.0 - 0.168736 * augf[..., 0] - 0.331264 * augf[..., 1] + 0.5 * augf[..., 2]
-    aug_cr = 128.0 + 0.5 * augf[..., 0] - 0.418688 * augf[..., 1] - 0.081312 * augf[..., 2]
+    src_cb = 128.0 - 0.114572 * srcf[..., 0] - 0.385428 * srcf[..., 1] + 0.5 * srcf[..., 2]
+    src_cr = 128.0 + 0.5 * srcf[..., 0] - 0.454153 * srcf[..., 1] - 0.045847 * srcf[..., 2]
+    src_y = 0.2126 * srcf[..., 0] + 0.7152 * srcf[..., 1] + 0.0722 * srcf[..., 2]
+    y = 0.2126 * augf[..., 0] + 0.7152 * augf[..., 1] + 0.0722 * augf[..., 2]
+    aug_cb = 128.0 - 0.114572 * augf[..., 0] - 0.385428 * augf[..., 1] + 0.5 * augf[..., 2]
+    aug_cr = 128.0 + 0.5 * augf[..., 0] - 0.454153 * augf[..., 1] - 0.045847 * augf[..., 2]
     if masks_dir is not None:
         from PIL import Image, ImageFilter
         mask_path = masks_dir / f"mask-{count:06d}.png"
@@ -294,9 +294,9 @@ for aug_frame in aug_frames:
     cb = aug_cb * (1.0 - alpha) + src_cb * alpha
     cr = aug_cr * (1.0 - alpha) + src_cr * alpha
     rgb = np.stack((
-        y + 1.402 * (cr - 128.0),
-        y - 0.344136 * (cb - 128.0) - 0.714136 * (cr - 128.0),
-        y + 1.772 * (cb - 128.0),
+        y + 1.5748 * (cr - 128.0),
+        y - 0.187324 * (cb - 128.0) - 0.468124 * (cr - 128.0),
+        y + 1.8556 * (cb - 128.0),
     ), axis=-1)
     frame = av.VideoFrame.from_ndarray(np.clip(rgb, 0, 255).astype(np.uint8), format="rgb24")
     frame.to_image().save(frames_dir / f"frame-{count:06d}.png")
@@ -367,6 +367,14 @@ print(json.dumps({"frames": count, "fps": float(rate)}))
                     "libx264",
                     "-pix_fmt",
                     "yuv420p",
+                    "-color_range",
+                    "tv",
+                    "-colorspace",
+                    "bt709",
+                    "-color_primaries",
+                    "bt709",
+                    "-color_trc",
+                    "bt709",
                     "-crf",
                     "18",
                     "-movflags",
@@ -400,6 +408,12 @@ print(json.dumps({"frames": count, "fps": float(rate)}))
         "feather_pixels": feather_pixels,
         "luma_max_delta": luma_max_delta,
         "frame_count": frame_count,
+        "output_color": {
+            "range": "tv",
+            "space": "bt709",
+            "primaries": "bt709",
+            "transfer": "bt709",
+        },
     }
     if mask_root is not None:
         result["protected_chroma"]["segmentation"] = segmentation or {
@@ -417,6 +431,7 @@ def _spec_for_input_video(
     control_weight: float,
     guidance: float,
     name: str,
+    negative_prompt: str = "",
     seed: int | None = None,
     control_asset: str = "",
     control_prompt: str = "",
@@ -467,6 +482,8 @@ def _spec_for_input_video(
         "guidance": guidance,
         modality: control_config,
     }
+    if str(negative_prompt or "").strip():
+        spec["negative_prompt"] = str(negative_prompt).strip()
     if seed is not None:
         spec["seed"] = int(seed)
     safe = "".join(
@@ -653,12 +670,17 @@ def _guardrail_nltk_tree_sha256(files: dict[str, dict[str, Any]]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _write_guardrail_nltk_ready_marker(root: Path) -> None:
+def _write_guardrail_nltk_ready_marker(
+    root: Path,
+    *,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> None:
     files = _guardrail_nltk_inventory(root)
     payload = {
         "schema": GUARDRAIL_NLTK_MANIFEST_SCHEMA,
-        "repo_id": GUARDRAIL_REPO,
-        "revision": GUARDRAIL_REVISION,
+        "repo_id": repository,
+        "revision": revision,
         "file_count": len(files),
         "files": files,
         "tree_sha256": _guardrail_nltk_tree_sha256(files),
@@ -671,7 +693,12 @@ def _write_guardrail_nltk_ready_marker(root: Path) -> None:
     os.chmod(marker, 0o444)
 
 
-def _verify_guardrail_nltk_materialization(destination: Path) -> int:
+def _verify_guardrail_nltk_materialization(
+    destination: Path,
+    *,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> int:
     """Verify exact revision identity and every copied byte before cache reuse."""
 
     marker = destination / GUARDRAIL_NLTK_READY_MARKER
@@ -691,8 +718,8 @@ def _verify_guardrail_nltk_materialization(destination: Path) -> int:
         ) from exc
     expected_identity = (
         payload.get("schema") == GUARDRAIL_NLTK_MANIFEST_SCHEMA
-        and payload.get("repo_id") == GUARDRAIL_REPO
-        and payload.get("revision") == GUARDRAIL_REVISION
+        and payload.get("repo_id") == repository
+        and payload.get("revision") == revision
     )
     if not expected_identity or not isinstance(payload.get("files"), dict):
         raise GuardrailNLTKDataError(
@@ -714,7 +741,9 @@ def _verify_guardrail_nltk_materialization(destination: Path) -> int:
     return len(files)
 
 
-def _guardrail_nltk_download_error(exc: Exception) -> GuardrailNLTKDataError:
+def _guardrail_nltk_download_error(
+    exc: Exception, *, revision: str = GUARDRAIL_REVISION
+) -> GuardrailNLTKDataError:
     name = type(exc).__name__.lower()
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
@@ -727,7 +756,7 @@ def _guardrail_nltk_download_error(exc: Exception) -> GuardrailNLTKDataError:
     if "revisionnotfound" in name or "revision_not_found" in name:
         return GuardrailNLTKDataError(
             "revision_unavailable",
-            f"Pinned Cosmos guardrail revision {GUARDRAIL_REVISION} is unavailable; "
+            f"Pinned Cosmos guardrail revision {revision} is unavailable; "
             "do not substitute another revision without a reviewed source update",
         )
     if status in {401, 403} or "gatedrepo" in name or "repositorynotfound" in name:
@@ -743,7 +772,13 @@ def _guardrail_nltk_download_error(exc: Exception) -> GuardrailNLTKDataError:
     )
 
 
-def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
+def prepare_guardrail_nltk_data(
+    *,
+    hf_home: str | None = None,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+    snapshot_path: Path | None = None,
+) -> int:
     """Download and safely materialize the pinned guardrail tokenizer data.
 
     Hugging Face snapshots represent files as symlinks into their local blob
@@ -757,30 +792,61 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
     """
 
     home = Path(hf_home or os.environ.get("HF_HOME", "/opt/cosmos-data/hf_cache"))
-    destination = home / GUARDRAIL_NLTK_MATERIALIZED_DIR / GUARDRAIL_REVISION
-    if destination.exists() or destination.is_symlink():
-        return _verify_guardrail_nltk_materialization(destination)
-
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
+    if not re.fullmatch(
+        r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", repository
+    ) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise GuardrailNLTKDataError(
-            "runtime_invalid",
-            "The audited Cosmos Transfer runtime is missing huggingface_hub; "
-            "rebuild the pinned image before fetching guardrail data",
-        ) from exc
+            "content_invalid",
+            "Guardrail repository and revision must be exact reviewed identities",
+        )
+    destination = _guardrail_nltk_data_path(
+        str(home), repository=repository, revision=revision
+    )
+    ancestor = destination.parent
+    while True:
+        if ancestor.is_symlink():
+            raise GuardrailNLTKDataError(
+                "cache_invalid",
+                "Cosmos guardrail NLTK cache contains an unsafe ancestor link",
+            )
+        if ancestor == home:
+            break
+        ancestor = ancestor.parent
+    if destination.exists() or destination.is_symlink():
+        return _verify_guardrail_nltk_materialization(
+            destination, repository=repository, revision=revision
+        )
 
     hub = (home / "hub").resolve()
-    try:
-        downloaded = snapshot_download(
-            repo_id=GUARDRAIL_REPO,
-            revision=GUARDRAIL_REVISION,
-            allow_patterns=["blocklist/nltk_data/**"],
-            cache_dir=hub,
-            token=os.environ.get("HF_TOKEN"),
+    if snapshot_path is None:
+        try:
+            from huggingface_hub import snapshot_download
+        except ImportError as exc:
+            raise GuardrailNLTKDataError(
+                "runtime_invalid",
+                "The audited Cosmos Transfer runtime is missing huggingface_hub; "
+                "rebuild the pinned image before fetching guardrail data",
+            ) from exc
+        try:
+            downloaded = snapshot_download(
+                repo_id=repository,
+                revision=revision,
+                allow_patterns=["blocklist/nltk_data/**"],
+                cache_dir=hub,
+                token=os.environ.get("HF_TOKEN"),
+            )
+        except Exception as exc:
+            raise _guardrail_nltk_download_error(exc, revision=revision) from exc
+    else:
+        downloaded = snapshot_path
+        expected = (
+            hub / ("models--" + repository.replace("/", "--")) / "snapshots" / revision
         )
-    except Exception as exc:
-        raise _guardrail_nltk_download_error(exc) from exc
+        if snapshot_path.is_symlink() or snapshot_path.resolve() != expected:
+            raise GuardrailNLTKDataError(
+                "content_invalid",
+                "Staged guardrail snapshot differs from the exact repository revision",
+            )
     snapshot = Path(downloaded).resolve()
     nltk_data = (snapshot / "blocklist" / "nltk_data").resolve()
     if (
@@ -795,9 +861,7 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
         )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(
-        tempfile.mkdtemp(prefix=f".{GUARDRAIL_REVISION}.", dir=destination.parent)
-    )
+    staging = Path(tempfile.mkdtemp(prefix=f".{revision}.", dir=destination.parent))
     materialized = 0
     try:
         for entry in sorted(nltk_data.rglob("*")):
@@ -823,13 +887,17 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
             raise GuardrailNLTKDataError(
                 "content_invalid", "Pinned Cosmos guardrail NLTK subtree is empty"
             )
-        _write_guardrail_nltk_ready_marker(staging)
+        _write_guardrail_nltk_ready_marker(
+            staging, repository=repository, revision=revision
+        )
         try:
             os.replace(staging, destination)
         except OSError:
             if not destination.exists():
                 raise
-            winner_count = _verify_guardrail_nltk_materialization(destination)
+            winner_count = _verify_guardrail_nltk_materialization(
+                destination, repository=repository, revision=revision
+            )
             shutil.rmtree(staging)
             return winner_count
     except GuardrailNLTKDataError:
@@ -846,16 +914,33 @@ def prepare_guardrail_nltk_data(*, hf_home: str | None = None) -> int:
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    return _verify_guardrail_nltk_materialization(destination)
+    return _verify_guardrail_nltk_materialization(
+        destination, repository=repository, revision=revision
+    )
 
 
-def _guardrail_nltk_data_path(hf_home: str) -> Path:
+def _guardrail_nltk_data_path(
+    hf_home: str,
+    *,
+    repository: str = GUARDRAIL_REPO,
+    revision: str = GUARDRAIL_REVISION,
+) -> Path:
     """Return the regular-file NLTK tree created for the pinned guardrail."""
 
-    return Path(hf_home) / GUARDRAIL_NLTK_MATERIALIZED_DIR / GUARDRAIL_REVISION
+    root = Path(hf_home) / GUARDRAIL_NLTK_MATERIALIZED_DIR
+    if repository != GUARDRAIL_REPO:
+        root /= "models--" + repository.replace("/", "--")
+    return root / revision
 
 
-def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> str:
+def _spec_with_prompt(
+    repo: Path,
+    spec: str,
+    prompt: str,
+    *,
+    negative_prompt: str = "",
+    tag: str = "",
+) -> str:
     """Write a copy of ``spec`` with its text prompt overridden; return its path.
 
     Cosmos controlnet specs carry the text prompt that steers appearance. Patching
@@ -873,7 +958,10 @@ def _spec_with_prompt(repo: Path, spec: str, prompt: str, *, tag: str = "") -> s
         data = _json.loads(spec_path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return spec
-        data["prompt"] = prompt
+        if prompt:
+            data["prompt"] = prompt
+        if str(negative_prompt or "").strip():
+            data["negative_prompt"] = str(negative_prompt).strip()
         safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(tag or ""))
         prefix = f"_npa_prompted_{safe}_" if safe else "_npa_prompted_"
         patched = spec_path.with_name(prefix + spec_path.name)
@@ -928,6 +1016,7 @@ def run_cosmos_transfer(
     run_id: str = "",
     spec: str | None = None,
     prompt: str | None = None,
+    negative_prompt: str | None = None,
     out_subdir: str | None = None,
     hf_home: str | None = None,
     input_video: str | None = None,
@@ -949,6 +1038,8 @@ def run_cosmos_transfer(
     ``COSMOS_TRANSFER_SPEC`` environment override). No upstream fixture is baked.
     ``prompt`` (or ``COSMOS_TRANSFER_PROMPT``), when set, overrides the spec's text
     prompt so the sampled appearance actually conditions the augmentation.
+    ``negative_prompt`` (or ``COSMOS_TRANSFER_NEGATIVE_PROMPT``) is rendered into
+    that same effective spec and retained in the published evidence.
 
     When ``input_video`` is provided the transfer is CONDITIONED ON THAT CLIP: a
     controlnet spec is built with ``video_path`` = the input and the ``control``
@@ -969,10 +1060,14 @@ def run_cosmos_transfer(
     tag = str(variant_tag or run_id or "input")
     conditioned_control = ""
     if input_video:
+        effective_negative_prompt = negative_prompt or os.environ.get(
+            "COSMOS_TRANSFER_NEGATIVE_PROMPT", ""
+        )
         spec, conditioned_control = _spec_for_input_video(
             repo,
             input_video=input_video,
             prompt=prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", ""),
+            negative_prompt=effective_negative_prompt,
             control=control,
             control_weight=control_weight,
             guidance=guidance,
@@ -991,8 +1086,17 @@ def run_cosmos_transfer(
                 "COSMOS_TRANSFER_SPEC; no upstream media is bundled"
             )
         prompt = prompt or os.environ.get("COSMOS_TRANSFER_PROMPT", "")
-        if prompt:
-            spec = _spec_with_prompt(repo, spec, prompt, tag=tag)
+        effective_negative_prompt = negative_prompt or os.environ.get(
+            "COSMOS_TRANSFER_NEGATIVE_PROMPT", ""
+        )
+        if prompt or effective_negative_prompt:
+            spec = _spec_with_prompt(
+                repo,
+                spec,
+                prompt,
+                negative_prompt=effective_negative_prompt,
+                tag=tag,
+            )
     out = out_subdir or f"outputs/{run_id or 'transfer'}"
     out_abs = repo / out
     if out_abs.exists():
@@ -1093,6 +1197,7 @@ def run_cosmos_transfer(
         "mask_videos": mask_videos,
         "control_weight": float(control_weight),
         "control_prompt": control_prompt,
+        "negative_prompt": str(effective_negative_prompt or ""),
         "mask_prompt": mask_prompt,
         "control_asset": control_asset,
         "mask_asset": mask_asset,
@@ -1226,6 +1331,7 @@ def publish_transfer_clip(
     effective_guidance = transfer.get("effective_guidance")
     inference_seed = transfer.get("inference_seed")
     conditioning_clip_uri = str(transfer.get("conditioning_clip_uri") or "")
+    negative_prompt = str(transfer.get("negative_prompt") or "")
 
     control_uris: dict[str, str] = {}
     control_frames: dict[str, list[str]] = {}
@@ -1263,6 +1369,7 @@ def publish_transfer_clip(
             "variant_index": int(variant_index),
             "variables": variables or {},
             "prompt": str((variables or {}).get("prompt") or ""),
+            "negative_prompt": negative_prompt,
             "control_spec": transfer.get("spec", ""),
             "input_conditioned": input_conditioned,
             "conditioned_input": conditioned_input,
@@ -1345,6 +1452,7 @@ def publish_transfer_clip(
         "control": conditioned_control,
         "control_weight": float(transfer.get("control_weight", 0.0) or 0.0),
         "control_prompt": str(transfer.get("control_prompt") or ""),
+        "negative_prompt": negative_prompt,
         "mask_prompt": str(transfer.get("mask_prompt") or ""),
         "control_uris": control_uris,
         "control_frames": control_frames,
@@ -1897,6 +2005,7 @@ def build_run_manifest(
         # segmentation, and the region mask that limited where it applied.
         "control_weight": float(first.get("control_weight", 0.0) or 0.0),
         "control_prompt": str(first.get("control_prompt") or ""),
+        "negative_prompt": str(first.get("negative_prompt") or ""),
         "mask_prompt": str(first.get("mask_prompt") or ""),
         "control_uris": first.get("control_uris", {}),
         "content_guardrails_enabled": bool(
@@ -1913,6 +2022,7 @@ def build_run_manifest(
                 "variant_index": int(c.get("variant_index", index) or 0),
                 "variables": c.get("variables", {}),
                 "prompt": str((c.get("variables") or {}).get("prompt") or ""),
+                "negative_prompt": str(c.get("negative_prompt") or ""),
                 "frame_count": int(c.get("frame_count", 0) or 0),
                 "augmented_video_uri": c.get("augmented_video_uri", ""),
                 "control_uris": c.get("control_uris", {}),
