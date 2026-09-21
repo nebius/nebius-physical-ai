@@ -2,14 +2,13 @@
   "schema": "npa.public-pr-readiness/v4",
   "snapshot_utc": "2026-09-21T07:28:45.187250+00:00",
   "mergeability_verified_at": "2026-09-21T07:28:45.187250+00:00",
-  "prepared_at": "2026-09-21T07:31:09.993934+00:00",
+  "prepared_at": "2026-09-21T07:39:45.865470+00:00",
   "required_checks_verified_at": "2026-09-21T07:29:18.143891+00:00",
   "tracked_open_count": 57,
   "tracked_historical_count": 59,
   "queue_candidates": [
     579,
     581,
-    584,
     594,
     596,
     607,
@@ -59,9 +58,21 @@
     "Historical proof retains its original source scope; no blanket GPU or VLM acceptance is claimed.",
     "Scanner current test-only delta is verified; published performance remains bound to the executed original production bytes.",
     "AprilTag presentation review passed disclosed controls, committed holdout cases and a production census; overlap and resolution limits remain explicit.",
-    "The earlier 18-candidate snapshot is superseded: PR610 was returned to draft after supplementary exact-image scanning found build-generated SSH private keys in an ancestor layer. CI passing alone is insufficient."
+    "The earlier 18-candidate snapshot is superseded: PR610 was returned to draft after supplementary exact-image scanning found build-generated SSH private keys in an ancestor layer. CI passing alone is insufficient.",
+    "PR584 readiness was separately withdrawn after exact-image ancestor inspection confirmed the same shared BYOF key defect; current candidate count is16. Its passing source CI and retained trajectory results do not override image acceptance."
   ],
   "workloads": [
+    {
+      "workload": "evo trajectory evaluation",
+      "current_result": "Real CPU workload and native trajectory metrics/negative controls remain retained. A supplementary exact-image inspection independently confirmed three generated SSH host private keys in an ancestor layer; later whiteouts do not erase those bytes.",
+      "remaining_acceptance": "PR584 is back in draft. Shared BYOF source repair, fresh immutable image/layer/security/bootstrap checks and actual CPU replay. No GPU applies. Prior visual review may carry only after exact output-image equivalence is proven.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/899caeab007bd2d55221ff3bc7b195f02a828c11/docs/testing/evidence/evo-proof/README.md",
+        "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/README.md",
+        "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/synthetic-errors.json",
+        "https://github.com/nebius/nebius-physical-ai/pull/584#issuecomment-5757043444"
+      ]
+    },
     {
       "workload": "SeedVR2",
       "current_result": "Exact 3B H100 image completed both four-stage workflows. The subsequent controlled official 7B H100 overlay diagnostic completed inference and passed the LPIPS improvement and SSIM regression gates, but frozen temporal and downstream annotation gates failed. A first causal temporal repair improved temporal error but still failed the unchanged limit at 1.3886x bicubic and introduced three critical annotation contradictions.",
@@ -235,13 +246,13 @@
       "title": "Add evo trajectory evaluation BYOF workflow",
       "source_commit": "8c6bb6b4190610711f410a7bb29e077c9a84b9c7",
       "state": "OPEN",
-      "draft": false,
+      "draft": true,
       "base": "main",
       "base_commit": "95c4eb685122d590d7e03f3da2d9583a16e74e6e",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
-      "status": "Ready for required merge queue",
-      "note": "Exact-source independent review and applicable proof accepted; current required GitHub Actions app/source identities and all applicable checks verified. Queue integration remains required.",
+      "status": "Readiness withdrawn: image contains private keys in an ancestor layer",
+      "note": "A separate exact-image audit verified all 12 layer blob identities and confirmed three build-generated OpenSSH private-key files in an ancestor layer, later whiteouted. Existing trajectory controls and visual results remain retained. Cursor must repair the shared BYOF build, qualify a fresh immutable image and rerun the CPU workload before readiness. No runtime use of those deleted keys or customer cloud API credential finding is asserted.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -280,7 +291,9 @@
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e53a7103b52a4a4ce0cc7c3c8b87b5d2bede6e4c/docs/testing/evidence/evo-recompute/synthetic-errors.json"
       ],
-      "review_links": []
+      "review_links": [
+        "https://github.com/nebius/nebius-physical-ai/pull/584#issuecomment-5757043444"
+      ]
     },
     {
       "number": 593,
@@ -3134,5 +3147,6 @@
       "review_links": []
     }
   ],
-  "workload_update_recorded_at": "2026-09-21T07:31:09.993934+00:00"
+  "workload_update_recorded_at": "2026-09-21T07:37:58.943455+00:00",
+  "qualification_correction_at": "2026-09-21T07:37:58.943455+00:00"
 }
