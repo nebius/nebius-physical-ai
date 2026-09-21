@@ -628,6 +628,64 @@ func TestFailedAdmissionReturnsItsReservation(t *testing.T) {
 	}
 }
 
+// reclaimsWholeCapacity reports whether the budget has nothing outstanding,
+// which is only true when every reservation taken so far was released.
+func reclaimsWholeCapacity(budget *byteBudget, capacity int64) bool {
+	reclaimed := make(chan int64, 1)
+	go func() {
+		amount, _ := budget.acquire(capacity)
+		reclaimed <- amount
+	}()
+	select {
+	case amount := <-reclaimed:
+		return amount == capacity
+	case <-time.After(5 * time.Second):
+		return false
+	}
+}
+
+func TestControlledPathFailureReturnsItsReservation(t *testing.T) {
+	const capacity = 256
+	budget := newByteBudget(capacity)
+	detector := scanner()
+	// The second record's controlled label collides with the configuration
+	// path, so admission fails after its reservation has already been taken.
+	detector.Config.Path = recordPath(2)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	input := bytes.NewReader(framed(bytes.Repeat([]byte("a"), 8), bytes.Repeat([]byte("b"), 8)))
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, detector, budget, dispatch, ordered, make(chan struct{}))
+	}()
+	first := <-ordered
+	budget.release(first.reserved)
+	if code := <-stopped; code != "controlled_path_matches_config" {
+		t.Fatalf("controlled path collision was not fail-closed: %q", code)
+	}
+	if !reclaimsWholeCapacity(budget, capacity) {
+		t.Fatal("the rejected record's reservation was never returned")
+	}
+}
+
+func TestDetectionReturnsItsReservation(t *testing.T) {
+	const capacity = 32
+	budget := newByteBudget(capacity)
+	job := &scanJob{ordinal: 1, length: capacity, payload: bytes.Repeat([]byte("a"), capacity), done: make(chan struct{})}
+	reserved, granted := budget.acquire(capacity)
+	if !granted {
+		t.Fatal("a fresh budget refused the whole capacity")
+	}
+	job.reserved = reserved
+	detectRecord(job, scanner(), budget)
+	<-job.done
+	// Only a worker that released the detected record's reservation leaves the
+	// whole capacity free for the next one.
+	if !reclaimsWholeCapacity(budget, capacity) {
+		t.Fatal("the detected record's reservation was never returned")
+	}
+}
+
 func TestEmptyRecordFloodStaysBounded(t *testing.T) {
 	// Empty records consume no byte budget, so only the job bound stops an
 	// unbounded number of them from being admitted at once.
