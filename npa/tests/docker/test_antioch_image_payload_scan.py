@@ -36,11 +36,21 @@ def _image(
         }
     ).encode()
     manifest = json.dumps(
-        [{"Config": "config.json", "RepoTags": ["fixture:latest"], "Layers": ["layer.tar"]}]
+        [
+            {
+                "Config": "config.json",
+                "RepoTags": ["fixture:latest"],
+                "Layers": ["layer.tar"],
+            }
+        ]
     ).encode()
     target = tmp_path / "image.tar"
     with tarfile.open(target, "w") as outer:
-        for name, payload in {"manifest.json": manifest, "config.json": config, "layer.tar": layer.getvalue()}.items():
+        for name, payload in {
+            "manifest.json": manifest,
+            "config.json": config,
+            "layer.tar": layer.getvalue(),
+        }.items():
             member = tarfile.TarInfo(name)
             member.size = len(payload)
             outer.addfile(member, io.BytesIO(payload))
@@ -48,7 +58,9 @@ def _image(
 
 
 def test_clean_adapter_fixture_passes(tmp_path: Path) -> None:
-    report = scanner.scan_tarball(_image(tmp_path, {"opt/npa/app.py": b"print('ok')\n"}))
+    report = scanner.scan_tarball(
+        _image(tmp_path, {"opt/npa/app.py": b"print('ok')\n"})
+    )
     assert report["verdict"] == "clean"
     assert report["layers_scanned"] == 1
     assert report["entries_scanned"] == 1
@@ -57,13 +69,17 @@ def test_clean_adapter_fixture_passes(tmp_path: Path) -> None:
 def test_renamed_distribution_is_found_from_metadata(tmp_path: Path) -> None:
     image = _image(
         tmp_path,
-        {"opt/renamed/harmless.dist-info/METADATA": b"Metadata-Version: 2.1\nName: antioch_sim\n"},
+        {
+            "opt/renamed/harmless.dist-info/METADATA": b"Metadata-Version: 2.1\nName: antioch_sim\n"
+        },
     )
     kinds = {item["kind"] for item in scanner.scan_tarball(image)["findings"]}
     assert "renamed_vendor_distribution" in kinds
 
 
-def test_binary_weight_vendor_state_and_private_key_are_rejected(tmp_path: Path) -> None:
+def test_binary_weight_vendor_state_and_private_key_are_rejected(
+    tmp_path: Path,
+) -> None:
     image = _image(
         tmp_path,
         {
@@ -78,7 +94,12 @@ def test_binary_weight_vendor_state_and_private_key_are_rejected(tmp_path: Path)
         },
     )
     kinds = {item["kind"] for item in scanner.scan_tarball(image)["findings"]}
-    assert {"proprietary_binary", "checkpoint_or_weight", "vendor_state", "credential_material"} <= kinds
+    assert {
+        "proprietary_binary",
+        "checkpoint_or_weight",
+        "vendor_state",
+        "credential_material",
+    } <= kinds
 
 
 def test_config_and_history_leakage_are_rejected(tmp_path: Path) -> None:

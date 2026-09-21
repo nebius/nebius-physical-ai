@@ -45,7 +45,11 @@ RELAY_BUNDLE_FILES = (
 )
 REQUIRED_BUNDLE_FILES = UPSTREAM_BUNDLE_FILES + RELAY_BUNDLE_FILES
 RUNTIME_SOURCE_FILES = (
-    "scenario_v2.py", "openpi_protocol.py", "relay_bridge.py", "policy_episode.py", "droid_scene.py",
+    "scenario_v2.py",
+    "openpi_protocol.py",
+    "relay_bridge.py",
+    "policy_episode.py",
+    "droid_scene.py",
 )
 RELAY_TARGET_PORT = 8_444
 RELAY_PUBLISHED_PORT = 18_444

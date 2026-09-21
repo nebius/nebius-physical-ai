@@ -61,9 +61,14 @@ REQUIRED_POC_CHECKS = frozenset(
     }
 )
 REQUIRED_PICKUP_CHECKS = REQUIRED_POC_CHECKS | {
-    "policy_views_exposure_and_contrast", "initial_target_resolved_both_views",
-    "policy_evidence_complete", "policy_actions_executed", "episode_completed",
-    "end_effector_approached_cube", "bilateral_gripper_contact", "cube_lift_held",
+    "policy_views_exposure_and_contrast",
+    "initial_target_resolved_both_views",
+    "policy_evidence_complete",
+    "policy_actions_executed",
+    "episode_completed",
+    "end_effector_approached_cube",
+    "bilateral_gripper_contact",
+    "cube_lift_held",
 }
 _METRIC_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 _CAMERA_REJECTION_VIEWS = frozenset({"exterior", "wrist", "pair"})
@@ -153,19 +158,42 @@ def _sanitized_metric_line(line: bytes) -> str:
 
 
 def _scenario_command(
-    executable: Path, scenario: str, timeout_seconds: int,
-    initial_posture: str, camera_mounts: str,
+    executable: Path,
+    scenario: str,
+    timeout_seconds: int,
+    initial_posture: str,
+    camera_mounts: str,
 ) -> list[str]:
     """Keep public experiment choices typed and separate from private bundles."""
     if initial_posture not in {"pregrasp", "droid"}:
         raise ValueError("Unsupported initial_posture")
-    if camera_mounts not in {"native_wide", "droid_reference", "droid_detail", "task_view"}:
+    if camera_mounts not in {
+        "native_wide",
+        "droid_reference",
+        "droid_detail",
+        "task_view",
+    }:
         raise ValueError("Unsupported camera_mounts")
-    command = [str(executable), "scenario", "run", "--scenario", scenario,
-               "--timeout", str(timeout_seconds), "--stream", "--verbose"]
+    command = [
+        str(executable),
+        "scenario",
+        "run",
+        "--scenario",
+        scenario,
+        "--timeout",
+        str(timeout_seconds),
+        "--stream",
+        "--verbose",
+    ]
     if scenario == "openpi_franka_pickup_v3":
-        command.extend(["--set", f"initial_posture={initial_posture}",
-                        "--set", f"camera_mounts={camera_mounts}"])
+        command.extend(
+            [
+                "--set",
+                f"initial_posture={initial_posture}",
+                "--set",
+                f"camera_mounts={camera_mounts}",
+            ]
+        )
     elif (initial_posture, camera_mounts) != ("pregrasp", "native_wide"):
         raise ValueError("Pickup parameters require the pickup scenario")
     return command
@@ -195,8 +223,9 @@ class VendorStreamProcess:
     ) -> "VendorStreamProcess":
         started = time.monotonic()
         process = subprocess.Popen(
-            _scenario_command(executable, scenario, timeout_seconds,
-                              initial_posture, camera_mounts),
+            _scenario_command(
+                executable, scenario, timeout_seconds, initial_posture, camera_mounts
+            ),
             cwd=runtime,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -518,8 +547,12 @@ def _integer_result(results: dict[str, Any], name: str, *, minimum: int) -> int:
 
 
 def _completed_poc_evidence(
-    record: dict[str, Any], *, scenario: str, scenario_run_id: str,
-    initial_posture: str | None = None, camera_mounts: str | None = None,
+    record: dict[str, Any],
+    *,
+    scenario: str,
+    scenario_run_id: str,
+    initial_posture: str | None = None,
+    camera_mounts: str | None = None,
 ) -> dict[str, Any]:
     """Validate the durable terminal record before retiring live compute."""
 
@@ -585,38 +618,65 @@ def _completed_poc_evidence(
 
 def _validate_pickup_configuration(results, initial_posture, camera_mounts) -> None:
     """Prevent a passed record from qualifying a different requested experiment."""
-    for result_name, expected in (("initial_arm_posture", initial_posture),
-                                  ("policy_camera_mounts", camera_mounts)):
+    for result_name, expected in (
+        ("initial_arm_posture", initial_posture),
+        ("policy_camera_mounts", camera_mounts),
+    ):
         if expected is not None and results.get(result_name) != expected:
-            raise AntiochLiveError(f"completed pickup does not match requested {result_name}")
-    if initial_posture is not None and results.get("post_reset_controller") != "openpi_policy_only":
-        raise AntiochLiveError("completed pickup does not establish policy-only control")
+            raise AntiochLiveError(
+                f"completed pickup does not match requested {result_name}"
+            )
+    if (
+        initial_posture is not None
+        and results.get("post_reset_controller") != "openpi_policy_only"
+    ):
+        raise AntiochLiveError(
+            "completed pickup does not establish policy-only control"
+        )
 
 
 def _validate_pickup_record(record, results, passed) -> None:
     """Reject communication-only or incomplete evidence for the pickup identity."""
     if not REQUIRED_PICKUP_CHECKS.issubset(passed):
         raise AntiochLiveError("completed pickup lacks required measured checks")
-    if (results.get("episode_objective") != "pickup"
-            or results.get("termination_reason") != "pickup_complete"
-            or results.get("pickup_success") is not True):
+    if (
+        results.get("episode_objective") != "pickup"
+        or results.get("termination_reason") != "pickup_complete"
+        or results.get("pickup_success") is not True
+    ):
         raise AntiochLiveError("completed pickup has no physical task success")
-    for name, minimum in (("end_effector_approach_m", 0.05),
-                          ("maximum_cube_lift_m", 0.05), ("pickup_hold_seconds", 1.0)):
+    for name, minimum in (
+        ("end_effector_approach_m", 0.05),
+        ("maximum_cube_lift_m", 0.05),
+        ("pickup_hold_seconds", 1.0),
+    ):
         value = results.get(name)
-        if (isinstance(value, bool) or not isinstance(value, (int, float))
-                or not math.isfinite(value) or value < minimum):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < minimum
+        ):
             raise AntiochLiveError(f"completed pickup has invalid {name}")
     _integer_result(results, "completed_action_chunks", minimum=2)
     _integer_result(results, "safe_targets_applied", minimum=10)
     _integer_result(results, "gripper_contact_samples", minimum=1)
     _validate_camera_quality_record(results)
     artifacts = record.get("artifacts")
-    artifact = artifacts.get("policy-evidence.zip") if isinstance(artifacts, dict) else None
-    if (not isinstance(artifact, dict) or not artifact.get("size_bytes")
-            or artifact.get("sha256") != results.get("policy_evidence_sha256")
-            or not re.fullmatch(r"[a-f0-9]{64}", str(results.get("policy_evidence_sha256", "")))):
-        raise AntiochLiveError("completed pickup lacks its matching control evidence archive")
+    artifact = (
+        artifacts.get("policy-evidence.zip") if isinstance(artifacts, dict) else None
+    )
+    if (
+        not isinstance(artifact, dict)
+        or not artifact.get("size_bytes")
+        or artifact.get("sha256") != results.get("policy_evidence_sha256")
+        or not re.fullmatch(
+            r"[a-f0-9]{64}", str(results.get("policy_evidence_sha256", ""))
+        )
+    ):
+        raise AntiochLiveError(
+            "completed pickup lacks its matching control evidence archive"
+        )
 
 
 def _validate_camera_quality_record(results) -> None:
@@ -627,8 +687,12 @@ def _validate_camera_quality_record(results) -> None:
             ("dynamic_range_min", 32.0, 255.0),
         ):
             value = results.get(f"{view}_{suffix}")
-            if (isinstance(value, bool) or not isinstance(value, (int, float))
-                    or not math.isfinite(value) or not lower <= value <= upper):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not lower <= value <= upper
+            ):
                 raise AntiochLiveError("completed pickup has invalid camera quality")
 
 
@@ -657,8 +721,11 @@ def _wait_for_completed_poc_record(
         record = cli.show(runtime, kind="scenario", remote_id=scenario_run_id)
         if record.get("phase") == "completed":
             return _completed_poc_evidence(
-                record, scenario=scenario, scenario_run_id=scenario_run_id,
-                initial_posture=initial_posture, camera_mounts=camera_mounts,
+                record,
+                scenario=scenario,
+                scenario_run_id=scenario_run_id,
+                initial_posture=initial_posture,
+                camera_mounts=camera_mounts,
             )
         if attempt + 1 < COMPLETION_POLL_ATTEMPTS:
             time.sleep(COMPLETION_POLL_SECONDS)
@@ -1294,9 +1361,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--stop-file", default="/var/run/npa-antioch/stop")
     run.add_argument("--scenario", default="openpi_franka_pickup_v3")
     run.add_argument("--scenario-timeout-seconds", type=int, default=14_400)
-    run.add_argument("--initial-posture", choices=("pregrasp", "droid"), default="pregrasp")
     run.add_argument(
-        "--camera-mounts", choices=("native_wide", "droid_reference", "droid_detail", "task_view"), default="native_wide"
+        "--initial-posture", choices=("pregrasp", "droid"), default="pregrasp"
+    )
+    run.add_argument(
+        "--camera-mounts",
+        choices=("native_wide", "droid_reference", "droid_detail", "task_view"),
+        default="native_wide",
     )
     run.add_argument("--owner-identity", required=True)
     run.add_argument("--health-port", type=int, default=18_080)

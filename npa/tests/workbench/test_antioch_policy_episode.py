@@ -55,7 +55,10 @@ def test_camera_rig_selection_keeps_optics_and_calibration_consistent(modules):
     assert reference["wrist"]["focal_length"] == 2.8
     assert native["wrist"]["focal_length"] == 2.1
     for view in ("exterior", "wrist"):
-        assert optical_config(view, "droid_reference")["focal_length"] == reference[view]["focal_length"]
+        assert (
+            optical_config(view, "droid_reference")["focal_length"]
+            == reference[view]["focal_length"]
+        )
     reference["wrist"]["focal_length"] = 100
     assert camera_calibration("droid_reference")["wrist"]["focal_length"] == 2.8
     assert camera_calibration() == native
@@ -69,7 +72,10 @@ def test_detail_rig_retains_reference_frames_and_independent_calibration(modules
     assert detail["wrist"] == reference["wrist"]
     for key in ("position", "quaternion_wxyz"):
         assert detail["exterior"][key] == reference["exterior"][key]
-    assert optical_config("exterior", "droid_detail")["focal_length"] > reference["exterior"]["focal_length"]
+    assert (
+        optical_config("exterior", "droid_detail")["focal_length"]
+        > reference["exterior"]["focal_length"]
+    )
     detail["wrist"]["position"] = (0, 0, 0)
     assert camera_calibration("droid_detail")["wrist"] == reference["wrist"]
 
@@ -88,7 +94,12 @@ def test_task_view_retains_cube_and_approach_region(modules):
     optics = optical_config("exterior", "task_view")
     # Cover the pickup volume and elevated starting fingers, not just the cube
     # center used to aim a camera. Native renders separately test occlusion.
-    for point in ([.48, 0, .035], [.3, -.15, .1], [.6, .15, .1], [.4, 0, .55]):
+    for point in (
+        [0.48, 0, 0.035],
+        [0.3, -0.15, 0.1],
+        [0.6, 0.15, 0.1],
+        [0.4, 0, 0.55],
+    ):
         assert scenario._point_in_camera_frame(point, pose, optics)
     assert calibration["wrist"] == camera_calibration("native_wide")["wrist"]
     assert optics["focal_length"] == exterior["focal_length"]
@@ -97,9 +108,13 @@ def test_task_view_retains_cube_and_approach_region(modules):
 
 
 @pytest.mark.parametrize("field", ["initial_posture", "camera_mounts"])
-def test_pickup_rejects_unknown_experiment_before_simulation(modules, monkeypatch, field):
+def test_pickup_rejects_unknown_experiment_before_simulation(
+    modules, monkeypatch, field
+):
     scenario, _episode = modules
-    monkeypatch.setattr(scenario, "_run_openpi_episode", lambda *_a, **_k: pytest.fail("started"))
+    monkeypatch.setattr(
+        scenario, "_run_openpi_episode", lambda *_a, **_k: pytest.fail("started")
+    )
     with pytest.raises(ValueError, match=field):
         scenario.openpi_franka_pickup_v3(object(), **{field: "unreviewed"})
 
@@ -111,11 +126,15 @@ def test_wrist_aim_gives_near_gripper_and_distant_cube_equal_angular_space(modul
     far_cube = np.array([-0.18, 0.0, -0.70])
     direction = scenario._camera_target_bisector(eye, near_finger, far_cube)
     normalized = [point / np.linalg.norm(point) for point in (near_finger, far_cube)]
-    assert np.dot(direction, normalized[0]) == pytest.approx(np.dot(direction, normalized[1]))
+    assert np.dot(direction, normalized[0]) == pytest.approx(
+        np.dot(direction, normalized[1])
+    )
     pose = (eye, direction, (0, 1, 0))
     optics = scenario._camera_optical_config("wrist")
-    assert all(scenario._point_in_camera_frame(point, pose, optics)
-               for point in (near_finger, far_cube))
+    assert all(
+        scenario._point_in_camera_frame(point, pose, optics)
+        for point in (near_finger, far_cube)
+    )
     midpoint_pose = (eye, (near_finger + far_cube) / 2, (0, 1, 0))
     assert not scenario._point_in_camera_frame(near_finger, midpoint_pose, optics)
 
@@ -132,7 +151,9 @@ def test_washed_out_but_nonblack_policy_frame_is_rejected(modules):
     np.testing.assert_array_equal(frame.rgb, image)
 
 
-@pytest.mark.parametrize("value,reason", [(0, "blank"), (255, "overexposed"), (120, "flat")])
+@pytest.mark.parametrize(
+    "value,reason", [(0, "blank"), (255, "overexposed"), (120, "flat")]
+)
 def test_droid_letterbox_cannot_hide_unusable_sensor_content(modules, value, reason):
     scenario, _episode = modules
     raw = np.full((180, 320, 3), value, dtype=np.uint8)
@@ -166,21 +187,31 @@ def test_startup_rejects_target_cut_by_sensor_edge(modules, policy_format, edge,
     scenario, _episode = modules
     height, width = (180, 320) if policy_format == "droid" else (224, 224)
     rows, columns = np.indices((height, width))
-    raw = np.repeat(((rows + columns * 2) % 180 + 30)[..., None], 3, axis=2).astype(np.uint8)
+    raw = np.repeat(((rows + columns * 2) % 180 + 30)[..., None], 3, axis=2).astype(
+        np.uint8
+    )
     y = 0 if edge == "top" else height - 24 if edge == "bottom" else height // 2
     x = 0 if edge == "left" else width - 24 if edge == "right" else width // 2
-    raw[y:y + 24, x:x + 24] = [220, 12, 8]
-    clipped = scenario._camera_frame_from_buffer(raw, view=view, policy_format=policy_format)
+    raw[y : y + 24, x : x + 24] = [220, 12, 8]
+    clipped = scenario._camera_frame_from_buffer(
+        raw, view=view, policy_format=policy_format
+    )
     assert not clipped.reason and scenario._target_resolved(clipped)
     clear = scenario._camera_frame_from_buffer(_rgb(shifted=True), view="other")
     frames = (clipped, clear) if view == "exterior" else (clear, clipped)
-    kwargs = dict(render_sequence=2, last_accepted_render_sequence=1,
-                  exterior_cube_in_frame=True, wrist_cube_in_frame=True)
+    kwargs = dict(
+        render_sequence=2,
+        last_accepted_render_sequence=1,
+        exterior_cube_in_frame=True,
+        wrist_cube_in_frame=True,
+    )
     pair = scenario._validate_camera_pair(*frames, initial_alignment=True, **kwargs)
     assert not pair.accepted and pair.reason == "target_clipped"
     assert pair.rejected_view == view
     # A later partial view remains usable when the other camera resolves the cube.
-    assert scenario._validate_camera_pair(*frames, initial_alignment=False, **kwargs).accepted
+    assert scenario._validate_camera_pair(
+        *frames, initial_alignment=False, **kwargs
+    ).accepted
 
 
 def test_droid_binds_observed_joints_by_name_and_excludes_passive_joints(modules):
@@ -190,16 +221,25 @@ def test_droid_binds_observed_joints_by_name_and_excludes_passive_joints(modules
     raw = np.arange(len(names), dtype=float) / 10
     articulation = SimpleNamespace(dof_names=names, get_joint_positions=lambda: raw)
     robot = DroidRobot(articulation, None)
-    np.testing.assert_array_equal(robot.get_joint_positions(), raw[list(joint_indices(names))])
+    np.testing.assert_array_equal(
+        robot.get_joint_positions(), raw[list(joint_indices(names))]
+    )
     assert robot.get_joint_positions().shape == (8,)
     raw[names.index("panda_joint4")] = np.nan
     with pytest.raises(ValueError, match="finite"):
         robot.get_joint_positions()
 
 
-@pytest.mark.parametrize("offset,yaw", [((0, 0, 0.125174), 0),
-    ((0, 0, 0.107), 0), ((0, 0, 0.125174), -np.pi / 4),
-    ((0.01, 0, 0.125174), 0), ((0, np.nan, 0.125174), 0)])
+@pytest.mark.parametrize(
+    "offset,yaw",
+    [
+        ((0, 0, 0.125174), 0),
+        ((0, 0, 0.107), 0),
+        ((0, 0, 0.125174), -np.pi / 4),
+        ((0.01, 0, 0.125174), 0),
+        ((0, np.nan, 0.125174), 0),
+    ],
+)
 def test_droid_mount_readback_detects_spacer_and_yaw_mismatches(modules, offset, yaw):
     from droid_scene import _verify_mount_poses
 
@@ -214,7 +254,9 @@ def test_droid_mount_readback_detects_spacer_and_yaw_mismatches(modules, offset,
             _verify_mount_poses(flange, gripper)
 
 
-def test_droid_mount_readback_uses_flange_coordinates_and_rejects_invalid_rotations(modules):
+def test_droid_mount_readback_uses_flange_coordinates_and_rejects_invalid_rotations(
+    modules,
+):
     from droid_scene import _verify_mount_poses
 
     # A 90-degree world Y rotation puts the flange's local Z along world X.
@@ -222,22 +264,39 @@ def test_droid_mount_readback_uses_flange_coordinates_and_rejects_invalid_rotati
     flange = (np.array([1, 2, 3]), q)
     gripper = (np.array([1.125174, 2, 3]), -q)
     result = _verify_mount_poses(flange, gripper)
-    np.testing.assert_allclose(result["base_in_flange_m"], [0, 0, .125174], atol=1e-12)
+    np.testing.assert_allclose(result["base_in_flange_m"], [0, 0, 0.125174], atol=1e-12)
     for invalid in (np.zeros(4), np.full(4, np.nan), np.ones(3)):
         with pytest.raises(RuntimeError, match="invalid quaternion"):
             _verify_mount_poses(flange, (gripper[0], invalid))
 
 
-@pytest.mark.parametrize("body0,body1", [([], []),
-    (["/World/OtherRobot/hand"], ["/World/OtherRobot/gripper"]),
-    (["/World/Franka/panda_hand"], ["/World/Cube"])])
-def test_droid_mount_authoring_rejects_unexpected_attachment(modules, monkeypatch, body0, body1):
+@pytest.mark.parametrize(
+    "body0,body1",
+    [
+        ([], []),
+        (["/World/OtherRobot/hand"], ["/World/OtherRobot/gripper"]),
+        (["/World/Franka/panda_hand"], ["/World/Cube"]),
+    ],
+)
+def test_droid_mount_authoring_rejects_unexpected_attachment(
+    modules, monkeypatch, body0, body1
+):
     from droid_scene import _configure_native_mount
 
-    joint = SimpleNamespace(GetBody0Rel=lambda: SimpleNamespace(GetTargets=lambda: body0),
-                            GetBody1Rel=lambda: SimpleNamespace(GetTargets=lambda: body1))
-    monkeypatch.setitem(sys.modules, "pxr", SimpleNamespace(Gf=None, Usd=None, UsdGeom=None,
-        UsdPhysics=SimpleNamespace(FixedJoint=lambda _prim: joint)))
+    joint = SimpleNamespace(
+        GetBody0Rel=lambda: SimpleNamespace(GetTargets=lambda: body0),
+        GetBody1Rel=lambda: SimpleNamespace(GetTargets=lambda: body1),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "pxr",
+        SimpleNamespace(
+            Gf=None,
+            Usd=None,
+            UsdGeom=None,
+            UsdPhysics=SimpleNamespace(FixedJoint=lambda _prim: joint),
+        ),
+    )
     with pytest.raises(RuntimeError, match="hand-to-Robotiq fixed joint"):
         _configure_native_mount(SimpleNamespace(GetPrimAtPath=lambda _path: None))
 
@@ -248,15 +307,23 @@ def test_reference_wrist_mount_preserves_reference_camera_side_and_axes(modules)
     camera = camera_calibration("droid_reference")["wrist"]
     # The actual CAD geometry maps reference (+X,+Y,+Z) to native (+Z,-Y,+X).
     basis = np.array([[0, 0, 1], [0, -1, 0], [1, 0, 0]])
-    np.testing.assert_allclose(camera["position"], basis @ [.011, -.031, -.074])
-    w, x, y, z = np.array([-.420, .570, .576, -.409]) / np.linalg.norm([-.420, .570, .576, -.409])
-    reference_forward = np.array([-2*(x*z+y*w), -2*(y*z-x*w), -(1-2*(x*x+y*y))])
+    np.testing.assert_allclose(camera["position"], basis @ [0.011, -0.031, -0.074])
+    w, x, y, z = np.array([-0.420, 0.570, 0.576, -0.409]) / np.linalg.norm(
+        [-0.420, 0.570, 0.576, -0.409]
+    )
+    reference_forward = np.array(
+        [-2 * (x * z + y * w), -2 * (y * z - x * w), -(1 - 2 * (x * x + y * y))]
+    )
     w, x, y, z = camera["quaternion_wxyz"]
-    native_forward = np.array([-2*(x*z+y*w), -2*(y*z-x*w), -(1-2*(x*x+y*y))])
+    native_forward = np.array(
+        [-2 * (x * z + y * w), -2 * (y * z - x * w), -(1 - 2 * (x * x + y * y))]
+    )
     np.testing.assert_allclose(native_forward, basis @ reference_forward, atol=1e-8)
 
 
-def test_droid_physics_converts_angular_units_and_scopes_gravity_to_robot(modules, monkeypatch):
+def test_droid_physics_converts_angular_units_and_scopes_gravity_to_robot(
+    modules, monkeypatch
+):
     from droid_scene import MODEL_JOINT_NAMES, _configure_native_dynamics
 
     class Prim:
@@ -283,52 +350,99 @@ def test_droid_physics_converts_angular_units_and_scopes_gravity_to_robot(module
             return lambda value: self.prim.attributes.__setitem__(key, value)
 
     api = SimpleNamespace(Apply=lambda prim, *_args: Writer(prim))
-    monkeypatch.setitem(sys.modules, "pxr", SimpleNamespace(
-        PhysxSchema=SimpleNamespace(PhysxRigidBodyAPI=api, PhysxArticulationAPI=api, PhysxJointAPI=api),
-        UsdPhysics=SimpleNamespace(RigidBodyAPI="body", ArticulationRootAPI="root",
-                                  RevoluteJoint="joint", DriveAPI=api)))
+    monkeypatch.setitem(
+        sys.modules,
+        "pxr",
+        SimpleNamespace(
+            PhysxSchema=SimpleNamespace(
+                PhysxRigidBodyAPI=api, PhysxArticulationAPI=api, PhysxJointAPI=api
+            ),
+            UsdPhysics=SimpleNamespace(
+                RigidBodyAPI="body",
+                ArticulationRootAPI="root",
+                RevoluteJoint="joint",
+                DriveAPI=api,
+            ),
+        ),
+    )
     root = Prim("/World/Franka/root_joint", "root")
     bodies = [Prim(f"/World/Franka/link_{i}", "body") for i in range(9)]
-    joints = [Prim(f"/World/Franka/joints/{name}", "joint") for name in MODEL_JOINT_NAMES]
+    joints = [
+        Prim(f"/World/Franka/joints/{name}", "joint") for name in MODEL_JOINT_NAMES
+    ]
     passive = Prim("/World/Franka/joints/passive_finger", "joint", stiffness=0)
     cube = Prim("/World/Cube", "body", gravity_enabled=True)
     other = Prim("/World/FrankaOther/link", "body", gravity_enabled=True)
-    report = _configure_native_dynamics(SimpleNamespace(Traverse=lambda: [root, *bodies, *joints, passive, cube, other]))
+    report = _configure_native_dynamics(
+        SimpleNamespace(Traverse=lambda: [root, *bodies, *joints, passive, cube, other])
+    )
     assert all(body.attributes["CreateDisableGravityAttr"] is True for body in bodies)
     assert cube.attributes == other.attributes == {"gravity_enabled": True}
     assert passive.attributes == {"stiffness": 0}
     # Independently convert authored per-degree gains back to effective per-radian gains.
     for joint in joints[:7]:
-        assert joint.attributes["CreateStiffnessAttr"] * 57.29577951308232 == pytest.approx(400)
-        assert joint.attributes["CreateDampingAttr"] * 57.29577951308232 == pytest.approx(80)
+        assert joint.attributes[
+            "CreateStiffnessAttr"
+        ] * 57.29577951308232 == pytest.approx(400)
+        assert joint.attributes[
+            "CreateDampingAttr"
+        ] * 57.29577951308232 == pytest.approx(80)
     assert joints[-1].attributes["CreateStiffnessAttr"] == pytest.approx(100)
-    assert joints[-1].attributes["CreateDampingAttr"] == pytest.approx(.0002)
+    assert joints[-1].attributes["CreateDampingAttr"] == pytest.approx(0.0002)
     assert joints[-1].attributes["CreateMaxForceAttr"] == pytest.approx(16.5)
-    assert joints[-1].attributes["CreateMaxJointVelocityAttr"] / 57.29577951308232 == pytest.approx(5)
+    assert joints[-1].attributes[
+        "CreateMaxJointVelocityAttr"
+    ] / 57.29577951308232 == pytest.approx(5)
     assert root.attributes["CreateSolverPositionIterationCountAttr"] == 64
     assert root.attributes["CreateSolverVelocityIterationCountAttr"] == 0
     assert report["gravity_compensated_robot_links"] == 9
 
 
-@pytest.mark.parametrize("bad_field,bad_value", [(None, None), ("stiffness", 22918.3125),
-                                               ("damping", 4583.6626), ("maxVelocity", 124.6183),
-                                               ("maxEffort", 8700.0)])
-def test_droid_verifies_effective_controller_units_after_reset(modules, bad_field, bad_value):
+@pytest.mark.parametrize(
+    "bad_field,bad_value",
+    [
+        (None, None),
+        ("stiffness", 22918.3125),
+        ("damping", 4583.6626),
+        ("maxVelocity", 124.6183),
+        ("maxEffort", 8700.0),
+    ],
+)
+def test_droid_verifies_effective_controller_units_after_reset(
+    modules, bad_field, bad_value
+):
     from droid_scene import DroidRobot, MODEL_JOINT_NAMES
 
     names = ("passive_finger", *reversed(MODEL_JOINT_NAMES))
-    properties = np.zeros(len(names), dtype=[(name, float) for name in
-                          ["stiffness", "damping", "maxVelocity", "maxEffort"]])
+    properties = np.zeros(
+        len(names),
+        dtype=[
+            (name, float)
+            for name in ["stiffness", "damping", "maxVelocity", "maxEffort"]
+        ],
+    )
     for index, name in enumerate(MODEL_JOINT_NAMES):
-        properties[names.index(name)] = (400, 80, 2.175 if index < 4 else 2.61,
-                                        87 if index < 4 else 12)
-    properties[names.index("finger_joint")] = (100 * 57.29577951308232, .0002 * 57.29577951308232, 5, 16.5)
+        properties[names.index(name)] = (
+            400,
+            80,
+            2.175 if index < 4 else 2.61,
+            87 if index < 4 else 12,
+        )
+    properties[names.index("finger_joint")] = (
+        100 * 57.29577951308232,
+        0.0002 * 57.29577951308232,
+        5,
+        16.5,
+    )
     if bad_field:
         properties[names.index("panda_joint3")][bad_field] = bad_value
-    articulation = SimpleNamespace(dof_names=names, dof_properties=properties,
+    articulation = SimpleNamespace(
+        dof_names=names,
+        dof_properties=properties,
         get_solver_position_iteration_count=lambda: 64,
         get_solver_velocity_iteration_count=lambda: 0,
-        get_enabled_self_collisions=lambda: False)
+        get_enabled_self_collisions=lambda: False,
+    )
     robot = DroidRobot(articulation, None, {"profile": "robolab_droid_jointpos_v1"})
     if bad_field:
         with pytest.raises(RuntimeError, match=bad_field):
@@ -337,7 +451,9 @@ def test_droid_verifies_effective_controller_units_after_reset(modules, bad_fiel
         result = robot.verify_dynamics()
         assert result["verified"]
         assert result["effective_joint_properties"]["stiffness"][:7] == [400] * 7
-        assert result["effective_joint_properties"]["stiffness"][7] == pytest.approx(5729.577951)
+        assert result["effective_joint_properties"]["stiffness"][7] == pytest.approx(
+            5729.577951
+        )
         properties[names.index("finger_joint")]["stiffness"] = 171.887
         with pytest.raises(RuntimeError, match="stiffness"):
             robot.verify_dynamics()
@@ -345,15 +461,21 @@ def test_droid_verifies_effective_controller_units_after_reset(modules, bad_fiel
         robot.dynamics["gripper_mount"] = {"profile": "droid_native_mount_v1"}
         with pytest.raises(RuntimeError, match="physical flange readback"):
             robot.verify_dynamics()
-        robot.flange = SimpleNamespace(get_world_pose=lambda: (np.zeros(3), [1, 0, 0, 0]))
-        robot.end_effector = SimpleNamespace(get_world_pose=lambda: ([0, 0, .125174], [1, 0, 0, 0]))
+        robot.flange = SimpleNamespace(
+            get_world_pose=lambda: (np.zeros(3), [1, 0, 0, 0])
+        )
+        robot.end_effector = SimpleNamespace(
+            get_world_pose=lambda: ([0, 0, 0.125174], [1, 0, 0, 0])
+        )
         assert robot.verify_dynamics()["gripper_mount"]["verified"]
         articulation.get_solver_position_iteration_count = lambda: 32
         with pytest.raises(RuntimeError, match="solver"):
             robot.verify_dynamics()
 
 
-@pytest.mark.parametrize("angle,position", [(0.0, 0.0), (np.pi / 8, 0.5), (np.pi / 4, 1.0)])
+@pytest.mark.parametrize(
+    "angle,position", [(0.0, 0.0), (np.pi / 8, 0.5), (np.pi / 4, 1.0)]
+)
 def test_droid_observation_normalizes_measured_master_joint(modules, angle, position):
     scenario, _episode = modules
     state = np.array([*scenario.DROID_RESET_JOINTS, angle])
@@ -363,8 +485,14 @@ def test_droid_observation_normalizes_measured_master_joint(modules, angle, posi
         scenario._droid_gripper_observation(state)
 
 
-@pytest.mark.parametrize("names", [tuple(f"panda_joint{i}" for i in range(1, 8)),
-                                  tuple(f"panda_joint{i}" for i in range(1, 8)) + ("finger_joint", "finger_joint")])
+@pytest.mark.parametrize(
+    "names",
+    [
+        tuple(f"panda_joint{i}" for i in range(1, 8)),
+        tuple(f"panda_joint{i}" for i in range(1, 8))
+        + ("finger_joint", "finger_joint"),
+    ],
+)
 def test_droid_rejects_missing_or_ambiguous_policy_joints(modules, names):
     from droid_scene import joint_indices
 
@@ -373,7 +501,9 @@ def test_droid_rejects_missing_or_ambiguous_policy_joints(modules, names):
 
 
 @pytest.mark.parametrize("command,angle", [(0.5, 0.0), (0.6, np.pi / 4)])
-def test_droid_target_drives_named_arm_and_master_gripper_only(modules, monkeypatch, command, angle):
+def test_droid_target_drives_named_arm_and_master_gripper_only(
+    modules, monkeypatch, command, angle
+):
     from droid_scene import DroidRobot, MODEL_JOINT_NAMES, joint_indices
 
     _install_fake_isaac(monkeypatch)
@@ -454,7 +584,11 @@ def test_scene_optics_cover_cube_and_approach_region(modules):
         np.subtract(scenario.EXTERIOR_CAMERA_EYE, scenario.CUBE_INITIAL_POSITION)
     )
     projected = (
-        224 * optics["focal_length"] / optics["horizontal_aperture"] * scenario.CUBE_SIZE_METERS / distance
+        224
+        * optics["focal_length"]
+        / optics["horizontal_aperture"]
+        * scenario.CUBE_SIZE_METERS
+        / distance
     )
     assert projected > 12
 
@@ -709,26 +843,36 @@ def _install_fake_camera_scene(scenario, monkeypatch, world):
 
         def apply_target(target):
             body.joints = np.asarray(target).copy()
-            body.joints[7] = ((0.1 if world.grasp else 1.0) *
-                              droid_scene.GRIPPER_CLOSED_ANGLE if target[7] > 0.5 else 0.0)
+            body.joints[7] = (
+                (0.1 if world.grasp else 1.0) * droid_scene.GRIPPER_CLOSED_ANGLE
+                if target[7] > 0.5
+                else 0.0
+            )
             body.actions.append(body.joints.copy())
 
         body.apply_policy_target = apply_target
+
         def verify_dynamics():
             assert world.reset_complete, "Read PhysX drive units only after reset"
             return {"profile": "robolab_droid_jointpos_v1", "verified": True}
+
         body.verify_dynamics = verify_dynamics
         return body
 
     monkeypatch.setattr(droid_scene, "create_robot", create_droid)
     world.camera_mounts = []
+
     def configure_camera(_stage, _view, mounts):
-        assert world.reset_complete, "Sensor reset must precede fixed camera calibration"
+        assert world.reset_complete, (
+            "Sensor reset must precede fixed camera calibration"
+        )
         world.camera_mounts.append(mounts)
 
     monkeypatch.setattr(droid_scene, "configure_camera", configure_camera)
     monkeypatch.setattr(droid_scene, "camera_pose", lambda *_args: (0, 0, 1))
-    monkeypatch.setattr(droid_scene, "grasp_region", lambda *_args: np.array([0.36, 0, 0.35]))
+    monkeypatch.setattr(
+        droid_scene, "grasp_region", lambda *_args: np.array([0.36, 0, 0.35])
+    )
     camera = SimpleNamespace(close=lambda: None)
     telemetry = SimpleNamespace(
         publish_camera_pair=lambda *_args: (),
@@ -821,8 +965,16 @@ def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
         return capture(*args)
 
     monkeypatch.setattr(scenario, "_capture_camera_samples", cold_capture)
-    monkeypatch.setattr(scenario, "time", SimpleNamespace(monotonic=lambda:
-        world.current_time + (cold_seconds if world.current_time >= 2 / 60 else 0)))
+    monkeypatch.setattr(
+        scenario,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: (
+                world.current_time
+                + (cold_seconds if world.current_time >= 2 / 60 else 0)
+            )
+        ),
+    )
 
 
 @pytest.mark.parametrize("cold_seconds", [0, 320])
@@ -835,7 +987,9 @@ def _install_cold_renderer(scenario, monkeypatch, world, cold_seconds):
         ("pickup", 450, None, True, "droid"),
     ],
 )
-@pytest.mark.parametrize("camera_mounts", ["native_wide", "droid_reference", "droid_detail", "task_view"])
+@pytest.mark.parametrize(
+    "camera_mounts", ["native_wide", "droid_reference", "droid_detail", "task_view"]
+)
 def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     modules,
     monkeypatch,
@@ -888,20 +1042,33 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
     monkeypatch.setattr(episode, "_PolicyEvidence", lambda: recorder)
     run = _Run()
     scenario._run_openpi_episode(
-        run, "pick up the red cube", objective=objective, control_steps=steps,
-        initial_posture=initial_posture, camera_mounts=camera_mounts,
+        run,
+        "pick up the red cube",
+        objective=objective,
+        control_steps=steps,
+        initial_posture=initial_posture,
+        camera_mounts=camera_mounts,
     )
     assert run.results["initial_arm_posture"] == initial_posture
-    size = scenario.PICKUP_CUBE_SIZE_METERS if objective == "pickup" else scenario.CUBE_SIZE_METERS
+    size = (
+        scenario.PICKUP_CUBE_SIZE_METERS
+        if objective == "pickup"
+        else scenario.CUBE_SIZE_METERS
+    )
     assert run.results["cube_size_m"] == size
-    assert run.results["initial_cube_position_m"] == [*scenario.CUBE_INITIAL_POSITION[:2], size / 2]
+    assert run.results["initial_cube_position_m"] == [
+        *scenario.CUBE_INITIAL_POSITION[:2],
+        size / 2,
+    ]
     assert run.results["post_reset_controller"] == "openpi_policy_only"
     if objective == "pickup":
         from droid_scene import camera_calibration
 
         assert world.camera_mounts == [camera_mounts, camera_mounts]
         assert run.results["policy_camera_mounts"] == camera_mounts
-        assert run.results["policy_camera_calibration"] == camera_calibration(camera_mounts)
+        assert run.results["policy_camera_calibration"] == camera_calibration(
+            camera_mounts
+        )
         assert run.results["policy_robot_dynamics"]["verified"]
     if initial_posture == "pregrasp":
         from droid_scene import PREGRASP_RESET_JOINTS
@@ -918,7 +1085,8 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         assert run.results["policy_round_trips"] == replies
     assert run.checks["policy_evidence_complete"]
     assert run.results["robot_embodiment"] == (
-        "franka_robotiq_2f85" if objective == "pickup" else "stock_panda")
+        "franka_robotiq_2f85" if objective == "pickup" else "stock_panda"
+    )
     if objective == "pickup":
         assert run.results["policy_image_content_rows"] == [49, 175]
         assert run.results["policy_native_resolution_hw"] == [180, 320]
@@ -945,8 +1113,10 @@ def test_executing_loop_runs_second_chunk_and_requires_task_evidence(
         # Ignore the initial hold command; compare actual actuator calls to the
         # entire two-query trace, including both late closure sequences.
         commands = world.robot.actions[-steps:]
-        np.testing.assert_allclose([command[7] for command in commands],
-                                   ([0.0] * 7 + [GRIPPER_CLOSED_ANGLE] * 8) * 2)
+        np.testing.assert_allclose(
+            [command[7] for command in commands],
+            ([0.0] * 7 + [GRIPPER_CLOSED_ANGLE] * 8) * 2,
+        )
         assert run.results["policy_close_targets_returned"] == 16
         assert run.results["policy_close_targets_applied"] == 16
     if not grasp:
@@ -989,9 +1159,15 @@ def test_cold_camera_deadline_cannot_extend_operating_camera_stall(modules):
     assert not startup.failure(now=320, camera_ready=False, last_control_at=None)
     assert startup.observe(now=320, produced_pair=True, policy_eligible=False)
     assert not startup.failure(now=409, camera_ready=False, last_control_at=None)
-    assert startup.failure(now=410, camera_ready=False, last_control_at=None) == "camera_unavailable"
+    assert (
+        startup.failure(now=410, camera_ready=False, last_control_at=None)
+        == "camera_unavailable"
+    )
     startup.observe(now=411, produced_pair=True, policy_eligible=True)
-    assert startup.failure(now=501, camera_ready=True, last_control_at=411) == "control_stalled"
+    assert (
+        startup.failure(now=501, camera_ready=True, last_control_at=411)
+        == "control_stalled"
+    )
 
 
 def test_never_producing_or_late_cameras_finish_as_startup_failure(modules):
@@ -1000,7 +1176,10 @@ def test_never_producing_or_late_cameras_finish_as_startup_failure(modules):
     assert not startup.observe(now=599, produced_pair=False, policy_eligible=False)
     assert not startup.failure(now=599, camera_ready=False, last_control_at=None)
     assert not startup.observe(now=600, produced_pair=True, policy_eligible=False)
-    assert startup.failure(now=600, camera_ready=False, last_control_at=None) == "camera_startup_unavailable"
+    assert (
+        startup.failure(now=600, camera_ready=False, last_control_at=None)
+        == "camera_startup_unavailable"
+    )
     run = _Run()
     startup.record(run)
     assert not run.checks["camera_startup_completed"]
@@ -1013,11 +1192,15 @@ def _recording_run():
         add_result=results.__setitem__,
         check=lambda name, passed, **_kwargs: checks.__setitem__(name, passed),
         add_artifact=lambda path, **_kwargs: artifacts.append(path),
-        results=results, checks=checks, artifacts=artifacts,
+        results=results,
+        checks=checks,
+        artifacts=artifacts,
     )
 
 
-def test_hd_recording_preserves_native_dimensions_times_and_checksums(modules, tmp_path):
+def test_hd_recording_preserves_native_dimensions_times_and_checksums(
+    modules, tmp_path
+):
     from PIL import Image
 
     _scenario, episode = modules
@@ -1025,12 +1208,19 @@ def test_hd_recording_preserves_native_dimensions_times_and_checksums(modules, t
     rgb = np.full((720, 1280, 3), 40, dtype=np.uint8)
     rgb[200:500, 700:1000] = [225, 20, 15]
     for i in range(2):
-        assert recording.capture(rgb, sim_seconds=3 + i / 15,
-                                 render_sequence=100 + i, producer_marker=(100 + i, 15))
+        assert recording.capture(
+            rgb,
+            sim_seconds=3 + i / 15,
+            render_sequence=100 + i,
+            producer_marker=(100 + i, 15),
+        )
     run = _recording_run()
     recording.finish(run)
     assert run.checks["showcase_recording_available"]
-    assert run.results["showcase_recording_sha256"] == hashlib.sha256(run.artifacts[0].read_bytes()).hexdigest()
+    assert (
+        run.results["showcase_recording_sha256"]
+        == hashlib.sha256(run.artifacts[0].read_bytes()).hexdigest()
+    )
     with zipfile.ZipFile(run.artifacts[0]) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         assert manifest["policy_input"] is False
@@ -1047,11 +1237,19 @@ def test_hd_recording_rejects_stale_producer_and_nonadvancing_time(modules, tmp_
     _scenario, episode = modules
     recording = episode._ShowcaseRecording(tmp_path)
     rgb = np.zeros((720, 1280, 3), dtype=np.uint8)
-    assert not recording.capture(rgb, sim_seconds=0, render_sequence=1, producer_marker=None)
-    assert recording.capture(rgb, sim_seconds=1, render_sequence=2, producer_marker=(1, 15))
-    assert not recording.capture(rgb, sim_seconds=2, render_sequence=3, producer_marker=(2, 30))
+    assert not recording.capture(
+        rgb, sim_seconds=0, render_sequence=1, producer_marker=None
+    )
+    assert recording.capture(
+        rgb, sim_seconds=1, render_sequence=2, producer_marker=(1, 15)
+    )
+    assert not recording.capture(
+        rgb, sim_seconds=2, render_sequence=3, producer_marker=(2, 30)
+    )
     with pytest.raises(ValueError, match="did not advance"):
-        recording.capture(rgb, sim_seconds=1, render_sequence=4, producer_marker=(3, 30))
+        recording.capture(
+            rgb, sim_seconds=1, render_sequence=4, producer_marker=(3, 30)
+        )
     assert len(recording.frames) == 1
 
 
@@ -1059,8 +1257,12 @@ def test_hd_recording_does_not_pass_with_only_black_frames(modules, tmp_path):
     _scenario, episode = modules
     recording = episode._ShowcaseRecording(tmp_path)
     for i in range(2):
-        recording.capture(np.zeros((720, 1280, 3), dtype=np.uint8), sim_seconds=i,
-                          render_sequence=i, producer_marker=(i, 15))
+        recording.capture(
+            np.zeros((720, 1280, 3), dtype=np.uint8),
+            sim_seconds=i,
+            render_sequence=i,
+            producer_marker=(i, 15),
+        )
     run = _recording_run()
     recording.finish(run)
     assert not run.checks["showcase_recording_available"]
@@ -1073,9 +1275,12 @@ def test_hd_capture_copies_sensor_pixels_and_uses_existing_render(modules, tmp_p
     recording = episode._ShowcaseRecording(tmp_path)
     published = []
     camera = SimpleNamespace(read_pixels=lambda: (rgb, (9, 15)))
-    telemetry = SimpleNamespace(publish_showcase=lambda pixels, frame: published.append((pixels, frame)))
-    scenario._record_showcase_frame(camera, recording, telemetry,
-                                    sim_seconds=0.6, render_sequence=9)
+    telemetry = SimpleNamespace(
+        publish_showcase=lambda pixels, frame: published.append((pixels, frame))
+    )
+    scenario._record_showcase_frame(
+        camera, recording, telemetry, sim_seconds=0.6, render_sequence=9
+    )
     rgb[:] = 100
     assert len(published) == 1
     assert (published[0][0] == 50).all()
@@ -1083,10 +1288,13 @@ def test_hd_capture_copies_sensor_pixels_and_uses_existing_render(modules, tmp_p
     assert published[0][1]["producer_marker"] == [9, 15]
 
 
-def test_native_hd_sensor_and_cpu_buffer_share_height_width_order(modules, monkeypatch, tmp_path):
+def test_native_hd_sensor_and_cpu_buffer_share_height_width_order(
+    modules, monkeypatch, tmp_path
+):
     scenario, episode = modules
-    warp = SimpleNamespace(uint8=np.uint8,
-                           empty=lambda shape, **_kwargs: np.zeros(shape, dtype=np.uint8))
+    warp = SimpleNamespace(
+        uint8=np.uint8, empty=lambda shape, **_kwargs: np.zeros(shape, dtype=np.uint8)
+    )
     monkeypatch.setitem(sys.modules, "warp", warp)
     monkeypatch.setattr(scenario, "_new_reference_time_annotator", lambda _path: None)
 
@@ -1095,8 +1303,11 @@ def test_native_hd_sensor_and_cpu_buffer_share_height_width_order(modules, monke
             # The Isaac Sim 6 native API documents NumPy (height, width) order.
             assert resolution == (720, 1280)
             assert annotators == ["rgb"]
-            self.render_product = SimpleNamespace(GetPrim=lambda: SimpleNamespace(
-                IsValid=lambda: True, GetPath=lambda: "/Render/showcase"))
+            self.render_product = SimpleNamespace(
+                GetPrim=lambda: SimpleNamespace(
+                    IsValid=lambda: True, GetPath=lambda: "/Render/showcase"
+                )
+            )
 
         def get_data(self, annotator, *, out):
             assert annotator == "rgb"
@@ -1105,10 +1316,17 @@ def test_native_hd_sensor_and_cpu_buffer_share_height_width_order(modules, monke
             return out, {"referenceTimeNumerator": 1, "referenceTimeDenominator": 15}
 
     camera = scenario._build_rtx_rgb_camera(
-        lambda *_args, **_kwargs: object(), Sensor, path="/World/ShowcaseCamera",
-        resolution=(720, 1280))
+        lambda *_args, **_kwargs: object(),
+        Sensor,
+        path="/World/ShowcaseCamera",
+        resolution=(720, 1280),
+    )
     recording = episode._ShowcaseRecording(tmp_path)
-    scenario._record_showcase_frame(camera, recording,
-                                    SimpleNamespace(publish_showcase=lambda *_args: None),
-                                    sim_seconds=1 / 15, render_sequence=1)
+    scenario._record_showcase_frame(
+        camera,
+        recording,
+        SimpleNamespace(publish_showcase=lambda *_args: None),
+        sim_seconds=1 / 15,
+        render_sequence=1,
+    )
     assert len(recording.frames) == 1

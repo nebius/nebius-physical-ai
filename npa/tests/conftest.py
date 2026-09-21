@@ -320,9 +320,13 @@ def isolate_instance_metadata(monkeypatch, request):
         return
     original_is_file = Path.is_file
     monkeypatch.setattr(
-        Path, "is_file",
-        lambda path: False if str(path) == "/mnt/cloud-metadata/token"
-        else original_is_file(path),
+        Path,
+        "is_file",
+        lambda path: (
+            False
+            if str(path) == "/mnt/cloud-metadata/token"
+            else original_is_file(path)
+        ),
     )
 
 

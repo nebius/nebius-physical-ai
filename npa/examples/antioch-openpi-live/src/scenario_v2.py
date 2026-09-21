@@ -138,8 +138,15 @@ class CameraSample:
 class RtxRgbCamera:
     """Own one Isaac Sim 6 RTX camera authoring/runtime pair."""
 
-    def __init__(self, authoring, sensor, producer_clock, output_buffer,
-                 *, policy_format="square") -> None:
+    def __init__(
+        self,
+        authoring,
+        sensor,
+        producer_clock,
+        output_buffer,
+        *,
+        policy_format="square",
+    ) -> None:
         self.authoring = authoring
         self.sensor = sensor
         self.producer_clock = producer_clock
@@ -157,8 +164,12 @@ class RtxRgbCamera:
         # public CameraSensor API to copy directly into CPU memory so the live
         # controller never aliases the renderer's CUDA external-memory view.
         data, marker = self.read_pixels()
-        return CameraSample(_camera_frame_from_buffer(
-            data, view=view, policy_format=self.policy_format), marker)
+        return CameraSample(
+            _camera_frame_from_buffer(
+                data, view=view, policy_format=self.policy_format
+            ),
+            marker,
+        )
 
     def read_pixels(self):
         """Read this camera's native resolution and exact producer marker."""
@@ -462,8 +473,14 @@ class LiveTelemetryPublisher:
     def publish_showcase(self, rgb, frame) -> bool:
         """Share the native recording view through the same serialized writer."""
         publication = ImagePublication(
-            "showcase", CAMERA_SHOWCASE_ENTITY, rgb, frame["render_sequence"],
-            frame["mean_rgb"], frame["variance"], 0.0, 0,
+            "showcase",
+            CAMERA_SHOWCASE_ENTITY,
+            rgb,
+            frame["render_sequence"],
+            frame["mean_rgb"],
+            frame["variance"],
+            0.0,
+            0,
         )
         return self._worker.submit("showcase", (publication,))
 
@@ -509,7 +526,9 @@ class LiveTelemetryPublisher:
         )
         try:
             if publication.view == "showcase":
-                self._logger.image(publication.entity, rgb, max_width=1280, jpeg_quality=92)
+                self._logger.image(
+                    publication.entity, rgb, max_width=1280, jpeg_quality=92
+                )
             else:
                 self._logger.image(publication.entity, rgb)
             self._logger.scalar(
@@ -717,9 +736,9 @@ def _configure_camera_optics(stage, path: str, view: str) -> None:
 def _world_transform(stage, path: str):
     from pxr import Usd, UsdGeom
 
-    return UsdGeom.Xformable(
-        stage.GetPrimAtPath(path)
-    ).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+    return UsdGeom.Xformable(stage.GetPrimAtPath(path)).ComputeLocalToWorldTransform(
+        Usd.TimeCode.Default()
+    )
 
 
 def _world_position(stage, path: str):
@@ -729,9 +748,7 @@ def _world_position(stage, path: str):
     return np.asarray(transform.ExtractTranslation(), dtype=np.float64)
 
 
-def _stock_franka_gripper_frame(
-    hand, left_finger, right_finger, *, side_hint=None
-):
+def _stock_franka_gripper_frame(hand, left_finger, right_finger, *, side_hint=None):
     """Return the measured stock-Franka grasp origin and orthonormal basis."""
 
     import numpy as np
@@ -848,9 +865,7 @@ def _aim_wrist_camera(stage, mount):
 
         side_hint = np.asarray(
             _world_transform(stage, STOCK_FRANKA_HAND_PATH).TransformDir(
-                Gf.Vec3d(
-                    *(float(value) for value in mount.side_direction_hand)
-                )
+                Gf.Vec3d(*(float(value) for value in mount.side_direction_hand))
             ),
             dtype=np.float64,
         )
@@ -985,8 +1000,11 @@ def _validated_actions(response: dict, current) -> tuple[object, dict[str, int]]
     actions = np.asarray(response.get("actions"))
     if actions.shape != ACTION_SHAPE:
         raise ActionValidationError("wrong_shape")
-    if (not np.issubdtype(actions.dtype, np.number) or not np.isrealobj(actions)
-            or not np.isfinite(actions).all()):
+    if (
+        not np.issubdtype(actions.dtype, np.number)
+        or not np.isrealobj(actions)
+        or not np.isfinite(actions).all()
+    ):
         raise ActionValidationError("non_finite")
     targets = actions.astype(np.float64, copy=True)
     low, high = np.asarray(JOINT_LOW), np.asarray(JOINT_HIGH)
@@ -1036,8 +1054,10 @@ def _install_overlay():
 def _camera_quality_reason(frame: CameraFrame) -> str:
     if frame.luminance_mean <= MIN_CAMERA_LUMINANCE_MEAN:
         return "blank"
-    if (frame.luminance_mean > MAX_CAMERA_LUMINANCE_MEAN
-            or frame.near_white_fraction > MAX_CAMERA_NEAR_WHITE_FRACTION):
+    if (
+        frame.luminance_mean > MAX_CAMERA_LUMINANCE_MEAN
+        or frame.near_white_fraction > MAX_CAMERA_NEAR_WHITE_FRACTION
+    ):
         return "overexposed"
     if frame.luminance_variance <= MIN_CAMERA_LUMINANCE_VARIANCE:
         return "flat"
@@ -1049,9 +1069,11 @@ def _camera_quality_reason(frame: CameraFrame) -> str:
 def _red_target_mask(rgb):
     import numpy as np
 
-    return ((rgb[..., 0] > 80)
-            & (rgb[..., 0].astype(np.float32) > rgb[..., 1] * 1.35)
-            & (rgb[..., 0].astype(np.float32) > rgb[..., 2] * 1.35))
+    return (
+        (rgb[..., 0] > 80)
+        & (rgb[..., 0].astype(np.float32) > rgb[..., 1] * 1.35)
+        & (rgb[..., 0].astype(np.float32) > rgb[..., 2] * 1.35)
+    )
 
 
 def _classify_camera_rgb(rgb, frame, *, content_rgb=None) -> CameraFrame:
@@ -1063,25 +1085,39 @@ def _classify_camera_rgb(rgb, frame, *, content_rgb=None) -> CameraFrame:
     luminance = np.mean(content, axis=2)
     red_mask = _red_target_mask(rgb)
     content_mask = _red_target_mask(content)
-    clipped = bool(content_mask[0].any() or content_mask[-1].any()
-                   or content_mask[:, 0].any() or content_mask[:, -1].any())
+    clipped = bool(
+        content_mask[0].any()
+        or content_mask[-1].any()
+        or content_mask[:, 0].any()
+        or content_mask[:, -1].any()
+    )
     rows, columns = np.nonzero(red_mask)
-    extent = (int(columns.max() - columns.min() + 1),
-              int(rows.max() - rows.min() + 1)) if rows.size else (0, 0)
+    extent = (
+        (int(columns.max() - columns.min() + 1), int(rows.max() - rows.min() + 1))
+        if rows.size
+        else (0, 0)
+    )
     result = CameraFrame(
-        rgb=rgb, reason="", luminance_mean=float(luminance.mean()),
+        rgb=rgb,
+        reason="",
+        luminance_mean=float(luminance.mean()),
         luminance_variance=float(luminance.var()),
         dynamic_range=float(np.percentile(luminance, 95) - np.percentile(luminance, 5)),
-        red_cube_pixels=int(red_mask.sum()), raw_min=float(frame.min()),
-        raw_max=float(frame.max()), raw_nonzero=int(np.count_nonzero(frame)),
+        red_cube_pixels=int(red_mask.sum()),
+        raw_min=float(frame.min()),
+        raw_max=float(frame.max()),
+        raw_nonzero=int(np.count_nonzero(frame)),
         raw_channels=int(frame.shape[2]),
-        near_white_fraction=float(np.mean(luminance > 240)), target_extent=extent,
+        near_white_fraction=float(np.mean(luminance > 240)),
+        target_extent=extent,
         target_clipped=clipped,
     )
     return replace(result, reason=_camera_quality_reason(result))
 
 
-def _camera_frame_from_buffer(buffer, *, view: str, policy_format="square") -> CameraFrame:
+def _camera_frame_from_buffer(
+    buffer, *, view: str, policy_format="square"
+) -> CameraFrame:
     """Copy and classify the sensor's RGB without modifying exposure in pixels."""
     import numpy as np
 
@@ -1092,8 +1128,14 @@ def _camera_frame_from_buffer(buffer, *, view: str, policy_format="square") -> C
         frame = np.array(source, copy=True)
     except (TypeError, ValueError, RuntimeError):
         return CameraFrame(None, "unreadable")
-    shapes = ((180, 320, 3),) if policy_format == "droid" else ((224, 224, 3), (224, 224, 4))
-    if policy_format not in {"square", "droid"} or frame.ndim != 3 or frame.shape not in shapes:
+    shapes = (
+        ((180, 320, 3),) if policy_format == "droid" else ((224, 224, 3), (224, 224, 4))
+    )
+    if (
+        policy_format not in {"square", "droid"}
+        or frame.ndim != 3
+        or frame.shape not in shapes
+    ):
         return CameraFrame(None, "wrong_shape")
     if not np.issubdtype(frame.dtype, np.number) or not np.isfinite(frame).all():
         return CameraFrame(None, "non_finite")
@@ -1110,8 +1152,10 @@ def _camera_frame_from_buffer(buffer, *, view: str, policy_format="square") -> C
 
 
 def _target_resolved(frame: CameraFrame) -> bool:
-    return (frame.red_cube_pixels >= MIN_EXTERIOR_RED_CUBE_PIXELS
-            and min(frame.target_extent) >= MIN_TARGET_EXTENT_PIXELS)
+    return (
+        frame.red_cube_pixels >= MIN_EXTERIOR_RED_CUBE_PIXELS
+        and min(frame.target_extent) >= MIN_TARGET_EXTENT_PIXELS
+    )
 
 
 def _camera_frame(camera, *, view: str) -> CameraFrame:
@@ -1185,8 +1229,14 @@ def _reference_time_advanced(current: tuple[int, int], prior: tuple[int, int]) -
 
 
 def _build_rtx_rgb_camera(
-    RtxCamera, CameraSensor, *, path: str, position=None, output_buffer=None,
-    resolution=(224, 224), policy_format="square",
+    RtxCamera,
+    CameraSensor,
+    *,
+    path: str,
+    position=None,
+    output_buffer=None,
+    resolution=(224, 224),
+    policy_format="square",
 ):
     """Construct an RGB sensor using native (height, width) resolution order."""
 
@@ -1222,14 +1272,19 @@ def _build_showcase_camera(stage, RtxCamera, CameraSensor):
     path = "/World/ShowcaseCamera"
     eye, target = (1.25, -1.10, 0.82), (0.35, 0.0, 0.25)
     camera = _build_rtx_rgb_camera(
-        RtxCamera, CameraSensor, path=path, position=eye, resolution=(720, 1280))
+        RtxCamera, CameraSensor, path=path, position=eye, resolution=(720, 1280)
+    )
     _look_at(stage, path, eye, target)
     _configure_camera_optics(stage, path, "wrist")
-    UsdGeom.Camera(stage.GetPrimAtPath(path)).CreateVerticalApertureAttr().Set(0.36 * 720 / 1280)
+    UsdGeom.Camera(stage.GetPrimAtPath(path)).CreateVerticalApertureAttr().Set(
+        0.36 * 720 / 1280
+    )
     return camera
 
 
-def _record_showcase_frame(camera, recording, telemetry, *, sim_seconds, render_sequence):
+def _record_showcase_frame(
+    camera, recording, telemetry, *, sim_seconds, render_sequence
+):
     """Read completed-render pixels; never advance physics for the recording."""
     import numpy as np
 
@@ -1240,8 +1295,12 @@ def _record_showcase_frame(camera, recording, telemetry, *, sim_seconds, render_
     if hasattr(pixels, "numpy"):
         pixels = pixels.numpy()
     rgb = np.ascontiguousarray(pixels).copy()
-    if recording.capture(rgb, sim_seconds=sim_seconds, render_sequence=render_sequence,
-                         producer_marker=marker):
+    if recording.capture(
+        rgb,
+        sim_seconds=sim_seconds,
+        render_sequence=render_sequence,
+        producer_marker=marker,
+    ):
         telemetry.publish_showcase(rgb, recording.frames[-1])
 
 
@@ -1348,15 +1407,21 @@ def _validate_camera_pair(
     exterior_target = _target_resolved(exterior_frame)
     wrist_target = wrist_cube_in_frame and _target_resolved(wrist_frame)
     if initial_alignment and not gripper_views_aligned:
-        return CameraPair(False, exterior_frame, wrist_frame, "pair", "gripper_out_of_frame")
-    if initial_alignment and (exterior_frame.target_clipped or wrist_frame.target_clipped):
+        return CameraPair(
+            False, exterior_frame, wrist_frame, "pair", "gripper_out_of_frame"
+        )
+    if initial_alignment and (
+        exterior_frame.target_clipped or wrist_frame.target_clipped
+    ):
         view = "exterior" if exterior_frame.target_clipped else "wrist"
         return CameraPair(False, exterior_frame, wrist_frame, view, "target_clipped")
     if initial_alignment and not (exterior_target and wrist_target):
         view = "exterior" if not exterior_target else "wrist"
         return CameraPair(False, exterior_frame, wrist_frame, view, "target_unresolved")
     if not (exterior_target or wrist_target or gripper_contact):
-        return CameraPair(False, exterior_frame, wrist_frame, "pair", "target_unresolved")
+        return CameraPair(
+            False, exterior_frame, wrist_frame, "pair", "target_unresolved"
+        )
     if difference < MIN_POLICY_CAMERA_PAIR_DIFFERENCE:
         return CameraPair(
             False,
@@ -1649,29 +1714,51 @@ def _record_camera_quality(run, camera_quality):
     for view, samples in camera_quality.items():
         maximum_mean = max((sample["mean"] for sample in samples), default=0.0)
         maximum_white = max((sample["near_white"] for sample in samples), default=1.0)
-        minimum_contrast = min((sample["dynamic_range"] for sample in samples), default=0.0)
+        minimum_contrast = min(
+            (sample["dynamic_range"] for sample in samples), default=0.0
+        )
         run.add_result(f"{view}_luminance_mean_max", maximum_mean)
         run.add_result(f"{view}_near_white_fraction_max", maximum_white)
         run.add_result(f"{view}_dynamic_range_min", minimum_contrast)
-        accepted = bool(accepted and maximum_mean <= MAX_CAMERA_LUMINANCE_MEAN
-                        and maximum_white <= MAX_CAMERA_NEAR_WHITE_FRACTION
-                        and minimum_contrast >= MIN_CAMERA_DYNAMIC_RANGE)
-    run.check("policy_views_exposure_and_contrast", accepted,
-              detail="Every submitted input met the recorded scene-specific image thresholds")
-    run.add_result("camera_quality_thresholds", {
-        "maximum_mean": MAX_CAMERA_LUMINANCE_MEAN,
-        "maximum_near_white_fraction": MAX_CAMERA_NEAR_WHITE_FRACTION,
-        "minimum_dynamic_range": MIN_CAMERA_DYNAMIC_RANGE,
-        "minimum_target_pixels": MIN_EXTERIOR_RED_CUBE_PIXELS,
-        "minimum_target_extent": MIN_TARGET_EXTENT_PIXELS,
-        "initial_target_must_clear_image_edges": True,
-    })
+        accepted = bool(
+            accepted
+            and maximum_mean <= MAX_CAMERA_LUMINANCE_MEAN
+            and maximum_white <= MAX_CAMERA_NEAR_WHITE_FRACTION
+            and minimum_contrast >= MIN_CAMERA_DYNAMIC_RANGE
+        )
+    run.check(
+        "policy_views_exposure_and_contrast",
+        accepted,
+        detail="Every submitted input met the recorded scene-specific image thresholds",
+    )
+    run.add_result(
+        "camera_quality_thresholds",
+        {
+            "maximum_mean": MAX_CAMERA_LUMINANCE_MEAN,
+            "maximum_near_white_fraction": MAX_CAMERA_NEAR_WHITE_FRACTION,
+            "minimum_dynamic_range": MIN_CAMERA_DYNAMIC_RANGE,
+            "minimum_target_pixels": MIN_EXTERIOR_RED_CUBE_PIXELS,
+            "minimum_target_extent": MIN_TARGET_EXTENT_PIXELS,
+            "initial_target_must_clear_image_edges": True,
+        },
+    )
 
 
 def _record_episode_checks(
-    run, *, objective, reason, progress, completed_chunks, camera_quality,
-    initial_target_resolved, evidence, evidence_sha256, requests, applied,
-    control_steps, render_settings,
+    run,
+    *,
+    objective,
+    reason,
+    progress,
+    completed_chunks,
+    camera_quality,
+    initial_target_resolved,
+    evidence,
+    evidence_sha256,
+    requests,
+    applied,
+    control_steps,
+    render_settings,
 ):
     run.add_result("episode_objective", objective)
     run.add_result("termination_reason", reason)
@@ -1681,26 +1768,48 @@ def _record_episode_checks(
     run.add_result("policy_evidence_sha256", evidence_sha256)
     run.add_result("render_settings", render_settings)
     _record_camera_quality(run, camera_quality)
-    run.check("initial_target_resolved_both_views", initial_target_resolved,
-              detail="Both initial policy views resolved the target clear of image edges before inference")
-    run.check("policy_evidence_complete", evidence.requests == requests > 0
-              and evidence.applied == applied and evidence.responses > 0,
-              detail="Lossless inputs, request hashes, raw responses and control trace archived")
-    run.check("policy_actions_executed", completed_chunks >= 2,
-              detail=f"{completed_chunks} control segments fully applied")
-    run.check("episode_completed", reason in {"communication_complete", "pickup_complete"},
-              detail=reason)
+    run.check(
+        "initial_target_resolved_both_views",
+        initial_target_resolved,
+        detail="Both initial policy views resolved the target clear of image edges before inference",
+    )
+    run.check(
+        "policy_evidence_complete",
+        evidence.requests == requests > 0
+        and evidence.applied == applied
+        and evidence.responses > 0,
+        detail="Lossless inputs, request hashes, raw responses and control trace archived",
+    )
+    run.check(
+        "policy_actions_executed",
+        completed_chunks >= 2,
+        detail=f"{completed_chunks} control segments fully applied",
+    )
+    run.check(
+        "episode_completed",
+        reason in {"communication_complete", "pickup_complete"},
+        detail=reason,
+    )
     if objective == "pickup":
         _record_pickup_checks(run, progress)
 
 
 def _record_pickup_checks(run, progress):
-    run.check("end_effector_approached_cube", progress.approach >= 0.05,
-              detail=f"{progress.approach:.6f} m approach; required 0.05 m")
-    run.check("bilateral_gripper_contact", progress.contact_samples > 0,
-              detail=f"{progress.contact_samples} physics samples with force on both fingers")
-    run.check("cube_lift_held", progress.success,
-              detail=f"5 cm lift with bilateral contact and closure held {progress.hold_seconds:.6f} simulation seconds")
+    run.check(
+        "end_effector_approached_cube",
+        progress.approach >= 0.05,
+        detail=f"{progress.approach:.6f} m approach; required 0.05 m",
+    )
+    run.check(
+        "bilateral_gripper_contact",
+        progress.contact_samples > 0,
+        detail=f"{progress.contact_samples} physics samples with force on both fingers",
+    )
+    run.check(
+        "cube_lift_held",
+        progress.success,
+        detail=f"5 cm lift with bilateral contact and closure held {progress.hold_seconds:.6f} simulation seconds",
+    )
 
 
 @antioch.scenario(tags=["openpi-communication"])
@@ -1731,13 +1840,16 @@ def openpi_franka_pickup_v3(
         description="DROID instruction matching the sustained pickup objective",
     ),
     control_steps: int = antioch.param(
-        450, ge=10, description="Finite manipulation episode length in applied policy targets"
+        450,
+        ge=10,
+        description="Finite manipulation episode length in applied policy targets",
     ),
     initial_posture: str = antioch.param(
         "pregrasp", description="Fixed initial arm posture: pregrasp or droid"
     ),
     camera_mounts: str = antioch.param(
-        "native_wide", description="Fixed rig: native_wide, droid_reference, droid_detail or task_view"
+        "native_wide",
+        description="Fixed rig: native_wide, droid_reference, droid_detail or task_view",
     ),
 ) -> None:
     """Evaluate measured approach and a sustained physical pickup.
@@ -1755,15 +1867,39 @@ def openpi_franka_pickup_v3(
     """
     if initial_posture not in {"pregrasp", "droid"}:
         raise ValueError("initial_posture must be pregrasp or droid")
-    if camera_mounts not in {"native_wide", "droid_reference", "droid_detail", "task_view"}:
+    if camera_mounts not in {
+        "native_wide",
+        "droid_reference",
+        "droid_detail",
+        "task_view",
+    }:
         raise ValueError("Unsupported camera_mounts")
-    _run_openpi_episode(run, prompt, objective="pickup", control_steps=control_steps,
-                       initial_posture=initial_posture, camera_mounts=camera_mounts)
+    _run_openpi_episode(
+        run,
+        prompt,
+        objective="pickup",
+        control_steps=control_steps,
+        initial_posture=initial_posture,
+        camera_mounts=camera_mounts,
+    )
 
 
-def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_posture="droid",
-                       camera_mounts="native_wide"):
-    from policy_episode import _PickupProgress, _PolicyEvidence, _ShowcaseRecording, _termination_reason, _CameraStartup
+def _run_openpi_episode(
+    run,
+    prompt,
+    *,
+    objective,
+    control_steps,
+    initial_posture="droid",
+    camera_mounts="native_wide",
+):
+    from policy_episode import (
+        _PickupProgress,
+        _PolicyEvidence,
+        _ShowcaseRecording,
+        _termination_reason,
+        _CameraStartup,
+    )
     import carb
     import numpy as np
     import rerun as rr
@@ -1782,8 +1918,9 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
 
     # Polaris predicts one second at 15 Hz. Truncating to five targets can
     # repeatedly discard its planned grasp at the end of the returned chunk.
-    targets_per_query = (ACTION_SHAPE[0] if objective == "pickup"
-                         else COMMUNICATION_TARGETS_PER_QUERY)
+    targets_per_query = (
+        ACTION_SHAPE[0] if objective == "pickup" else COMMUNICATION_TARGETS_PER_QUERY
+    )
     run.add_result("policy_targets_per_query", targets_per_query)
     world = antioch.world()
     world.scene.add_ground_plane(z_position=-0.75, color=np.array([0.12, 0.14, 0.17]))
@@ -1813,20 +1950,29 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
     droid = objective == "pickup"
     cube_size_m = PICKUP_CUBE_SIZE_METERS if droid else CUBE_SIZE_METERS
     cube_initial_position = (*CUBE_INITIAL_POSITION[:2], cube_size_m / 2.0)
-    if initial_posture not in {"pregrasp", "droid"} or (not droid and initial_posture != "droid"):
+    if initial_posture not in {"pregrasp", "droid"} or (
+        not droid and initial_posture != "droid"
+    ):
         raise ValueError("Unsupported initial arm posture for this objective")
-    reset_joints = (droid_scene.PREGRASP_RESET_JOINTS
-                    if initial_posture == "pregrasp" else DROID_RESET_JOINTS)
+    reset_joints = (
+        droid_scene.PREGRASP_RESET_JOINTS
+        if initial_posture == "pregrasp"
+        else DROID_RESET_JOINTS
+    )
     run.add_result("initial_arm_posture", initial_posture)
     run.add_result("initial_arm_joints", list(reset_joints))
     run.add_result("cube_size_m", cube_size_m)
     run.add_result("initial_cube_position_m", list(cube_initial_position))
     run.add_result("post_reset_controller", "openpi_policy_only")
-    robot = (droid_scene.create_robot(world) if droid else
-             world.scene.add(Franka(prim_path="/World/Franka", name="franka")))
+    robot = (
+        droid_scene.create_robot(world)
+        if droid
+        else world.scene.add(Franka(prim_path="/World/Franka", name="franka"))
+    )
     world.scene.add(
         FixedCuboid(
-            prim_path="/World/RobotPedestal", name="robot_pedestal",
+            prim_path="/World/RobotPedestal",
+            name="robot_pedestal",
             position=np.array([-0.025, 0.0, -0.375]),
             scale=np.array([0.22, 0.24, 0.75]),
             color=np.array([0.16, 0.18, 0.20]),
@@ -1846,22 +1992,35 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
             prim_paths_expr="/World/Cube",
             name="cube_gripper_contacts",
             track_contact_forces=True,
-            contact_filter_prim_paths_expr=(list(droid_scene.CONTACT_BODIES) if droid else [
-                "/World/Franka/panda_leftfinger",
-                "/World/Franka/panda_rightfinger",
-            ]),
+            contact_filter_prim_paths_expr=(
+                list(droid_scene.CONTACT_BODIES)
+                if droid
+                else [
+                    "/World/Franka/panda_leftfinger",
+                    "/World/Franka/panda_rightfinger",
+                ]
+            ),
             max_contact_count=16,
         )
     )
     if droid:
         exterior, wrist = (
             _build_rtx_rgb_camera(
-                RtxCamera, CameraSensor, path=droid_scene.CAMERA_PATHS[view],
-                resolution=droid_scene.NATIVE_POLICY_RESOLUTION, policy_format="droid")
-            for view in ("exterior", "wrist"))
+                RtxCamera,
+                CameraSensor,
+                path=droid_scene.CAMERA_PATHS[view],
+                resolution=droid_scene.NATIVE_POLICY_RESOLUTION,
+                policy_format="droid",
+            )
+            for view in ("exterior", "wrist")
+        )
     else:
         exterior = _build_rtx_rgb_camera(
-            RtxCamera, CameraSensor, path=EXTERIOR_CAMERA_PATH, position=EXTERIOR_CAMERA_EYE)
+            RtxCamera,
+            CameraSensor,
+            path=EXTERIOR_CAMERA_PATH,
+            position=EXTERIOR_CAMERA_EYE,
+        )
         wrist = _build_rtx_rgb_camera(RtxCamera, CameraSensor, path=WRIST_CAMERA_PATH)
     showcase_camera = _build_showcase_camera(world.stage, RtxCamera, CameraSensor)
     _configure_lighting(world.stage)
@@ -1880,11 +2039,19 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
         wrist_optics = droid_scene.optical_config("wrist", camera_mounts)
     else:
         robot.set_joint_positions(
-            np.asarray([*DROID_RESET_JOINTS, GRIPPER_JOINT_MAX, GRIPPER_JOINT_MAX]))
-        _look_at(world.stage, EXTERIOR_CAMERA_PATH, EXTERIOR_CAMERA_EYE, EXTERIOR_CAMERA_TARGET)
+            np.asarray([*DROID_RESET_JOINTS, GRIPPER_JOINT_MAX, GRIPPER_JOINT_MAX])
+        )
+        _look_at(
+            world.stage,
+            EXTERIOR_CAMERA_PATH,
+            EXTERIOR_CAMERA_EYE,
+            EXTERIOR_CAMERA_TARGET,
+        )
         wrist_mount = _calibrate_wrist_camera_mount(
-            *_stock_franka_camera_points(world.stage), cube.get_world_pose()[0],
-            hand_transform=_world_transform(world.stage, STOCK_FRANKA_HAND_PATH))
+            *_stock_franka_camera_points(world.stage),
+            cube.get_world_pose()[0],
+            hand_transform=_world_transform(world.stage, STOCK_FRANKA_HAND_PATH),
+        )
         wrist_pose = _aim_wrist_camera(world.stage, wrist_mount)
         _configure_camera_optics(world.stage, EXTERIOR_CAMERA_PATH, "exterior")
         _configure_camera_optics(world.stage, WRIST_CAMERA_PATH, "wrist")
@@ -1980,7 +2147,8 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
     initial_target_resolved = False
     termination_reason = "interrupted_or_error"
     camera_startup = _CameraStartup(
-        started, CAMERA_STARTUP_DEADLINE_SECONDS, MAX_RESPONSE_AGE_SECONDS)
+        started, CAMERA_STARTUP_DEADLINE_SECONDS, MAX_RESPONSE_AGE_SECONDS
+    )
     last_control_at = None
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="openpi-policy")
     camera_readiness = CameraReadinessMonitor()
@@ -2035,7 +2203,9 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                         raise RuntimeError(
                             "policy response camera-pair identity mismatch"
                         )
-                    evidence.response(pending_camera_pair_id, response, sim_seconds=sim_now)
+                    evidence.response(
+                        pending_camera_pair_id, response, sim_seconds=sim_now
+                    )
                     if now - pending_started_at > MAX_RESPONSE_AGE_SECONDS:
                         raise TimeoutError("policy response was stale")
                     chunk, action_evidence = _validated_actions(
@@ -2166,13 +2336,17 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                     pending_started_at = 0.0
                     pending_stall_reported = False
 
-
             # A long first render can return between the 15 Hz sampling ticks.
             # Inspect each completed render during startup before its deadline.
             if camera_startup.completed_at is None or sim_now >= next_camera_attempt:
                 next_camera_attempt = sim_now + 1.0 / CONTROL_HZ
-                _record_showcase_frame(showcase_camera, showcase_recording, telemetry,
-                                       sim_seconds=sim_now, render_sequence=render_sequence)
+                _record_showcase_frame(
+                    showcase_camera,
+                    showcase_recording,
+                    telemetry,
+                    sim_seconds=sim_now,
+                    render_sequence=render_sequence,
+                )
                 joint_positions = np.asarray(
                     robot.get_joint_positions(), dtype=np.float32
                 )
@@ -2189,15 +2363,16 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                     wrist_pose,
                     wrist_optics,
                 )
-                gripper_position = (droid_scene.grasp_region(world.stage) if droid else
-                                    robot.end_effector.get_world_pose()[0])
+                gripper_position = (
+                    droid_scene.grasp_region(world.stage)
+                    if droid
+                    else robot.end_effector.get_world_pose()[0]
+                )
                 gripper_views_aligned = _point_in_camera_frame(
                     gripper_position,
                     exterior_pose,
                     exterior_optics,
-                ) and _point_in_camera_frame(
-                    gripper_position, wrist_pose, wrist_optics
-                )
+                ) and _point_in_camera_frame(gripper_position, wrist_pose, wrist_optics)
                 samples = _capture_camera_samples(cameras)
                 pair = _validate_camera_pair(
                     samples["exterior"].frame,
@@ -2207,7 +2382,9 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                     exterior_cube_in_frame=exterior_cube_in_frame,
                     wrist_cube_in_frame=wrist_cube_in_frame,
                     initial_alignment=not initial_target_resolved,
-                    gripper_contact=bool(gripper_commanded_closed and in_gripper_contact),
+                    gripper_contact=bool(
+                        gripper_commanded_closed and in_gripper_contact
+                    ),
                     gripper_views_aligned=gripper_views_aligned,
                 )
                 producers_advanced, current_markers, producer_reason = (
@@ -2227,15 +2404,25 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                 readiness = camera_readiness.observe(pair, producer_reason)
                 camera_policy_eligible = readiness.policy_eligible
                 first_pair = camera_startup.observe(
-                    now=now, produced_pair=producers_advanced and all(
-                        sample.frame.rgb is not None for sample in samples.values()),
-                    policy_eligible=camera_policy_eligible)
+                    now=now,
+                    produced_pair=producers_advanced
+                    and all(
+                        sample.frame.rgb is not None for sample in samples.values()
+                    ),
+                    policy_eligible=camera_policy_eligible,
+                )
                 if first_pair:
                     elapsed = now - started
-                    evidence.event("camera_startup", elapsed_seconds=elapsed,
-                                   sim_seconds=sim_now, render_sequence=render_sequence)
-                    print(f"NPA_OPENPI_CAMERA_STARTUP_COMPLETE elapsed_seconds={elapsed:.3f}",
-                          flush=True)
+                    evidence.event(
+                        "camera_startup",
+                        elapsed_seconds=elapsed,
+                        sim_seconds=sim_now,
+                        render_sequence=render_sequence,
+                    )
+                    print(
+                        f"NPA_OPENPI_CAMERA_STARTUP_COMPLETE elapsed_seconds={elapsed:.3f}",
+                        flush=True,
+                    )
                 current_exterior_cube_in_frame = int(exterior_cube_in_frame)
                 current_wrist_cube_in_frame = int(wrist_cube_in_frame)
                 current_exterior_red_cube_pixels = pair.exterior.red_cube_pixels
@@ -2306,19 +2493,28 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                             ),
                             flush=True,
                         )
-                if (camera_policy_eligible and chunk is None and pending is None
-                        and now >= next_attempt and applied < control_steps
-                        and not (objective == "communication" and completed_action_chunks >= 2)):
+                if (
+                    camera_policy_eligible
+                    and chunk is None
+                    and pending is None
+                    and now >= next_attempt
+                    and applied < control_steps
+                    and not (
+                        objective == "communication" and completed_action_chunks >= 2
+                    )
+                ):
                     initial_target_resolved = True
                     for view in ("exterior", "wrist"):
                         frame = getattr(pair, view)
-                        camera_quality[view].append({
-                            "mean": frame.luminance_mean,
-                            "near_white": frame.near_white_fraction,
-                            "dynamic_range": frame.dynamic_range,
-                            "target_pixels": frame.red_cube_pixels,
-                            "target_clipped": frame.target_clipped,
-                        })
+                        camera_quality[view].append(
+                            {
+                                "mean": frame.luminance_mean,
+                                "near_white": frame.near_white_fraction,
+                                "dynamic_range": frame.dynamic_range,
+                                "target_pixels": frame.red_cube_pixels,
+                                "target_clipped": frame.target_clipped,
+                            }
+                        )
                     exterior_rgb = pair.exterior.rgb
                     wrist_rgb = pair.wrist.rgb
                     if first_frame:
@@ -2376,9 +2572,15 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                     if last_control_at is None:
                         last_control_at = now
                     pending_stall_reported = False
-                    request = PolicyRequest(observation, request_camera_pair_id, request_render_sequence)
-                    payload = evidence.request(request, sim_seconds=sim_now, producer_markers=camera_markers)
-                    pending = executor.submit(client.infer, replace(request, payload=payload))
+                    request = PolicyRequest(
+                        observation, request_camera_pair_id, request_render_sequence
+                    )
+                    payload = evidence.request(
+                        request, sim_seconds=sim_now, producer_markers=camera_markers
+                    )
+                    pending = executor.submit(
+                        client.infer, replace(request, payload=payload)
+                    )
 
             if (
                 chunk is not None
@@ -2391,10 +2593,23 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
                 if droid:
                     robot.apply_policy_target(target)
                 else:
-                    robot.apply_action(ArticulationAction(joint_positions=np.concatenate(
-                        [target[:7], np.repeat(_isaac_finger_target(target[7]), 2)])))
-                evidence.target(camera_pair_id=chunk_camera_pair_id, row=chunk_index,
-                                target=target, before=measured_before, sim_seconds=sim_now)
+                    robot.apply_action(
+                        ArticulationAction(
+                            joint_positions=np.concatenate(
+                                [
+                                    target[:7],
+                                    np.repeat(_isaac_finger_target(target[7]), 2),
+                                ]
+                            )
+                        )
+                    )
+                evidence.target(
+                    camera_pair_id=chunk_camera_pair_id,
+                    row=chunk_index,
+                    target=target,
+                    before=measured_before,
+                    sim_seconds=sim_now,
+                )
                 gripper_commanded_closed = bool(target[7] > 0.5)
                 close_targets_applied += int(gripper_commanded_closed)
                 applied += 1
@@ -2431,28 +2646,53 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
             )
             # Require measured closure as well as the command. Bilateral contact
             # and sustained physical lift independently establish the grasp.
-            gripper_closed = bool(gripper_commanded_closed and
-                _droid_gripper_observation(current_joint_positions) >= 0.05)
-            progress.observe(sim_seconds=sim_now, distance=ee_distance, lift=cube_lift,
-                             contact_force=contact_force, closed=gripper_closed)
+            gripper_closed = bool(
+                gripper_commanded_closed
+                and _droid_gripper_observation(current_joint_positions) >= 0.05
+            )
+            progress.observe(
+                sim_seconds=sim_now,
+                distance=ee_distance,
+                lift=cube_lift,
+                contact_force=contact_force,
+                closed=gripper_closed,
+            )
             pickup_hold_seconds = progress.hold_seconds
             pickup_success = progress.success
-            evidence.event("physics", sim_seconds=sim_now, render_sequence=render_sequence,
-                           joints=current_joint_positions.tolist(), cube=cube_position.tolist(),
-                           end_effector=ee_position.tolist(), contact_force=contact_force,
-                           lift=cube_lift, approach=progress.approach, pickup=pickup_success)
+            evidence.event(
+                "physics",
+                sim_seconds=sim_now,
+                render_sequence=render_sequence,
+                joints=current_joint_positions.tolist(),
+                cube=cube_position.tolist(),
+                end_effector=ee_position.tolist(),
+                contact_force=contact_force,
+                lift=cube_lift,
+                approach=progress.approach,
+                pickup=pickup_success,
+            )
             terminal = _termination_reason(
-                objective=objective, round_trips=round_trips,
-                completed_chunks=completed_action_chunks, pickup=progress,
-                applied=applied, control_steps=control_steps, sim_seconds=sim_now,
-                last_apply_sim_seconds=last_apply)
+                objective=objective,
+                round_trips=round_trips,
+                completed_chunks=completed_action_chunks,
+                pickup=progress,
+                applied=applied,
+                control_steps=control_steps,
+                sim_seconds=sim_now,
+                last_apply_sim_seconds=last_apply,
+            )
             if terminal:
                 termination_reason = terminal
-                print(f"NPA_OPENPI_EPISODE_COMPLETE reason={terminal} applied={applied}", flush=True)
+                print(
+                    f"NPA_OPENPI_EPISODE_COMPLETE reason={terminal} applied={applied}",
+                    flush=True,
+                )
                 break
             failure = camera_startup.failure(
-                now=now, camera_ready=camera_policy_eligible,
-                last_control_at=last_control_at)
+                now=now,
+                camera_ready=camera_policy_eligible,
+                last_control_at=last_control_at,
+            )
             if failure:
                 termination_reason = failure
                 break
@@ -2681,11 +2921,19 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
         showcase_recording.finish(run)
         camera_startup.record(run)
         _record_episode_checks(
-            run, objective=objective, reason=termination_reason, progress=progress,
-            completed_chunks=completed_action_chunks, camera_quality=camera_quality,
-            initial_target_resolved=initial_target_resolved, evidence=evidence,
-            evidence_sha256=evidence_sha256, requests=requests, applied=applied,
-            control_steps=control_steps, render_settings=render_settings,
+            run,
+            objective=objective,
+            reason=termination_reason,
+            progress=progress,
+            completed_chunks=completed_action_chunks,
+            camera_quality=camera_quality,
+            initial_target_resolved=initial_target_resolved,
+            evidence=evidence,
+            evidence_sha256=evidence_sha256,
+            requests=requests,
+            applied=applied,
+            control_steps=control_steps,
+            render_settings=render_settings,
         )
         run.add_result("observation_sequence", observation_sequence)
         run.add_result("policy_requests", requests)
@@ -2725,15 +2973,25 @@ def _run_openpi_episode(run, prompt, *, objective, control_steps, initial_postur
             current_exterior_red_cube_pixels,
         )
         run.add_result("task_label", TASK_LABEL)
-        run.add_result("robot_embodiment", "franka_robotiq_2f85" if droid else "stock_panda")
+        run.add_result(
+            "robot_embodiment", "franka_robotiq_2f85" if droid else "stock_panda"
+        )
         if droid:
             run.add_result("policy_joint_names", list(droid_scene.MODEL_JOINT_NAMES))
             run.add_result("policy_camera_mounts", camera_mounts)
-            run.add_result("policy_camera_calibration", droid_scene.camera_calibration(camera_mounts))
+            run.add_result(
+                "policy_camera_calibration",
+                droid_scene.camera_calibration(camera_mounts),
+            )
             run.add_result("policy_image_content_rows", [49, 175])
-            run.add_result("policy_native_resolution_hw", list(droid_scene.NATIVE_POLICY_RESOLUTION))
-        run.add_result("minimum_end_effector_cube_distance_m",
-                       minimum_ee_distance if math.isfinite(minimum_ee_distance) else None)
+            run.add_result(
+                "policy_native_resolution_hw",
+                list(droid_scene.NATIVE_POLICY_RESOLUTION),
+            )
+        run.add_result(
+            "minimum_end_effector_cube_distance_m",
+            minimum_ee_distance if math.isfinite(minimum_ee_distance) else None,
+        )
         run.add_result("maximum_cube_lift_m", maximum_cube_lift)
         run.add_result("gripper_contact_samples", gripper_contact_samples)
         run.add_result("maximum_gripper_contact_force_n", maximum_gripper_contact_force)

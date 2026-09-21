@@ -99,9 +99,12 @@ def test_ensure_runtime_downloads_pinned_wheel_and_verifies_sha256(
 
 @pytest.mark.parametrize("retired_version", ["0.4.236", "0.4.265"])
 def test_ensure_runtime_refuses_retired_manifest_client_before_fetch(
-    runtime_harness, retired_version: str,
+    runtime_harness,
+    retired_version: str,
 ) -> None:
-    with pytest.raises(runtime.AntiochRuntimeError, match="unsupported Antioch CLI version"):
+    with pytest.raises(
+        runtime.AntiochRuntimeError, match="unsupported Antioch CLI version"
+    ):
         runtime.ensure_runtime(expected_version=retired_version)
     assert runtime_harness == {"downloads": 0, "installs": 0}
 

@@ -22,10 +22,34 @@ class Finding:
 
 
 FORBIDDEN_PATHS = (
-    ("vendor_state", re.compile(r"(?:^|/)(?:\.antioch|antioch[-_](?:config|cache|auth)|auth\.json|machines\.json|credentials\.json)(?:/|$)", re.I)),
-    ("credential_file", re.compile(r"(?:^|/)(?:\.aws/credentials|\.docker/config\.json|\.git-credentials|kubeconfig|ssh_host_(?:rsa|ecdsa|ed25519)_key)$", re.I)),
-    ("checkpoint_or_weight", re.compile(r"(?:\.(?:safetensors|ckpt|onnx|gguf)$|(?:^|/)(?:weights?|checkpoints?|models?)/.*\.(?:bin|pt|pth)$)", re.I)),
-    ("vendor_distribution", re.compile(r"(?:^|/)(?:antioch[-_]?sim|antioch_sim-.*\.(?:dist-info|egg-info))(?:/|$)", re.I)),
+    (
+        "vendor_state",
+        re.compile(
+            r"(?:^|/)(?:\.antioch|antioch[-_](?:config|cache|auth)|auth\.json|machines\.json|credentials\.json)(?:/|$)",
+            re.I,
+        ),
+    ),
+    (
+        "credential_file",
+        re.compile(
+            r"(?:^|/)(?:\.aws/credentials|\.docker/config\.json|\.git-credentials|kubeconfig|ssh_host_(?:rsa|ecdsa|ed25519)_key)$",
+            re.I,
+        ),
+    ),
+    (
+        "checkpoint_or_weight",
+        re.compile(
+            r"(?:\.(?:safetensors|ckpt|onnx|gguf)$|(?:^|/)(?:weights?|checkpoints?|models?)/.*\.(?:bin|pt|pth)$)",
+            re.I,
+        ),
+    ),
+    (
+        "vendor_distribution",
+        re.compile(
+            r"(?:^|/)(?:antioch[-_]?sim|antioch_sim-.*\.(?:dist-info|egg-info))(?:/|$)",
+            re.I,
+        ),
+    ),
 )
 FORBIDDEN_HISTORY = (
     (
@@ -36,7 +60,12 @@ FORBIDDEN_HISTORY = (
             re.I,
         ),
     ),
-    ("vendor_payload", re.compile(r"(?:COPY|ADD)[^\n]*(?:antioch[-_]?sim|omniverse|isaac[-_ ]?sim)", re.I)),
+    (
+        "vendor_payload",
+        re.compile(
+            r"(?:COPY|ADD)[^\n]*(?:antioch[-_]?sim|omniverse|isaac[-_ ]?sim)", re.I
+        ),
+    ),
     ("cached_acceptance", re.compile(r"NPA_ANTIOCH_ACCEPT_TERMS\s*=\s*YES", re.I)),
 )
 SECRET_CONTENT = (
@@ -65,11 +94,29 @@ def _inspect_file(path: str, payload: bytes) -> list[Finding]:
     if payload.lstrip().startswith(b"-----BEGIN") and any(
         pattern.search(payload) for pattern in SECRET_CONTENT
     ):
-        findings.append(Finding("credential_material", normalized, "secret or private-key signature"))
-    if normalized.endswith(("METADATA", "PKG-INFO")) and VENDOR_METADATA.search(payload):
-        findings.append(Finding("renamed_vendor_distribution", normalized, "distribution metadata identifies antioch-sim"))
+        findings.append(
+            Finding(
+                "credential_material", normalized, "secret or private-key signature"
+            )
+        )
+    if normalized.endswith(("METADATA", "PKG-INFO")) and VENDOR_METADATA.search(
+        payload
+    ):
+        findings.append(
+            Finding(
+                "renamed_vendor_distribution",
+                normalized,
+                "distribution metadata identifies antioch-sim",
+            )
+        )
     if payload.startswith(b"\x7fELF") and PROPRIETARY_BINARY.search(payload):
-        findings.append(Finding("proprietary_binary", normalized, "ELF contains a proprietary runtime signature"))
+        findings.append(
+            Finding(
+                "proprietary_binary",
+                normalized,
+                "ELF contains a proprietary runtime signature",
+            )
+        )
     return findings
 
 
@@ -103,12 +150,18 @@ def scan_tarball(path: Path) -> dict[str, object]:
             )
         for kind, pattern in FORBIDDEN_HISTORY:
             if pattern.search(serialized_config):
-                findings.append(Finding(kind, config_name, "forbidden OCI config value"))
+                findings.append(
+                    Finding(kind, config_name, "forbidden OCI config value")
+                )
         for item in config.get("history") or []:
             command = str(item.get("created_by") or "")
             for kind, pattern in FORBIDDEN_HISTORY:
                 if pattern.search(command):
-                    findings.append(Finding(kind, config_name, "forbidden layer history instruction"))
+                    findings.append(
+                        Finding(
+                            kind, config_name, "forbidden layer history instruction"
+                        )
+                    )
         for layer_name in layer_names:
             layer_file = outer.extractfile(layer_name)
             if layer_file is None:
@@ -148,7 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         with tempfile.TemporaryDirectory(prefix="npa-antioch-scan-") as directory:
             archive = Path(directory) / "image.tar"
-            completed = subprocess.run(["docker", "save", "--output", str(archive), args.image], check=False)
+            completed = subprocess.run(
+                ["docker", "save", "--output", str(archive), args.image], check=False
+            )
             if completed.returncode:
                 raise SystemExit("could not export built Antioch image")
             report = scan_tarball(archive)

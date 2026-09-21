@@ -162,7 +162,10 @@ class StateStore:
                     "cannot collect missing Antioch operation state"
                 )
             latest, etag = current
-            if latest.completion_uri or latest.status not in {"completed", "collecting"}:
+            if latest.completion_uri or latest.status not in {
+                "completed",
+                "collecting",
+            }:
                 return latest, False
             now = datetime.now(timezone.utc)
             expires = None
@@ -187,7 +190,9 @@ class StateStore:
                     "collection_owner": owner,
                     "collection_lease_expires_at": (
                         now + timedelta(seconds=lease_seconds)
-                    ).isoformat().replace("+00:00", "Z"),
+                    )
+                    .isoformat()
+                    .replace("+00:00", "Z"),
                     "collection_phase": "claimed",
                     "retryable": False,
                     "error_type": "",
@@ -226,7 +231,9 @@ class StateStore:
         changes: dict[str, Any] = {
             "collection_lease_expires_at": (
                 datetime.now(timezone.utc) + timedelta(seconds=lease_seconds)
-            ).isoformat().replace("+00:00", "Z")
+            )
+            .isoformat()
+            .replace("+00:00", "Z")
         }
         if phase is not None:
             changes["collection_phase"] = phase

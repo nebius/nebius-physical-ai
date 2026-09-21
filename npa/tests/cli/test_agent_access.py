@@ -775,7 +775,8 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(runtime, "_agent_command_env", lambda: {})
     monkeypatch.setattr(
-        runtime, "_agent_inventory_credential_context",
+        runtime,
+        "_agent_inventory_credential_context",
         lambda: ({}, "test-profile", "", "configured_profile"),
     )
     monkeypatch.setattr(runtime.subprocess, "run", timeout_run)
@@ -816,9 +817,13 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
     original_is_file = runtime.Path.is_file
     monkeypatch.setattr(
-        runtime.Path, "is_file",
-        lambda path: metadata_available
-        if str(path) == "/mnt/cloud-metadata/token" else original_is_file(path),
+        runtime.Path,
+        "is_file",
+        lambda path: (
+            metadata_available
+            if str(path) == "/mnt/cloud-metadata/token"
+            else original_is_file(path)
+        ),
     )
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(

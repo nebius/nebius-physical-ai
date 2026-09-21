@@ -43,9 +43,7 @@ def main() -> int:
         payload = None
         for _ in range(50):
             try:
-                connection = http.client.HTTPConnection(
-                    "127.0.0.1", port, timeout=2
-                )
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
                 try:
                     connection.request(
                         "GET",

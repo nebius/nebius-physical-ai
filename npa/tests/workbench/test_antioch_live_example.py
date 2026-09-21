@@ -52,9 +52,7 @@ def test_live_example_uses_only_runtime_project_identity() -> None:
     sim = manifest["services"]["sim"]
     assert "image" not in sim
     assert sim["build"] == {"context": ".", "dockerfile": "Dockerfile"}
-    assert sim["environment"] == {
-        "TMPDIR": "/antioch/renderer-cache/npa-live-tmp"
-    }
+    assert sim["environment"] == {"TMPDIR": "/antioch/renderer-cache/npa-live-tmp"}
     assert sim["ports"] == [
         {
             "name": "policy-relay",
@@ -2245,6 +2243,15 @@ def test_cluster_relay_holds_stopped_state_until_controller_resumes(
 
 
 def test_live_metrics_bind_current_valid_camera_pair_to_policy_request() -> None:
+    """Keep inference and action guards tied to validated current camera inputs.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Camera validation no longer guards policy requests/actions.
+    """
     source = (EXAMPLE / "src/scenario_v2.py").read_text(encoding="utf-8")
     assert "camera_quality_schema=4" in source
     assert "action_horizon={ACTION_SHAPE[0]}" in source
@@ -2256,13 +2263,15 @@ def test_live_metrics_bind_current_valid_camera_pair_to_policy_request() -> None
     assert source.index("observation = _build_policy_observation(") < source.index(
         "camera_validated_requests += 1"
     )
-    readiness = source.index("camera_policy_eligible = readiness.policy_eligible")
-    request_gate = source.index(
-        "if (camera_policy_eligible and chunk is None and pending is None"
+    # Whitespace does not change guard conditions or their required ordering.
+    normalized = re.sub(r"\s+", "", source)
+    readiness = normalized.index("camera_policy_eligible=readiness.policy_eligible")
+    request_gate = normalized.index(
+        "if(camera_policy_eligibleandchunkisNoneandpendingisNone"
     )
-    request = source.index("requests += 1", request_gate)
+    request = normalized.index("requests+=1", request_gate)
     assert readiness < request_gate < request
-    assert "chunk is not None\n                and camera_policy_eligible" in source
+    assert "chunkisnotNoneandcamera_policy_eligible" in normalized
 
 
 def test_live_stop_cancels_scenario_before_service(
