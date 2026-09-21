@@ -1,0 +1,80 @@
+[
+  {
+    "case": "33369213973_9d9bb4cc96_c",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "You are scoring a robot rollout from visual evidence.\nTask/instruction: The supplied review sheet may be valid or adversarially corrupted. Its top panel is the exact overlay enlarged 2x by nearest-neighbor sampling; its bottom panels are nearest-neighbor pixel crops from that same overlay and add no geometry. Treat the sheet header's overlay SHA as provenance, not as proof of correctness. Judge this single AprilTag detector evidence image. Expected source basename: 33369213973_9d9bb4cc96_c.jpg. Expected source SHA256 prefix: 6f2888334e654405. Expected banner counts: 12 expected and 12 detected. Determine whether the visible image is suitable evidence that detected overlays align to the real printed tag borders.\nRubric: Judge visible geometry before banner metadata. In each bottom crop, compare the cyan expected quadrilateral, magenta detected quadrilateral, and physical black-and-white tag. Correct alignment means cyan and magenta follow the same square tag perimeter; one line may be nested a few display pixels inside the other because their stroke widths differ. The magenta 'id 0' text may extend outside a polygon and is not itself a false detection. Use the enlarged full frame to find magenta quadrilaterals absent from the tag crops or floating on road, robot, empty background, or an untagged surface. FAIL if any clearly visible magenta quadrilateral is displaced from its cyan/tag perimeter; if the representative crops lack magenta while the full frame contains displaced magenta polygons; or if the image is blank. After geometry inspection, require the banner to match the task's exact source basename, first 16 source-SHA256 characters, expected count, detected count, and tag36h11 family. A wrong source/hash/count is a failure even if geometry is otherwise good. Score 0.95-1.0 for strong reviewable evidence, 0.80-0.94 for passing evidence with only minor legibility limits, 0.40-0.79 for ambiguous or partial evidence, and 0.0-0.39 for a clear failure. Set success true if and only if score is at least 0.8. In the rationale, separately report crop alignment, full-frame false/shifted polygons, and banner metadata.\nFrame selection: final; frames supplied: 1.\nReturn only a JSON object with this schema:\n{\"success\": boolean, \"score\": number between 0 and 1, \"rationale\": string}\nThe score is the only downstream contract; make it repeatable and calibrated.",
+            "type": "text"
+          },
+          {
+            "type": "image_file",
+            "file": "33369213973_9d9bb4cc96_c_submitted.png",
+            "sha256": "6200c46a3dd743926d44c7c945c75cdbe5648177b8756b6249abda71d02b6c44"
+          }
+        ]
+      }
+    ],
+    "model": "moonshotai/Kimi-K3",
+    "reasoning_effort": "low",
+    "response_format": {
+      "type": "json_object"
+    },
+    "exact_request_body_sha256": "cb41c91ed0f8ce47dcbfb8b8dd6adc16926eadf1b994b6203bef844e1ea9e727",
+    "representation": "The data URL is replaced by a relative reference to the exact extracted PNG; all visible text is unchanged."
+  },
+  {
+    "case": "34085369442_304b6bafd9_c",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "You are scoring a robot rollout from visual evidence.\nTask/instruction: The supplied review sheet may be valid or adversarially corrupted. Its top panel is the exact overlay enlarged 2x by nearest-neighbor sampling; its bottom panels are nearest-neighbor pixel crops from that same overlay and add no geometry. Treat the sheet header's overlay SHA as provenance, not as proof of correctness. Judge this single AprilTag detector evidence image. Expected source basename: 34085369442_304b6bafd9_c.jpg. Expected source SHA256 prefix: 386c70bbd4d98dc0. Expected banner counts: 25 expected and 25 detected. Determine whether the visible image is suitable evidence that detected overlays align to the real printed tag borders.\nRubric: Judge visible geometry before banner metadata. In each bottom crop, compare the cyan expected quadrilateral, magenta detected quadrilateral, and physical black-and-white tag. Correct alignment means cyan and magenta follow the same square tag perimeter; one line may be nested a few display pixels inside the other because their stroke widths differ. The magenta 'id 0' text may extend outside a polygon and is not itself a false detection. Use the enlarged full frame to find magenta quadrilaterals absent from the tag crops or floating on road, robot, empty background, or an untagged surface. FAIL if any clearly visible magenta quadrilateral is displaced from its cyan/tag perimeter; if the representative crops lack magenta while the full frame contains displaced magenta polygons; or if the image is blank. After geometry inspection, require the banner to match the task's exact source basename, first 16 source-SHA256 characters, expected count, detected count, and tag36h11 family. A wrong source/hash/count is a failure even if geometry is otherwise good. Score 0.95-1.0 for strong reviewable evidence, 0.80-0.94 for passing evidence with only minor legibility limits, 0.40-0.79 for ambiguous or partial evidence, and 0.0-0.39 for a clear failure. Set success true if and only if score is at least 0.8. In the rationale, separately report crop alignment, full-frame false/shifted polygons, and banner metadata.\nFrame selection: final; frames supplied: 1.\nReturn only a JSON object with this schema:\n{\"success\": boolean, \"score\": number between 0 and 1, \"rationale\": string}\nThe score is the only downstream contract; make it repeatable and calibrated.",
+            "type": "text"
+          },
+          {
+            "type": "image_file",
+            "file": "34085369442_304b6bafd9_c_submitted.png",
+            "sha256": "2f7627f555768144f031179c3a720ad09e44812a81981cd1fc7ec3291c2628cb"
+          }
+        ]
+      }
+    ],
+    "model": "moonshotai/Kimi-K3",
+    "reasoning_effort": "low",
+    "response_format": {
+      "type": "json_object"
+    },
+    "exact_request_body_sha256": "52c647c72730c40d3f1b2077842e484b722f6ae1a3eb4f9833ddf3a36ff69f98",
+    "representation": "The data URL is replaced by a relative reference to the exact extracted PNG; all visible text is unchanged."
+  },
+  {
+    "case": "34139872896_defdb2f8d9_c",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "text": "You are scoring a robot rollout from visual evidence.\nTask/instruction: The supplied review sheet may be valid or adversarially corrupted. Its top panel is the exact overlay enlarged 2x by nearest-neighbor sampling; its bottom panels are nearest-neighbor pixel crops from that same overlay and add no geometry. Treat the sheet header's overlay SHA as provenance, not as proof of correctness. Judge this single AprilTag detector evidence image. Expected source basename: 34139872896_defdb2f8d9_c.jpg. Expected source SHA256 prefix: 435a619d642e2d50. Expected banner counts: 10 expected and 10 detected. Determine whether the visible image is suitable evidence that detected overlays align to the real printed tag borders.\nRubric: Judge visible geometry before banner metadata. In each bottom crop, compare the cyan expected quadrilateral, magenta detected quadrilateral, and physical black-and-white tag. Correct alignment means cyan and magenta follow the same square tag perimeter; one line may be nested a few display pixels inside the other because their stroke widths differ. The magenta 'id 0' text may extend outside a polygon and is not itself a false detection. Use the enlarged full frame to find magenta quadrilaterals absent from the tag crops or floating on road, robot, empty background, or an untagged surface. FAIL if any clearly visible magenta quadrilateral is displaced from its cyan/tag perimeter; if the representative crops lack magenta while the full frame contains displaced magenta polygons; or if the image is blank. After geometry inspection, require the banner to match the task's exact source basename, first 16 source-SHA256 characters, expected count, detected count, and tag36h11 family. A wrong source/hash/count is a failure even if geometry is otherwise good. Score 0.95-1.0 for strong reviewable evidence, 0.80-0.94 for passing evidence with only minor legibility limits, 0.40-0.79 for ambiguous or partial evidence, and 0.0-0.39 for a clear failure. Set success true if and only if score is at least 0.8. In the rationale, separately report crop alignment, full-frame false/shifted polygons, and banner metadata.\nFrame selection: final; frames supplied: 1.\nReturn only a JSON object with this schema:\n{\"success\": boolean, \"score\": number between 0 and 1, \"rationale\": string}\nThe score is the only downstream contract; make it repeatable and calibrated.",
+            "type": "text"
+          },
+          {
+            "type": "image_file",
+            "file": "34139872896_defdb2f8d9_c_submitted.png",
+            "sha256": "29fbaf9c9446d3f29f60aa11b72bb7fc1ab60cd43d0cd8dd7bdbf5d6100e3866"
+          }
+        ]
+      }
+    ],
+    "model": "moonshotai/Kimi-K3",
+    "reasoning_effort": "low",
+    "response_format": {
+      "type": "json_object"
+    },
+    "exact_request_body_sha256": "feca75c3eedcd1105e1ba6222db686182ce67763e2f014fe56645df677b719c4",
+    "representation": "The data URL is replaced by a relative reference to the exact extracted PNG; all visible text is unchanged."
+  }
+]

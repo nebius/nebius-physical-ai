@@ -1,0 +1,22 @@
+{
+  "case_id": "33369213973_9d9bb4cc96_c",
+  "finish_reason": "stop",
+  "image_file": "33369213973_9d9bb4cc96_c_review.png",
+  "image_sha256": "97144c7d25a4efe4bd5150a63155f1bce897b8c2c3f3308738b21c90d8f114cb",
+  "rationale": "Crop alignment: In all four bottom crops the magenta detected quadrilaterals closely track the cyan expected quadrilaterals, both following the physical black-and-white tag perimeters; minor nesting due to stroke width differences is within tolerance. The magenta 'id 0' text extends outside polygons (notably crop 2), which the rubric permits and is not a false detection. Full-frame check: The 2x enlarged frame shows every visible printed tag carrying overlapping cyan/magenta outlines; no magenta quadrilateral floats on the road, robot, or empty background, and no clearly displaced polygon is visible. Banner metadata: '12 expected | 12 detected' matches the required counts, family tag36h11 is stated, the source basename 33369213973_9d9bb4cc96_c.jpg matches, and the SHA256 prefix 6f2888334e654405 matches the expected value. Strong, reviewable evidence.",
+  "request_body_sha256": "cb41c91ed0f8ce47dcbfb8b8dd6adc16926eadf1b994b6203bef844e1ea9e727",
+  "response_body_sha256": "f2d9ddb639c558ae9f10cbd51f6194d881ef356211eb85310761ec1803c02d93",
+  "returned_model": "moonshotai/Kimi-K3",
+  "schema": "npa.public-kimi-k3-census-answer.v1",
+  "scope": "overlay presentation and reviewability only",
+  "score": 0.95,
+  "success": true,
+  "visible_content_sha256": "c57c2e71171f2454d7e49e0650ecda97c3950b8c547f689d72be68cafe69ca19",
+  "image_role": "Original review sheet before product normalization",
+  "submitted_image_file": "33369213973_9d9bb4cc96_c_submitted.png",
+  "submitted_image_sha256": "6200c46a3dd743926d44c7c945c75cdbe5648177b8756b6249abda71d02b6c44",
+  "submitted_image_dimensions": [
+    674,
+    768
+  ]
+}

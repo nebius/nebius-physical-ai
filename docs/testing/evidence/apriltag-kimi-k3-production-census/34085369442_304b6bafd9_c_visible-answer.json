@@ -1,0 +1,22 @@
+{
+  "case_id": "34085369442_304b6bafd9_c",
+  "finish_reason": "stop",
+  "image_file": "34085369442_304b6bafd9_c_review.png",
+  "image_sha256": "7197707947693e2b167b5d8ef59c5d52da91df0eec0fc41fd58148ac0c630fc6",
+  "rationale": "Crop alignment: in all four bottom crops the magenta detected quadrilaterals are tightly nested with the cyan expected quadrilaterals on the physical black-and-white tag perimeters, with only stroke-width offsets; the 'id 0' text extending outside polygons is permitted. Full-frame check: the enlarged 2x overlay shows ~25 tag clusters, and every visible magenta polygon sits on a printed tag; none are floating on the road, robot, or empty background, and no shifted polygons absent from the crops are evident. Banner metadata: basename 34085369442_304b6bafd9_c.jpg, SHA256 prefix 386c70bbd4d98dc0, counts 25 expected / 25 detected, family tag36h11 all match the task requirements. Minor resolution limits on distant tags prevent a perfect score.",
+  "request_body_sha256": "52c647c72730c40d3f1b2077842e484b722f6ae1a3eb4f9833ddf3a36ff69f98",
+  "response_body_sha256": "0f9330db5b2b0ba6cd2391be648b6d16a70dd0d36cf0b0ef67f0e11770b6781f",
+  "returned_model": "moonshotai/Kimi-K3",
+  "schema": "npa.public-kimi-k3-census-answer.v1",
+  "scope": "overlay presentation and reviewability only",
+  "score": 0.95,
+  "success": true,
+  "visible_content_sha256": "b3158572b57f481eb27305e085c3a70e1ee9792bd9d103b3d835a067c4996bb6",
+  "image_role": "Original review sheet before product normalization",
+  "submitted_image_file": "34085369442_304b6bafd9_c_submitted.png",
+  "submitted_image_sha256": "2f7627f555768144f031179c3a720ad09e44812a81981cd1fc7ec3291c2628cb",
+  "submitted_image_dimensions": [
+    674,
+    768
+  ]
+}

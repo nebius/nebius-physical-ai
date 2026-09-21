@@ -1,0 +1,45 @@
+{
+  "schema": "npa.public-census-root-audit.v1",
+  "verdict": "PASS_SCOPED_RETAINED_BINDINGS",
+  "detector_source": "c725a44af7ce222f295b0a54d7866d108c1eb070",
+  "evaluator_source": "a26a868e3bed68d48eb6fd91638e1e1d3d048474",
+  "reviewed_original_candidate_manifest_sha256": "72931a6ebedd3844ae688e6a93c84551324dd1723c8fd36ec80e4286a6825543",
+  "retained_file_hashes_verified": 24,
+  "physical_sends": 3,
+  "cases": [
+    {
+      "case": "33369213973_9d9bb4cc96_c",
+      "retained_request_response_bindings_verified": true,
+      "score": 0.95,
+      "passed": true,
+      "http_status": 200,
+      "finish_reason": "stop",
+      "actual_submitted_png_extracted_without_reencoding": true
+    },
+    {
+      "case": "34085369442_304b6bafd9_c",
+      "retained_request_response_bindings_verified": true,
+      "score": 0.95,
+      "passed": true,
+      "http_status": 200,
+      "finish_reason": "stop",
+      "actual_submitted_png_extracted_without_reencoding": true
+    },
+    {
+      "case": "34139872896_defdb2f8d9_c",
+      "retained_request_response_bindings_verified": true,
+      "score": 0.95,
+      "passed": true,
+      "http_status": 200,
+      "finish_reason": "stop",
+      "actual_submitted_png_extracted_without_reencoding": true
+    }
+  ],
+  "holdout_root_audit_sha256": "a400ae9d79db9b67c20905b0d31d68490a0cc57cc6d8cbb49836698000d68e11",
+  "root_publication_extension": "Adds exact submitted PNGs, visible request text, explicit original/submitted dimensions and hashes, and the corresponding attribution; original visible verdicts/rationales and source images unchanged.",
+  "limitations": [
+    "No new provider call, semantic rescore, detector execution, or GPU test.",
+    "Census overlaps disclosed calibration and is not an independent holdout or error-rate estimate.",
+    "Visual acceptance concerns overlay presentation, not detector accuracy or physical safety."
+  ]
+}

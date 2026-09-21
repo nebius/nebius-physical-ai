@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "answer_file": "33369213973_9d9bb4cc96_c_visible-answer.json",
+      "answer_sha256": "190c7fb20208a2e839bb78f71d067cb666cb7d956d26edc86b726f616565aa1c",
+      "id": "33369213973_9d9bb4cc96_c",
+      "image_file": "33369213973_9d9bb4cc96_c_review.png",
+      "image_sha256": "97144c7d25a4efe4bd5150a63155f1bce897b8c2c3f3308738b21c90d8f114cb",
+      "request_body_sha256": "cb41c91ed0f8ce47dcbfb8b8dd6adc16926eadf1b994b6203bef844e1ea9e727",
+      "response_body_sha256": "f2d9ddb639c558ae9f10cbd51f6194d881ef356211eb85310761ec1803c02d93",
+      "score": 0.95,
+      "source_image_dimensions": [
+        1598,
+        1822
+      ],
+      "submitted_image_file": "33369213973_9d9bb4cc96_c_submitted.png",
+      "submitted_image_sha256": "6200c46a3dd743926d44c7c945c75cdbe5648177b8756b6249abda71d02b6c44",
+      "submitted_image_dimensions": [
+        674,
+        768
+      ]
+    },
+    {
+      "answer_file": "34085369442_304b6bafd9_c_visible-answer.json",
+      "answer_sha256": "e7649afcb2a6778a48024f53b57040059d30aa1080ef4a6b86c74d53bf6f9898",
+      "id": "34085369442_304b6bafd9_c",
+      "image_file": "34085369442_304b6bafd9_c_review.png",
+      "image_sha256": "7197707947693e2b167b5d8ef59c5d52da91df0eec0fc41fd58148ac0c630fc6",
+      "request_body_sha256": "52c647c72730c40d3f1b2077842e484b722f6ae1a3eb4f9833ddf3a36ff69f98",
+      "response_body_sha256": "0f9330db5b2b0ba6cd2391be648b6d16a70dd0d36cf0b0ef67f0e11770b6781f",
+      "score": 0.95,
+      "source_image_dimensions": [
+        1598,
+        1822
+      ],
+      "submitted_image_file": "34085369442_304b6bafd9_c_submitted.png",
+      "submitted_image_sha256": "2f7627f555768144f031179c3a720ad09e44812a81981cd1fc7ec3291c2628cb",
+      "submitted_image_dimensions": [
+        674,
+        768
+      ]
+    },
+    {
+      "answer_file": "34139872896_defdb2f8d9_c_visible-answer.json",
+      "answer_sha256": "ee1cf5603f695f2356b2011c02f76810f2a4ac3128c6a08ea632e38eed441ff2",
+      "id": "34139872896_defdb2f8d9_c",
+      "image_file": "34139872896_defdb2f8d9_c_review.png",
+      "image_sha256": "4ba0905341dd6392eff43a81536f11cfecd62b638ffbe77109e744921de949d6",
+      "request_body_sha256": "feca75c3eedcd1105e1ba6222db686182ce67763e2f014fe56645df677b719c4",
+      "response_body_sha256": "ace4f1ca9a4872460f14a795fe98c213b7183db2a7ba288470cc22e99b52a964",
+      "score": 0.95,
+      "source_image_dimensions": [
+        1598,
+        1822
+      ],
+      "submitted_image_file": "34139872896_defdb2f8d9_c_submitted.png",
+      "submitted_image_sha256": "29fbaf9c9446d3f29f60aa11b72bb7fc1ab60cd43d0cd8dd7bdbf5d6100e3866",
+      "submitted_image_dimensions": [
+        674,
+        768
+      ]
+    }
+  ],
+  "census_retained_review_sha256": "1b58e0b75e79fee998383e9941071b1b871f81432de2ee7bc00e6cb0ae839557",
+  "census_summary_sha256": "cff5fb6144cc081993f8a146c2c337757cbd984f27b2857ec00b35acaf800e1f",
+  "credential_material_included": false,
+  "detector_candidate_commit": "c725a44af7ce222f295b0a54d7866d108c1eb070",
+  "files": {
+    "33369213973_9d9bb4cc96_c_review.png": "97144c7d25a4efe4bd5150a63155f1bce897b8c2c3f3308738b21c90d8f114cb",
+    "33369213973_9d9bb4cc96_c_submitted.png": "6200c46a3dd743926d44c7c945c75cdbe5648177b8756b6249abda71d02b6c44",
+    "33369213973_9d9bb4cc96_c_visible-answer.json": "190c7fb20208a2e839bb78f71d067cb666cb7d956d26edc86b726f616565aa1c",
+    "34085369442_304b6bafd9_c_review.png": "7197707947693e2b167b5d8ef59c5d52da91df0eec0fc41fd58148ac0c630fc6",
+    "34085369442_304b6bafd9_c_submitted.png": "2f7627f555768144f031179c3a720ad09e44812a81981cd1fc7ec3291c2628cb",
+    "34085369442_304b6bafd9_c_visible-answer.json": "e7649afcb2a6778a48024f53b57040059d30aa1080ef4a6b86c74d53bf6f9898",
+    "34139872896_defdb2f8d9_c_review.png": "4ba0905341dd6392eff43a81536f11cfecd62b638ffbe77109e744921de949d6",
+    "34139872896_defdb2f8d9_c_submitted.png": "29fbaf9c9446d3f29f60aa11b72bb7fc1ab60cd43d0cd8dd7bdbf5d6100e3866",
+    "34139872896_defdb2f8d9_c_visible-answer.json": "ee1cf5603f695f2356b2011c02f76810f2a4ac3128c6a08ea632e38eed441ff2",
+    "ATTRIBUTION.md": "8ff41a83e2f6d43b3cb6645e3cf72d37f96edc7710014aaf6e3a44a44eab397c",
+    "README.md": "8b5401fab5b1727c7c7f5ef07024abf1d62769479ba4254af57202fd0775bf90",
+    "independent-audit.json": "cfe243dae01b2058a351f7797cbd545bf6b32c940bc2642770b5d0783114145c",
+    "model-inputs.json": "dd717d5686e146193dc25305d0e7c9859ec52b82417f53f39953c7a83bc288f2"
+  },
+  "holdout_payload_included": false,
+  "holdout_review_sha256": "c304cd21b3ff5c2c63580273457dae9d2ed6b1c25edf010513f39fa51e53f236",
+  "holdout_summary_sha256": "281715faedd47cdf21208d34abeae3dec3ef5f7c65d4a50de877ca623d9efd2b",
+  "private_infrastructure_included": false,
+  "provider_calls_in_packaging": 0,
+  "schema": "npa.public-kimi-k3-census-pack.v3",
+  "source_commit": "a26a868e3bed68d48eb6fd91638e1e1d3d048474",
+  "superseded_review_sha256": "9ac3771b2cd3bf92d76bf689a29752c7dcf38572a7517d1e3137437910a83ba8",
+  "supersedes_manifest_sha256": "279a18d4e394b7a7549c5f3cf14c9a4cc825fe225f238e2ab242650d4a0dadd8",
+  "supersedes_reason": "Correct the three-file attribution inventory and disclose both calibration image-byte overlaps. Provider evidence is unchanged.",
+  "reviewed_v2_manifest_sha256": "72931a6ebedd3844ae688e6a93c84551324dd1723c8fd36ec80e4286a6825543",
+  "normalization": "RGB; Pillow thumbnail768\u00d7768; optimizedPNG. Both original1598\u00d71822 and exactsubmitted674\u00d7768 files retained."
+}

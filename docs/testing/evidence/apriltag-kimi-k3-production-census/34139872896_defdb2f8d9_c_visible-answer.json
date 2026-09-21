@@ -1,0 +1,22 @@
+{
+  "case_id": "34139872896_defdb2f8d9_c",
+  "finish_reason": "stop",
+  "image_file": "34139872896_defdb2f8d9_c_review.png",
+  "image_sha256": "4ba0905341dd6392eff43a81536f11cfecd62b638ffbe77109e744921de949d6",
+  "rationale": "Crop alignment: In all four bottom crops the cyan expected quadrilateral and magenta detected quadrilateral tightly follow the same physical black-and-white tag perimeter, with magenta nested only a few display pixels inside/outside cyan consistent with stroke-width differences; the magenta 'id 0' labels extend past the polygons but are not counted as detections. Full-frame inspection: The enlarged frame shows cyan/magenta quads sitting on the printed cube tags around the robot; I do not see a clearly visible magenta quadrilateral floating on road, robot body, empty background, or an untagged surface, and no obvious shifted polygon displaced from its tag. Banner metadata: Header matches the required source basename 34139872896_defdb2f8d9_c.jpg, source SHA256 prefix 435a619d642e2d50, family tag36h11, and counts 10 expected / 10 detected. Geometry and provenance both pass, giving strong reviewable evidence.",
+  "request_body_sha256": "feca75c3eedcd1105e1ba6222db686182ce67763e2f014fe56645df677b719c4",
+  "response_body_sha256": "ace4f1ca9a4872460f14a795fe98c213b7183db2a7ba288470cc22e99b52a964",
+  "returned_model": "moonshotai/Kimi-K3",
+  "schema": "npa.public-kimi-k3-census-answer.v1",
+  "scope": "overlay presentation and reviewability only",
+  "score": 0.95,
+  "success": true,
+  "visible_content_sha256": "040a061e31963bb8a653c49b7045305b1389988f8f53c44b45763f2b8c534d07",
+  "image_role": "Original review sheet before product normalization",
+  "submitted_image_file": "34139872896_defdb2f8d9_c_submitted.png",
+  "submitted_image_sha256": "29fbaf9c9446d3f29f60aa11b72bb7fc1ab60cd43d0cd8dd7bdbf5d6100e3866",
+  "submitted_image_dimensions": [
+    674,
+    768
+  ]
+}
