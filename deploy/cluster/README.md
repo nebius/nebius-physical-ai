@@ -188,8 +188,11 @@ The verification is a fresh observation, not a permanent guarantee of absence.
 
 Keep the manifest and raw records private. Successful recovery retains an
 owner-only audit under the original operation directory. Repeating the same
-terminal recovery verifies its recorded audit and returns `already-reconciled`
-without claiming fresh provider reads. A failed provision is never relabeled
+terminal recovery verifies its recorded audit and exact original project lease.
+If a process stopped after writing the terminal journal, the retry completes only
+that same lease release under the original project and execution locks. Changed
+or foreign leases are refused. It returns `already-reconciled` only after durable
+release readback, without claiming fresh provider reads. A failed provision is never relabeled
 as a successful deployment or workload result.
 
 The opt-in `test_cluster_absence_recovery_live.py` accepts

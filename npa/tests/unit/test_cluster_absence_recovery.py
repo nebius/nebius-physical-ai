@@ -440,3 +440,96 @@ def test_audit_directory_never_follows_links_or_changes_existing_permissions(
     assert operation.read()["phase"] == "recovery-required"
     assert (foreign.stat().st_mode if symlink else directory.stat().st_mode) == before
     assert not (path.parent / "provider-calls.jsonl").exists()
+
+
+def _crash_after_terminal_journal(path, mode="crash"):
+    code = """
+import os,sys
+from pathlib import Path
+from npa import provisioning_journal as journals
+from npa.cluster.reconcile_absent import reconcile_absent
+original=journals._write_atomic
+def crash(path,payload):
+ if sys.argv[2]=='write-error' and path.name=='lease.json' and payload.get('phase')=='destroyed':
+  raise OSError('synthetic durable lease write failure')
+ original(path,payload)
+ if sys.argv[2]=='crash' and path.name=='journal.json' and payload.get('phase')=='destroyed':
+  os._exit(73)
+journals._write_atomic=crash
+reconcile_absent(Path(sys.argv[1]))
+"""
+    return subprocess.run(
+        [sys.executable, "-c", code, str(path), mode], capture_output=True, text=True
+    )
+
+
+@pytest.mark.parametrize("mode", ["crash", "write-error"])
+def test_fresh_process_finishes_lease_after_terminal_journal_crash(recovery, mode):
+    from npa import provisioning_journal as journals
+
+    path, _manifest, operation = recovery
+    crash = _crash_after_terminal_journal(path, mode)
+    assert crash.returncode == (73 if mode == "crash" else 1), crash.stderr
+    assert operation.read()["phase"] == "destroyed"
+    lease = journals._project_lease_directory("project-example") / "lease.json"
+    assert json.loads(lease.read_text())["phase"] != "destroyed"
+    calls = (path.parent / "provider-calls.jsonl").read_bytes()
+    retried = _run(path)
+    assert retried.returncode == 0, retried.stderr
+    released = json.loads(lease.read_text())
+    assert released["phase"] == "destroyed"
+    assert released["released_at"] == operation.read()["updated_at"]
+    assert (path.parent / "provider-calls.jsonl").read_bytes() == calls
+    assert _run(path).returncode == 0
+
+
+@pytest.mark.parametrize("change", ["foreign", "raced", "released", "audit", "nested"])
+def test_terminal_retry_refuses_changed_lease_or_original_binding(
+    recovery, monkeypatch, change
+):
+    from npa import provisioning_journal as journals
+
+    path, _manifest, operation = recovery
+    assert _crash_after_terminal_journal(path).returncode == 73
+    lease = journals._project_lease_directory("project-example") / "lease.json"
+    payload = json.loads(lease.read_text())
+    if change == "foreign":
+        payload["operation_id"] = "foreign-operation"
+    elif change == "raced":
+        payload["owner_pid"] = os.getpid()
+    elif change == "released":
+        payload.update(phase="destroyed", released_at="wrong-generation")
+    elif change == "audit":
+        receipt = operation.read()["absence_recovery"]
+        (Path(receipt["path"]).parent / "original-project-lease.json").write_text(
+            "changed"
+        )
+    else:
+        monkeypatch.setenv("NPA_PARENT_LIFECYCLE_OPERATION", operation.operation_id)
+    if change in {"foreign", "raced", "released"}:
+        lease.write_text(json.dumps(payload))
+    before = lease.read_bytes()
+    calls = (path.parent / "provider-calls.jsonl").read_bytes()
+    assert _run(path).returncode != 0
+    assert lease.read_bytes() == before
+    assert (path.parent / "provider-calls.jsonl").read_bytes() == calls
+
+
+@pytest.mark.parametrize("lock_name", ["project", "execution"])
+def test_terminal_retry_refuses_active_lifecycle_lock(recovery, lock_name):
+    from npa import provisioning_journal as journals
+    from npa.cluster.absent_journal import _exclusive_existing
+
+    path, _manifest, operation = recovery
+    assert _crash_after_terminal_journal(path).returncode == 73
+    project = journals._project_lease_directory("project-example")
+    lock = (
+        project / ".lock"
+        if lock_name == "project"
+        else operation.path.parent / ".execution.lock"
+    )
+    before = (project / "lease.json").read_bytes()
+    with _exclusive_existing(lock):
+        assert _run(path).returncode != 0
+    assert (project / "lease.json").read_bytes() == before
+    assert _run(path).returncode == 0

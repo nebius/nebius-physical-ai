@@ -97,19 +97,78 @@ def complete_absence(
             }
         )
         journals._write_atomic(operation.path, payload)
-    lease = journals._read_project_lease(lease_path)
+    _release_bound_lease(operation, payload, receipt, lease_path)
+
+
+def _audit_payload(receipt: dict) -> dict:
+    path = Path(receipt["path"])
+    require(path.is_file() and not path.is_symlink(), "Recovery audit is unavailable")
+    data = path.read_bytes()
+    require(digest(data) == receipt["sha256"], "Recovery audit changed")
+    return json.loads(data)
+
+
+def _original_lease(receipt: dict) -> tuple[dict, str]:
+    audit = _audit_payload(receipt)
+    path = Path(receipt["path"]).parent / "original-project-lease.json"
+    require(path.is_file() and not path.is_symlink(), "Original lease is unavailable")
+    data = path.read_bytes()
+    require(digest(data) == audit["original_lease_sha256"], "Original lease changed")
+    return journals._read_project_lease(path), digest(data)
+
+
+def _release_bound_lease(operation, payload: dict, receipt: dict, path: Path) -> None:
+    original, original_hash = _original_lease(receipt)
     require(
-        lease.get("operation_id") == operation.operation_id,
-        "Project lease changed while exclusively held",
+        original.get("operation_id") == operation.operation_id,
+        "Original project lease belongs to another operation",
     )
-    lease.update(
-        phase="destroyed", lifecycle="succeeded", owner_pid=os.getpid(), released_at=now
+    released = dict(original)
+    released.update(
+        phase="destroyed",
+        lifecycle="succeeded",
+        owner_pid=payload["owner_pid"],
+        released_at=payload["updated_at"],
     )
-    journals._write_atomic(lease_path, lease)
+    current = journals._read_project_lease(path)
+    if current == released:
+        return
+    require(
+        digest(path.read_bytes()) == original_hash, "Project lease generation changed"
+    )
+    journals._write_atomic(path, released)
+    require(
+        journals._read_project_lease(path) == released, "Lease release readback failed"
+    )
+
+
+@contextmanager
+def _terminal_locks(operation, payload: dict, expected: str):
+    require(
+        not os.environ.get("NPA_PARENT_LIFECYCLE_OPERATION")
+        and journals.current_operation() is None,
+        "Nested recovery is not supported",
+    )
+    directory = journals._project_lease_directory(payload["project_id"])
+    require(
+        directory.is_dir() and not directory.is_symlink(),
+        "Original project lease missing",
+    )
+    with _exclusive_existing(directory / ".lock"):
+        with _exclusive_existing(operation.path.parent / ".execution.lock"):
+            with journals._locked_operation(operation.operation_id):
+                require(
+                    not operation.path.is_symlink()
+                    and digest(operation.path.read_bytes()) == expected,
+                    "Terminal journal generation changed",
+                )
+                yield directory / "lease.json"
 
 
 def completed_receipt(operation, manifest_hash: str) -> dict | None:
-    payload = operation.read()
+    require(not operation.path.is_symlink(), "Original journal is not regular")
+    data = operation.path.read_bytes()
+    payload = json.loads(data)
     if payload.get("phase") != "destroyed":
         return None
     receipt = payload.get("absence_recovery", {})
@@ -117,9 +176,8 @@ def completed_receipt(operation, manifest_hash: str) -> dict | None:
         receipt.get("manifest_sha256") == manifest_hash,
         "Terminal operation belongs to different recovery evidence",
     )
-    path = Path(receipt["path"])
-    require(path.is_file() and not path.is_symlink(), "Recovery audit is unavailable")
-    require(digest(path.read_bytes()) == receipt["sha256"], "Recovery audit changed")
+    with _terminal_locks(operation, payload, digest(data)) as path:
+        _release_bound_lease(operation, payload, receipt, path)
     return {
         "status": "already-reconciled",
         "operation_id": operation.operation_id,

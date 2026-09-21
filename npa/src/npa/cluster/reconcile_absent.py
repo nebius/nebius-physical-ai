@@ -31,9 +31,9 @@ def _write_private(path: Path, data: bytes) -> None:
         os.close(descriptor)
 
 
-def _audit(
-    operation, evidence: dict, manifest_data: bytes, output: Path, records: list
-) -> dict:
+def _retain_originals(
+    operation, manifest_data: bytes, output: Path, lease: dict
+) -> bytes:
     original = operation.path.read_bytes()
     manifest = json.loads(manifest_data)
     require(
@@ -42,12 +42,28 @@ def _audit(
     )
     _write_private(output / "original-journal.json", original)
     _write_private(output / "evidence-manifest.json", manifest_data)
+    lease_data = lease["path"].read_bytes()
+    require(digest(lease_data) == lease["sha256"], "Project lease generation changed")
+    _write_private(output / "original-project-lease.json", lease_data)
+    return original
+
+
+def _audit(
+    operation,
+    evidence: dict,
+    manifest_data: bytes,
+    output: Path,
+    records: list,
+    lease: dict,
+) -> dict:
+    original = _retain_originals(operation, manifest_data, output, lease)
     payload = {
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "action": "verified_absence_reconciliation",
         "operation_id": operation.operation_id,
         "original_journal_sha256": digest(original),
         "manifest_sha256": digest(manifest_data),
+        "original_lease_sha256": lease["sha256"],
         "producer_source": evidence["producer_source"],
         "producer_files": evidence["producer_files"],
         "state_sha256": evidence["state_sha256"],
@@ -102,7 +118,7 @@ def reconcile_absent(evidence_file: Path) -> dict:
         verify_absence(provider, evidence)
         require(evidence_file.read_bytes() == data, "Recovery manifest changed")
         require(load_legacy_evidence(manifest) == evidence, "Original evidence changed")
-        receipt = _audit(operation, evidence, data, output, provider.records)
+        receipt = _audit(operation, evidence, data, output, provider.records, lease)
         complete_absence(operation, expected, receipt, lease)
     return {
         "status": "reconciled-destroyed",
