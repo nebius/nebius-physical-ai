@@ -280,8 +280,8 @@ jobs:
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          # Both complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}
+          # Every complete-byte path requires the verified CPython 3.12 wheel.
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robocasa') && '3.12' || '3.11' }}
 
       - name: Install NPA validation environment
         run: |
@@ -302,7 +302,9 @@ jobs:
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/docker/test_fiftyone_image_validation.py \
             npa/tests/docker/test_fiftyone_source_delivery.py \
+            npa/tests/docker/test_image_byte_publish_contract.py \
             npa/tests/deploy/test_public_publish.py \
+            npa/tests/guardrails/test_public_release_workflows.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
             -q
           git diff origin/main...HEAD --no-ext-diff | \
@@ -334,6 +336,34 @@ jobs:
           umask 077
           scan_root="$(mktemp -d "$RUNNER_TEMP/curobo-byte-gate.XXXXXXXX")"
           echo "CUROBO_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" \
+            --output-dir "$scan_root/integration-checks"
+
+      - name: Validate required RoboCasa confidentiality policy before building
+        if: matrix.tool == 'robocasa'
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+        run: |
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py check-policy \
+            --policy-mode ci-regex
+
+      - name: Prepare and test the RoboCasa complete-byte scanner
+        if: matrix.tool == 'robocasa'
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/robocasa-byte-gate.XXXXXXXX")"
+          echo "ROBOCASA_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
           npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
             --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
             --output-dir "$scan_root/tools"
@@ -423,7 +453,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stage supported workflow catalog in the package build context
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'robocasa'
         run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 
       - name: Build NCore committed attested OCI archive
@@ -443,6 +473,13 @@ jobs:
         if: matrix.tool != 'ncore'
         run: |
           set -euo pipefail
+          if [[ "$TOOL" == robocasa ]]; then
+            NPA_SOURCE_SHA="$DEVELOPMENT_SHA" ROBOCASA_VERSION=0.1.1 \
+              npa/docker/workbench/robocasa/build.sh \
+                --registry "$NPA_PUBLIC_REGISTRY"
+            test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-robocasa:dev-$DEVELOPMENT_SHA"
+            exit 0
+          fi
           build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
           if [[ -n "${LEROBOT_VERSION:-}" ]]; then
             [[ "$TOOL" == lerobot && "$LEROBOT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -468,8 +505,8 @@ jobs:
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
         if: matrix.tool != 'ncore'
         env:
-          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa') && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
           npa/.venv/bin/python - <<'PY'
@@ -533,6 +570,31 @@ jobs:
               --output-dir "$phase/scan" \
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
+            rm -f "$phase/image.tar"
+          fi
+          if [ "$TOOL" = robocasa ]; then
+            umask 077
+            phase="$ROBOCASA_BYTE_GATE_ROOT/pre"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}.tar" "$phase/image.tar"
+            chmod 0600 "$phase/image.tar"
+            expected_image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/docker_save_verification.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --archive "$phase/image.tar" --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/verification"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$ROBOCASA_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$ROBOCASA_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" \
+              --verification-report "$phase/verification/verification.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan"
             rm -f "$phase/image.tar"
           fi
           if [ "$TOOL" = ltx2 ]; then
@@ -719,8 +781,8 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa') && secrets.INFRA_DENYLIST || '' }}
         run: |
           set -euo pipefail
           repository="${IMAGE%:*}"
@@ -780,6 +842,31 @@ jobs:
               --output-dir "$phase/scan" \
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
+            rm -f "$phase/image.tar"
+          fi
+          if [ "$TOOL" = robocasa ]; then
+            umask 077
+            phase="$ROBOCASA_BYTE_GATE_ROOT/post"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}-pushed.tar" "$phase/image.tar"
+            chmod 0600 "$phase/image.tar"
+            expected_image_id="$(docker image inspect --format '{{.Id}}' "$exact")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/docker_save_verification.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --archive "$phase/image.tar" --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/verification"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$ROBOCASA_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$ROBOCASA_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" \
+              --verification-report "$phase/verification/verification.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan"
             rm -f "$phase/image.tar"
           fi
           if [ "$TOOL" = ltx2 ]; then

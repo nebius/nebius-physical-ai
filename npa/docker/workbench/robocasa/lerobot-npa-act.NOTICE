@@ -1,0 +1,12 @@
+NPA LeRobot ACT runtime derivative
+
+Upstream project: Hugging Face LeRobot
+Upstream revision: 7e241bd630a3719a56157a497ce5d08f244784f1 (v0.6.1)
+Upstream license: Apache License 2.0
+Derivative version: 0.6.1+npa1
+
+This derivative changes packaging metadata only. It declares the dependency
+closure qualified for NPA's RoboCasa ACT evaluation path: PyTorch 2.13,
+torchvision 0.28, RoboCasa's Gymnasium 0.29.1 and opencv-python provider, and
+setuptools 83. Other LeRobot policies and training paths are not qualified by
+this derivative.

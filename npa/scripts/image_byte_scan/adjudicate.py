@@ -32,6 +32,12 @@ SCHEMA = "npa.image-byte-adjudication.v1"
 MANIFEST_SCHEMA = "npa.image-byte-disposition-manifest.v1"
 REVIEW_SCHEMA = "npa.image-byte-independent-review.v1"
 PROOF_SCHEMA = "npa.image-byte-occurrence-provenance.v1"
+_DOCKER_SAVE_VERIFICATION_SCHEMAS = frozenset(
+    {
+        "npa.curobo.image-verification.v1",
+        "npa.docker-save.image-verification.v1",
+    }
+)
 # Roles describe independently reviewed bytes; labels alone never prove safety.
 # Static prose excludes runtime values. Protocol identifiers require declared or
 # consumed fields. Debug/unwind numbers and instructions require typed decoding.
@@ -129,8 +135,41 @@ def bound_bytes(spec):
     return bytes(data)
 
 
+def iter_bound_jsonl(spec):
+    fields(spec, {"path", "sha256"}, "adjudication_file_binding")
+    digest(spec["sha256"])
+    with W.bound_open(spec, secret=True) as (_path, fd, initial):
+        pending = bytearray()
+        observed = hashlib.sha256()
+        os.lseek(fd, 0, os.SEEK_SET)
+        while chunk := os.read(fd, W.CHUNK):
+            observed.update(chunk)
+            pending.extend(chunk)
+            while (newline := pending.find(b"\n")) >= 0:
+                W.require(newline <= W.LEDGER_LINE_LIMIT, "ledger_line_limit")
+                line = bytes(pending[:newline])
+                del pending[: newline + 1]
+                yield decode(line)
+            W.require(len(pending) <= W.LEDGER_LINE_LIMIT, "ledger_line_limit")
+        W.require(not pending, "adjudication_ledger_unterminated")
+        W.require(
+            observed.hexdigest() == spec["sha256"]
+            and W.stat_fingerprint(os.fstat(fd)) == W.stat_fingerprint(initial),
+            "adjudication_file_changed",
+        )
+
+
 def pinned_json(path, expected):
     return decode(bound_bytes({"path": str(path), "sha256": digest(expected)}))
+
+
+def _verified_docker_save_report(verification):
+    W.require(
+        verification.get("valid") is True
+        and verification.get("schema_version") in _DOCKER_SAVE_VERIFICATION_SCHEMAS,
+        "adjudication_verification_failed",
+    )
+    return verification
 
 
 def record_context(row):
@@ -296,188 +335,23 @@ def write_result(directory, held_fd, result):
                 os.close(fd)
 
 
-def population(report, rows):
-    """Conserve each native/regex/literal occurrence, including duplicates.
+class _Population:
+    def __init__(self, report):
+        W.require(
+            report.get("schema_version") == "npa.image-byte-scan.v1"
+            and report.get("complete") is True
+            and report.get("helper_joined") is True
+            and "failure_code" not in report,
+            "adjudication_incomplete_scan",
+        )
+        self.report = report
+        self.records = self.scanned_bytes = 0
+        self.regular_files = self.regular_bytes = 0
+        self.zero_bytes = self.native_findings = 0
+        self.pending = []
+        self.occurrences = {}
 
-    Identical detections receive distinct identities by their ledger position.
-    Structural archive findings are never waivable by this first protocol.
-    """
-    W.require(
-        report.get("schema_version") == "npa.image-byte-scan.v1"
-        and report.get("complete") is True
-        and report.get("helper_joined") is True
-        and "failure_code" not in report,
-        "adjudication_incomplete_scan",
-    )
-    records, issues = {}, []
-    native_count = zero_bytes = 0
-    for line, row in enumerate(rows, 1):
-        W.require(isinstance(row, dict), "adjudication_ledger_row")
-        kind = row.get("type")
-        if kind == "record":
-            ordinal = integer(row.get("record_ordinal"))
-            W.require(ordinal == len(records) + 1, "adjudication_record_order")
-            digest(row.get("sha256"))
-            integer(row.get("bytes"))
-            W.require(
-                isinstance(row.get("findings"), list), "adjudication_record_findings"
-            )
-            records[ordinal] = row
-            record_context(row)
-            for index, finding in enumerate(row["findings"]):
-                W.require(
-                    isinstance(finding, dict)
-                    and isinstance(finding.get("rule_id"), str)
-                    and re.fullmatch(r"[a-z0-9_-]+", finding["rule_id"]),
-                    "adjudication_finding_schema",
-                )
-                if set(finding) == {"rule_id", "start_line", "end_line"}:
-                    integer(finding["start_line"])
-                    integer(finding["end_line"])
-                    # The pinned detector uses zero-based lines for a fragment
-                    # with StartLine=0. Byte length bounds its LF line count.
-                    W.require(
-                        row["bytes"] > 0
-                        and finding["start_line"]
-                        <= finding["end_line"]
-                        <= row["bytes"],
-                        "adjudication_native_range",
-                    )
-                    native_count += 1
-                else:
-                    fields(
-                        finding,
-                        {
-                            "rule_id",
-                            "start_byte",
-                            "end_byte",
-                            "start_line",
-                            "end_line",
-                            "views",
-                        },
-                        "adjudication_regex_finding_schema",
-                    )
-                    W.require(
-                        finding["rule_id"] in {"customer-denylist", "infra-denylist"},
-                        "adjudication_regex_rule",
-                    )
-                    for name in ("start_byte", "end_byte", "start_line", "end_line"):
-                        integer(finding[name])
-                    W.require(
-                        0
-                        <= finding["start_byte"]
-                        <= finding["end_byte"]
-                        <= row["bytes"],
-                        "adjudication_regex_range",
-                    )
-                    # Confidentiality uses one-based lines, including an empty
-                    # record's zero-width position and the line after a final LF.
-                    W.require(
-                        1
-                        <= finding["start_line"]
-                        <= finding["end_line"]
-                        <= row["bytes"] + 1,
-                        "adjudication_regex_line_range",
-                    )
-                    W.require(
-                        isinstance(finding["views"], list)
-                        and bool(finding["views"])
-                        and all(view in {"line", "record"} for view in finding["views"])
-                        and len(finding["views"]) == len(set(finding["views"])),
-                        "adjudication_regex_views",
-                    )
-                issues.append((line, index, ordinal, finding))
-        elif kind == "finding":
-            # Path/structural failures without a content record need separate
-            # controls. Refuse them instead of converting a format error to safe.
-            W.require(
-                type(row.get("record_ordinal")) is int,
-                "adjudication_structural_finding",
-            )
-            literal_keys = {
-                "type",
-                "rule_id",
-                "record_ordinal",
-                "literal_index",
-                "literal_sha256",
-                "byte_start",
-                "byte_end",
-            }
-            W.require(
-                literal_keys
-                <= set(row)
-                <= literal_keys
-                | {
-                    "scope",
-                    "layer_ordinal",
-                    "entry_ordinal",
-                    "tar_offset",
-                    "compressed_offset",
-                }
-                and row["rule_id"] == "private_literal",
-                "adjudication_literal_finding_schema",
-            )
-            for name in ("literal_index", "byte_start", "byte_end"):
-                integer(row[name])
-            for name in (
-                "layer_ordinal",
-                "entry_ordinal",
-                "tar_offset",
-                "compressed_offset",
-            ):
-                if name in row:
-                    integer(row[name])
-            digest(row["literal_sha256"])
-            issues.append((line, None, row["record_ordinal"], row))
-        elif kind == "verified_zero_range":
-            zero_bytes += integer(row.get("bytes"))
-            digest(row.get("sha256"))
-        else:
-            W.require(
-                kind in {"confidentiality_record", "encoded_layer_blob"},
-                "adjudication_unknown_ledger_row",
-            )
-    W.require(
-        len(records) == integer(report.get("records")), "adjudication_record_population"
-    )
-    W.require(
-        sum(row["bytes"] for row in records.values())
-        == integer(report.get("scanned_bytes")),
-        "adjudication_byte_population",
-    )
-    regular = [r for r in records.values() if r["kind"] == "layer_regular_content"]
-    W.require(
-        len(regular) == integer(report.get("regular_files"))
-        and sum(r["bytes"] for r in regular) == integer(report.get("regular_bytes")),
-        "adjudication_regular_population",
-    )
-    W.require(
-        len(issues) == integer(report.get("findings")),
-        "adjudication_finding_population",
-    )
-    W.require(
-        zero_bytes == integer(report.get("verified_zero_bytes")),
-        "adjudication_zero_population",
-    )
-    helper = report.get("helper_summary")
-    fields(helper, {"type", "files", "bytes", "findings"}, "adjudication_helper_schema")
-    for name in ("files", "bytes", "findings"):
-        integer(helper[name])
-    W.require(
-        report.get("helper_summary")
-        == {
-            "type": "summary",
-            "files": len(records),
-            "bytes": report["scanned_bytes"],
-            "findings": native_count,
-        },
-        "adjudication_native_population",
-    )
-    W.require(report.get("valid") is (len(issues) == 0), "adjudication_raw_verdict")
-    result = {}
-    for line, index, ordinal, finding in issues:
-        W.require(ordinal in records, "adjudication_orphan_finding")
-        subject = records[ordinal]
+    def add_occurrence(self, line, index, finding, subject):
         if index is None:
             W.require(
                 record_context(finding) == record_context(subject),
@@ -490,15 +364,210 @@ def population(report, rows):
         identity = {
             "ledger_line": line,
             "finding_index": index,
-            "record_ordinal": ordinal,
+            "record_ordinal": subject["record_ordinal"],
             "record_sha256": subject["sha256"],
             "record_bytes": subject["bytes"],
             "finding": finding,
         }
         occurrence = W.sha(W.canonical(identity))
-        W.require(occurrence not in result, "adjudication_duplicate_occurrence")
-        result[occurrence] = identity
-    return result
+        W.require(
+            len(self.occurrences) < W.SCAN_FINDING_LIMIT,
+            "adjudication_finding_limit",
+        )
+        W.require(
+            occurrence not in self.occurrences,
+            "adjudication_duplicate_occurrence",
+        )
+        self.occurrences[occurrence] = identity
+
+    def record_finding(self, row, finding):
+        W.require(
+            isinstance(finding, dict)
+            and isinstance(finding.get("rule_id"), str)
+            and re.fullmatch(r"[a-z0-9_-]+", finding["rule_id"]),
+            "adjudication_finding_schema",
+        )
+        if self.native_finding(row, finding):
+            return
+        self.regex_finding(row, finding)
+
+    def native_finding(self, row, finding):
+        if set(finding) != {"rule_id", "start_line", "end_line"}:
+            return False
+        integer(finding["start_line"])
+        integer(finding["end_line"])
+        W.require(
+            row["bytes"] > 0
+            and finding["start_line"] <= finding["end_line"] <= row["bytes"],
+            "adjudication_native_range",
+        )
+        self.native_findings += 1
+        return True
+
+    def regex_finding(self, row, finding):
+        fields(
+            finding,
+            {"rule_id", "start_byte", "end_byte", "start_line", "end_line", "views"},
+            "adjudication_regex_finding_schema",
+        )
+        W.require(
+            finding["rule_id"] in {"customer-denylist", "infra-denylist"},
+            "adjudication_regex_rule",
+        )
+        for name in ("start_byte", "end_byte", "start_line", "end_line"):
+            integer(finding[name])
+        W.require(
+            0 <= finding["start_byte"] <= finding["end_byte"] <= row["bytes"],
+            "adjudication_regex_range",
+        )
+        W.require(
+            1 <= finding["start_line"] <= finding["end_line"] <= row["bytes"] + 1,
+            "adjudication_regex_line_range",
+        )
+        W.require(
+            isinstance(finding["views"], list)
+            and bool(finding["views"])
+            and all(view in {"line", "record"} for view in finding["views"])
+            and len(finding["views"]) == len(set(finding["views"])),
+            "adjudication_regex_views",
+        )
+
+    def record(self, line, row):
+        ordinal = integer(row.get("record_ordinal"))
+        W.require(ordinal == self.records + 1, "adjudication_record_order")
+        digest(row.get("sha256"))
+        size = integer(row.get("bytes"))
+        findings = row.get("findings")
+        W.require(
+            isinstance(findings, list)
+            and len(findings) + len(self.pending) <= W.RECORD_FINDING_LIMIT,
+            "adjudication_record_findings",
+        )
+        record_context(row)
+        self.records += 1
+        self.scanned_bytes += size
+        if row.get("kind") == "layer_regular_content":
+            self.regular_files += 1
+            self.regular_bytes += size
+        for index, finding in enumerate(findings):
+            self.record_finding(row, finding)
+            self.add_occurrence(line, index, finding, row)
+        for finding_line, finding in self.pending:
+            self.add_occurrence(finding_line, None, finding, row)
+        self.pending.clear()
+
+    def literal(self, line, row):
+        W.require(
+            type(row.get("record_ordinal")) is int,
+            "adjudication_structural_finding",
+        )
+        literal_keys = {
+            "type",
+            "rule_id",
+            "record_ordinal",
+            "literal_index",
+            "literal_sha256",
+            "byte_start",
+            "byte_end",
+        }
+        context_keys = {
+            "scope",
+            "layer_ordinal",
+            "entry_ordinal",
+            "tar_offset",
+            "compressed_offset",
+        }
+        W.require(
+            literal_keys <= set(row) <= literal_keys | context_keys
+            and row["rule_id"] == "private_literal"
+            and row["record_ordinal"] == self.records + 1,
+            "adjudication_literal_finding_schema",
+        )
+        for name in ("literal_index", "byte_start", "byte_end"):
+            integer(row[name])
+        for name in context_keys - {"scope"}:
+            if name in row:
+                integer(row[name])
+        digest(row["literal_sha256"])
+        W.require(
+            len(self.pending) < W.RECORD_FINDING_LIMIT,
+            "adjudication_finding_limit",
+        )
+        self.pending.append((line, row))
+
+    def consume(self, line, row):
+        W.require(isinstance(row, dict), "adjudication_ledger_row")
+        kind = row.get("type")
+        if kind == "record":
+            self.record(line, row)
+        elif kind == "finding":
+            self.literal(line, row)
+        elif kind == "verified_zero_range":
+            self.zero_bytes += integer(row.get("bytes"))
+            digest(row.get("sha256"))
+        else:
+            W.require(
+                kind in {"confidentiality_record", "encoded_layer_blob"},
+                "adjudication_unknown_ledger_row",
+            )
+
+    def report_totals(self):
+        W.require(not self.pending, "adjudication_orphan_finding")
+        W.require(
+            self.records == integer(self.report.get("records")),
+            "adjudication_record_population",
+        )
+        W.require(
+            self.scanned_bytes == integer(self.report.get("scanned_bytes")),
+            "adjudication_byte_population",
+        )
+        W.require(
+            self.regular_files == integer(self.report.get("regular_files"))
+            and self.regular_bytes == integer(self.report.get("regular_bytes")),
+            "adjudication_regular_population",
+        )
+        W.require(
+            len(self.occurrences) == integer(self.report.get("findings")),
+            "adjudication_finding_population",
+        )
+        W.require(
+            self.zero_bytes == integer(self.report.get("verified_zero_bytes")),
+            "adjudication_zero_population",
+        )
+
+    def helper_summary(self):
+        helper = self.report.get("helper_summary")
+        fields(
+            helper,
+            {"type", "files", "bytes", "findings"},
+            "adjudication_helper_schema",
+        )
+        for name in ("files", "bytes", "findings"):
+            integer(helper[name])
+        expected = {
+            "type": "summary",
+            "files": self.records,
+            "bytes": self.report["scanned_bytes"],
+            "findings": self.native_findings,
+        }
+        W.require(helper == expected, "adjudication_native_population")
+
+    def finish(self):
+        self.report_totals()
+        self.helper_summary()
+        W.require(
+            self.report.get("valid") is (not self.occurrences),
+            "adjudication_raw_verdict",
+        )
+        return self.occurrences
+
+
+def population(report, rows):
+    """Conserve each occurrence without retaining clean record rows."""
+    state = _Population(report)
+    for line, row in enumerate(rows, 1):
+        state.consume(line, row)
+    return state.finish()
 
 
 def context(
@@ -587,7 +656,11 @@ def policy_receipt(authorization):
     literal = authorization.get("literal_inventory")
     literal_receipt = typed = None
     if literal is not None:
-        inventory = W.bound_json(literal)
+        inventory = W.bound_json(
+            literal,
+            byte_limit=W.LITERAL_INVENTORY_JSON_LIMIT,
+            limit_code="literal_inventory_json_limit",
+        )
         values = inventory.get("literals")
         W.require(
             isinstance(values, list)
@@ -781,19 +854,16 @@ def verify(args):
         "adjudication_tools_authorization",
     )
     snapshots = W.input_snapshots(authorization)
-    verification = W.bound_json(authorization["verification_report"])
-    W.require(
-        verification.get("valid") is True
-        and verification.get("schema_version") == "npa.curobo.image-verification.v1",
-        "adjudication_verification_failed",
+    verification = _verified_docker_save_report(
+        W.bound_json(authorization["verification_report"])
     )
     W.bound_file(authorization["archive"], secret=True)
     report = pinned_json(args.report, expected.get("report_sha256"))
-    ledger_bytes = bound_bytes(
-        {"path": str(args.records), "sha256": expected.get("records_sha256")}
-    )
-    rows = [decode(line) for line in ledger_bytes.splitlines()]
-    occurrence_map = population(report, rows)
+    rows_spec = {
+        "path": str(args.records),
+        "sha256": expected.get("records_sha256"),
+    }
+    occurrence_map = population(report, iter_bound_jsonl(rows_spec))
     image_source_sha = image_revision(authorization, verification, report)
     scanner_source_sha = committed_sources(authorization)
     actual = context(

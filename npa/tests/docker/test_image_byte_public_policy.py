@@ -96,6 +96,31 @@ def test_duplicate_coordinates_and_identical_ancestor_content_conserved():
     assert report == original
 
 
+def test_public_policy_replays_stream_without_materializing_clean_records(monkeypatch):
+    catalog, report, rows = fixture()
+    passes = 0
+
+    def stream():
+        nonlocal passes
+        passes += 1
+        return (copy.deepcopy(row) for row in rows)
+
+    monkeypatch.setattr(
+        P.A,
+        "bound_bytes",
+        lambda *_args, **_kwargs: pytest.fail("ledger must remain streaming"),
+    )
+    result = P.match_fresh_population(compile_catalog(catalog), report, stream)
+    assert passes == 2
+    assert result["accepted_native_occurrences"] == 4
+
+
+def test_public_policy_rejects_one_shot_ledger_iterator():
+    catalog, report, rows = fixture()
+    with pytest.raises(W.ScanError, match="public_policy_replayable_ledger"):
+        P.match_fresh_population(compile_catalog(catalog), report, iter(rows))
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

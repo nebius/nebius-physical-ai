@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import collections
 import csv
 import fcntl
 import hashlib
@@ -11,9 +12,12 @@ import importlib.machinery
 import importlib.util
 import io
 import json
+import multiprocessing
 import os
 import re
+import resource
 import signal
+import select
 import stat
 import struct
 import subprocess
@@ -31,6 +35,90 @@ from . import confidentiality as C
 
 _ROOTS = ContextVar("image_byte_scan_authorized_roots", default=None)
 CHUNK = 1024 * 1024
+MAX_DETECTION_WORKERS = 64
+
+
+def schedulable_cpus():
+    """Report how many CPUs this process may be scheduled on.
+
+    Scans run on Linux, where the helper is a Go child whose default worker count
+    follows the same affinity mask. Other platforms only import this module to run
+    the hermetic tests and have no affinity call, so they fall back to the
+    machine's CPU count.
+
+    Args:
+        None.
+
+    Returns:
+        The affinity mask size capped at the scanner's worker limit, or the
+        equivalently capped machine CPU count where no mask is exposed, and
+        never less than one.
+
+    Raises:
+        None.
+    """
+    if hasattr(os, "sched_getaffinity"):
+        return max(1, min(len(os.sched_getaffinity(0)), MAX_DETECTION_WORKERS))
+    return max(1, min(os.cpu_count() or 1, MAX_DETECTION_WORKERS))
+
+
+# Records submitted to the helper before their results are collected. The helper
+# runs one detection worker per schedulable CPU, so it can only use more than one
+# core when more than one record is outstanding. Record sizes inside an image span
+# several orders of magnitude, so a depth of one record per worker leaves workers
+# idle whenever the outstanding set happens to be small records; several per worker
+# keeps them fed. Ledger output stays in stream order for every depth, so this
+# bounds resident memory and nothing else.
+PIPELINE_RECORDS = 4 * schedulable_cpus()
+# Payload bytes held for outstanding records, checked before the next record is
+# read. Confidentiality composition needs each complete record, so a run of large
+# records reduces the effective depth instead of growing resident memory. This
+# bounds the records this process holds for composition; the record being read,
+# the helper's own admitted bytes, and the detector's copies of them are separate
+# and are bounded on the helper side.
+PIPELINE_BYTES = 256 * 1024 * 1024
+# PAX/GNU extension bodies are metadata, not file payloads. One MiB is well
+# above practical path/xattr limits while bounding attacker-directed allocation.
+TAR_EXTENSION_LIMIT = 1024 * 1024
+TAR_EXTENSION_CHAIN_LIMIT = 4 * 1024 * 1024
+TAR_PAX_KEY_LIMIT = 4096
+TAR_PATH_LIMIT = 4096
+ZERO_RECORD_LIMIT = 1024 * 1024
+GZIP_HEADER_LIMIT = 1024 * 1024
+# Public GPU images legitimately contain large native libraries and many files.
+# These ceilings leave operational headroom while making every attacker-driven
+# decoded population, path set, and complete-record allocation finite.
+TAR_ENTRY_LIMIT = 250_000
+# Current native-helper measurements peak at 9.85x payload bytes for one record.
+# Round that observation up, retain explicit fixed/process headroom, and derive
+# the admitted record size from the address-space ceiling. The multiplier is not
+# treated as a promise: drift still terminates the worker fail closed at RLIMIT_AS.
+DETECTOR_MEMORY_LIMIT = 12 * 1024 * 1024 * 1024
+DETECTOR_MEMORY_HEADROOM = 4 * 1024 * 1024 * 1024
+DETECTOR_PAYLOAD_EXPANSION = 10
+DETECTOR_RECORD_LIMIT = (
+    DETECTOR_MEMORY_LIMIT - DETECTOR_MEMORY_HEADROOM
+) // DETECTOR_PAYLOAD_EXPANSION
+TAR_REGULAR_FILE_LIMIT = DETECTOR_RECORD_LIMIT
+DOCKER_SAVE_DECODED_LAYER_LIMIT = 64 * 1024 * 1024 * 1024
+CONFIDENTIALITY_RECORD_LIMIT = DETECTOR_RECORD_LIMIT
+CONFIDENTIALITY_MEMORY_LIMIT = DETECTOR_MEMORY_LIMIT
+HELPER_RESPONSE_LIMIT = 8 * 1024 * 1024
+RECORD_FINDING_LIMIT = 4096
+SCAN_FINDING_LIMIT = 100_000
+LITERAL_MATCH_CHUNK = 64 * 1024
+LITERAL_PATTERN_LIMIT = 4096
+LITERAL_VALUE_BYTES_LIMIT = 64 * 1024
+LITERAL_TOTAL_BYTES_LIMIT = 8 * 1024 * 1024
+LITERAL_INVENTORY_JSON_LIMIT = 16 * 1024 * 1024
+LEDGER_LINE_LIMIT = 16 * 1024 * 1024
+# Docker-save's outer archive contains only short, regular metadata/blob paths.
+# Bound the population and every JSON document before handing the archive to
+# tarfile, whose PAX/GNU handlers otherwise consume extension bodies eagerly.
+DOCKER_SAVE_OUTER_ENTRY_LIMIT = 100_000
+DOCKER_SAVE_METADATA_LIMIT = 16 * 1024 * 1024
+DOCKER_SAVE_LAYER_LIMIT = 1024
+DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT = 8
 _CANCEL_REQUESTED = False
 _SPAWNING = False
 POLICY = "exact-or-short-ascii-token-v1"
@@ -43,9 +131,27 @@ REMOVED_PATH_RULES = [
 PKCS12 = re.compile(r"(?i)(?:^|/)[^/]+\.p(?:12|fx)$")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}$")
 SHA = re.compile(r"[0-9a-f]{64}$")
+PAX_TEXT_KEYS = frozenset(
+    {
+        "path",
+        "linkpath",
+        "uid",
+        "gid",
+        "uname",
+        "gname",
+        "mtime",
+        "atime",
+        "ctime",
+    }
+)
+PAX_BINARY_PREFIXES = ("SCHILY.xattr.", "LIBARCHIVE.xattr.")
 
 
 class ScanError(ValueError):
+    pass
+
+
+class LiteralFindingLimit(ScanError):
     pass
 
 
@@ -223,11 +329,20 @@ def descriptor_digest(fd):
     return digest.hexdigest()
 
 
-def descriptor_bytes(fd):
+def descriptor_bytes(fd, *, byte_limit=None, limit_code="input_byte_limit"):
+    if byte_limit is not None:
+        require(type(byte_limit) is int and byte_limit >= 0, limit_code)
     parts, offset = [], 0
-    while data := os.pread(fd, CHUNK, offset):
+    while True:
+        amount = CHUNK if byte_limit is None else min(CHUNK, byte_limit + 1 - offset)
+        require(amount > 0, limit_code)
+        data = os.pread(fd, amount, offset)
+        if not data:
+            break
         parts.append(data)
         offset += len(data)
+        if byte_limit is not None:
+            require(offset <= byte_limit, limit_code)
     return b"".join(parts)
 
 
@@ -301,9 +416,27 @@ def json_object(data):
     return json.loads(data, object_pairs_hook=pairs)
 
 
-def bound_json(spec):
-    with bound_open(spec) as (_path, fd, _info):
-        data = descriptor_bytes(fd)
+def bounded_json_line(stream, limit=HELPER_RESPONSE_LIMIT):
+    line = stream.readline(limit + 1)
+    require(bool(line), "helper_unexpected_eof")
+    require(len(line) <= limit and line.endswith(b"\n"), "helper_response_limit")
+    return json_object(line)
+
+
+def bound_json(spec, *, byte_limit=None, limit_code="json_input_limit"):
+    with bound_open(spec) as (_path, fd, info):
+        if byte_limit is not None:
+            require(
+                type(byte_limit) is int
+                and byte_limit >= 0
+                and info.st_size <= byte_limit,
+                limit_code,
+            )
+        data = descriptor_bytes(
+            fd,
+            byte_limit=byte_limit,
+            limit_code=limit_code,
+        )
         require(sha(data) == spec["sha256"], "parsed_input_binding_changed")
         return json_object(data)
 
@@ -326,6 +459,21 @@ class Slice:
         require(result, "archive_short_read")
         self.position += len(result)
         return result
+
+
+class ZeroReader:
+    """Generate a logical zero range without materializing the whole range."""
+
+    def __init__(self, length):
+        require(type(length) is int and length >= 0, "zero_reader_length")
+        self.remaining = length
+
+    def read(self, amount=-1):
+        require(type(amount) is int, "zero_reader_amount")
+        requested = self.remaining if amount < 0 else amount
+        count = min(requested, self.remaining, CHUNK)
+        self.remaining -= count
+        return bytes(count)
 
 
 class HashedReader:
@@ -387,17 +535,88 @@ def read_exact(reader, count, *, eof=False):
     return bytes(data)
 
 
+def preflight_docker_save_outer_tar(fd, length):
+    """Bound outer Docker-save parsing before tarfile sees attacker metadata.
+
+    Docker/OCI save paths fit in one ustar header. PAX and GNU name extensions
+    are therefore unnecessary in the outer transport and are rejected before
+    tarfile can eagerly allocate their bodies. Layer tar streams retain bounded
+    extension support in :func:`walk_tar`.
+    """
+    require(type(length) is int and length >= 1024, "docker_save_outer_size")
+    allowed = {
+        tarfile.REGTYPE,
+        tarfile.AREGTYPE,
+        tarfile.DIRTYPE,
+        tarfile.SYMTYPE,
+        tarfile.LNKTYPE,
+    }
+    offset = entries = zero_headers = 0
+    while offset + 512 <= length:
+        raw = os.pread(fd, 512, offset)
+        require(len(raw) == 512, "docker_save_outer_truncated")
+        offset += 512
+        if not any(raw):
+            zero_headers += 1
+            if zero_headers < 2:
+                continue
+            while offset < length:
+                data = os.pread(fd, min(CHUNK, length - offset), offset)
+                require(bool(data), "docker_save_outer_truncated")
+                require(not any(data), "docker_save_outer_nonzero_trailer")
+                offset += len(data)
+            return entries
+        require(zero_headers == 0, "docker_save_outer_incomplete_end_markers")
+        info = tarfile.TarInfo.frombuf(raw, encoding="utf-8", errors="strict")
+        require(
+            info.type
+            not in {
+                tarfile.XHDTYPE,
+                tarfile.XGLTYPE,
+                tarfile.GNUTYPE_LONGNAME,
+                tarfile.GNUTYPE_LONGLINK,
+            },
+            "docker_save_outer_extension_unsupported",
+        )
+        require(
+            info.type in allowed and info.size >= 0,
+            "docker_save_outer_entry_type",
+        )
+        entries += 1
+        require(
+            entries <= DOCKER_SAVE_OUTER_ENTRY_LIMIT,
+            "docker_save_outer_entry_limit",
+        )
+        body_end = offset + info.size
+        next_header = body_end + (-info.size) % 512
+        require(
+            body_end <= next_header <= length,
+            "docker_save_outer_member_range",
+        )
+        offset = next_header
+    raise ScanError("docker_save_outer_missing_end_markers")
+
+
 def gzip_header(reader):
     """RFC1952 header bytes, including every optional field; no filename use."""
     header = bytearray(read_exact(reader, 10))
+    require(len(header) <= GZIP_HEADER_LIMIT, "gzip_header_limit")
+
+    def append(data):
+        require(
+            len(header) + len(data) <= GZIP_HEADER_LIMIT,
+            "gzip_header_limit",
+        )
+        header.extend(data)
+
     require(header[:3] == b"\x1f\x8b\x08", "unsupported_gzip_method_or_magic")
     flags = header[3]
     require(not flags & 0xE0, "reserved_gzip_header_flags")
     if flags & 4:
         length = read_exact(reader, 2)
-        header.extend(length)
+        append(length)
         extra = read_exact(reader, int.from_bytes(length, "little"))
-        header.extend(extra)
+        append(extra)
         cursor = 0
         while cursor < len(extra):
             require(len(extra) - cursor >= 4, "malformed_gzip_extra_subfield")
@@ -408,7 +627,7 @@ def gzip_header(reader):
         if flags & bit:
             while True:
                 value = read_exact(reader, 1)
-                header.extend(value)
+                append(value)
                 if value == b"\0":
                     break
     if flags & 2:
@@ -417,15 +636,35 @@ def gzip_header(reader):
             int.from_bytes(checksum, "little") == zlib.crc32(header) & 0xFFFF,
             "gzip_header_crc_mismatch",
         )
-        header.extend(checksum)
+        append(checksum)
     return bytes(header)
 
 
-def compile_literals(values, policy):
-    patterns = []
-    carry = max((len(value.encode("utf-8")) for value in values), default=0) + 1
-    for index, value in enumerate(values):
+def validate_literal_inventory(values):
+    require(
+        isinstance(values, (list, tuple)) and len(values) <= LITERAL_PATTERN_LIMIT,
+        "literal_inventory_pattern_limit",
+    )
+    encoded = []
+    total = 0
+    for value in values:
+        require(type(value) is str and value, "literal_inventory_schema")
         raw = value.encode("utf-8")
+        require(
+            len(raw) <= LITERAL_VALUE_BYTES_LIMIT,
+            "literal_inventory_value_limit",
+        )
+        total += len(raw)
+        require(total <= LITERAL_TOTAL_BYTES_LIMIT, "literal_inventory_total_limit")
+        encoded.append(raw)
+    return tuple(encoded)
+
+
+def compile_literals(values, policy):
+    encoded = validate_literal_inventory(values)
+    patterns = []
+    carry = max((len(raw) for raw in encoded), default=0) + 1
+    for index, (value, raw) in enumerate(zip(values, encoded, strict=True)):
         pattern = re.escape(raw)
         if policy == POLICY and len(value) < 6:
             pattern = rb"(?<![A-Za-z0-9_])" + pattern + rb"(?![A-Za-z0-9_])"
@@ -443,7 +682,14 @@ class LiteralMatcher:
         self.buffer, self.base = b"", 0
         self.next_positions = [0] * len(self.patterns)
 
-    def feed(self, data, *, final=False):
+    def feed(self, data, *, final=False, finding_limit):
+        require(
+            type(data) is bytes
+            and type(final) is bool
+            and type(finding_limit) is int
+            and finding_limit >= 0,
+            "literal_feed_schema",
+        )
         self.buffer += data
         boundary = len(self.buffer) if final else max(0, len(self.buffer) - self.carry)
         found = []
@@ -454,6 +700,8 @@ class LiteralMatcher:
                 start = self.base + match.start()
                 if start >= self.base + boundary:
                     break
+                if len(found) >= finding_limit:
+                    raise LiteralFindingLimit("literal_finding_limit")
                 found.append(
                     {
                         "rule_id": "private_literal",
@@ -474,7 +722,7 @@ class LiteralMatcher:
 
 
 AHO_PINS = {
-    "source": "8ab2ea2152684fa7789dc4ba8dfedf5802b00bd08d4f91d8e88808feaa313455",
+    "source": "1d722e5a68445fcc35ff1a3b6406f476a2b80e2918ce985ccc5ca9e11815955d",
     "wheel": "9ec1d3465f25a5063c7eaa85ecb106cbe256064669c754e0b13b2483cf613a98",
     "extension": "6c44b1b03f94319834b9294d9720053071ce3ecfab584f3c479407d77249680c",
 }
@@ -634,6 +882,14 @@ class Detector:
         self.process = self.stderr = None
         self.joined = False
         self.ordinal = self.bytes = self.findings = 0
+        # Submitted records awaiting their result, oldest first. Responses are
+        # buffered from the raw descriptor so that writing record bytes and
+        # reading results can never block on each other.
+        self.outstanding = collections.deque()
+        self.responses = bytearray()
+        self.stdout_fd = None
+        self.stdin_fd = None
+        self.stdout_closed = False
         try:
             parent_fd = directory_fd(stderr_path.parent)
             try:
@@ -679,6 +935,12 @@ class Detector:
                     _SPAWNING = False
             if _CANCEL_REQUESTED:
                 raise ScanError("scan_cancelled")
+            self.stdout_fd = self.process.stdout.fileno()
+            self.stdin_fd = self.process.stdin.fileno()
+            # Records go out through this descriptor rather than the buffered
+            # writer, so a full pipe returns to _transfer instead of parking this
+            # process inside a write while the helper waits to be read.
+            os.set_blocking(self.stdin_fd, False)
             self._validate_ready(authorization)
         except BaseException:
             self.abort()
@@ -727,38 +989,143 @@ class Detector:
             "helper_pkcs12_selector",
         )
 
+    def _absorb(self):
+        """Read one batch of helper output into the response buffer.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        chunk = os.read(self.stdout_fd, CHUNK)
+        if not chunk:
+            self.stdout_closed = True
+            return
+        self.responses += chunk
+        require(
+            len(self.responses) - self.responses.rfind(b"\n") - 1
+            <= HELPER_RESPONSE_LIMIT,
+            "helper_response_limit",
+        )
+
+    def _transfer(self, data):
+        """Write one buffer to the helper while continuing to read its output.
+
+        With several records outstanding, both directions are live at once: the
+        helper is writing results for earlier records while this process is still
+        writing the bytes of a later one. Draining what is already readable and
+        then making a blocking write is not enough, because output that appears
+        during that write is never collected and both pipes fill: the helper
+        blocks writing results, stops reading records, and this process blocks
+        writing records. Waiting for either direction and servicing whichever is
+        ready means one side always progresses, so the pipes cannot deadlock
+        however few workers the helper actually runs.
+
+        Args:
+            data: Bytes to hand to the helper.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If the helper closed its input before the bytes landed.
+        """
+        view = memoryview(data)
+        while view:
+            readable, writable, _ = select.select(
+                [] if self.stdout_closed else [self.stdout_fd], [self.stdin_fd], ()
+            )
+            if readable:
+                self._absorb()
+            if writable:
+                try:
+                    view = view[os.write(self.stdin_fd, view) :]
+                except BlockingIOError:
+                    continue
+                except BrokenPipeError:
+                    require(False, "helper_unexpected_eof")
+
     def _response(self):
-        line = self.process.stdout.readline()
-        require(bool(line), "helper_unexpected_eof")
-        result = json_object(line)
-        require(isinstance(result, dict), "helper_response_schema")
-        return result
+        while True:
+            newline = self.responses.find(b"\n")
+            if newline >= 0:
+                require(newline + 1 <= HELPER_RESPONSE_LIMIT, "helper_response_limit")
+                line = bytes(self.responses[: newline + 1])
+                del self.responses[: newline + 1]
+                result = json_object(line)
+                require(isinstance(result, dict), "helper_response_schema")
+                return result
+            require(not self.stdout_closed, "helper_unexpected_eof")
+            chunk = os.read(self.stdout_fd, CHUNK)
+            if not chunk:
+                self.stdout_closed = True
+                require(False, "helper_unexpected_eof")
+            self.responses += chunk
+            require(
+                len(self.responses) - self.responses.rfind(b"\n") - 1
+                <= HELPER_RESPONSE_LIMIT,
+                "helper_response_limit",
+            )
 
     def begin(self, length):
         require(type(length) is int and 0 <= length < 2**64, "protocol_length")
-        self.process.stdin.write(struct.pack(">Q", length))
+        self._transfer(struct.pack(">Q", length))
 
     def write(self, data):
-        self.process.stdin.write(data)
+        self._transfer(data)
 
-    def end(self, length, digest):
-        self.process.stdin.flush()
-        result = self._response()
-        self.ordinal += 1
-        require(
-            result.get("type") == "result"
-            and type(result.get("ordinal")) is int
-            and result["ordinal"] == self.ordinal,
-            "helper_record_order",
-        )
-        require(
-            type(result.get("bytes")) is int
-            and result["bytes"] == length
-            and result.get("sha256") == digest,
-            "helper_record_byte_receipt",
-        )
-        findings = result.get("findings")
+    def submit(self, length, digest):
+        """Hand one completely written record over without awaiting its result.
+
+        Args:
+            length: The record's exact byte count, already written.
+            digest: The record's SHA-256, recomputed here for the receipt check.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.outstanding.append((length, digest))
+
+    def outstanding_records(self):
+        """Report how many submitted records have not been collected yet.
+
+        Args:
+            None.
+
+        Returns:
+            The number of outstanding records.
+
+        Raises:
+            None.
+        """
+        return len(self.outstanding)
+
+    def _checked_findings(self, findings):
+        """Validate one record's findings against the accepted schema.
+
+        Args:
+            findings: The findings list the helper reported for one record.
+
+        Returns:
+            The same list, once every entry matches the schema.
+
+        Raises:
+            ScanError: If the list or any finding in it is not exactly the
+                accepted shape.
+        """
         require(isinstance(findings, list), "helper_findings_schema")
+        require(len(findings) <= RECORD_FINDING_LIMIT, "record_finding_limit")
+        require(
+            self.findings + len(findings) <= SCAN_FINDING_LIMIT,
+            "scan_finding_limit",
+        )
         allowed = {"rule_id", "start_line", "end_line"}
         for finding in findings:
             require(
@@ -774,11 +1141,44 @@ class Detector:
                 type(finding["start_line"]) is int and type(finding["end_line"]) is int,
                 "helper_line_schema",
             )
+        return findings
+
+    def collect(self):
+        """Read and validate the oldest outstanding record's result.
+
+        Args:
+            None.
+
+        Returns:
+            The record's findings as reported by the helper.
+
+        Raises:
+            ScanError: If the helper's receipt does not match the submitted
+                record's ordinal, byte count, digest, or finding schema.
+        """
+        require(bool(self.outstanding), "helper_collect_without_record")
+        length, digest = self.outstanding.popleft()
+        result = self._response()
+        self.ordinal += 1
+        require(
+            result.get("type") == "result"
+            and type(result.get("ordinal")) is int
+            and result["ordinal"] == self.ordinal,
+            "helper_record_order",
+        )
+        require(
+            type(result.get("bytes")) is int
+            and result["bytes"] == length
+            and result.get("sha256") == digest,
+            "helper_record_byte_receipt",
+        )
+        findings = self._checked_findings(result.get("findings"))
         self.bytes += length
         self.findings += len(findings)
         return findings
 
     def finish(self):
+        require(not self.outstanding, "helper_unfinished_records")
         self.process.stdin.close()
         result = self._response()
         require(
@@ -791,7 +1191,8 @@ class Detector:
             },
             "helper_summary_receipt",
         )
-        require(self.process.stdout.read(1) == b"", "helper_extra_response")
+        require(not self.responses, "helper_extra_response")
+        require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
         code = self.process.wait()
         self.joined = True
         self.process.stdout.close()
@@ -819,6 +1220,385 @@ class Detector:
             self.stderr.close()
 
 
+class PendingRecord:
+    """One submitted record whose ledger lines are held until its result lands.
+
+    Ledger bytes must stay identical to scanning one record at a time, so every
+    line produced while a record is outstanding is buffered here and written
+    only when that record is finalized, in stream order.
+    """
+
+    def __init__(self, ordinal, length, kind, context, raw_parts):
+        """Open a buffer for one record.
+
+        Args:
+            ordinal: The record's one-based position in the scan.
+            length: The record's exact byte count.
+            kind: The ledger record kind for this content.
+            context: Scope fields repeated on every line for this record.
+            raw_parts: Accumulated record bytes when confidentiality
+                composition needs the complete record, otherwise ``None``.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        self.ordinal = ordinal
+        self.length = length
+        self.kind = kind
+        self.context = context
+        self.raw_parts = raw_parts
+        self.literal_matches = []
+        self.digest = None
+        # Lines belonging to the record itself, and lines the scan produced
+        # after it moved past the record. Keeping them apart is what lets the
+        # record's own result line land between them, exactly where scanning one
+        # record at a time would have written it.
+        self.lines = []
+        self.trailing = []
+        self.sealed = False
+        self.held_bytes = length if raw_parts is not None else 0
+
+    def append(self, serialized):
+        """Buffer one ledger line in this record's correct position.
+
+        Args:
+            serialized: The line, newline included.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        target = self.trailing if self.sealed else self.lines
+        target.append(serialized)
+
+    def ordered_lines(self):
+        """Return every buffered line in final ledger order.
+
+        Args:
+            None.
+
+        Returns:
+            The record's own lines followed by the lines that came after it.
+
+        Raises:
+            None.
+        """
+        return self.lines + self.trailing
+
+
+def _apply_address_space_limit(requested):
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    effective = requested
+    for inherited in (soft, hard):
+        if inherited != resource.RLIM_INFINITY:
+            effective = min(effective, inherited)
+    resource.setrlimit(resource.RLIMIT_AS, (effective, effective))
+    return effective
+
+
+def _confidentiality_worker(
+    connection,
+    policy_config,
+    literal_binding,
+    memory_limit,
+    finding_limit,
+):
+    try:
+        _apply_address_space_limit(memory_limit)
+        policy = C.compile_policy(
+            policy_config.get("customer_pattern"),
+            policy_config.get("infra_pattern"),
+            literal_policy=literal_binding,
+        )
+        connection.send_bytes(
+            canonical(
+                {
+                    "type": "ready",
+                    "policy_sha256": policy.policy_sha256,
+                }
+            )
+        )
+        records = 0
+        while True:
+            command = json_object(connection.recv_bytes(HELPER_RESPONSE_LIMIT))
+            require(isinstance(command, dict), "confidentiality_worker_protocol")
+            if command == {"type": "finish"}:
+                connection.send_bytes(
+                    canonical({"type": "summary", "records": records})
+                )
+                return
+            require(
+                set(command) == {"type", "length"}
+                and command["type"] == "record"
+                and type(command["length"]) is int
+                and 0 <= command["length"] <= CONFIDENTIALITY_RECORD_LIMIT,
+                "confidentiality_worker_protocol",
+            )
+            length = command["length"]
+            raw_buffer = bytearray()
+            remaining = length
+            while remaining:
+                data = connection.recv_bytes(min(CHUNK, remaining))
+                require(
+                    bool(data) and len(data) <= remaining,
+                    "confidentiality_worker_protocol",
+                )
+                raw_buffer.extend(data)
+                remaining -= len(data)
+            finish = json_object(connection.recv_bytes(HELPER_RESPONSE_LIMIT))
+            require(
+                isinstance(finish, dict)
+                and set(finish) == {"type", "sha256", "literal_matches"}
+                and finish["type"] == "record_end"
+                and isinstance(finish["sha256"], str)
+                and SHA.fullmatch(finish["sha256"]) is not None
+                and isinstance(finish["literal_matches"], list)
+                and len(finish["literal_matches"]) <= finding_limit,
+                "confidentiality_worker_protocol",
+            )
+            matches = tuple(
+                C.LiteralMatch(
+                    item["literal_index"],
+                    item["byte_start"],
+                    item["byte_end"],
+                )
+                for item in finish["literal_matches"]
+                if isinstance(item, dict)
+                and set(item) >= {"literal_index", "byte_start", "byte_end"}
+            )
+            require(
+                len(matches) == len(finish["literal_matches"]),
+                "confidentiality_worker_protocol",
+            )
+            raw = bytes(raw_buffer)
+            del raw_buffer
+            literal_scan = (
+                C.LiteralScan(
+                    literal_binding,
+                    finish["sha256"],
+                    length,
+                    matches,
+                    True,
+                )
+                if literal_binding is not None
+                else None
+            )
+            receipt = policy.scan_record(
+                raw,
+                literal_scan=literal_scan,
+                finding_limit=finding_limit,
+            )
+            response = canonical(
+                {
+                    "type": "result",
+                    "policy_sha256": receipt.policy_sha256,
+                    "record_sha256": receipt.record_sha256,
+                    "byte_count": receipt.byte_count,
+                    "line_count": receipt.line_count,
+                    "findings": [asdict(item) for item in receipt.findings],
+                }
+            )
+            require(
+                len(response) <= HELPER_RESPONSE_LIMIT,
+                "confidentiality_response_limit",
+            )
+            connection.send_bytes(response)
+            records += 1
+    except BaseException as exc:
+        code = (
+            str(exc)
+            if isinstance(exc, (ScanError, C.ConfidentialityError))
+            else "confidentiality_worker_failure"
+        )
+        try:
+            connection.send_bytes(canonical({"type": "error", "error": code}))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+        return
+    finally:
+        connection.close()
+
+
+class ConfidentialityDetector:
+    def __init__(
+        self,
+        policy_config,
+        literal_binding,
+        policy_sha256,
+        *,
+        process_context=None,
+        memory_limit=CONFIDENTIALITY_MEMORY_LIMIT,
+        finding_limit=RECORD_FINDING_LIMIT,
+        autostart=True,
+    ):
+        self.connection = self.process = self.child_connection = None
+        self.policy_sha256 = policy_sha256
+        self.joined = False
+        context = process_context or multiprocessing.get_context("spawn")
+        parent, child = context.Pipe(duplex=True)
+        self.connection = parent
+        self.child_connection = child
+        self.process = context.Process(
+            target=_confidentiality_worker,
+            args=(
+                child,
+                policy_config,
+                literal_binding,
+                memory_limit,
+                finding_limit,
+            ),
+            name="image-byte-confidentiality",
+        )
+        self.records = 0
+        self.finding_limit = finding_limit
+        if autostart:
+            self.start()
+
+    def start(self):
+        require(
+            self.process is not None and self.process.pid is None,
+            "confidentiality_worker_already_started",
+        )
+        try:
+            self.process.start()
+            self.child_connection.close()
+            self.child_connection = None
+            ready = self._response()
+            require(
+                ready
+                == {
+                    "type": "ready",
+                    "policy_sha256": self.policy_sha256,
+                },
+                "confidentiality_worker_ready",
+            )
+        except BaseException:
+            if self.child_connection is not None:
+                self.child_connection.close()
+                self.child_connection = None
+            self.abort()
+            raise
+
+    def _response(self):
+        try:
+            raw = self.connection.recv_bytes(HELPER_RESPONSE_LIMIT)
+        except (EOFError, OSError) as exc:
+            raise ScanError("confidentiality_worker_failed") from exc
+        result = json_object(raw)
+        require(isinstance(result, dict), "confidentiality_worker_protocol")
+        if result.get("type") == "error":
+            code = result.get("error")
+            require(
+                isinstance(code, str) and re.fullmatch(r"[a-z0-9_-]+", code),
+                "confidentiality_worker_protocol",
+            )
+            raise ScanError(code)
+        return result
+
+    def _send(self, payload):
+        try:
+            self.connection.send_bytes(payload)
+        except (BrokenPipeError, EOFError, OSError) as exc:
+            raise ScanError("confidentiality_worker_failed") from exc
+
+    def begin(self, length):
+        self._send(canonical({"type": "record", "length": length}))
+
+    def write(self, data):
+        self._send(data)
+
+    def end(self, length, digest, literal_matches):
+        self._send(
+            canonical(
+                {
+                    "type": "record_end",
+                    "sha256": digest,
+                    "literal_matches": literal_matches,
+                }
+            )
+        )
+        result = self._response()
+        require(
+            set(result)
+            == {
+                "type",
+                "policy_sha256",
+                "record_sha256",
+                "byte_count",
+                "line_count",
+                "findings",
+            }
+            and result["type"] == "result"
+            and result["record_sha256"] == digest
+            and result["byte_count"] == length
+            and type(result["line_count"]) is int
+            and result["line_count"] >= 0
+            and isinstance(result["findings"], list)
+            and len(result["findings"]) <= self.finding_limit,
+            "confidentiality_worker_result",
+        )
+        findings = []
+        for item in result["findings"]:
+            require(
+                isinstance(item, dict)
+                and set(item)
+                == {
+                    "rule_id",
+                    "start_byte",
+                    "end_byte",
+                    "start_line",
+                    "end_line",
+                    "views",
+                }
+                and isinstance(item["rule_id"], str)
+                and type(item["start_byte"]) is int
+                and type(item["end_byte"]) is int
+                and type(item["start_line"]) is int
+                and type(item["end_line"]) is int
+                and isinstance(item["views"], list)
+                and all(isinstance(view, str) for view in item["views"]),
+                "confidentiality_worker_result",
+            )
+            findings.append(item)
+        self.records += 1
+        return result, findings
+
+    def finish(self):
+        self._send(canonical({"type": "finish"}))
+        result = self._response()
+        require(
+            result == {"type": "summary", "records": self.records},
+            "confidentiality_worker_summary",
+        )
+        self.connection.close()
+        self.process.join()
+        self.joined = True
+        require(self.process.exitcode == 0, "confidentiality_worker_exit")
+        if hasattr(self.process, "close"):
+            self.process.close()
+
+    def abort(self):
+        if self.child_connection is not None:
+            self.child_connection.close()
+            self.child_connection = None
+        if self.connection is not None:
+            self.connection.close()
+        if self.process is not None and self.process.pid is not None:
+            if self.process.is_alive():
+                self.process.terminate()
+            self.process.join()
+            self.joined = True
+            if hasattr(self.process, "close"):
+                self.process.close()
+        else:
+            self.joined = True
+
+
 class Ledger:
     def __init__(
         self,
@@ -831,6 +1611,7 @@ class Ledger:
         policy_config=None,
         literal_binding=None,
         record_observer=None,
+        defer_confidentiality=False,
     ):
         parent_fd = directory_fd(directory)
         try:
@@ -845,11 +1626,13 @@ class Ledger:
         self.stream = os.fdopen(stream_fd, "w", encoding="utf-8")
         self.record_observer = record_observer
         self.detector, self.literals, self.policy = detector, literals, policy
+        validate_literal_inventory(literals)
         if literal_engine is None:
             self.compiled_literals = compile_literals(literals, policy)
             self.new_matcher = lambda: LiteralMatcher(
                 (), self.policy, compiled=self.compiled_literals
             )
+            self.literal_limit_error = LiteralFindingLimit
         else:
             self.compiled_literals = literal_engine.module.compile_literals(
                 literals, policy
@@ -857,6 +1640,7 @@ class Ledger:
             self.new_matcher = lambda: literal_engine.module.LiteralMatcher(
                 self.compiled_literals
             )
+            self.literal_limit_error = literal_engine.module.LiteralFindingLimit
         self.literal_policy_receipt = {
             "kind": policy,
             "inventory_sha256": literal_binding["sha256"] if literal_binding else None,
@@ -884,29 +1668,148 @@ class Ledger:
             if policy_config is not None
             else None
         )
+        self.confidentiality_detector = None
+        self.confidentiality_configuration = (
+            (policy_config, typed_binding, self.confidentiality.policy_sha256)
+            if self.confidentiality is not None
+            else None
+        )
+        if self.confidentiality_configuration is not None and not defer_confidentiality:
+            self.start_confidentiality()
         self.zero_run = None
         self.records = self.findings = self.scan_bytes = self.zero_bytes = 0
         self.regular_files = self.regular_bytes = 0
+        self.pending = collections.deque()
+        self.open_record = None
+        self.held_bytes = 0
+
+    def start_confidentiality(self):
+        if self.confidentiality_configuration is None:
+            return
+        require(
+            self.confidentiality_detector is None,
+            "confidentiality_worker_already_started",
+        )
+        detector = ConfidentialityDetector(
+            *self.confidentiality_configuration,
+            autostart=False,
+        )
+        self.confidentiality_detector = detector
+        detector.start()
 
     def write(self, record):
         serialized = json.dumps(record, sort_keys=True) + "\n"
+        require(
+            len(serialized.encode("utf-8")) <= LEDGER_LINE_LIMIT,
+            "ledger_line_limit",
+        )
+        if self.open_record is not None:
+            self.open_record.append(serialized)
+            return
+        self.emit(serialized)
+
+    def emit(self, serialized):
+        """Write one already-serialized ledger line through to the stream.
+
+        Args:
+            serialized: The line, newline included, in final ledger order.
+
+        Returns:
+            None.
+
+        Raises:
+            OSError: If the ledger stream cannot be written or flushed.
+        """
         self.stream.write(serialized)
         self.stream.flush()
         if self.record_observer is not None:
             self.record_observer(serialized.encode("utf-8"))
 
     def issue(self, code, context):
+        require(self.findings < SCAN_FINDING_LIMIT, "scan_finding_limit")
         self.findings += 1
         self.write({"type": "finding", "rule_id": code, **context})
 
+    def literal_batch(self, matcher, data, pending, *, final=False):
+        record_remaining = RECORD_FINDING_LIMIT - len(pending.literal_matches)
+        scan_remaining = SCAN_FINDING_LIMIT - self.findings
+        finding_limit = min(record_remaining, scan_remaining)
+        try:
+            return matcher.feed(
+                data,
+                final=final,
+                finding_limit=finding_limit,
+            )
+        except self.literal_limit_error as error:
+            code = (
+                "record_finding_limit"
+                if record_remaining <= scan_remaining
+                else "scan_finding_limit"
+            )
+            raise ScanError(code) from error
+
     def send(self, reader, length, kind, context):
         self.flush_zeros()
+        require(
+            self.confidentiality is None or length <= CONFIDENTIALITY_RECORD_LIMIT,
+            "confidentiality_record_limit",
+        )
         self.records += 1
-        ordinal = self.records
+        self.make_room(length)
+        pending = self.stream_record(reader, length, kind, context)
+        pending.sealed = True
+        self.pending.append(pending)
+        self.held_bytes += pending.held_bytes
+        return pending.digest
+
+    def make_room(self, length):
+        """Collect outstanding records until the next one fits within the bounds.
+
+        Draining before the record is read keeps ``PIPELINE_BYTES`` a bound on
+        the bytes held at once rather than a target the next whole record
+        overshoots. A record larger than the whole bound is still held alone, so
+        no record is ever skipped or truncated for its size.
+
+        Args:
+            length: Byte count of the record about to be read.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If a collected record fails its receipt checks.
+        """
+        held = length if self.confidentiality is not None else 0
+        while self.pending and (
+            len(self.pending) >= PIPELINE_RECORDS
+            or self.held_bytes + held > PIPELINE_BYTES
+        ):
+            self.finalize_head()
+
+    def stream_record(self, reader, length, kind, context):
+        """Read one complete record, hand it to the helper, and hold its lines.
+
+        Every byte still reaches the detector, the record digest, the literal
+        matcher and, when configured, the confidentiality buffer. Only the wait
+        for the helper's result is deferred.
+
+        Args:
+            reader: Source positioned at the record's first byte.
+            length: The record's exact byte count.
+            kind: The ledger record kind for this content.
+            context: Scope fields repeated on every line for this record.
+
+        Returns:
+            The :class:`PendingRecord` awaiting its detector result.
+
+        Raises:
+            ScanError: If the source ends before the declared byte count.
+        """
         digest = hashlib.sha256()
         matcher = self.new_matcher()
         raw_parts = [] if self.confidentiality is not None else None
-        literal_matches = []
+        pending = PendingRecord(self.records, length, kind, context, raw_parts)
+        self.open_record = pending
         self.detector.begin(length)
         remaining = length
         while remaining:
@@ -916,85 +1819,221 @@ class Ledger:
             digest.update(data)
             if raw_parts is not None:
                 raw_parts.append(data)
-            for finding in matcher.feed(data):
-                literal_matches.append(finding)
-                self.findings += 1
-                self.write(
-                    {"type": "finding", "record_ordinal": ordinal, **context, **finding}
+            for offset in range(0, len(data), LITERAL_MATCH_CHUNK):
+                self.issue_literals(
+                    pending,
+                    self.literal_batch(
+                        matcher,
+                        data[offset : offset + LITERAL_MATCH_CHUNK],
+                        pending,
+                    ),
                 )
             remaining -= len(data)
-        for finding in matcher.feed(b"", final=True):
-            literal_matches.append(finding)
+        self.issue_literals(
+            pending,
+            self.literal_batch(matcher, b"", pending, final=True),
+        )
+        pending.digest = digest.hexdigest()
+        self.detector.submit(length, pending.digest)
+        return pending
+
+    def issue_literals(self, pending, findings):
+        """Record literal matches found in one chunk of a record.
+
+        Args:
+            pending: The record the matches belong to.
+            findings: Literal matches produced by the matcher.
+
+        Returns:
+            None.
+
+        Raises:
+            None.
+        """
+        for finding in findings:
+            require(
+                len(pending.literal_matches) < RECORD_FINDING_LIMIT,
+                "record_finding_limit",
+            )
+            require(self.findings < SCAN_FINDING_LIMIT, "scan_finding_limit")
+            pending.literal_matches.append(finding)
             self.findings += 1
             self.write(
-                {"type": "finding", "record_ordinal": ordinal, **context, **finding}
-            )
-        value = digest.hexdigest()
-        found = self.detector.end(length, value)
-        if self.confidentiality is not None:
-            raw_record = b"".join(raw_parts)
-            literal_scan = (
-                C.LiteralScan(
-                    self.typed_literal_binding,
-                    value,
-                    length,
-                    tuple(
-                        C.LiteralMatch(
-                            row["literal_index"], row["byte_start"], row["byte_end"]
-                        )
-                        for row in literal_matches
-                    ),
-                    True,
-                )
-                if self.typed_literal_binding is not None
-                else None
-            )
-            receipt = self.confidentiality.scan_record(
-                raw_record, literal_scan=literal_scan
-            )
-            require(
-                receipt.record_sha256 == value and receipt.byte_count == length,
-                "confidentiality_record_binding",
-            )
-            # Literal findings already have durable standalone receipts. The typed
-            # composition verifies them; append only the additive regex findings.
-            for item in receipt.findings:
-                if "external_literal" not in item.views:
-                    found.append(asdict(item))
-            self.write(
                 {
-                    "type": "confidentiality_record",
-                    "record_ordinal": ordinal,
-                    "policy_sha256": receipt.policy_sha256,
-                    "sha256": value,
-                    "bytes": length,
-                    "line_count": receipt.line_count,
-                    "composed_findings": len(receipt.findings),
+                    "type": "finding",
+                    "record_ordinal": pending.ordinal,
+                    **pending.context,
+                    **finding,
                 }
             )
-        self.findings += len(found)
-        self.scan_bytes += length
+
+    def literal_scan(self, pending):
+        """Build the typed literal evidence the confidentiality policy verifies.
+
+        Args:
+            pending: The finalized record, holding its literal matches.
+
+        Returns:
+            The record's :class:`LiteralScan`, or ``None`` when no literal
+            inventory is bound.
+
+        Raises:
+            None.
+        """
+        if self.typed_literal_binding is None:
+            return None
+        return C.LiteralScan(
+            self.typed_literal_binding,
+            pending.digest,
+            pending.length,
+            tuple(
+                C.LiteralMatch(row["literal_index"], row["byte_start"], row["byte_end"])
+                for row in pending.literal_matches
+            ),
+            True,
+        )
+
+    def compose_confidentiality(self, pending, found):
+        """Add the confidentiality policy's findings to a record's results.
+
+        Args:
+            pending: The finalized record, holding its complete bytes.
+            found: Helper findings for the record, extended in place.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If the composed receipt does not bind the same record.
+        """
+        self.confidentiality_detector.begin(pending.length)
+        for data in pending.raw_parts:
+            self.confidentiality_detector.write(data)
+        receipt, confidentiality_findings = self.confidentiality_detector.end(
+            pending.length,
+            pending.digest,
+            pending.literal_matches,
+        )
+        require(
+            receipt["record_sha256"] == pending.digest
+            and receipt["byte_count"] == pending.length
+            and receipt["policy_sha256"] == self.confidentiality.policy_sha256,
+            "confidentiality_record_binding",
+        )
+        # Literal findings already have durable standalone receipts. The typed
+        # composition verifies them; append only the additive regex findings.
+        for item in confidentiality_findings:
+            if "external_literal" not in item["views"]:
+                require(
+                    len(pending.literal_matches) + len(found) < RECORD_FINDING_LIMIT,
+                    "record_finding_limit",
+                )
+                require(
+                    self.findings + len(found) < SCAN_FINDING_LIMIT,
+                    "scan_finding_limit",
+                )
+                found.append(item)
         self.write(
             {
-                "type": "record",
-                "record_ordinal": ordinal,
-                "kind": kind,
-                "bytes": length,
-                "sha256": value,
-                "findings": found,
-                **context,
+                "type": "confidentiality_record",
+                "record_ordinal": pending.ordinal,
+                "policy_sha256": receipt["policy_sha256"],
+                "sha256": pending.digest,
+                "bytes": pending.length,
+                "line_count": receipt["line_count"],
+                "composed_findings": len(confidentiality_findings),
             }
         )
-        return value
+
+    def finalize_head(self):
+        """Collect the oldest outstanding record and release its ledger lines.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If the helper's receipt does not match the record.
+        """
+        pending = self.pending.popleft()
+        self.held_bytes -= pending.held_bytes
+        previous, self.open_record = self.open_record, pending
+        pending.sealed = False
+        try:
+            found = self.detector.collect()
+            require(
+                len(pending.literal_matches) + len(found) <= RECORD_FINDING_LIMIT,
+                "record_finding_limit",
+            )
+            require(
+                self.findings + len(found) <= SCAN_FINDING_LIMIT,
+                "scan_finding_limit",
+            )
+            if self.confidentiality is not None:
+                self.compose_confidentiality(pending, found)
+            self.findings += len(found)
+            self.scan_bytes += pending.length
+            self.write(
+                {
+                    "type": "record",
+                    "record_ordinal": pending.ordinal,
+                    "kind": pending.kind,
+                    "bytes": pending.length,
+                    "sha256": pending.digest,
+                    "findings": found,
+                    **pending.context,
+                }
+            )
+        finally:
+            pending.sealed = True
+            self.open_record = None if previous is pending else previous
+        for line in pending.ordered_lines():
+            self.emit(line)
+
+    def flush_pending(self):
+        """Finalize every outstanding record so the ledger is complete.
+
+        Args:
+            None.
+
+        Returns:
+            None.
+
+        Raises:
+            ScanError: If a collected record fails its receipt checks.
+        """
+        while self.pending:
+            self.finalize_head()
 
     def data(self, data, kind, context):
         return self.send(io.BytesIO(data), len(data), kind, context)
 
+    def finish(self):
+        if (
+            self.confidentiality_detector is not None
+            and not self.confidentiality_detector.joined
+        ):
+            self.confidentiality_detector.finish()
+
+    def abort(self):
+        if (
+            self.confidentiality_detector is not None
+            and not self.confidentiality_detector.joined
+        ):
+            self.confidentiality_detector.abort()
+
     def flush_zeros(self):
         if self.zero_run is not None:
-            run, self.zero_run = self.zero_run, None
+            run = self.zero_run
+            require(
+                run["bytes"] <= ZERO_RECORD_LIMIT,
+                "zero_record_complete_scan_limit",
+            )
+            self.zero_run = None
             self.send(
-                io.BytesIO(b"\0" * run["bytes"]),
+                ZeroReader(run["bytes"]),
                 run["bytes"],
                 "verified_zero_content",
                 run["context"],
@@ -1013,6 +2052,10 @@ class Ledger:
             self.zero_run = {"key": key, "context": context, "bytes": 0}
         self.zero_run["next_offset"] = offset + len(data)
         self.zero_run["bytes"] += len(data)
+        require(
+            self.zero_run["bytes"] <= ZERO_RECORD_LIMIT,
+            "zero_record_complete_scan_limit",
+        )
         self.write(
             {
                 "type": "verified_zero_range",
@@ -1024,13 +2067,18 @@ class Ledger:
 
 
 def safe_name(name):
-    require(isinstance(name, str) and "\x00" not in name, "tar_path_encoding")
+    require(
+        isinstance(name, str)
+        and "\x00" not in name
+        and len(name.encode("utf-8")) <= TAR_PATH_LIMIT,
+        "tar_path_encoding",
+    )
     path = PurePosixPath(name)
     require(not path.is_absolute() and ".." not in path.parts, "tar_path_escape")
     return str(path)
 
 
-def parse_pax(data):
+def parse_pax(data, *, key_limit=TAR_PAX_KEY_LIMIT):
     result, cursor = {}, 0
     while cursor < len(data):
         space = data.find(b" ", cursor)
@@ -1043,27 +2091,24 @@ def parse_pax(data):
         record = data[space + 1 : cursor + length]
         require(record.endswith(b"\n") and b"=" in record, "pax_record_format")
         key, value = record[:-1].split(b"=", 1)
-        key, value = key.decode("utf-8"), value.decode("utf-8")
         require(
-            key and key not in result and "\x00" not in value,
+            len(result) < key_limit and len(key) <= TAR_PATH_LIMIT,
+            "tar_pax_key_limit",
+        )
+        key = key.decode("utf-8")
+        require(
+            key and key not in result and "\x00" not in key,
             "pax_duplicate_or_invalid_key",
         )
         require(
-            key
-            in {
-                "path",
-                "linkpath",
-                "uid",
-                "gid",
-                "uname",
-                "gname",
-                "mtime",
-                "atime",
-                "ctime",
-            }
-            or key.startswith(("SCHILY.xattr.", "LIBARCHIVE.xattr.")),
+            key in PAX_TEXT_KEYS or key.startswith(PAX_BINARY_PREFIXES),
             "unsupported_pax_semantics",
         )
+        if key in PAX_TEXT_KEYS:
+            value = value.decode("utf-8")
+            require("\x00" not in value, "pax_duplicate_or_invalid_key")
+        # Kernel xattrs carry arbitrary bytes; only their already-scanned record
+        # and key participate in this parser's path-safety decisions.
         result[key] = value
         cursor += length
     return result
@@ -1072,16 +2117,23 @@ def parse_pax(data):
 def walk_tar(reader, sink, scope, file_handler):
     """Read every physical tar byte, including extension records and EOF padding."""
     index, zero_headers = 0, 0
+    layer_scope = scope.get("scope") in {"layer", "docker_save_layer"}
     seen = set()
-    pending, global_pax = {}, {}
+    pending, pending_keys = {}, set()
+    extension_chain_bytes = 0
     long_name = long_link = None
     while True:
         offset = reader.tell()
         raw = read_exact(reader, 512, eof=True)
+        if layer_scope:
+            require(
+                reader.tell() <= DOCKER_SAVE_DECODED_LAYER_LIMIT,
+                "docker_save_decoded_layer_limit",
+            )
         if not raw:
             require(zero_headers >= 2, "tar_missing_end_markers")
             require(
-                not pending and long_name is None and long_link is None,
+                not pending_keys and long_name is None and long_link is None,
                 "orphan_tar_extension",
             )
             break
@@ -1094,6 +2146,11 @@ def walk_tar(reader, sink, scope, file_handler):
             sink.issue("nonzero_tar_trailer", context)
             sink.data(raw, "unexplained_tar_trailer", context)
             while data := reader.read(CHUNK):
+                if layer_scope:
+                    require(
+                        reader.tell() <= DOCKER_SAVE_DECODED_LAYER_LIMIT,
+                        "docker_save_decoded_layer_limit",
+                    )
                 context = {
                     **scope,
                     "entry_ordinal": index,
@@ -1105,9 +2162,16 @@ def walk_tar(reader, sink, scope, file_handler):
                     sink.zeros(data, context)
             require(zero_headers >= 2, "tar_incomplete_end_markers")
             break
+        require(index < TAR_ENTRY_LIMIT, "tar_entry_limit")
         sink.data(raw, "raw_tar_header", context)
         info = tarfile.TarInfo.frombuf(raw, encoding="utf-8", errors="strict")
         require(info.size >= 0, "negative_tar_size")
+        padding = (-info.size) % 512
+        if layer_scope:
+            require(
+                reader.tell() + info.size + padding <= DOCKER_SAVE_DECODED_LAYER_LIMIT,
+                "docker_save_decoded_layer_limit",
+            )
         require(
             info.type
             in {
@@ -1132,20 +2196,49 @@ def walk_tar(reader, sink, scope, file_handler):
             tarfile.GNUTYPE_LONGNAME,
             tarfile.GNUTYPE_LONGLINK,
         }:
+            require(
+                info.size <= TAR_EXTENSION_LIMIT,
+                "tar_extension_body_too_large",
+            )
+            require(
+                extension_chain_bytes + info.size <= TAR_EXTENSION_CHAIN_LIMIT,
+                "tar_extension_chain_too_large",
+            )
+            extension_chain_bytes += info.size
             extension_context = {**context, "tar_offset": reader.tell()}
             data = read_exact(reader, info.size)
             sink.data(data, "raw_tar_extension", extension_context)
             if info.type in {tarfile.XHDTYPE, tarfile.XGLTYPE}:
-                parsed = parse_pax(data)
+                parsed = parse_pax(
+                    data,
+                    key_limit=(
+                        TAR_PAX_KEY_LIMIT
+                        if info.type == tarfile.XGLTYPE
+                        else TAR_PAX_KEY_LIMIT - len(pending_keys)
+                    ),
+                )
                 if info.type == tarfile.XGLTYPE:
                     require(
-                        not set(parsed) & {"path", "linkpath"},
+                        not pending_keys
+                        and long_name is None
+                        and long_link is None
+                        and not set(parsed) & {"path", "linkpath"},
                         "global_pax_name_override",
                     )
-                    global_pax.update(parsed)
                 else:
-                    require(not set(parsed) & set(pending), "ambiguous_pax_override")
-                    pending.update(parsed)
+                    parsed_keys = set(parsed)
+                    require(
+                        not parsed_keys & pending_keys,
+                        "ambiguous_pax_override",
+                    )
+                    pending_keys.update(parsed_keys)
+                    require(
+                        len(pending_keys) <= TAR_PAX_KEY_LIMIT,
+                        "tar_pax_key_limit",
+                    )
+                    for key in ("path", "linkpath"):
+                        if key in parsed:
+                            pending[key] = parsed[key]
             else:
                 require(
                     data.endswith(b"\x00") and b"\x00" not in data[:-1],
@@ -1170,7 +2263,10 @@ def walk_tar(reader, sink, scope, file_handler):
             link = pending.get(
                 "linkpath", long_link if long_link is not None else info.linkname
             )
-            require("\x00" not in link, "tar_link_encoding")
+            require(
+                "\x00" not in link and len(link.encode("utf-8")) <= TAR_PATH_LIMIT,
+                "tar_link_encoding",
+            )
             require(name not in seen, "duplicate_tar_path")
             seen.add(name)
             sink.data(name.encode("utf-8"), "logical_tar_path", context)
@@ -1178,14 +2274,19 @@ def walk_tar(reader, sink, scope, file_handler):
                 sink.data(link.encode("utf-8"), "logical_tar_link", context)
             if PKCS12.search(name):
                 sink.issue("pkcs12-file", context)
-            pending, long_name, long_link = {}, None, None
+            pending, pending_keys = {}, set()
+            extension_chain_bytes = 0
+            long_name = long_link = None
             if info.isreg():
+                require(
+                    not layer_scope or info.size <= TAR_REGULAR_FILE_LIMIT,
+                    "tar_regular_file_limit",
+                )
                 file_handler(
                     reader, info.size, name, {**context, "tar_offset": reader.tell()}
                 )
             else:
                 require(info.size == 0, "nonregular_tar_body")
-        padding = (-info.size) % 512
         if padding:
             context = {**context, "tar_offset": reader.tell()}
             data = read_exact(reader, padding)
@@ -1203,6 +2304,34 @@ def walk_tar(reader, sink, scope, file_handler):
     }
 
 
+def validate_docker_save_layer_references(names, diff_ids):
+    """Bound logical layer reuse before any physical layer bytes are read."""
+    require(
+        isinstance(names, list)
+        and isinstance(diff_ids, list)
+        and len(names) == len(diff_ids)
+        and 0 < len(names) <= DOCKER_SAVE_LAYER_LIMIT,
+        "docker_save_layer_reference_limit",
+    )
+    counts = {}
+    bindings = {}
+    for name, diff_id in zip(names, diff_ids, strict=True):
+        require(
+            isinstance(name, str)
+            and isinstance(diff_id, str)
+            and DIGEST.fullmatch(diff_id) is not None,
+            "docker_save_layer_reference",
+        )
+        normalized = safe_name(name)
+        counts[normalized] = counts.get(normalized, 0) + 1
+        require(
+            counts[normalized] <= DOCKER_SAVE_LAYER_MEMBER_REPEAT_LIMIT,
+            "docker_save_layer_member_repeat_limit",
+        )
+        previous = bindings.setdefault(normalized, diff_id)
+        require(previous == diff_id, "docker_save_layer_member_conflict")
+
+
 def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
     if verification.get("schema_version") == "npa.ncore.oci-verification.v1":
@@ -1211,6 +2340,7 @@ def graph(fd, length, verification, expected_id):
         result = N.inspect(fd, length, expected_id)
         N.bind(result, verification, expected_id)
         return result["layers"]
+    preflight_docker_save_outer_tar(fd, length)
     os.lseek(fd, 0, os.SEEK_SET)
     with (
         os.fdopen(os.dup(fd), "rb") as file,
@@ -1221,11 +2351,25 @@ def graph(fd, length, verification, expected_id):
             name = safe_name(item.name)
             require(name not in members, "duplicate_outer_path")
             members[name] = item
+        require(
+            len(members) <= DOCKER_SAVE_OUTER_ENTRY_LIMIT,
+            "docker_save_outer_entry_limit",
+        )
 
         def payload(name):
             info = members[name]
-            require(info.isfile(), "graph_metadata_not_regular")
-            return archive.extractfile(info).read()
+            require(
+                info.isfile() and info.size <= DOCKER_SAVE_METADATA_LIMIT,
+                "graph_metadata_not_regular_or_too_large",
+            )
+            stream = archive.extractfile(info)
+            require(stream is not None, "graph_metadata_not_regular_or_too_large")
+            data = stream.read(DOCKER_SAVE_METADATA_LIMIT + 1)
+            require(
+                len(data) == info.size <= DOCKER_SAVE_METADATA_LIMIT,
+                "graph_metadata_not_regular_or_too_large",
+            )
+            return data
 
         saved = json_object(payload("manifest.json"))
         require(
@@ -1246,11 +2390,8 @@ def graph(fd, length, verification, expected_id):
             "graph_layer_binding",
         )
         names = saved[0]["Layers"]
-        require(
-            isinstance(names, list)
-            and len(names) == len(diff_ids) == verification["layer_count"],
-            "graph_layer_population",
-        )
+        validate_docker_save_layer_references(names, diff_ids)
+        require(len(names) == verification["layer_count"], "graph_layer_population")
         manifest_digest = verification.get("image_manifest_digest")
         descriptors = None
         if manifest_digest is not None:
@@ -1291,6 +2432,7 @@ def graph(fd, length, verification, expected_id):
             "graph_expected_identity",
         )
         result = []
+        member_descriptors = {}
         for ordinal, name in enumerate(names):
             name = safe_name(name)
             item = members[name]
@@ -1300,6 +2442,13 @@ def graph(fd, length, verification, expected_id):
             )
             descriptor = descriptors[ordinal] if descriptors is not None else None
             if descriptor is not None:
+                binding = (
+                    descriptor["mediaType"],
+                    descriptor["digest"],
+                    descriptor["size"],
+                )
+                previous = member_descriptors.setdefault(name, binding)
+                require(previous == binding, "docker_save_layer_member_conflict")
                 require(
                     name == "blobs/sha256/" + descriptor["digest"][7:]
                     and item.size == descriptor["size"],
@@ -1448,7 +2597,12 @@ def verification_archive_digest(verification):
     require(verification.get("valid") is True, "verification_did_not_pass")
     schema = verification.get("schema_version")
     require(
-        schema in ("npa.curobo.image-verification.v1", "npa.ncore.oci-verification.v1"),
+        schema
+        in (
+            "npa.curobo.image-verification.v1",
+            "npa.docker-save.image-verification.v1",
+            "npa.ncore.oci-verification.v1",
+        ),
         "verification_schema",
     )
     return verification[
@@ -1502,7 +2656,11 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         authorization.get("literal_inventory"),
     )
     if literal_binding is not None:
-        inventory = bound_json(literal_binding)
+        inventory = bound_json(
+            literal_binding,
+            byte_limit=LITERAL_INVENTORY_JSON_LIMIT,
+            limit_code="literal_inventory_json_limit",
+        )
         values = inventory.get("literals")
         require(
             isinstance(values, list)
@@ -1585,12 +2743,14 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             literal_engine,
             policy_config=policy_config,
             literal_binding=literal_binding,
+            defer_confidentiality=True,
             **(
                 {"record_observer": record_observer}
                 if record_observer is not None
                 else {}
             ),
         )
+        sink.start_confidentiality()
         report["confidentiality_policy"] = (
             sink.confidentiality.receipt()
             if sink.confidentiality is not None
@@ -1690,7 +2850,9 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             "verifier_regular_population_disagreement",
         )
         sink.flush_zeros()
+        sink.flush_pending()
         report["helper_summary"] = detector.finish()
+        sink.finish()
         recheck_snapshots(snapshots)
         require(
             authorization["sources"] == source_bindings(),
@@ -1718,6 +2880,11 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             detector.abort()
         report["helper_joined"] = detector is None or detector.joined
         if sink is not None:
+            sink.abort()
+            report["confidentiality_worker_joined"] = (
+                sink.confidentiality_detector is None
+                or sink.confidentiality_detector.joined
+            )
             if sink.zero_run is not None:
                 report.update(
                     valid=False,
@@ -1884,40 +3051,118 @@ def verify_private_json(directory, held_fd, name, result, identity):
         os.close(fd)
 
 
-def write_private_json(directory, name, result):
-    """Publish once and return the original file's final identity for readback."""
+def _private_json_payload(result):
+    return (json.dumps(result, sort_keys=True, indent=2) + "\n").encode("utf-8")
+
+
+def stage_private_json(held_fd, name, result):
+    """Write and fsync a private pending receipt through a held directory FD."""
     require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
-    fd = directory_fd(directory)
-    created = False
-    output = None
     temporary = name + ".pending"
+    output = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=held_fd,
+    )
     try:
-        output = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-            dir_fd=fd,
+        payload = _private_json_payload(result)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(output, remaining)
+            require(written > 0, "output_short_write")
+            remaining = remaining[written:]
+        os.fsync(output)
+        identity = stat_fingerprint(os.fstat(output))
+    except BaseException:
+        try:
+            os.unlink(temporary, dir_fd=held_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    finally:
+        os.close(output)
+    return identity
+
+
+def publish_staged_private_json(held_fd, name, result, identity):
+    """Link a verified pending receipt into place through the held directory FD."""
+    require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
+    temporary = name + ".pending"
+    pending = os.open(
+        temporary,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        dir_fd=held_fd,
+    )
+    try:
+        before = os.fstat(pending)
+        require(
+            stat.S_ISREG(before.st_mode)
+            and before.st_uid == os.geteuid()
+            and stat.S_IMODE(before.st_mode) == 0o600
+            and before.st_nlink == 1
+            and stat_fingerprint(before) == identity
+            and descriptor_bytes(pending) == _private_json_payload(result)
+            and stat_fingerprint(os.fstat(pending)) == identity,
+            "staged_output_changed",
         )
-        created = True
-        with os.fdopen(output, "w", encoding="utf-8", closefd=False) as stream:
-            json.dump(result, stream, sort_keys=True, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.link(temporary, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
-        os.unlink(temporary, dir_fd=fd)
-        created = False
-        os.fsync(fd)
-        return stat_fingerprint(os.fstat(output))
+        os.link(
+            temporary,
+            name,
+            src_dir_fd=held_fd,
+            dst_dir_fd=held_fd,
+            follow_symlinks=False,
+        )
+        os.unlink(temporary, dir_fd=held_fd)
+        os.fsync(held_fd)
+        published = os.stat(name, dir_fd=held_fd, follow_symlinks=False)
+        final = os.fstat(pending)
+        require(
+            final.st_nlink == published.st_nlink == 1
+            and (final.st_dev, final.st_ino) == (published.st_dev, published.st_ino)
+            and stat_fingerprint(final) == stat_fingerprint(published),
+            "published_output_changed",
+        )
+        return stat_fingerprint(final)
+    except BaseException:
+        try:
+            os.unlink(name, dir_fd=held_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    finally:
+        os.close(pending)
+
+
+def discard_private_json(held_fd, name):
+    """Remove pending or published output from the originally held directory."""
+    require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
+    for candidate in (name + ".pending", name):
+        try:
+            os.unlink(candidate, dir_fd=held_fd)
+        except FileNotFoundError:
+            pass
+    os.fsync(held_fd)
+
+
+def write_private_json(directory, name, result, *, held_fd=None):
+    """Publish once through a held directory and return the final identity."""
+    require(re.fullmatch(r"[a-zA-Z0-9_.-]+", name) is not None, "output_name")
+    owns_fd = held_fd is None
+    fd = directory_fd(directory) if owns_fd else held_fd
+    try:
+        if not owns_fd:
+            output_identity(directory, fd)
+        identity = stage_private_json(fd, name, result)
+        return publish_staged_private_json(fd, name, result, identity)
     finally:
         try:
-            if created:
-                os.unlink(temporary, dir_fd=fd)
-        finally:
             try:
-                if output is not None:
-                    os.close(output)
-            finally:
+                os.unlink(name + ".pending", dir_fd=fd)
+            except FileNotFoundError:
+                pass
+        finally:
+            if owns_fd:
                 os.close(fd)
 
 
@@ -2012,7 +3257,9 @@ def main(argv=None):
                         else "invalid_scan_configuration",
                     }
                 output_identity(directory, output_fd)
-                report_identity = write_private_json(directory, "report.json", result)
+                report_identity = write_private_json(
+                    directory, "report.json", result, held_fd=output_fd
+                )
                 verify_private_json(
                     directory, output_fd, "report.json", result, report_identity
                 )

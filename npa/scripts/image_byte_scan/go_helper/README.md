@@ -7,6 +7,21 @@ Gitleaks 8.28.0 `Detector.Detect` API on each complete raw record, including bin
 and empty records. It does not use Gitleaks file discovery, MIME filtering,
 stdin chunking, a baseline, or image-authored ignore files.
 
+Distinct records are detected concurrently, with at most 64 workers, and results
+are emitted in record order. Admission reserves payload bytes against a 512 MiB
+budget before allocating them, so the bytes held for detection are bounded
+independently of archive size. A record larger than that budget is admitted alone
+up to the derived per-record ceiling; larger records fail before payload
+allocation rather than being skipped or truncated.
+
+The helper has a 12 GiB address-space ceiling. Current measurements peak at
+9.85x payload bytes for one record, so admission rounds that observation to 10x,
+retains 4 GiB of fixed/process headroom, and derives a record ceiling of
+858,993,459 bytes (about 819 MiB). The same formula covers the 512 MiB aggregate
+payload budget used by concurrent smaller records. The measurement is not
+treated as a permanent detector constant: `RLIMIT_AS` remains the hard,
+fail-closed backstop if implementation drift uses more memory.
+
 ## Prepare the helper
 
 Run on **Linux amd64**, from an NPA checkout with its development environment
@@ -63,10 +78,19 @@ helper checks configuration metadata before and after its complete read.
 
 The helper emits one readiness JSON line, then consumes an unsigned 64-bit
 big-endian byte length followed by exactly that many bytes, repeatedly. It emits
-one JSON result per record, retaining every finding but returning only rule and
-line information, record ordinal, byte count and SHA-256. Clean EOF between
-records produces a final summary. A truncated header or payload is an error.
-The scanner process uses these exit codes:
+one JSON result per record, returning only rule and line information, record
+ordinal, byte count and SHA-256. More than 4,096 findings in one record fails the
+scan before response population; findings are never silently discarded. Clean
+EOF between records produces a final summary. A truncated header or payload is
+an error. The scanner process uses these exit codes:
+
+The caller may keep several records in flight; results are emitted strictly in
+record order, so the response bytes are identical at every depth. Both directions
+are live at once, so a caller must continue reading results while it writes
+records. A caller that blocks in a write without reading deadlocks against a
+helper that has filled its output pipe and stopped reading, which is why
+`core.Detector` transfers record bytes and collects results through one readiness
+wait rather than draining only before each write.
 
 | Code | Meaning |
 | --- | --- |
