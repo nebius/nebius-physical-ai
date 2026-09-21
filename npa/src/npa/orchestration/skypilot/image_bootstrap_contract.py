@@ -443,6 +443,47 @@ def probe_image_capabilities(
             last_identity_read_error or "exact probe absence was not verified",
         )
 
+    def cleanup_owned_probe_resilient(
+        *,
+        probe_name: str,
+        selected_probe_id: str,
+        expected_uid: str | None,
+        require_stable_absence: bool = False,
+    ) -> tuple[str, str, BaseException | None]:
+        """Retry one signal-interrupted cleanup while preserving the signal."""
+
+        interrupted: BaseException | None = None
+        interruption_types = []
+        for _attempt in range(2):
+            try:
+                cleanup, detail = cleanup_owned_probe(
+                    probe_name=probe_name,
+                    selected_probe_id=selected_probe_id,
+                    expected_uid=expected_uid,
+                    require_stable_absence=require_stable_absence,
+                )
+                return cleanup, detail, interrupted
+            except BaseException as exc:
+                interrupted = interrupted or exc
+                interruption_types.append(type(exc).__name__)
+        return (
+            "failed",
+            f"cleanup interrupted twice: {', '.join(interruption_types)}",
+            interrupted,
+        )
+
+    def add_cleanup_note(
+        error: BaseException, cleanup: str, cleanup_detail: str
+    ) -> None:
+        if cleanup == "verified":
+            return
+        note = f"probe cleanup={cleanup}: {cleanup_detail[:300]}"
+        add_note = getattr(error, "add_note", None)
+        if callable(add_note):
+            add_note(note)
+        else:  # Python 3.10 compatibility; preserve the primary exception.
+            setattr(error, "__npa_cleanup_note__", note)
+
     for _attempt in range(3):
         probe_id = str(nonce_factory()).lower()
         name = probe_name(digest, probe_id)
@@ -487,21 +528,18 @@ def probe_image_capabilities(
                 env,
             )
         except BaseException as exc:
-            cleanup, cleanup_detail = cleanup_owned_probe(
+            cleanup, cleanup_detail, cleanup_interrupt = cleanup_owned_probe_resilient(
                 probe_name=name,
                 selected_probe_id=probe_id,
                 expected_uid=None,
                 require_stable_absence=True,
             )
             if not isinstance(exc, (OSError, subprocess.SubprocessError)):
-                if cleanup != "verified":
-                    note = f"probe cleanup={cleanup}: {cleanup_detail}"
-                    add_note = getattr(exc, "add_note", None)
-                    if callable(add_note):
-                        add_note(note)
-                    else:
-                        setattr(exc, "__npa_cleanup_note__", note)
+                add_cleanup_note(exc, cleanup, cleanup_detail)
                 raise
+            if cleanup_interrupt is not None:
+                add_cleanup_note(cleanup_interrupt, cleanup, cleanup_detail)
+                raise cleanup_interrupt
             return _probe_evidence(
                 immutable,
                 digest,
@@ -515,12 +553,15 @@ def probe_image_capabilities(
             break
         detail = (create.stderr or create.stdout).strip()
         if "alreadyexists" not in detail.replace(" ", "").lower():
-            cleanup, cleanup_detail = cleanup_owned_probe(
+            cleanup, cleanup_detail, cleanup_interrupt = cleanup_owned_probe_resilient(
                 probe_name=name,
                 selected_probe_id=probe_id,
                 expected_uid=None,
                 require_stable_absence=True,
             )
+            if cleanup_interrupt is not None:
+                add_cleanup_note(cleanup_interrupt, cleanup, cleanup_detail)
+                raise cleanup_interrupt
             return _probe_evidence(
                 immutable,
                 digest,
@@ -561,6 +602,8 @@ def probe_image_capabilities(
         identity_checked = True
         if identity is None:
             primary = identity_error
+            if identity_error.startswith("probe identity read "):
+                observation_indeterminate = True
         else:
             wait = terminal_observer(
                 [
@@ -594,41 +637,23 @@ def probe_image_capabilities(
         interrupted = exc
         primary = f"probe lifecycle interrupted: {type(exc).__name__}"
     finally:
-        if identity_checked and identity is None:
+        if (
+            identity_checked
+            and identity is None
+            and not identity_error.startswith("probe identity read ")
+        ):
             cleanup = "refused_identity_mismatch"
             cleanup_detail = identity_error
         else:
-            try:
-                cleanup, cleanup_detail = cleanup_owned_probe(
-                    probe_name=name,
-                    selected_probe_id=probe_id,
-                    expected_uid=identity,
-                )
-            except BaseException as cleanup_exc:
-                if interrupted is None:
-                    interrupted = cleanup_exc
-                try:
-                    # A one-shot signal may interrupt the ownership re-read itself.
-                    # Retry once so the exact owned pod still gets best-effort cleanup.
-                    cleanup, cleanup_detail = cleanup_owned_probe(
-                        probe_name=name,
-                        selected_probe_id=probe_id,
-                        expected_uid=identity,
-                    )
-                except BaseException as retry_exc:
-                    cleanup = "failed"
-                    cleanup_detail = (
-                        f"cleanup interrupted twice: {type(cleanup_exc).__name__}, "
-                        f"{type(retry_exc).__name__}"
-                    )
+            cleanup, cleanup_detail, cleanup_interrupt = cleanup_owned_probe_resilient(
+                probe_name=name,
+                selected_probe_id=probe_id,
+                expected_uid=identity,
+            )
+            if interrupted is None and cleanup_interrupt is not None:
+                interrupted = cleanup_interrupt
     if interrupted is not None:
-        if cleanup != "verified":
-            note = f"probe cleanup={cleanup}: {cleanup_detail[:300]}"
-            add_note = getattr(interrupted, "add_note", None)
-            if callable(add_note):
-                add_note(note)
-            else:  # Python 3.10 compatibility; preserve the primary exception.
-                setattr(interrupted, "__npa_cleanup_note__", note)
+        add_cleanup_note(interrupted, cleanup, cleanup_detail)
         raise interrupted
     if cleanup != "verified":
         return ImageContractEvidence(

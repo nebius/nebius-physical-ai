@@ -586,8 +586,9 @@ def render_pip_extra_setup(extra: str) -> str:
 
 #: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
 #: SkyPilot 0.12 accepts these inside a task's ``config:`` block and recursively
-#: merges ``kubernetes.pod_config``. Most lists append, while imagePullSecrets
-#: keeps the base tail and replaces the first entry with the task override.
+#: merges ``kubernetes.pod_config``. Most lists append. imagePullSecrets keeps an
+#: initial list intact, then replaces the first base entry from a one-item
+#: override while preserving the base tail.
 #: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
 #: arbitrary cluster configuration.
 TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
@@ -1898,7 +1899,7 @@ class ImagePullRequirements:
 
     requires_operator: bool = False
     requires_kubernetes: bool = False
-    pull_secret_name_sets: tuple[tuple[str, ...], ...] = ()
+    pull_secret_name_sets: tuple[tuple[str, ...] | None, ...] = ()
 
     @property
     def pull_secret_names(self) -> tuple[str, ...]:
@@ -1906,23 +1907,23 @@ class ImagePullRequirements:
 
         return tuple(
             dict.fromkeys(
-                name for names in self.pull_secret_name_sets for name in names
+                name for names in self.pull_secret_name_sets for name in (names or ())
             )
         )
 
 
-def _task_pull_secret_names(pod_spec: Mapping[str, Any]) -> tuple[str, ...]:
-    """Read a present nonempty SkyPilot imagePullSecrets task override."""
+def _task_pull_secret_names(
+    pod_spec: Mapping[str, Any],
+) -> tuple[str, ...] | None:
+    """Read a SkyPilot imagePullSecrets task override, preserving absence."""
 
     if "imagePullSecrets" not in pod_spec:
-        return ()
+        return None
     raw_names = pod_spec["imagePullSecrets"]
     if not isinstance(raw_names, list):
         raise NpaWorkflowRenderError(
             "SkyPilot task imagePullSecrets must be a list of name mappings"
         )
-    if not raw_names:
-        raise NpaWorkflowRenderError("SkyPilot task imagePullSecrets must not be empty")
     names: list[str] = []
     for item in raw_names:
         if not isinstance(item, Mapping):
@@ -1947,7 +1948,7 @@ def plan_image_pull_requirements(
 ) -> dict[str, ImagePullRequirements]:
     """Preserve VM and Kubernetes pull requirements for each exact image."""
 
-    paths: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
+    paths: dict[str, list[tuple[str, tuple[str, ...] | None]]] = {}
     for step in steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
         resources = task.get("resources") or {}
@@ -1961,7 +1962,7 @@ def plan_image_pull_requirements(
             continue
         cloud = str(resources.get("cloud") or "").strip().casefold()
         if cloud not in {"kubernetes", "k8s"}:
-            paths.setdefault(image, []).append(("operator", ()))
+            paths.setdefault(image, []).append(("operator", None))
             continue
         kubernetes = resources.get("kubernetes")
         kubernetes = kubernetes if isinstance(kubernetes, dict) else {}

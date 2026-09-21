@@ -89,6 +89,7 @@ class ImagePullCheck:
     target_status: str = "unverified"
     authority: str = "operator"
     digest: str = ""
+    acceptable_digests: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -124,6 +125,7 @@ class KubernetesPullTarget:
 
     namespace: str
     pull_secret_names: tuple[str, ...] = ()
+    pull_secret_names_configured: bool = False
 
 
 def merge_skypilot_pull_secret_names(
@@ -132,16 +134,14 @@ def merge_skypilot_pull_secret_names(
 ) -> tuple[str, ...]:
     """Apply SkyPilot 0.12's legacy imagePullSecrets override semantics."""
 
-    if base_names is not None and not base_names:
-        raise RegistryPreflightError("SkyPilot imagePullSecrets base must not be empty")
-    if override_names is not None and not override_names:
-        raise RegistryPreflightError(
-            "SkyPilot imagePullSecrets override must not be empty"
-        )
     if override_names is None:
         return base_names or ()
     if base_names is None:
         return override_names
+    if not base_names:
+        raise RegistryPreflightError(
+            "SkyPilot cannot merge imagePullSecrets into an existing empty list"
+        )
     if len(override_names) != 1:
         raise RegistryPreflightError(
             "SkyPilot imagePullSecrets override must contain exactly one entry"
@@ -378,6 +378,24 @@ def _registry_error_detail(body: bytes) -> str:
     return code if re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", code) else ""
 
 
+def _manifest_pull_digests(body: bytes, top_digest: str) -> tuple[str, ...]:
+    """Return the index and platform-manifest digests a pull may report."""
+
+    digests = []
+    if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", top_digest):
+        digests.append(top_digest.lower())
+    try:
+        payload: Any = json.loads(body.decode("utf-8", errors="replace") or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+    manifests = payload.get("manifests") if isinstance(payload, Mapping) else None
+    for item in manifests if isinstance(manifests, list) else []:
+        digest = str(item.get("digest") or "") if isinstance(item, Mapping) else ""
+        if re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+            digests.append(digest.lower())
+    return tuple(dict.fromkeys(digests))
+
+
 def check_image_pull(
     image: str,
     *,
@@ -511,15 +529,15 @@ def check_image_pull(
     detail = _registry_error_detail(body)
     if 200 <= status < 300:
         digest = str(response_headers.get("docker-content-digest") or "").strip()
+        digest = (
+            reference.reference if reference.reference.startswith("sha256:") else digest
+        )
         return ImagePullCheck(
             image=reference.raw,
             status="ok",
             http_status=status,
-            digest=(
-                reference.reference
-                if reference.reference.startswith("sha256:")
-                else digest
-            ),
+            digest=digest,
+            acceptable_digests=_manifest_pull_digests(body, digest),
         )
     if status == 403:
         return ImagePullCheck(
@@ -861,11 +879,15 @@ def check_image_pulls_with_credentials(
                                 "not verified"
                             )
                         break
+                    acceptable_digests = operator_check.acceptable_digests or tuple(
+                        digest
+                        for digest in (operator_check.digest or target_digest,)
+                        if digest
+                    )
                     if (
                         target_check.digest
-                        and (operator_check.digest or target_digest)
-                        and target_check.digest
-                        != (operator_check.digest or target_digest)
+                        and acceptable_digests
+                        and target_check.digest not in acceptable_digests
                     ):
                         target_verified = False
                         target_status = "digest_mismatch"
@@ -1016,6 +1038,7 @@ def resolve_kubernetes_pull_target(
     if not selected_context:
         raise RegistryPreflightError("an exact Kubernetes context is required")
     secret_names: tuple[str, ...] = ()
+    secret_names_configured = False
     if global_config_path is not None:
         try:
             document = (
@@ -1042,9 +1065,14 @@ def resolve_kubernetes_pull_target(
             raise RegistryPreflightError(
                 "selected SkyPilot context config must be a mapping"
             )
+        base_secret_names = _configured_pull_secret_names(kubernetes)
+        override_secret_names = _configured_pull_secret_names(context_config)
         secret_names = merge_skypilot_pull_secret_names(
-            _configured_pull_secret_names(kubernetes),
-            _configured_pull_secret_names(context_config),
+            base_secret_names,
+            override_secret_names,
+        )
+        secret_names_configured = (
+            base_secret_names is not None or override_secret_names is not None
         )
     execute = runner or subprocess.run
     try:
@@ -1105,6 +1133,7 @@ def resolve_kubernetes_pull_target(
     return KubernetesPullTarget(
         namespace=namespace,
         pull_secret_names=secret_names,
+        pull_secret_names_configured=secret_names_configured,
     )
 
 
@@ -1124,8 +1153,6 @@ def _configured_pull_secret_names(
         raise RegistryPreflightError(
             "SkyPilot imagePullSecrets must be a list of name mappings"
         )
-    if not raw_names:
-        raise RegistryPreflightError("SkyPilot imagePullSecrets must not be empty")
     names: list[str] = []
     for item in raw_names:
         if not isinstance(item, Mapping):

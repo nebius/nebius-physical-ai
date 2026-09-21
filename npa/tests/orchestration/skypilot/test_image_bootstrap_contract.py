@@ -808,3 +808,87 @@ def test_cleanup_retries_transient_identity_read_failure() -> None:
     assert evidence.cleanup == "verified"
     assert reads == 4
     assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+
+
+def test_initial_transient_identity_read_still_cleans_owned_probe() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+    deleted = False
+
+    def runner(argv, _env):
+        nonlocal deleted, reads
+        calls.append(argv)
+        action = _verb(argv)
+        if action == "run":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if action == "get":
+            reads += 1
+            if reads == 1:
+                raise subprocess.TimeoutExpired(argv, 30)
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            deleted = True
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    evidence = probe_image_capabilities(
+        image=IMAGE,
+        digest=DIGEST,
+        context="ctx",
+        runner=runner,
+        terminal_observer=lambda *args, **kwargs: pytest.fail(
+            "indeterminate identity must not start observation"
+        ),
+        nonce_factory=lambda: "a" * 16,
+    )
+
+    assert evidence.state == "indeterminate"
+    assert evidence.cleanup == "verified"
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+
+
+def test_uncertain_create_cleanup_interrupt_retries_before_propagation() -> None:
+    calls: list[list[str]] = []
+    reads = 0
+    deleted = False
+
+    def runner(argv, _env):
+        nonlocal deleted, reads
+        calls.append(argv)
+        action = _verb(argv)
+        if action == "run":
+            raise OSError("indeterminate create")
+        if action == "get":
+            reads += 1
+            if reads == 1:
+                raise KeyboardInterrupt
+            if deleted and "--ignore-not-found=true" in argv:
+                return subprocess.CompletedProcess(argv, 0, "", "")
+            name = _pod_name_from_command(argv)
+            probe_id = name.rsplit("-", 1)[-1]
+            return subprocess.CompletedProcess(
+                argv, 0, _pod_payload(name, probe_id), ""
+            )
+        if action == "delete":
+            deleted = True
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        raise AssertionError(argv)
+
+    with pytest.raises(KeyboardInterrupt):
+        probe_image_capabilities(
+            image=IMAGE,
+            digest=DIGEST,
+            context="ctx",
+            runner=runner,
+            terminal_observer=_terminal_observer(),
+            nonce_factory=lambda: "b" * 16,
+        )
+
+    assert len([argv for argv in calls if _verb(argv) == "delete"]) == 1
+    assert reads == 4

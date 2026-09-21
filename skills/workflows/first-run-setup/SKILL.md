@@ -171,11 +171,11 @@ Kubernetes retries pulls forever — so an unpullable image silently burns clust
 time in `ImagePullBackOff`. The check uses the selected kubeconfig context
 namespace (the namespace source used by SkyPilot 0.12), falling back to
 `default`, and proves every distinct rendered `imagePullSecret` set after
-applying SkyPilot 0.12's first-entry context/task override semantics. An explicit empty
-`imagePullSecrets: []` layer is rejected instead of being mistaken for an absent
-override. For `deployIfAbsent`, `submit` checks definitive public manifests
-before provisioning and runs the exact target pod proof immediately after the
-cluster exists.
+applying SkyPilot 0.12's first-entry context/task override semantics. An initial
+empty or multi-entry list is valid; once a base list exists, the override must
+have exactly one entry and the base cannot be empty. For `deployIfAbsent`,
+`submit` checks definitive public manifests before provisioning and runs the
+exact target pod proof immediately after the cluster exists.
 
 ## Step 9 — Submit
 

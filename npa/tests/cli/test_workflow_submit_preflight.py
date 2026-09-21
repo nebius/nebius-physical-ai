@@ -1203,6 +1203,62 @@ def test_effective_pull_secret_sets_reject_invalid_multi_entry_override() -> Non
         )
 
 
+def test_effective_pull_secret_sets_reject_empty_task_override_with_base() -> None:
+    from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
+
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=((),),
+        )
+    }
+
+    with pytest.raises(RegistryPreflightError):
+        workflow_cli._image_pull_secret_sets(
+            images=["image"],
+            requirements=requirements,
+            kubernetes_images={"image"},
+            inherited_pull_secrets=("global",),
+        )
+
+
+def test_effective_pull_secret_sets_reject_task_override_after_empty_base() -> None:
+    from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
+
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("task",),),
+        )
+    }
+
+    with pytest.raises(RegistryPreflightError):
+        workflow_cli._image_pull_secret_sets(
+            images=["image"],
+            requirements=requirements,
+            kubernetes_images={"image"},
+            inherited_pull_secrets=(),
+            inherited_pull_secrets_configured=True,
+        )
+
+
+def test_effective_pull_secret_sets_accept_initial_multi_entry_task_list() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("task-a", "task-b"),),
+        )
+    }
+
+    effective = workflow_cli._image_pull_secret_sets(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+    )
+
+    assert effective == {"image": (("task-a", "task-b"),)}
+
+
 def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
 

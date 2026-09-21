@@ -807,6 +807,52 @@ def test_single_state_workflow_runs_manifest_and_target_image_preflights(
     assert result == {image: image}
 
 
+def test_submit_preflight_preserves_explicit_empty_inherited_secret_layer(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    image = "registry.example/customer/private:latest"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_images",
+        lambda *args, **kwargs: [image],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.plan_image_pull_requirements",
+        lambda *args, **kwargs: {
+            image: ImagePullRequirements(
+                requires_kubernetes=True,
+                pull_secret_name_sets=(("task-secret",),),
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(
+            namespace="target-namespace",
+            pull_secret_names=(),
+            pull_secret_names_configured=True,
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda *args, **kwargs: pytest.fail(
+            "invalid empty-base merge must fail before registry access"
+        ),
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/target-context",
+        )
+
+    assert exc_info.type.__name__ == "Exit"
+
+
 def test_public_manifest_failure_blocks_before_target_exists(
     monkeypatch: pytest.MonkeyPatch, spec_path: Path
 ) -> None:

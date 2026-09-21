@@ -3338,6 +3338,7 @@ def _preflight_submit_images(
     target_context = context_from_infra(infra)
     target_namespace = ""
     inherited_pull_secrets: tuple[str, ...] = ()
+    inherited_pull_secrets_configured = False
     if kubernetes_images:
         try:
             target = resolve_kubernetes_pull_target(
@@ -3348,12 +3349,14 @@ def _preflight_submit_images(
             _fail(f"image-preflight target resolution failed: {exc}")
         target_namespace = target.namespace
         inherited_pull_secrets = target.pull_secret_names
+        inherited_pull_secrets_configured = target.pull_secret_names_configured
     try:
         pull_secret_sets_by_image = _image_pull_secret_sets(
             images=images,
             requirements=pull_requirements,
             kubernetes_images=kubernetes_images,
             inherited_pull_secrets=inherited_pull_secrets,
+            inherited_pull_secrets_configured=inherited_pull_secrets_configured,
         )
     except RegistryPreflightError as exc:
         _fail(f"image-preflight target delivery resolution failed: {exc}")
@@ -3434,6 +3437,7 @@ def _image_pull_secret_sets(
     requirements: Mapping[str, ImagePullRequirements],
     kubernetes_images: Collection[str],
     inherited_pull_secrets: tuple[str, ...] = (),
+    inherited_pull_secrets_configured: bool = False,
     additional_pull_secrets: tuple[str, ...] = (),
 ) -> dict[str, tuple[tuple[str, ...], ...]]:
     """Preserve every rendered Kubernetes path's effective Secret set."""
@@ -3450,15 +3454,20 @@ def _image_pull_secret_sets(
             continue
         requirement = requirements.get(image)
         declared_sets = tuple(
-            getattr(requirement, "pull_secret_name_sets", ()) or ((),)
+            getattr(requirement, "pull_secret_name_sets", ()) or (None,)
+        )
+        inherited_names = (
+            inherited_pull_secrets
+            if inherited_pull_secrets_configured or inherited_pull_secrets
+            else None
         )
         effective_sets = (
             tuple(
                 dict.fromkeys(
                     (
                         *merge_skypilot_pull_secret_names(
-                            inherited_pull_secrets or None,
-                            declared_names or None,
+                            inherited_names,
+                            declared_names,
                         ),
                         *additional_pull_secrets,
                     )
@@ -7975,6 +7984,7 @@ def preflight_images_cmd(
     )
     target_namespace = ""
     inherited_pull_secrets: tuple[str, ...] = ()
+    inherited_pull_secrets_configured = False
     if kubernetes_images:
         try:
             target = resolve_kubernetes_pull_target(
@@ -7985,12 +7995,14 @@ def preflight_images_cmd(
             _fail(f"image-preflight target resolution failed: {exc}")
         target_namespace = target.namespace
         inherited_pull_secrets = target.pull_secret_names
+        inherited_pull_secrets_configured = target.pull_secret_names_configured
     try:
         pull_secret_sets_by_image = _image_pull_secret_sets(
             images=images,
             requirements=pull_requirements,
             kubernetes_images=kubernetes_images,
             inherited_pull_secrets=inherited_pull_secrets,
+            inherited_pull_secrets_configured=inherited_pull_secrets_configured,
             additional_pull_secrets=explicit_pull_secrets,
         )
     except RegistryPreflightError as exc:

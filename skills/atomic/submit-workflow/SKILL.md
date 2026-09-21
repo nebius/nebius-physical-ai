@@ -176,11 +176,13 @@ successful `npa skypilot verify --cluster <exact-context>`:
   overrides. Every distinct rendered Secret set is probed independently.
   SkyPilot 0.12 replaces the first
   `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
-  that effective set instead of unioning overridden Secrets. A present empty
-  `imagePullSecrets: []` list is invalid and fails preflight rather than being
-  treated like an absent override. Anonymous host access never substitutes for
-  a target pull. It never falls back to the ambient context or mints a Secret.
-  Run it standalone with
+  that effective set instead of unioning overridden Secrets. An initial empty
+  or multi-entry list is valid; after a base list exists, SkyPilot requires one
+  override entry and cannot merge into an empty base, so NPA rejects those exact
+  invalid merge shapes. For a multi-platform image, a target platform-manifest
+  digest is accepted only when the fetched OCI index declares it. Anonymous
+  host access never substitutes for a target pull. It never falls back to the
+  ambient context or mints a Secret. Run it standalone with
   `npa workbench workflow preflight-images <spec.yaml>` plus
   `--infra k8s/<context>`, or skip with `--no-preflight-images`.
 - **A large authenticated cold pull is not an access failure.** Bootstrap probes

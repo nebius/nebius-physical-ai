@@ -636,7 +636,7 @@ def test_same_image_preserves_each_kubernetes_pull_secret_set() -> None:
     assert requirement.pull_secret_names == ("secret-a", "secret-b")
 
 
-def test_pull_requirements_reject_explicit_empty_task_pull_secrets() -> None:
+def test_pull_requirements_preserve_explicit_empty_task_pull_secrets() -> None:
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     step = build_plan(spec, run_id="demo").steps[0]
     kubernetes = replace(
@@ -650,13 +650,16 @@ def test_pull_requirements_reject_explicit_empty_task_pull_secrets() -> None:
         },
     )
 
-    with pytest.raises(NpaWorkflowRenderError, match="must not be empty"):
-        plan_image_pull_requirements(
-            spec,
-            [kubernetes],
-            run_id="demo",
-            options=SkypilotRenderOptions(registry="registry.example/customer"),
-        )
+    requirements = plan_image_pull_requirements(
+        spec,
+        [kubernetes],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+
+    requirement = next(iter(requirements.values()))
+    assert requirement.pull_secret_name_sets == ((),)
+    assert requirement.pull_secret_names == ()
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:

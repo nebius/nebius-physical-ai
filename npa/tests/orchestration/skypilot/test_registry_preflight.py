@@ -841,6 +841,44 @@ def test_host_and_target_must_resolve_the_same_immutable_bytes(
     assert checks[0].digest == DIGEST
 
 
+def test_target_platform_digest_may_belong_to_operator_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_private_registry(monkeypatch)
+    platform_digest = f"sha256:{'b' * 64}"
+    index = json.dumps(
+        {
+            "schemaVersion": 2,
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "manifests": [
+                {
+                    "digest": platform_digest,
+                    "platform": {"os": "linux", "architecture": "amd64"},
+                }
+            ],
+        }
+    ).encode()
+
+    checks = check_image_pulls_with_credentials(
+        [IMAGE],
+        fetcher=FakeRegistry(
+            manifest_status=200,
+            manifest_headers={"docker-content-digest": DIGEST},
+            manifest_body=index,
+        ),
+        pull_secret_names=("pull-secret",),
+        context="target-context",
+        namespace="default",
+        secret_runner=lambda *args, **kwargs: _docker_secret_result(REGISTRY),
+        target_pull_verifier=lambda **kwargs: KubernetesPullCheck(
+            status="verified", digest=platform_digest
+        ),
+    )
+
+    assert checks[0].ok
+    assert checks[0].digest == DIGEST
+
+
 def test_target_pull_and_cleanup_failures_are_both_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1110,18 +1148,78 @@ kubernetes:
 
 
 @pytest.mark.parametrize(
-    "config_text",
+    ("config_text", "expected_names"),
     [
-        """
+        (
+            """
 kubernetes:
-  namespace: team-namespace
   pod_config:
     spec:
       imagePullSecrets: []
 """,
+            (),
+        ),
+        (
+            """
+kubernetes:
+  context_configs:
+    target-context:
+      pod_config:
+        spec:
+          imagePullSecrets: []
+""",
+            (),
+        ),
+        (
+            """
+kubernetes:
+  context_configs:
+    target-context:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: context-a
+            - name: context-b
+""",
+            ("context-a", "context-b"),
+        ),
+    ],
+)
+def test_effective_target_accepts_initial_empty_or_multi_entry_pull_secret_list(
+    tmp_path, config_text: str, expected_names: tuple[str, ...]
+) -> None:
+    config = tmp_path / "sky.yaml"
+    config.write_text(config_text, encoding="utf-8")
+
+    target = resolve_kubernetes_pull_target(
+        context="target-context",
+        global_config_path=config,
+        runner=lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "contexts": [
+                        {
+                            "name": "target-context",
+                            "context": {"namespace": "team-namespace"},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    assert target.pull_secret_names == expected_names
+    assert target.pull_secret_names_configured is True
+
+
+@pytest.mark.parametrize(
+    "config_text",
+    [
         """
 kubernetes:
-  namespace: team-namespace
   pod_config:
     spec:
       imagePullSecrets:
@@ -1132,20 +1230,46 @@ kubernetes:
         spec:
           imagePullSecrets: []
 """,
+        """
+kubernetes:
+  pod_config:
+    spec:
+      imagePullSecrets: []
+  context_configs:
+    target-context:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: context-secret
+""",
+        """
+kubernetes:
+  pod_config:
+    spec:
+      imagePullSecrets:
+        - name: global-secret
+  context_configs:
+    target-context:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: context-a
+            - name: context-b
+""",
     ],
 )
-def test_effective_target_rejects_explicit_empty_pull_secret_lists(
+def test_effective_target_rejects_invalid_existing_pull_secret_list_merge(
     tmp_path, config_text: str
 ) -> None:
     config = tmp_path / "sky.yaml"
     config.write_text(config_text, encoding="utf-8")
 
-    with pytest.raises(RegistryPreflightError, match="must not be empty"):
+    with pytest.raises(RegistryPreflightError):
         resolve_kubernetes_pull_target(
             context="target-context",
             global_config_path=config,
             runner=lambda *args, **kwargs: pytest.fail(
-                "explicit SkyPilot namespace must not consult ambient context"
+                "invalid config merge must fail before target access"
             ),
         )
 
