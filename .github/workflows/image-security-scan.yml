@@ -268,7 +268,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install crane
-        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
       - name: Scan the public development image for a baked Omniverse Kit payload
         env:
