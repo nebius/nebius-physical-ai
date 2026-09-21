@@ -21,6 +21,10 @@ Implementation belongs in `npa/src/npa/tools/desktop`, independently of Workbenc
    make Retina fonts look enormous. The viewer's **More space** control changes
    workspace scale while retaining lossless rendering and device-pixel density.
    `display --dpi 192` suits a Retina display; use 96 for standard density.
+   For delayed clicks or typing, measure VM load and network latency, then use
+   `optimize --ssh-host <alias>` to disable compositing and GTK animations live.
+   Preserve resolution and running applications; compare actual input-to-frame
+   latency before claiming an improvement. Setup uses these same defaults.
 4. For authorized public access, verify the VM's external IPv4 address and
    ingress for TCP 80 and the selected HTTPS port. Then use
    `public-access --ssh-host <alias> --public-ip <address> --https-port 8443`.

@@ -16,7 +16,9 @@ def _validate_host(host: str) -> None:
 
 
 def _configuration(action: str, options: dict) -> dict:
-    if action not in {"setup", "status", "display", "public-access", "chat-setup"}:
+    if action not in {
+        "setup", "status", "display", "public-access", "chat-setup", "optimize"
+    }:
         raise ValueError("Unsupported desktop action.")
     result = {"action": action, **options}
     if "dpi" in result and not 96 <= result["dpi"] <= 240:
@@ -53,7 +55,7 @@ def operate(host: str, action: str, *, dry_run: bool = False, **options) -> dict
 
     Args:
         host: Existing SSH alias or user@hostname using the operator's SSH keys.
-        action: Setup, status, display, public-access, or chat-setup.
+        action: Setup, status, display, public-access, chat-setup, or optimize.
         dry_run: Return the intended action without connecting or writing files.
         options: Validated action-specific configuration; never credentials.
     Returns:

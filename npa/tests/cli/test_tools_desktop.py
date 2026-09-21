@@ -12,12 +12,13 @@ from npa.tools import desktop
 from npa.tools.desktop import remote
 
 
-def test_setup_dry_run_is_offline(monkeypatch):
+@pytest.mark.parametrize("action", ["setup", "optimize"])
+def test_desktop_dry_run_is_offline(monkeypatch, action):
     monkeypatch.setattr(
         subprocess, "run", Mock(side_effect=AssertionError("network call"))
     )
     result = CliRunner().invoke(
-        app, ["desktop", "setup", "--ssh-host", "dev-host", "--dry-run", "--json"]
+        app, ["desktop", action, "--ssh-host", "dev-host", "--dry-run", "--json"]
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["planned"] is True

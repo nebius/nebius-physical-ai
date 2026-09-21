@@ -274,6 +274,25 @@ def _display(dpi):
     _write(_STATE / "display.json", json.dumps({"dpi": dpi}))
 
 
+def _optimize(environment=None):
+    prefix = [] if environment is not None else ["dbus-run-session", "--"]
+    for channel, key in [
+        ("xfwm4", "/general/use_compositing"),
+        ("xsettings", "/Gtk/EnableAnimations"),
+    ]:
+        _command(
+            prefix + [
+                "xfconf-query", "-c", channel, "-p", key,
+                "-n", "-t", "bool", "-s", "false",
+            ],
+            environment=environment,
+        )
+    _write(
+        _STATE / "performance.json",
+        json.dumps({"compositing": False, "gtk_animations": False}),
+    )
+
+
 def _setup(config):
     repository = str(Path(config["repository_path"]).expanduser())
     if not (Path(repository) / ".git").exists():
@@ -298,6 +317,7 @@ def _initial_density(dpi):
     )
     if probe.returncode == 0:
         _display(dpi)
+        _optimize(_desktop_environment())
         return
     _command(
         [
@@ -316,6 +336,7 @@ def _initial_density(dpi):
         ]
     )
     _write(_STATE / "display.json", json.dumps({"dpi": dpi}))
+    _optimize()
 
 
 _DESKTOP_PACKAGES = [
@@ -361,6 +382,7 @@ def _status():
     for name, key in (
         ("public-access.json", "public_access"),
         ("display.json", "display"),
+        ("performance.json", "performance"),
         ("backup-last-success.json", "last_backup"),
         ("snapshot-verification.json", "snapshot"),
         ("chat.json", "chat"),
@@ -587,6 +609,8 @@ def _run(config):
                 _public_access(config)
             elif config["action"] == "chat-setup":
                 _chat_setup(config)
+            elif config["action"] == "optimize":
+                _optimize(_desktop_environment())
         print(json.dumps(_status()))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         with (_STATE / "setup.log").open("a") as log, redirect_stderr(log):

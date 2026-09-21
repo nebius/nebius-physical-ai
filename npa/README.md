@@ -28,6 +28,8 @@ desktop with adjustable workspace size, and can enable authenticated HTTPS on a
 public IP. Its setup and operation commands live under `npa tools`.
 `npa tools desktop chat-setup --connect-vscode` adds authenticated mobile Codex
 chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it.
+`npa tools desktop optimize --ssh-host <alias>` reduces desktop effects for faster
+clicking and typing while preserving the running session and display resolution.
 
 From the repository root, with your virtual environment active:
 

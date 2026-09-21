@@ -13,6 +13,7 @@ Commands
 setup  Install a private desktop, preserving existing credentials and sessions.
 display  Change desktop density without restarting applications.
 status  Inspect desktop services and recovery records without disclosing secrets.
+optimize  Reduce desktop input latency without changing resolution or restarting apps.
 public-access  Enable HTTPS with a trusted IP certificate and a separate strong login.
 open  Open the desktop using public HTTPS or a private SSH tunnel.
 chat-setup  Install authenticated mobile chat on the existing desktop HTTPS gateway.
@@ -31,6 +32,7 @@ chat-setup  Install authenticated mobile chat on the existing desktop HTTPS gate
 | `setup` | Install a private desktop, preserving existing credentials and sessions. |
 | `display` | Change desktop density without restarting applications. |
 | `status` | Inspect desktop services and recovery records without disclosing secrets. |
+| `optimize` | Reduce desktop input latency without changing resolution or restarting apps. |
 | `public-access` | Enable HTTPS with a trusted IP certificate and a separate strong login. |
 | `open` | Open the desktop using public HTTPS or a private SSH tunnel. |
 | `chat-setup` | Install authenticated mobile chat on the existing desktop HTTPS gateway. |

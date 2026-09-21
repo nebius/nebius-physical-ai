@@ -65,6 +65,22 @@ At a 1512 × 900 CSS viewport, Retina mode needs roughly twice each dimension in
 framebuffer pixels; the viewer toolbar takes part of the height. Raising JPEG
 quality alone cannot correct a low-resolution framebuffer.
 
+## Responsive clicking and typing
+
+Setup disables XFCE compositing and GTK animations to reduce redundant rendering
+on the CPU desktop. Apply the same persistent preferences to a running desktop:
+
+```bash
+npa tools desktop optimize --ssh-host "$DESKTOP_SSH_HOST" --dry-run --json
+npa tools desktop optimize --ssh-host "$DESKTOP_SSH_HOST" --json
+```
+
+The change takes effect immediately, preserving applications, resolution, font
+density, and lossless text rendering. `status` reports the applied performance
+preferences. Network round-trip time still contributes to input latency.
+Desktop effects can be re-enabled in XFCE's Settings Editor; running `setup` or
+`optimize` reapplies the responsive defaults.
+
 ## Direct access through an external IP
 
 Select a provider-verified static external IPv4 address already assigned to the

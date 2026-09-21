@@ -115,6 +115,28 @@ def status(
     _emit(ssh_host, "status", output_json)
 
 
+@desktop.command("optimize")
+@intent_boundary(OperationIntent.MUTATE)
+@json_stdout_contract
+def optimize(
+    ssh_host: str = typer.Option(..., "--ssh-host"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    output_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Reduce desktop input latency without changing resolution or restarting apps.
+
+    Args:
+        ssh_host: Existing desktop SSH destination.
+        dry_run: Show the action without connecting.
+        output_json: Emit JSON instead of text.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: Applying desktop preferences fails.
+    """
+    _emit(ssh_host, "optimize", output_json, dry_run=dry_run)
+
+
 @desktop.command("public-access")
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 @json_stdout_contract
