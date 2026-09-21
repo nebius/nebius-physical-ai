@@ -1,0 +1,63 @@
+{
+  "schema": "npa.evo.neutral-image-qualification.v1",
+  "recipe_source": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+  "upstream_evo": "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422",
+  "image_index": "sha256:2d1e1c074e2b6f066bb49aaee1ac6bf5252ca48689312ee9c368941ca42f15a9",
+  "runtime_manifest": "sha256:4bf6043b377ccabd72fe9d3fac71f0c09863e23b337a343e592cad424f6181df",
+  "qualification": "Accepted for private delivery and the scoped CPU workflow; no public-image promotion",
+  "cpu_reproduction": {
+    "functional_outputs": 62,
+    "native_result_archives": 10,
+    "decoded_pngs": 19,
+    "independently_recomputed_values": 690,
+    "max_absolute_numeric_difference": 4.11e-15,
+    "true_positive": 2,
+    "true_negative": 2,
+    "false_positive": 0,
+    "false_negative": 0,
+    "malformed_input_expected_exit": 1,
+    "default_uid": 1000,
+    "network": "none"
+  },
+  "complete_byte_review": {
+    "coverage_checks_passed": 26,
+    "records": 88099,
+    "record_bytes": 887114842,
+    "regular_files": 20100,
+    "layers": 12,
+    "raw_exit": 1,
+    "raw_valid": false,
+    "raw_findings": 54,
+    "finding_records": 14,
+    "private_literal_matches": 0,
+    "unresolved_findings": 0,
+    "disposition": "Exact public crypto self-test constants, SSH parser marker, public source/test/documentation and checksum or scientific-library symbols; raw failures retained without rewriting scanner output"
+  },
+  "native_security": {
+    "all_severity_secret_findings": 0,
+    "fixable_critical_vulnerabilities": 0,
+    "other_cves_retained": true,
+    "restricted_payload_matches": 0
+  },
+  "spdx": {
+    "packages": 184,
+    "raw_schema_errors": 1,
+    "raw_error": "primaryPackagePurpose OPERATING-SYSTEM is not the SPDX2.3 enum",
+    "derived_correction": "OPERATING_SYSTEM",
+    "other_json_values_changed": false,
+    "derived_schema_errors": 0,
+    "references_resolve": true,
+    "licenses_include": "GPL-3.0 Evo and actual embedded numerical-library/font grants; not all-permissive"
+  },
+  "private_delivery": {
+    "same_index_preserved": true,
+    "three_manifest_readbacks_equal": true,
+    "actual_target_pull_pending": true
+  },
+  "limitations": [
+    "Synthetic metric controls and pinned upstream examples do not establish real-world SLAM/navigation/safety accuracy.",
+    "No GPU or hosted VLM acceptance is claimed.",
+    "The fresh standard Sky CPU lifecycle is still pending.",
+    "Earlier confidentiality findings belong to the rejected predecessor image and remain retained."
+  ]
+}
