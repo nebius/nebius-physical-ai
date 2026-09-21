@@ -1,0 +1,107 @@
+{
+  "dataset_revision": null,
+  "elapsed_seconds": 7.822667914002523,
+  "engine": "nvidia-curobo-v2",
+  "gpu": {
+    "compute_capability": [
+      10,
+      0
+    ],
+    "cuda_version": "13.0",
+    "name": "NVIDIA B200",
+    "torch_version": "2.13.0+cu130"
+  },
+  "input_sha256": "55fd5a85f3366c23fa5ce06dda4854ca331232404cbb46ae39a491e5296bf859",
+  "journal_sha256": "e6b589f9077839bf493ff2d99ba930a37797f11122cec0149aa9a9b1d178207d",
+  "kind": "plan",
+  "limitations": [
+    "Franka pose planning only; no hardware execution or independent collision certification."
+  ],
+  "requested_modes": [
+    "kinematic"
+  ],
+  "schema_version": "npa.curobo.result.v1",
+  "seed": 2,
+  "source_revision": "8e734f3ced1df898990bcd92de40abce475907db",
+  "subprocess_wall_seconds": 11.449744218996784,
+  "summary": {
+    "kinematic": {
+      "eligible_count": 2,
+      "failed": 1,
+      "input_count": 2,
+      "invalid": 0,
+      "metrics": {
+        "joint_path_length_rad": {
+          "count": 1,
+          "mean": 3.049696223690777,
+          "p50": 3.049696223690777,
+          "p95": 3.049696223690777,
+          "p98": 3.049696223690777
+        },
+        "max_abs_jerk_rad_s3": {
+          "count": 1,
+          "mean": 139.2711944580078,
+          "p50": 139.2711944580078,
+          "p95": 139.2711944580078,
+          "p98": 139.2711944580078
+        },
+        "planner_total_seconds": {
+          "count": 1,
+          "mean": 0.0453285129070282,
+          "p50": 0.0453285129070282,
+          "p95": 0.0453285129070282,
+          "p98": 0.0453285129070282
+        },
+        "position_error_m": {
+          "count": 1,
+          "mean": 1.3719009928081505e-07,
+          "p50": 1.3719009928081505e-07,
+          "p95": 1.3719009928081505e-07,
+          "p98": 1.3719009928081505e-07
+        },
+        "rotation_error_rad": {
+          "count": 1,
+          "mean": 1.622694725256224e-07,
+          "p50": 1.622694725256224e-07,
+          "p95": 1.622694725256224e-07,
+          "p98": 1.622694725256224e-07
+        },
+        "solver_seconds": {
+          "count": 1,
+          "mean": 0.03318736052513122,
+          "p50": 0.03318736052513122,
+          "p95": 0.03318736052513122,
+          "p98": 0.03318736052513122
+        },
+        "tool_path_length_m": {
+          "count": 1,
+          "mean": 0.6550320880671613,
+          "p50": 0.6550320880671613,
+          "p95": 0.6550320880671613,
+          "p98": 0.6550320880671613
+        },
+        "trajectory_duration_seconds": {
+          "count": 1,
+          "mean": 1.5000000223517418,
+          "p50": 1.5000000223517418,
+          "p95": 1.5000000223517418,
+          "p98": 1.5000000223517418
+        },
+        "wall_plan_seconds": {
+          "count": 2,
+          "mean": 0.061088475998985814,
+          "p50": 0.061088475998985814,
+          "p95": 0.07635517689777771,
+          "p98": 0.07737295695769716
+        }
+      },
+      "success": 1,
+      "success_fraction_all": 0.5,
+      "success_fraction_eligible": 0.5
+    }
+  },
+  "warmup_seconds": [
+    4.1486134820006555,
+    2.5328275079991727
+  ]
+}

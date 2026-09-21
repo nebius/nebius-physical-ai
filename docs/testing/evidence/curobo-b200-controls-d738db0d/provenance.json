@@ -1,0 +1,48 @@
+{
+  "format": "npa.public-control-evidence.v1",
+  "source_overlay": "d738db0dc0053b4abff48c5b7d6bfd00b8c76f97",
+  "predecessor_image_source": "b12c1005198d0a1f58fe646db5214c9c75f5c59a",
+  "image_manifest_digest": "sha256:6f3cb888e1a59e2e58ab5582851ab2d1a205928df7fd9b42266dd64f4781bb22",
+  "retained_object_count_verified": 25,
+  "original_fetch_manifest_sha256": "20f9a533e528c36281032aa0f4b410002abaa93ae3bfde86dfd99a2ee4ac1561",
+  "independent_acceptance_sha256": "ce383cf010ce0e60a17be69bf84ea179369853d3227142c6db4acc6e434eea7f",
+  "file_transformations": [
+    {
+      "published_file": "validation.json",
+      "original_sha256": "6879ba49e3a14876a81ade97efc52808f28c7bc6ec50e0f06e6941e8dcd0d1ac",
+      "transformation": "Omit operational run_id; JSON formatting only; all other fields unchanged."
+    },
+    {
+      "published_file": "result.json",
+      "original_sha256": "84f26f2a5bf18b28ce4f9e45361bd4d2a082144904f6bab415e1df28267cfc45",
+      "transformation": "Omit operational run_id; JSON formatting only; all other fields unchanged."
+    },
+    {
+      "published_file": "rrd-inspection.json",
+      "original_sha256": "29ef31696fe3fbde5d580d1955b1e2bae29f5c27c2b9f1eb83b0c86e07480eb1",
+      "transformation": "Omit operational run_id; JSON formatting only; all other fields unchanged."
+    },
+    {
+      "published_file": "problems.jsonl",
+      "original_sha256": "e6b589f9077839bf493ff2d99ba930a37797f11122cec0149aa9a9b1d178207d",
+      "transformation": "None; exact retained bytes."
+    },
+    {
+      "published_file": "controls.json",
+      "original_sha256": "b32bd4139014c531c2908d8ad58c58e04e5360f0249c9cf5bf7e4e17d0836a4a",
+      "transformation": "None; exact retained bytes."
+    },
+    {
+      "published_file": "malformed.json",
+      "original_sha256": "59a052438fe530f6173a30d3c430612bd152809c4f92fe9d96b4e5e95e234ffe",
+      "transformation": "None; exact retained bytes."
+    }
+  ],
+  "plot": {
+    "input": "problems.jsonl",
+    "input_sha256": "e6b589f9077839bf493ff2d99ba930a37797f11122cec0149aa9a9b1d178207d",
+    "samples": 61,
+    "method": "Matplotlib plot of retained tool_position and seven arm joint positions; no smoothing or interpolation."
+  },
+  "scope": "Two kinematic controls and malformed-input rejection. Does not establish full benchmark, final-image, RTX, dynamics, VLM, or hardware-execution acceptance."
+}

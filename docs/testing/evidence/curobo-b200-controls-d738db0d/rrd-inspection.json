@@ -1,0 +1,34 @@
+{
+  "dataset_revision": null,
+  "decode": {
+    "chunk_mismatches": [],
+    "decoded_chunk_rows": 2508,
+    "goal_entities": 2,
+    "print": "passed",
+    "print_bytes": 259856,
+    "print_sha256": "37ffe927792129315376c33ed5ea45c4c743590c9c5a7da574826dda941605db",
+    "required_chunk_count": 48,
+    "semantic_compare": "passed",
+    "semantic_reference_sha256": "40df576b9da4f1224eef8cde29cf0d63a6d7084a1be388680cf3d76f2e8007b7",
+    "status_entities": 2,
+    "trajectory_entities": 1,
+    "trajectory_samples": 61,
+    "verify": "passed"
+  },
+  "goal_markers": 2,
+  "journal_sha256": "e6b589f9077839bf493ff2d99ba930a37797f11122cec0149aa9a9b1d178207d",
+  "problem_count": 2,
+  "result_sha256": "84f26f2a5bf18b28ce4f9e45361bd4d2a082144904f6bab415e1df28267cfc45",
+  "rrd_sha256": "0fa6d48990763603c589c7be57748ddfc1d556b5675d19efa7bc858423e31465",
+  "schema_version": "npa.curobo.rrd-manifest.v1",
+  "sha256": "0fa6d48990763603c589c7be57748ddfc1d556b5675d19efa7bc858423e31465",
+  "source_revision": "8e734f3ced1df898990bcd92de40abce475907db",
+  "status_counts": {
+    "failed": 1,
+    "invalid": 0,
+    "success": 1
+  },
+  "status_entities": 2,
+  "successful_trajectories": 1,
+  "trajectory_samples": 61
+}

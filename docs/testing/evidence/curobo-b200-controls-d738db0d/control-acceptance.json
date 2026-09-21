@@ -1,0 +1,35 @@
+{
+  "acceptance_sha256": "babe3f019b4c2c888f4810b107004ec4a186a6290dfc45e706c2a5ad0b83c3c3",
+  "artifact_count": 25,
+  "artifact_fetch_sha256": "20f9a533e528c36281032aa0f4b410002abaa93ae3bfde86dfd99a2ee4ac1561",
+  "compute_capability": [
+    10,
+    0
+  ],
+  "explicit_statuses": {
+    "feasible": "success",
+    "goal-blocked": "failed"
+  },
+  "fk_replay_max_error_m": 0.0,
+  "format": "npa_curobo_d738_parser3_b200_independent_acceptance_v1",
+  "hardware_family": "B200",
+  "host_launcher_commit": "f1751358cd21bf48384fd597550da4a29fbfebb4",
+  "image_config_digest": "sha256:63bfb1e868a0997bd2507c1b8590246a4c42e0400beb080b1ce3bae16b440caa",
+  "image_manifest_digest": "sha256:6f3cb888e1a59e2e58ab5582851ab2d1a205928df7fd9b42266dd64f4781bb22",
+  "image_source_sha": "b12c1005198d0a1f58fe646db5214c9c75f5c59a",
+  "journal_sha256": "e6b589f9077839bf493ff2d99ba930a37797f11122cec0149aa9a9b1d178207d",
+  "malformed_outputs_absent": true,
+  "malformed_robot_rejected": true,
+  "max_fk_quaternion_component_replay_error": 0.0,
+  "max_fk_quaternion_replay_error_rad": 0.0,
+  "overlay_source_sha": "d738db0dc0053b4abff48c5b7d6bfd00b8c76f97",
+  "overlay_wheel_sha256": "294141fa2ab779eaa64a00c54dd467efc3115208d59bbc215e2d7d981e94aab1",
+  "rrd_verified": true,
+  "scope": "predecessor exact image plus reviewed d738 source overlay diagnostic; not final exact-image acceptance",
+  "stock_product_passed": true,
+  "terminal_status": "SUCCEEDED",
+  "validation_sha256": "6879ba49e3a14876a81ade97efc52808f28c7bc6ec50e0f06e6941e8dcd0d1ac",
+  "validation_valid": true,
+  "verdict": "PASS_B200_DIAGNOSTIC_OVERLAY_FULL_COMPOSITE",
+  "publication_transformation": "Operational run identifier omitted; measurements and source/image hashes unchanged."
+}
