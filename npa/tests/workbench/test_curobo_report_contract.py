@@ -170,12 +170,13 @@ def solved_row(monkeypatch):
                 get_link_pose=lambda _name: SimpleNamespace(
                     position=Tensor(
                         np.column_stack(
-                            (active[:, 0], np.zeros((len(active), 2), dtype=active.dtype))
+                            (
+                                active[:, 0],
+                                np.zeros((len(active), 2), dtype=active.dtype),
+                            )
                         )
                     ),
-                    quaternion=Tensor(
-                        np.tile([1.0, 0.0, 0.0, 0.0], (len(active), 1))
-                    ),
+                    quaternion=Tensor(np.tile([1.0, 0.0, 0.0, 0.0], (len(active), 1))),
                 )
             )
         )
@@ -317,9 +318,7 @@ def test_actual_runner_metrics_bind_serialized_float32_trajectory(solved_row):
         **solved_row(positions=positions),
     }
 
-    raw_float32_metric = float(
-        np.linalg.norm(np.diff(positions, axis=0), axis=1).sum()
-    )
+    raw_float32_metric = float(np.linalg.norm(np.diff(positions, axis=0), axis=1).sum())
     durable_metric = float(
         np.linalg.norm(
             np.diff(np.asarray(row["trajectory"]["position"], dtype=float), axis=0),
