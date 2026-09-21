@@ -220,6 +220,201 @@ def test_workbench_workflow_submit_dispatches_skypilot(
     assert submit_mock.call_args.kwargs["secret_envs"] == ["AWS_ACCESS_KEY_ID"]
 
 
+def _raw_recovery_submit_args(
+    yaml_path: Path, isolated_dir: Path, config_path: Path
+) -> list[str]:
+    return [
+        "workbench",
+        "workflow",
+        "submit",
+        str(yaml_path),
+        "--run-id",
+        "raw-recovery-run",
+        "--project",
+        "synthetic",
+        "--infra",
+        "k8s/synthetic-context",
+        "--isolated-config-dir",
+        str(isolated_dir),
+        "--config-path",
+        str(config_path),
+        "--controller-backend",
+        "kubernetes",
+        "--no-deploy-if-absent",
+        "--durable-s3",
+        "--workflow-s3-uri",
+        "s3://bucket/raw-recovery-run/",
+        "--secret-env",
+        "AWS_ACCESS_KEY_ID",
+        "--secret-env",
+        "AWS_SECRET_ACCESS_KEY",
+        "--output-format",
+        "json",
+    ]
+
+
+def _recovery_option(argv: list[str], flag: str) -> str:
+    return argv[argv.index(flag) + 1]
+
+
+@pytest.fixture
+def raw_recovery_case(monkeypatch, mocker, tmp_path) -> SimpleNamespace:
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    operation_root = tmp_path / "operations"
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(operation_root))
+    _patch_workflow_s3(monkeypatch, FakeWorkflowS3())
+    yaml_path = tmp_path / "raw.yaml"
+    yaml_path.write_text("name: raw\nrun: echo recovery\n", encoding="utf-8")
+    config_path = tmp_path / "sky-config.yaml"
+    config_path.write_text("{}\n", encoding="utf-8")
+    isolated_dir = tmp_path / "isolated"
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=[
+            SkyPilotSubmitError(
+                "synthetic indeterminate launch", launch_attempted=True
+            ),
+            WorkflowResult(status="SUBMITTED", job_id="42", returncode=0),
+        ],
+    )
+    return SimpleNamespace(
+        operation_root=operation_root,
+        yaml_path=yaml_path,
+        config_path=config_path,
+        isolated_dir=isolated_dir,
+        submit=submit,
+    )
+
+
+def _assert_raw_recovery_options(case, argv: list[str]) -> None:
+    assert argv[4] == str(case.yaml_path)
+    assert "--resume-run" not in argv
+    assert argv.count("--resume") == 1
+    assert _recovery_option(argv, "--run-id") == "raw-recovery-run"
+    assert _recovery_option(argv, "--project") == "synthetic"
+    assert _recovery_option(argv, "--infra") == "k8s/synthetic-context"
+    assert _recovery_option(argv, "--controller-backend") == "kubernetes"
+    assert _recovery_option(argv, "--workflow-s3-uri") == (
+        "s3://bucket/raw-recovery-run"
+    )
+    assert _recovery_option(argv, "--isolated-config-dir") == str(case.isolated_dir)
+    assert _recovery_option(argv, "--config-path") == str(case.config_path)
+    assert _recovery_option(argv, "--output-format") == "json"
+    assert "--no-deploy-if-absent" in argv
+    assert "--durable-s3" in argv
+    assert argv.count("--secret-env") == 2
+
+
+def test_raw_sky_recovery_argv_replays_same_journal_and_launch_options(
+    raw_recovery_case,
+) -> None:
+    first = runner.invoke(
+        app,
+        _raw_recovery_submit_args(
+            raw_recovery_case.yaml_path,
+            raw_recovery_case.isolated_dir,
+            raw_recovery_case.config_path,
+        ),
+    )
+    assert first.exit_code == 1, first.output
+    [journal_path] = raw_recovery_case.operation_root.glob("*/journal.json")
+    initial = json.loads(journal_path.read_text(encoding="utf-8"))
+    recovery_argv = initial["recovery_commands"]["resume_argv"]
+
+    resumed = runner.invoke(app, recovery_argv[1:])
+    assert resumed.exit_code == 0, resumed.output
+    _assert_raw_recovery_options(raw_recovery_case, recovery_argv)
+    journal_text = journal_path.read_text(encoding="utf-8")
+    assert "test-access" not in journal_text
+    assert "test-secret" not in journal_text
+    final = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert final["phase"] == "committed"
+    assert final["resume_count"] == 1
+    assert len(list(raw_recovery_case.operation_root.glob("*/journal.json"))) == 1
+    assert raw_recovery_case.submit.call_count == 2
+    replay = raw_recovery_case.submit.call_args_list[1]
+    assert replay.args[1] == "raw-recovery-run"
+    assert replay.kwargs["infra"] == "k8s/synthetic-context"
+    assert replay.kwargs["controller_backend"] == "kubernetes"
+
+
+@pytest.mark.parametrize(
+    ("runtime", "runtime_flag", "opposite_flag"),
+    [(True, "--runtime", "--no-runtime"), (False, "--no-runtime", "--runtime")],
+)
+def test_declarative_recovery_argv_keeps_resume_run_contract(
+    runtime: bool, runtime_flag: str, opposite_flag: str
+) -> None:
+    from npa.cli.workbench import workflow
+
+    argv = workflow._workflow_submit_recovery_argv(
+        Path("workflow.yaml"),
+        alias="synthetic",
+        run_id="declarative-run",
+        is_npa_spec=True,
+        arguments={"runtime": runtime, "output_format": workflow.OutputFormat.json},
+    )
+    assert _recovery_option(argv, "--resume-run") == "declarative-run"
+    assert "--run-id" not in argv
+    assert "--resume" not in argv
+    assert runtime_flag in argv
+    assert opposite_flag not in argv
+    assert _recovery_option(argv, "--output-format") == "json"
+
+
+def test_recovery_serializer_accounts_for_every_submit_argument() -> None:
+    import inspect
+    import typer
+    from npa.cli.workbench import workflow
+
+    parameters = set(inspect.signature(workflow.submit_cmd).parameters)
+    identity_arguments = {"yaml_path", "run_id", "resume_run", "project", "resume"}
+    intentionally_omitted = {
+        "details",  # Only affects plan-only output; no launch journal is created.
+        "plan_only",  # A plan never enters the launch transaction.
+        "registry_password",  # Secrets must never enter durable recovery argv.
+        "workflow_s3_prefix",  # Replaced by the exact resolved workflow_s3_uri.
+    }
+    accounted_for = (
+        set(workflow._WORKFLOW_RECOVERY_ARGUMENT_NAMES)
+        | identity_arguments
+        | intentionally_omitted
+    )
+    assert parameters == accounted_for
+
+    submit_command = (
+        typer.main.get_command(app)
+        .commands["workbench"]
+        .commands["workflow"]
+        .commands["submit"]
+    )
+    cli_flags = {
+        flag
+        for parameter in submit_command.params
+        for flag in parameter.opts + parameter.secondary_opts
+    }
+    serialized_flags = {
+        flag
+        for option_group in (
+            workflow._WORKFLOW_RECOVERY_VALUE_OPTIONS,
+            workflow._WORKFLOW_RECOVERY_REPEATABLE_OPTIONS,
+            workflow._WORKFLOW_RECOVERY_BOOLEAN_OPTIONS,
+            workflow._WORKFLOW_RECOVERY_ENABLED_FLAGS,
+        )
+        for _name, *flags in option_group
+        for flag in flags
+    } | {
+        "--project",
+        "--resume-run",
+        "--run-id",
+        "--resume",
+        "--runtime",
+        "--no-runtime",
+    }
+    assert serialized_flags <= cli_flags
+
+
 def test_submit_missing_secret_fails_before_remote_setup(
     mocker, monkeypatch, tmp_path
 ) -> None:
