@@ -185,12 +185,7 @@ def test_gpu_subprocess_failure_preserves_interrupted_journal_and_receipt(
     monkeypatch, tmp_path
 ):
     monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
-    partial_journal = (
-        canonical(row())
-        + b"\n\n"
-        + b"42\n"
-        + b'{"status":"truncated"'
-    )
+    partial_journal = canonical(row()) + b"\n\n" + b"42\n" + b'{"status":"truncated"'
     objects = {
         request().input_path: canonical(BenchmarkManifest().model_dump(mode="json"))
     }

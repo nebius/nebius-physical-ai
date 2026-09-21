@@ -95,9 +95,7 @@ def payload():
         )
     )
     receipt = b"Synthetic real benchmark import receipt."
-    contract["runtime_import_receipt"].update(
-        sha256=digest(receipt), size=len(receipt)
-    )
+    contract["runtime_import_receipt"].update(sha256=digest(receipt), size=len(receipt))
     entries.append(entry(contract["runtime_import_receipt"]["path"], receipt))
     return contract, entries, excluded
 
@@ -545,9 +543,7 @@ def test_production_contract_matches_locked_artifacts_and_notice():
         "135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1"
     )
     assert libgomp["runtime"]["soname_target"] == "libgomp.so.1.0.0"
-    assert libgomp["license_expression"] == (
-        "GPL-3.0-or-later WITH GCC-exception-3.1"
-    )
+    assert libgomp["license_expression"] == ("GPL-3.0-or-later WITH GCC-exception-3.1")
     assert {row["sha256"] for row in libgomp["license_files"]} == {
         "20390f8a6f3b1e4d7cb45dd8652dabb259bbef688cbad839bcdb0b9ba7252f79",
         "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
@@ -998,9 +994,7 @@ def test_unknown_header_under_torch_namespace_is_still_rejected(
 def test_ancestor_adapter_tampering_remains_rejected_after_valid_replacement(
     tmp_path, adapter_payload
 ):
-    path = next(
-        item[0] for item in adapter_payload[1] if "/torch/include/" in item[0]
-    )
+    path = next(item[0] for item in adapter_payload[1] if "/torch/include/" in item[0])
     report = verify(
         tmp_path,
         adapter_payload,

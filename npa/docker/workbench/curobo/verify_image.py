@@ -409,9 +409,7 @@ def verify_image(
                                 "retained_payload_not_regular", layer_index, entry_index
                             )
                         if path in expected_links and not entry.issym():
-                            issue(
-                                "retained_link_not_symlink", layer_index, entry_index
-                            )
+                            issue("retained_link_not_symlink", layer_index, entry_index)
                         # Ancestor bytes remain distributed even if later hidden.
                         if not entry.isdir():
                             if _SDK_NAME.fullmatch(basename) and path not in adapters:

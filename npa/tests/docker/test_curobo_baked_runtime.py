@@ -88,7 +88,9 @@ def _install_dataset_modules(monkeypatch, *, motion_rows=800, mpinets_rows=1800)
     monkeypatch.setitem(sys.modules, "robometrics.datasets", datasets)
 
 
-def test_runtime_import_check_records_exact_real_boundary_receipt(monkeypatch, tmp_path):
+def test_runtime_import_check_records_exact_real_boundary_receipt(
+    monkeypatch, tmp_path
+):
     from npa.workbench.curobo import runner
 
     calls = []
