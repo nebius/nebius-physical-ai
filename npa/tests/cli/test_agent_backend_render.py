@@ -59,65 +59,20 @@ def _isolate_rendered_agent_backend_package():
     _clear_rendered_agent_backend_modules()
 
 
-def test_artifact_route_uses_source_qualified_run_ref() -> None:
-    from fastapi import FastAPI, HTTPException
-    from fastapi.responses import JSONResponse
-    from fastapi.testclient import TestClient
+def test_artifact_routes_use_the_shipped_shared_policy(monkeypatch) -> None:
+    body = _render_backend_body(monkeypatch)
 
-    from npa.agent_backend.artifact_routes import (
-        ArtifactRouteDeps,
-        register_artifact_routes,
-    )
-
-    class _Artifact:
-        key = "nested/root/category/run-one/reports/run.mcap"
-
-        def to_dict(self):
-            return {"key": self.key, "render": "mcap"}
-
-    artifact = _Artifact()
-    resolution = SimpleNamespace(
-        run_id="run-one",
-        run_ref="npa1_canonical",
-        bucket="configured-bucket",
-        artifacts=[artifact],
-    )
-    seen: dict[str, str] = {}
-
-    def _resolve(_buckets, **kwargs):
-        seen["run_ref"] = kwargs["run_ref_or_id"]
-        return resolution
-
-    app = FastAPI()
-    register_artifact_routes(
-        app,
-        ArtifactRouteDeps(
-            s3_client=lambda: (
-                object(),
-                {"bucket": "configured-bucket", "prefix": "nested/root"},
-            ),
-            discovery_prefix=lambda _settings, prefix: prefix,
-            list_runs_cached=lambda *_args, **_kwargs: None,
-            list_runs_cached_multi=lambda *_args, **_kwargs: None,
-            list_buckets=lambda _s3, _settings: ["configured-bucket"],
-            validate_run_id=lambda value: value,
-            find_artifacts=lambda *_args, **_kwargs: ("", []),
-            resolve_run=_resolve,
-            summarize_run=lambda *_args, **_kwargs: None,
-            discovery_excludes=lambda: set(),
-            list_artifacts=lambda *_args, **_kwargs: [],
-            select_preferred=lambda items: items[0] if items else None,
-            http_exception=HTTPException,
-            json_response=JSONResponse,
-        ),
-    )
-    response = TestClient(app).get(
-        "/artifacts/run/run-one", params={"run_ref": "npa1_exact"}
-    )
-    assert response.status_code == 200
-    assert seen == {"run_ref": "npa1_exact"}
-    assert response.json()["run_ref"] == "npa1_canonical"
-    assert response.json()["artifacts"] == [{"key": artifact.key, "render": "mcap"}]
+    assert "from agent_backend.artifact_routes import (" in body
+    for helper in (
+        "artifact_run_snapshot_scope",
+        "build_artifact_run_list_response",
+        "decide_artifact_run_lookup",
+        "build_artifact_run_detail_response",
+    ):
+        assert helper in body
+        assert f"{helper}(" in body
+    assert "ArtifactRouteDeps" not in body
+    assert "register_artifact_routes" not in body
 
 
 def _render_backend_body(monkeypatch) -> str:
@@ -197,6 +152,155 @@ def test_rendered_backend_compiles(monkeypatch) -> None:
     )
     assert "POST /api/agent/gpu-allocation/attempt" in body
     assert "POST /api/agent/gpu-allocation/consent" in body
+
+
+def test_rendered_artifact_reads_use_an_identity_isolated_from_state_writes(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_identity"
+    )
+    deployment = {
+        "NPA_AGENT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_S3_PREFIX": "deployment/runs",
+        "NPA_AGENT_S3_ENDPOINT": "https://deployment.example",
+        "AWS_ACCESS_KEY_ID": "deployment-access",
+        "AWS_SECRET_ACCESS_KEY": "deployment-secret",
+        "AWS_REGION": "deployment-region",
+    }
+    artifact = {
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE": "isolated-read",
+        "NPA_AGENT_ARTIFACT_S3_BUCKET": "artifact-bucket",
+        "NPA_AGENT_ARTIFACT_S3_PREFIX": "preserved/runs",
+        "NPA_AGENT_ARTIFACT_S3_ENDPOINT": "https://artifact.example",
+        "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID": "artifact-access",
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY": "artifact-secret",
+        "NPA_AGENT_ARTIFACT_S3_REGION": "artifact-region",
+        "NPA_AGENT_ARTIFACT_SOURCES_B64": module.base64.urlsafe_b64encode(
+            json.dumps(
+                [
+                    {
+                        "project_id": "artifact-project",
+                        "bucket": "artifact-bucket",
+                        "resolved_prefix": "preserved/runs",
+                    },
+                    {
+                        "project_id": "second-artifact-project",
+                        "bucket": "second-artifact-bucket",
+                        "resolved_prefix": "other/runs",
+                    },
+                ]
+            ).encode("utf-8")
+        ).decode("ascii"),
+    }
+    for key, value in {**deployment, **artifact}.items():
+        monkeypatch.setenv(key, value)
+
+    assert module._agent_artifact_s3_settings() == {
+        "bucket": "artifact-bucket",
+        "prefix": "",
+        "endpoint": "https://artifact.example",
+        "access_key": "artifact-access",
+        "secret_key": "artifact-secret",
+        "region": "artifact-region",
+        "credential_mode": "isolated-read",
+        "credential_status": "ready",
+        "credential_reason": "isolated_read_identity_configured",
+    }
+    expected_deployment = {
+        "bucket": "deployment-bucket",
+        "endpoint": "https://deployment.example",
+        "access_key": "deployment-access",
+        "secret_key": "deployment-secret",
+        "region": "deployment-region",
+        "prefix": "npa-agent/session-state",
+    }
+    assert module._state_s3_settings() == expected_deployment
+    assert module._agent_s3_settings() == {
+        **expected_deployment,
+        "prefix": "deployment/runs",
+    }
+
+    # Never form a mixed credential pair from a partial artifact-read channel.
+    monkeypatch.delenv("NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY")
+    assert module._agent_artifact_s3_settings() == {
+        "bucket": "",
+        "prefix": "",
+        "endpoint": "",
+        "access_key": "",
+        "secret_key": "",
+        "region": "artifact-region",
+        "credential_mode": "isolated-read",
+        "credential_status": "blocked",
+        "credential_reason": "artifact_read_identity_incomplete",
+    }
+
+
+def test_rendered_artifact_write_migration_is_explicit_and_scope_bound(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_migration"
+    )
+    deployment = {
+        "NPA_AGENT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_S3_ENDPOINT": "https://deployment.example",
+        "AWS_ACCESS_KEY_ID": "deployment-access",
+        "AWS_SECRET_ACCESS_KEY": "deployment-secret",
+        "AWS_REGION": "deployment-region",
+    }
+    source = module.base64.urlsafe_b64encode(
+        json.dumps(
+            [
+                {
+                    "project_id": "deployment-project",
+                    "bucket": "deployment-bucket",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ]
+        ).encode("utf-8")
+    ).decode("ascii")
+    artifact = {
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MODE": "deployment-write-migration",
+        "NPA_AGENT_ARTIFACT_CREDENTIAL_MIGRATION": ("deployment-write-exact-source-v1"),
+        "NPA_AGENT_ARTIFACT_SOURCES_B64": source,
+        "NPA_AGENT_ARTIFACT_S3_BUCKET": "deployment-bucket",
+        "NPA_AGENT_ARTIFACT_S3_ENDPOINT": "https://deployment.example",
+        "NPA_AGENT_ARTIFACT_S3_ACCESS_KEY_ID": "deployment-access",
+        "NPA_AGENT_ARTIFACT_S3_SECRET_ACCESS_KEY": "deployment-secret",
+        "NPA_AGENT_ARTIFACT_S3_REGION": "deployment-region",
+    }
+    for key, value in {**deployment, **artifact}.items():
+        monkeypatch.setenv(key, value)
+
+    settings = module._agent_artifact_s3_settings()
+    assert settings["credential_mode"] == "deployment-write-migration"
+    assert settings["credential_status"] == "ready"
+    assert settings["credential_reason"] == "explicit_deployment_write_migration"
+
+    monkeypatch.setenv("NPA_AGENT_ARTIFACT_S3_BUCKET", "different-bucket")
+    blocked = module._agent_artifact_s3_settings()
+    assert blocked["credential_status"] == "blocked"
+    assert blocked["credential_reason"] == "artifact_read_identity_scope_mismatch"
+    assert blocked["access_key"] == blocked["secret_key"] == ""
+
+
+def test_rendered_artifact_reads_block_when_read_identity_is_absent(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_artifact_s3_absent"
+    )
+    monkeypatch.setenv("NPA_AGENT_S3_BUCKET", "deployment-bucket")
+    monkeypatch.setenv("NPA_AGENT_S3_ENDPOINT", "https://deployment.example")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "deployment-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "deployment-secret")
+
+    settings = module._agent_artifact_s3_settings()
+    assert settings["credential_mode"] == "unconfigured"
+    assert settings["credential_status"] == "blocked"
+    assert settings["credential_reason"] == "artifact_read_identity_absent"
+    assert settings["bucket"] == settings["access_key"] == settings["secret_key"] == ""
 
 
 def test_rendered_agent_s3_client_bounds_interactive_discovery(
@@ -938,6 +1042,12 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
     module_name = "npa_rendered_session_status_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     run_id = "agent-run-local-status"
+    recordings_dir = tmp_path / "recordings"
+    recordings_dir.mkdir()
+    recording = recordings_dir / "session.rrd"
+    recording.write_bytes(b"RRF2-session")
+    monkeypatch.setattr(module, "RECORDINGS_DIR", recordings_dir)
+    local_rrd_uri = recording.resolve().as_uri()
     details = module._default_sim2real_run_details(run_id)
     state = {
         "latest_submit": {"run_id": run_id},
@@ -960,7 +1070,7 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         viewer = {
             "run_id": run_id,
             "source_type": "workflow_history",
-            "rrd_uri": "file:///opt/npa-agent/recordings/session.rrd",
+            "rrd_uri": local_rrd_uri,
             "camera": "workspace",
         }
         state["sim_viz_runs"] = {run_id: viewer}
@@ -968,7 +1078,7 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         monkeypatch.setattr(module, "_save_state", lambda _state: None)
         monkeypatch.setattr(
             module,
-            "_agent_s3_client",
+            "_agent_artifact_s3_client",
             lambda: (_ for _ in ()).throw(
                 AssertionError("session load-run must not scan artifact buckets")
             ),
@@ -976,45 +1086,111 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
         loaded = module.sim_viz_load_run({"run_id": run_id})
         assert loaded["sim_viz"]["run_id"] == run_id
         assert loaded["sim_viz"]["rrd_uri"].endswith("session.rrd")
+        explicit_local = module.sim_viz_load_run(
+            {
+                "run_id": run_id,
+                "rrd_uri": local_rrd_uri,
+            }
+        )
+        assert explicit_local["sim_viz"]["rrd_uri"].endswith("session.rrd")
     finally:
         sys.modules.pop(module_name, None)
 
 
-def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
+def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
     monkeypatch, tmp_path
 ) -> None:
-    """An exact URI disambiguates same-named runs without weakening membership."""
+    """Only a server-issued source tuple plus inventory key authorizes a load."""
     import sys
 
     module_name = "npa_rendered_exact_artifact_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     uri = "s3://bucket-b/team/run-1/reports/preview.mp4"
+    key = "team/run-1/reports/preview.mp4"
     authorization: dict[str, str] = {}
 
     def _authorize(**kwargs):
         authorization.update(
             run_id=str(kwargs["run_id"]),
-            key=str(kwargs["key"]),
-            bucket=str(kwargs["bucket"]),
+            run_ref=str(kwargs["run_ref"]),
+            bucket=str(kwargs["resource_bucket"]),
+            project_id=str(kwargs["project_id"]),
+            prefix=str(kwargs["resolved_prefix"]),
         )
-        return "bucket-b", str(kwargs["key"]), "run-1"
+        return "bucket-b", "project-b", "team"
 
     try:
         monkeypatch.setattr(module, "RECORDINGS_DIR", tmp_path / "recordings")
-
-        class _S3:
-            def head_object(self, **_kwargs):
-                return {"ContentLength": 24}
-
-        monkeypatch.setattr(
-            module, "_agent_s3_client", lambda: (_S3(), {"bucket": "bucket-a"})
-        )
-        monkeypatch.setattr(module, "_resolve_accessible_run_artifact", _authorize)
         monkeypatch.setattr(
             module,
-            "resolve_run_artifacts",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                AssertionError("plain run IDs must use exact URI membership")
+            "_agent_artifact_s3_client",
+            lambda: (_ for _ in ()).throw(
+                AssertionError("raw URI rejection must precede S3 initialization")
+            ),
+        )
+        with pytest.raises(module.HTTPException) as raw_uri:
+            module.sim_viz_load_artifact(
+                {
+                    "run_id": "run-1",
+                    "run_ref": "npa1_server_issued",
+                    "key": key,
+                    "project_id": "project-b",
+                    "resource_bucket": "bucket-b",
+                    "resolved_prefix": "team",
+                    "source_selected": True,
+                    "s3_uri": uri,
+                }
+            )
+        assert raw_uri.value.status_code == 400
+        assert raw_uri.value.detail["code"] == "raw_artifact_uri_not_supported"
+        assert raw_uri.value.detail["migration"]["remove_field"] == "s3_uri"
+
+        with pytest.raises(module.HTTPException) as incomplete:
+            module.sim_viz_load_artifact(
+                {"run_id": "run-1", "run_ref": "npa1_server_issued", "key": key}
+            )
+        assert incomplete.value.status_code == 400
+        assert incomplete.value.detail["code"] == "exact_artifact_source_required"
+        assert incomplete.value.detail["missing_fields"] == [
+            "project_id",
+            "resource_bucket",
+            "resolved_prefix",
+            "source_selected",
+        ]
+
+        s3 = object()
+        lease = {"begin": 0, "end": 0}
+        monkeypatch.setattr(
+            module,
+            "_begin_agent_artifact_access",
+            lambda: lease.__setitem__("begin", lease["begin"] + 1),
+        )
+        monkeypatch.setattr(
+            module,
+            "_end_agent_artifact_access",
+            lambda: lease.__setitem__("end", lease["end"] + 1),
+        )
+        monkeypatch.setattr(
+            module, "_agent_artifact_s3_client", lambda: (s3, {"bucket": "bucket-a"})
+        )
+        monkeypatch.setattr(module, "_authorize_exact_run_ref_source", _authorize)
+        artifact = module.Artifact(
+            "run-1", key, uri, 24, "2031-01-01T00:00:00Z", "video", False
+        )
+        monkeypatch.setattr(
+            module,
+            "_resolved_artifact_for_content",
+            lambda client, _settings, **kwargs: (
+                (
+                    "run-1",
+                    "bucket-b",
+                    artifact,
+                )
+                if client is s3
+                and kwargs["key"] == key
+                and kwargs["resolved_prefix"] == "team"
+                and kwargs["source_authorized"] is True
+                else pytest.fail("unexpected exact artifact resolution")
             ),
         )
         monkeypatch.setattr(
@@ -1027,12 +1203,6 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
             )[-1],
         )
         monkeypatch.setattr(module, "_load_state", lambda: {})
-        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
-        monkeypatch.setattr(
-            module,
-            "_artifact_source_metadata",
-            lambda *_args: ("bucket-b", "project-b", "team"),
-        )
         monkeypatch.setattr(
             module,
             "_apply_loaded_artifact",
@@ -1042,9 +1212,17 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
             },
         )
 
-        run_ref = module.encode_run_ref("bucket-b", "team", "run-1")
+        run_ref = "npa1_server_issued"
         loaded = module.sim_viz_load_artifact(
-            {"run_id": "run-1", "run_ref": run_ref, "s3_uri": uri}
+            {
+                "run_id": "run-1",
+                "run_ref": run_ref,
+                "key": key,
+                "project_id": "project-b",
+                "resource_bucket": "bucket-b",
+                "resolved_prefix": "team",
+                "source_selected": True,
+            }
         )
         assert loaded["ok"] is True
         assert loaded["render"] == "video"
@@ -1052,20 +1230,12 @@ def test_load_artifact_authorizes_exact_uri_for_duplicate_run_ids(
         assert loaded["run_ref"] == run_ref
         assert authorization == {
             "run_id": "run-1",
-            "key": "team/run-1/reports/preview.mp4",
+            "run_ref": run_ref,
             "bucket": "bucket-b",
+            "project_id": "project-b",
+            "prefix": "team",
         }
-        with pytest.raises(module.HTTPException) as mismatch:
-            module.sim_viz_load_artifact(
-                {
-                    "run_id": "run-1",
-                    "run_ref": module.encode_run_ref(
-                        "bucket-b", "another-team", "run-1"
-                    ),
-                    "s3_uri": uri,
-                }
-            )
-        assert mismatch.value.status_code == 400
+        assert lease == {"begin": 1, "end": 1}
     finally:
         sys.modules.pop(module_name, None)
 
@@ -1673,17 +1843,26 @@ def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
     monkeypatch.setattr(module, "_load_session_run_if_known", lambda **_kwargs: None)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (object(), {"bucket": "bucket", "prefix": ""}),
     )
-    monkeypatch.setattr(module, "list_artifacts", lambda *_args, **_kwargs: artifacts)
+    monkeypatch.setattr(
+        module,
+        "_load_scoped_legacy_run_artifacts",
+        lambda **_kwargs: (
+            "artifact-only-run",
+            "bucket",
+            "project",
+            "category",
+            artifacts,
+            "server-issued-run-ref",
+        ),
+    )
     monkeypatch.setattr(module, "_load_state", lambda: state)
     monkeypatch.setattr(module, "_save_state", lambda value: state.update(value))
     monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
 
-    response = module.sim_viz_load_run(
-        {"run_id": "artifact-only-run", "prefix": "category"}
-    )
+    response = module.sim_viz_load_run({"run_id": "artifact-only-run"})
 
     sim_viz = response["sim_viz"]
     assert response["artifacts_available"] is True
@@ -2608,7 +2787,7 @@ def test_agent_npa_failure_prefers_safe_structured_transaction(
         ("gpu_allocation_fallback", "def record_attempt"),
         ("gpu_allocation_routes", "def register_gpu_allocation_routes"),
         ("access_approval", "def classify_followup"),
-        ("artifact_routes", "def register_artifact_routes"),
+        ("artifact_routes", "def build_artifact_run_list_response"),
         ("canonical_mcap", "def prepare_canonical_mcap"),
         ("foxglove_cloud", "class FoxgloveCloudClient"),
         ("leisaac", "def normalize_manifest"),
@@ -2721,7 +2900,7 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
     )
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (s3, {"bucket": "deployment-bucket", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -2729,6 +2908,8 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         "_agent_access_report",
         lambda **_kwargs: pytest.fail("exact source must not rebuild tenant access"),
     )
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: object())
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
     authorization_calls = []
     monkeypatch.setattr(
         module,
@@ -2814,7 +2995,10 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         assert cached_selected["source_fingerprint"]
         assert len(authorization_calls) == 3
         with module._FOXGLOVE_EXACT_INVENTORY_LOCK:
-            module._FOXGLOVE_EXACT_INVENTORY_CACHE.clear()
+            assert module._FOXGLOVE_EXACT_INVENTORY_CACHE
+        module._invalidate_agent_artifact_discovery()
+        with module._FOXGLOVE_EXACT_INVENTORY_LOCK:
+            assert module._FOXGLOVE_EXACT_INVENTORY_CACHE == {}
         fallback_selected = module._foxglove_resolve_artifact(
             {
                 "run_id": "run-one",
@@ -2852,7 +3036,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     monkeypatch.setattr(module, "_save_state", lambda _state: None)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (
             object(),
             {"bucket": "artifact-bucket", "prefix": "nested/root"},
@@ -2861,31 +3045,41 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     monkeypatch.setattr(
         module, "_agent_s3_buckets", lambda _s3, _settings: ["artifact-bucket"]
     )
+    ref_one = module.encode_run_ref(
+        "artifact-bucket", "nested/root/category-one", "run-one"
+    )
+    ref_two = module.encode_run_ref(
+        "artifact-bucket", "nested/root/category-two", "run-two"
+    )
     selections = {
-        "npa1_source_one": (
+        ref_one: (
             "run-one",
             "nested/root/category-one",
             b"first recording bytes",
         ),
-        "npa1_source_two": (
+        ref_two: (
             "run-two",
             "nested/root/category-two",
             b"second, different recording bytes",
         ),
     }
 
-    def _resolve(_buckets, *, base_prefix, run_ref_or_id, s3):
-        assert base_prefix == "nested/root"
-        selection = selections.get(run_ref_or_id)
-        if selection is None:
-            selection = next(
-                candidate
-                for candidate in selections.values()
-                if module.encode_run_ref("artifact-bucket", candidate[1], candidate[0])
-                == run_ref_or_id
-            )
+    def _authorize(**kwargs):
+        selection = selections[str(kwargs["run_ref"])]
         run_id, source_prefix, _body = selection
+        assert kwargs["run_id"] == run_id
+        assert kwargs["resource_bucket"] == "artifact-bucket"
+        assert kwargs["project_id"] == "artifact-project"
+        assert kwargs["resolved_prefix"] == source_prefix
+        return "artifact-bucket", "artifact-project", source_prefix
+
+    def _resolve_content(_s3, _settings, **kwargs):
+        run_id = str(kwargs["run_id"])
+        source_prefix = str(kwargs["resolved_prefix"])
         key = f"{source_prefix}/{run_id}/reports/run.rrd"
+        assert kwargs["key"] == key
+        assert kwargs["requested_bucket"] == "artifact-bucket"
+        assert kwargs["source_authorized"] is True
         artifact = module.Artifact(
             run_id,
             key,
@@ -2895,9 +3089,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             "rerun",
             True,
         )
-        return module.RunResolution(
-            run_id, "artifact-bucket", source_prefix, [artifact]
-        )
+        return run_id, "artifact-bucket", artifact
 
     def _download(s3_uri, destination, *, s3):
         body = next(
@@ -2921,7 +3113,8 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         published_capabilities.append(capability)
         return capability
 
-    monkeypatch.setattr(module, "resolve_run_artifacts", _resolve)
+    monkeypatch.setattr(module, "_authorize_exact_run_ref_source", _authorize)
+    monkeypatch.setattr(module, "_resolved_artifact_for_content", _resolve_content)
     monkeypatch.setattr(module, "download_s3_uri", _download)
     monkeypatch.setattr(module, "_publish_rrd_recording", _publish)
     monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
@@ -2935,7 +3128,15 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             key = f"{source_prefix}/{run_id}/reports/run.rrd"
             responses.append(
                 module.sim_viz_load_artifact(
-                    {"run_id": run_id, "run_ref": run_ref, "key": key}
+                    {
+                        "run_id": run_id,
+                        "run_ref": run_ref,
+                        "key": key,
+                        "project_id": "artifact-project",
+                        "resource_bucket": "artifact-bucket",
+                        "resolved_prefix": source_prefix,
+                        "source_selected": True,
+                    }
                 )
             )
 
@@ -2943,13 +3144,9 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             "run-one",
             "run-two",
         ]
-        snapshots = state["sim_viz_runs"]
-        ref_one = module.encode_run_ref(
-            "artifact-bucket", "nested/root/category-one", "run-one"
-        )
-        ref_two = module.encode_run_ref(
-            "artifact-bucket", "nested/root/category-two", "run-two"
-        )
+        snapshots = {
+            item["artifact_run_ref"]: item for item in state["sim_viz_runs"].values()
+        }
         assert set(snapshots) == {ref_one, ref_two}
         assert snapshots[ref_one]["artifact_key"].endswith(
             "category-one/run-one/reports/run.rrd"
@@ -2958,16 +3155,16 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             "category-two/run-two/reports/run.rrd"
         )
         assert snapshots[ref_one]["served_recording_sha256"] == (
-            hashlib.sha256(selections["npa1_source_one"][2]).hexdigest()
+            hashlib.sha256(selections[ref_one][2]).hexdigest()
         )
         assert snapshots[ref_one]["served_recording_size_bytes"] == len(
-            selections["npa1_source_one"][2]
+            selections[ref_one][2]
         )
         assert snapshots[ref_two]["served_recording_sha256"] == (
-            hashlib.sha256(selections["npa1_source_two"][2]).hexdigest()
+            hashlib.sha256(selections[ref_two][2]).hexdigest()
         )
         assert snapshots[ref_two]["served_recording_size_bytes"] == len(
-            selections["npa1_source_two"][2]
+            selections[ref_two][2]
         )
         assert (
             snapshots[ref_one]["served_recording_sha256"]
@@ -2981,11 +3178,11 @@ def test_source_qualified_rrd_loads_keep_independent_history(
 
         # History selection must reload A's exact S3 bytes after B was active,
         # publish a fresh capability, and keep the two source identities separate.
-        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_two"][2]
+        assert module.RECORDING_PATH.read_bytes() == selections[ref_two][2]
         selected_one = module.sim_viz_select_run(
             {"run_id": "run-one", "run_ref": ref_one}
         )["sim_viz"]
-        assert module.RECORDING_PATH.read_bytes() == selections["npa1_source_one"][2]
+        assert module.RECORDING_PATH.read_bytes() == selections[ref_one][2]
         assert selected_one["run_id"] == "run-one"
         assert selected_one["artifact_run_ref"] == ref_one
         assert selected_one["artifact_key"].endswith(
@@ -2996,7 +3193,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         )
         assert (
             selected_one["served_recording_sha256"]
-            == hashlib.sha256(selections["npa1_source_one"][2]).hexdigest()
+            == hashlib.sha256(selections[ref_one][2]).hexdigest()
         )
         assert selected_one["artifact_preview_url"] == published_capabilities[-1]
         assert (
@@ -3151,28 +3348,27 @@ def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
         render="json",
         inline=True,
     )
-    resolution = module.RunResolution(
-        run_id,
-        "artifact-bucket",
-        "nested/root",
-        [artifact],
-    )
     try:
         monkeypatch.setattr(module, "_load_state", lambda: state)
         monkeypatch.setattr(module, "_save_state", lambda _state: None)
         monkeypatch.setattr(module, "_record_sim_viz_run", lambda *_args: None)
         monkeypatch.setattr(
             module,
-            "_agent_s3_client",
+            "_agent_artifact_s3_client",
             lambda: (object(), {"bucket": "artifact-bucket", "prefix": ""}),
         )
         monkeypatch.setattr(
-            module, "_agent_s3_buckets", lambda *_args, **_kwargs: ["artifact-bucket"]
+            module,
+            "_load_scoped_legacy_run_artifacts",
+            lambda **_kwargs: (
+                run_id,
+                "artifact-bucket",
+                "project",
+                "nested/root",
+                [artifact],
+                "server-issued-run-ref",
+            ),
         )
-        monkeypatch.setattr(
-            module, "resolve_run_artifacts", lambda *_args, **_kwargs: resolution
-        )
-        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
 
         loaded = module.sim_viz_load_run({"run_id": run_id})
 
@@ -3243,7 +3439,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (
             object(),
             {"bucket": "configured-bucket", "prefix": "nested/root"},
@@ -3262,17 +3458,31 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail == {
             "schema": "npa.agent.api_error/v1",
-            "contract_version": "npa.agent.load-artifact.v2",
-            "code": "run_id_required_for_s3_uri",
-            "message": "run_id or server-issued run_ref is required with s3_uri",
+            "contract_version": "npa.agent.load-artifact.v3",
+            "code": "raw_artifact_uri_not_supported",
+            "message": (
+                "s3_uri is not an artifact authorization selector. Discover the "
+                "run and submit its exact server-issued source tuple."
+            ),
             "migration": {
-                "required_fields": ["run_id", "s3_uri"],
-                "preferred_fields": ["run_ref", "key"],
+                "remove_field": "s3_uri",
+                "required_fields": [
+                    "run_id",
+                    "run_ref",
+                    "key",
+                    "project_id",
+                    "resource_bucket",
+                    "resolved_prefix",
+                    "source_selected",
+                ],
                 "discover_via": [
                     "GET /api/artifacts/runs",
                     "GET /api/artifacts/run/{run_id_or_run_ref}",
                 ],
-                "security_boundary": "only server-discovered inventory objects may be loaded",
+                "security_boundary": (
+                    "only exact server-issued source tuples and inventory keys "
+                    "authorize artifact reads"
+                ),
             },
         }
         for key in ("../secret", "folder/../secret", "folder\\secret", "bad\x00key"):
@@ -3349,6 +3559,8 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 }
             )
         assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "raw_artifact_uri_not_supported"
+        assert exc_info.value.detail["migration"]["remove_field"] == "rrd_uri"
         with pytest.raises(module.HTTPException) as exc_info:
             module.sim_viz_load_run(
                 {
@@ -3358,6 +3570,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
                 }
             )
         assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["code"] == "raw_artifact_uri_not_supported"
     finally:
         sys.modules.pop(module_name, None)
 
@@ -3410,7 +3623,7 @@ def test_rendered_backend_registers_no_shadowed_routes(monkeypatch, tmp_path) ->
         sys.modules.pop(module_name, None)
 
 
-def test_rendered_exact_query_prefers_durable_default_source_without_ui_scope(
+def test_rendered_exact_query_refreshes_durable_source_without_claiming_partial_complete(
     monkeypatch, tmp_path
 ) -> None:
     module_name = "npa_rendered_configured_artifact_source_backend"
@@ -3425,11 +3638,17 @@ def test_rendered_exact_query_prefers_durable_default_source_without_ui_scope(
         project_id="project-exact",
         resolved_prefix="preserved/runs",
     )
-    calls: list[str] = []
+    calls: list[dict[str, object]] = []
+    source_probe_calls: list[tuple[str, str]] = []
+
+    def probe_configured_source(bucket: str, prefix: str):
+        source_probe_calls.append((bucket, prefix))
+        return module.BucketProbe("available", "available")
+
     try:
         monkeypatch.setattr(
             module,
-            "_agent_s3_client",
+            "_agent_artifact_s3_client",
             lambda: (object(), {"bucket": "primary-bucket", "prefix": ""}),
         )
         monkeypatch.setattr(
@@ -3443,64 +3662,518 @@ def test_rendered_exact_query_prefers_durable_default_source_without_ui_scope(
                 },
             ),
         )
-        monkeypatch.setattr(
-            module,
-            "_find_configured_exact_run_sources",
-            lambda _s3, queried: (calls.append(queried) or [found], (), True),
+        report = module.discover_agent_access(
+            tenant_id="tenant-test",
+            deployment_project_id="deployment-project",
+            configured_sources=[
+                {
+                    "project_id": "project-exact",
+                    "bucket": "bucket-exact",
+                    "resolved_prefix": "preserved/runs",
+                }
+            ],
+            list_projects=lambda _tenant: (_ for _ in ()).throw(
+                module.AccessProbeError("unavailable", "list tenant projects")
+            ),
+            list_buckets=lambda _project: (_ for _ in ()).throw(
+                module.AccessProbeError("denied", "list project buckets")
+            ),
+            probe_bucket=lambda _bucket: module.BucketProbe(
+                "denied", "denied", "Bucket-root listing is denied."
+            ),
+            probe_configured_source=probe_configured_source,
         )
+        monkeypatch.setattr(module, "_agent_access_report", lambda **_kwargs: report)
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+
+        class _ConfiguredPage:
+            runs = [found]
+            total_runs = 1
+            truncated = False
+            discovery_complete = True
+            source_errors = ()
+
+        def list_configured(sources, **kwargs):
+            calls.append({"sources": tuple(sources), **kwargs})
+            return _ConfiguredPage()
+
+        monkeypatch.setattr(module, "list_runs_cached_sources", list_configured)
         monkeypatch.setattr(
             module,
-            "_agent_access_report",
-            lambda **_kwargs: module.discover_agent_access(
-                tenant_id="tenant-test",
-                deployment_project_id="deployment-project",
-                configured_sources=[
-                    {
-                        "project_id": "project-exact",
-                        "bucket": "bucket-exact",
-                        "resolved_prefix": "preserved/runs",
-                    }
-                ],
-                list_projects=lambda _tenant: (_ for _ in ()).throw(
-                    module.AccessProbeError("unavailable", "list tenant projects")
-                ),
-                list_buckets=lambda _project: (_ for _ in ()).throw(
-                    module.AccessProbeError("denied", "list project buckets")
-                ),
-                probe_bucket=lambda _bucket: module.BucketProbe(
-                    "available", "available"
-                ),
+            "list_runs_cached_multi",
+            lambda *_args, **_kwargs: pytest.fail(
+                "an exact configured bucket must not be reinterpreted generically"
             ),
         )
 
         for _fresh_session in range(2):
             response = module.artifacts_runs(limit=100, q=run_id)
             assert response["count"] == 1
-            assert response["total_runs"] == 1
-            assert response["query_complete"] is True
-            assert response["pagination_complete"] is True
+            assert response["total_runs"] is None
+            assert response["query_complete"] is False
+            assert response["pagination_complete"] is False
             assert response["runs"][0]["run_id"] == run_id
             assert response["runs"][0]["project_id"] == "project-exact"
             assert response["runs"][0]["bucket"] == "bucket-exact"
             assert response["runs"][0]["resolved_prefix"] == "preserved/runs"
-        assert calls == [run_id, run_id]
+            assert any(
+                item.get("code") == "artifact_search_incomplete"
+                for item in response["source_errors"]
+            )
+        assert len(calls) == 2
+        assert source_probe_calls == [("bucket-exact", "preserved/runs")]
+        assert all(call["refresh_sync"] is True for call in calls)
+        assert all(
+            call["sources"][0].identity
+            == ("project-exact", "bucket-exact", "preserved/runs")
+            for call in calls
+        )
 
+        _ConfiguredPage.runs = []
+        _ConfiguredPage.total_runs = 0
+        empty = module.artifacts_runs(limit=100, q=run_id)
+        assert empty["count"] == 0
+        assert empty["total_runs"] is None
+        assert empty["query_complete"] is False
+        with pytest.raises(module.HTTPException) as outside_source:
+            module.artifacts_runs(prefix="another/run-parent")
+        assert outside_source.value.status_code == 403
+
+        recording = module.Artifact(
+            run_id=run_id,
+            key=f"preserved/runs/{run_id}/reports/final.rrd",
+            s3_uri=f"s3://bucket-exact/preserved/runs/{run_id}/reports/final.rrd",
+            size=128,
+            last_modified="2031-01-01T00:00:00Z",
+            render="rerun",
+            inline=False,
+        )
+        monkeypatch.setattr(
+            module,
+            "find_run_sources_across_buckets",
+            lambda buckets, **_kwargs: ([], (), True),
+        )
         monkeypatch.setattr(
             module,
             "_find_configured_exact_run_sources",
-            lambda _s3, queried: (calls.append(queried) or [], (), True),
+            lambda _s3, queried, **_kwargs: (
+                [found] if queried == run_id else [],
+                (),
+                True,
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                artifacts=[recording],
+                truncated=False,
+                next_cursor="",
+                page_size=1000,
+            ),
+        )
+        monkeypatch.setattr(module, "_summary_documents_for_run", lambda *_args: {})
+        exact = module.artifacts_for_run(run_id)
+        assert exact["run_id"] == run_id
+        assert exact["project_id"] == "project-exact"
+        assert exact["resolved_prefix"] == "preserved/runs"
+        assert exact["source_resolution_complete"] is False
+        assert exact["run_ref"] == found.run_ref
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_configured_prefix_does_not_hide_duplicate_in_inventory_bucket(
+    monkeypatch, tmp_path
+) -> None:
+    """Direct-parent config and whole-bucket inventory remain independent."""
+    import json
+    import sys
+
+    module_name = "npa_rendered_overlapping_artifact_source_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "duplicate-run"
+    direct = module.RunSummary(
+        run_id,
+        "2031-01-02T00:00:00Z",
+        1,
+        "reports/direct.rrd",
+        bucket="shared-bucket",
+        project_id="shared-project",
+        resolved_prefix="configured/runs",
+    )
+    generic = module.RunSummary(
+        run_id,
+        "2031-01-01T00:00:00Z",
+        1,
+        "reports/generic.rrd",
+        bucket="shared-bucket",
+        project_id="shared-project",
+        resolved_prefix="other/runs",
+    )
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="shared-project",
+        configured_sources=[
+            {
+                "project_id": "shared-project",
+                "bucket": "shared-bucket",
+                "resolved_prefix": "configured/runs",
+            }
+        ],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "shared-project", "name": "Shared Project"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource", "name": "shared-bucket"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+    direct_page = module.RunListPage(
+        runs=[direct], truncated=False, total_runs=1, limit=10_000
+    )
+    generic_page = module.RunListPage(
+        runs=[generic], truncated=False, total_runs=1, limit=10_000
+    )
+    list_calls: list[dict[str, object]] = []
+    exact_calls: list[dict[str, object]] = []
+    lease = {"begin": 0, "end": 0}
+
+    def _begin():
+        lease["begin"] += 1
+        return report
+
+    def _end():
+        lease["end"] += 1
+
+    def _list_generic(buckets, **kwargs):
+        list_calls.append({"buckets": list(buckets), **kwargs})
+        return generic_page
+
+    def _find_generic(buckets, **kwargs):
+        exact_calls.append({"buckets": list(buckets), **kwargs})
+        return [generic], (), True
+
+    try:
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (
+                object(),
+                {"bucket": "shared-bucket", "prefix": ""},
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "_configured_agent_artifact_sources",
+            lambda: (
+                {
+                    "project_id": "shared-project",
+                    "bucket": "shared-bucket",
+                    "resolved_prefix": "configured/runs",
+                },
+            ),
+        )
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", _begin)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", _end)
+        monkeypatch.setattr(module, "_discovery_exclude_roots", lambda: {"state"})
+        monkeypatch.setattr(
+            module, "list_runs_cached_sources", lambda *_args, **_kwargs: direct_page
+        )
+        monkeypatch.setattr(module, "list_runs_cached_multi", _list_generic)
+
+        listed = module.artifacts_runs(limit=100, q=run_id)
+        assert listed["count"] == 2
+        assert {item["run_ref"] for item in listed["runs"]} == {
+            direct.run_ref,
+            generic.run_ref,
+        }
+        assert list_calls[0]["buckets"] == ["shared-bucket"]
+        assert list_calls[0]["base_prefix"] == ""
+        assert list_calls[0]["exclude"] == {"state"}
+
+        monkeypatch.setattr(module, "find_run_sources_across_buckets", _find_generic)
+        monkeypatch.setattr(
+            module,
+            "_find_configured_exact_run_sources",
+            lambda *_args, **_kwargs: ([direct], (), True),
+        )
+        ambiguous = module.artifacts_for_run(run_id)
+        assert ambiguous.status_code == 409
+        payload = json.loads(ambiguous.body)
+        assert payload["error"]["code"] == "ambiguous_run_id"
+        assert {item["run_ref"] for item in payload["sources"]} == {
+            direct.run_ref,
+            generic.run_ref,
+        }
+        assert exact_calls[0]["buckets"] == ["shared-bucket"]
+        assert exact_calls[0]["base_prefix"] == ""
+        assert exact_calls[0]["exclude"] == {"state"}
+        assert lease == {"begin": 2, "end": 2}
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_default_artifact_credentials_keep_nonempty_prefix_as_layout_hint(
+    monkeypatch, tmp_path
+) -> None:
+    """Fallback credentials scan the bucket root but parse their nested layout."""
+    import sys
+
+    module_name = "npa_rendered_default_artifact_prefix_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "paidf-prefix-layout-run"
+    run = module.RunSummary(
+        run_id=run_id,
+        last_modified="2031-01-01T00:00:00Z",
+        artifact_count=1,
+        has_viewable=True,
+        bucket="deployment-bucket",
+        project_id="deployment-project",
+        resolved_prefix="deployment/runs/category",
+    )
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"deployment/runs/category/{run_id}/report.rrd",
+        s3_uri=(f"s3://deployment-bucket/deployment/runs/category/{run_id}/report.rrd"),
+        size=128,
+        last_modified="2031-01-01T00:00:00Z",
+        render="rerun",
+        inline=True,
+    )
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="deployment-project",
+        fallback_buckets=[],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "deployment-project", "name": "Deployment"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource", "name": "deployment-bucket"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+    list_bases: list[str] = []
+    exact_bases: list[str] = []
+
+    try:
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (
+                object(),
+                {"bucket": "deployment-bucket", "prefix": "deployment/runs"},
+            ),
+        )
+        monkeypatch.setattr(module, "_configured_agent_artifact_sources", lambda: ())
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+
+        def list_generic(_buckets, **kwargs):
+            list_bases.append(str(kwargs.get("base_prefix") or ""))
+            return module.RunListPage([run], False, 1, 10_000)
+
+        monkeypatch.setattr(module, "list_runs_cached_multi", list_generic)
+        listed = module.artifacts_runs(limit=100, q=run_id)
+        assert listed["runs"][0]["run_id"] == run_id
+        assert list_bases == ["deployment/runs"]
+
+        def find_generic(_buckets, **kwargs):
+            exact_bases.append(str(kwargs.get("base_prefix") or ""))
+            return [run], (), True
+
+        monkeypatch.setattr(module, "find_run_sources_across_buckets", find_generic)
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                [artifact], False, "", 1000
+            ),
+        )
+        monkeypatch.setattr(module, "_summary_documents_for_run", lambda *_args: {})
+        detail = module.artifacts_for_run(run_id)
+        assert detail["run_ref"] == run.run_ref
+        assert detail["resolved_prefix"] == "deployment/runs/category"
+        assert exact_bases == ["deployment/runs"]
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_configured_bucket_root_is_not_reparsed_as_a_generic_category(
+    monkeypatch, tmp_path
+) -> None:
+    import sys
+
+    module_name = "npa_rendered_root_artifact_source_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run_id = "root-direct-run"
+    run = module.RunSummary(
+        run_id=run_id,
+        last_modified="2031-01-01T00:00:00Z",
+        artifact_count=1,
+        has_viewable=True,
+        bucket="shared-bucket",
+        project_id="shared-project",
+        resolved_prefix="",
+    )
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"{run_id}/reports/final.rrd",
+        s3_uri=f"s3://shared-bucket/{run_id}/reports/final.rrd",
+        size=128,
+        last_modified="2031-01-01T00:00:00Z",
+        render="rerun",
+        inline=True,
+    )
+    report = module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="shared-project",
+        configured_sources=[
+            {
+                "project_id": "shared-project",
+                "bucket": "shared-bucket",
+                "resolved_prefix": "",
+            }
+        ],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "shared-project", "name": "Shared"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource", "name": "shared-bucket"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+
+    try:
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (object(), {"bucket": "shared-bucket", "prefix": ""}),
+        )
+        monkeypatch.setattr(
+            module,
+            "_configured_agent_artifact_sources",
+            lambda: (
+                {
+                    "project_id": "shared-project",
+                    "bucket": "shared-bucket",
+                    "resolved_prefix": "",
+                },
+            ),
+        )
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+        monkeypatch.setattr(
+            module,
+            "list_runs_cached_sources",
+            lambda *_args, **_kwargs: module.RunListPage([run], False, 1, 10_000),
         )
         monkeypatch.setattr(
             module,
             "list_runs_cached_multi",
             lambda *_args, **_kwargs: pytest.fail(
-                "empty configured exact search must not fall through"
+                "a configured root already covers the whole bucket"
             ),
         )
-        empty = module.artifacts_runs(limit=100, q=run_id)
-        assert empty["count"] == 0
-        assert empty["total_runs"] == 0
-        assert empty["query_complete"] is True
+
+        listed = module.artifacts_runs(limit=100, q=run_id)
+        assert [item["run_id"] for item in listed["runs"]] == [run_id]
+
+        monkeypatch.setattr(
+            module,
+            "find_run_sources_across_buckets",
+            lambda *_args, **_kwargs: pytest.fail(
+                "exact lookup must not reinterpret a configured root generically"
+            ),
+        )
+        monkeypatch.setattr(
+            module,
+            "_find_configured_exact_run_sources",
+            lambda *_args, **_kwargs: ([run], (), True),
+        )
+        monkeypatch.setattr(
+            module,
+            "list_artifacts_page",
+            lambda *_args, **_kwargs: module.ArtifactListPage(
+                [artifact], False, "", 1000
+            ),
+        )
+        monkeypatch.setattr(module, "_summary_documents_for_run", lambda *_args: {})
+        detail = module.artifacts_for_run(run_id)
+        assert detail["run_ref"] == run.run_ref
+        assert detail["resolved_prefix"] == ""
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+def test_rendered_cold_search_forces_source_refresh_before_filtering(
+    monkeypatch, tmp_path
+) -> None:
+    module_name = "npa_rendered_cold_artifact_search_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    run = module.RunSummary(
+        "paidf-cold-run",
+        "2031-01-01T00:00:00Z",
+        1,
+        "reports/result.rrd",
+        bucket="bucket-test",
+        project_id="project-test",
+        resolved_prefix="physical-ai-data-factory",
+    )
+    try:
+        report = module.discover_agent_access(
+            tenant_id="tenant-test",
+            deployment_project_id="project-test",
+            fallback_buckets=[],
+            list_projects=lambda _tenant: [
+                {"metadata": {"id": "project-test", "name": "Project Test"}}
+            ],
+            list_buckets=lambda _project: [
+                {"metadata": {"id": "bucket-resource", "name": "bucket-test"}}
+            ],
+            probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+        )
+        monkeypatch.setattr(module, "_agent_access_report", lambda **_kwargs: report)
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+        )
+        refresh_values: list[bool] = []
+
+        class _Page:
+            runs = [run]
+            total_runs = 1
+            truncated = False
+            discovery_complete = True
+            source_errors = ()
+
+        def discover(_buckets, **kwargs):
+            refresh_values.append(bool(kwargs.get("refresh_sync")))
+            return (
+                _Page()
+                if kwargs.get("refresh_sync")
+                else type(
+                    "StaleEmpty",
+                    (),
+                    {
+                        "runs": [],
+                        "total_runs": 0,
+                        "truncated": False,
+                        "discovery_complete": True,
+                        "source_errors": (),
+                    },
+                )()
+            )
+
+        monkeypatch.setattr(module, "list_runs_cached_multi", discover)
+        response = module.artifacts_runs(limit=20, q="paidf")
+        assert [item["run_id"] for item in response["runs"]] == ["paidf-cold-run"]
+        assert response["query_complete"] is True
+        assert refresh_values == [True]
     finally:
         sys.modules.pop(module_name, None)
 
@@ -3537,9 +4210,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             }
 
     try:
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: object())
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
         s3 = FakeS3()
         monkeypatch.setattr(
-            module, "_agent_s3_client", lambda: (s3, {"bucket": "bucket"})
+            module, "_agent_artifact_s3_client", lambda: (s3, {"bucket": "bucket"})
         )
         monkeypatch.setattr(
             module,
@@ -3570,7 +4245,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
         stale = FakeS3(total=11)
         monkeypatch.setattr(
-            module, "_agent_s3_client", lambda: (stale, {"bucket": "bucket"})
+            module, "_agent_artifact_s3_client", lambda: (stale, {"bucket": "bucket"})
         )
         with pytest.raises(module.HTTPException) as exc_info:
             module._artifact_content_response(
@@ -3766,6 +4441,8 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         now=lambda: "2026-08-06T23:30:00+00:00",
     )
     monkeypatch.setattr(module, "_agent_access_report", lambda *, refresh=False: report)
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: report)
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
     monkeypatch.setattr(
         module, "_agent_access_report_for_artifact_discovery", lambda: report
     )
@@ -3773,6 +4450,12 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     assert access_payload["apiVersion"] == "npa.agent.access/v1"
     assert access_payload["identity"]["tenant_id"] == "tenant-test"
     assert access_payload["projects"][0]["id"] == "project-test"
+    assert access_payload["artifact_credentials"] == {
+        "mode": "unconfigured",
+        "status": "blocked",
+        "reason": "artifact_read_identity_absent",
+        "source_scope": "none",
+    }
 
     called: dict[str, object] = {}
 
@@ -3791,7 +4474,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -3957,8 +4640,10 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         "max_objects": 1000,
         "continue_with": [
             "next_cursor",
-            "resolved_prefix",
+            "run_ref",
+            "project_id",
             "resource_bucket",
+            "resolved_prefix",
             "source_selected",
         ],
     }
@@ -4036,9 +4721,15 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
         load_patch.setattr(
             module,
-            "resolve_run_artifacts",
+            "_load_scoped_legacy_run_artifacts",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                module.AmbiguousRunError("foreign-run-1", ["source-a", "source-b"])
+                module.HTTPException(
+                    status_code=409,
+                    detail=(
+                        "run selection is ambiguous; use its server-issued "
+                        "run_ref or exact source tuple"
+                    ),
+                )
             ),
         )
         with pytest.raises(module.HTTPException) as ambiguous_load:
@@ -4137,8 +4828,9 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         lambda *_args, **_kwargs: ([source], (), False),
     )
     incomplete_unique = module.artifacts_for_run("foreign-run-1")
-    assert incomplete_unique.status_code == 503
-    assert b'"code":"artifact_search_incomplete"' in incomplete_unique.body
+    assert incomplete_unique["run_id"] == "foreign-run-1"
+    assert incomplete_unique["source_resolution_complete"] is False
+    assert incomplete_unique["access"]["status"] == "available"
     # A fully-qualified source is still safe when unrelated candidates were
     # truncated: the exact bucket + prefix tuple itself was server-discovered.
     exact_incomplete_page = module.artifacts_for_run(
@@ -4152,7 +4844,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -4218,7 +4910,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (_S3(), {"bucket": "bucket-test", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -4325,7 +5017,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (_ManifestS3(), {"bucket": "bucket-test", "prefix": ""}),
     )
     monkeypatch.setattr(
@@ -4741,9 +5433,11 @@ def test_scoped_mp4_content_and_download_stream_real_bytes_for_get_head_and_rang
             return {"Body": io.BytesIO(media), "ContentLength": len(media)}
 
     s3 = FakeS3()
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: object())
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
     monkeypatch.setattr(
         module,
-        "_agent_s3_client",
+        "_agent_artifact_s3_client",
         lambda: (s3, {"bucket": bucket, "prefix": prefix}),
     )
 
@@ -4778,7 +5472,7 @@ def test_scoped_mp4_content_and_download_stream_real_bytes_for_get_head_and_rang
         assert unscoped_download.status_code == 400
         assert (
             unscoped_download.json()["detail"]["code"]
-            == "exact_artifact_source_required"
+            == "raw_artifact_uri_not_supported"
         )
 
         full = client.get("/artifacts/content", params=params)
@@ -5096,6 +5790,8 @@ def _startup(tmp_path, snapshot, body):
     }
     observed = {"published": [], "saved": []}
     namespace = {
+        "hashlib": hashlib,
+        "json": json,
         "PRELOAD_STOCK_DEMO": True,
         "RRD_PATH": recording,
         "DEFAULT_SIM_VIZ": {"run_id": "franka-demo"},
@@ -5110,6 +5806,7 @@ def _startup(tmp_path, snapshot, body):
         "_now_iso": lambda: "2026-01-01T00:00:00Z",
         "resolve_run_source": lambda *_args: ("artifact_storage", "Artifacts"),
     }
+    _preload_function("_sim_viz_history_key", namespace, body)
     _preload_function("_record_sim_viz_run", namespace, body)
     hook = _preload_function("_boot_preload_sim_viz", namespace, body)
     return hook, state, observed, namespace
@@ -5147,6 +5844,43 @@ def test_stock_preload_initializes_an_empty_workspace(tmp_path, preload_backend_
     assert state["sim_viz"]["stage"] == "demo"
     assert state["sim_viz"]["rrd_uri"].startswith("file://")
     assert len(observed["published"]) == len(observed["saved"]) == 1
+
+
+def test_viewer_history_preserves_project_distinct_sources(preload_backend_body):
+    namespace = {
+        "hashlib": hashlib,
+        "json": json,
+        "DEFAULT_SIM_VIZ": {},
+        "resolve_run_source": lambda *_args: ("artifact_storage", "Artifacts"),
+    }
+    history_key = _preload_function(
+        "_sim_viz_history_key", namespace, preload_backend_body
+    )
+    record = _preload_function("_record_sim_viz_run", namespace, preload_backend_body)
+    lookup = _preload_function("_sim_viz_for_run", namespace, preload_backend_body)
+    common = {
+        "run_id": "same-run",
+        "artifact_run_ref": "npa1_same_bucket_prefix_run",
+        "bucket": "same-bucket",
+        "resolved_prefix": "preserved/runs",
+        "artifact_render": "rerun",
+    }
+    first = {**common, "project_id": "project-one", "artifact_key": "one.rrd"}
+    second = {**common, "project_id": "project-two", "artifact_key": "two.rrd"}
+    state = {"sim_viz_runs": {}}
+
+    record(state, first)
+    first_key = history_key(first)
+    record(state, second)
+    second_key = history_key(second)
+
+    assert first_key != second_key
+    assert set(state["sim_viz_runs"]) == {first_key, second_key}
+    assert state["active_run_ref"] == common["artifact_run_ref"]
+    assert state["active_run_history_key"] == second_key
+    assert lookup(state, run_id="same-run")["project_id"] == "project-two"
+    state["active_run_history_key"] = first_key
+    assert lookup(state, run_id="same-run")["project_id"] == "project-one"
 
 
 @pytest.mark.parametrize("already_specific", [False, True])
