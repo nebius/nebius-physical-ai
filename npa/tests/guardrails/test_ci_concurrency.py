@@ -2,8 +2,9 @@
 
 One merge candidate waited seventeen minutes for coverage and another twelve
 for its three-second final check. Shared runner slots bound competing PR work;
-merge completion must have its own slot. These checks pin the finite routing
-expressions, cover every runner job, and forbid callers holding child slots.
+short scope and completion jobs must have their own slot. These checks pin the
+finite routing expressions, cover every runner job, and forbid callers holding
+child slots.
 """
 
 from pathlib import Path
@@ -45,11 +46,10 @@ RUNNER_SLOTS = {
         "ci-timing-report": "report",
     },
     "test.yml": {
-        "scope": "checks",
+        "scope": "completion",
         "browser-mocked": "browser",
         "pr-smoke": "test",
         "test": "shards",
-        "affected-tests": "test",
         "coverage": "completion",
     },
     "lint.yml": {"ruff": "checks", "docs-drift": "docs"},
@@ -121,7 +121,7 @@ def test_reusable_callers_never_hold_a_child_runner_slot() -> None:
 
 
 def test_merge_completion_slot_excludes_long_and_optional_work() -> None:
-    """Reserve merge completion for coverage and the final required result.
+    """Reserve candidate coordination for scope, coverage, and the required result.
 
     Args:
         None.
@@ -137,6 +137,7 @@ def test_merge_completion_slot_excludes_long_and_optional_work() -> None:
         if "completion" in job.get("concurrency", {}).get("group", "")
     }
     assert completion == {
+        ("test.yml", "scope"),
         ("test.yml", "coverage"),
         ("security-regression.yml", "security-regression"),
     }
