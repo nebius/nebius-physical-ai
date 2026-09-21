@@ -1943,7 +1943,6 @@ def _build_preference_request(
     request: dict[str, Any] = {
         "model": model,
         "temperature": 0,
-        "max_tokens": 1000,
         "messages": [{"role": "user", "content": content}],
     }
     from npa.clients.token_factory import default_chat_extra

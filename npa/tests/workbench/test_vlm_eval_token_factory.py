@@ -699,7 +699,9 @@ def _preference_request_image_urls(request):
 
 def _assert_balanced_preference_requests(report, calls) -> None:
     first, second = (call["request"] for call in calls)
-    assert first["max_tokens"] == second["max_tokens"] == 1000
+    expected_fields = {"model", "temperature", "messages", "chat_template_kwargs"}
+    assert set(first) == set(second) == expected_fields
+    assert "max_tokens" not in first and "max_tokens" not in second
     assert first["chat_template_kwargs"] == {"thinking_mode": "disabled"}
     assert "response_format" not in first
     assert first["messages"][0]["content"][1]["text"] == "IMAGE A"
