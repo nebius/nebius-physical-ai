@@ -1709,7 +1709,10 @@ def openpi_franka_mk8s_live_v2(
 @antioch.scenario(tags=["openpi-live", "mk8s-native"])
 def openpi_franka_pickup_v3(
     run: antioch.ScenarioRun,
-    prompt: str = antioch.param("pick up the red cube", description="DROID task prompt"),
+    prompt: str = antioch.param(
+        "pick up the red cube and hold it above the table",
+        description="DROID instruction matching the sustained pickup objective",
+    ),
     control_steps: int = antioch.param(
         450, ge=10, description="Finite manipulation episode length in applied policy targets"
     ),

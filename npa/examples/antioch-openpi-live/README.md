@@ -225,7 +225,8 @@ before changing either pin.
 
 `openpi_franka_pickup_v3` uses a versioned remote scenario identity so an
 already-published definition cannot mask a new camera/action contract. It dispatches
-the default instruction `pick up the red cube`
+the default instruction `pick up the red cube and hold it above the table`,
+matching the sustained hold required by the task check,
 and records only the non-sensitive `red_cube_pickup` task label in proof telemetry.
 It records both current cameras in a default side-by-side Rerun layout, per-view
 luminance/variance/dynamic range, cube-frustum evidence, rendered exterior cube

@@ -141,7 +141,9 @@ relative entities below it, and the Rerun blueprint uses those exact resolved
 origins for both cameras, the 3D scene, metrics, Franka joint plots, and errors.
 The versioned `openpi_franka_pickup_v3` remote scenario identity prevents a
 previously published definition from masking the schema-4 camera/action contract.
-Its default dispatched instruction is `pick up the red cube`; public proof telemetry
+Its default dispatched instruction is `pick up the red cube and hold it above the table`,
+so the language instruction includes the sustained hold required by the task check;
+public proof telemetry
 uses only the non-sensitive `red_cube_pickup` label.
 
 The two 224x224 policy cameras use Isaac Sim 6's supported
