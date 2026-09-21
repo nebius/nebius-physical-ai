@@ -1,0 +1,152 @@
+{
+  "hardware_family": "RTX_PRO_6000",
+  "compute_capability": [
+    12,
+    0
+  ],
+  "image_manifest_digest": "sha256:c85e8718c9645cc70fddc0e20ea66edd317448a8c50c0444bbcc85384db07550",
+  "image_config_digest": "sha256:43dd64ab4afdad6b6c124ad67a15a4fe873998a927523265c173d5adfe64037c",
+  "image_source_sha": "49fed65d0d1a315ce08addab533c56c48180d419",
+  "pr_head_sha": "662f04c3a98e395f4f0f37a19475806a553ffe06",
+  "stock_product_passed": true,
+  "statuses": {
+    "feasible": "success",
+    "goal-blocked": "failed"
+  },
+  "malformed_robot_rejected": true,
+  "malformed_outputs_absent": true,
+  "validation_valid": true,
+  "fk_replay_max_error_m": 0.0,
+  "max_fk_quaternion_replay_error_rad": 0.0,
+  "max_fk_quaternion_component_replay_error": 0.0,
+  "position_error_m": 1.3719009928081505e-07,
+  "rotation_error_rad": 1.622694725256224e-07,
+  "rrd_semantic_compare": "passed",
+  "rrd_trajectory_samples": 61,
+  "rrd_verified": true,
+  "artifact_count": 25,
+  "artifact_readback_sha256": "9effe0117b105600f8dc0cf271ad22d86ce0ed01411fb1dc60b4c4cfd7123afd",
+  "acceptance_sha256": "f2fe0b36c4d8dfe7423ab838b32de519f8e723ec19fe88f69b8a5fe3c2635f6a",
+  "validation_sha256": "64ad9c250acadaef9a04e4cb6b05f1a05ab20df36e4e0d53b90c02822ad0db60",
+  "journal_sha256": "ee5841218d576ac17c6af5367ae84399f29200cad68dce20c1ffd22fa7f577ec",
+  "rrd_sha256": "cec60ddbf1cd21aef53d56c9e548a4c423e86ae0731fc9eb9352d516d737dab8",
+  "readback_verify_sha256": "e3ededa558f9eb8e55ea5dbc352a37efc95553ff1332d5d6ebecfd9f866b75f3",
+  "readback_print_sha256": "92f5d53277b2bc5140a57755a4660d4b6bb3d06455b00430072a177a6b4a4c59",
+  "terminal_status": "SUCCEEDED",
+  "verdict": "PASS_RTX_EXACT_IMAGE_CONTROLS_CPU5",
+  "schema": "npa.public-curobo-controls.v1",
+  "scope": "Preliminary RTX PRO6000 positive and failure controls; not a full benchmark or release acceptance.",
+  "artifact_bytes_hash_checked": 970301,
+  "root_originals_hash_checked": 25,
+  "fresh_object_store_query_by_root": false,
+  "source_mapping": "Image produced from49fed65d; current PRhead662f04c3 changes three Python files by AST-equivalent formatting. The image producer retains its exact identity; checked Docker/bootstrap/workflow inputs are byte-identical.",
+  "recomputed_from_unchanged_public_journal": {
+    "samples": 61,
+    "joint_columns": 9,
+    "planned_dt_seconds": 0.02500000037252903,
+    "planned_duration_seconds": 1.5000000223517418,
+    "terminal_goal_distance_m": 1.427736610998321e-07,
+    "tool_path_length_m": 0.6550320880671613
+  },
+  "limitations": [
+    "One positive case, one expected blocked-goal failure, and malformed-input rejection; no operational success-rate estimate.",
+    "Kinematics replay and goal agreement do not independently certify collision freedom or robot hardware execution.",
+    "This control contains no inverse-dynamics benchmark results.",
+    "No VLM quality gate is claimed for the data plot.",
+    "Complete image-byte qualification, full benchmark matrices and current CI remain separate gates. Full local source validation at49fed passed; successor662 is independently AST-equivalent.",
+    "The original workflow RRD and operational records remain private; the public plot is derived from all61 retained trajectory samples."
+  ],
+  "observed_dynamics_contract": {
+    "kinematics_active_joint_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7"
+    ],
+    "kinematics_all_articulated_joint_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7",
+      "panda_finger_joint1",
+      "panda_finger_joint2"
+    ],
+    "model_joint_names": [
+      "universe",
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7"
+    ],
+    "model_nq": 7,
+    "model_nv": 7,
+    "planner_active_joint_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7"
+    ],
+    "retained_field_shapes": {
+      "acceleration": [
+        61,
+        9
+      ],
+      "dt": [],
+      "jerk": [
+        61,
+        9
+      ],
+      "position": [
+        61,
+        9
+      ],
+      "velocity": [
+        61,
+        9
+      ]
+    },
+    "retained_joint_names": [
+      "panda_joint1",
+      "panda_joint2",
+      "panda_joint3",
+      "panda_joint4",
+      "panda_joint5",
+      "panda_joint6",
+      "panda_joint7",
+      "panda_finger_joint1",
+      "panda_finger_joint2"
+    ],
+    "torque_limit_shape": [
+      7
+    ]
+  },
+  "observed_dynamics_contract_scope": "Actual runtime model/joint/shape observations; this kinematic control does not establish a completed inverse-dynamics benchmark.",
+  "successor_binding_receipt_sha256": "0602d0f7c22cb1591891116c7b54eef2e006b2e99d960f6b6cf653495895ae43",
+  "manual_package_intervention": false,
+  "resource_cpu_reservation": 5,
+  "prior_attempt": "Seven-CPU submission failed prechecks for insufficient free node CPU before allocation; retained separately. This successful attempt requested five CPUs under a new identity.",
+  "cross_hardware_comparison": {
+    "b200_journal_sha256": "1a8fa32dc71c85a5adff3a916743f0af0e14e2673bb2bc9135afcd7d53cd5d60",
+    "rtx_journal_sha256": "ee5841218d576ac17c6af5367ae84399f29200cad68dce20c1ffd22fa7f577ec",
+    "fields_compared": [
+      "problem_id",
+      "status",
+      "trajectory"
+    ],
+    "all_retained_trajectory_arrays_exactly_equal": true,
+    "whole_journals_identical": false,
+    "limitation": "Runtime timing and architecture-dependent fields are not asserted equal."
+  }
+}
