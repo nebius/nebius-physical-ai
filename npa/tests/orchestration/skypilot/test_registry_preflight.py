@@ -262,6 +262,71 @@ def test_token_challenge_preserves_existing_realm_query_parameters() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "realm",
+    [
+        f"http://{REGISTRY}/token",
+        "https://token.attacker.invalid/mint",
+        f"https://operator:secret@{REGISTRY}/token",
+        f"https://{REGISTRY}/token#credential-relay",
+    ],
+)
+def test_untrusted_token_realm_never_receives_basic_credentials(realm: str) -> None:
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def registry(url: str, headers: dict[str, str], timeout: int):
+        del timeout
+        calls.append((url, headers))
+        if len(calls) > 1:
+            pytest.fail("untrusted token realm must not receive a request")
+        return (
+            401,
+            {"www-authenticate": (f'Bearer realm="{realm}",service="{REGISTRY}"')},
+            b"",
+        )
+
+    check = check_image_pull(
+        IMAGE,
+        username="operator",
+        password="synthetic-secret",
+        fetcher=registry,
+    )
+
+    assert check.status == "unauthorized"
+    assert len(calls) == 1
+    assert "Authorization" not in calls[0][1]
+
+
+def test_metadata_fetch_rejects_cross_origin_token_realm_before_credentials() -> None:
+    calls = 0
+
+    def registry(url: str, headers: dict[str, str], timeout: int):
+        nonlocal calls
+        del url, headers, timeout
+        calls += 1
+        if calls > 1:
+            pytest.fail("cross-origin realm must fail before credential forwarding")
+        return (
+            401,
+            {
+                "www-authenticate": (
+                    'Bearer realm="https://token.attacker.invalid/mint"'
+                )
+            },
+            b"",
+        )
+
+    with pytest.raises(RegistryPreflightError, match="untrusted token realm"):
+        fetch_image_config_metadata(
+            IMAGE,
+            username="operator",
+            password="synthetic-secret",
+            fetcher=registry,
+        )
+
+    assert calls == 1
+
+
 def test_a_network_failure_is_not_mistaken_for_a_permission_failure() -> None:
     def broken(url: str, headers: dict[str, str], timeout: int):
         raise OSError("Name or service not known")
@@ -1090,6 +1155,43 @@ def test_effective_target_uses_selected_context_namespace() -> None:
     assert target.service_account_name == "skypilot-service-account"
 
 
+def test_effective_target_uses_only_skypilot_first_kubeconfig(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "first-kubeconfig"
+    second = tmp_path / "second-kubeconfig"
+    first.write_text("{}\n", encoding="utf-8")
+    second.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("KUBECONFIG", f"{first}:{second}")
+    environments: list[dict[str, str]] = []
+
+    def kubectl(cmd, **kwargs):
+        environments.append(kwargs["env"])
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "contexts": [
+                        {
+                            "name": "target-context",
+                            "context": {"namespace": "team-workloads"},
+                        }
+                    ]
+                }
+            ),
+            stderr="",
+        )
+
+    target = resolve_kubernetes_pull_target(
+        context="target-context",
+        runner=kubectl,
+    )
+
+    assert target.kubeconfig_path == str(first)
+    assert environments[0]["KUBECONFIG"] == str(first)
+
+
 def test_effective_target_applies_secret_override_in_kubeconfig_namespace(
     tmp_path,
 ) -> None:
@@ -1104,6 +1206,11 @@ kubernetes:
       imagePullSecrets:
         - name: global-secret
         - name: global-fallback
+      nodeSelector:
+        kubernetes.io/os: linux
+        topology.kubernetes.io/zone: global-zone
+      tolerations:
+        - {key: global-taint, operator: Exists}
   context_configs:
     target-context:
       namespace: team-namespace
@@ -1113,6 +1220,12 @@ kubernetes:
           serviceAccountName: context-pod-service-account
           imagePullSecrets:
             - name: context-secret
+          nodeSelector:
+            topology.kubernetes.io/zone: context-zone
+            nebius.com/node-group: gpu
+          runtimeClassName: nvidia
+          tolerations:
+            - {key: context-taint, operator: Exists}
 """,
         encoding="utf-8",
     )
@@ -1151,6 +1264,18 @@ kubernetes:
     assert target.namespace == "kubeconfig-namespace"
     assert target.pull_secret_names == ("context-secret", "global-fallback")
     assert target.service_account_name == "context-pod-service-account"
+    assert json.loads(target.pod_placement_json) == {
+        "nodeSelector": {
+            "kubernetes.io/os": "linux",
+            "nebius.com/node-group": "gpu",
+            "topology.kubernetes.io/zone": "context-zone",
+        },
+        "runtimeClassName": "nvidia",
+        "tolerations": [
+            {"key": "global-taint", "operator": "Exists"},
+            {"key": "context-taint", "operator": "Exists"},
+        ],
+    }
 
 
 def test_effective_target_selects_context_from_global_remote_identity_map(
@@ -1333,10 +1458,10 @@ def test_target_namespace_lookup_never_renders_kubectl_diagnostics() -> None:
 
 
 def test_anonymous_host_success_still_requires_exact_target_probe() -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[tuple[str, ...], str]] = []
 
     def target_pull(**kwargs):
-        calls.append(kwargs["secret_names"])
+        calls.append((kwargs["secret_names"], kwargs["image"]))
         return KubernetesPullCheck(status="verified", digest=DIGEST)
 
     checks = check_image_pulls_with_credentials(
@@ -1353,7 +1478,12 @@ def test_anonymous_host_success_still_requires_exact_target_probe() -> None:
         target_pull_verifier=target_pull,
     )
 
-    assert calls == [()]
+    assert calls == [
+        (
+            (),
+            f"{REGISTRY}/{REPOSITORY}@{DIGEST}",
+        )
+    ]
     assert checks[0].ok
     assert checks[0].authority == "kubernetes_target_pull"
 
@@ -1362,10 +1492,16 @@ def test_every_distinct_kubernetes_secret_set_is_probed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_private_registry(monkeypatch)
-    probed: list[tuple[tuple[str, ...], str]] = []
+    probed: list[tuple[tuple[str, ...], str, dict[str, object]]] = []
 
     def target_pull(**kwargs):
-        probed.append((kwargs["secret_names"], kwargs["service_account_name"]))
+        probed.append(
+            (
+                kwargs["secret_names"],
+                kwargs["service_account_name"],
+                dict(kwargs["pod_placement"]),
+            )
+        )
         return KubernetesPullCheck(status="verified", digest=DIGEST)
 
     checks = check_image_pulls_with_credentials(
@@ -1378,6 +1514,12 @@ def test_every_distinct_kubernetes_secret_set_is_probed(
         service_account_names_by_image={
             IMAGE: ("service-account-a", "service-account-b")
         },
+        pod_placements_by_image={
+            IMAGE: (
+                {"nodeSelector": {"pool": "a"}},
+                {"nodeSelector": {"pool": "b"}},
+            )
+        },
         operator_images=set(),
         kubernetes_images={IMAGE},
         namespace="team-namespace",
@@ -1388,11 +1530,18 @@ def test_every_distinct_kubernetes_secret_set_is_probed(
 
     assert checks[0].ok
     assert probed == [
-        (("path-a-secret",), "service-account-a"),
-        (("path-b-secret",), "service-account-b"),
+        (
+            ("path-a-secret",),
+            "service-account-a",
+            {"nodeSelector": {"pool": "a"}},
+        ),
+        (
+            ("path-b-secret",),
+            "service-account-b",
+            {"nodeSelector": {"pool": "b"}},
+        ),
     ]
     assert checks[0].target_status == "verified_target_paths"
-    assert probed == [("path-a-secret",), ("path-b-secret",)]
 
 
 def _target_probe_runner(
@@ -1401,6 +1550,7 @@ def _target_probe_runner(
     image_id: str = f"docker-pullable://{REGISTRY}/{REPOSITORY}@{DIGEST}",
     waiting_reason: str = "",
     active_deadline_seconds: int | None = 30,
+    pod_placement: dict[str, object] | None = None,
 ):
     calls: list[list[str]] = []
     deleted = False
@@ -1438,13 +1588,19 @@ def _target_probe_runner(
             manifest = json.loads(kwargs["input"])
             assert manifest["spec"]["imagePullSecrets"] == [{"name": "pull-secret"}]
             assert manifest["spec"]["serviceAccountName"] == "skypilot-service-account"
-            assert manifest["spec"]["tolerations"] == [
+            expected_tolerations = [
                 {
                     "key": "nvidia.com/gpu",
                     "operator": "Exists",
                     "effect": "NoSchedule",
                 }
             ]
+            expected_tolerations.extend((pod_placement or {}).get("tolerations", []))
+            assert manifest["spec"]["tolerations"] == expected_tolerations
+            if pod_placement:
+                for key, value in pod_placement.items():
+                    if key != "tolerations":
+                        assert manifest["spec"][key] == value
             if active_deadline_seconds is None:
                 assert "activeDeadlineSeconds" not in manifest["spec"]
             else:
@@ -1496,6 +1652,31 @@ def test_exact_target_pull_probe_verifies_image_id_and_owned_cleanup() -> None:
         for cmd in calls
     )
     assert sum("delete" in cmd for cmd in calls) == 1
+
+
+def test_exact_target_pull_probe_reproduces_pod_placement() -> None:
+    placement = {
+        "nodeSelector": {
+            "kubernetes.io/os": "linux",
+            "nebius.com/node-group": "gpu-a",
+        },
+        "runtimeClassName": "nvidia",
+        "tolerations": [{"key": "customer-taint", "operator": "Exists"}],
+    }
+    run, _calls = _target_probe_runner(pod_placement=placement)
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        pod_placement=placement,
+        runner=run,
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check.ok
 
 
 def test_target_pull_probe_fails_when_owned_cleanup_is_unverified() -> None:
@@ -1785,7 +1966,7 @@ def test_non_pull_container_failure_does_not_wait_for_timeout() -> None:
     assert check.cleanup_status == "verified"
 
 
-def test_opaque_cri_image_id_proves_pull_without_false_digest_comparison() -> None:
+def test_cri_image_id_digest_is_retained_for_identity_comparison() -> None:
     run, _calls = _target_probe_runner(image_id=f"cri-o://{DIGEST}")
 
     check = verify_kubernetes_image_pull(
@@ -1799,4 +1980,67 @@ def test_opaque_cri_image_id_proves_pull_without_false_digest_comparison() -> No
     )
 
     assert check.ok
-    assert check.digest == ""
+    assert check.digest == DIGEST
+
+
+def test_opaque_cri_image_id_fails_closed_without_immutable_digest() -> None:
+    run, _calls = _target_probe_runner(image_id="cri-o://opaque-runtime-id")
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=run,
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check.status == "digest_unverified"
+    assert not check.ok
+
+
+def test_sidecar_image_id_cannot_satisfy_pull_container_probe() -> None:
+    run, _calls = _target_probe_runner()
+
+    def sidecar_first(cmd, **kwargs):  # noqa: ANN001
+        result = run(cmd, **kwargs)
+        if not result.stdout.strip():
+            return result
+        payload = json.loads(result.stdout)
+        payload["spec"]["containers"].insert(
+            0,
+            {"name": "sidecar", "image": "registry.example/sidecar:latest"},
+        )
+        payload["status"]["containerStatuses"] = [
+            {
+                "name": "sidecar",
+                "imageID": f"containerd://{DIGEST}",
+                "state": {"running": {}},
+            },
+            {
+                "name": "pull",
+                "imageID": "",
+                "state": {"waiting": {"reason": "ErrImagePull"}},
+            },
+        ]
+        return subprocess.CompletedProcess(
+            result.args,
+            result.returncode,
+            stdout=json.dumps(payload),
+            stderr=result.stderr,
+        )
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=sidecar_first,
+        sleeper=lambda seconds: pytest.fail("pull failure must not sleep"),
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check.status == "image_pull_failed"
+    assert not check.ok

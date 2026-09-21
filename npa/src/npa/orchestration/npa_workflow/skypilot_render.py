@@ -1900,8 +1900,10 @@ class ImagePullRequirements:
 
     requires_operator: bool = False
     requires_kubernetes: bool = False
+    target_unresolved: bool = False
     pull_secret_name_sets: tuple[tuple[str, ...] | None, ...] = ()
     service_account_names: tuple[str | None, ...] = ()
+    pod_placement_specs: tuple[str, ...] = ()
 
     @property
     def pull_secret_names(self) -> tuple[str, ...]:
@@ -1962,6 +1964,35 @@ def _task_service_account_name(pod_spec: Mapping[str, Any]) -> str | None:
     return name
 
 
+_PULL_PLACEMENT_FIELDS = frozenset(
+    {
+        "affinity",
+        "dnsConfig",
+        "dnsPolicy",
+        "hostNetwork",
+        "nodeName",
+        "nodeSelector",
+        "priorityClassName",
+        "runtimeClassName",
+        "schedulerName",
+        "tolerations",
+        "topologySpreadConstraints",
+    }
+)
+
+
+def _task_pull_placement_json(pod_spec: Mapping[str, Any]) -> str:
+    placement = {
+        key: value for key, value in pod_spec.items() if key in _PULL_PLACEMENT_FIELDS
+    }
+    try:
+        return json.dumps(placement, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task pod placement must contain JSON-compatible values"
+        ) from None
+
+
 def plan_image_pull_requirements(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
@@ -1973,7 +2004,7 @@ def plan_image_pull_requirements(
 
     paths: dict[
         str,
-        list[tuple[str, tuple[str, ...] | None, str | None]],
+        list[tuple[str, tuple[str, ...] | None, str | None, str]],
     ] = {}
     for step in steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
@@ -1986,10 +2017,6 @@ def plan_image_pull_requirements(
         ).strip()
         if not image:
             continue
-        cloud = str(resources.get("cloud") or "").strip().casefold()
-        if cloud not in {"kubernetes", "k8s"}:
-            paths.setdefault(image, []).append(("operator", None, None))
-            continue
         kubernetes = resources.get("kubernetes")
         kubernetes = kubernetes if isinstance(kubernetes, dict) else {}
         pod_config = kubernetes.get("pod_config")
@@ -1998,25 +2025,50 @@ def plan_image_pull_requirements(
         pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
         names = _task_pull_secret_names(pod_spec)
         service_account_name = _task_service_account_name(pod_spec)
-        paths.setdefault(image, []).append(("kubernetes", names, service_account_name))
+        pod_placement_json = _task_pull_placement_json(pod_spec)
+        cloud = str(resources.get("cloud") or "").strip().casefold()
+        if not cloud:
+            paths.setdefault(image, []).append(
+                ("unresolved", names, service_account_name, pod_placement_json)
+            )
+            continue
+        if cloud not in {"kubernetes", "k8s"}:
+            paths.setdefault(image, []).append(("operator", None, None, "{}"))
+            continue
+        paths.setdefault(image, []).append(
+            ("kubernetes", names, service_account_name, pod_placement_json)
+        )
     return {
         image: ImagePullRequirements(
-            requires_operator=any(kind == "operator" for kind, _, _ in authorities),
-            requires_kubernetes=any(kind == "kubernetes" for kind, _, _ in authorities),
+            requires_operator=any(kind == "operator" for kind, _, _, _ in authorities),
+            requires_kubernetes=any(
+                kind == "kubernetes" for kind, _, _, _ in authorities
+            ),
+            target_unresolved=any(
+                kind == "unresolved" for kind, _, _, _ in authorities
+            ),
             pull_secret_name_sets=tuple(
                 names
-                for names, _ in dict.fromkeys(
-                    (names, service_account_name)
-                    for kind, names, service_account_name in authorities
-                    if kind == "kubernetes"
+                for names, _, _ in dict.fromkeys(
+                    (names, service_account_name, pod_placement_json)
+                    for kind, names, service_account_name, pod_placement_json in authorities
+                    if kind in {"kubernetes", "unresolved"}
                 )
             ),
             service_account_names=tuple(
                 service_account_name
-                for _, service_account_name in dict.fromkeys(
-                    (names, service_account_name)
-                    for kind, names, service_account_name in authorities
-                    if kind == "kubernetes"
+                for _, service_account_name, _ in dict.fromkeys(
+                    (names, service_account_name, pod_placement_json)
+                    for kind, names, service_account_name, pod_placement_json in authorities
+                    if kind in {"kubernetes", "unresolved"}
+                )
+            ),
+            pod_placement_specs=tuple(
+                pod_placement_json
+                for _, _, pod_placement_json in dict.fromkeys(
+                    (names, service_account_name, pod_placement_json)
+                    for kind, names, service_account_name, pod_placement_json in authorities
+                    if kind in {"kubernetes", "unresolved"}
                 )
             ),
         )

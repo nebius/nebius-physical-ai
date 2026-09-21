@@ -1180,6 +1180,84 @@ states:
     assert observed["pull_secrets_by_image"] == {reject_image: ()}
 
 
+def test_image_preflight_includes_mixed_decision_reachable_image(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    hidden_image = "registry.example.invalid/customer/mixed-only:latest"
+    spec_path = tmp_path / "mixed-decisions.yaml"
+    spec_path.write_text(
+        f"""
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {{name: mixed-decision-image-preflight}}
+config: {{bucket: example-bucket, prefix: runs/test}}
+resources:
+  route: {{cloud: kubernetes, image: registry.example.invalid/customer/route:latest}}
+  hidden: {{cloud: kubernetes, image: {hidden_image}}}
+initial: first-gate
+states:
+  first-gate:
+    resources: route
+    run: {{shell: echo first}}
+    transitions:
+      - {{when: promote_checkpoint, goto: second-gate}}
+      - {{when: loop_back, goto: stop}}
+  second-gate:
+    resources: route
+    run: {{shell: echo second}}
+    transitions:
+      - {{when: promote_checkpoint, goto: stop}}
+      - {{when: loop_back, goto: mixed-only}}
+  mixed-only:
+    resources: hidden
+    run: {{shell: echo mixed}}
+    terminal: true
+  stop:
+    resources: route
+    run: {{shell: echo stop}}
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+    observed: list[str] = []
+
+    def check(images, **_kwargs):
+        observed.extend(images)
+        return [
+            ImagePullCheck(image=image, status="ok", http_status=200)
+            for image in images
+        ]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        check,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda *, images, **_kwargs: [
+            {"image": image, "state": "compatible"} for image in images
+        ],
+    )
+
+    workflow_cli._preflight_submit_images(
+        spec_path,
+        options=SkypilotRenderOptions(),
+        assume_decision="promote_checkpoint",
+        enabled=True,
+        infra="k8s/example-context",
+    )
+
+    assert hidden_image in observed
+
+
 def test_first_party_image_without_attestation_fails_instead_of_probing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1225,6 +1303,7 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    digest = "sha256:" + "a" * 64
 
     def metadata_forbidden(*_args, **_kwargs):
         raise AssertionError("uncontracted image reached bootstrap metadata lookup")
@@ -1236,12 +1315,30 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
 
     result = workflow_cli._preflight_image_bootstrap_contracts(
         images=[image],
-        pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+        pull_checks=[
+            ImagePullCheck(
+                image=image,
+                status="ok",
+                http_status=200,
+                digest=digest,
+            )
+        ],
         context="exact-context",
         namespace="target-namespace",
     )
 
-    assert result == []
+    assert result == [
+        {
+            "image": (f"ghcr.io/nebius/nebius-physical-ai/npa-retargeting@{digest}"),
+            "digest": digest,
+            "contract_version": "skypilot-0.12.2-v1",
+            "state": "compatible",
+            "source": "registry_pull_preflight",
+            "checks": ("immutable_registry_pull",),
+            "cleanup": "not_applicable",
+            "detail": "",
+        }
+    ]
 
 
 @pytest.mark.parametrize("source", ["oci_attestation", "ephemeral_capability_probe"])

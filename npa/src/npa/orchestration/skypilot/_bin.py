@@ -7,7 +7,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -132,6 +132,22 @@ def resolve_global_config_path(
         ),
     )
     return _optional_path(global_value)
+
+
+def resolve_skypilot_kubeconfig_path(
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the one kubeconfig pinned SkyPilot sees in its isolated HOME."""
+
+    env = os.environ if environment is None else environment
+    raw = str(env.get("KUBECONFIG") or "").strip()
+    if raw:
+        first = raw.split(os.pathsep, 1)[0].strip()
+        if first:
+            return Path(first).expanduser().resolve(strict=False)
+    return (
+        Path(env.get("HOME") or Path.home()).expanduser() / ".kube" / "config"
+    ).resolve(strict=False)
 
 
 def resolve_isolated_config_dir(

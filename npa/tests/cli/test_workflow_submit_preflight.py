@@ -1202,10 +1202,69 @@ def test_effective_pull_paths_preserve_service_account_authority() -> None:
 
     assert effective == {
         "image": (
-            (("shared",), "service-account-a"),
-            (("shared",), "service-account-b"),
+            (("shared",), "service-account-a", "{}"),
+            (("shared",), "service-account-b", "{}"),
         )
     }
+
+
+def test_effective_pull_paths_merge_global_and_task_placement() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("shared",),),
+            service_account_names=("service-account",),
+            pod_placement_specs=(
+                json.dumps(
+                    {
+                        "nodeSelector": {"nebius.com/node-group": "gpu"},
+                        "runtimeClassName": "nvidia",
+                    }
+                ),
+            ),
+        )
+    }
+
+    effective = workflow_cli._image_pull_paths(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+        inherited_service_account_name="base-service-account",
+        inherited_pod_placement_json=json.dumps(
+            {"nodeSelector": {"kubernetes.io/os": "linux"}}
+        ),
+    )
+
+    assert effective == {
+        "image": (
+            (
+                ("shared",),
+                "service-account",
+                (
+                    '{"nodeSelector":{"kubernetes.io/os":"linux",'
+                    '"nebius.com/node-group":"gpu"},'
+                    '"runtimeClassName":"nvidia"}'
+                ),
+            ),
+        )
+    }
+
+
+def test_unresolved_cloud_is_not_certified_as_operator_pull() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            target_unresolved=True,
+        )
+    }
+
+    operator_images, kubernetes_images = workflow_cli._image_pull_execution_paths(
+        images=["image"],
+        requirements=requirements,
+        infra="",
+    )
+
+    assert operator_images == set()
+    assert kubernetes_images == set()
 
 
 def test_effective_pull_secret_sets_reject_invalid_multi_entry_override() -> None:

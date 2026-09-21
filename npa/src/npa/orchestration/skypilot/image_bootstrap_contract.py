@@ -26,6 +26,21 @@ DEFAULT_PROBE_TIMEOUT_SECONDS = 1800
 # Backward-compatible import alias. New callers should use the explicit default name.
 PROBE_TIMEOUT_SECONDS = DEFAULT_PROBE_TIMEOUT_SECONDS
 _KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
+_PULL_PLACEMENT_FIELDS = frozenset(
+    {
+        "affinity",
+        "dnsConfig",
+        "dnsPolicy",
+        "hostNetwork",
+        "nodeName",
+        "nodeSelector",
+        "priorityClassName",
+        "runtimeClassName",
+        "schedulerName",
+        "tolerations",
+        "topologySpreadConstraints",
+    }
+)
 
 
 class ImageBootstrapContractError(RuntimeError):
@@ -308,6 +323,7 @@ def probe_image_capabilities(
     kubeconfig: str = "",
     image_pull_secrets: tuple[str, ...] = (),
     service_account_name: str = "skypilot-service-account",
+    pod_placement: Mapping[str, Any] | None = None,
     runtime_bootstrap: bool = False,
     observation_timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS,
     runner: Runner = _run,
@@ -321,6 +337,7 @@ def probe_image_capabilities(
         context, namespace, kubeconfig: Exact Kubernetes target and credentials file.
         image_pull_secrets: Existing registry authentication Secret names.
         service_account_name: Exact ServiceAccount SkyPilot renders for the task.
+        pod_placement: Pull-relevant scheduling and runtime fields SkyPilot renders.
         runtime_bootstrap: Reproduce SkyPilot's shell override and package
             installation for vendor images; first-party byte probes stay strict.
         observation_timeout_seconds: Watch deadline; zero waits indefinitely.
@@ -499,9 +516,18 @@ def probe_image_capabilities(
             f"npa.nebius.com/probe-id={probe_id}"
         )
         try:
-            override_spec: dict[str, Any] = {
-                "serviceAccountName": service_account_name,
-            }
+            selected_placement = dict(pod_placement or {})
+            if any(key not in _PULL_PLACEMENT_FIELDS for key in selected_placement):
+                raise ImageBootstrapContractError(
+                    "Kubernetes pod placement contains unsupported fields"
+                )
+            try:
+                override_spec = json.loads(json.dumps(selected_placement))
+            except (TypeError, ValueError):
+                raise ImageBootstrapContractError(
+                    "Kubernetes pod placement must contain JSON-compatible values"
+                ) from None
+            override_spec["serviceAccountName"] = service_account_name
             if pull_secret_names:
                 override_spec["imagePullSecrets"] = [
                     {"name": secret_name} for secret_name in pull_secret_names

@@ -363,6 +363,10 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
         context="ctx-exact",
         image_pull_secrets=("operator-registry-secret", "operator-registry-secret"),
         service_account_name="exact-service-account",
+        pod_placement={
+            "nodeSelector": {"nebius.com/node-group": "gpu-a"},
+            "runtimeClassName": "nvidia",
+        },
         runner=_successful_runner(calls),
         terminal_observer=_terminal_observer(),
         nonce_factory=lambda: "c" * 16,
@@ -377,6 +381,8 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
     override_spec = json.loads(raw_overrides)["spec"]
     assert override_spec["imagePullSecrets"] == [{"name": "operator-registry-secret"}]
     assert override_spec["serviceAccountName"] == "exact-service-account"
+    assert override_spec["nodeSelector"] == {"nebius.com/node-group": "gpu-a"}
+    assert override_spec["runtimeClassName"] == "nvidia"
 
 
 def test_probe_rejects_invalid_image_pull_secret_name_before_creation() -> None:

@@ -177,7 +177,10 @@ successful `npa skypilot verify --cluster <exact-context>`:
   context-effective `kubernetes.remote_identity`, with any config-level or task
   `pod_config.spec.serviceAccountName` override applied. This matters because
   ServiceAccount admission can attach additional pull Secrets. Every distinct
-  rendered Secret-and-ServiceAccount path is probed independently.
+  rendered Secret, ServiceAccount, and pull-relevant pod-placement path
+  (`nodeSelector`, affinity, runtime class, tolerations, and related scheduling
+  fields) is probed independently. NPA uses the first `KUBECONFIG` file because
+  that is the file pinned SkyPilot 0.12 exposes in its isolated home.
   SkyPilot 0.12 replaces the first
   `imagePullSecrets` entry at each context/task overlay, so preflight mirrors
   that effective set instead of unioning overridden Secrets. An initial empty
@@ -185,8 +188,13 @@ successful `npa skypilot verify --cluster <exact-context>`:
   override entry and cannot merge into an empty base, so NPA rejects those exact
   invalid merge shapes. For a multi-platform image, a target platform-manifest
   digest is accepted only when the fetched OCI index declares it. Anonymous
-  host access never substitutes for a target pull. It never falls back to the
-  ambient context or mints a Secret. Run it standalone with
+  host access never substitutes for a target pull, and an opaque runtime image
+  ID without an immutable digest is not proof. Registry credentials are sent
+  only to a trusted HTTPS Bearer realm. Preflight includes every
+  control-flow-reachable image, including mixed outcomes across multiple
+  decisions. If a resource omits `cloud`, pass an exact `--infra`; NPA does not
+  guess VM versus Kubernetes authority. It never falls back to the ambient
+  context or mints a Secret. Run it standalone with
   `npa workbench workflow preflight-images <spec.yaml>` plus
   `--infra k8s/<context>`, or skip with `--no-preflight-images`.
 - **A large authenticated cold pull is not an access failure.** Bootstrap probes
