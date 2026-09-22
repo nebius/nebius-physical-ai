@@ -1,11 +1,11 @@
 {
   "schema": "npa.public-pr-readiness/v5",
-  "snapshot_utc": "2026-09-22T04:45:31.858471+00:00",
-  "mergeability_verified_at": "2026-09-22T04:45:31.858471+00:00",
-  "prepared_at": "2026-09-22T04:45:32.301348+00:00",
-  "required_checks_verified_at": "2026-09-22T04:45:31.858471+00:00",
-  "tracked_open_count": 63,
-  "tracked_historical_count": 67,
+  "snapshot_utc": "2026-09-22T05:17:42.536456+00:00",
+  "mergeability_verified_at": "2026-09-22T05:17:42.536456+00:00",
+  "prepared_at": "2026-09-22T05:17:42.921015+00:00",
+  "required_checks_verified_at": "2026-09-22T05:17:42.536456+00:00",
+  "tracked_open_count": 64,
+  "tracked_historical_count": 68,
   "queue_candidates": [
     581,
     584,
@@ -29,6 +29,7 @@
     652,
     654,
     659,
+    678,
     679,
     681,
     682,
@@ -106,7 +107,7 @@
     },
     {
       "workload": "SeedVR2",
-      "current_result": "Draft. Published f1de passed 25,882 full-suite tests, all ten local gates and native security. Its new private image passed nine offline runtime commands, pinned architecture checks, secret/vulnerability/payload gates and independent receipt/OCI review. A fresh private 3B encoder experiment is being frozen; no new GPU quality pass is claimed. Earlier failed quality trials remain public. Complete-byte scanning continues and blocks public publication/release.",
+      "current_result": "Draft. Published f1de passed 25,882 full-suite tests, all ten local gates and native security. Its new private image passed nine offline runtime commands, pinned architecture checks, secret/vulnerability/payload gates and independent receipt/OCI review. All four frozen private 3B encoder arms completed on B200 with exact image identity and zero restarts. Independent tensor/RNG and posterior-selection verification is in progress; this is not a restoration-quality pass. Earlier failed quality trials remain public. Complete-byte scanning continues and blocks public publication/release.",
       "remaining_acceptance": "Private image qualification, actual 3B encoder controls and paired GPU quality checks; retain unchanged thresholds and sealed holdout.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/fcf5d78138211faff37339e19604bc0b3e5b7ce6/docs/testing/evidence/seedvr-paired-b200-0b5e47d9/README.md",
@@ -120,7 +121,7 @@
     },
     {
       "workload": "RoboCasa",
-      "current_result": "Draft. The real golden RTX run failed because asset staging removed fixture-registry YAML files. The repair preserves them and passes independent filesystem and mutant checks. Its exact tree passed 25,854 full-suite tests and native security, but independent review found an incorrect whole-PR validation scope; missing applicable gates and the correction are required before source publication. The replacement private image passed runtime and asset checks. Private GPU qualification is being prepared; full ACT training and held-out acceptance are outstanding. Complete-byte scanning continues.",
+      "current_result": "Draft. The real golden RTX run failed because asset staging removed fixture-registry YAML files. The repair preserves them and passes independent filesystem and mutant checks. Its exact tree passed 25,854 full-suite tests and native security, but independent review found an incorrect whole-PR validation scope; missing applicable gates and the correction are required before source publication. The replacement private image passed independent mandatory checks, authenticated exact-digest delivery/readback and anonymous-access denial. Frozen GPU qualification is being prepared; full ACT training and held-out acceptance are outstanding. Complete-byte scanning continues.",
       "remaining_acceptance": "Correct whole-PR gate coverage, then real golden and full ACT training/evaluation with frozen held-out comparisons; public release additionally needs complete-byte acceptance.",
       "proof_links": []
     },
@@ -260,15 +261,15 @@
     },
     {
       "workload": "Kimi-K3 evaluator integration",
-      "current_result": "Draft pending final hosted CI. Published 723b5bc passed 25,654 full-suite tests, ten local gates, native security and independent contract review. Four real integrated Kimi-K3 calls scored 0.96/0.25/0.05/0.30, accepting one valid overlay and rejecting three disclosed controls. Nine public proof files were anonymously verified. Hosted inference needs no local GPU; this is no new holdout or robot-policy claim. #596 should land first.",
-      "remaining_acceptance": "Final exact-source hosted CI; #596 should land first. Hosted evidence is accepted for its narrow visual rubric.",
+      "current_result": "Ready: exact-source hosted checks passed and the PR is conflict-free. Published 723b5bc passed 25,654 full-suite tests, ten local gates, native security and independent contract review. Four real integrated Kimi-K3 calls scored 0.96/0.25/0.05/0.30, accepting one valid overlay and rejecting three disclosed controls. Nine public proof files were anonymously verified. Hosted inference needs no local GPU; this is no new holdout or robot-policy claim. #596 should land first.",
+      "remaining_acceptance": "Required merge queue after #596; retained hosted visual-rubric scope only.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/d38f2f9b2aa8164c1bfb10a01c65865822532ec7/docs/testing/evidence/kimi-k3-integrated-provenance-b760e513/README.md"
       ]
     },
     {
       "workload": "NCore source capture and RTX reconstruction",
-      "current_result": "Draft. Published b231 has the exact 116 validation tree: 25,832 full-suite tests, ten local gates and native security passed. Real image qualification then exposed source-guard scratch symlinks inside immutable evidence. Private dd1 separates scratch: actual predecessor and candidate each ran 667 guards; only the repaired candidate passed manifest assembly. Its new private image is built and being checked. Current full-source validation also exposed a process-exit readiness race, now being fixed separately. Complete reference data was staged and independently read back. Conversion, RTX reconstruction, novel views and VLM acceptance remain outstanding.",
+      "current_result": "Draft. Published b231 has the exact 116 validation tree: 25,832 full-suite tests, ten local gates and native security passed. Real image qualification then exposed source-guard scratch symlinks inside immutable evidence. Private dd1 separates scratch: actual predecessor and candidate each ran 667 guards; only the repaired candidate passed manifest assembly. Its full image check passed, then the actual CPU qualification exposed a missing packaged S3-probe module. Private f6 repairs the curated COPY closure; a real isolated import regression fails on the predecessor and passes on f6. Its rebuilt image is being checked before conversion. The process-exit readiness race is repaired in #723 with 25,650 full-suite tests passed; integrated NCore validation is running separately. Complete reference data was staged and independently read back. Conversion, RTX reconstruction, novel views and VLM acceptance remain outstanding.",
       "remaining_acceptance": "Finish source/image qualification, full CPU conversion, actual RTX training and novel views, independent output/VLM review, owned cleanup and exact-source CI.",
       "proof_links": []
     }
@@ -438,11 +439,12 @@
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "status": "Pending acceptance or exact-source hosted checks",
-      "note": "Draft. Published f1de passed 25,882 full-suite tests, all ten local gates and native security. Its new private image passed nine offline runtime commands, pinned architecture checks, secret/vulnerability/payload gates and independent receipt/OCI review. A fresh private 3B encoder experiment is being frozen; no new GPU quality pass is claimed. Earlier failed quality trials remain public. Complete-byte scanning continues and blocks public publication/release.",
+      "note": "Draft. Published f1de passed 25,882 full-suite tests, all ten local gates and native security. Its new private image passed nine offline runtime commands, pinned architecture checks, secret/vulnerability/payload gates and independent receipt/OCI review. All four frozen private 3B encoder arms completed on B200 with exact image identity and zero restarts. Independent tensor/RNG and posterior-selection verification is in progress; this is not a restoration-quality pass. Earlier failed quality trials remain public. Complete-byte scanning continues and blocks public publication/release.",
       "check_counts": {
-        "SUCCESS": 11,
+        "SUCCESS": 22,
         "SKIPPED": 3,
-        "QUEUED": 17
+        "IN_PROGRESS": 2,
+        "QUEUED": 5
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -562,7 +564,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Pending acceptance or exact-source hosted checks",
-      "note": "Draft. The real golden RTX run failed because asset staging removed fixture-registry YAML files. The repair preserves them and passes independent filesystem and mutant checks. Its exact tree passed 25,854 full-suite tests and native security, but independent review found an incorrect whole-PR validation scope; missing applicable gates and the correction are required before source publication. The replacement private image passed runtime and asset checks. Private GPU qualification is being prepared; full ACT training and held-out acceptance are outstanding. Complete-byte scanning continues.",
+      "note": "Draft. The real golden RTX run failed because asset staging removed fixture-registry YAML files. The repair preserves them and passes independent filesystem and mutant checks. Its exact tree passed 25,854 full-suite tests and native security, but independent review found an incorrect whole-PR validation scope; missing applicable gates and the correction are required before source publication. The replacement private image passed independent mandatory checks, authenticated exact-digest delivery/readback and anonymous-access denial. Frozen GPU qualification is being prepared; full ACT training and held-out acceptance are outstanding. Complete-byte scanning continues.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 2
@@ -746,9 +748,9 @@
       "status": "Pending acceptance or exact-source hosted checks",
       "note": "Draft pending final hosted CI. Published f0d42715 has the exact fully tested tree and all 43 ahead-base signatures verify. Validation producer b5bd8cd passed 25,848 full-suite tests, ten local gates and native security. Actual six-stage managed CPU execution succeeded on recorded producer 2a909 and its e62-built image. Geometry, decoded RRD, runtime and complete owned cleanup passed independent review; eight public proof files were anonymously verified. No GPU or new VLM call applies to this replay.",
       "check_counts": {
-        "SUCCESS": 20,
+        "SUCCESS": 29,
         "SKIPPED": 3,
-        "IN_PROGRESS": 8
+        "QUEUED": 1
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -2834,12 +2836,12 @@
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "status": "Pending acceptance or exact-source hosted checks",
-      "note": "Draft. Published b231 has the exact 116 validation tree: 25,832 full-suite tests, ten local gates and native security passed. Real image qualification then exposed source-guard scratch symlinks inside immutable evidence. Private dd1 separates scratch: actual predecessor and candidate each ran 667 guards; only the repaired candidate passed manifest assembly. Its new private image is built and being checked. Current full-source validation also exposed a process-exit readiness race, now being fixed separately. Complete reference data was staged and independently read back. Conversion, RTX reconstruction, novel views and VLM acceptance remain outstanding.",
+      "note": "Draft. Published b231 has the exact 116 validation tree: 25,832 full-suite tests, ten local gates and native security passed. Real image qualification then exposed source-guard scratch symlinks inside immutable evidence. Private dd1 separates scratch: actual predecessor and candidate each ran 667 guards; only the repaired candidate passed manifest assembly. Its full image check passed, then the actual CPU qualification exposed a missing packaged S3-probe module. Private f6 repairs the curated COPY closure; a real isolated import regression fails on the predecessor and passes on f6. Its rebuilt image is being checked before conversion. The process-exit readiness race is repaired in #723 with 25,650 full-suite tests passed; integrated NCore validation is running separately. Complete reference data was staged and independently read back. Conversion, RTX reconstruction, novel views and VLM acceptance remain outstanding.",
       "check_counts": {
-        "SUCCESS": 6,
-        "SKIPPED": 2,
-        "QUEUED": 4,
-        "IN_PROGRESS": 2
+        "SUCCESS": 14,
+        "SKIPPED": 3,
+        "QUEUED": 8,
+        "IN_PROGRESS": 7
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -3378,19 +3380,18 @@
       "title": "Fix Kimi-K3 hosted VLM completion contract",
       "source_commit": "723b5bc54446c50932edba9a8747adb3ad55a95a",
       "state": "OPEN",
-      "draft": true,
+      "draft": false,
       "base": "main",
       "base_commit": "a42662b27043c31f07f036bb451fdfb18f252981",
       "mergeable": "MERGEABLE",
-      "merge_state": "UNSTABLE",
-      "status": "Pending acceptance or exact-source hosted checks",
-      "note": "Draft pending final hosted CI. Published 723b5bc passed 25,654 full-suite tests, ten local gates, native security and independent contract review. Four real integrated Kimi-K3 calls scored 0.96/0.25/0.05/0.30, accepting one valid overlay and rejecting three disclosed controls. Nine public proof files were anonymously verified. Hosted inference needs no local GPU; this is no new holdout or robot-policy claim. #596 should land first.",
+      "merge_state": "CLEAN",
+      "status": "Ready for required merge queue",
+      "note": "Ready: exact-source hosted checks passed and the PR is conflict-free. Published 723b5bc passed 25,654 full-suite tests, ten local gates, native security and independent contract review. Four real integrated Kimi-K3 calls scored 0.96/0.25/0.05/0.30, accepting one valid overlay and rejecting three disclosed controls. Nine public proof files were anonymously verified. Hosted inference needs no local GPU; this is no new holdout or robot-policy claim. #596 should land first.",
       "check_counts": {
-        "SUCCESS": 24,
-        "SKIPPED": 4,
-        "QUEUED": 1
+        "SUCCESS": 25,
+        "SKIPPED": 4
       },
-      "applicable_ci_passes": false,
+      "applicable_ci_passes": true,
       "required_checks_app_and_source_verified": true,
       "required_checks": [
         {
@@ -4026,9 +4027,10 @@
       "mergeable": "MERGEABLE",
       "merge_state": "BLOCKED",
       "check_counts": {
-        "SUCCESS": 1,
+        "SUCCESS": 7,
+        "SKIPPED": 3,
         "IN_PROGRESS": 1,
-        "QUEUED": 3
+        "QUEUED": 12
       },
       "applicable_ci_passes": false,
       "required_checks_app_and_source_verified": false,
@@ -4037,9 +4039,9 @@
           "name": "gitleaks",
           "app_id": 15368,
           "source_commit": "b3ed5b0b04820686f0d7ed0210cc3a29cb0fc30a",
-          "conclusion": "MISSING_OR_PENDING",
+          "conclusion": "SUCCESS",
           "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35686818676/job/106615501445",
-          "passes_required_identity": false
+          "passes_required_identity": true
         },
         {
           "name": "scan",
@@ -4233,6 +4235,56 @@
       ],
       "required_checks_app_and_source_verified": true,
       "note": "Ready after #709. Public signed 04f64 passes all 21 hosted checks: 19 success and two expected skips. Both accepted-ID and zero-ID real recovery proof are public. Full suite: 25,690 passed; ten local gates and trusted native security607\u2192607 passed. Final equivalent source-pin representation has157 focused passing consumers. Historical failures and unknown outcomes are preserved; no GPU applies."
+    },
+    {
+      "number": 723,
+      "source_commit": "e41aa93329ab2b60ef4b26bc7085b2ef23e9b1b6",
+      "depends_on": [],
+      "public_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/f679d9db8c028781b74cc1653759e706ec7fd4c6/docs/testing/evidence/sky-listener-exit-race-e41aa933/README.md"
+      ],
+      "review_links": [],
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/723",
+      "title": "Handle SkyPilot daemon exit during listener ownership checks",
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "base_commit": "36605d46a7b67da6bb7f296bba556aa5111eee02",
+      "mergeable": "MERGEABLE",
+      "merge_state": "BLOCKED",
+      "applicable_ci_passes": false,
+      "required_checks_app_and_source_verified": false,
+      "check_counts": {
+        "QUEUED": 5
+      },
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "app_id": 15368,
+          "source_commit": "e41aa93329ab2b60ef4b26bc7085b2ef23e9b1b6",
+          "conclusion": "MISSING_OR_PENDING",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35689837822/job/106624266381",
+          "passes_required_identity": false
+        },
+        {
+          "name": "scan",
+          "app_id": 15368,
+          "source_commit": "e41aa93329ab2b60ef4b26bc7085b2ef23e9b1b6",
+          "conclusion": "MISSING_OR_PENDING",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35689837822/job/106624267507",
+          "passes_required_identity": false
+        },
+        {
+          "name": "security-regression",
+          "app_id": null,
+          "source_commit": null,
+          "conclusion": "MISSING_OR_PENDING",
+          "url": null,
+          "passes_required_identity": false
+        }
+      ],
+      "status": "Pending acceptance or exact-source hosted checks",
+      "note": "Draft pending hosted CI. Exact signed e41 fixes a real child-process exit race during SkyPilot listener ownership checks. The actual predecessor fails; the fix refuses readiness. All 25,650 full-suite tests, ten local gates and native security passed; independent review verified 6,652 scanner input blobs. Three public proof files were anonymously read back. CPU process lifecycle only; GPU/VLM not applicable."
     }
   ],
   "workload_update_recorded_at": "2026-09-21T17:50:31.526423+00:00",
@@ -4250,7 +4302,7 @@
     "recovery": "Codex is implementing and validating the active recovery work. Completed Cursor work retains its original attribution.",
     "no_blanket_worker_liveness_claim": true
   },
-  "supplemental_verified_at": "2026-09-22T04:45:32.301359+00:00",
-  "root_operational_update_at": "2026-09-22T04:45:32.301360+00:00",
+  "supplemental_verified_at": "2026-09-22T05:17:42.921026+00:00",
+  "root_operational_update_at": "2026-09-22T05:17:42.921028+00:00",
   "current_main_commit": "36605d46a7b67da6bb7f296bba556aa5111eee02"
 }
