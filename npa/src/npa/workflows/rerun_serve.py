@@ -34,7 +34,7 @@ DEFAULT_NGINX_IMAGE = "nginx:1.30.4-alpine-slim@sha256:77da26c31397bf6694b4bf932
 RERUN_STATIC_CACHE_CONTROL = "public, max-age=604800, immutable"
 # 0.31.x embeds localhost gRPC URLs and lacks --cors-allow-origin; remote LoadBalancer
 # viewers stall around wasm load (~37%) then fail to connect. Pin serve pods to 0.32+.
-DEFAULT_RERUN_SERVE_SDK_VERSION = "0.32.0"
+DEFAULT_RERUN_SERVE_SDK_VERSION = "0.38.1"
 DEFAULT_S3_PREFIX = "sim2real-b"
 DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
 DEFAULT_SERVICE_TYPE = "ClusterIP"
