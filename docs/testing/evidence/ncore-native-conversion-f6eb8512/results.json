@@ -1,0 +1,84 @@
+{
+  "at": "2026-09-22T05:51:57.307657+00:00",
+  "status": "PASS_ACTUAL_CPU_CONVERSION_AND_AUDIT_READBACK",
+  "original_wrapper_exit": 1,
+  "source_contract_fix": "027ea5849adb4df2ef7ecba628a9539f2ff66f91",
+  "actual_image_source": "f6eb851255ecf219e94cdc8ca937875509bc0a48",
+  "image_manifest_digest": "sha256:cdd4e00174f74a25fb0b6ac6dafa3d9d3f5f351deba3e4b822e87f78228f3de6",
+  "local_image_id": "sha256:d20e46f8b226513a613e40b0205b821da9c6c36b3cbadd938810217488d00a7a",
+  "candidate_receipt_sha256": "680fa3425df3ffc6e1c9cdb8c1efe55a0d569546f0c5b6d363c75bbb049e83b2",
+  "wrong_source_receipt_sha256": "a62ecb2c85e6496469d5dc8a68020e05cd50ef0fe5b330e301d4e01b86dadba3",
+  "wrong_source_control": "PASS_BEFORE_AND_AFTER_REAL_INTEGER_ZERO_NATIVE_NOT_STARTED",
+  "actual_executions": {
+    "wrong-source": "bc1640aa8451d0388b07685e6a6672faaab86e57a9305a0aa2a1be637f5d7eea",
+    "convert": "e62db9e818956f8c7194c584a3e84a6d4cf53d63aadab464d6480456ec0d7971",
+    "audit": "c0c136ee2b0db61dbc31ed71b6002c21577fa02d22b4e630eec39c8b8bf78a65"
+  },
+  "container_cleanup": "three_exact_created_IDs_absent",
+  "independent_native_audit_sha256": "a6c2d22c9b03892cd9a6321ee862ca81038b2d6e92c6a5c6c0b230805d44fc32",
+  "counts": {
+    "cameras": 3,
+    "images": 518,
+    "points": 163453,
+    "poses": 518
+  },
+  "readback_members": [
+    {
+      "path": ".npa-colmap-claim.json",
+      "bytes": 106,
+      "sha256": "b8cef7d0af2d445aff79ab2ed8f3e0c287c5cba6f1daad90a58865a7b806f8a5"
+    },
+    {
+      "path": "conversion.json",
+      "bytes": 93508,
+      "sha256": "212a4ba6f8b572c38f1aafe293eab7ab38a9e505f24288e70054f30d113dd5e3"
+    },
+    {
+      "path": "npa-rig.json",
+      "bytes": 238,
+      "sha256": "2245d2a506f5a89db3cb3b14b98e97f1277cd5fd07a2a9595ef821c4acb331e8"
+    },
+    {
+      "path": "sequence.json",
+      "bytes": 2469,
+      "sha256": "41b448c349ff9d8fd8e3fa99ce6e2ec9b65486f903038ea43b6c626bb48d498b"
+    },
+    {
+      "path": "struktur28.ncore4-camera1.zarr.itar",
+      "bytes": 563737600,
+      "sha256": "76ae7e571484074dd4e610e989f74fcba84d355c95dea5def1645d85424fcd06"
+    },
+    {
+      "path": "struktur28.ncore4-camera2.zarr.itar",
+      "bytes": 102350848,
+      "sha256": "689d736bc969ba079e216670a60e86204aa93deebb59b753734b9eedbe9392c7"
+    },
+    {
+      "path": "struktur28.ncore4-camera3.zarr.itar",
+      "bytes": 332804096,
+      "sha256": "344a8aa1da81dd440e04b964553182d86d3ed72f48996e8a981833520773729b"
+    },
+    {
+      "path": "struktur28.ncore4-npa_rig.zarr.itar",
+      "bytes": 656384,
+      "sha256": "21bb37debc90edbd69685498607c74a562c5eb9434a05e2c23a610d16a3cb81c"
+    },
+    {
+      "path": "struktur28.ncore4-sfm_points.zarr.itar",
+      "bytes": 2315264,
+      "sha256": "fb49d96a490e661fd92c217525db604e74428d2b1cc3f4cac834a114a4b41cfe"
+    },
+    {
+      "path": "struktur28.ncore4.zarr.itar",
+      "bytes": 472064,
+      "sha256": "08375448033a9bee8cc1f7af30e93bcb7c299b572364caf645227e70727d58ba"
+    }
+  ],
+  "readback_bytes": 1002432577,
+  "scope": "Existing three real exit-zero containers and native independent audit accepted with fresh full S3 readback. No container was reexecuted; original wrapper failure remains retained. No GPU, NRE, rendered-media or visual-quality acceptance.",
+  "schema": "npa.public.ncore.cpu-proof/v1",
+  "source_contract_fix_publication": "private successor pending full validation",
+  "root_private_recovery_sha256": "bebcd3391490485b61e58d2effd279d1343e0122bfb859e49d263070154ccf2d",
+  "gpu_qualification": false,
+  "visual_quality_accepted": false
+}
