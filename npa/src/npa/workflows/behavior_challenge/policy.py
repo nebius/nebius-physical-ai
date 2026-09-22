@@ -164,7 +164,11 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
         from .comet_policy import prepare_policy
 
         return prepare_policy(args, plan, output)
-    if getattr(args, "policy_kind", "official") in {"rlc", "rlc-selected"}:
+    if getattr(args, "policy_kind", "official") in {
+        "rlc",
+        "rlc-selected",
+        "rlc-specialist",
+    }:
         from .rlc_policy import prepare_policy
 
         return prepare_policy(args, plan, output)
@@ -244,6 +248,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             "native-stage-transition-refresh",
         },
         "rlc-selected": {"native", "transition-refresh", "final-stage-backtrack"},
+        "rlc-specialist": {"native"},
         "comet12": {"native"},
         "comet50": {"native"},
     }

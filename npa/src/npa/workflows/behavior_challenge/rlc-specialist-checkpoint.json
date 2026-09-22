@@ -1,0 +1,106 @@
+{
+  "schema": "npa.behavior.rlc-specialist-checkpoint.v1",
+  "repository": "Shawn3636/pi05-rft-behavior1k",
+  "revision": "5f0354b905ef5a5673c38eab364e439926f08e70",
+  "source_repository": "Sunliu36/Behavior1kChallenge_Solution_by_SHAWN",
+  "source_commit": "a608b89c419694b97f944108f67dc0232f4085b8",
+  "declared_task_ids": [
+    1,
+    7,
+    18,
+    21
+  ],
+  "normalization_sha256": "ccd14a0210fc59b2d2726ba599cc0c4b81347395dd60d2a15b334b28ed15a80b",
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 1891,
+      "git_blob_sha1": "dd170c58238c0d8163f73a08154050ee392925fd"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3925,
+      "git_blob_sha1": "8236a26fb7a06e5dc32465cd745cb62b2dca49fb"
+    },
+    {
+      "path": "_CHECKPOINT_METADATA",
+      "bytes": 423,
+      "git_blob_sha1": "0a23632dfe256711ce633dc010ee84af8c7b03b7"
+    },
+    {
+      "path": "assets/IliaLarchenko/behavior_224_rgb/norm_stats.json",
+      "bytes": 18009212,
+      "git_blob_sha1": "88979048985629997805edad96880ec11fb0ebee",
+      "sha256": "ccd14a0210fc59b2d2726ba599cc0c4b81347395dd60d2a15b334b28ed15a80b"
+    },
+    {
+      "path": "params/_METADATA",
+      "bytes": 31071,
+      "git_blob_sha1": "e96914a3e08384cd3cc18ba28c4a0d65b55f46bd"
+    },
+    {
+      "path": "params/_sharding",
+      "bytes": 18057,
+      "git_blob_sha1": "e8d69cd33d5d81c75f41ce4a7f7e00a0010a32ff"
+    },
+    {
+      "path": "params/array_metadatas/process_0",
+      "bytes": 12736,
+      "git_blob_sha1": "a380a147a1e3e23834d6ec47fc4fb7289e8b8995"
+    },
+    {
+      "path": "params/d/10a61934cf166e3254132df5ea7dd3db",
+      "bytes": 3630,
+      "git_blob_sha1": "33f5cc08c9de04a2841f587b02bcdc1f0e24abb0"
+    },
+    {
+      "path": "params/manifest.ocdbt",
+      "bytes": 118,
+      "git_blob_sha1": "98697ae3150456d611abcb4f7c1b7b8b333cb812"
+    },
+    {
+      "path": "params/ocdbt.process_0/d/11a294aac72fd4c26859c41afee768b0",
+      "bytes": 2384781312,
+      "git_blob_sha1": "02e51a8fb13cc416bdf0dcbea0dcaaba66373489",
+      "sha256": "daab46e0f5185d89f6bf725581f950a758788784bea8641363ff43f7b572818c"
+    },
+    {
+      "path": "params/ocdbt.process_0/d/43fa49ab8d5f3b6f559a62ddf787da3c",
+      "bytes": 2835415040,
+      "git_blob_sha1": "4c945dfb11e2f218705a18f0e6c86d396df6c4c7",
+      "sha256": "7fc48716dab01d7e7ef1f00cfe60010c7c1eadbe1273da4134bb9d5b086f93c7"
+    },
+    {
+      "path": "params/ocdbt.process_0/d/97f60c713932caf18a8c21fe40d17d63",
+      "bytes": 1431,
+      "git_blob_sha1": "80e4478e0f4cccdeb80605b80170188321b01416"
+    },
+    {
+      "path": "params/ocdbt.process_0/d/a0c1fccc0501cf51c45cb3dc3614c6a5",
+      "bytes": 217,
+      "git_blob_sha1": "6c60d9806929469a1c2c646600d643b0c3e4bb3c"
+    },
+    {
+      "path": "params/ocdbt.process_0/d/afc4c1443cc9540184bef4974e43e9a8",
+      "bytes": 3258,
+      "git_blob_sha1": "7ee9a91e70e950654adb898088e3d028aeb55f9a"
+    },
+    {
+      "path": "params/ocdbt.process_0/d/b2b7ccceabe3a952317629693ea31205",
+      "bytes": 112168960,
+      "git_blob_sha1": "fae9ed46c118cc1351aa26293983efd674995eef",
+      "sha256": "3824342e7af8f3679084051ed99a7c2d0ea9159462d6243e14b448237ca48cd9"
+    },
+    {
+      "path": "params/ocdbt.process_0/d/d364ea75116209ee0a44d348144a1ec0",
+      "bytes": 3615,
+      "git_blob_sha1": "6eaf35449629a2793929a7ac44f511add5e4cae8"
+    },
+    {
+      "path": "params/ocdbt.process_0/manifest.ocdbt",
+      "bytes": 362,
+      "git_blob_sha1": "645004b3289c47fdb819ab63dcb55ad10993bfaf"
+    }
+  ],
+  "license": "apache-2.0"
+}

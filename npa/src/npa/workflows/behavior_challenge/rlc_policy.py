@@ -71,7 +71,9 @@ def _verify_published_files(root: Path, checkpoint: str, files: dict) -> None:
             raise ValueError("Checkpoint bytes differ from the pinned published model")
 
 
-def _adapter_files(output: Path, *, selected: bool) -> dict[str, str]:
+def _adapter_files(
+    output: Path, *, selected: bool, specialist: bool = False
+) -> dict[str, str]:
     adapters = {}
     names = [
         "rlc_server.py",
@@ -81,6 +83,8 @@ def _adapter_files(output: Path, *, selected: bool) -> dict[str, str]:
     ]
     if selected:
         names.extend(("rlc_selected.py", "rlc_selected_server.py", "rlc_transition.py"))
+    if specialist:
+        names.extend(("rlc_specialist.py", "rlc-specialist-checkpoint.json"))
     for name in names:
         shutil.copyfile(Path(__file__).with_name(name), output / name)
         adapters[name] = file_digest(output / name)
@@ -151,7 +155,16 @@ def _verify_task(args, plan):
     task_id, checkpoint = _task_checkpoint(
         args.policy_root, args.upstream_root, tasks[0]
     )
-    if getattr(args, "policy_kind", "rlc") == "rlc-selected":
+    kind = getattr(args, "policy_kind", "rlc")
+    if kind == "rlc-specialist":
+        from .rlc_specialist import SUPPORTED_TASK_IDS
+
+        if plan["recipe"]["split"] != "development":
+            raise ValueError("Released RLC specialist is development-only")
+        if task_id not in SUPPORTED_TASK_IDS:
+            raise ValueError("Released RLC specialist does not support this task")
+        return task_id, "shawn-task-specialist"
+    if kind == "rlc-selected":
         if checkpoint != "checkpoint_2":
             raise ValueError("Selected RLC export supports checkpoint_2 tasks only")
         return task_id, "selected"
@@ -169,6 +182,21 @@ def _verify_weights(args, plan, checkpoint):
         normalization=NORMALIZATION,
     )
     _verify_published_files(args.policy_checkpoint, checkpoint, files)
+    return files
+
+
+def _verify_specialist_weights(args, plan):
+    from .policy import _verify_checkpoint
+    from .rlc_specialist import NORMALIZATION, verify_checkpoint_files
+
+    files = _verify_checkpoint(
+        args.policy_archive,
+        args.policy_checkpoint,
+        plan["recipe"]["policy_checkpoint_sha256"],
+        prefix="shawn-task-specialist/",
+        normalization=NORMALIZATION,
+    )
+    verify_checkpoint_files(args.policy_checkpoint, files)
     return files
 
 
@@ -269,6 +297,8 @@ def _command(
                 getattr(args, "policy_stock_correlation_sha256"),
             ]
         )
+    if getattr(args, "policy_kind", "rlc") == "rlc-specialist":
+        command.append("--specialist-state-contract")
     command.extend(
         [
             "--execution-variant",
@@ -365,6 +395,44 @@ def _record_selected(output, command, files, receipt, plan, staged):
     )
 
 
+def _record_specialist(output, command, files, plan):
+    from .rlc_specialist import (
+        MODEL_REPOSITORY,
+        MODEL_REVISION,
+        NORMALIZATION,
+        SOURCE_COMMIT as SPECIALIST_SOURCE_COMMIT,
+        SOURCE_REPOSITORY,
+        SUPPORTED_TASK_IDS,
+    )
+
+    adapters = _adapter_files(output, selected=False, specialist=True)
+    shutil.copyfile(
+        Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
+    )
+    evidence = {
+        "schema": "npa.behavior.policy.v1",
+        "kind": "rlc-specialist",
+        "source_commit": SOURCE_COMMIT,
+        "openpi_commit": OPENPI_COMMIT,
+        "model_repository": MODEL_REPOSITORY,
+        "model_revision": MODEL_REVISION,
+        "model_source_repository": SOURCE_REPOSITORY,
+        "model_source_commit": SPECIALIST_SOURCE_COMMIT,
+        "supported_task_ids": sorted(SUPPORTED_TASK_IDS),
+        "checkpoint_files": files,
+        "checkpoint_archive_sha256": plan["recipe"]["policy_checkpoint_sha256"],
+        "normalization_asset": NORMALIZATION,
+        "adapters": adapters,
+        "command": command,
+        "execution_variant": "native",
+        "memory_compliance": "unverified",
+        "status": "local_development_only_memory_unverified_not_rollout_ranked",
+    }
+    (output / "policy-provenance.json").write_text(
+        json.dumps(evidence, indent=2) + "\n"
+    )
+
+
 def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     """Validate the RLC source, task, archive and launcher before policy execution.
 
@@ -381,9 +449,13 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     from .policy import _healthy
 
     task_id, checkpoint = _verify_task(args, plan)
-    selected = getattr(args, "policy_kind", "rlc") == "rlc-selected"
+    kind = getattr(args, "policy_kind", "rlc")
+    selected = kind == "rlc-selected"
+    specialist = kind == "rlc-specialist"
     if selected:
         files, receipt = _verify_selected_weights(args, plan)
+    elif specialist:
+        files = _verify_specialist_weights(args, plan)
     else:
         files = _verify_weights(args, plan, checkpoint)
     if _healthy(args.port) or any(
@@ -395,6 +467,8 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     command = _command(args, task_id, output, staged, stock_correlation)
     if selected:
         _record_selected(output, command, files, receipt, plan, staged)
+    elif specialist:
+        _record_specialist(output, command, files, plan)
     else:
         _record(output, command, files, checkpoint, plan, stock_correlation)
     return command

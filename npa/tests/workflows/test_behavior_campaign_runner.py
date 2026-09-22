@@ -295,6 +295,18 @@ def test_serving_identity_binds_comet_task_name():
     assert serving_identity.serving_artifact(args) != first
 
 
+def test_serving_identity_binds_specialist_manifest(monkeypatch):
+    args = SimpleNamespace(
+        policy_kind="rlc-specialist", policy_execution_variant="native"
+    )
+    complete = serving_identity.serving_artifact(args)
+    monkeypatch.setattr(
+        serving_identity, "_SPECIALIST_SERVING_FILES", ("rlc_specialist.py",)
+    )
+
+    assert serving_identity.serving_artifact(args) != complete
+
+
 def test_provenance_failure_preserves_primary_evaluator_error(
     fixture, monkeypatch, caplog
 ):

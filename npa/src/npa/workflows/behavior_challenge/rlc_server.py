@@ -120,6 +120,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--checkpoint", type=Path, required=True)
     value.add_argument("--correlation-asset", type=Path)
     value.add_argument("--correlation-sha256")
+    value.add_argument("--specialist-state-contract", action="store_true")
     value.add_argument("--task-id", type=int, choices=range(50), required=True)
     value.add_argument("--port", type=int, required=True)
     value.add_argument(
@@ -142,7 +143,15 @@ def _load_stock_policy(args):
     if (asset is None) != (expected_sha256 is None):
         raise ValueError("stock correlation requires both artifact and SHA-256")
     if asset is None:
-        return _load_policy(args), None
+        policy = _load_policy(args)
+        if getattr(args, "specialist_state_contract", False):
+            from rlc_specialist import verify_loaded_state
+
+            native = getattr(policy, "base_policy", None)
+            if native is None or native is not getattr(policy, "policy", None):
+                raise ValueError("Specialist native wrapper identity differs")
+            verify_loaded_state(native)
+        return policy, None
     from b1k.models.pi_behavior import PiBehavior
     from rlc_correlation import (
         load_fp32_correlation,

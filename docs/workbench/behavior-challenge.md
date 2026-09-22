@@ -8,8 +8,21 @@ proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; policy serving uses pinned upstream implementations.
 
 The [September 21 recovery experiment plan](behavior-recovery-experiments-2026-09-21.md)
-records the next fixed-weight execution comparisons and stock-anchored training
-recipe. Its GPU results are pending.
+records the fixed-weight execution comparisons and stock-anchored training
+recipe. Its completed picking-up-trash development panels use the same frozen
+ten cases:
+
+| Policy | Mean Q | Full successes |
+| --- | ---: | ---: |
+| Native RLC | 0.466667 | 2/10 |
+| Comet12 | 0.400000 | 2/10 |
+| Comet50 | 0.266667 | 0/10 |
+| Adaptive short chunk with transition refresh | 0.500000 | 1/10 |
+
+The adaptive candidate has the highest mean Q but fewer full successes than
+native RLC, so it did not pass the frozen local target. The separate native
+timing transition-refresh result remains pending. These reused development
+cases are neither a reporting score nor proof of the 24 GB policy limit.
 
 The [campaign control plane](behavior-campaign.md) freezes policy identities,
 assigns complete task panels across workers, and preserves per-instance progress
@@ -164,6 +177,24 @@ Hugging Face revision `89545bc1b7aa7f2e687bc0032d091f132d715d4e` of
 [`IliaLarchenko/behavior_submission`](https://huggingface.co/IliaLarchenko/behavior_submission).
 Source and weights remain runtime inputs; Workbench does not redistribute them.
 Retain upstream attribution and satisfy the existing OpenPI/Gemma use terms.
+
+`--policy-kind rlc-specialist` selects the separately released
+[SHAwn SFT task specialist](https://huggingface.co/Shawn3636/pi05-rft-behavior1k)
+at revision `5f0354b905ef5a5673c38eab364e439926f08e70` for task IDs
+1, 7, 18, and 21 only. It uses the unchanged pinned RLC native server and the
+same three RGB images plus 61-element proprioception adapter. Before readiness,
+the runner verifies the complete 17-file release inventory, raw 75-leaf
+topology, 74 BF16 parameter leaves, and the canonical FP32 correlation
+intermediate. Only `native` execution is accepted. The available RTX smoke
+proved model loading and finite synthetic task-1 wire actions; it did not prove
+the official single-24 GB policy-memory requirement or rank the checkpoint on a
+complete 2026 rollout panel. This profile is admitted only for local development
+recipes, independently of that immutable smoke receipt. Weights remain
+operator-provided runtime inputs. The model card says these weights are a
+supervised fine-tune on human demonstrations; this integration does not claim
+that the source repository's separate RFT algorithm produced them. The model
+card declares Apache-2.0; the integration records that declaration while keeping
+all checkpoint bytes outside public source and images.
 
 For a controlled stock-policy experiment, choose
 `--policy-execution-variant native-stage-transition-refresh`. It preserves the
@@ -399,10 +430,10 @@ The checked-in adapter tests cover both inventories, cross-profile rejection,
 task coverage including Comet50 task 49, task 50 rejection, profile-specific
 server identity, source/task bindings, camera and proprioception transforms,
 finite 23-dimensional actions, and complete private archive verification. This
-is implementation coverage only. The current shared Comet adapter bytes and the
-Comet50 checkpoint have not completed a GPU load, action smoke, or challenge
-rollout, so neither profile should be described as currently GPU-qualified by
-this integration.
+implementation coverage is accompanied by the shared adapter's synthetic-action
+GPU qualification and the complete Comet12 and Comet50 task-1 development
+panels summarized above. Neither result proves the official 24 GB policy limit
+or challenge-wide competitiveness.
 
 The earlier Comet12-only adapter at Workbench commit
 `3abb75e4e9ee29732dff102f1b643789006f4049` completed a B200 development smoke.

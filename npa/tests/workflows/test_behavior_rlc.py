@@ -291,6 +291,30 @@ def test_stock_server_default_keeps_native_loader(server, monkeypatch):
     assert receipt is None
 
 
+def test_specialist_server_verifies_loaded_state_before_return(server, monkeypatch):
+    native = object()
+    wrapper = SimpleNamespace(base_policy=native, policy=native)
+    calls = []
+    monkeypatch.setattr(server, "_load_policy", lambda args: wrapper)
+    monkeypatch.setitem(
+        sys.modules,
+        "rlc_specialist",
+        SimpleNamespace(verify_loaded_state=lambda policy: calls.append(policy)),
+    )
+
+    loaded, receipt = server._load_stock_policy(
+        SimpleNamespace(
+            correlation_asset=None,
+            correlation_sha256=None,
+            specialist_state_contract=True,
+        )
+    )
+
+    assert loaded is wrapper
+    assert receipt is None
+    assert calls == [native]
+
+
 def test_adapter_inventory_stages_execution_module_for_both_weight_paths(tmp_path):
     stock = tmp_path / "stock"
     stock.mkdir()
@@ -1077,6 +1101,7 @@ def test_stock_correlation_is_staged_and_added_to_server_command(tmp_path):
         ("official", "final-stage-backtrack"),
         ("rlc", "transition-refresh"),
         ("rlc-selected", "adaptive-short-chunk"),
+        ("rlc-specialist", "final-stage-backtrack"),
     ],
 )
 def test_execution_variant_rejects_wrong_policy_family(tmp_path, kind, variant):

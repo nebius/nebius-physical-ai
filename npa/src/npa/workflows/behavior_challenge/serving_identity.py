@@ -26,6 +26,10 @@ _SERVING_FILES = (
     "comet12-checkpoint.json",
     "comet50-checkpoint.json",
 )
+_SPECIALIST_SERVING_FILES = (
+    "rlc_specialist.py",
+    "rlc-specialist-checkpoint.json",
+)
 _INPUT_FIELDS = (
     "policy_selected_export_receipt",
     "policy_correlation_manifest",
@@ -46,12 +50,15 @@ def serving_artifact(args) -> dict:
         OSError: Serving code or a declared auxiliary input cannot be read.
     """
     root = Path(__file__).parent
+    source_names = _SERVING_FILES
+    if args.policy_kind == "rlc-specialist":
+        source_names += _SPECIALIST_SERVING_FILES
     payload = {
         "schema": "npa.behavior.serving-identity.v1",
         "kind": args.policy_kind,
         "execution_variant": args.policy_execution_variant,
         "episode_lifecycle": "fresh-managed-process-per-case-v1",
-        "source": {name: file_digest(root / name) for name in _SERVING_FILES},
+        "source": {name: file_digest(root / name) for name in source_names},
         "inputs": {
             field: file_digest(Path(getattr(args, field)))
             for field in _INPUT_FIELDS

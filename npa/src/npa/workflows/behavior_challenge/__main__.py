@@ -13,7 +13,14 @@ from .protocol import make_plan, verify_upstream
 def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--policy-kind",
-        choices=("official", "rlc", "rlc-selected", "comet12", "comet50"),
+        choices=(
+            "official",
+            "rlc",
+            "rlc-selected",
+            "rlc-specialist",
+            "comet12",
+            "comet50",
+        ),
         default="official",
     )
     for field in ("root", "python", "checkpoint", "archive"):
