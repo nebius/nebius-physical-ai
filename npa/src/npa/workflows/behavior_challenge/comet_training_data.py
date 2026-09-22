@@ -342,11 +342,11 @@ class _PackedV3Dataset:
         return starts
 
     def _load_tables(self) -> dict[Path, Any]:
-        from datasets import load_dataset
+        from datasets import Dataset
 
         result = {}
         for path in sorted({row.data_path for row in self.locations.values()}):
-            table = load_dataset("parquet", data_files=str(path), split="train")
+            table = Dataset.from_parquet(str(path))
             _validate_packed_features(table.features)
             table.set_format("numpy")
             result[path] = table

@@ -336,10 +336,16 @@ def test_v3_full_getitem_applies_numpy_format_and_preserves_float32(
 ):
     root = _v3_metadata(tmp_path)
     table = _PackedTable()
+    loaded_paths = []
+
+    def from_parquet(path):
+        loaded_paths.append(path)
+        return table
+
     monkeypatch.setitem(
         sys.modules,
         "datasets",
-        SimpleNamespace(load_dataset=lambda *args, **kwargs: table),
+        SimpleNamespace(Dataset=SimpleNamespace(from_parquet=from_parquet)),
     )
     monkeypatch.setattr(
         data,
@@ -361,6 +367,7 @@ def test_v3_full_getitem_applies_numpy_format_and_preserves_float32(
     sample = dataset[0]
 
     assert table.formatted
+    assert loaded_paths == [str(root / "data/chunk-001/file-000.parquet")]
     assert sample["observation.state"].dtype == np.float32
     assert sample["action"].dtype == np.float32
     assert sample["action"].shape == (data.ACTION_HORIZON, data.ACTION_DIMENSION)
