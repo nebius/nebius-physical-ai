@@ -526,7 +526,7 @@ def _json_document(text):
 def test_real_rrd_preserves_review_evidence_and_omits_private_locations(
     tmp_path, monkeypatch, overlapping_hostname
 ):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     run = tmp_path / "review-run"
     candidate = _recording_fixture(run)

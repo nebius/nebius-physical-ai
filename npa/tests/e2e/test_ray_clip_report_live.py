@@ -31,7 +31,7 @@ def _require_cuda_actor_evidence(report):
 )
 def test_real_cuda_results_convert_and_decode(tmp_path):
     """Require CUDA actor evidence and independently verify actual RRD bytes."""
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     root = Path(os.environ["NPA_RAY_CLIP_RESULTS"])
     source = (
@@ -68,7 +68,7 @@ def test_real_cuda_results_convert_and_decode(tmp_path):
         [str(cli), "rrd", "print", "-vv", str(output)], capture_output=True, text=True
     )
     assert printed.returncode == 0
-    assert "npa.ray-clip-development" in printed.stdout
+    assert "npa-ray-clip-development" in printed.stdout
     assert "clip-live-validation" in printed.stdout
     indices, entities = [], set()
     for chunk in load_recording(output).chunks():
