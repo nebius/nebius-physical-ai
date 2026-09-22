@@ -1,11 +1,11 @@
 {
   "schema": "npa.public-pr-readiness/v5",
-  "snapshot_utc": "2026-09-21T23:25:23.053763+00:00",
-  "mergeability_verified_at": "2026-09-21T23:25:23.053763+00:00",
-  "prepared_at": "2026-09-21T23:25:23.801412+00:00",
-  "required_checks_verified_at": "2026-09-21T23:25:23.053763+00:00",
+  "snapshot_utc": "2026-09-22T01:09:42.078063+00:00",
+  "mergeability_verified_at": "2026-09-22T01:09:42.078063+00:00",
+  "prepared_at": "2026-09-22T01:09:43.019644+00:00",
+  "required_checks_verified_at": "2026-09-22T01:09:42.078063+00:00",
   "tracked_open_count": 63,
-  "tracked_historical_count": 66,
+  "tracked_historical_count": 67,
   "queue_candidates": [
     581,
     584,
@@ -14,6 +14,7 @@
     607,
     608,
     609,
+    610,
     613,
     614,
     615,
@@ -37,7 +38,6 @@
     687,
     688,
     692,
-    693,
     709
   ],
   "excluded_closed_prs": [
@@ -106,9 +106,10 @@
     },
     {
       "workload": "SeedVR2",
-      "current_result": "Draft. Exact 0b5e47d9 passed 25,766 full-suite tests and all hosted checks. The final image passed native B200 numerical kernels. The first official model control failed after real inference because its private recorder required unavailable cv2; the failure is retained. The narrow Pillow recorder repair passed actual native encoding controls and the revised official B200 run is submitted. Complete-byte scanning and objective restoration-quality qualification remain pending.",
-      "remaining_acceptance": "Corrected final image qualification, actual B200 kernels, paired objective gates and then blinded visual review. Held-out data remains sealed until Gate A passes.",
+      "current_result": "Draft. Exact 0b5 source, full suite and hosted checks pass. Native B200 kernels passed. The actual private 7B/B200 paired diagnostic failed temporal, codec-attribution and light-input gates; videos and measurements are public. The shipped interface remains 3B/H100 with earlier failed quality evidence. Complete-byte scanning continues; no rejected candidate was integrated.",
+      "remaining_acceptance": "Actual shipped3B quality repair and compatible GPU proof, complete image byte acceptance, and unchanged quality gates. Private7B diagnosis failed; heldout remains sealed.",
       "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/fcf5d78138211faff37339e19604bc0b3e5b7ce6/docs/testing/evidence/seedvr-paired-b200-0b5e47d9/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/3e46a1346cf083968e17ed9615ea87e7b6557242/docs/testing/evidence/seedvr-b200-compatibility-5b4258c7/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/363cb7bc1df8e7526740e0b3a6d632daf27b8c90/docs/testing/evidence/mk8s-absence-reconciliation-59f8829d/README.md"
       ],
@@ -119,15 +120,16 @@
     },
     {
       "workload": "RoboCasa",
-      "current_result": "Draft. Exact 1f6d8900 passed 25,760 full-suite tests, trusted native security and local source gates after retaining the initial environment failure. The official ZIP64 asset failure is repaired and tested against the real archive. The rebuilt final image passed mandatory runtime, payload, vulnerability and SBOM gates and private delivery. Complete-byte scanning continues. Root launch review found an empty project-identity hash in a receipt; actual project/cluster binding and Secret readback must be corrected before the frozen RTX/B200 workload begins.",
-      "remaining_acceptance": "Resolve the actual archive failure, requalify changed bytes, run the frozen compatibility and policy/video/VLM evaluation, and complete source/hosted checks.",
+      "current_result": "Draft. Public 1f6 passed its prior full suite and rebuilt private image gates. The actual RTX service was evicted for DiskPressure before golden trajectory export completed; no full B200 job ran. Successor 4c47 adds a 32 GiB ephemeral-storage request and passed focused, pre-PR and native checks. Its full-suite environment failure was reproduced at the unchanged base; a corrected environment rerun is active. A new node passed CUDA but failed required graphics validation. A dedicated supported RTX-rendering cluster is being prepared. Complete-byte scanning continues.",
+      "remaining_acceptance": "Clean exact-successor full suite; new owned RTX graphics/capacity gate; successful golden conversion; full200-update ACT and matched train/heldout evaluation with native/video/VLM checks; complete-byte acceptance and cleanup.",
       "proof_links": []
     },
     {
       "workload": "cuRobo",
-      "current_result": "Ready. Exact 1558422b passed all 21 hosted checks (19 successes and two expected skips). The full head suite passed 24,243 tests; the prospective merge against current main passed 25,698 tests and native security with zero regressions. Actual B200 and RTX matrices each cover 5,200 cases; exact-image full recording replay and complete-byte acceptance are retained with explicit producer identities. All 24 final visual-judge cases passed after repairing the obscured terminal marker. Earlier trials remain recorded.",
+      "current_result": "Ready. Exact 1558422b passed 21 hosted checks. The head suite passed 24,243 tests and prospective current-main suite passed 25,698. Actual B200 and RTX matrices each cover 5,200 cases. Full recording replay, complete-byte acceptance and 24 final visual-judge cases are retained with explicit producer scope and earlier failed trials.",
       "remaining_acceptance": "Required merge-queue integration; presentation review does not certify collision freedom or robot safety.",
       "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/fda4d33d55e612fe3ef8626c07d7a32ea12f7a5c/docs/testing/evidence/curobo-visible-terminals-1558422b/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/fda4d33d55e612fe3ef8626c07d7a32ea12f7a5c/docs/testing/evidence/curobo-visible-terminals-1558422b/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/9b6a2ddf3e1fb1972b1e9b97932313dce0958eb1/docs/testing/evidence/curobo-complete-byte-0b0accdd/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/c28926f3d1f8e9236930cdc1d7fb4c9c6ef32d1a/docs/testing/evidence/curobo-recorded-paths-0b0accdd/README.md",
@@ -142,8 +144,8 @@
     },
     {
       "workload": "Open3D",
-      "current_result": "Draft. Exact f7141a35 passed 25,792 full-suite tests, native security and every hosted check. A generic absence-recovery adapter preserves the original failed cloud-operation evidence. Its first actual read-only preview refused a byte-encoding defect in the SDK error path; the original lease and journal remain unchanged. Repair and a fresh managed CPU lifecycle run are pending. The qualified a6 image retains e62 producer identity and the explicit #693 dependency.",
-      "remaining_acceptance": "Supported original-operation reconciliation and a fresh managed CPU lifecycle run; existing geometry/image proof retains its producer scope.",
+      "current_result": "Draft. Public 2a909 integrates #659 after a real submit exposed storage discovery excluding Nebius. All 25,793 full-suite tests, local gates and native security passed. Historical accepted-ID and fresh zero-ID failed operations were recovered through reviewed generation-checked updates, preserving errors and unknown outcomes. A new complete managed CPU replay remains pending. Geometry proof retains the actual e62 image producer and visual/physics limitations; incorporated #693 was subsequently closed.",
+      "remaining_acceptance": "Fresh successful managed CPU lifecycle with numeric/RRD review and cleanup; retained image/geometry scope unchanged.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/3fa3d6246971cba310a4eb6e62ac53763d16e5de/docs/testing/evidence/open3d-inspectable-scene-a6c05625/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/da2c3690707e959378ab07636516633ad2d5b88c/docs/testing/evidence/base-image-disk-5f812394/README.md",
@@ -153,9 +155,10 @@
     },
     {
       "workload": "AprilTag / Kimi-K3",
-      "current_result": "Real CPU workload reproduced all 47 upstream-recorded labels across three images and rejected blank/noise controls. Four disclosed controls, four precommitted holdout cases and the three-sheet production census passed; each production sheet scored 0.95. Exact submitted PNGs, visible answers, attribution and hashes are public and anonymously verified. The replacement AprilTag image complete scan has 24 coverage checks passing across 75,054 records/932,994,180 record bytes, but raw exit 1/valid=false remains: 32 native findings, 11 private-literal matches and 1 PKCS12 file finding. The latter is an exact public CMake packaging certificate; the frozen rule remains failed. Confidential provenance/export metadata is not a clean publication result. Healthy-host credentials/storage are bound, but exact target context, image cache and replay configuration remain incomplete; no replacement AprilTag run occurred in this audit.",
-      "remaining_acceptance": "Resolve image confidentiality/policy findings and exact target/runtime bindings, then complete accepted replacement-image capability proof. Existing Kimi census is separate.",
+      "current_result": "Ready. Exact d005 passed 25,549 full-suite tests, eleven local gates and native security. The qualified 7bb image completed a real standard SkyPilot CPU job: 47/47 detections, zero misses/false positives, three native tests, 24 downloaded artifacts and 376 independently checked corner coordinates. Actual Pod image and complete owned cleanup were verified. Overlay pixels match prior qualified VLM inputs; no new provider call is claimed. All 22 hosted checks completed successfully or expected-skipped. All 23 public proof files were anonymously verified.",
+      "remaining_acceptance": "Required merge-queue integration; CPU-only detector proof is accepted, with no camera-pose/generalization/safety claim.",
       "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/f4c7bf492ff58a44b1cd6c007ea824d704b7d0a5/docs/testing/evidence/apriltag-cloud-d0057c80/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/4c017e2db23b270e2ef114b698f43dc9cd98b716/docs/testing/evidence/kimi-k3-disclosed-controls-a26a868e/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/861bbb9b75b9cb008b3b6ce8c6004b0efcca6b2f/docs/testing/evidence/byof-complete-byte-scans/README.md",
         "https://github.com/nebius/nebius-physical-ai/blob/e5f4210090dac2d1a1880bdffdc33a9e042c102b/docs/testing/evidence/apriltag-kimi-k3-production-census/README.md"
@@ -224,8 +227,8 @@
     },
     {
       "workload": "Base-image CI disk ownership",
-      "current_result": "Ready: Current-main successor passed 25,561 full-suite tests, native security and all source gates. Every applicable hosted check passed and the PR is conflict-free. Independent image-scan jobs preserve every inventory entry and required aggregate; predecessor proof remains source-bound.",
-      "remaining_acceptance": "Required merge-queue integration.",
+      "current_result": "Closed without merging on September 21 at 23:50 UTC. Its previously accepted source and image-CI evidence remain historical; it is excluded from the open ready count.",
+      "remaining_acceptance": "PR closed externally; accepted prior evidence remains historical. Incorporated changes retain their source identity in dependent work.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/da2c3690707e959378ab07636516633ad2d5b88c/docs/testing/evidence/base-image-disk-5f812394/README.md"
       ]
@@ -244,6 +247,14 @@
       "remaining_acceptance": "Required merge-queue integration.",
       "proof_links": [
         "https://github.com/nebius/nebius-physical-ai/blob/363cb7bc1df8e7526740e0b3a6d632daf27b8c90/docs/testing/evidence/mk8s-absence-reconciliation-59f8829d/README.md"
+      ]
+    },
+    {
+      "workload": "SkyPilot absence recovery",
+      "current_result": "Draft. New supported SkyPilot absence-recovery PR. Public d1 passed 25,659 full-suite tests, ten local gates and native security with zero regressions. Real accepted-ID recovery proof is attached. A separately tested zero-ID successor completed an actual reviewed preview/apply preserving the original failure. Native scanning then found two SQL-concatenation findings; a narrow fixed-query repair and final qualification are in progress.",
+      "remaining_acceptance": "Complete exact zero-ID successor source/CI qualification; original failure and historical read limits remain explicit.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/6b48a001d27c11d8dd96b96c4a06693cb3b5a937/docs/testing/evidence/skypilot-absence-recovery-6d033866/README.md"
       ]
     }
   ],
@@ -412,7 +423,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Old lease reconciled; fresh H200 preflight before paired GPU experiment",
-      "note": "Draft. Exact 0b5e47d9 passed 25,766 full-suite tests and all hosted checks. The final image passed native B200 numerical kernels. The first official model control failed after real inference because its private recorder required unavailable cv2; the failure is retained. The narrow Pillow recorder repair passed actual native encoding controls and the revised official B200 run is submitted. Complete-byte scanning and objective restoration-quality qualification remain pending.",
+      "note": "Draft. Exact 0b5 source, full suite and hosted checks pass. Native B200 kernels passed. The actual private 7B/B200 paired diagnostic failed temporal, codec-attribution and light-input gates; videos and measurements are public. The shipped interface remains 3B/H100 with earlier failed quality evidence. Complete-byte scanning continues; no rejected candidate was integrated.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -535,7 +546,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Accepted permission-fix source; exact build and full validation running",
-      "note": "Draft. Exact 1f6d8900 passed 25,760 full-suite tests, trusted native security and local source gates after retaining the initial environment failure. The official ZIP64 asset failure is repaired and tested against the real archive. The rebuilt final image passed mandatory runtime, payload, vulnerability and SBOM gates and private delivery. Complete-byte scanning continues. Root launch review found an empty project-identity hash in a receipt; actual project/cluster binding and Secret readback must be corrected before the frozen RTX/B200 workload begins.",
+      "note": "Draft. Public 1f6 passed its prior full suite and rebuilt private image gates. The actual RTX service was evicted for DiskPressure before golden trajectory export completed; no full B200 job ran. Successor 4c47 adds a 32 GiB ephemeral-storage request and passed focused, pre-PR and native checks. Its full-suite environment failure was reproduced at the unchanged base; a corrected environment rerun is active. A new node passed CUDA but failed required graphics validation. A dedicated supported RTX-rendering cluster is being prepared. Complete-byte scanning continues.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -709,7 +720,7 @@
       "number": 602,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/602",
       "title": "Add Open3D registration and support-distance surface filtering",
-      "source_commit": "f7141a35b05ff2d829a025bd1d910ee352fdb088",
+      "source_commit": "2a90905570d9cb134da527be78ebfecb0bd841c8",
       "state": "OPEN",
       "draft": true,
       "base": "main",
@@ -717,9 +728,9 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Inspectable local execution and image qualification pass; Sky workflow and CI failing",
-      "note": "Draft. Exact f7141a35 passed 25,792 full-suite tests, native security and every hosted check. A generic absence-recovery adapter preserves the original failed cloud-operation evidence. Its first actual read-only preview refused a byte-encoding defect in the SDK error path; the original lease and journal remain unchanged. Repair and a fresh managed CPU lifecycle run are pending. The qualified a6 image retains e62 producer identity and the explicit #693 dependency.",
+      "note": "Draft. Public 2a909 integrates #659 after a real submit exposed storage discovery excluding Nebius. All 25,793 full-suite tests, local gates and native security passed. Historical accepted-ID and fresh zero-ID failed operations were recovered through reviewed generation-checked updates, preserving errors and unknown outcomes. A new complete managed CPU replay remains pending. Geometry proof retains the actual e62 image producer and visual/physics limitations; incorporated #693 was subsequently closed.",
       "check_counts": {
-        "SUCCESS": 29,
+        "SUCCESS": 28,
         "SKIPPED": 2
       },
       "applicable_ci_passes": true,
@@ -728,25 +739,25 @@
         {
           "name": "gitleaks",
           "app_id": 15368,
-          "source_commit": "f7141a35b05ff2d829a025bd1d910ee352fdb088",
+          "source_commit": "2a90905570d9cb134da527be78ebfecb0bd841c8",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35661990666/job/106539148568",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35673069126/job/106573663748",
           "passes_required_identity": true
         },
         {
           "name": "scan",
           "app_id": 15368,
-          "source_commit": "f7141a35b05ff2d829a025bd1d910ee352fdb088",
+          "source_commit": "2a90905570d9cb134da527be78ebfecb0bd841c8",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35661990666/job/106539147157",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35673069126/job/106573663768",
           "passes_required_identity": true
         },
         {
           "name": "security-regression",
           "app_id": 15368,
-          "source_commit": "f7141a35b05ff2d829a025bd1d910ee352fdb088",
+          "source_commit": "2a90905570d9cb134da527be78ebfecb0bd841c8",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35661990666/job/106543056519",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35673069126/job/106576467677",
           "passes_required_identity": true
         }
       ],
@@ -962,15 +973,15 @@
       "number": 610,
       "url": "https://github.com/nebius/nebius-physical-ai/pull/610",
       "title": "Add AprilTag fiducial detection BYOF workflow",
-      "source_commit": "c725a44af7ce222f295b0a54d7866d108c1eb070",
+      "source_commit": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
       "state": "OPEN",
-      "draft": true,
+      "draft": false,
       "base": "main",
-      "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+      "base_commit": "f9fafced122235312566b1f62ce590aa7f1e5604",
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
-      "status": "Readiness withdrawn; AprilTag replacement qualification pending",
-      "note": "The predecessor image contains three SSH host private keys in an ancestor layer. The generic source repair and separate Evo evidence do not qualify AprilTag replacement bytes. Fresh exact image/security/runtime-key qualification, CPU detector replay, artifact equivalence, cleanup and current source/CI closure remain. Retained presentation and 47-label controls do not establish geometry, pose or robot safety.",
+      "status": "Ready for required merge queue",
+      "note": "Ready. Exact d005 passed 25,549 full-suite tests, eleven local gates and native security. The qualified 7bb image completed a real standard SkyPilot CPU job: 47/47 detections, zero misses/false positives, three native tests, 24 downloaded artifacts and 376 independently checked corner coordinates. Actual Pod image and complete owned cleanup were verified. Overlay pixels match prior qualified VLM inputs; no new provider call is claimed. All 22 hosted checks completed successfully or expected-skipped. All 23 public proof files were anonymously verified.",
       "check_counts": {
         "SUCCESS": 20,
         "SKIPPED": 2
@@ -981,25 +992,25 @@
         {
           "name": "gitleaks",
           "app_id": 15368,
-          "source_commit": "c725a44af7ce222f295b0a54d7866d108c1eb070",
+          "source_commit": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35493814817/job/106078069473",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35671036745/job/106567310411",
           "passes_required_identity": true
         },
         {
           "name": "scan",
           "app_id": 15368,
-          "source_commit": "c725a44af7ce222f295b0a54d7866d108c1eb070",
+          "source_commit": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35493814817/job/106078057315",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35671036745/job/106567310320",
           "passes_required_identity": true
         },
         {
           "name": "security-regression",
           "app_id": 15368,
-          "source_commit": "c725a44af7ce222f295b0a54d7866d108c1eb070",
+          "source_commit": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
           "conclusion": "SUCCESS",
-          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35493814817/job/106079542466",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35671036745/job/106570381888",
           "passes_required_identity": true
         }
       ],
@@ -1760,7 +1771,7 @@
       "mergeable": "MERGEABLE",
       "merge_state": "CLEAN",
       "status": "Ready for required merge queue",
-      "note": "Ready. Exact 1558422b passed all 21 hosted checks (19 successes and two expected skips). The full head suite passed 24,243 tests; the prospective merge against current main passed 25,698 tests and native security with zero regressions. Actual B200 and RTX matrices each cover 5,200 cases; exact-image full recording replay and complete-byte acceptance are retained with explicit producer identities. All 24 final visual-judge cases passed after repairing the obscured terminal marker. Earlier trials remain recorded.",
+      "note": "Ready. Exact 1558422b passed 21 hosted checks. The head suite passed 24,243 tests and prospective current-main suite passed 25,698. Actual B200 and RTX matrices each cover 5,200 cases. Full recording replay, complete-byte acceptance and 24 final visual-judge cases are retained with explicit producer scope and earlier failed trials.",
       "check_counts": {
         "SUCCESS": 19,
         "SKIPPED": 2
@@ -4040,7 +4051,7 @@
       "review_links": [],
       "title": "fix(ci): isolate base-image scans and reclaim owned disk",
       "source_commit": "53725dd1f82982fc791ff39792ada5a771672d9d",
-      "state": "OPEN",
+      "state": "CLOSED",
       "draft": false,
       "base": "main",
       "base_commit": "f9fafced122235312566b1f62ce590aa7f1e5604",
@@ -4078,8 +4089,8 @@
           "passes_required_identity": true
         }
       ],
-      "status": "Ready for required merge queue",
-      "note": "Ready: Current-main successor passed 25,561 full-suite tests, native security and all source gates. Every applicable hosted check passed and the PR is conflict-free. Independent image-scan jobs preserve every inventory entry and required aggregate; predecessor proof remains source-bound.",
+      "status": "Draft: fresh current-main CI pending",
+      "note": "Closed without merging on September 21 at 23:50 UTC. Its previously accepted source and image-CI evidence remain historical; it is excluded from the open ready count.",
       "full_local_suite": {
         "source_commit": "5f8123940b8e631a934c34ce22f113b4b5713338",
         "passed": 25534,
@@ -4148,6 +4159,59 @@
       "required_checks_app_and_source_verified": true,
       "note": "Exact 59f8829d passed 25,561 full-suite tests and native security comparison. The actual owned-resource absence reconciliation made eight provider reads, closed the original local journal/lease, and a second real CLI call proved a safe repeat without additional reads or mutations. All applicable hosted checks now pass; required merge-queue integration remains.",
       "status": "Ready for required merge queue"
+    },
+    {
+      "number": 716,
+      "depends_on": [
+        709
+      ],
+      "public_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/6b48a001d27c11d8dd96b96c4a06693cb3b5a937/docs/testing/evidence/skypilot-absence-recovery-6d033866/README.md"
+      ],
+      "review_links": [],
+      "status": "Draft: exact zero-ID successor qualification and hosted CI pending",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/716",
+      "title": "fix(workflow): reconcile absent SkyPilot resources without losing failure evidence",
+      "source_commit": "d1eaf1ec7c8b00c2b46afe399121a6629d7b4308",
+      "state": "OPEN",
+      "draft": true,
+      "base": "main",
+      "base_commit": "f9fafced122235312566b1f62ce590aa7f1e5604",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "check_counts": {
+        "SUCCESS": 19,
+        "SKIPPED": 2
+      },
+      "applicable_ci_passes": true,
+      "required_checks": [
+        {
+          "name": "gitleaks",
+          "app_id": 15368,
+          "source_commit": "d1eaf1ec7c8b00c2b46afe399121a6629d7b4308",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35673207478/job/106574081492",
+          "passes_required_identity": true
+        },
+        {
+          "name": "scan",
+          "app_id": 15368,
+          "source_commit": "d1eaf1ec7c8b00c2b46afe399121a6629d7b4308",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35673207478/job/106574081663",
+          "passes_required_identity": true
+        },
+        {
+          "name": "security-regression",
+          "app_id": 15368,
+          "source_commit": "d1eaf1ec7c8b00c2b46afe399121a6629d7b4308",
+          "conclusion": "SUCCESS",
+          "url": "https://github.com/nebius/nebius-physical-ai/actions/runs/35673207478/job/106577200495",
+          "passes_required_identity": true
+        }
+      ],
+      "required_checks_app_and_source_verified": true,
+      "note": "Draft. New supported SkyPilot absence-recovery PR. Public d1 passed 25,659 full-suite tests, ten local gates and native security with zero regressions. Real accepted-ID recovery proof is attached. A separately tested zero-ID successor completed an actual reviewed preview/apply preserving the original failure. Native scanning then found two SQL-concatenation findings; a narrow fixed-query repair and final qualification are in progress."
     }
   ],
   "workload_update_recorded_at": "2026-09-21T17:50:31.526423+00:00",
@@ -4165,7 +4229,14 @@
     "recovery": "Codex is implementing and validating the active recovery work. Completed Cursor work retains its original attribution.",
     "no_blanket_worker_liveness_claim": true
   },
-  "supplemental_verified_at": "2026-09-21T23:25:23.801419+00:00",
-  "root_operational_update_at": "2026-09-21T23:25:23.801420+00:00",
-  "current_main_commit": "f9fafced122235312566b1f62ce590aa7f1e5604"
+  "supplemental_verified_at": "2026-09-22T01:09:43.019659+00:00",
+  "root_operational_update_at": "2026-09-22T01:09:43.019660+00:00",
+  "current_main_commit": "f9fafced122235312566b1f62ce590aa7f1e5604",
+  "cursor_latest_execution_attempt": {
+    "at": "2026-09-22T01:08:49Z",
+    "model": "gpt-5.6-sol-max",
+    "exit_code": 1,
+    "result": "Team monthly per-user usage limit; no review or edits executed.",
+    "active_execution_provider": "Codex"
+  }
 }
