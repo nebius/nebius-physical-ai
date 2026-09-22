@@ -351,12 +351,13 @@ def committed_npa_imports(sha):
         sys.meta_path.remove(finder)
 
 
-def guard_snapshot(directory, sha):
+def guard_snapshot(directory, sha, scratch):
     """Export the complete committed guard import, conftest and data closure.
 
     Args:
         directory: Private gate evidence directory.
         sha: Full reviewed commit.
+        scratch: Separate private directory for the extracted source tree.
     Returns:
         Snapshot directory and archive SHA256.
     Raises:
@@ -364,7 +365,7 @@ def guard_snapshot(directory, sha):
     """
     archive = directory / "source-guards.tar"
     run(["git", "archive", sha], archive, env=public_environment())
-    snapshot = directory / "source-guards-tree"
+    snapshot = scratch / "source-guards-tree"
     snapshot.mkdir(mode=0o700)
     with tarfile.open(archive) as stream:
         stream.extractall(snapshot, filter="data")
@@ -376,7 +377,7 @@ def guard_command(snapshot, directory):
 
     Args:
         snapshot: Complete committed source export.
-        directory: Private evidence and temporary-file root.
+        directory: Private evidence directory for the execution report.
     Returns:
         Interpreter argv with fixed import paths and no ambient Python hooks.
     Raises:
@@ -434,7 +435,7 @@ def _execute_source_guards(snapshot, directory):
             "-p",
             "no:cacheprovider",
             "--basetemp",
-            str(directory / "guard-tmp"),
+            str(snapshot.parent / "guard-tmp"),
             *SOURCE_GUARDS,
         ],
         plugins=[recorder],
