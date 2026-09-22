@@ -424,10 +424,13 @@ def _gateway_credentials():
 
 def _gateway_config(config, *, tls):
     text = _NGINX_HTTP
+    http_action = "return 404;"
     if tls:
+        http_action = f"return 308 https://{config['public_ip']}:{config['https_port']}$request_uri;"
         text += _NGINX_TLS.replace("@PORT@", str(config["https_port"])).replace(
             "@PUBLIC_IP@", config["public_ip"]
         )
+    text = text.replace("@HTTP_ACTION@", http_action)
     text = text.replace(
         "@CHAT_ROUTE@", _NGINX_CHAT if (_STATE / "chat.json").exists() else ""
     )
@@ -672,7 +675,7 @@ _NGINX_HTTP = """server {
     listen 80;
     server_name _;
     location /.well-known/acme-challenge/ { root /var/lib/npa-desktop/acme; }
-    location / { return 404; }
+    location / { @HTTP_ACTION@ }
 }
 """
 _NGINX_TLS = """map $http_origin $npa_desktop_origin_allowed {

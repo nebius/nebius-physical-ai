@@ -91,6 +91,9 @@ def test_gateway_auth_applies_to_page_websocket_and_credentials():
     assert '"https://203.0.113.10:8443" 1;' in config
     assert "return 403" in config
     assert 'Cache-Control "no-store"' in config
+    assert "return 308 https://203.0.113.10:8443$request_uri;" in config
+    assert "https://$host" not in config
+    assert "location /.well-known/acme-challenge/" in config
 
 
 def test_http_gateway_only_serves_certificate_challenges():

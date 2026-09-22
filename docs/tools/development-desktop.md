@@ -90,7 +90,9 @@ routing before requesting a certificate. This command does not allocate or move
 cloud addresses or modify security groups.
 
 Allow inbound TCP 80 for certificate validation and the selected HTTPS port for
-the desktop. Port 80 serves only ACME challenge files and returns 404 elsewhere.
+the desktop. Before HTTPS is configured, port 80 serves only ACME challenge
+files and returns 404 elsewhere. Once HTTPS is ready, other HTTP requests
+redirect to the configured secure address and port, preserving their path.
 The default HTTPS port is 8443, preserving unrelated services on port 443.
 
 ```bash
