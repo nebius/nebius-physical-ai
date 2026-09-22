@@ -19,7 +19,8 @@ combined Git tree using trusted-base `ci_queue_evidence.py`, then reruns fresh
 secret, confidentiality and source/dependency scans. Changed combined trees rerun
 all tests, lint, guardrails and hostile-input checks; image checks rerun when the
 trusted base policy identifies changed image inputs. Missing, failed or stale
-evidence fails closed: refresh the branch and finish PR checks before requeueing.
+evidence restores the full queue gate, which must pass before merging. Older
+PRs can adopt the policy without a forced branch refresh.
 `pr-precheck` gives a five-minute early signal without replacing full admission.
 The queue execution target is ten minutes; hosted-runner waits can add delay.
 A daily audit covers all supported Python versions instead of starting a full

@@ -241,13 +241,12 @@ def _main() -> None:
             runpy.run_path(str(arguments.image_policy))["needs_deep_image_security"],
         )
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
-        raise SystemExit(
-            f"Queue evidence rejected: {error}. Refresh the branch and complete PR validation."
-        ) from error
+        # Missing proof must restore all checks, including during policy rollout.
+        proof = {"mode": "full", "reason": str(error)}
     print(json.dumps(proof, sort_keys=True))
     with arguments.github_output.open("a") as output:
         output.write(f"mode={proof['mode']}\n")
-        output.write(f"source_run={proof['run_id']}\n")
+        output.write(f"source_run={proof.get('run_id', '')}\n")
 
 
 if __name__ == "__main__":

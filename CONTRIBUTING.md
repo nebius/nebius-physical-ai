@@ -533,11 +533,12 @@ change the combined tree, it reruns all tests, lint, guardrails and hostile-inpu
 checks. Complete Git-tree comparisons include additions, deletions and file
 modes. The trusted base image-scope policy decides whether image inputs changed:
 unchanged image inputs reuse the successful image checks; changed inputs rerun
-the full image gate too. Missing, stale, failed, or rerun evidence fails closed
-with an instruction to refresh the branch and complete PR validation before
-requeueing. Never retry stale evidence
-unchanged. The installing PR retains the full old queue gate because its base
-has no verifier yet. Refresh older branches after rollout to publish receipts.
+the full image gate too. Missing, stale, failed, partial-rerun or unreadable
+evidence also restores the full queue gate: every current combined-tree test
+and security check must then pass. Older PRs can therefore adopt the policy
+without being rejected just for lacking a receipt. The installing PR receives
+the full gate because its base has no verifier yet. Refreshing an older branch
+and completing PR validation enables the faster evidence-reuse path.
 
 The operating targets are an early signal within five minutes and queue
 validation within ten. Hosted-runner waiting is outside these execution budgets;
@@ -654,7 +655,8 @@ PR admission includes every test category required by the queue. The queue
 compares its combined tree with the completed PR validation and reruns fresh
 security scans. A preceding merge can change that tree; the queue then reruns
 combined-tree tests and any affected image checks. Missing, failed or stale PR
-evidence requires a branch refresh and complete PR validation before retrying. Open the
+evidence restores full queue validation. Refreshing the branch and completing
+PR validation can enable the faster reuse path. Open the
 failed **Security regression** run whose event is **merge_group**, then inspect
 the first failed component job. Cancelled sibling shards usually follow a failed
 shard through matrix fail-fast; their cancellation is not the original failure.

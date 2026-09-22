@@ -294,8 +294,8 @@ full collection before expensive validation. The merge queue verifies fresh,
 successful PR evidence for its identical Git tree and repeats secret,
 confidentiality, source and dependency scans. Changed combined trees rerun
 all tests, lint, guardrails and hostile-input checks; image checks rerun when
-their inputs changed. Missing, failed or stale proof requires a branch refresh
-and PR validation. The queue target
+their inputs changed. Missing, failed or stale proof restores full queue
+validation, so older PRs can adopt the policy without a forced branch refresh. The queue target
 is ten minutes; hosted runner waiting can add delay.
 
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection

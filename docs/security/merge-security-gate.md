@@ -14,7 +14,8 @@ tree through GitHub APIs. Evidence must be less than 24 hours old; no downloaded
 artifact content is trusted. Changed combined trees rerun all tests, lint,
 guardrails and hostile-input checks. A complete Git-tree comparison and the
 trusted base image-scope policy decide whether image checks must rerun too.
-Stale proof, missing results and API errors reject the queue candidate. Secret, confidentiality and real
+Stale proof, missing results and API errors restore the full queue gate;
+all fresh tests and security checks must pass before merging. Secret, confidentiality and real
 source/dependency scanners still run against every queue candidate. Main and
 scheduled deep image audits remain in place. See the
 [queue evidence and timing contract](../../CONTRIBUTING.md#testing-requirements).

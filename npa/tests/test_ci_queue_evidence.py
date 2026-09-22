@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import importlib.util
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -310,3 +311,35 @@ def test_image_comparison_includes_every_kind_of_tree_change(metadata, change):
     }
     result = evidence.verify(REPOSITORY, event, NOW, lambda paths: path in paths)
     assert result["mode"] == "full"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("missing or stale proof"),
+        KeyError("receipt"),
+        OSError("API offline"),
+        evidence.subprocess.CalledProcessError(1, ["gh", "api"]),
+    ],
+)
+def test_unavailable_evidence_restores_the_full_gate(tmp_path, monkeypatch, error):
+    event_path = tmp_path / "event.json"
+    event_path.write_text("{}")
+    output = tmp_path / "outputs"
+    monkeypatch.setattr(evidence, "verify", Mock(side_effect=error))
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "ci_queue_evidence",
+            "--repository",
+            REPOSITORY,
+            "--event-path",
+            str(event_path),
+            "--github-output",
+            str(output),
+            "--image-policy",
+            str(ROOT / "scripts/ci_image_security_scope.py"),
+        ],
+    )
+    evidence._main()
+    assert output.read_text() == "mode=full\nsource_run=\n"
