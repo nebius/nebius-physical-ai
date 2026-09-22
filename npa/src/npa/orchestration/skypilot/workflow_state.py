@@ -833,8 +833,7 @@ def cancel_workflow_job(
             )
             terminal_status = str(observed.status or "UNKNOWN").upper()
             if terminal_status == "ABSENT" or (
-                terminal_status != "FAILED_CONTROLLER"
-                and is_terminal(terminal_status)
+                terminal_status != "FAILED_CONTROLLER" and is_terminal(terminal_status)
             ):
                 terminal_confirmed = True
                 break

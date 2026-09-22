@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import argparse
-from io import BytesIO
 import json
 from pathlib import Path
 import sys
-import urllib.error
+import httpx
 
 from PIL import Image
 import pytest
@@ -17,20 +16,11 @@ from npa.clients.storage import StoragePreconditionFailed  # noqa: E402
 from ncore_publication import vlm_evidence  # noqa: E402
 
 
-class _Response:
-    status = 200
-
+class _Response(httpx.Response):
     def __init__(self, payload):
-        self.payload = payload
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return False
-
-    def read(self):
-        return json.dumps(self.payload).encode()
+        super().__init__(
+            200, json=payload, request=httpx.Request("POST", vlm_evidence.ENDPOINT)
+        )
 
 
 class _Storage:
@@ -99,8 +89,8 @@ def test_one_shot_call_retains_exact_transport_without_labels(
     root, records = _root(tmp_path)
     storage = _Storage()
     monkeypatch.setattr(
-        vlm_evidence.urllib.request,
-        "urlopen",
+        vlm_evidence,
+        "_post_hosted_bytes",
         lambda *_args, **_kwargs: _Response(_response()),
     )
 
@@ -157,8 +147,8 @@ def test_one_shot_call_rejects_served_model_drift(monkeypatch, tmp_path: Path) -
     root, records = _root(tmp_path)
     storage = _Storage()
     monkeypatch.setattr(
-        vlm_evidence.urllib.request,
-        "urlopen",
+        vlm_evidence,
+        "_post_hosted_bytes",
         lambda *_args, **_kwargs: _Response(_response(model="other/model")),
     )
 
@@ -213,8 +203,8 @@ def test_transport_verifier_rederives_outcome_from_raw_response(
 ) -> None:
     root, records = _root(tmp_path)
     monkeypatch.setattr(
-        vlm_evidence.urllib.request,
-        "urlopen",
+        vlm_evidence,
+        "_post_hosted_bytes",
         lambda *_args, **_kwargs: _Response(_response()),
     )
     vlm_evidence._call_once(
@@ -254,8 +244,8 @@ def test_weak_rationale_is_rejected_after_external_attempt_commit(
         {"success": True, "score": 0.9, "rationale": "looks good"}
     )
     monkeypatch.setattr(
-        vlm_evidence.urllib.request,
-        "urlopen",
+        vlm_evidence,
+        "_post_hosted_bytes",
         lambda *_args, **_kwargs: _Response(response),
     )
     storage = _Storage()
@@ -338,15 +328,11 @@ def test_http_error_retains_status_and_response_without_retry(
     def fail(*_args, **_kwargs):
         nonlocal calls
         calls += 1
-        raise urllib.error.HTTPError(
-            vlm_evidence.ENDPOINT,
-            429,
-            "limited",
-            {},
-            BytesIO(b'{"error":"limited"}'),
-        )
+        request = httpx.Request("POST", vlm_evidence.ENDPOINT)
+        response = httpx.Response(429, content=b'{"error":"limited"}', request=request)
+        raise httpx.HTTPStatusError("limited", request=request, response=response)
 
-    monkeypatch.setattr(vlm_evidence.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(vlm_evidence, "_post_hosted_bytes", fail)
 
     with pytest.raises(vlm_evidence.VlmEvidenceError, match="HTTP error"):
         vlm_evidence._call_once(
@@ -427,3 +413,52 @@ def test_final_rejects_passing_calibration_from_another_freeze(
 
     with pytest.raises(vlm_evidence.VlmEvidenceError, match="contract differs"):
         vlm_evidence.final(args)
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_provider_redirect_is_retained_without_following_or_retry(
+    monkeypatch, tmp_path, status
+):
+    root, records = _root(tmp_path)
+    storage = _Storage()
+    requests = []
+    original_client = httpx.Client
+
+    def transport(request):
+        requests.append(request)
+        return httpx.Response(
+            status,
+            headers={"Location": "https://other.invalid/collect"},
+            content=b"redirect rejected",
+        )
+
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: original_client(
+            transport=httpx.MockTransport(transport), **kwargs
+        ),
+    )
+    with pytest.raises(vlm_evidence.VlmEvidenceError, match="HTTP error"):
+        vlm_evidence._call_once(
+            root=root,
+            attempt_id="redirect-case",
+            freeze_sha256="a" * 64,
+            purpose="calibration",
+            frame_records=records,
+            task="Review visible coherence.",
+            rubric="Use visible pixels only.",
+            api_key="synthetic-test-credential",
+            external_attempt_prefix="s3://private/run/vlm/",
+            storage_client=storage,
+        )
+    assert len(requests) == 1
+    assert str(requests[0].url) == vlm_evidence.ENDPOINT
+    attempt = root / "transport/redirect-case"
+    assert requests[0].content == (attempt / "request.json").read_bytes()
+    assert (attempt / "response.json").read_bytes() == b"redirect rejected"
+    assert json.loads((attempt / "outcome.json").read_text())["http_status"] == status
+    assert len(storage.objects) == 1
+    assert all(
+        "synthetic-test-credential" not in p.read_text() for p in attempt.glob("*.json")
+    )

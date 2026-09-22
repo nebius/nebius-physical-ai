@@ -18,8 +18,7 @@ import stat
 import tempfile
 import time
 from typing import Any
-import urllib.error
-import urllib.request
+import httpx
 
 from PIL import Image
 
@@ -568,6 +567,21 @@ def _attempt_marker(
     }
 
 
+def _post_hosted_bytes(request_bytes: bytes, api_key: str) -> httpx.Response:
+    """Send the frozen request once, without following provider redirects."""
+    with httpx.Client(timeout=120, follow_redirects=False) as client:
+        response = client.post(
+            ENDPOINT,
+            content=request_bytes,
+            headers={
+                "Authorization": "Bearer " + api_key,
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+        return response
+
+
 def _call_once(
     *,
     root: Path,
@@ -640,24 +654,15 @@ def _call_once(
         },
     )
     _write_private(attempt_root / "request.json", request_bytes)
-    request = urllib.request.Request(
-        ENDPOINT,
-        data=request_bytes,
-        headers={
-            "Authorization": "Bearer " + api_key,
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
     started_at = datetime.now(timezone.utc).isoformat()
     started_clock = time.monotonic()
     provider_request_id = "unavailable"
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            status_code = int(response.status)
-            response_bytes = response.read()
-    except urllib.error.HTTPError as exc:
-        response_bytes = exc.read()
+        response = _post_hosted_bytes(request_bytes, api_key)
+        status_code = response.status_code
+        response_bytes = response.content
+    except httpx.HTTPStatusError as exc:
+        response_bytes = exc.response.content
         finished_at = datetime.now(timezone.utc).isoformat()
         latency_ms = max(0, round((time.monotonic() - started_clock) * 1000))
         _write_private(attempt_root / "response.json", response_bytes)
@@ -665,8 +670,8 @@ def _call_once(
             attempt_root / "outcome.json",
             {
                 "status": "response_failed",
-                "error_class": "HTTPError",
-                "http_status": int(exc.code),
+                "error_class": "HTTPStatusError",
+                "http_status": exc.response.status_code,
                 "response_sha256": _sha_bytes(response_bytes),
                 "request_started_at": started_at,
                 "request_finished_at": finished_at,
