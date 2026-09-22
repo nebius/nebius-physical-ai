@@ -545,7 +545,8 @@ def test_customer_entitlement_notice_names_terms_responsibility_and_resume() -> 
     assert "cuDNN 9.7.1" in CUSTOMER_ENTITLEMENT_NOTICE
     assert "CuRobo v0.7.8" in CUSTOMER_ENTITLEMENT_NOTICE
     assert "customer representative" in CUSTOMER_ENTITLEMENT_NOTICE
-    assert "Decline" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "decline" in CUSTOMER_ENTITLEMENT_NOTICE.lower()
+    assert "customer-terminal" in CUSTOMER_ENTITLEMENT_NOTICE
     assert "accept and resume" in CUSTOMER_ENTITLEMENT_NOTICE
     assert CUSTOMER_ENTITLEMENT_ENV in CUSTOMER_ENTITLEMENT_NOTICE
     assert "technical artifact-lock" in CUSTOMER_ENTITLEMENT_NOTICE
