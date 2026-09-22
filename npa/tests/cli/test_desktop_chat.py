@@ -157,6 +157,8 @@ def test_static_page_has_no_inline_script_or_cache(chat):
 
 def test_list_includes_all_providers_and_source_kinds(chat):
     client, rpc = chat
+    rpc.call.side_effect = None
+    rpc.call.return_value = {"data": [], "nextCursor": None}
     assert (
         client.get("/chat/api/threads?search=example&archived=true").status_code == 200
     )
@@ -166,6 +168,47 @@ def test_list_includes_all_providers_and_source_kinds(chat):
     assert {"vscode", "cli", "appServer", "exec"} <= set(params["sourceKinds"])
     assert params["archived"] is True
     assert params["searchTerm"] == "example"
+
+
+def test_session_list_bounds_labels_without_changing_conversation_history(chat):
+    client, rpc = chat
+    original = {
+        "id": "existing-thread",
+        "name": "Long prompt " * 4000,
+        "preview": "Detailed context " * 4000,
+        "cwd": "/workspace/project",
+        "status": {"type": "active"},
+        "updatedAt": 100,
+    }
+    rpc.call.side_effect = lambda method, params: (
+        {"data": [original], "nextCursor": "next-page"}
+        if method == "thread/list"
+        else {"thread": original}
+    )
+    response = client.get("/chat/api/threads?cursor=previous-page")
+    assert response.status_code == 200
+    page = response.json()
+    entry = page["data"][0]
+    assert page["nextCursor"] == "next-page"
+    assert rpc.call.call_args.args[1]["cursor"] == "previous-page"
+    for field in ("name", "preview"):
+        assert len(entry[field]) == 240
+        assert entry[field].endswith("…")
+    for field in ("id", "cwd", "status", "updatedAt"):
+        assert entry[field] == original[field]
+    assert len(response.content) < 2000
+    assert (
+        client.get("/chat/api/thread?id=existing-thread").json()["thread"] == original
+    )
+    assert len(original["name"]) > 240
+
+
+def test_session_list_preserves_short_and_missing_labels(chat):
+    client, rpc = chat
+    threads = [{"id": "one", "name": None, "preview": "Short preview"}, {"id": "two"}]
+    rpc.call.side_effect = None
+    rpc.call.return_value = {"data": threads, "nextCursor": None}
+    assert client.get("/chat/api/threads").json()["data"] == threads
 
 
 def test_resume_preserves_existing_thread_and_permissions(chat):

@@ -64,6 +64,16 @@ def _authorized(header, username, password):
     return hmac.compare_digest(supplied, f"{username}:{password}".encode())
 
 
+def _thread_list_entry(thread):
+    entry = dict(thread)
+    # Native owners can use an entire prompt as a title; polling needs only labels.
+    for field in ("name", "preview"):
+        value = entry.get(field)
+        if isinstance(value, str) and len(value) > 240:
+            entry[field] = value[:239] + "…"
+    return entry
+
+
 def _answer_result(request, body):
     method = request["method"]
     if method in {
@@ -251,7 +261,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         }
 
     def _list_threads(self, query):
-        return self.server.rpc.call(
+        page = self.server.rpc.call(
             "thread/list",
             {
                 "limit": 50,
@@ -264,6 +274,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "archived": query.get("archived") == "true",
             },
         )
+        return {**page, "data": [_thread_list_entry(thread) for thread in page["data"]]}
 
     def do_POST(self):
         """Apply explicit, same-origin chat actions.
