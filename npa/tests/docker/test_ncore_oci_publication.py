@@ -17,7 +17,16 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "npa/scripts"))
 
 from image_byte_scan import core as W  # noqa: E402
-from ncore_publication import artifact, cli, gates, process, provenance, registry  # noqa: E402
+from ncore_publication import (  # noqa: E402
+    acceptance,
+    artifact,
+    cli,
+    gates,
+    process,
+    provenance,
+    registry,
+)
+from npa.deploy import images  # noqa: E402
 
 SHA = "a" * 40
 
@@ -462,7 +471,7 @@ def test_publication_cannot_transfer_quarantined_bytes_without_acceptance(
     evidence.write_text("{}")
     monkeypatch.setattr(cli, "_gate_evidence_manifest", lambda *_: evidence)
     monkeypatch.setattr(
-        cli.images,
+        images,
         "ncore_accepted_image_manifest",
         lambda: (_ for _ in ()).throw(RuntimeError("NCore remains unaccepted")),
     )
@@ -499,7 +508,7 @@ def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
         },
     }
     monkeypatch.setattr(
-        cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
+        images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
     )
     assert (
         cli._require_accepted_publication(SHA, build, graph, evidence_manifest_sha256)[
@@ -509,13 +518,13 @@ def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
     )
     accepted["development_sha"] = "f" * 40
     monkeypatch.setattr(
-        cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
+        images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
     )
     with pytest.raises(ValueError, match="does_not_match"):
         cli._require_accepted_publication(SHA, build, graph, evidence_manifest_sha256)
     accepted["development_sha"] = SHA
     monkeypatch.setattr(
-        cli.images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
+        images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
     )
     with pytest.raises(ValueError, match="does_not_match"):
         cli._require_accepted_publication(SHA, build, graph, "0" * 64)
@@ -543,12 +552,12 @@ def test_publication_can_consume_external_acceptance_at_exact_candidate(
     path = tmp_path / "accepted.json"
     path.write_text(json.dumps(accepted))
     monkeypatch.setattr(
-        cli.acceptance,
+        acceptance,
         "verify_final_acceptance",
         lambda analysis_root, acceptance_path: accepted,
     )
     monkeypatch.setattr(
-        cli.images,
+        images,
         "ncore_accepted_image_manifest",
         lambda: pytest.fail("in-tree post-run mutation was consulted"),
     )

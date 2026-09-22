@@ -745,6 +745,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "nurec-reconstruct-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NGC_API_KEY"),
+        image_overrides=(("workbench.nurec.visualize", "rerun-viewer"),),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an independently audited NCore sequence from the separate "
+            "local immutable-image conversion before this downstream submit."
+        ),
+        notes=(
+            "Qualification downstream route: native NRE reconstruction and novel "
+            "views on RTX PRO 6000, followed by factual Rerun and finalize stages. "
+            "Uses the supplied audited ncore_sequence_uri; it does not pull or "
+            "execute the candidate NCore converter. No live acceptance implied."
+        ),
+    ),
+    SubmitLiveCase(
         "nurec-reconstruct.yaml",
         "gpu",
         secret_envs=(
