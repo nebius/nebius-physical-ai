@@ -920,8 +920,18 @@ def _validate_libero_runtime_authorization(
             "submission_identity",
             "LIBERO submission identity is invalid",
         ) from exc
+    from npa.workflows.byof.libero_customer import selected as customer_selected, validate_profile
+
+    customer_run = customer_selected(documents)
+    if customer_run:
+        validate_profile(documents)
     try:
-        repository_manifest, qualification = _libero_submission_qualification()
+        if customer_run:
+            from npa.workflows.byof.libero_customer import image_manifest as customer_image_manifest
+
+            repository_manifest, qualification = customer_image_manifest(process_env)
+        else:
+            repository_manifest, qualification = _libero_submission_qualification()
     except (TypeError, ValueError, RuntimeError) as exc:
         raise ExecutionPreflightError(
             "qualification",
@@ -941,6 +951,7 @@ def _validate_libero_runtime_authorization(
             run_id,
             image_manifest=repository_manifest,
             executable_profile_sha256=executable_profile_sha256,
+            customer_run=customer_run,
         )
     except LiberoCustomerAuthorizationDenied as exc:
         raise ExecutionPreflightError(
@@ -1036,8 +1047,17 @@ def _libero_submission_authorization(
     *,
     image_manifest: dict[str, Any],
     executable_profile_sha256: str,
+    customer_run: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """Validate customer acceptance against an independently qualified image."""
+
+    if customer_run:
+        from npa.workflows.byof.libero_customer import validate_authorization
+
+        return validate_authorization(
+            process_env, image_manifest=image_manifest, run_id=run_id,
+            profile_sha256=executable_profile_sha256,
+        )
 
     from npa.deploy.images import (
         LIBERO_AUTHENTICATED_CALLER_PUBLIC_KEY_FILE_ENV,
@@ -1250,6 +1270,9 @@ def preflight_skypilot_submission(
     libero_submission = verify_solution_payload_service_accounts(
         documents, global_config=global_config
     )
+    from npa.workflows.byof.libero_customer import selected as customer_selected
+
+    customer_run = libero_submission and customer_selected(documents)
     if libero_submission:
         customer_authorization = _validate_libero_runtime_authorization(
             documents,
@@ -1260,7 +1283,8 @@ def preflight_skypilot_submission(
             executable_profile_sha256=executable_profile_sha256,
         )
         try:
-            _verify_libero_output_storage_authorization(
+            if not customer_run:
+                _verify_libero_output_storage_authorization(
                 documents,
                 process_env,
                 customer_authorization=customer_authorization,
@@ -1280,6 +1304,7 @@ def preflight_skypilot_submission(
             "alternative resource targets are ambiguous; select one effective resource mapping",
         )
     selected = (
+        SubmitCredentialContext() if customer_run else
         resolve_submit_credentials(
             project=project,
             environ=process_env,
@@ -1398,6 +1423,8 @@ def preflight_skypilot_submission(
             ) != prefix.strip("/"):
                 envs["SONIC_OUTPUT_PREFIX"] = prefix
     destinations = skypilot_output_destinations(documents)
+    if customer_run and destinations:
+        raise ExecutionPreflightError("storage_target", "customer-run artifacts must use controller retrieval")
     from npa.orchestration.skypilot.storage_preflight import (
         nebius_mount_destinations,
         verify_nebius_mount_principal,
@@ -1471,7 +1498,7 @@ def preflight_skypilot_submission(
                         "native task placement disagrees with the explicit infrastructure",
                     )
                 resources["zone"] = placement[2]
-    injected = {
+    injected = {} if customer_run else {
         "AWS_ACCESS_KEY_ID": selected.access_key_id,
         "AWS_SECRET_ACCESS_KEY": selected.secret_access_key,
         "AWS_SESSION_TOKEN": selected.session_token,
@@ -1655,6 +1682,7 @@ def preflight_skypilot_submission(
     report["checks"]["libero_customer_authorization_validated"] = (
         "validated" if libero_submission else "not-required"
     )
+    report["checks"]["libero_customer_run"] = customer_run
     return target, report, {name: value for name, value in injected.items() if value}
 
 

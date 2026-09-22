@@ -413,13 +413,14 @@ historical evidence.
 
 ## Intentionally not published as separate images
 
-- **LIBERO** now has an unbuilt, quarantined public-neutral-bootstrap design,
-  not a supported or published NPA image. The planned bytes contain only a
+- **LIBERO** has a quarantined public-neutral-bootstrap development candidate,
+  with no supported release. Its neutral bytes contain only a
   digest-pinned Python/Debian base, snapshot-locked bootstrap packages, NPA
   code, and immutable manifests—no LIBERO, GPU runtime, model, demonstration,
-  task/render asset, cache, checkpoint, credential, or output. A future trusted
-  build needs complete-byte, published-base-provenance, anonymous-pull, and
-  exact-digest B200 acceptance before any public-table row or release claim.
+  task/render asset, cache, checkpoint, credential, or output. Trusted development
+  publication requires complete-byte, published-base-provenance and anonymous-pull
+  checks. Customer-authorized exact-digest B200 acceptance remains required before
+  any public-table row or supported release claim.
   Historical private r15 bytes do not establish equivalence. See the
   [LIBERO qualification contract](byof-libero.md).
 - **`npa-cosmos3-nano-video`** extends the digest-pinned upstream

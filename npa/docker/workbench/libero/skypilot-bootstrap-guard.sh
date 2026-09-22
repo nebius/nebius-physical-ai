@@ -245,6 +245,11 @@ bootstrap_ssh_keygen() {
         exit $?
     fi
     umask 077
+    if [ ! -e /etc/ssh/sshd_config ]; then
+        install -m 0644 /opt/npa/libero/sshd_config /etc/ssh/sshd_config || exit $?
+    fi
+    mkdir -p /run/sshd || exit $?
+    chmod 0755 /run/sshd || exit $?
     exec "$real_ssh_keygen" -A
 }
 

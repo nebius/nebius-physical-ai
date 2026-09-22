@@ -92,6 +92,11 @@ LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (
     "npa/docker/workbench/libero/build.sh",
     "npa/docker/workbench/packaging-contract.yaml",
     "npa/scripts/run_byof_container_verify.py",
+    "npa/scripts/run_libero_customer.py",
+    "npa/src/npa/workflows/byof/libero_customer.py",
+    "npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-customer-b200-gpu.yaml",
+    "npa/src/npa/workflows/byof/profiles/libero-customer-seccomp.json",
+    "npa/src/npa/workflows/byof/profiles/libero-customer-apparmor",
     "npa/scripts/run_byof_repo.py",
     "npa/scripts/scan_image_libero_payload.py",
     "npa/scripts/scan_image_wan_payload.py",
@@ -918,7 +923,9 @@ def libero_customer_acceptance_notification(
     }
 
 
-def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
+def validate_libero_qualified_image_manifest(
+    payload: Any, *, customer_run: bool = False
+) -> dict[str, Any]:
     """Validate the separately reviewed immutable image qualification."""
 
     def require(ok: bool, field: str) -> None:
@@ -1014,7 +1021,6 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
         "publication_bundle_sha256",
         "build_input_bundle_sha256",
         "publication_enforcement_bundle_sha256",
-        "output_storage_authorization_public_key_sha256",
         "runtime_manifest_sha256",
     ):
         require(
@@ -1022,6 +1028,12 @@ def validate_libero_qualified_image_manifest(payload: Any) -> dict[str, Any]:
             is not None,
             field,
         )
+    storage_root = str(qualification.get("output_storage_authorization_public_key_sha256") or "")
+    require(
+        (customer_run and storage_root == "")
+        or re.fullmatch(r"[0-9a-f]{64}", storage_root) is not None,
+        "output storage authority for hosted delivery",
+    )
     require(
         qualification.get("customer_authorization_public_key_sha256") == "",
         "customer signer remains runtime-only",
@@ -1267,6 +1279,7 @@ def validate_libero_customer_runtime_authorization(
     executable_profile_sha256: str | None = None,
     public_key_file: str = "",
     now: datetime | None = None,
+    customer_run: bool = False,
 ) -> tuple[dict[str, Any], str]:
     """Validate direct customer-controlled evidence for one exact run."""
 
@@ -1297,7 +1310,7 @@ def validate_libero_customer_runtime_authorization(
     }
     if not isinstance(authorization, dict) or set(authorization) != expected_keys:
         raise RuntimeError("LIBERO customer authorization schema is not closed")
-    qualification = validate_libero_qualified_image_manifest(image_manifest)
+    qualification = validate_libero_qualified_image_manifest(image_manifest, customer_run=customer_run)
     expected_terms = [
         {"id": term["id"], "version": term["version"]}
         for term in _libero_customer_terms(image_manifest)

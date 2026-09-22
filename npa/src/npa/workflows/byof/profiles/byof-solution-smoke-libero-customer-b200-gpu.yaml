@@ -1,0 +1,174 @@
+# Customer-operated LIBERO: direct customer signature, no workload cloud credentials.
+name: byof-solution-smoke-libero-b200-gpu
+execution: serial
+---
+name: byof-solution-smoke-libero-b200-gpu
+resources:
+  cloud: kubernetes
+  accelerators: B200:1
+  cpus: 16+
+  memory: 96+
+  disk_size: 100
+  image_id: docker:<explicit-npa-libero-candidate>@sha256:<digest>
+  kubernetes:
+    pod_config:
+      spec:
+        serviceAccountName: npa-byof-libero-payload
+        automountServiceAccountToken: false
+        hostNetwork: false
+        hostPID: false
+        hostIPC: false
+        securityContext:
+          runAsNonRoot: true
+          fsGroup: 1001
+          seccompProfile:
+            type: Localhost
+            localhostProfile: npa-libero-customer-v1.json
+          appArmorProfile:
+            type: Localhost
+            localhostProfile: npa-libero-customer-v1
+        containers:
+        - securityContext:
+            privileged: false
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
+              add:
+              - SETUID
+              - SETGID
+              - NET_BIND_SERVICE
+              - SYS_CHROOT
+          volumeMounts:
+          - name: libero-customer-run-key
+            mountPath: /run/npa/libero/customer-run-public-key.b64
+            subPath: customer-run-public-key.b64
+            readOnly: true
+          - name: libero-workspace
+            mountPath: /workspace
+          - name: libero-tmp
+            mountPath: /tmp
+          - name: libero-run
+            mountPath: /run
+          - name: libero-ssh
+            mountPath: /etc/ssh
+          - name: libero-home
+            mountPath: /home/ubuntu
+        volumes:
+        - name: libero-customer-run-key
+          configMap:
+            name: npa-byof-libero-customer-run-key
+            defaultMode: 292
+        - name: libero-workspace
+          emptyDir: {}
+        - name: libero-tmp
+          emptyDir: {}
+        - name: libero-run
+          emptyDir: {}
+        - name: libero-ssh
+          emptyDir: {}
+        - name: libero-home
+          emptyDir: {}
+envs:
+  NPA_BYOF_RUN_ID: <your-run-id>
+  BYOF_REPO_ROOT: /opt/byof
+  BYOF_SMOKE_COMMAND: /opt/npa/libero/smoke.sh
+  BYOF_SOLUTION_NAME: libero
+  BYOF_CAPABILITY_NAME: libero_spatial_bc_rnn_train_reload_heldout
+  BYOF_SMOKE_ARTIFACT_NAME: libero-smoke.json
+  BYOF_IMAGE: ''
+  LIBERO_RUNTIME_ROOT: /workspace/.cache/npa/libero/current
+  NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256: ''
+  NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256: ''
+  NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256: ''
+  NPA_LIBERO_EXPECTED_NAMESPACE_SHA256: ''
+  NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256: ''
+  NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256: ''
+  NPA_LIBERO_EXPECTED_ROLE_UID_SHA256: ''
+  NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256: ''
+  NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT: ''
+  NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256: ''
+  NPA_LIBERO_EXECUTABLE_PROFILE_B64: ''
+  NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256: ''
+  NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  NPA_LIBERO_RUNTIME_DELIVERY: customer-run-v1
+setup: |
+  set -euo pipefail
+  test -x /usr/local/sbin/npa-skypilot-bootstrap-guard
+  /usr/local/sbin/npa-skypilot-bootstrap-guard verify
+  test "$(id -u)" = 1000
+  test "$(id -un)" = ubuntu
+  test -n "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64}"
+  test -n "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256}"
+  test -n "${NPA_LIBERO_CUSTOMER_IDENTITY_SHA256}"
+  test -n "${NPA_LIBERO_EXECUTABLE_PROFILE_B64}"
+  # emptyDir hides the image's cache parents; both fixed UIDs need traversal.
+  install -d -m 0750 /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero
+  chgrp npa-libero-exec /workspace/.cache /workspace/.cache/npa /workspace/.cache/npa/libero
+  authorization="$(mktemp /tmp/npa-libero-customer-authorization.XXXXXXXX)"
+  cleanup_authorization() {
+    rm -f "${authorization}"
+  }
+  trap cleanup_authorization EXIT INT TERM
+  printf '%s' "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64}" | base64 -d > "${authorization}"
+  chmod 0600 "${authorization}"
+  test "$(sha256sum "${authorization}" | cut -d ' ' -f 1)" = \
+    "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256}"
+  run_root="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  output_dir="${run_root}/output"
+  install -d -m 1770 "${output_dir}"
+  chgrp npa-libero-exec "${output_dir}"
+  chmod 01770 "${output_dir}"
+  profile_path="${run_root}/.npa-executable-profile.json"
+  test ! -e "${profile_path}"
+  profile_partial="${profile_path}.partial"
+  printf '%s' "${NPA_LIBERO_EXECUTABLE_PROFILE_B64}" | base64 -d > "${profile_partial}"
+  chmod 0440 "${profile_partial}"
+  chgrp npa-libero-exec "${profile_partial}"
+  test "$(sha256sum "${profile_partial}" | cut -d ' ' -f 1)" = "${NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256}"
+  mv "${profile_partial}" "${profile_path}"
+  unset NPA_LIBERO_EXECUTABLE_PROFILE_B64
+  protected_authorization="${output_dir}/.npa-customer-authorization.json"
+  test ! -e "${protected_authorization}"
+  receipt_dir="/workspace/.cache/npa/libero/run-receipts"
+  install -d -m 0750 "${receipt_dir}"
+  chgrp npa-libero-exec "${receipt_dir}"
+  bootstrap_receipt="${receipt_dir}/${NPA_BYOF_RUN_ID}.json"
+  test ! -e "${bootstrap_receipt}"
+  if ! /opt/npa/libero/runtime-bootstrap.py ensure \
+    --manifest /opt/npa/libero/runtime-manifest.json \
+    --requirements /opt/npa/libero/runtime-requirements.txt \
+    --cache-root /workspace/.cache/npa/libero \
+    --authorization "${authorization}" \
+    --authorization-sha256 "${NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256}" \
+    --output-dir "${output_dir}" > "${bootstrap_receipt}.partial"; then
+    rm -f "${bootstrap_receipt}.partial"
+    exit 1
+  fi
+  chmod 0640 "${bootstrap_receipt}.partial"
+  chgrp npa-libero-exec "${bootstrap_receipt}.partial"
+  mv "${bootstrap_receipt}.partial" "${bootstrap_receipt}"
+  install -m 0600 "${authorization}" "${protected_authorization}"
+  cleanup_authorization
+  trap - EXIT INT TERM
+  unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64
+  test -x "${LIBERO_RUNTIME_ROOT}/venv/bin/python"
+  test -d "${BYOF_REPO_ROOT}/libero/lifelong"
+  test ! -e "${BYOF_REPO_ROOT}/libero/libero/assets"
+  test ! -e "${BYOF_REPO_ROOT}/.git"
+
+  /opt/npa/libero/runtime-bootstrap.py customer-ready
+run: |
+  set -euo pipefail
+  unset NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64
+  output_dir="/workspace/byof-runs/${NPA_BYOF_RUN_ID}/output"
+  export NPA_SMOKE_OUTPUT_DIR="${output_dir}"
+  /usr/bin/nvidia-smi > "${output_dir}/nvidia_smi.txt" 2>&1
+  /usr/bin/nvidia-smi -L > "${output_dir}/nvidia_smi_list.txt" 2>&1
+  # The image-owned supervisor retains descriptor-stable authorization and
+  # exclusive execution ownership through smoke and sealing for controller retrieval.
+  status=0
+  /usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py execute-and-seal || status=$?
+  /usr/local/bin/python /opt/npa/libero/runtime-bootstrap.py wait-for-retrieval
+  exit "${status}"

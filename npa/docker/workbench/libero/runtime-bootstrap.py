@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import ctypes
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -87,7 +88,7 @@ EXPECTED_BOUNDARIES = {
     "rendering": False,
 }
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44"
+    "d21a34b58f787023c5ae539a98a9c69c2dc2a032c0094d86f8a2e11fcce3d5da"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
     "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99"
@@ -108,6 +109,24 @@ AUTHENTICATED_CALLER_TRUST_ROOT_OWNER_UID = 0
 # network effects; the caller assertion cannot select or create this root.
 CUSTOMER_SIGNER_REGISTRY_ROOT = Path("/run/npa/libero/customer-signer-roots")
 CUSTOMER_SIGNER_REGISTRY_OWNER_UID = 0
+CUSTOMER_RUN_PUBLIC_KEY = Path("/run/npa/libero/customer-run-public-key.b64")
+CUSTOMER_RUN_MODE = "customer-run-v1"
+CUSTOMER_RUN_PHASE_ROOT = Path("/workspace/byof-runs")
+
+
+def _customer_run() -> bool:
+    """Select only the explicit customer-operated transport, never acceptance."""
+    mode = os.environ.get("NPA_LIBERO_RUNTIME_DELIVERY", "")
+    if mode not in {"", CUSTOMER_RUN_MODE}:
+        raise BootstrapRefusal("unsupported LIBERO runtime delivery")
+    return mode == CUSTOMER_RUN_MODE
+
+
+def _customer_run_key() -> bytes:
+    return _trusted_public_key(
+        CUSTOMER_RUN_PUBLIC_KEY, owner_uid=0, label="customer-run signer"
+    )
+
 CUSTOMER_AUTHORIZATION_NAMESPACE = b"npa.libero.customer-authorization"
 AUTHENTICATED_CALLER_NAMESPACE = b"npa.libero.authenticated-caller"
 OUTPUT_STORAGE_AUTHORIZATION_NAMESPACE = b"npa.libero.output-storage-authorization"
@@ -220,6 +239,7 @@ RUNTIME_EXECUTION_PASSTHROUGH_ENV_NAMES = frozenset(
         "LC_ALL",
         "LC_CTYPE",
         "NPA_BYOF_RUN_ID",
+        "NPA_LIBERO_RUNTIME_DELIVERY",
         "NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT",
         "NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256",
         "NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256",
@@ -803,7 +823,8 @@ def _read_private_regular_bytes(path: Path, *, limit: int, input_name: str) -> b
 
 
 def _read_private_regular_descriptor(
-    descriptor: int, *, limit: int, owner_uid: int, input_name: str
+    descriptor: int, *, limit: int, owner_uid: int, input_name: str,
+    allow_unlinked: bool = False,
 ) -> bytes:
     """Read stable private bytes without changing an inherited descriptor offset."""
 
@@ -816,7 +837,7 @@ def _read_private_regular_descriptor(
     if (
         not stat.S_ISREG(before.st_mode)
         or before.st_uid != owner_uid
-        or before.st_nlink != 1
+        or before.st_nlink not in ({0, 1} if allow_unlinked else {1})
         or stat.S_IMODE(before.st_mode) & 0o077
         or len(payload) > limit
         or before.st_size != len(payload)
@@ -1792,6 +1813,11 @@ def _validate_authenticated_caller_binding(
 def _authenticated_caller_binding_from_environment() -> tuple[bytes, bytes, str]:
     """Read the owner-validated caller binding used before any runtime effect."""
 
+    if _customer_run():
+        # The actual customer supplies this key through the private handoff.
+        # It is mounted by the controller, never selected by a signed payload.
+        key = _customer_run_key()
+        return b"", key, hashlib.sha256(key).hexdigest()
     try:
         caller_bytes = base64.b64decode(
             os.environ.get("NPA_LIBERO_AUTHENTICATED_CALLER_B64", ""), validate=True
@@ -1864,6 +1890,18 @@ def _validate_executable_profile_digest(expected_sha256: str) -> None:
         or not hmac.compare_digest(hashlib.sha256(payload).hexdigest(), expected_sha256)
     ):
         raise BootstrapRefusal("executable profile bytes differ from authorization")
+    if _customer_run():
+        try:
+            tasks = [item for item in json.loads(payload) if item.get("resources")]
+            task = tasks[0]
+            pod = task["resources"]["kubernetes"]["pod_config"]["spec"]
+            valid = (len(tasks) == 1
+                     and task["envs"].get("NPA_LIBERO_RUNTIME_DELIVERY") == CUSTOMER_RUN_MODE
+                     and pod.get("automountServiceAccountToken") is False)
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+            valid = False
+        if not valid:
+            raise BootstrapRefusal("customer-run mode is absent from the signed profile")
 
 
 def _trusted_public_key(path: Path, *, owner_uid: int, label: str) -> bytes:
@@ -1941,6 +1979,8 @@ def _trusted_output_storage_authorization_public_key() -> bytes:
 def _trusted_customer_signer_public_key(customer_identity_sha256: str) -> bytes:
     if not _is_hex(customer_identity_sha256, 64):
         raise BootstrapRefusal("customer signer trust root is invalid")
+    if _customer_run():
+        return _customer_run_key()
     return _trusted_public_key(
         CUSTOMER_SIGNER_REGISTRY_ROOT / f"{customer_identity_sha256}.b64",
         owner_uid=CUSTOMER_SIGNER_REGISTRY_OWNER_UID,
@@ -2739,11 +2779,20 @@ def _build_source_wheels(
         "usr",
     ):
         (sandbox_root / relative).mkdir(mode=0o700, parents=True)
+    # Container /etc contains locked hosts/DNS/SSH submounts that cannot be
+    # detached by a non-recursive bind inside an unprivileged user namespace.
+    # Builds need only neutral account/loader data, never SSH keys or sudoers.
+    for name in ("passwd", "group", "nsswitch.conf", "ld.so.cache"):
+        source = Path("/etc") / name
+        info = source.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise BootstrapRefusal("source build account/loader file is not trusted")
+        shutil.copyfile(source, sandbox_root / "etc" / name)
+        os.chmod(sandbox_root / "etc" / name, 0o400)
     (sandbox_root / "npa-build/source-requirements.txt").touch(mode=0o400)
     quote = shlex.quote
     readonly_binds = [
         ("/bin", sandbox_root / "bin"),
-        ("/etc", sandbox_root / "etc"),
         ("/lib", sandbox_root / "lib"),
         ("/lib64", sandbox_root / "lib64"),
         ("/sbin", sandbox_root / "sbin"),
@@ -3670,23 +3719,32 @@ def execute(
         limit=1024 * 1024,
         owner_uid=supervisor_uid,
         input_name="authenticated caller assertion",
+        allow_unlinked=True,
     )
     trusted_public_key = _read_private_regular_descriptor(
         customer_trust_descriptor,
         limit=1024,
         owner_uid=supervisor_uid,
         input_name="authenticated caller trust root",
+        allow_unlinked=True,
     )
     try:
-        caller_signer_sha256 = _validate_authenticated_caller_binding(
-            caller_bytes,
-            trusted_public_key,
-            expected_sha256=os.environ.get(
-                "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", ""
-            ),
-            expected_run_id=expected_run,
-            expected_customer_identity_sha256=expected_customer,
-        )
+        if _customer_run():
+            if caller_bytes or not hmac.compare_digest(
+                trusted_public_key, _customer_run_key()
+            ):
+                raise BootstrapRefusal("customer-run signer handoff differs")
+            caller_signer_sha256 = hashlib.sha256(trusted_public_key).hexdigest()
+        else:
+            caller_signer_sha256 = _validate_authenticated_caller_binding(
+                caller_bytes,
+                trusted_public_key,
+                expected_sha256=os.environ.get(
+                    "NPA_LIBERO_AUTHENTICATED_CALLER_SHA256", ""
+                ),
+                expected_run_id=expected_run,
+                expected_customer_identity_sha256=expected_customer,
+            )
     except BootstrapRefusal as exc:
         reason = (
             "authorization_expired_or_replayable"
@@ -3762,6 +3820,11 @@ def execute(
             customer_trust_descriptor, "authenticated caller trust root"
         )
         environment = _runtime_execution_environment(stable_root)
+        if _customer_run():
+            # The trusted supervisor needs sudo for this UID transition; the
+            # subsequently executed third-party runtime must never regain it.
+            if ctypes.CDLL(None, use_errno=True).prctl(38, 1, 0, 0, 0) != 0:
+                raise BootstrapRefusal("training no-new-privileges setup failed")
         smoke_exit_code = _run_authorized_smoke(
             cache_descriptor=cache_descriptor,
             environment=environment,
@@ -4399,6 +4462,103 @@ def _output_limits_for_exit(smoke_exit_code: int, *, root_fd: int) -> dict[str, 
     return output_limits
 
 
+def _write_output_summary(smoke_exit_code: int, *, root_fd: int) -> None:
+    summary = {
+        "status": "success" if smoke_exit_code == 0 else "failed",
+        "tool": "byof",
+        "workload": "solution-smoke-libero-b200",
+        "run_id": os.environ.get("NPA_BYOF_RUN_ID", ""),
+        "image": os.environ.get("BYOF_IMAGE", ""),
+        "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+        "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+        "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+        "smoke_exit_code": smoke_exit_code,
+        "runtime_cache_uploaded": False,
+        "rendering_invoked": False,
+        "created_unix": round(datetime.now(timezone.utc).timestamp(), 3),
+    }
+    summary_payload = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode()
+    summary_fd = os.open(
+        "npa_byof_summary.json",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
+        dir_fd=root_fd,
+    )
+    with os.fdopen(summary_fd, "wb") as stream:
+        stream.write(summary_payload)
+
+
+
+def seal_for_controller(smoke_exit_code: int, *, root_fd: int) -> None:
+    """Seal the existing bounded proof files; no object-store authority enters the Pod."""
+    if not _customer_run():
+        raise BootstrapRefusal("controller retrieval requires the customer-run profile")
+    if any(os.environ.get(name) for name in (
+        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+        "NEBIUS_IAM_TOKEN", "NPA_LIBERO_OUTPUT_STORAGE_AUTHORIZATION_B64",
+    )):
+        raise BootstrapRefusal("customer-run workload received cloud or storage credentials")
+    info = os.fstat(root_fd)
+    if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise BootstrapRefusal("controller output descriptor is not sealed")
+    _write_output_summary(smoke_exit_code, root_fd=root_fd)
+    limits = _output_limits_for_exit(smoke_exit_code, root_fd=root_fd)
+    records = []
+    total = 0
+    for name, limit in sorted(limits.items()):
+        payload, digest = _immutable_output_bytes(root_fd, name, limit)
+        total += len(payload)
+        if total > MAX_OUTPUT_BYTES:
+            raise BootstrapRefusal("controller output exceeds aggregate size budget")
+        if name in OUTPUT_UPLOAD_SIZE_LIMITS:
+            _canonical_output_payload(name, payload)
+        records.append({"name": name, "size_bytes": len(payload), "sha256": digest})
+    payload = {
+        "schema": "npa.libero.controller-output-inventory.v1",
+        "run_id": os.environ["NPA_BYOF_RUN_ID"],
+        "image": os.environ["BYOF_IMAGE"],
+        "authorization_sha256": os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256"],
+        "smoke_exit_code": smoke_exit_code,
+        "files": records,
+    }
+    path = _customer_phase_path("completed.json")
+    _write_phase_file(path, payload)
+
+
+def _customer_phase_path(name: str) -> Path:
+    run_id = os.environ.get("NPA_BYOF_RUN_ID", "")
+    if re.fullmatch(r"[a-z0-9][a-z0-9-]{15,62}", run_id) is None:
+        raise BootstrapRefusal("customer-run phase requires an exact run ID")
+    return CUSTOMER_RUN_PHASE_ROOT / run_id / name
+
+
+def _write_phase_file(path: Path, value: dict[str, Any]) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(value, stream, sort_keys=True)
+
+
+def wait_for_customer_phase(phase: str) -> dict[str, Any]:
+    """Wait for the owned controller; fetched code cannot write supervisor phase files."""
+    if not _customer_run() or phase not in {"training", "retrieved"}:
+        raise BootstrapRefusal("invalid customer-run phase")
+    path = _customer_phase_path(phase + ".json")
+    while not path.exists():
+        expected = os.environ.get("NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT", "")
+        _ensure_deadline(_parse_utc(expected, "customer authorization expiry"))
+        time.sleep(1)
+    payload = json.loads(_immutable_supervisor_bytes(path, 64 * 1024))
+    if (
+        payload.get("schema") != "npa.libero.customer-controller-phase.v1"
+        or payload.get("phase") != phase
+        or payload.get("run_id") != os.environ.get("NPA_BYOF_RUN_ID")
+        or payload.get("authorization_sha256") != os.environ.get("NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256")
+        or payload.get("image") != os.environ.get("BYOF_IMAGE")
+    ):
+        raise BootstrapRefusal("customer-run controller phase differs")
+    return payload
+
+
 def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
     """Upload through image-owned stdlib code after untrusted runtime execution ends."""
 
@@ -4425,29 +4585,7 @@ def upload_outputs(smoke_exit_code: int, *, root_fd: int) -> dict[str, Any]:
         or stat.S_IMODE(root_info.st_mode) != 0o700
     ):
         raise BootstrapRefusal("output upload descriptor is not sealed")
-    summary = {
-        "status": "success" if smoke_exit_code == 0 else "failed",
-        "tool": "byof",
-        "workload": "solution-smoke-libero-b200",
-        "run_id": run_id,
-        "image": os.environ.get("BYOF_IMAGE", ""),
-        "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
-        "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
-        "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
-        "smoke_exit_code": smoke_exit_code,
-        "runtime_cache_uploaded": False,
-        "rendering_invoked": False,
-        "created_unix": round(datetime.now(timezone.utc).timestamp(), 3),
-    }
-    summary_payload = (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode()
-    summary_fd = os.open(
-        "npa_byof_summary.json",
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP,
-        dir_fd=root_fd,
-    )
-    with os.fdopen(summary_fd, "wb") as stream:
-        stream.write(summary_payload)
+    _write_output_summary(smoke_exit_code, root_fd=root_fd)
 
     prefix = parsed.path.lstrip("/")
     transaction_id = uuid4().hex
@@ -4649,6 +4787,10 @@ def _execution_uid_processes() -> list[int]:
                 )
             except (FileNotFoundError, PermissionError, ProcessLookupError):
                 continue
+            # A dead child retained by container PID 1 cannot execute or write;
+            # only its parent can reap it, so signals cannot remove that entry.
+            if any(line.startswith("State:\tZ") for line in status_lines):
+                continue
             uid_line = next(
                 (line for line in status_lines if line.startswith("Uid:")), None
             )
@@ -4657,7 +4799,7 @@ def _execution_uid_processes() -> list[int]:
             fields = uid_line.split()
             if len(fields) != 5:
                 raise BootstrapRefusal("execution process identity is invalid")
-            if int(fields[2]) == execution_uid:
+            if int(fields[2]) == execution_uid and int(process.name) != os.getpid():
                 discovered.append(int(process.name))
         return sorted(discovered)
     except OSError as exc:
@@ -4697,6 +4839,13 @@ def _terminate_execution_processes(processes: list[int]) -> None:
 
     initial = sorted(set(processes))
     if not initial:
+        return
+    if _customer_run() and os.getuid() == pwd.getpwnam(RUNTIME_SUPERVISOR_USER).pw_uid:
+        subprocess.run(
+            ["/usr/bin/sudo", "-n", "-u", RUNTIME_EXECUTION_USER,
+             "/opt/npa/libero/runtime-bootstrap.py", "terminate"],
+            check=True, start_new_session=True,
+        )
         return
     groups = _execution_process_group_ids(initial)
     for group in groups:
@@ -4784,8 +4933,11 @@ def _bind_inherited_descriptors(sources: tuple[int, ...]) -> Iterator[tuple[int,
             os.close(descriptor)
 
 
-def execute_and_upload() -> int:
+def execute_and_upload(*, controller_retrieval: bool = False) -> int:
     """Hold exact authorization and exclusive UID ownership through readback."""
+
+    if controller_retrieval != _customer_run():
+        raise BootstrapRefusal("execution output transport differs from customer profile")
 
     manifest, manifest_sha256 = _validate_manifest(DEFAULT_MANIFEST)
     _, requirements_sha256 = _validate_requirements(DEFAULT_REQUIREMENTS, manifest)
@@ -5046,7 +5198,10 @@ def execute_and_upload() -> int:
                             manifest_sha256,
                             authenticated_signer_sha256=caller_signer_sha256,
                         )
-                        upload_outputs(smoke_exit_code, root_fd=output_fd)
+                        if controller_retrieval:
+                            seal_for_controller(smoke_exit_code, root_fd=output_fd)
+                        else:
+                            upload_outputs(smoke_exit_code, root_fd=output_fd)
                         _validate_complete(
                             stable_root,
                             manifest,
@@ -5090,6 +5245,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "status",
             "execute",
             "execute-and-upload",
+            "execute-and-seal",
+            "customer-ready",
+            "wait-for-retrieval",
+            "terminate",
         ),
     )
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
@@ -5105,6 +5264,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        if args.command == "terminate":
+            if os.getuid() != pwd.getpwnam(RUNTIME_EXECUTION_USER).pw_uid:
+                raise BootstrapRefusal("termination requires the execution UID")
+            _terminate_execution_processes(_execution_uid_processes())
+            return 0
         if args.command == "wait-for-release":
             print(
                 json.dumps({**wait_for_release(), "status": "released"}, sort_keys=True)
@@ -5114,6 +5278,20 @@ def main(argv: list[str] | None = None) -> int:
             return execute()
         if args.command == "execute-and-upload":
             return execute_and_upload()
+        if args.command == "execute-and-seal":
+            wait_for_customer_phase("training")
+            return execute_and_upload(controller_retrieval=True)
+        if args.command == "customer-ready":
+            if not _customer_run():
+                raise BootstrapRefusal("customer-ready requires the customer-run profile")
+            _write_phase_file(_customer_phase_path("materialized.json"), {
+                "run_id": os.environ["NPA_BYOF_RUN_ID"],
+                "authorization_sha256": os.environ["NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256"],
+            })
+            return 0
+        if args.command == "wait-for-retrieval":
+            wait_for_customer_phase("retrieved")
+            return 0
         else:
             payload = ensure(args) if args.command == "ensure" else status(args)
     except CustomerAcceptanceRequired as exc:

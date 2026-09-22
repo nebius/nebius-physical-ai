@@ -25,7 +25,7 @@
   },
   "runtime_payloads_baked": false,
   "customer_runtime_authorization_required": true,
-  "runtime_manifest_sha256": "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44",
+  "runtime_manifest_sha256": "d21a34b58f787023c5ae539a98a9c69c2dc2a032c0094d86f8a2e11fcce3d5da",
   "runtime_requirements_sha256": "8504f236dcad67ad0e2f5959b916c93aa7ccbd02567c6e323e480366d0f23b99",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
@@ -67,14 +67,14 @@
       {
         "id": "cuda-eula",
         "name": "NVIDIA CUDA Toolkit End User License Agreement",
-        "official_url": "https://docs.nvidia.com/cuda/eula/index.html",
-        "version": "sha256:c441d0f8e3ad7ede569d4c5b2a9a50c4d46f278e820a6be81f2e34f1d6f89653"
+        "official_url": "https://docs.nvidia.com/cuda/archive/13.0.2/eula/index.html",
+        "version": "sha256:845cf2a25f5705b8633393cd18e38bced16ced0914d468c707910df2190f4bc4"
       },
       {
         "id": "nvidia-software-license",
         "name": "NVIDIA Software License Agreement",
         "official_url": "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-software-license-agreement/",
-        "version": "sha256:d7f741cc20084c5f03a7c6191e7cdd6a30f2b0cfe5a52dfc04e2fe161b176a14"
+        "version": "sha256:4c907a13d7234081c482876c3b135ab617b8610dcb71bd53059ec6b46076f3f5"
       },
       {
         "id": "cudnn-eula",
@@ -120,7 +120,7 @@
     "package_writer_repository": "",
     "customer_authorization_public_key_sha256": "",
     "output_storage_authorization_public_key_sha256": "",
-    "runtime_manifest_sha256": "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44"
+    "runtime_manifest_sha256": "d21a34b58f787023c5ae539a98a9c69c2dc2a032c0094d86f8a2e11fcce3d5da"
   },
   "catalog_release": false
 }

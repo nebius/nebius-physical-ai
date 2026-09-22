@@ -207,6 +207,13 @@ def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
         str(skypilot_tmp / "apt-ssh-setup.failed"),
         str(tmp_path / "apt-ssh-setup.failed"),
     )
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    ssh_config = tmp_path / "sshd_config"
+    ssh_config.write_text("UsePAM yes\n")
+    guard_source = guard_source.replace("/etc/ssh", str(ssh_dir)).replace(
+        "/opt/npa/libero/sshd_config", str(ssh_config)
+    ).replace("/run/sshd", str(tmp_path / "sshd-run"))
     guard = bin_dir / "npa-skypilot-bootstrap-guard"
     guard.write_text(
         guard_source.replace("/usr/bin/ssh-keygen", str(real_keygen)),
@@ -233,6 +240,7 @@ def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
     )
 
     assert accepted.returncode == 0
+    assert (ssh_dir / "sshd_config").read_text() == "UsePAM yes\n"
     assert calls.read_text(encoding="utf-8") == "-A\n"
     assert refused.returncode == 87
     assert "unexpected-ssh-keygen-arguments" in refused.stderr

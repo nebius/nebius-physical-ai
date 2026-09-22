@@ -551,6 +551,7 @@ class LiberoRuntimeBinding:
     candidate_image: str = ""
     task_name: str = ""
     customer_identity_sha256: str = ""
+    customer_run: bool = False
 
 
 def _libero_payload_rules(resource_name: str) -> list[dict[str, Any]]:
@@ -1501,8 +1502,8 @@ def _libero_payload_pod_record(
         raise RuntimeError("LIBERO payload Pod identity changed after exact binding")
     if spec.get("serviceAccountName") != LIBERO_PAYLOAD_SERVICE_ACCOUNT:
         raise RuntimeError("LIBERO payload Pod used a different service account")
-    if spec.get("automountServiceAccountToken") is not True:
-        raise RuntimeError("LIBERO payload Pod release token contract is absent")
+    if spec.get("automountServiceAccountToken") is not (not binding.customer_run):
+        raise RuntimeError("LIBERO payload Pod release token contract differs")
     containers = spec.get("containers")
     if (
         not isinstance(containers, list)
@@ -1523,7 +1524,13 @@ def _libero_payload_pod_record(
     pod_security = spec.get("securityContext") or {}
     if (
         pod_security.get("runAsNonRoot") is not True
-        or (pod_security.get("seccompProfile") or {}).get("type") != "RuntimeDefault"
+        or (pod_security.get("seccompProfile") or {}) != (
+            {"type": "Localhost", "localhostProfile": "npa-libero-customer-v1.json"}
+            if binding.customer_run else {"type": "RuntimeDefault"}
+        )
+        or (binding.customer_run and pod_security.get("appArmorProfile") != {
+            "type": "Localhost", "localhostProfile": "npa-libero-customer-v1"
+        })
     ):
         raise RuntimeError("LIBERO payload Pod security context is not confined")
     container = containers[0]
@@ -1531,21 +1538,37 @@ def _libero_payload_pod_record(
     capabilities = security.get("capabilities") or {}
     if (
         security.get("privileged") not in (None, False)
-        or security.get("allowPrivilegeEscalation") is not False
+        or security.get("allowPrivilegeEscalation") is not binding.customer_run
         or security.get("readOnlyRootFilesystem") is not True
         or set(capabilities.get("drop") or ()) != {"ALL"}
-        or capabilities.get("add")
+        or set(capabilities.get("add") or ()) != (
+            {"SETUID", "SETGID", "NET_BIND_SERVICE", "SYS_CHROOT"}
+            if binding.customer_run else set()
+        )
         or any(port.get("hostPort") for port in (container.get("ports") or ()))
     ):
         raise RuntimeError("LIBERO payload container security context is not confined")
     volumes = spec.get("volumes") or []
-    expected_volumes, expected_mounts = _libero_reviewed_mount_contract(binding.customer_identity_sha256)
+    if binding.customer_run:
+        from npa.workflows.byof.libero_customer import PROFILE
+
+        customer_profile = list(yaml.safe_load_all(PROFILE.read_text()))[1]
+        customer_spec = customer_profile["resources"]["kubernetes"]["pod_config"]["spec"]
+        expected_volumes = customer_spec["volumes"]
+        expected_mounts = customer_spec["containers"][0]["volumeMounts"]
+    else:
+        expected_volumes, expected_mounts = _libero_reviewed_mount_contract(binding.customer_identity_sha256)
     expected_by_name = {volume["name"]: volume for volume in expected_volumes}
     volume_types: dict[str, str] = {}
     for volume in volumes:
         if not isinstance(volume, dict) or not volume.get("name") or volume["name"] in volume_types:
             raise RuntimeError("LIBERO payload volume identity is invalid")
         name = volume["name"]
+        if binding.customer_run and any(
+            "serviceAccountToken" in item
+            for item in (volume.get("projected") or {}).get("sources", [])
+        ):
+            raise RuntimeError("LIBERO customer Pod may not mount a service-account token")
         kinds = set(volume) - {"name"}
         if name in expected_by_name:
             if volume != expected_by_name[name]:

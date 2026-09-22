@@ -13,8 +13,83 @@ The planned managed workflow is
 [`workflows/testing/byof-libero.yaml`](../../workflows/testing/byof-libero.yaml).
 Its `tool://libero` default deliberately cannot run: execution requires an
 explicit qualified `npa-libero@sha256:…` candidate, a short-lived customer/run
-authorization, and independent build-lineage evidence. There is no published LIBERO
-tag or digest and the public image table remains unchanged.
+authorization, and independent build-lineage evidence. There is no supported LIBERO release; development digests require independent
+qualification and the public release table remains unchanged.
+
+## Customer-operated managed run
+
+The bounded customer path uses the standard NPA managed SkyPilot submission,
+status, cancellation and cleanup helpers on one B200. It accepts the same v2
+customer signature directly through an owner-private handoff. The customer does
+not need to deploy caller or storage signing services. The payload receives no
+Kubernetes token or cloud/storage credentials; its controller retrieves only the
+sealed, size-limited proof inventory after training with egress denied.
+
+From a reviewed source checkout, prepare the exact image/run/terms/profile packet:
+
+```bash
+npa/.venv/bin/python npa/scripts/run_libero_customer.py prepare \
+  --image-manifest /private/libero/image-manifest.json \
+  --run-id <exact-run-id> --output /private/libero/customer-packet
+```
+
+The actual customer reviews `request.json`, including every official terms URL
+and content digest, then runs this command in their own interactive terminal:
+
+```bash
+npa/.venv/bin/python npa/scripts/run_libero_customer.py authorize \
+  --packet /private/libero/customer-packet
+```
+
+The prompt requires the customer's identity and `AUTHORIZE <exact-run-id>`.
+Declining creates no authorization. An existing Ed25519 key can be selected with
+`--signing-key`; otherwise the helper creates the customer's local key only after
+that explicit acknowledgement. The customer retains the private signing key and
+returns only `customer-authorization.json` and `customer-public-key.b64` through
+the private handoff. NPA never runs this acknowledgement on the customer's behalf.
+
+The resource owner supplies a private target JSON with exactly `project`,
+`context`, `namespace`, `namespace_uid`, `allowed_node`, `kubeconfig`, `config_path`,
+`isolated_config_dir`, `deny_policy_uid`, and `fetch_policy_uid`. The dedicated
+namespace bears `npa-libero-run=<exact-run-id>`, has no pre-existing Pods, and uses
+the tokenless `npa-byof-libero-payload` account. Its two owner-provisioned policies
+are `libero-deny-egress` (all Pods, Egress, no allowed destinations) and
+`libero-fetch-egress` (all Pods, Egress, initially all destinations). The controller
+checks their UIDs, removes only the exact fetch allowance after verified runtime
+materialization, proves the observed egress change, then releases training.
+
+```bash
+npa/.venv/bin/python npa/scripts/run_libero_customer.py submit \
+  --packet /private/libero/customer-packet \
+  --target /private/libero/target.json --output /private/libero/result
+```
+
+This profile requires the exact repository `libero-customer-seccomp.json`
+installed as `npa-libero-customer-v1.json` under the owned node's kubelet seccomp
+root, and `libero-customer-apparmor` loaded as `npa-libero-customer-v1`. Both files
+are beside the customer YAML profile. Install them only on the run-owned node and
+remove them during that node's cleanup. The seccomp file derives from the resolved
+Docker 29.1.3 OCI default with the four permitted capabilities; it contains no
+Docker-specific conditional rules. The AppArmor policy derives from
+[Moby's default template](https://github.com/moby/profiles/blob/245180c51918481c0525424b3ee025d2b435d46c/apparmor/template.go)
+under Apache-2.0. Both retain default denials and permit only the existing builder's
+exact user/mount/network/PID namespace operation and scoped sandbox mounts.
+Arbitrary namespace flags and mounts outside that sandbox remain denied.
+
+The root filesystem remains read-only. Writable emptyDirs hold workspace, home,
+SSH host keys, runtime state and temporary files; no PVC is requested. SETUID and
+SETGID support the fixed sudo UID transition, NET_BIND_SERVICE supports SSH port
+22, and SYS_CHROOT supports SSH privilege separation. No SYS_ADMIN, CAP_KILL,
+privileged container or host namespace is granted. Training sets `no_new_privs`
+before executing third-party code. Descendant cleanup uses the existing routine
+under the same execution UID through one exact sudo command.
+
+Neutral Docker checks cover these bootstrap and isolation transitions only.
+Qualification still requires the real official-data BC-RNN train, checkpoint
+reload and complete held-out evaluation on the observed B200 Pod. A successful
+image build or neutral test is not GPU evidence.
+
+## Hosted integration
 
 Image qualification and customer acceptance are separate. The checked-in
 qualification binds independently reviewed immutable image and publication

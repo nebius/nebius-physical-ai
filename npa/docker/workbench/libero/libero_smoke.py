@@ -62,7 +62,7 @@ DATASET_URL = (
 DATASET_SHA256 = "ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead"
 DATASET_SIZE = 508779600
 RUNTIME_MANIFEST_SHA256 = (
-    "a319f5ac5fbd0eeb1390940eeda62828d621cd7dd0dd828789182024562c5b44"
+    "d21a34b58f787023c5ae539a98a9c69c2dc2a032c0094d86f8a2e11fcce3d5da"
 )
 BDDL_RELATIVE = f"libero/libero/bddl_files/{SUITE}/{TASK}.bddl"
 BDDL_SHA256 = "9b59eb1287802868ad9bc78d58e6d36d4ba31134e679cfdbdf4b0feb660c959b"
@@ -252,6 +252,31 @@ def bound_service_account_claims(token: str) -> dict[str, str]:
 
 
 def observe_own_pod_image(expected_digest: str) -> dict[str, str]:
+    if os.environ.get("NPA_LIBERO_RUNTIME_DELIVERY") == "customer-run-v1":
+        # The owned controller observes the immutable Pod before releasing the
+        # offline training phase. No Kubernetes token reaches this execution UID.
+        observation_path = output_dir.parent / "observation.json"
+        info = observation_path.stat(follow_symlinks=False)
+        if observation_path.is_symlink() or info.st_uid != 1000 or info.st_mode & 0o022:
+            raise RuntimeError("customer-run controller observation is mutable")
+        observation = json.loads(observation_path.read_text())
+        keys = {
+            "pod_observed_image_digest", "observation_method", "pod_name_sha256",
+            "namespace_sha256", "pod_uid_sha256", "node_name_sha256",
+            "actual_service_account", "service_account_uid_sha256",
+            "controller_service_account_separated",
+        }
+        if (
+            set(observation) != keys
+            or observation["pod_observed_image_digest"] != expected_digest
+            or observation["observation_method"] != "customer_controller_kubernetes_status_imageID"
+            or observation["actual_service_account"] != "npa-byof-libero-payload"
+            or observation["controller_service_account_separated"] is not True
+            or any(re.fullmatch(r"[0-9a-f]{64}", str(value)) is None
+                   for key, value in observation.items() if key.endswith("_sha256"))
+        ):
+            raise RuntimeError("customer-run controller observation differs")
+        return observation
     service_account = Path("/var/run/secrets/kubernetes.io/serviceaccount")
     token_path = service_account / "token"
     namespace_path = service_account / "namespace"

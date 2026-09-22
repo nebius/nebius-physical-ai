@@ -12,6 +12,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tempfile
 import zipfile
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
@@ -1289,6 +1290,62 @@ def test_executable_profile_bytes_are_verified_before_cache_effect(
     with pytest.raises(module.BootstrapRefusal, match="profile bytes differ"):
         module.ensure(args)
     assert not Path(args.cache_root).exists()
+
+
+def test_customer_run_reuses_signature_without_caller_or_storage_services(monkeypatch, tmp_path):
+    module, args, fixture = _fixture(tmp_path)
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_DELIVERY", module.CUSTOMER_RUN_MODE)
+    monkeypatch.setattr(module, "_customer_run_key", lambda: fixture["customer_public_key"])
+    monkeypatch.delenv("NPA_LIBERO_AUTHENTICATED_CALLER_B64")
+    monkeypatch.delenv("NPA_LIBERO_AUTHENTICATED_CALLER_SHA256")
+    caller, key, signer = module._authenticated_caller_binding_from_environment()
+    assert caller == b"" and key == fixture["customer_public_key"]
+    manifest = json.loads(Path(args.manifest).read_bytes())
+    payload = Path(args.authorization).read_bytes()
+    accepted, _ = module._validate_customer_authorization_bytes(
+        payload, args.authorization_sha256, manifest, fixture["manifest_sha"],
+        authenticated_signer_sha256=signer,
+    )
+    assert accepted["run_id"] == fixture["run_id"]
+    tampered = json.loads(payload)
+    tampered["customer_identity_sha256"] = "f" * 64
+    changed = json.dumps(tampered).encode()
+    with pytest.raises(module.CustomerAcceptanceRequired):
+        module._validate_customer_authorization_bytes(
+            changed, _sha(changed), manifest, fixture["manifest_sha"],
+            authenticated_signer_sha256=signer,
+        )
+    assert not Path(args.cache_root).exists()
+
+
+def test_customer_mode_must_be_present_in_customer_signed_profile(monkeypatch, tmp_path):
+    module, _args, fixture = _fixture(tmp_path)
+    monkeypatch.setenv("NPA_LIBERO_RUNTIME_DELIVERY", module.CUSTOMER_RUN_MODE)
+    with pytest.raises(module.BootstrapRefusal, match="mode is absent"):
+        module._validate_executable_profile_digest(fixture["profile_sha256"])
+    profile = module._executable_profile_path()
+    profile.chmod(0o600)
+    payload = json.dumps([{"resources": {"kubernetes": {"pod_config": {"spec": {"automountServiceAccountToken": False}}}}, "envs": {"NPA_LIBERO_RUNTIME_DELIVERY": module.CUSTOMER_RUN_MODE}}]).encode()
+    profile.write_bytes(payload)
+    profile.chmod(0o440)
+    module._validate_executable_profile_digest(_sha(payload))
+
+
+def test_unnamed_supervisor_handoff_remains_distinct_from_authorization_file():
+    module = _load_module()
+    with tempfile.TemporaryFile() as handoff:
+        handoff.write(b"synthetic-public-key")
+        handoff.flush()
+        assert os.fstat(handoff.fileno()).st_nlink == 0
+        assert module._read_private_regular_descriptor(
+            handoff.fileno(), limit=1024, owner_uid=os.getuid(),
+            input_name="supervisor handoff", allow_unlinked=True,
+        ) == b"synthetic-public-key"
+        with pytest.raises(module.BootstrapRefusal, match="owner-private"):
+            module._read_private_regular_descriptor(
+                handoff.fileno(), limit=1024, owner_uid=os.getuid(),
+                input_name="customer authorization file",
+            )
 
 
 def test_customer_signer_environment_binding_is_required(monkeypatch, tmp_path) -> None:

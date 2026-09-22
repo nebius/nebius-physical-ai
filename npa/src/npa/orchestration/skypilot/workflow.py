@@ -887,6 +887,14 @@ def _preflight_prepared_submission(
         "libero_customer_authorization_validated"
     ) == "validated"
     env.update(injected)
+    if (_report.get("checks") or {}).get("libero_customer_run"):
+        from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
+        from npa.workflows.byof.libero_customer import SECRET_NAMES
+
+        # Keep operator Kubernetes access on the controller, while removing the
+        # extra hosted-path secrets from automatic workload secret forwarding.
+        for key in set(LIBERO_SKYPILOT_SECRET_ENV_NAMES) - set(SECRET_NAMES):
+            env.pop(key, None)
     if selected is not None:
         env["NPA_SKYPILOT_PROJECT"] = selected.project
     if (
@@ -1073,11 +1081,16 @@ def submit_workflow(
         if infra:
             cmd[-1:-1] = ["--infra", infra]
         selected_secret_envs = list(secret_envs or ())
+        from npa.workflows.byof.libero_customer import selected as customer_selected, SECRET_NAMES
+
+        customer_run = libero_submission and customer_selected(docs)
+        if customer_run and any(name not in SECRET_NAMES for name in selected_secret_envs):
+            raise SkyPilotSubmitError("customer-run profile cannot forward additional secrets", launch_attempted=False)
         if libero_submission:
             # This is mandatory even for direct SDK callers.  The preflight has
             # removed these values from prepared YAML, so omitting ``--secret``
             # must never silently launch a credentialless or inline-secret task.
-            selected_secret_envs.extend(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+            selected_secret_envs.extend(SECRET_NAMES if customer_run else LIBERO_SKYPILOT_SECRET_ENV_NAMES)
         for secret_name in dict.fromkeys(selected_secret_envs):
             if env.get(secret_name):
                 cmd[-1:-1] = ["--secret", secret_name]
