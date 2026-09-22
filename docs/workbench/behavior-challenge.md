@@ -18,11 +18,14 @@ ten cases:
 | Comet12 | 0.400000 | 2/10 |
 | Comet50 | 0.266667 | 0/10 |
 | Adaptive short chunk with transition refresh | 0.500000 | 1/10 |
+| Native RLC with accepted-stage transition refresh | 0.466667 | 2/10 |
 
 The adaptive candidate has the highest mean Q but fewer full successes than
-native RLC, so it did not pass the frozen local target. The separate native
-timing transition-refresh result remains pending. These reused development
-cases are neither a reporting score nor proof of the 24 GB policy limit.
+native RLC, so it did not pass the frozen local target. Refreshing the native
+action queue once after an accepted stage change matched native RLC on both
+selection metrics: five cases improved and five worsened. These reused
+development cases are neither a reporting score nor proof of the 24 GB policy
+limit.
 
 The [campaign control plane](behavior-campaign.md) freezes policy identities,
 assigns complete task panels across workers, and preserves per-instance progress

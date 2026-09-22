@@ -212,6 +212,31 @@ full successes (1/10). It therefore has not met the local task target requiring
 both Q and full successes to match or exceed the strongest qualified baseline.
 The separate reporting gate remains outstanding.
 
+### Native stage-transition refresh development result
+
+The native-timing variant keeps the released RLC checkpoint and native execution
+settings. It discards the current action queue and resamples once only when the
+unchanged native stage-voting method accepts a stage change. Correction-only
+stage resets leave the native queue untouched.
+
+On the same ten development cases, this variant reached mean **Q=0.466667**,
+**2/10 full successes**, and **7,252.9 mean simulator steps**. This matches
+native RLC on both selection metrics. Five cases improved and five worsened, so
+the panel provides no development advantage over native execution. It does not
+support a causal claim about stage-transition refresh.
+
+Every original metrics file and video was downloaded and hashed, and all ten
+videos were fully decoded. The managed workers and aggregate stage completed
+without rerunning an episode. The operator transport disconnected afterward,
+so the final workflow status was still being checked when this result was
+recorded; the whole workflow is not claimed as successful. The verified
+aggregate artifact is 12,313 bytes with SHA-256
+`14cee110b276a87e16e7e500bd050ab5c6286b4df0f708410efff3a17c22dc68`;
+its canonical aggregate digest is
+`cb5c59f5ee5dcf0492d6619c34dfcc39624f5561c0daafc3b66010937b57964b`.
+Reporting remains held pending selection confirmation. This reused development
+panel is not an official score or evidence of challenge-wide competitiveness.
+
 ### Native Comet50 development result
 
 The released Comet50 checkpoint completed the same ten development cases with
