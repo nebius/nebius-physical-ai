@@ -1,0 +1,187 @@
+{
+  "bindings": {
+    "independent_media_receipt_sha256": "5e0e668d5036d18a056d977a880e073e94fde99b79a0876405355f95646d2cba",
+    "metric_core_sha256": "805929f41e7e295f701a1631065f41b1310b88f43372468df96f6a9ab7d60843",
+    "official_freeze_sha256": "8f52dc9b4e3bc9eb1f5896ea0a1fd399d747c49d4d60dc05e880a8de49ce281f",
+    "private_metrics_sha256": "8cbb7c24dd8c7ccf39a6484e0818fae0a973a8ef3c9a0aa98bfa7c4328b8e99a",
+    "retained_dataset_manifest_sha256": "aa38b63ead9da18ad5ac9a7da72fa2766c670423c9f0dd873b8b7d71e2a85781",
+    "root_identity_acceptance_sha256": "266198c724febc5b31ec7144db9f1db1eccfd3d0bbc36fc7e31997829d5faded"
+  },
+  "dataset": {
+    "asset": "lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4",
+    "license": "CC-BY-4.0",
+    "repository": "Hoshipu/RoboPro",
+    "revision": "90ec789bf4018eb9c0f75da9f69aab5c185f0fd0",
+    "source_sha256": "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198"
+  },
+  "hardware": "NVIDIA B200, one GPU",
+  "heldout_consumed": false,
+  "identity_selected_by_quality": false,
+  "image_digest": "sha256:e48b35346e47d6d70f9336fda238c38c1c5cfc8c64448dca89840eb201ab0362",
+  "input_sha256": {
+    "degraded": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4",
+    "light_input": "44013573e65c7b64f92deac1acaeb4828abb860cad3696d99e6808ddee81149e",
+    "reference": "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198"
+  },
+  "light": {
+    "edge_overshoot_median_ratio": 4.92,
+    "official": {
+      "lpips": {
+        "failure_count": 0,
+        "finite_count": 25,
+        "median": 0.15370365977287292
+      },
+      "masks": {
+        "failure_count": 0,
+        "measured_count": 2,
+        "median_centroid_error_px": 1.8454115144468357,
+        "median_iou": 0.9152381133198295
+      },
+      "ssim": {
+        "failure_count": 0,
+        "finite_count": 25,
+        "median": 0.921832263469696
+      },
+      "temporal": {
+        "failure_count": 0,
+        "finite_count": 24,
+        "median": 0.0032163241330315086
+      }
+    }
+  },
+  "limits": [
+    "Two predeclared tuning controls, not the held-out evaluation.",
+    "Official identity acceptance establishes provenance and integrity, not quality.",
+    "The unchanged main temporal gate fails. Earlier 3B/7B/temporal failures remain valid.",
+    "No paired VAE diagnostic result is included. No robot safety, downstream policy performance, or real-sensor generalization is established.",
+    "Image complete-byte scanning and final publication/readiness qualification remain pending."
+  ],
+  "main": {
+    "bicubic_baseline": {
+      "lpips": {
+        "failure_count": 0,
+        "finite_count": 100,
+        "median": 0.11442815884947777
+      },
+      "masks": {
+        "failure_count": 0,
+        "measured_count": 9,
+        "median_centroid_error_px": 2.0167658494918266,
+        "median_iou": 0.8657458563535911
+      },
+      "ssim": {
+        "failure_count": 0,
+        "finite_count": 100,
+        "median": 0.959371417760849
+      },
+      "temporal": {
+        "failure_count": 0,
+        "finite_count": 99,
+        "median": 0.001565148666793225
+      }
+    },
+    "official": {
+      "lpips": {
+        "failure_count": 0,
+        "finite_count": 100,
+        "median": 0.09794719144701958
+      },
+      "masks": {
+        "failure_count": 0,
+        "measured_count": 9,
+        "median_centroid_error_px": 0.9963996370650546,
+        "median_iou": 0.9105869445968184
+      },
+      "ssim": {
+        "failure_count": 0,
+        "finite_count": 100,
+        "median": 0.9466929137706757
+      },
+      "temporal": {
+        "failure_count": 0,
+        "finite_count": 99,
+        "median": 0.002472093759798536
+      }
+    },
+    "original_gate_results": {
+      "lpips_aggregate": true,
+      "lpips_two_of_three_strata": true,
+      "mask_centroid": true,
+      "mask_iou": true,
+      "mask_segmentation": true,
+      "no_black_frame": true,
+      "no_critical_mask_outlier": true,
+      "no_critical_temporal_outlier": true,
+      "ssim": true,
+      "temporal": false
+    },
+    "strata": {
+      "baseline": {
+        "lpips": {
+          "approach": 0.11412452161312103,
+          "before_contact": 0.11140087991952896,
+          "grasp_reposition": 0.11619528010487556
+        },
+        "ssim": {
+          "approach": 0.9588978886604309,
+          "before_contact": 0.962598979473114,
+          "grasp_reposition": 0.9583939015865326
+        },
+        "temporal": {
+          "approach": 0.0011619550340315875,
+          "before_contact": 0.0016953073880251715,
+          "grasp_reposition": 0.0018433535800260656
+        }
+      },
+      "official": {
+        "lpips": {
+          "approach": 0.10236793756484985,
+          "before_contact": 0.09435112029314041,
+          "grasp_reposition": 0.10113072767853737
+        },
+        "ssim": {
+          "approach": 0.9443342685699463,
+          "before_contact": 0.9519751667976379,
+          "grasp_reposition": 0.9450551271438599
+        },
+        "temporal": {
+          "approach": 0.002076996541490742,
+          "before_contact": 0.0027230796860713584,
+          "grasp_reposition": 0.0033947681679445153
+        }
+      }
+    },
+    "temporal_maximum": 0.0017999209668122086
+  },
+  "media": {
+    "light": {
+      "duration_seconds": 0.5,
+      "file": "light-official.mp4",
+      "fps": 50,
+      "frames": 25,
+      "height": 480,
+      "sha256": "5e5f676db77565905a9f3a7e2edf61a3ddcf81a523bd9f18e18fe851a22780bc",
+      "width": 640
+    },
+    "main": {
+      "duration_seconds": 2.0,
+      "file": "main-official.mp4",
+      "fps": 50,
+      "frames": 100,
+      "height": 480,
+      "sha256": "ea9ccd334eda4c6d5daffaadc567e6b97d6072d4eb2e5824189c0eb91d259e4c",
+      "width": 640
+    }
+  },
+  "official_identity_accepted": true,
+  "overall_quality_acceptance": false,
+  "paired_candidate_run": false,
+  "removed_field_categories": [
+    "Private object-storage and registry locations",
+    "Infrastructure and workload names and UIDs",
+    "Credential selectors and configuration paths",
+    "Absolute local paths and raw operational commands"
+  ],
+  "schema": "npa.seedvr2.public-official-control-summary.v1",
+  "source": "0b5e47d97414a2fe46d6184efe9b4423b2b52198"
+}
