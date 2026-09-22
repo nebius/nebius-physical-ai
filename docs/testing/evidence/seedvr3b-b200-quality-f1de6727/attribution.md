@@ -1,0 +1,5 @@
+# Attribution
+
+Source: [RoboPro, Hoshipu](https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4), revision `90ec789bf4018eb9c0f75da9f69aab5c185f0fd0`, asset `lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4`. The retained source provenance identifies [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The source video hash is retained in results.json. These robot-kitchen clips are spatially degraded or excerpted, processed by SeedVR2 and encoded as H.264. No endorsement by the dataset authors is implied.
+
+Restoration model: [ByteDance SeedVR](https://github.com/ByteDance-Seed/SeedVR), upstream revision `e4de8c24441a67e1b7df56abea10645059bb1185`; [SeedVR2-3B](https://huggingface.co/ByteDance-Seed/SeedVR2-3B), model revision `37255ff8cccfb01071b87f635a5948ca8d53117c`. Software, model weights and tensor payloads are not included in this pack.
