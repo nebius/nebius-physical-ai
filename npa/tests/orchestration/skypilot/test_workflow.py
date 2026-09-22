@@ -2016,7 +2016,13 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     authorization = outer_context.authorization
     endpoint = "https://storage.eu-north1.nebius.cloud"
     image = authorization.bootstrap_image
+    monkeypatch.setenv("PATH", "/usr/bin:/bin:/synthetic-control-bin")
+    monkeypatch.setenv("UNBOUND_CONTROL_CANARY", "must-not-reach-control")
     environment = {
+        "HOME": str(tmp_path / "operator-home"),
+        "PATH": os.environ["PATH"],
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
         "KUBECONFIG": authorization.kubeconfig_source,
         "KUBECONTEXT": authorization.kubernetes_context,
         "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
@@ -2068,9 +2074,8 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         runtime_env=environment,
     )
     inner_yaml = tmp_path / "robotwin-inner.yaml"
-    inner_yaml.write_text(
-        yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
-    )
+    module._write_yaml_documents(inner_yaml, documents, True)
+    assert len(list(yaml.safe_load_all(inner_yaml.read_text()))) == 2
     private_values = (
         *authorization.redactions,
         authorization.summary_uri,
@@ -2165,6 +2170,11 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
         item for item in calls if item[0][1:3] == ["jobs", "launch"]
     )
     control_calls = [item for item in calls if item[0] != launch_cmd]
+    assert all(
+        item[1]["env"]["PATH"] == os.environ["PATH"]
+        and "UNBOUND_CONTROL_CANARY" not in item[1]["env"]
+        for item in control_calls
+    )
     assert "--infra" not in launch_cmd
     assert all(private not in json.dumps(launch_cmd) for private in private_values)
     secret_pairs = [

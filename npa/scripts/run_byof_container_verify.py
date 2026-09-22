@@ -304,9 +304,12 @@ def _task_docs(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return docs
 
 
-def _write_yaml_documents(path: Path, docs: list[dict[str, Any]]) -> None:
+def _write_yaml_documents(
+    path: Path, docs: list[dict[str, Any]], preserve_metadata: bool = False
+) -> None:
     path.write_text(
-        yaml.safe_dump_all(_task_docs(docs), sort_keys=False), encoding="utf-8"
+        yaml.safe_dump_all(docs if preserve_metadata else _task_docs(docs), sort_keys=False),
+        encoding="utf-8",
     )
 
 
@@ -562,10 +565,6 @@ def _robotwin_submit_environment(
     """Limit the inner submit environment to values required at its boundary."""
 
     names = (
-        "HOME",
-        "PATH",
-        "LANG",
-        "LC_ALL",
         *DEFAULT_SECRET_ENVS,
         *OPERATOR_RUNTIME_ENVS_BY_SOLUTION["robotwin"],
     )
@@ -795,7 +794,7 @@ def _submit_and_wait(
             tempfile.mkdtemp(prefix=f"npa-byof-container-{scheduler_run_id}-")
         )
         rendered_yaml = render_dir / "byof-container.rendered.yaml"
-        _write_yaml_documents(rendered_yaml, docs)
+        _write_yaml_documents(rendered_yaml, docs, robotwin_submit_context is not None)
         payload = (
             {"launch_id": scheduler_run_id, "status": "rendered"}
             if robotwin_submit_context is not None
@@ -829,7 +828,7 @@ def _submit_and_wait(
         )
         robotwin_control_env = (
             _robotwin_control_environment(
-                robotwin_submit_context, submit_environment or {}
+                robotwin_submit_context, authorized_env or {}
             )
             if robotwin_submit_context is not None
             else None
@@ -847,12 +846,14 @@ def _submit_and_wait(
                     tmp_path, submit_environment or {}
                 )
                 robotwin_control_env = _robotwin_control_environment(
-                    robotwin_submit_context, submit_environment
+                    robotwin_submit_context, authorized_env or {}
                 )
             else:
                 _normalize_kubeconfig_current_context(tmp_path)
             rendered_yaml = Path(tmp) / "byof-container.rendered.yaml"
-            _write_yaml_documents(rendered_yaml, docs)
+            # The confidential bridge recognizes the complete frozen profile,
+            # including its metadata document, before native SDK normalization.
+            _write_yaml_documents(rendered_yaml, docs, robotwin_submit_context is not None)
             infra = args.infra or _default_infra()
             config_path = args.config_path or _write_default_k8s_config(tmp_path, infra)
             if robotwin_submit_context is None:

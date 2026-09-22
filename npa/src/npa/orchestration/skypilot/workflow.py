@@ -1607,6 +1607,17 @@ def submit_workflow(
                 environment = {
                     name: value for name, value in (extra_env or {}).items() if value
                 }
+                if robotwin_submit_context.layer == "inner":
+                    # Host process execution settings are not launch secrets or
+                    # authorization fields. Restore only this fixed baseline
+                    # after the exact value-only submit bridge has validated.
+                    environment.update(
+                        {
+                            name: os.environ[name]
+                            for name in ("HOME", "PATH", "LANG", "LC_ALL")
+                            if os.environ.get(name)
+                        }
+                    )
                 for name, value in tuple(environment.items()):
                     if any(
                         private and private in value

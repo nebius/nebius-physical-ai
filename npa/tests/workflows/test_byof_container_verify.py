@@ -39,6 +39,83 @@ def _load_module():
     return module
 
 
+def test_robotwin_real_wrapper_preserves_the_strict_file_and_environment_bridge(
+    monkeypatch, tmp_path
+):
+    from npa.orchestration.npa_workflow.robotwin_preflight import (
+        validate_confidential_submit_bridge,
+    )
+    from tests.orchestration.skypilot.test_workflow import _robotwin_bridge_fixture
+
+    module = _load_module()
+    _, outer, _, _, _ = _robotwin_bridge_fixture(monkeypatch, tmp_path)
+    authorization = outer.authorization
+    spec = importlib.util.spec_from_file_location(
+        "robotwin_wrapper_bridge_test", ROOT / "npa/scripts/run_byof_repo.py"
+    )
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "synthetic-bridge-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-bridge-secret")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.eu-north1.nebius.cloud")
+    monkeypatch.setenv("HOME", str(tmp_path / "host-home"))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin:/synthetic-host-bin")
+    environment = runner._authorized_live_env(
+        authorization,
+        {"report_sha256": "b" * 64, "archives_scanned": 2},
+        project=authorization.project,
+        image=authorization.bootstrap_image,
+    )
+    workflow = yaml.safe_load((ROOT / "workflows/testing/byof-robotwin.yaml").read_text())
+    checked = []
+
+    class BoundaryChecked(Exception):
+        pass
+
+    def bootstrap(_directory, control):
+        assert control["HOME"] == environment["HOME"]
+        assert control["PATH"] == environment["PATH"]
+        return "/synthetic/sky"
+
+    def submit(path, _run_id, **kwargs):
+        documents = module._load_yaml_documents(path)
+        checked.append(validate_confidential_submit_bridge(
+            kwargs["robotwin_submit_context"],
+            documents=documents,
+            infra=kwargs["infra"],
+            config_path=kwargs["config_path"],
+            secret_envs=kwargs["secret_envs"],
+            extra_env=kwargs["extra_env"],
+            execution_target=kwargs["execution_target"],
+            execution_report=kwargs["execution_preflight_report"],
+        ))
+        assert len(documents) == 2
+        assert not {"HOME", "PATH", "LANG", "LC_ALL"} & kwargs["extra_env"].keys()
+        raise BoundaryChecked
+
+    monkeypatch.setattr(module, "_bootstrap_robotwin_sky", bootstrap)
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "stop_isolated_api", Mock())
+    monkeypatch.setattr(module, "install_teardown_signal_handlers", lambda *_args: {})
+    monkeypatch.setattr(module, "restore_signal_handlers", lambda *_args: None)
+    with pytest.raises(BoundaryChecked):
+        module.run_authorized_robotwin(
+            [
+                "--yaml", str(
+                    ROOT / "npa/src/npa/workflows/byof/profiles"
+                    / (workflow["config"]["resource_profile_yaml"] + ".yaml")
+                ),
+                "--solution-name", "robotwin",
+                "--smoke-command", workflow["config"]["smoke_command"],
+                "--capability-name", workflow["config"]["capability_name"],
+                "--smoke-artifact-name", "robotwin-smoke.json",
+            ],
+            authorization=authorization,
+            environment=environment,
+        )
+    assert checked == [authorization]
+
+
 @pytest.fixture
 def inert_wrapper(monkeypatch):
     """Replace every wrapper filesystem, process and resource effect with a mock."""
