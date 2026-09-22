@@ -192,12 +192,12 @@ def _runtime_args(tmp_path, monkeypatch):
 
 def _baseline_receipts(tmp_path, storage):
     seals, evidence, panels = {}, {}, {}
-    for arm, marker, score in (
-        ("native", "b", 0.6),
-        ("comet12", "c", 0.4),
-        ("comet50", "d", 0.2),
+    for arm, score in (
+        ("native", 0.6),
+        ("comet12", 0.4),
+        ("comet50", 0.2),
     ):
-        panels[arm] = _panel(_policy(arm, marker), "report")
+        panels[arm] = _panel(admission._BASELINE_POLICIES[arm], "report")
         seals[arm] = _seal(tmp_path, arm, panels[arm])
         prefix = f"s3://test/{arm}"
         _populate(storage, panels[arm], prefix, tmp_path / arm, score)
@@ -344,6 +344,87 @@ def test_bstar_is_recomputed_from_original_aggregates(admitted):
     _rewrite_admission(args, receipt)
     with pytest.raises(ValueError, match="recomputed selection"):
         admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_candidate_selection_must_bind_exact_development_evidence(admitted):
+    args, panel, receipt, storage, workspace = admitted
+    candidate_path = Path(receipt["candidate_selection"]["path"])
+    candidate = json.loads(candidate_path.read_text())
+    candidate["development_evidence_sha256"] = "0" * 64
+    candidate["selection_sha256"] = canonical_digest(
+        {key: value for key, value in candidate.items() if key != "selection_sha256"}
+    )
+    receipt["candidate_selection"] = _write(candidate_path, candidate)
+    _rewrite_admission(args, receipt)
+    with pytest.raises(ValueError, match="development-only evidence"):
+        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_unseal_must_bind_all_frozen_evidence_files(admitted):
+    args, panel, receipt, storage, workspace = admitted
+    unseal_path = Path(receipt["unseal"]["path"])
+    unseal = json.loads(unseal_path.read_text())
+    unseal["baseline_evidence_sha256"]["native"] = "0" * 64
+    unseal["unseal_sha256"] = canonical_digest(
+        {key: value for key, value in unseal.items() if key != "unseal_sha256"}
+    )
+    receipt["unseal"] = _write(unseal_path, unseal)
+    _rewrite_admission(args, receipt)
+    with pytest.raises(ValueError, match="unseal ordering differs"):
+        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_receipt_reference_rejects_symlinks(admitted, tmp_path):
+    args, panel, receipt, storage, workspace = admitted
+    target = Path(receipt["candidate_selection"]["path"])
+    link = tmp_path / "candidate-link.json"
+    link.symlink_to(target)
+    receipt["candidate_selection"] = {
+        "path": str(link),
+        "sha256": admission.file_digest(target),
+    }
+    _rewrite_admission(args, receipt)
+    with pytest.raises(ValueError, match="path or SHA-256 is invalid"):
+        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_report_panel_requires_exact_specialist_identity(admitted):
+    args, _, receipt, storage, workspace = admitted
+    changed = _panel(_policy("other-specialist", "e"), "report")
+    receipt["report_panel"] = changed
+    _rewrite_admission(args, receipt)
+    with pytest.raises(ValueError, match="frozen candidate"):
+        admission.verify_specialist_report_admission(args, changed, storage, workspace)
+
+
+def test_swapped_baseline_arms_reject_policy_identity(admitted):
+    args, panel, receipt, storage, workspace = admitted
+    receipt["baseline_evidence"]["comet12"], receipt["baseline_evidence"]["comet50"] = (
+        receipt["baseline_evidence"]["comet50"],
+        receipt["baseline_evidence"]["comet12"],
+    )
+    _rewrite_admission(args, receipt)
+    with pytest.raises(ValueError, match="comet12 baseline policy identity differs"):
+        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_started_panel_is_rejected_before_original_recovery(tmp_path):
+    storage = MemoryStorage()
+    panel = _panel(admission._LEGACY_POLICY, "development")
+    store = CaseStore(storage, "s3://test/started", panel["panel_id"])
+    version = store.start(store.claim(panel["cases"][0], "worker-0"))
+    prefix = store.artifact_prefix(version)
+    storage.objects[f"{prefix}/validation.json"] = (b"{}", "original")
+    storage.objects[f"{prefix}/provenance.json"] = (b"{}", "original")
+    declared = {
+        "panel": panel,
+        "state_prefix": "s3://test/started",
+        "seal_sha256": None,
+    }
+    with pytest.raises(ValueError, match="Complete panel required"):
+        admission._actual_panel_evidence(storage, declared, tmp_path / "verify")
+    assert store.read(panel["cases"][0]).record["state"] == "started"
+    assert not (tmp_path / "verify").exists()
 
 
 def test_report_validation_precedes_case_store_creation(monkeypatch, tmp_path):

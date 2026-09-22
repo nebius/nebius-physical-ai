@@ -36,6 +36,53 @@ _LEGACY_AUTHORIZATION = {
     "rlc_policy_sha256": "c5734b8024ddfdd50b81fd7f2f941bad979838a417e6ac19bb3455ec2896dd21",
     "reporting_authorized": False,
 }
+_BASELINE_POLICIES = {
+    "native": {
+        "schema": "npa.behavior.policy-identity.v1",
+        "policy_id": "rlc-native",
+        "artifacts": {
+            "checkpoint": {
+                "sha256": "9e7e078a721e5a0db60ca180e8ed6ace57d66da03d9884923b5d88304b5f98ea",
+                "bytes": 12_645_726_756,
+            },
+            "serving": {
+                "sha256": "faf7c821915f404631c29da91bcc2aa20cc1a3cfe3c8b7af2a940158ec8c8929",
+                "bytes": 1_234,
+            },
+        },
+        "identity_sha256": "1ac6a5a49a86e567d2a2dfb53b49add552ec03357dcf4c620eb7d3c30f21110a",
+    },
+    "comet12": {
+        "schema": "npa.behavior.policy-identity.v1",
+        "policy_id": "comet12-task1-published-transfer",
+        "artifacts": {
+            "checkpoint": {
+                "sha256": "709cf4ca174c3d542fea194a3fdda7afada8174ea75e23e4ceb8b3a9f12ad835",
+                "bytes": 12_443_035_460,
+            },
+            "serving": {
+                "sha256": "943614e1e22e45bd0506a99bd1c4164eac92c68974a02d5d628ce97d9b0a7e5e",
+                "bytes": 1_532,
+            },
+        },
+        "identity_sha256": "d0cc7b19da3d17278d6735ac2e08c1468a843d34f9a67006d43a10e9d490d9c6",
+    },
+    "comet50": {
+        "schema": "npa.behavior.policy-identity.v1",
+        "policy_id": "comet50-native-task1",
+        "artifacts": {
+            "checkpoint": {
+                "sha256": "992a38ca94b9dadc93798b4f84f4455ee4094d780e3278e6379a3f2ed85d5173",
+                "bytes": 12_443_019_873,
+            },
+            "serving": {
+                "sha256": "06bf140d65a8c9353ee130e9e34301ded134799c3a536c26f26fec75cdaa9f77",
+                "bytes": 1_625,
+            },
+        },
+        "identity_sha256": "daaf62fd1652857fdef26b6762a0fdac173187e758fa1a95a38dfa97bd807e3a",
+    },
+}
 _RUNTIME_FILES = (
     "rlc_server.py",
     "rlc_observations.py",
@@ -584,6 +631,8 @@ def _baseline_inputs(
             f"{arm} evidence",
         )
         panels[arm] = _task_panel(evidence[arm]["panel"], "report", f"{arm} panel")
+        if panels[arm]["policy"] != _BASELINE_POLICIES[arm]:
+            raise ValueError(f"{arm} baseline policy identity differs")
         seal_shas[arm] = _verify_seal(receipt["baseline_seals"][arm], arm, panels[arm])
         if evidence[arm]["seal_sha256"] != seal_shas[arm]:
             raise ValueError(f"{arm} evidence is not bound to its frozen seal")
@@ -654,7 +703,7 @@ def _verify_admission(
     if set(receipt) != keys:
         raise ValueError("Specialist report admission fields differ")
     report = _task_panel(receipt["report_panel"], "report", "Specialist report panel")
-    if report != panel:
+    if report != panel or report["policy"] != _LEGACY_POLICY:
         raise ValueError("Specialist report panel differs from frozen candidate")
     _verify_admission_chain(storage, workspace, receipt, report)
     if not _admission_header_matches(receipt, equivalence_sha256):
