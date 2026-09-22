@@ -168,6 +168,8 @@ def _launch_native(payload, *, sky, load_dag, observe, verify_context) -> None:
     _require(verify_context() == payload["context"])
     dag = load_dag(payload["yaml"], secrets_overrides=payload["secrets"])
     _require(len(dag.tasks) == payload["task_count"] and bool(dag.tasks))
+    if payload.get("robotwin_image_sha256"):
+        _bind_robotwin_image(dag, payload["secrets"], payload["robotwin_image_sha256"])
     _require(verify_context() == payload["context"])
     request_id = _request_id(
         sky.jobs.launch(dag, name=payload["name"], _need_confirmation=False)
@@ -191,6 +193,31 @@ def _launch_native(payload, *, sky, load_dag, observe, verify_context) -> None:
             "task_ids": list(range(len(dag.tasks))),
         }
     )
+
+
+def _bind_robotwin_image(dag, secrets, expected_sha256: str) -> None:
+    """Resolve the one authorized image in memory; SkyPilot does not expand it.
+
+    The validated inner submit supplies a hash of its immutable image. Other
+    secret interpolation and persisted template contents remain unchanged.
+    """
+    name = "NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE"
+    values = [value for key, value in secrets if key == name]
+    _require(len(values) == 1 and isinstance(values[0], str))
+    image = values[0]
+    _require(re.fullmatch(r"[^@\s]+/npa-robotwin@sha256:[0-9a-f]{64}", image) is not None)
+    _require(hashlib.sha256(image.encode()).hexdigest() == expected_sha256)
+    _require(len(dag.tasks) == 1)
+    task = dag.tasks[0]
+    _require(task.name == "byof-solution-smoke-robotwin-rtxpro")
+    _require(len(task.resources) == 1)
+    resources = next(iter(task.resources))
+    image_ids = resources.image_id
+    _require(isinstance(image_ids, dict) and len(image_ids) == 1)
+    _require(next(iter(image_ids.values())) == f"docker:${{{name}}}")
+    resolved = {region: "docker:" + image for region in image_ids}
+    task.set_resources(resources.copy(image_id=resolved))
+    _require(next(iter(task.resources)).image_id == resolved)
 
 
 def _successful_job_id(result: Any, controller: str) -> int:

@@ -2193,6 +2193,30 @@ def test_robotwin_inner_bridge_launches_one_gpu_without_private_argv(
     assert "region:" not in prepared
     assert "NPA_EXECUTION_OUTPUTS" not in prepared
     prepared_document = list(yaml.safe_load_all(prepared))[1]
+    # SkyPilot's resources schema rejects Kubernetes pod settings here. Preserve
+    # the exact validated Downward API fields in its supported task config.
+    assert "kubernetes" not in prepared_document["resources"]
+    assert prepared_document["config"]["kubernetes"]["pod_config"] == {
+        "spec": {
+            "containers": [
+                {
+                    "name": "ray-node",
+                    "env": [
+                        {
+                            "name": "POD_NAME",
+                            "valueFrom": {"fieldRef": {"fieldPath": "metadata.name"}},
+                        },
+                        {
+                            "name": "POD_NAMESPACE",
+                            "valueFrom": {
+                                "fieldRef": {"fieldPath": "metadata.namespace"}
+                            },
+                        },
+                    ],
+                }
+            ]
+        }
+    }
     assert prepared_document["envs"]["AWS_ENDPOINT_URL"] == "${AWS_ENDPOINT_URL}"
     assert prepared_document["envs"]["NEBIUS_S3_ENDPOINT"] == ("${NEBIUS_S3_ENDPOINT}")
     if session_token:

@@ -1742,6 +1742,16 @@ def submit_workflow(
                     )
                     else (),
                 )
+                if robotwin_submit_context.layer == "inner":
+                    from npa.orchestration.npa_workflow.skypilot_render import (
+                        normalize_task_config,
+                    )
+
+                    # The exact source profile and GPU preflight use NPA resource
+                    # fields; the native SDK accepts pod settings in task config.
+                    task = docs[1]
+                    task["config"] = normalize_task_config(task["resources"])
+                    task["resources"].pop("kubernetes")
             # Native preflight pins the exact project/region in this per-submit
             # configuration; persist the verified version before any controller.
             generated_config_path.write_text(yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8")
@@ -1915,6 +1925,10 @@ def submit_workflow(
                     sky_executable=sky_executable, secret_envs=secret_envs,
                     environment=env, timeout=timeout, cwd=stable_cwd,
                     log_dir=submission_dir, controller_backend=controller_backend,
+                    robotwin_image_sha256=(
+                        hashlib.sha256(robotwin_authorization.bootstrap_image.encode()).hexdigest()
+                        if robotwin_submit_context.layer == "inner" else ""
+                    ),
                 )
             try:
                 launch_result, diagnoses = _run_launch(
@@ -2940,6 +2954,8 @@ def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
     payload_keys = ("yaml_path", "run_id", "isolated_dir", "controller", "context",
                     "sky_executable", "secret_envs", "environment")
     payload = _native_launch_payload(**{key: kwargs[key] for key in payload_keys})
+    if kwargs.get("robotwin_image_sha256"):
+        payload["robotwin_image_sha256"] = kwargs["robotwin_image_sha256"]
     result, context_check = _run_native_launch(
         payload, environment=kwargs["environment"], control_environment=cleanup.environment,
         log_dir=kwargs["log_dir"], timeout=kwargs["timeout"], cwd=kwargs["cwd"],

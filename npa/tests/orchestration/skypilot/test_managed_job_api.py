@@ -1,5 +1,6 @@
 """Inert pinned-shape request/result transport checks; no SkyPilot imports."""
 
+import hashlib
 import json
 import os
 from types import SimpleNamespace
@@ -192,3 +193,60 @@ def test_initial_id_loss_retains_empty_observation_and_never_gets(tmp_path):
         os.close(descriptor)
     assert [call[0] for call in calls] == ["dag"]
     assert not (tmp_path / "observation").read_bytes()
+
+
+@pytest.mark.parametrize("mutation", ("", "missing", "duplicate", "wrong", "mutable", "wrong-task", "wrong-placeholder"))
+def test_robotwin_native_image_is_bound_before_any_launch(mutation):
+    image = "registry.example/team/npa-robotwin@sha256:" + "a" * 64
+    secret_name = "NPA_INTERNAL_BYOF_ROBOTWIN_IMAGE"
+
+    class Resource:
+        def __init__(self, image_id):
+            self.image_id = image_id
+
+        def copy(self, *, image_id):
+            return Resource(image_id)
+
+    task = SimpleNamespace(
+        name="byof-solution-smoke-robotwin-rtxpro",
+        resources={Resource({None: f"docker:${{{secret_name}}}"})},
+    )
+    task.set_resources = lambda resource: setattr(task, "resources", {resource})
+    dag = SimpleNamespace(tasks=[task])
+    sky, _loader, calls = _fixture()
+    sky.jobs.launch = lambda loaded, **kwargs: (
+        calls.append(("launch", next(iter(loaded.tasks[0].resources)).image_id)) or REQUEST
+    )
+    payload = {
+        **_payload(), "task_count": 1,
+        "secrets": [(secret_name, image)],
+        "robotwin_image_sha256": hashlib.sha256(image.encode()).hexdigest(),
+    }
+    if mutation == "missing":
+        payload["secrets"] = []
+    elif mutation == "duplicate":
+        payload["secrets"] *= 2
+    elif mutation == "wrong":
+        payload["secrets"] = [(secret_name, image[:-1] + "b")]
+    elif mutation == "mutable":
+        payload["secrets"] = [(secret_name, "registry.example/team/npa-robotwin:latest")]
+    elif mutation == "wrong-task":
+        task.name = "another-task"
+    elif mutation == "wrong-placeholder":
+        task.resources = {Resource({None: "docker:${ANOTHER_IMAGE}"})}
+    observations = []
+    if mutation:
+        with pytest.raises(bridge.NativeResultUnavailable):
+            bridge._launch_native(
+                payload, sky=sky, load_dag=lambda *args, **kwargs: dag,
+                observe=observations.append, verify_context=lambda: CONTEXT,
+            )
+        assert calls == [] and observations == []
+    else:
+        bridge._launch_native(
+            payload, sky=sky, load_dag=lambda *args, **kwargs: dag,
+            observe=observations.append, verify_context=lambda: CONTEXT,
+        )
+        assert calls[0] == ("launch", {None: "docker:" + image})
+        assert image not in json.dumps(observations)
+        assert payload["yaml"] == _payload()["yaml"]
