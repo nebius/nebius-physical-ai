@@ -53,6 +53,8 @@ envs:
   BYOF_CAPABILITY_NAME: ""
   BYOF_SMOKE_ARTIFACT_NAME: ""
   BYOF_IMAGE: ""
+  # Sky task shells do not inherit the image Python import path.
+  PYTHONPATH: "/opt/robomimic"
   NPA_ROBOMIMIC_RUNTIME_ROOT: "/opt/npa-runtime/robomimic"
   # Exact identity only. The authorized live harness fills the
   # operator-selected digest of inventory.json in its run-local copy.

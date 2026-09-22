@@ -576,6 +576,7 @@ def test_robomimic_live_harness_uses_selected_registry(
 def test_robomimic_profile_uses_verified_runtime_for_boto3() -> None:
     task = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))[1]
     setup = task["setup"]
+    assert task["envs"]["PYTHONPATH"] == "/opt/robomimic"
     assert setup.index("robomimic-entrypoint verify-runtime") < setup.index(
         "robomimic-runtime exec - <<'PY'"
     )
