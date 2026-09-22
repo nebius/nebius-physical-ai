@@ -17,6 +17,7 @@ ten cases:
 | Native RLC | 0.466667 | 2/10 |
 | Comet12 | 0.400000 | 2/10 |
 | Comet50 | 0.266667 | 0/10 |
+| Released RLC task specialist | 0.166667 | 0/10 |
 | Adaptive short chunk with transition refresh | 0.500000 | 1/10 |
 | Native RLC with accepted-stage transition refresh | 0.466667 | 2/10 |
 
@@ -27,12 +28,21 @@ selection metrics: five cases improved and five worsened. These reused
 development cases are neither a reporting score nor proof of the 24 GB policy
 limit.
 
+The released task specialist completed the same ten development cases without
+episode reruns. Verification hashed all 130 original files and fully decoded
+every video. Its mean Q=0.166667, 0/10 successes, and 7,902 mean steps did not
+pass native RLC's mean Q=0.466667 and 2/10 successes, so it was rejected before
+reporting. No specialist report candidate was frozen or materialized. The
+complete-panel verification evidence has SHA-256
+`acf5494ace7e6094d273820e67ef77f495ba831d68d4c169ff72ac31d0c12076`.
+
 The reporting comparison evaluates native RLC, Comet12, and Comet50 on the
-same ten reporting instances. Their results stay sealed until every baseline
-arm finishes and the candidate identity is fixed using development evidence.
-Then the complete baseline results determine the reporting target, before the
-fixed candidate runs. Leading the development comparison does not establish
-the strongest baseline on the reporting cohort.
+same ten reporting instances. All three baseline workflows and their cleanup
+completed, but their scores remain sealed and unread. After a candidate identity
+is fixed using development evidence, the complete baseline results determine
+the reporting target before the fixed candidate runs. No candidate is currently
+frozen, and leading the development comparison does not establish the strongest
+baseline on the reporting cohort.
 
 The [campaign control plane](behavior-campaign.md) freezes policy identities,
 assigns complete task panels across workers, and preserves per-instance progress
@@ -206,6 +216,12 @@ supervised fine-tune on human demonstrations; this integration does not claim
 that the source repository's separate RFT algorithm produced them. The model
 card declares Apache-2.0; the integration records that declaration while keeping
 all checkpoint bytes outside public source and images.
+
+The complete task-1 development panel later scored mean Q=0.166667 with 0/10
+full successes and 7,902 mean steps. Native RLC scored mean Q=0.466667 with
+2/10 successes on the same cases. The specialist therefore did not advance to
+reporting; this result does not change its serving identity or make a causal
+claim about its training recipe.
 
 A local report worker can use the same frozen specialist only through the
 report-admission bridge. Pass all four of

@@ -336,15 +336,31 @@ All four failure originals were downloaded and hash-verified. The diagnostic
 needs to preserve native optional fields. The future eight-worker loader still
 requires separate throughput and parity evidence.
 
+A fourth qualification uses the corrected optional-field handling. Its native
+observation regression passed in the pinned training interpreter before the
+batch check. The three RGB leaves still differed from the earlier CPU receipt,
+so it stopped before optimizer creation. The saved diagnostic shows identical
+outputs for its first-sample comparison; this does not prove that both paths
+used the intended device at every operation. The loader's explicit device
+placement is under investigation. No training checkpoint was produced.
+
 ### Specialist recovery and Workbench task status
 
-The released SFT specialist completed four original development episodes; their
-metrics and videos were downloaded, hash-verified, and fully decoded. Two other
-workers rejected a loaded correlation-state mismatch before evaluator startup,
-leaving six episodes unstarted. This incomplete panel has no aggregate score.
-Recovery preserves completed episodes and the unchanged policy state check.
+The released SFT specialist ultimately completed all ten original development
+cases without rerunning an episode. Verification covered 130 original files,
+including full decoding of every video. It scored mean Q=0.166667, with 0/10
+full successes and 7,902 mean simulator steps. Native RLC scored mean Q=0.466667
+with 2/10 full successes on the same development cohort, so the specialist was
+rejected before reporting. No specialist report candidate was frozen, and the
+positive report materializer did not run. This is a development comparison,
+not an official score or evidence that the fine-tuning method caused the gap.
+The complete-panel verification evidence has SHA-256
+`acf5494ace7e6094d273820e67ef77f495ba831d68d4c169ff72ac31d0c12076`.
 
-This failure also exercised Workbench's task-activity reporting. A failed
+Earlier, two workers rejected a loaded correlation-state mismatch before
+evaluator startup, leaving six cases unstarted while two other workers completed
+four cases. This infrastructure failure exercised Workbench's task-activity
+reporting. A failed
 parallel workflow can retain running sibling tasks. Status now reports active
 and unresolved stage keys separately from workflow outcome and requires unique,
 complete scheduler observations before declaring all tasks terminal. Extra or
@@ -355,15 +371,20 @@ conflicting workflow outcomes. The exact controller cleanup was then verified.
 Live status evidence SHA-256:
 `3777ec17916b8884a8d87fdceb45086e79e6e92a386b5ae46cbcf3c58fb07323`.
 
-The recovery retained those four originals and started only the six previously
-unstarted cases. Its durable ledger now records six completed cases overall;
-complete-panel original verification and scoring remain pending.
+The recovery retained the first four originals and evaluated only the six
+previously unstarted cases. All 52 files from those four cases remained
+byte-identical within the final 130-file panel. The final verification
+reconstructed the complete panel from both sets of original artifacts while
+preserving the strict loaded state check.
 
 ### Report admission and singleton task status
 
-The native RLC and Comet12 baseline report workflows completed, and their exact
-controller cleanup was verified. Comet50 reporting continues. All baseline
-scores remain sealed until the candidate is fixed from development evidence.
+The native RLC, Comet12, and Comet50 baseline report workflows completed, and
+their exact controller cleanup was verified. Their scores remain sealed and
+unread. No candidate has been frozen, no baseline output has been unsealed, and
+no positive report materializer has run. The protocol first freezes a candidate
+from development evidence, then unseals the three same-cohort baselines to
+select the reporting reference before any candidate report run.
 
 The completed Comet12 workflow exposed a task-name attribution gap: SkyPilot
 named its serial aggregate task after the managed job. Workbench now accepts
