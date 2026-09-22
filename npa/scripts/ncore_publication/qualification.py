@@ -376,7 +376,10 @@ def run_candidate_qualification(
         control.get("format") != "npa_ncore_wrong_source_control_v1"
         or control.get("status") != "pass"
         or control.get("native_started") is not False
-        or control.get("output_objects") != 0
+        or type(control.get("before_output_objects")) is not int
+        or control["before_output_objects"] != 0
+        or type(control.get("after_output_objects")) is not int
+        or control["after_output_objects"] != 0
     ):
         raise ValueError("wrong-source control receipt differs")
     receipt = {

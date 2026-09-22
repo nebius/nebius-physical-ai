@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -86,8 +87,19 @@ def test_candidate_binding_recomputes_checked_local_identity(
     )
 
 
+@pytest.mark.parametrize(
+    ("corrupt_field", "corrupt_value"),
+    [(None, None)]
+    + [
+        (field, value)
+        for field in ("before_output_objects", "after_output_objects")
+        for value in (1, False, 0.0, None, "0", "missing")
+    ],
+)
 def test_candidate_qualification_uses_three_inspected_pull_disabled_containers(
     tmp_path: Path,
+    corrupt_field: str | None,
+    corrupt_value: object,
 ) -> None:
     evidence = tmp_path / "evidence"
     cache = tmp_path / "cache"
@@ -148,15 +160,39 @@ def test_candidate_qualification_uses_three_inspected_pull_disabled_containers(
             container_id = command[3]
             started.add(container_id)
             if "wrong-source" in created[container_id]["name"]:
-                _private(
-                    evidence / "wrong-source.json",
-                    {
-                        "format": "npa_ncore_wrong_source_control_v1",
-                        "status": "pass",
-                        "native_started": False,
-                        "output_objects": 0,
-                    },
+                from npa.workbench.nurec.colmap import (
+                    ColmapConversionRequest,
+                    NcoreConversionError,
                 )
+                from npa.workbench.nurec.source_control import run_wrong_source_control
+
+                paginator = SimpleNamespace(paginate=lambda **_kwargs: [{}])
+                storage = SimpleNamespace(
+                    s3=SimpleNamespace(get_paginator=lambda _name: paginator)
+                )
+
+                def reject_source(_request, **_kwargs):
+                    raise NcoreConversionError(
+                        "source digest differs", phase="source_digest_pre_extract"
+                    )
+
+                control = run_wrong_source_control(
+                    ColmapConversionRequest(
+                        input_path="s3://fixture/source.zip",
+                        output_path="s3://fixture/control/",
+                        cache_dir=cache,
+                    ),
+                    expected_archive_sha256="a" * 64,
+                    receipt_path=evidence / "wrong-source.json",
+                    storage_client=storage,
+                    converter=reject_source,
+                )
+                if corrupt_field:
+                    if corrupt_value == "missing":
+                        control.pop(corrupt_field)
+                    else:
+                        control[corrupt_field] = corrupt_value
+                    _private(evidence / "wrong-source.json", control)
             return subprocess.CompletedProcess(command, 0, b'{"status":"ok"}\n', b"")
         if command[:3] == ["docker", "container", "rm"]:
             return subprocess.CompletedProcess(command, 0, b"removed\n", b"")
@@ -166,7 +202,7 @@ def test_candidate_qualification_uses_three_inspected_pull_disabled_containers(
         return command[command.index("--label") + 1].split("=", 1)[1]
 
     with W.authorized_roots(tmp_path, ROOT):
-        receipt = qualification.run_candidate_qualification(
+        arguments = dict(
             run_id="qualification-run",
             candidate_path=candidate_path,
             evidence_dir=evidence,
@@ -179,6 +215,14 @@ def test_candidate_qualification_uses_three_inspected_pull_disabled_containers(
             expected_archive_sha256="a" * 64,
             runner=runner,
         )
+        if corrupt_field:
+            with pytest.raises(
+                ValueError, match="wrong-source control receipt differs"
+            ):
+                qualification.run_candidate_qualification(**arguments)
+            assert not (evidence / "qualification-execution.json").exists()
+            return
+        receipt = qualification.run_candidate_qualification(**arguments)
     creates = [command for command in commands if command[:2] == ["docker", "create"]]
     assert len(creates) == 3
     assert all("--pull=never" in command and LOCAL_ID in command for command in creates)
