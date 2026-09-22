@@ -214,6 +214,8 @@ SDK; previously published container pins retain their recorded build versions.
   `genesis-test` extra adds CPU checkpoint regression tests to the complete test
   stage; the fast precheck does not install PyTorch. Genesis simulation remains
   in the separate `genesis` extra.
+  The [Genesis skill](../skills/tools/genesis/SKILL.md#teacher-checkpoint-compatibility)
+  describes the live GPU migration check and its numerical report.
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands

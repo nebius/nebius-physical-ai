@@ -34,3 +34,16 @@ and the current MLPModel checkpoint path. Load external checkpoints only with
 loader. Validate action and observation widths, normalization, and real ONNX
 outputs. CPU PPO round trips cover the framework contract; promotion still
 requires the Genesis GPU workload and camera-demo checks.
+
+Run the committed migration check in the candidate GPU environment:
+
+```bash
+NPA_VALIDATION_SOURCE_SHA="$(git rev-parse HEAD)" \
+  npa/.venv/bin/python npa/scripts/validate_genesis_rsl_migration.py \
+  --output-path /tmp/genesis-rsl-validation
+```
+
+It trains in real physics, compares the restricted loader and ONNX Runtime
+against the upstream actor, and records real camera arrays. The short training
+run checks framework compatibility; its report preserves the actual teacher
+success rate and explicitly labels any failure demonstrations.
