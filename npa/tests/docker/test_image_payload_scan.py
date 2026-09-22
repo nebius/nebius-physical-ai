@@ -228,7 +228,7 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
         "'nvidia-nvshmem-cu12==3.2.5'",
     ):
         assert pin in dockerfile
-    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0314" in dockerfile
+    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0381" in dockerfile
     assert "'rerun-sdk==0.38.1'" in dockerfile
     assert "'numpy==1.26.4'" in dockerfile
     assert "from transformers import GemmaForCausalLM" in dockerfile
