@@ -146,6 +146,24 @@ opening a conversation retains its full messages. It sends prompts, streams
 replies and tool activity, steers or stops a running turn, and presents command/file
 approvals and questions. Specialized MCP and dynamic-tool requests remain in VS Code.
 
+Cloud chat setup replaces repeated browser password prompts with a sign-in page.
+The existing desktop username and password work for both chat and desktop; a
+Secure, HttpOnly session cookie keeps browsers signed in for thirty days.
+Changing the password invalidates cloud cookies. Repeating setup preserves the
+private signing key (`session_secret`) and uses the independent loopback sign-in
+service (`auth_port`, managed as 6092); it does not restart the shared Codex engine
+or desktop. Basic credentials remain supported for existing API clients.
+
+On phones and tablets, the origin's root and ordinary `/desktop.html` links open
+chat. Desktop browsers keep the desktop view. **Open desktop** explicitly opens
+the full desktop on any device (`/desktop.html?desktop=1`). For a Home Screen
+app, open `/chat/` in Safari, choose **Share → Add to Home Screen**, and keep
+**Open as Web App** enabled if shown. The session list has an **Add to Home
+Screen** help button. The manifest always starts at chat, with dedicated app
+icons; only install metadata, icons, and the sign-in page are public. Chat data
+is authenticated and never stored in a service-worker cache. Existing shortcuts
+that point to the desktop should be removed and added again from `/chat/`.
+
 Tap **…** beside a chat, or in the open chat's header, to **Save name** or
 **Archive**. Archiving preserves messages and browser drafts. Choose **Archived**
 in the session list and use **… → Restore** to continue the same conversation.

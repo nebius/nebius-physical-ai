@@ -123,6 +123,17 @@ describe("Mobile Codex conversations", () => {
     cy.get("#model").should("be.enabled").and("have.value", "model-a");
   });
 
+  it("offers Home Screen guidance and an explicit desktop choice on phones", () => {
+    cy.get('link[rel="manifest"]').should("have.attr", "href", "./manifest.webmanifest");
+    cy.get('link[rel="apple-touch-icon"]').should("have.attr", "href", "./icon-180.png");
+    cy.get("#menu").click();
+    cy.get("#open-host").should("have.attr", "href", "/desktop.html?desktop=1");
+    cy.get("#install-app").click();
+    cy.get("#install-help").should("be.visible").and("contain.text", "Add to Home Screen");
+    cy.get("#install-help button").click();
+    cy.get("#install-help").should("not.be.visible");
+  });
+
   it("renames the same chat from its phone list without interpreting markup", () => {
     cy.get("#menu").click();
     cy.get(".session-actions").click();

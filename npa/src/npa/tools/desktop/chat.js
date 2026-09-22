@@ -1064,3 +1064,7 @@ $("#session-form").addEventListener("submit", event => {
 });
 $("#archive-chat").addEventListener("click", () =>
   manageAction(managedChat.archived ? "unarchive" : "archive"));
+
+// Installation keeps the same chat URL and authenticated browser session.
+$("#install-app").hidden = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+$("#install-app").addEventListener("click", () => $("#install-help").showModal());

@@ -1,8 +1,5 @@
 """Serve authenticated mobile chat controls through the desktop HTTPS gateway."""
 
-import base64
-import binascii
-import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
@@ -16,13 +13,15 @@ try:
     from .chat_history import owned_elsewhere
     from .chat_models import available_models, model_selection
     from .chat_delivery import Deliveries
-    from .chat_session import mobile_session
+    from .chat_session import authorized as _authorized, mobile_session, session_key
+    from .chat_pwa import public_asset
 except ImportError:
     from chat_rpc import CodexConnection
     from chat_history import owned_elsewhere
     from chat_models import available_models, model_selection
     from chat_delivery import Deliveries
-    from chat_session import mobile_session
+    from chat_session import authorized as _authorized, mobile_session, session_key
+    from chat_pwa import public_asset
 
 _SOURCES = [
     "cli",
@@ -52,16 +51,6 @@ def _update_created_threads(created, message):
     if thread is not None and message["method"] == "thread/settings/updated":
         settings = params["threadSettings"]
         thread.update(model=settings["model"], reasoningEffort=settings["effort"])
-
-
-def _authorized(header, username, password):
-    if not header.startswith("Basic "):
-        return False
-    try:
-        supplied = base64.b64decode(header[6:], validate=True)
-    except (ValueError, binascii.Error):
-        return False
-    return hmac.compare_digest(supplied, f"{username}:{password}".encode())
 
 
 def _thread_list_entry(thread):
@@ -130,7 +119,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         config = self.server.config
         password = Path(config["password_file"]).read_text().strip()
         if not mobile_session(
-            self.headers.get("Cookie", ""), config.get("session_secret")
+            self.headers.get("Cookie", ""), session_key(config, password)
         ) and not _authorized(
             self.headers.get("Authorization", ""), config["username"], password
         ):
@@ -149,7 +138,12 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _respond(self, status, body, content_type="application/json"):
         raw = json.dumps(body).encode() if content_type == "application/json" else body
         self.send_response(status)
-        self.send_header("Content-Type", content_type + "; charset=utf-8")
+        self.send_header(
+            "Content-Type",
+            content_type
+            if content_type == "image/png"
+            else content_type + "; charset=utf-8",
+        )
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -158,7 +152,7 @@ class ChatHandler(BaseHTTPRequestHandler):
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'",
         )
-        if status == 401:
+        if status == 401 and not self.server.config.get("auth_port"):
             self.send_header(
                 "WWW-Authenticate", 'Basic realm="Development desktop", charset="UTF-8"'
             )
@@ -175,9 +169,14 @@ class ChatHandler(BaseHTTPRequestHandler):
         Raises:
             None.
         """
+        path = urlsplit(self.path)
+        asset = public_asset(path.path)
+        if asset:
+            body, mime = asset
+            self._respond(200, body, mime)
+            return
         if not self._guard():
             return
-        path = urlsplit(self.path)
         try:
             if path.path in _STATIC:
                 name, mime = _STATIC[path.path]

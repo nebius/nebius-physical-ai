@@ -12,6 +12,9 @@
       name="apple-mobile-web-app-status-bar-style"
       content="black-translucent"
     />
+    <meta name="apple-mobile-web-app-title" content="Codex" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-180.png" />
     <title>Codex · Your desktop</title>
     <link id="tab-icon" rel="icon" type="image/svg+xml" />
     <link rel="stylesheet" href="./chat.css" />
@@ -46,9 +49,11 @@
       <button id="more-sessions" class="subtle" hidden>
         Load more sessions
       </button>
+      <button id="install-app" class="subtle">Add to Home Screen</button>
+      <dialog id="install-help"><h2>Add Codex to your Home Screen</h2><p>On iPhone or iPad, open this page in Safari, tap Share, then Add to Home Screen. Keep Open as Web App enabled if shown.</p><p>On Android, use your browser menu and choose Install app or Add to Home screen.</p><form method="dialog"><button>Done</button></form></dialog>
       <footer>
         <span id="connection" role="status">Connecting…</span
-        ><a id="open-host" href="/desktop.html" target="_blank" rel="noopener"
+        ><a id="open-host" href="/desktop.html?desktop=1" target="_blank" rel="noopener"
           >Open desktop ↗</a
         >
       </footer>

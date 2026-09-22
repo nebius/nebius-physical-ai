@@ -29,6 +29,8 @@ public IP. Its setup and operation commands live under `npa tools`.
 `npa tools desktop chat-setup --connect-vscode` adds authenticated mobile Codex
 chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it. Mobile
 and VS Code share conversations, model/reasoning selections, and live activity.
+Cloud chat setup also enables a persistent browser sign-in, automatic phone
+routing to chat, and an installable Home Screen app using the same login.
 `npa tools desktop chat-setup --local` attaches the same interface to existing Mac
 sessions. Add `--gateway-ssh-host <alias>` to use an existing authenticated gateway.
 `npa tools desktop optimize --ssh-host <alias>` reduces desktop effects for faster

@@ -434,6 +434,15 @@ def _gateway_config(config, *, tls):
     text = text.replace(
         "@CHAT_ROUTE@", _NGINX_CHAT if (_STATE / "chat.json").exists() else ""
     )
+    chat_state = _STATE / "chat.json"
+    browser_login = chat_state.exists() and json.loads(chat_state.read_text()).get(
+        "browser_login"
+    )
+    basic_auth = 'auth_basic "Development desktop";\n    auth_basic_user_file /etc/npa-desktop/htpasswd;'
+    text = text.replace(
+        "@AUTHENTICATION@", _NGINX_LOGIN if browser_login else basic_auth
+    )
+    text = (_NGINX_LOGIN_MAPS if tls and browser_login else "") + text
     return (
         "user www-data;\nworker_processes auto;\npid /run/npa-desktop-gateway.pid;\nerror_log /var/log/nginx/npa-desktop-error.log;\nevents {}\nhttp {\ninclude /etc/nginx/mime.types;\n"
         + text
@@ -583,6 +592,10 @@ def _chat_setup(config):
         raise RuntimeError("Configure authenticated public-access before mobile chat.")
     names = {
         "chat_setup.py",
+        "chat_auth.py",
+        "chat_login.html",
+        "chat_login.css",
+        "chat_login.js",
         "chat_server.py",
         "chat_rpc.py",
         "chat_proxy.py",
@@ -590,6 +603,7 @@ def _chat_setup(config):
         "chat_models.py",
         "chat_delivery.py",
         "chat_session.py",
+        "chat_pwa.py",
         "chat.html",
         "chat.css",
         "chat.js",
@@ -690,8 +704,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/npa-desktop/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     if ($npa_desktop_origin_allowed = 0) { return 403; }
-    auth_basic "Development desktop";
-    auth_basic_user_file /etc/npa-desktop/htpasswd;
+    @AUTHENTICATION@
     add_header Cache-Control "no-store" always;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options DENY always;
@@ -718,6 +731,55 @@ _NGINX_CHAT = """    location = /chat { return 308 /chat/; }
         proxy_read_timeout 65s;
         proxy_buffering off;
         client_max_body_size 16m;
+    }
+"""
+_NGINX_LOGIN_MAPS = """map $http_user_agent $npa_phone {
+    default 0;
+    ~*(iphone|ipad|ipod|android|mobile) 1;
+}
+map $npa_phone $npa_entry {
+    default /desktop.html;
+    1 /chat/;
+}
+map "$npa_phone:$arg_desktop" $npa_mobile_chat {
+    default 0;
+    "1:" 1;
+}
+limit_req_zone $binary_remote_addr zone=npa_login:1m rate=10r/m;
+"""
+_NGINX_LOGIN = """auth_request /_desktop_auth;
+    error_page 401 = @desktop_login;
+    location = /_desktop_auth {
+        internal;
+        auth_request off;
+        proxy_pass http://127.0.0.1:6092/auth/check;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+    }
+    location @desktop_login {
+        auth_request off;
+        if ($http_accept ~* text/html) { return 302 /chat/login?next=$request_uri; }
+        return 401;
+    }
+    location ~ ^/chat/(login(\\.(js|css))?|manifest\\.webmanifest|icon-(180|192|512)\\.png)$ {
+        auth_request off;
+        proxy_pass http://127.0.0.1:6092;
+        proxy_set_header Host $http_host;
+        client_max_body_size 8k;
+    }
+    location = /chat/login {
+        auth_request off;
+        limit_req zone=npa_login burst=5 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:6092;
+        proxy_set_header Host $http_host;
+        client_max_body_size 8k;
+    }
+    location = / { return 302 $npa_entry; }
+    location = /desktop.html {
+        if ($npa_mobile_chat) { return 302 /chat/; }
+        proxy_pass http://127.0.0.1:6080;
+        proxy_set_header Host $http_host;
     }
 """
 _GATEWAY_UNIT = """[Unit]

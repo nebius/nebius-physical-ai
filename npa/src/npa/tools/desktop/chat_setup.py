@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import secrets
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -94,6 +95,53 @@ def _services(config):
     _run("systemctl", "--user", "restart", "npa-codex-chat.service")
 
 
+def _authentication(config):
+    if not config.get("auth_port"):
+        listeners = subprocess.check_output(
+            ["ss", "-H", "-ltn", "sport", "=", ":6092"], text=True
+        )
+        if listeners.strip():
+            raise RuntimeError("The desktop sign-in port is already occupied.")
+    config.setdefault("session_secret", secrets.token_urlsafe(48))
+    config.setdefault("auth_port", 6092)
+    _write(_ROOT / "config.json", json.dumps(config))
+    _write(
+        _UNITS / "npa-desktop-auth.service",
+        _unit(
+            [
+                str(_ROOT / "venv/bin/python"),
+                str(_ROOT / "chat_auth.py"),
+                str(_ROOT / "config.json"),
+            ],
+            "Desktop browser sign-in independent of Codex",
+        ),
+    )
+    _run("systemctl", "--user", "daemon-reload")
+    _run("systemctl", "--user", "enable", "npa-desktop-auth.service")
+    _run("systemctl", "--user", "restart", "npa-desktop-auth.service")
+    _wait_for_auth(config)
+
+
+def _wait_for_auth(config):
+    import time
+    from urllib.error import URLError
+    from urllib.request import urlopen
+
+    for attempt in range(30):
+        try:
+            with urlopen(
+                f"http://127.0.0.1:{config['auth_port']}/chat/login", timeout=2
+            ) as response:
+                if response.status == 200:
+                    return
+        except URLError:
+            if attempt == 29:
+                raise RuntimeError(
+                    "Desktop sign-in service did not become ready."
+                ) from None
+            time.sleep(0.2)
+
+
 def _connect_vscode():
     launcher = Path.home() / ".local/bin/npa-codex-shared"
     command = [
@@ -128,6 +176,7 @@ def main(connect_vscode=False):
     _write(_ROOT / "config.json", json.dumps(config))
     _run("/usr/bin/python3", "-m", "venv", str(_ROOT / "venv"))
     _run(str(_ROOT / "venv/bin/pip"), "install", "websockets==15.0.1")
+    _authentication(config)
     _services(config)
     if connect_vscode:
         _connect_vscode()
@@ -137,6 +186,7 @@ def main(connect_vscode=False):
             {
                 "url": config["origin"] + "/chat/",
                 "shared_vscode_configured": connect_vscode,
+                "browser_login": True,
             }
         ),
     )

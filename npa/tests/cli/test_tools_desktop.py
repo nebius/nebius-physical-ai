@@ -79,7 +79,8 @@ def test_display_arguments_rejected_before_ssh(options, monkeypatch):
     transport.assert_not_called()
 
 
-def test_gateway_auth_applies_to_page_websocket_and_credentials():
+def test_gateway_auth_applies_to_page_websocket_and_credentials(monkeypatch, tmp_path):
+    monkeypatch.setattr(remote, "_STATE", tmp_path)
     config = remote._gateway_config(
         {"https_port": 8443, "public_ip": "203.0.113.10"}, tls=True
     )

@@ -153,6 +153,7 @@ def _install_assets(root):
         "chat_models.py",
         "chat_delivery.py",
         "chat_session.py",
+        "chat_pwa.py",
         "chat_native.py",
         "chat.html",
         "chat.css",
