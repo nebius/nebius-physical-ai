@@ -84,6 +84,41 @@ hashed steps. The worker also requires a free loopback policy port before any
 claim. Receipt paths authorize the campaign; they are excluded from the
 specialist runtime identity and never enter the policy command.
 
+The opt-in negative live regression uses an owner-only JSON file selected by
+`NPA_BEHAVIOR_SPECIALIST_ADMISSION_LIVE_CONFIG`. It invokes the internal
+`campaign-worker` CLI against real panel and partition objects, supplies a fresh
+empty S3 prefix, and proves missing or mismatched authorization exits before any
+case state, worker receipt, policy process, or evaluator output. The config holds
+the declaration URIs and the existing specialist runtime paths; the test does not
+read sealed baseline results or create positive report authorization.
+
+Create the private file outside the repository, make it owner-readable only,
+and use the existing authorized runtime paths:
+
+```json
+{
+  "panel_uri": "s3://<bucket>/<prefix>/reporting-panel.json",
+  "partition_uri": "s3://<bucket>/<prefix>/reporting-partition.json",
+  "absence_prefix": "s3://<bucket>/<fresh-negative-test-prefix>",
+  "upstream_root": "/path/to/BEHAVIOR-1K",
+  "evaluator_python": "/path/to/evaluator-python",
+  "data_root": "/path/to/dataset",
+  "policy_root": "/path/to/rlc-source",
+  "policy_python": "/path/to/policy-python",
+  "policy_checkpoint": "/path/to/checkpoint_2",
+  "policy_archive": "/path/to/specialist.zip"
+}
+```
+
+Run only the negative admission regression:
+
+```bash
+chmod 600 /path/to/specialist-admission-live.json
+NPA_BEHAVIOR_SPECIALIST_ADMISSION_LIVE_CONFIG=/path/to/specialist-admission-live.json \
+  NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_behavior_specialist_report_admission_live.py -q
+```
+
 ## Durable execution and recovery
 
 The internal `campaign-worker` stage takes `--panel-uri`, `--partition-uri`,

@@ -772,6 +772,7 @@ def verify_specialist_report_admission(
         if any(_report_paths_present(args)):
             raise ValueError("Specialist development does not accept report receipts")
         return None
+    _report_paths(args)
     runtime = specialist_runtime_identity(args)
     report_admission, equivalence_sha, admission_sha = _load_report_receipts(
         args, runtime
