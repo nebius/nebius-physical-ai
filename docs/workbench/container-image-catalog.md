@@ -661,3 +661,12 @@ redistribution requirements.
 The cuRobo V2 candidate is separately publication-quarantined: its permissively
 licensed source, robot assets and benchmark data have a checked-in recipe, but
 no public release is claimed until exact-image and real-GPU gates are accepted.
+
+## Rerun SDK migration in build sources
+
+Current NPA dependency and viewer build sources use Rerun 0.38.1, including
+its `psutil>=7` dependency. The Rerun viewer, OpenPI sidecar environment, Isaac
+OSS dependency closure, and cuRobo lock file were updated together. Published
+release tags and accepted digests above still identify their original immutable
+builds; changing a source pin does not republish those images. Existing 0.31.4
+recordings remain readable by the new SDK and viewer.

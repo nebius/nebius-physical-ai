@@ -473,7 +473,7 @@ def _inspect(
 ) -> dict[str, Any]:
     """Independently decode the closed RRD and compare its factual rows/pixels."""
     from PIL import Image
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     recording = load_recording(path)
     if (

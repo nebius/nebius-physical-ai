@@ -190,6 +190,13 @@ For artifact conversion and sharing, see the
 [Foxglove export](../docs/workbench/foxglove-export.md), and
 [Rerun sharing](../docs/workbench/rerun-sharing.md).
 
+NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
+Recording inspection uses the supported streaming reader and accepts existing
+0.31.4 RRD files without rewriting their contents or provenance. A recording
+validator rejects ambiguous multi-recording files unless it selects each store
+explicitly. For a custom viewer image, use a version that supports the producing
+SDK; previously published container pins retain their recorded build versions.
+
 ## Package map
 
 - `npa.cli`: Typer CLI entrypoints
