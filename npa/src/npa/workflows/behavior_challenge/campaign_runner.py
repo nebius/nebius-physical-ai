@@ -293,7 +293,12 @@ def _prepared_evaluator(args, panel, workspace):
 
     if not all(getattr(args, field, None) for field in POLICY_FIELDS):
         raise ValueError("Campaign execution requires a verified managed policy")
-    verify_serving_identity(args, panel["policy"])
+    if args.policy_kind == "rlc-specialist" and panel["split"] == "report":
+        from .rlc_specialist_admission import verify_specialist_report_token
+
+        verify_specialist_report_token(args, panel)
+    else:
+        verify_serving_identity(args, panel["policy"])
     environment = _runtime_environment(args)
     task = panel["selected_tasks"]
     if len(task) != 1:
@@ -368,6 +373,10 @@ def evaluate_partition(args) -> dict:
     workspace.mkdir(parents=True, exist_ok=True)
     storage = StorageClient.from_environment()
     panel, partition = _worker_declarations(args, storage, workspace)
+    if args.policy_kind == "rlc-specialist" and panel["split"] == "report":
+        from .rlc_specialist_admission import verify_specialist_report_admission
+
+        verify_specialist_report_admission(args, panel)
     store = CaseStore(storage, args.output_path, panel["panel_id"])
     records = _execute_partition(args, panel, partition, store, workspace)
     verify_upstream(args.upstream_root)

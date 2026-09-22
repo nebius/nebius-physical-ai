@@ -203,7 +203,7 @@ def test_specialist_rejects_report_admission(monkeypatch):
         upstream_root=Path("/upstream"),
     )
 
-    with pytest.raises(ValueError, match="development-only"):
+    with pytest.raises(ValueError, match="not admitted before case claim"):
         rlc_policy._verify_task(
             args, {"recipe": {"split": "report", "tasks": ["task"]}}
         )
@@ -229,8 +229,29 @@ def test_specialist_provenance_is_memory_unqualified_and_unranked(tmp_path):
     output = tmp_path / "evidence"
     output.mkdir()
     plan = {"recipe": {"policy_checkpoint_sha256": "a" * 64}}
+    args = SimpleNamespace(
+        policy_python=Path("/runtime/python"),
+        policy_root=Path("/source"),
+        policy_checkpoint=Path("/checkpoint"),
+        port=8000,
+    )
+    command = [
+        "/runtime/python",
+        str(output / "rlc_server.py"),
+        "--source-root",
+        "/source",
+        "--checkpoint",
+        "/checkpoint",
+        "--task-id",
+        "1",
+        "--port",
+        "8000",
+        "--specialist-state-contract",
+        "--execution-variant",
+        "native",
+    ]
 
-    rlc_policy._record_specialist(output, ["python", "server"], {}, plan)
+    rlc_policy._record_specialist(output, command, {}, plan, args=args)
 
     record = json.loads((output / "policy-provenance.json").read_text())
     assert record["kind"] == "rlc-specialist"
@@ -250,6 +271,31 @@ def test_managed_cli_exposes_specialist_kind():
 
     assert args.policy_kind == "rlc-specialist"
     assert args.policy_execution_variant == "native"
+
+
+def test_managed_cli_parses_pinned_specialist_report_receipts():
+    parser = argparse.ArgumentParser()
+    behavior_main._add_policy_arguments(parser)
+
+    args = parser.parse_args(
+        [
+            "--policy-kind",
+            "rlc-specialist",
+            "--policy-specialist-equivalence-receipt",
+            "/evidence/equivalence.json",
+            "--policy-specialist-equivalence-sha256",
+            "4" * 64,
+            "--policy-specialist-report-admission",
+            "/evidence/admission.json",
+            "--policy-specialist-report-admission-sha256",
+            "5" * 64,
+        ]
+    )
+
+    assert args.policy_specialist_equivalence_receipt == Path(
+        "/evidence/equivalence.json"
+    )
+    assert args.policy_specialist_report_admission_sha256 == "5" * 64
 
 
 def test_specialist_cannot_skip_managed_paths(tmp_path):

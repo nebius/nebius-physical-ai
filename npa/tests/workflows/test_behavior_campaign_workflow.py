@@ -188,6 +188,39 @@ def test_worker_argv_includes_operator_runtime_and_only_supplied_optional_flags(
     assert "--policy-selected-export-receipt" not in argv
 
 
+def test_specialist_report_receipts_and_hashes_reach_every_worker():
+    runtime = _runtime(
+        policy_kind="rlc-specialist",
+        policy_execution_variant="native",
+        policy_specialist_equivalence_receipt="/evidence/equivalence.json",
+        policy_specialist_equivalence_sha256="4" * 64,
+        policy_specialist_report_admission="/evidence/admission.json",
+        policy_specialist_report_admission_sha256="5" * 64,
+    )
+    document = _workflow(runtime=runtime)
+
+    for name in document["states"]["campaign-workers"]["parallel"]:
+        argv = document["states"][name]["run"]["argv"]
+        for flag in (
+            "--policy-specialist-equivalence-receipt",
+            "--policy-specialist-equivalence-sha256",
+            "--policy-specialist-report-admission",
+            "--policy-specialist-report-admission-sha256",
+        ):
+            assert argv.count(flag) == 1
+
+
+def test_specialist_report_runtime_requires_all_receipt_bindings():
+    runtime = _runtime(
+        policy_kind="rlc-specialist",
+        policy_execution_variant="native",
+        policy_specialist_equivalence_receipt="/evidence/equivalence.json",
+    )
+
+    with pytest.raises(ValueError, match="receipts and SHA-256 values"):
+        _workflow(runtime=runtime)
+
+
 def test_optional_aggregate_is_a_real_barrier_and_can_be_omitted():
     with_aggregate = _workflow()
     aggregate = with_aggregate["states"]["campaign-aggregate"]

@@ -74,6 +74,12 @@ The worker recomputes that identity and checks the checkpoint archive bytes
 before starting the policy. This prevents a changed controller from inheriting
 an earlier policy's completed cases.
 
+Released-specialist reporting adds two independently frozen receipts and their
+expected SHA-256 values. The worker validates their complete development,
+baseline-reporting, selection, and runtime-equivalence graph before constructing
+the durable case store. Receipt paths authorize the campaign; they are excluded
+from the specialist runtime identity and never enter the policy command.
+
 ## Durable execution and recovery
 
 The internal `campaign-worker` stage takes `--panel-uri`, `--partition-uri`,

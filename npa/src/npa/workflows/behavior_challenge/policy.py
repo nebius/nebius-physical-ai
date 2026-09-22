@@ -29,6 +29,12 @@ STOCK_RLC_CORRELATION_FIELDS = (
     "policy_stock_correlation_asset",
     "policy_stock_correlation_sha256",
 )
+SPECIALIST_REPORT_FIELDS = (
+    "policy_specialist_equivalence_receipt",
+    "policy_specialist_equivalence_sha256",
+    "policy_specialist_report_admission",
+    "policy_specialist_report_admission_sha256",
+)
 _POLICY_STARTUP_TIMEOUT_SECONDS = 600
 
 
@@ -154,6 +160,7 @@ def _stop_policy(process: subprocess.Popen) -> None:
 
 def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[str]:
     require_openpi_terms()
+    _verify_specialist_report_options(args)
     if args.host not in {"localhost", "127.0.0.1"}:
         raise ValueError("Managed policy requires a loopback evaluator host")
     if getattr(args, "policy_kind", "official") in {"comet12", "comet50"}:
@@ -191,6 +198,19 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
     command = _policy_command(args)
     _record_policy(args, plan, output, command, files)
     return command
+
+
+def _verify_specialist_report_options(args: argparse.Namespace) -> None:
+    supplied = [bool(getattr(args, field, None)) for field in SPECIALIST_REPORT_FIELDS]
+    specialist = getattr(args, "policy_kind", "official") == "rlc-specialist"
+    if any(supplied) and not all(supplied):
+        raise ValueError(
+            "Specialist report requires both receipt paths and SHA-256 values"
+        )
+    if any(supplied) and not specialist:
+        raise ValueError(
+            "Specialist report receipts require --policy-kind rlc-specialist"
+        )
 
 
 def _record_policy(args, plan, output, command, files):

@@ -158,9 +158,14 @@ def _verify_task(args, plan):
     kind = getattr(args, "policy_kind", "rlc")
     if kind == "rlc-specialist":
         from .rlc_specialist import SUPPORTED_TASK_IDS
+        from .rlc_specialist_admission import _report_paths_present
 
-        if plan["recipe"]["split"] != "development":
-            raise ValueError("Released RLC specialist is development-only")
+        if plan["recipe"]["split"] == "report":
+            from .rlc_specialist_admission import verify_specialist_policy_scope
+
+            verify_specialist_policy_scope(args, plan)
+        elif any(_report_paths_present(args)):
+            raise ValueError("Specialist development does not accept report receipts")
         if task_id not in SUPPORTED_TASK_IDS:
             raise ValueError("Released RLC specialist does not support this task")
         return task_id, "shawn-task-specialist"
@@ -395,7 +400,7 @@ def _record_selected(output, command, files, receipt, plan, staged):
     )
 
 
-def _record_specialist(output, command, files, plan):
+def _record_specialist(output, command, files, plan, *, args):
     from .rlc_specialist import (
         MODEL_REPOSITORY,
         MODEL_REVISION,
@@ -406,6 +411,9 @@ def _record_specialist(output, command, files, plan):
     )
 
     adapters = _adapter_files(output, selected=False, specialist=True)
+    from .rlc_specialist_admission import verify_staged_specialist_runtime
+
+    verify_staged_specialist_runtime(args, output, adapters, command)
     shutil.copyfile(
         Path(__file__).with_name("POLICY_LICENSE"), output / "rlc-adapter.LICENSE"
     )
@@ -428,9 +436,19 @@ def _record_specialist(output, command, files, plan):
         "memory_compliance": "unverified",
         "status": "local_development_only_memory_unverified_not_rollout_ranked",
     }
+    _add_specialist_report_provenance(evidence, args, plan)
     (output / "policy-provenance.json").write_text(
         json.dumps(evidence, indent=2) + "\n"
     )
+
+
+def _add_specialist_report_provenance(evidence, args, plan) -> None:
+    if plan["recipe"].get("split", "development") != "report":
+        return
+    from .rlc_specialist_admission import specialist_report_provenance
+
+    evidence["report_authorization"] = specialist_report_provenance(args, plan)
+    evidence["status"] = "local_report_admitted_memory_unverified"
 
 
 def prepare_policy(args, plan: dict, output: Path) -> list[str]:
@@ -468,7 +486,7 @@ def prepare_policy(args, plan: dict, output: Path) -> list[str]:
     if selected:
         _record_selected(output, command, files, receipt, plan, staged)
     elif specialist:
-        _record_specialist(output, command, files, plan)
+        _record_specialist(output, command, files, plan, args=args)
     else:
         _record(output, command, files, checkpoint, plan, stock_correlation)
     return command

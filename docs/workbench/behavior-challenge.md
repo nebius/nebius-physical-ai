@@ -199,13 +199,31 @@ canonical FP32 correlation intermediate. Only `native` execution is accepted.
 The available RTX smoke
 proved model loading and finite synthetic task-1 wire actions; it did not prove
 the official single-24 GB policy-memory requirement or rank the checkpoint on a
-complete 2026 rollout panel. This profile is admitted only for local development
-recipes, independently of that immutable smoke receipt. Weights remain
+complete 2026 rollout panel. By default this profile admits only local
+development recipes, independently of that immutable smoke receipt. Weights remain
 operator-provided runtime inputs. The model card says these weights are a
 supervised fine-tune on human demonstrations; this integration does not claim
 that the source repository's separate RFT algorithm produced them. The model
 card declares Apache-2.0; the integration records that declaration while keeping
 all checkpoint bytes outside public source and images.
+
+A local report worker can use the same frozen specialist only through the
+report-admission bridge. Pass all four of
+`--policy-specialist-equivalence-receipt`,
+`--policy-specialist-equivalence-sha256`,
+`--policy-specialist-report-admission`, and
+`--policy-specialist-report-admission-sha256`. The equivalence receipt binds
+the frozen development policy to a runtime identity over the exact six staged
+server/manifest files, checkpoint, native command contract, sources, task, and
+fresh-process lifecycle. The admission receipt must then bind all ten verified
+development originals, a development-only candidate selection frozen before
+reporting baselines were unsealed, complete native/Comet12/Comet50 reporting
+baselines and their selected B*, and exact task-1 cases 301–310 at rollout zero.
+The worker reconstructs each aggregate from its case receipts and JSON/video
+hashes before it creates the case store. Missing or changed evidence fails
+closed. This is a local comparison path and keeps
+`official_24gb_qualified` false. Development workers reject these report
+receipts and continue to require none.
 
 For a controlled stock-policy experiment, choose
 `--policy-execution-variant native-stage-transition-refresh`. It preserves the

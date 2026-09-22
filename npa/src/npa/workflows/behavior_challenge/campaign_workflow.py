@@ -36,6 +36,10 @@ _OPTIONAL_POLICY_FLAGS = {
     "policy_validation_receipt": "--policy-validation-receipt",
     "policy_stock_correlation_asset": "--policy-stock-correlation-asset",
     "policy_stock_correlation_sha256": "--policy-stock-correlation-sha256",
+    "policy_specialist_equivalence_receipt": "--policy-specialist-equivalence-receipt",
+    "policy_specialist_equivalence_sha256": "--policy-specialist-equivalence-sha256",
+    "policy_specialist_report_admission": "--policy-specialist-report-admission",
+    "policy_specialist_report_admission_sha256": "--policy-specialist-report-admission-sha256",
 }
 
 
@@ -210,7 +214,27 @@ def _runtime_config(runtime: dict[str, Any]) -> dict[str, Any]:
     stock = {"policy_stock_correlation_asset", "policy_stock_correlation_sha256"}
     if bool(stock & set(optional)) != stock.issubset(optional):
         raise ValueError("stock correlation artifact and SHA-256 must appear together")
+    _validate_specialist_report_config(optional)
     return {**values, **optional}
+
+
+def _validate_specialist_report_config(optional: dict[str, str]) -> None:
+    report = {
+        "policy_specialist_equivalence_receipt",
+        "policy_specialist_equivalence_sha256",
+        "policy_specialist_report_admission",
+        "policy_specialist_report_admission_sha256",
+    }
+    if bool(report & set(optional)) != report.issubset(optional):
+        raise ValueError(
+            "specialist report receipts and SHA-256 values must appear together"
+        )
+    for field in report & set(optional):
+        if (
+            field.endswith("sha256")
+            and re.fullmatch(r"[0-9a-f]{64}", optional[field]) is None
+        ):
+            raise ValueError("specialist report SHA-256 values must be lowercase hex")
 
 
 def _validate_slots(slots: object, worker_count: int) -> list[dict[str, Any]]:
