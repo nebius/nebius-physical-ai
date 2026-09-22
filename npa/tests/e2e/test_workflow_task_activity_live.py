@@ -23,7 +23,8 @@ def test_failed_workflow_retains_live_task_activity():
     )
     Path(settings["output_path"]).write_text(json.dumps(payload, indent=2) + "\n")
     assert payload["live_verified"] is True
-    assert payload["status"] == "FAILED"
+    assert payload["status"] == settings["expected_workflow_status"]
+    assert payload["raw_controller_state"] == "FAILED"
     activity = payload["scheduler_task_activity"]
     assert activity["active_stage_keys"] == settings["expected_active_stage_keys"]
     assert activity["unresolved_stage_keys"] == []
@@ -32,5 +33,9 @@ def test_failed_workflow_retains_live_task_activity():
     )
     for key, state in settings["expected_task_states"].items():
         assert payload["stages"][key]["raw_task_scheduler_state"] == state
+    conflicts = [
+        key for key, stage in payload["stages"].items() if stage["outcome_conflict"]
+    ]
+    assert conflicts == settings["expected_outcome_conflicts"]
     for key in activity["active_stage_keys"]:
         assert payload["stages"][key]["raw_task_scheduler_state"] == "RUNNING"

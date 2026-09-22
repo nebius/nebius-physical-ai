@@ -158,12 +158,16 @@ stopped. Duplicate names or task IDs, unexpected rows, and missing observations
 prevent a terminal claim. A stage can be both active and unresolved when its
 duplicate observations disagree. Use these fields only with the response's live-verification result.
 `all_stage_tasks_terminal` describes scheduler tasks, not resource cleanup.
+Task activity remains separate from outcome conflicts: explicit terminal task
+observations can establish that tasks stopped while contradictory durable
+outcomes keep the workflow status `UNKNOWN`.
 
 The read-only live regression uses an existing failed workflow. On its Linux
 operator, set `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` to a
 private JSON file containing `run_id`, `project`, `isolated_config_dir`,
 `expected_active_stage_keys`, `expected_all_tasks_terminal`,
-`expected_task_states` (stage key to scheduler state), and a private `output_path`. Run
+`expected_task_states` (stage key to scheduler state), `expected_workflow_status`,
+`expected_outcome_conflicts` (stage keys), and a private `output_path`. Run
 `npa/tests/e2e/test_workflow_task_activity_live.py` with `NPA_INTEGRATION_E2E=1`.
 It records the actual status response and checks the prescribed task states;
 it submits, cancels, and reruns no jobs.

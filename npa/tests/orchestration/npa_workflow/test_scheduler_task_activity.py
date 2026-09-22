@@ -107,6 +107,8 @@ def test_every_task_requires_an_explicit_terminal_observation():
         "unresolved_stage_keys": [],
         "all_stage_tasks_terminal": True,
     }
+    assert result["status"] == "UNKNOWN"
+    assert result["stages"]["worker-3"]["outcome_conflict"] is True
 
 
 def test_unrecognized_task_state_remains_unresolved():
