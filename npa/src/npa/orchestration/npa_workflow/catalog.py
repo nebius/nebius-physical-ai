@@ -1553,7 +1553,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output-s3-uri",
             "{{config.training_uri}}",
         ],
-        access_capabilities=("huggingface",),
     ),
     "workbench.molmoact.serve": ToolEntry(
         name="workbench.molmoact.serve",
@@ -1569,7 +1568,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--port",
             "{{config.serve_port}}",
         ],
-        access_capabilities=("huggingface",),
     ),
     "workbench.molmoact.eval": ToolEntry(
         name="workbench.molmoact.eval",
@@ -1589,7 +1587,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output-s3-uri",
             "{{config.evaluation_uri}}",
         ],
-        access_capabilities=("huggingface",),
     ),
     "workbench.openvla.train": ToolEntry(
         name="workbench.openvla.train",
