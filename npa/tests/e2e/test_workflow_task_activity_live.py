@@ -1,4 +1,4 @@
-"""Verify task activity against an operator-selected live failed workflow."""
+"""Verify task activity against an operator-selected live terminal workflow."""
 
 import json
 import os
@@ -11,10 +11,12 @@ from npa.cli.workbench.workflow import _durable_workflow_status
 pytestmark = pytest.mark.e2e
 
 
-def test_failed_workflow_retains_live_task_activity():
+def test_terminal_workflow_retains_live_task_activity():
     config_path = os.environ.get("NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG")
     if not config_path:
-        pytest.skip("requires an operator-selected failed run and expected task states")
+        pytest.skip(
+            "requires an operator-selected terminal run and expected task states"
+        )
     settings = json.loads(Path(config_path).read_text())
     payload = _durable_workflow_status(
         settings["run_id"],
@@ -24,7 +26,9 @@ def test_failed_workflow_retains_live_task_activity():
     Path(settings["output_path"]).write_text(json.dumps(payload, indent=2) + "\n")
     assert payload["live_verified"] is True
     assert payload["status"] == settings["expected_workflow_status"]
-    assert payload["raw_controller_state"] == "FAILED"
+    assert payload["raw_controller_state"] == settings.get(
+        "expected_raw_controller_state", "FAILED"
+    )
     activity = payload["scheduler_task_activity"]
     assert activity["active_stage_keys"] == settings["expected_active_stage_keys"]
     assert activity["unresolved_stage_keys"] == []
