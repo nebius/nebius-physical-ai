@@ -30,7 +30,12 @@ validation jobs use available GitHub runner capacity without shared job queues.
 The parent workflow still cancels superseded PR work; distinct candidate groups
 keep unrelated PRs and merge candidates independent. Scope selection, coverage,
 and final checks wait for their declared dependencies and an available runner.
-Organization runner limits can still cause waiting. See the
+Organization runner limits can still cause waiting.
+Queue proof now shares the secret-scan runner, while full precheck collection
+overlaps smoke and guardrail execution on one runner. Both precheck results remain
+blocking. Optional priority/test runner labels separate candidate validation from
+background audits when operators provision that capacity; their defaults preserve
+standard runner behavior. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
 for cancellation and rollout behavior, including refreshing older PR branches.
 
