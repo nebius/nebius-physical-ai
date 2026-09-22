@@ -514,8 +514,8 @@ is combined before enforcing the 60% floor on both events.
 
 Full suites collect smoke tests and run the CLI install check in the shards,
 avoiding duplicate smoke and subsystem jobs. Cypress runs once in its own job,
-never inside a pytest shard. Cached constrained installs, xdist workers, and the
-existing merge-priority runner pools retain fast feedback without deferring
+never inside a pytest shard. Cached constrained installs, xdist workers, and
+independent job scheduling retain fast feedback without deferring
 coverage until queue admission. Scheduled and manual audits retain four shards
 on each of Python 3.10, 3.12, and 3.14.
 
@@ -584,43 +584,34 @@ of the parent workflow can interrupt reporting.
 
 ### Validation concurrency
 
-Runner jobs share repository-wide concurrency slots across the validation
-workflows. Adding PRs therefore adds waiting work without multiplying active
-jobs. The pools are independent:
+Independent validation jobs use GitHub's available runner capacity. Validation
+workflows have no job-level concurrency locks or matrix `max-parallel` caps:
+all five pytest shards and browser checks can run together, and unrelated PRs,
+merge candidates, and audits do not serialize through repository-wide slots.
+Scope selection, coverage aggregation, and the final required check wait only
+for their declared dependencies and an available runner.
 
-| Pool | Maximum active runner jobs | Shared slots |
-|---|---:|---|
-| PR checks | 7 | metadata, docs/guardrails, policy, runtime, two test slots, scope/completion |
-| Merge candidates | 9 | metadata/docs/guardrails, policy, runtime, five test slots, scope/completion |
-| Main, scheduled, and manual audits | 3 | metadata, security, tests |
+The parent workflow retains a concurrency group per PR so a newer commit
+cancels that PR's superseded validation, including its reusable child workflows.
+Merge candidates have distinct groups keyed by candidate SHA. Main pushes
+supersede older main runs. Reusable workflows use distinct group prefixes so
+they cannot hold or cancel their parent's group. Publication and live-workload
+concurrency controls have separate purposes and remain independent of this policy.
 
-These are shared totals for each pool, not per-PR or per-candidate allowances.
-PR shards 1/3/5 share one test slot; shards 2/4 and browser checks share the
-other. Merge shards keep five slots, with browser checks sharing shard 5's slot.
-Each candidate pool has a completion slot for the short test-scope selector,
-coverage, and the final required check. Test selection can start the shards
-without waiting behind long docs or guardrail jobs, and completed suites can
-report their result promptly.
-This also lets a superseded PR report its unsuccessful final check promptly
-and release its workflow lock for the replacement commit.
-Optional timing reports use the audit metadata slot even for candidate runs.
+The former shared pools limited every PR's tests to two active jobs across the
+repository. A dependency-update batch filled their 100-job pending queues and
+caused jobs to be rejected before tests ran. Removing those shared locks avoids
+that concurrency-group queue limit; GitHub plan limits and organization-wide
+runner availability can still cause waiting. Separate concurrency groups do
+not reserve runners or guarantee merge priority. Use the CI timing report to
+distinguish runner waiting from execution, and inspect organization runner
+capacity if waiting persists. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 
-Each job uses `queue: max` and `cancel-in-progress: false`. GitHub retains up to
-100 waiting jobs per slot; additional jobs are cancelled when that platform
-queue is full. Do not omit `queue: max`: the default replaces an already waiting
-job when another arrives. The parent workflow still cancels superseded commits
-of the same PR. Reusable workflow callers must not hold runner slots while their
-children wait for those slots. See [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
-
-The 19-job ceiling applies to these validation workflows once they use this
-configuration. Older branches/runs and publication workflows are outside it;
-refresh an old branch when its PR checks need the new scheduling policy.
-Merge candidates receive the policy from the combined commit after it lands on
-`main`. Separate groups limit this repository's demand; they do not reserve
-physical runners against other repositories in the organization. Busy PRs can
-wait longer to leave capacity for merges. Use the timing report to check the
-tradeoff against actual runner capacity before increasing the pools. Required
-checks and the merge queue timeout remain unchanged.
+Already queued runs keep the workflow configuration from their original commit.
+After this policy lands on `main`, refresh older PR branches to create runs with
+the new configuration; rerunning an old commit does not adopt it. Merge
+candidates receive it through their combined commit. Required checks, coverage,
+and the merge queue timeout retain their existing behavior.
 
 ### Merge readiness and queue rejections
 
@@ -677,9 +668,24 @@ CI jobs, and helper scripts such as `npa/scripts/start_golden_evals_tmux.sh` and
 you must then point the tooling at it — `make test PYTHON=...`,
 `NPA_BIN=.../bin/npa`, `GOLDEN_EVAL_PYTHON=.../bin/python`.
 
+If you keep multiple checkouts of this repo (for example `git worktree add`, or
+several agent sandboxes on one machine) and share one `npa/.venv` across them —
+by symlinking it, rather than running its own `pip install -e` in each — the
+venv's editable install still resolves `npa` from whichever checkout last ran
+that install. `pytest` then collects test files from the checkout you are
+standing in but imports production code from a *different* checkout, silently,
+with no error or non-zero exit. `make test`/`test-smoke`/`test-guardrails`/
+`test-e2e` all run `make check-env` first specifically to catch this: it fails
+fast with the exact `export PYTHONPATH=...` fix (or the option to give the
+checkout its own venv) instead of letting you spend minutes on a run whose
+result is meaningless. Run it standalone any time you are unsure which
+checkout your interpreter is really resolving `npa` from: `make check-env`.
+
 Then use the `make` targets from the repo root:
 
 ```bash
+make check-env        # fails fast if $PYTHON would import npa from another checkout
+make test-prereqs     # non-blocking: reports missing optional tools and temp-disk observations
 make check            # local subset: lint, docs-check, unit tests
 make test             # full unit suite, live/GPU markers deselected
 make test-smoke       # quickest: onboarding CLI smoke tests only
@@ -689,6 +695,27 @@ make docs             # regenerate docs/cli/ after any CLI change
 make docs-check       # the docs/cli/ drift gate
 make test-e2e         # opt-in: real Nebius infrastructure, NPA_INTEGRATION_E2E=1
 ```
+
+Run `make test-prereqs` once per environment before trusting `make test`'s
+result: it distinguishes two different consequences of a missing optional
+tool, verified against the specific test files that check for each, not
+assumed. The `adapter` extra's `pyarrow` is not optional in the usual sense —
+without it, files that import it unconditionally (for example
+`npa/tests/test_lerobot_shared_video_offsets.py`) fail to collect at all, so
+`make test` exits non-zero outright rather than passing with less coverage.
+Missing ffmpeg/ffprobe, a CPU checkpoint runtime, tmux, or Node
+instead let the specific tests that check for them self-skip, so `make test`
+can still exit 0 while covering less than CI. The same command also reports
+free space and any retained `pytest-of-<user>/pytest-N` directories under the
+temp root pytest will use, purely for awareness — it recommends no deletion.
+That root (`$TMPDIR/pytest-of-<user>` by default) is shared by every process
+you run, not scoped to one checkout, so concurrent work across worktrees on
+one machine competes for the same disk. Point a large or parallel run at a
+directory you own instead — `pytest --basetemp=<owned-dir> ...` — and clean
+up only that directory yourself. A directory not currently the
+`pytest-current` target is not thereby proven idle: another process may hold
+a different `--basetemp` entirely, or a live lock file under this same root.
+Do not delete another process's temp directory based on age alone.
 
 `docs/cli/` is generated from live `npa --help` and drift-gated in CI, so
 `make docs` and a commit of its output are part of any change to a command, flag,

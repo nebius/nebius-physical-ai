@@ -15,16 +15,14 @@ lint, guardrails, and every security gate. The test selector comes from the
 trusted base commit and uses its merge-candidate policy for both events,
 including when an older base still has a narrower PR policy. Missing policy
 keeps full validation and invalid comparisons fail. The full three-interpreter
-test audit runs daily instead of immediately after each merge. Repository-wide
-job concurrency
-limits validation to seven PR jobs, nine merge-candidate jobs, and three background
-audit jobs. Each candidate pool has a separate slot for the short test-scope
-selector, coverage, and the final required check. Shards can start without
-waiting for long docs and guardrail jobs. Optional timing reports use the audit
-pool. These groups bound repository demand but cannot reserve organization
-runners. See the
+test audit runs daily instead of immediately after each merge. Independent
+validation jobs use available GitHub runner capacity without shared job queues.
+The parent workflow still cancels superseded PR work; distinct candidate groups
+keep unrelated PRs and merge candidates independent. Scope selection, coverage,
+and final checks wait for their declared dependencies and an available runner.
+Organization runner limits can still cause waiting. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
-for queue retention, superseded-commit cancellation, and rollout limits.
+for cancellation and rollout behavior, including refreshing older PR branches.
 
 The image workflow has no top-level path filter. Its two automatic jobs always
 report an internal, fail-closed scope decision. Image, packaging, workflow, and
@@ -76,8 +74,10 @@ The AnyIO floor is 4.14.2 for ordinary installs and the application lock, coveri
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
 `.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
-dependencies daily and proposes updates for review. After changing Python
-dependency declarations, regenerate the CI pins with
+dependencies daily and proposes version updates in one cross-ecosystem
+`dependencies` PR, so overlapping manifests and generated locks are reviewed
+and tested together. After changing Python dependency declarations, regenerate
+the CI pins with
 `npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
 Dependabot security-update enablement is a separate repository setting; the
 version-update configuration does not enable it or merge its PRs automatically.
@@ -106,6 +106,12 @@ Use a fresh private directory outside the repository for each run. Install the
 scanner requirements into a separate virtual environment and put its `bin`
 directory on `PATH`; keep `npa/.venv/bin/python` for repository validation.
 The installer supports Linux x86-64 and verifies the Trivy archive's SHA-256.
+Trivy and gitleaks release downloads retry transient HTTP failures, including
+429 and 504, with curl's exponential backoff. Downloads still require their
+exact pinned SHA-256 before extraction; permanent HTTP failures, exhausted
+retries, checksum mismatches, and scanner findings fail the gate. When a hosted
+run fails during tool download, inspect that step and rerun only the failed
+jobs after the release host recovers.
 
 ```bash
 umask 077
