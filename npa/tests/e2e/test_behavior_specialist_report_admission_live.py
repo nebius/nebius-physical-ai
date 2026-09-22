@@ -31,12 +31,6 @@ def _settings() -> dict:
         "partition_uri",
         "absence_prefix",
         "upstream_root",
-        "evaluator_python",
-        "data_root",
-        "policy_root",
-        "policy_python",
-        "policy_checkpoint",
-        "policy_archive",
     }
     assert set(value) == required
     return value
@@ -74,32 +68,24 @@ def _base_command(settings: dict, workspace: Path) -> list[str]:
         "--worker-receipt-uri",
         f"{prefix}/worker.json",
     ]
-    command.extend(_runtime_arguments(settings))
+    command.extend(_runtime_arguments(settings, workspace))
     return command
 
 
-def _runtime_arguments(settings: dict) -> list[str]:
+def _runtime_arguments(settings: dict, workspace: Path) -> list[str]:
     return [
         "--upstream-root",
         settings["upstream_root"],
         "--evaluator-python",
-        settings["evaluator_python"],
+        sys.executable,
         "--data-root",
-        settings["data_root"],
+        str(workspace / "unused-data"),
         "--host",
         "127.0.0.1",
         "--port",
         "8000",
         "--policy-kind",
         "rlc-specialist",
-        "--policy-root",
-        settings["policy_root"],
-        "--policy-python",
-        settings["policy_python"],
-        "--policy-checkpoint",
-        settings["policy_checkpoint"],
-        "--policy-archive",
-        settings["policy_archive"],
         "--policy-execution-variant",
         "native",
     ]
@@ -114,8 +100,24 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, capture_output=True, env=environment)
 
 
-def _negative_receipt(path: Path) -> tuple[Path, str]:
+def _invalid_admission(path: Path) -> tuple[Path, str]:
     path.write_text('{"schema":"intentionally-invalid-negative-evidence"}\n')
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _shaped_equivalence(path: Path) -> tuple[Path, str]:
+    value = {
+        "schema": "npa.behavior.rlc-specialist-equivalence.v1",
+        "status": "reviewed_legacy_v1_to_runtime_v2_equivalent",
+        "legacy_policy": {},
+        "legacy_authorization": {},
+        "runtime_identity": {},
+        "control_plane_changes": [],
+        "claims": {},
+    }
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    value["receipt_sha256"] = hashlib.sha256(encoded).hexdigest()
+    path.write_text(json.dumps(value, sort_keys=True) + "\n")
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -133,24 +135,25 @@ def test_live_cli_rejects_missing_and_mismatched_evidence_before_claim(tmp_path)
     ]
     _assert_empty_prefix(settings)
 
-    invalid, digest = _negative_receipt(tmp_path / "invalid-receipt.json")
+    equivalent, equivalent_sha = _shaped_equivalence(tmp_path / "equivalence.json")
+    invalid, invalid_sha = _invalid_admission(tmp_path / "invalid-admission.json")
     mismatched_workspace = tmp_path / "mismatched"
     command = _base_command(settings, mismatched_workspace)
     command.extend(
         [
             "--policy-specialist-equivalence-receipt",
-            str(invalid),
+            str(equivalent),
             "--policy-specialist-equivalence-sha256",
-            digest,
+            equivalent_sha,
             "--policy-specialist-report-admission",
             str(invalid),
             "--policy-specialist-report-admission-sha256",
-            digest,
+            invalid_sha,
         ]
     )
     mismatched = _run(command)
     assert mismatched.returncode != 0
-    assert "Specialist equivalence receipt fields differ" in mismatched.stderr
+    assert "Specialist report admission fields differ" in mismatched.stderr
     assert sorted(path.name for path in mismatched_workspace.iterdir()) == [
         "panel.json",
         "partition.json",

@@ -89,24 +89,18 @@ The opt-in negative live regression uses an owner-only JSON file selected by
 `campaign-worker` CLI against real panel and partition objects, supplies a fresh
 empty S3 prefix, and proves missing or mismatched authorization exits before any
 case state, worker receipt, policy process, or evaluator output. The config holds
-the declaration URIs and the existing specialist runtime paths; the test does not
-read sealed baseline results or create positive report authorization.
+the declaration URIs and the pinned upstream source path; the test does not read
+sealed baseline results or create positive report authorization.
 
 Create the private file outside the repository, make it owner-readable only,
-and use the existing authorized runtime paths:
+and use the exact upstream source checkout:
 
 ```json
 {
   "panel_uri": "s3://<bucket>/<prefix>/reporting-panel.json",
   "partition_uri": "s3://<bucket>/<prefix>/reporting-partition.json",
   "absence_prefix": "s3://<bucket>/<fresh-negative-test-prefix>",
-  "upstream_root": "/path/to/BEHAVIOR-1K",
-  "evaluator_python": "/path/to/evaluator-python",
-  "data_root": "/path/to/dataset",
-  "policy_root": "/path/to/rlc-source",
-  "policy_python": "/path/to/policy-python",
-  "policy_checkpoint": "/path/to/checkpoint_2",
-  "policy_archive": "/path/to/specialist.zip"
+  "upstream_root": "/path/to/BEHAVIOR-1K"
 }
 ```
 

@@ -393,6 +393,15 @@ authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
 
+The negative BEHAVIOR specialist-report admission check uses
+`NPA_BEHAVIOR_SPECIALIST_ADMISSION_LIVE_CONFIG` to select an owner-only JSON
+file containing real panel and partition URIs, a fresh empty output prefix, and
+the pinned BEHAVIOR source root. It downloads only those declarations and proves
+missing or malformed authorization exits before runtime identity, case claims,
+or policy startup. See the
+[campaign evidence instructions](../docs/workbench/behavior-campaign.md) for the
+config schema and focused command.
+
 For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
 plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
 `NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the

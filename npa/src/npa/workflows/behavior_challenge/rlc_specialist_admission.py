@@ -313,18 +313,7 @@ def _receipt_digest(receipt: dict, field: str, label: str) -> None:
 
 
 def _verify_equivalence(receipt: dict, runtime: dict) -> None:
-    expected_keys = {
-        "schema",
-        "status",
-        "legacy_policy",
-        "legacy_authorization",
-        "runtime_identity",
-        "control_plane_changes",
-        "claims",
-        "receipt_sha256",
-    }
-    if set(receipt) != expected_keys:
-        raise ValueError("Specialist equivalence receipt fields differ")
+    expected_keys = _equivalence_fields()
     claims = {
         "runtime_files_byte_identical": True,
         "checkpoint_bytes_identical": True,
@@ -333,6 +322,8 @@ def _verify_equivalence(receipt: dict, runtime: dict) -> None:
         "fresh_process_lifecycle_identical": True,
         "official_24gb_qualified": False,
     }
+    if set(receipt) != expected_keys:
+        raise ValueError("Specialist equivalence receipt fields differ")
     if (
         receipt["schema"] != "npa.behavior.rlc-specialist-equivalence.v1"
         or receipt["status"] != "reviewed_legacy_v1_to_runtime_v2_equivalent"
@@ -344,6 +335,19 @@ def _verify_equivalence(receipt: dict, runtime: dict) -> None:
     ):
         raise ValueError("Specialist legacy-to-runtime equivalence differs")
     _receipt_digest(receipt, "receipt_sha256", "Specialist equivalence receipt")
+
+
+def _equivalence_fields() -> set[str]:
+    return {
+        "schema",
+        "status",
+        "legacy_policy",
+        "legacy_authorization",
+        "runtime_identity",
+        "control_plane_changes",
+        "claims",
+        "receipt_sha256",
+    }
 
 
 def _task_panel(value: object, split: str, label: str) -> dict:
@@ -684,7 +688,20 @@ def _verify_admission(
     panel: dict,
     equivalence_sha256: str,
 ) -> None:
-    keys = {
+    keys = _admission_fields()
+    if set(receipt) != keys:
+        raise ValueError("Specialist report admission fields differ")
+    report = _task_panel(receipt["report_panel"], "report", "Specialist report panel")
+    if report != panel or report["policy"] != _LEGACY_POLICY:
+        raise ValueError("Specialist report panel differs from frozen candidate")
+    _verify_admission_chain(storage, workspace, receipt, report)
+    if not _admission_header_matches(receipt, equivalence_sha256):
+        raise ValueError("Specialist report authorization scope differs")
+    _receipt_digest(receipt, "admission_sha256", "Specialist report admission")
+
+
+def _admission_fields() -> set[str]:
+    return {
         "schema",
         "status",
         "legacy_policy",
@@ -700,15 +717,6 @@ def _verify_admission(
         "official_24gb_qualified",
         "admission_sha256",
     }
-    if set(receipt) != keys:
-        raise ValueError("Specialist report admission fields differ")
-    report = _task_panel(receipt["report_panel"], "report", "Specialist report panel")
-    if report != panel or report["policy"] != _LEGACY_POLICY:
-        raise ValueError("Specialist report panel differs from frozen candidate")
-    _verify_admission_chain(storage, workspace, receipt, report)
-    if not _admission_header_matches(receipt, equivalence_sha256):
-        raise ValueError("Specialist report authorization scope differs")
-    _receipt_digest(receipt, "admission_sha256", "Specialist report admission")
 
 
 def _admission_header_matches(receipt: dict, equivalence_sha256: str) -> bool:
@@ -737,16 +745,33 @@ def _report_paths(args) -> tuple[Path, str, Path, str]:
     return values
 
 
-def _load_report_receipts(args, runtime: dict) -> tuple[dict, str, str]:
+def _load_report_receipts(args) -> tuple[dict, str, dict, str]:
     equivalent_path, equivalent_sha, admission_path, admission_sha = _report_paths(args)
     equivalence, equivalence_file_sha = _json_identity(
         equivalent_path, equivalent_sha, "Specialist equivalence receipt"
     )
-    _verify_equivalence(equivalence, runtime)
     report_admission, _ = _json_identity(
         admission_path, admission_sha, "Specialist report admission"
     )
-    return report_admission, equivalence_file_sha, admission_sha
+    return equivalence, equivalence_file_sha, report_admission, admission_sha
+
+
+def _preflight_report_receipts(
+    equivalence: dict, equivalence_sha: str, report_admission: dict
+) -> None:
+    if set(equivalence) != _equivalence_fields():
+        raise ValueError("Specialist equivalence receipt fields differ")
+    if (
+        equivalence["schema"] != "npa.behavior.rlc-specialist-equivalence.v1"
+        or equivalence["status"] != "reviewed_legacy_v1_to_runtime_v2_equivalent"
+    ):
+        raise ValueError("Specialist equivalence receipt envelope differs")
+    _receipt_digest(equivalence, "receipt_sha256", "Specialist equivalence receipt")
+    if set(report_admission) != _admission_fields():
+        raise ValueError("Specialist report admission fields differ")
+    if not _admission_header_matches(report_admission, equivalence_sha):
+        raise ValueError("Specialist report admission envelope differs")
+    _receipt_digest(report_admission, "admission_sha256", "Specialist report admission")
 
 
 def verify_specialist_report_admission(
@@ -772,11 +797,12 @@ def verify_specialist_report_admission(
         if any(_report_paths_present(args)):
             raise ValueError("Specialist development does not accept report receipts")
         return None
-    _report_paths(args)
-    runtime = specialist_runtime_identity(args)
-    report_admission, equivalence_sha, admission_sha = _load_report_receipts(
-        args, runtime
+    equivalence, equivalence_sha, report_admission, admission_sha = (
+        _load_report_receipts(args)
     )
+    _preflight_report_receipts(equivalence, equivalence_sha, report_admission)
+    runtime = specialist_runtime_identity(args)
+    _verify_equivalence(equivalence, runtime)
     _verify_admission(
         storage, workspace, report_admission, valid_panel, equivalence_sha
     )

@@ -505,7 +505,50 @@ def test_equivalence_rejects_runtime_identity_change(admitted):
     args.policy_specialist_equivalence_sha256 = _write(
         args.policy_specialist_equivalence_receipt, receipt
     )["sha256"]
+    report_admission = json.loads(args.policy_specialist_report_admission.read_text())
+    report_admission["equivalence_receipt_sha256"] = (
+        args.policy_specialist_equivalence_sha256
+    )
+    _rewrite_admission(args, report_admission)
     with pytest.raises(ValueError, match="equivalence differs"):
+        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_bad_receipt_schema_rejects_before_runtime_identity(admitted, monkeypatch):
+    args, panel, _, storage, workspace = admitted
+    args.policy_specialist_equivalence_sha256 = _write(
+        args.policy_specialist_equivalence_receipt,
+        {"schema": "invalid-negative-receipt"},
+    )["sha256"]
+    monkeypatch.setattr(
+        admission,
+        "specialist_runtime_identity",
+        lambda *_: (_ for _ in ()).throw(AssertionError("runtime identity called")),
+    )
+    with pytest.raises(ValueError, match="equivalence receipt fields differ"):
+        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_bad_receipt_bytes_reject_before_runtime_identity(admitted, monkeypatch):
+    args, panel, _, storage, workspace = admitted
+    args.policy_specialist_equivalence_receipt.write_text("{}\n")
+    monkeypatch.setattr(
+        admission,
+        "specialist_runtime_identity",
+        lambda *_: (_ for _ in ()).throw(AssertionError("runtime identity called")),
+    )
+    with pytest.raises(ValueError, match="bytes differ from the frozen receipt"):
+        admission.verify_specialist_report_admission(args, panel, storage, workspace)
+
+
+def test_valid_receipt_envelopes_still_require_runtime_identity(admitted, monkeypatch):
+    args, panel, _, storage, workspace = admitted
+    monkeypatch.setattr(
+        admission,
+        "specialist_runtime_identity",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("runtime identity required")),
+    )
+    with pytest.raises(RuntimeError, match="runtime identity required"):
         admission.verify_specialist_report_admission(args, panel, storage, workspace)
 
 
