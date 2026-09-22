@@ -374,9 +374,15 @@ def evaluate_partition(args) -> dict:
     storage = StorageClient.from_environment()
     panel, partition = _worker_declarations(args, storage, workspace)
     if args.policy_kind == "rlc-specialist" and panel["split"] == "report":
-        from .rlc_specialist_admission import verify_specialist_report_admission
+        from .rlc_specialist_admission import (
+            verify_specialist_preclaim_endpoint,
+            verify_specialist_report_admission,
+        )
 
-        verify_specialist_report_admission(args, panel)
+        verify_specialist_report_admission(
+            args, panel, storage, workspace / "report-admission"
+        )
+        verify_specialist_preclaim_endpoint(args, panel)
     store = CaseStore(storage, args.output_path, panel["panel_id"])
     records = _execute_partition(args, panel, partition, store, workspace)
     verify_upstream(args.upstream_root)

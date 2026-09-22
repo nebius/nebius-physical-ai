@@ -74,11 +74,15 @@ The worker recomputes that identity and checks the checkpoint archive bytes
 before starting the policy. This prevents a changed controller from inheriting
 an earlier policy's completed cases.
 
-Released-specialist reporting adds two independently frozen receipts and their
-expected SHA-256 values. The worker validates their complete development,
-baseline-reporting, selection, and runtime-equivalence graph before constructing
-the durable case store. Receipt paths authorize the campaign; they are excluded
-from the specialist runtime identity and never enter the policy command.
+Released-specialist reporting adds independently frozen receipts and their
+expected SHA-256 values. Before constructing the durable case store, the worker
+downloads every development and baseline original, verifies its declared hash,
+fully decodes every video, rebuilds each aggregate, and recomputes the frozen
+baseline selection. Candidate selection must bind only that verified development
+evidence; baseline unsealing and report authorization are later, separately
+hashed steps. The worker also requires a free loopback policy port before any
+claim. Receipt paths authorize the campaign; they are excluded from the
+specialist runtime identity and never enter the policy command.
 
 ## Durable execution and recovery
 

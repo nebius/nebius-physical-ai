@@ -6,11 +6,11 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import socket
 
 from .campaign import (
     canonical_digest,
     validate_panel,
-    validate_panel_aggregate,
 )
 from .protocol import UPSTREAM_COMMIT, WRAPPER, file_digest
 
@@ -299,27 +299,6 @@ def _verify_equivalence(receipt: dict, runtime: dict) -> None:
     _receipt_digest(receipt, "receipt_sha256", "Specialist equivalence receipt")
 
 
-def _verified_panel(value: object, panel: dict, label: str) -> dict:
-    if not isinstance(value, dict) or set(value) != {
-        "schema",
-        "aggregate",
-        "verification",
-    }:
-        raise ValueError(f"{label} verified panel fields differ")
-    verification = {
-        "all_original_bytes_downloaded_and_hashed": True,
-        "all_original_videos_fully_decoded": True,
-        "case_count": 10,
-    }
-    if (
-        value["schema"] != "npa.behavior.verified-panel.v1"
-        or value["verification"] != verification
-    ):
-        raise ValueError(f"{label} original artifact verification is incomplete")
-    validate_panel_aggregate(value["aggregate"], panel)
-    return value
-
-
 def _task_panel(value: object, split: str, label: str) -> dict:
     panel = validate_panel(value)
     expected_instances = range(311, 321) if split == "development" else range(301, 311)
@@ -335,18 +314,120 @@ def _task_panel(value: object, split: str, label: str) -> dict:
     return panel
 
 
-def _verify_candidate_selection(value: object, panel: dict, aggregate: dict) -> str:
+def _reference(value: object, label: str) -> tuple[dict, str]:
+    if not isinstance(value, dict) or set(value) != {"path", "sha256"}:
+        raise ValueError(f"{label} reference fields differ")
+    path = Path(value["path"])
+    if not path.is_absolute():
+        raise ValueError(f"{label} reference path must be absolute")
+    return _json_identity(path, value["sha256"], label)
+
+
+def _bytes_identity(payload: bytes, uri: str) -> dict:
+    return {
+        "uri": uri,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+
+def _remote_identity(storage, uri: str) -> tuple[dict, bytes]:
+    saved = storage.read_bytes_with_etag(uri)
+    if saved is None:
+        raise ValueError(f"Original evidence is missing at {uri}")
+    return _bytes_identity(saved[0], uri), saved[0]
+
+
+def _local_identity(path: Path, uri: str) -> dict:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Verified original artifact must be a regular file")
+    return {"uri": uri, "sha256": file_digest(path), "bytes": path.stat().st_size}
+
+
+def _case_inventory(store, version, output: Path) -> list[dict]:
+    prefix = store.artifact_prefix(version)
+    validation, validation_bytes = _remote_identity(
+        store.storage, f"{prefix}/validation.json"
+    )
+    provenance, provenance_bytes = _remote_identity(
+        store.storage, f"{prefix}/provenance.json"
+    )
+    validation_record = json.loads(validation_bytes)
+    provenance_record = json.loads(provenance_bytes)
+    if not isinstance(validation_record.get("files"), dict):
+        raise ValueError("Validation original file map is invalid")
+    if not isinstance(provenance_record, dict):
+        raise ValueError("Provenance original file map is invalid")
+    rows = [validation, provenance]
+    rows.extend(
+        _local_identity(output / relative, f"{prefix}/{relative}")
+        for relative in sorted(validation_record["files"])
+    )
+    rows.extend(
+        _local_identity(output / name, f"{prefix}/provenance/{name}")
+        for name in sorted(provenance_record)
+    )
+    return rows
+
+
+def _actual_panel_evidence(storage, declared: dict, workspace: Path) -> dict:
+    from .campaign_runner import aggregate_stored_panel, _case_directory
+    from .case_store import CaseStore
+
+    panel = validate_panel(declared["panel"])
+    store = CaseStore(storage, declared["state_prefix"], panel["panel_id"])
+    verified = aggregate_stored_panel(panel, store, workspace)
+    inventory = []
+    for case in panel["cases"]:
+        version = store.read(case)
+        if version is None:
+            raise ValueError("Complete panel required before evidence verification")
+        inventory.extend(
+            _case_inventory(store, version, _case_directory(workspace, version))
+        )
+    uris = [row["uri"] for row in inventory]
+    if len(uris) != len(set(uris)):
+        raise ValueError("Verified panel inventory contains duplicate artifact URIs")
+    payload = {
+        "schema": "npa.behavior.verified-panel-evidence.v1",
+        "panel": panel,
+        "state_prefix": declared["state_prefix"],
+        "seal_sha256": declared["seal_sha256"],
+        "aggregate": verified["aggregate"],
+        "inventory": sorted(inventory, key=lambda row: row["uri"]),
+    }
+    return {**payload, "receipt_sha256": canonical_digest(payload)}
+
+
+def _verify_panel_evidence(
+    storage, reference: object, workspace: Path, label: str
+) -> tuple[dict, str]:
+    declared, digest = _reference(reference, label)
+    keys = {
+        "schema",
+        "panel",
+        "state_prefix",
+        "seal_sha256",
+        "aggregate",
+        "inventory",
+        "receipt_sha256",
+    }
+    if not isinstance(declared, dict) or set(declared) != keys:
+        raise ValueError(f"{label} fields differ")
+    actual = _actual_panel_evidence(storage, declared, workspace)
+    if declared != actual:
+        raise ValueError(f"{label} differs from downloaded original evidence")
+    return actual, digest
+
+
+def _verify_candidate_selection(value: object, panel: dict, evidence_sha: str) -> str:
     keys = {
         "schema",
         "status",
         "policy_identity_sha256",
         "development_panel_id",
-        "development_aggregate_sha256",
+        "development_evidence_sha256",
         "selection_inputs",
-        "report_evidence_used",
-        "baseline_evidence_used",
-        "frozen_before_baseline_unseal",
-        "immutable",
         "selection_sha256",
     }
     if not isinstance(value, dict) or set(value) != keys:
@@ -356,12 +437,8 @@ def _verify_candidate_selection(value: object, panel: dict, aggregate: dict) -> 
         or value["status"] != "development_only_candidate_selected"
         or value["policy_identity_sha256"] != _LEGACY_POLICY["identity_sha256"]
         or value["development_panel_id"] != panel["panel_id"]
-        or value["development_aggregate_sha256"] != aggregate["aggregate_sha256"]
+        or value["development_evidence_sha256"] != evidence_sha
         or value["selection_inputs"] != ["development"]
-        or value["report_evidence_used"] is not False
-        or value["baseline_evidence_used"] is not False
-        or value["frozen_before_baseline_unseal"] is not True
-        or value["immutable"] is not True
     ):
         raise ValueError(
             "Specialist candidate selection is not immutable development-only evidence"
@@ -370,65 +447,205 @@ def _verify_candidate_selection(value: object, panel: dict, aggregate: dict) -> 
     return value["selection_sha256"]
 
 
-def _verify_baseline_arm(value: object, name: str) -> tuple[dict, dict]:
-    keys = {"policy_kind", "panel", "verified_panel"}
+def _verify_seal(reference: object, arm: str, panel: dict) -> str:
+    value, digest = _reference(reference, f"{arm} baseline seal")
+    expected = {
+        "schema",
+        "status",
+        "arm",
+        "panel_id",
+        "policy_identity_sha256",
+        "seal_sha256",
+    }
     if (
-        not isinstance(value, dict)
-        or set(value) != keys
-        or value["policy_kind"] != name
+        set(value) != expected
+        or value["schema"] != "npa.behavior.baseline-results-seal.v1"
+        or value["status"] != "frozen_before_results_unseal"
+        or value["arm"] != arm
+        or value["panel_id"] != panel["panel_id"]
+        or value["policy_identity_sha256"] != panel["policy"]["identity_sha256"]
     ):
-        raise ValueError(f"Reporting baseline {name} fields differ")
-    panel = _task_panel(value["panel"], "report", f"Reporting baseline {name}")
-    verified = _verified_panel(
-        value["verified_panel"], panel, f"Reporting baseline {name}"
+        raise ValueError(f"{arm} baseline seal differs")
+    _receipt_digest(value, "seal_sha256", f"{arm} baseline seal")
+    return digest
+
+
+def _same_cohort(panels: dict[str, dict], report: dict) -> None:
+    fields = (
+        "upstream_commit",
+        "wrapper",
+        "registry_sha256",
+        "split",
+        "selected_tasks",
+        "cases",
     )
-    return panel, verified
+    expected = {field: report[field] for field in fields}
+    if any(
+        {field: panel[field] for field in fields} != expected
+        for panel in panels.values()
+    ):
+        raise ValueError(
+            "Reporting baselines and specialist must use one frozen cohort"
+        )
 
 
-def _verify_baseline_selection(value: object, candidate_sha256: str) -> None:
+def _verify_unseal(
+    value: object, candidate_sha: str, seals: dict, evidence: dict
+) -> None:
     keys = {
         "schema",
         "status",
         "candidate_selection_sha256",
-        "arms",
-        "selected_arm",
-        "selected_policy_identity_sha256",
-        "selection_sha256",
+        "baseline_seal_sha256",
+        "baseline_evidence_sha256",
+        "unseal_sha256",
     }
     if (
         not isinstance(value, dict)
         or set(value) != keys
-        or set(value.get("arms", {})) != {"native", "comet12", "comet50"}
+        or value["schema"] != "npa.behavior.baseline-results-unseal.v1"
+        or value["status"]
+        != "candidate_frozen_then_three_baselines_verified_then_unsealed"
+        or value["candidate_selection_sha256"] != candidate_sha
+        or value["baseline_seal_sha256"] != seals
+        or value["baseline_evidence_sha256"] != evidence
     ):
-        raise ValueError("Reporting baseline selection fields differ")
-    panels = {
-        name: _verify_baseline_arm(arm, name)[0] for name, arm in value["arms"].items()
+        raise ValueError("Baseline unseal ordering differs")
+    _receipt_digest(value, "unseal_sha256", "Baseline unseal")
+
+
+def _baseline_metrics(evidence: dict) -> dict:
+    aggregate = evidence["aggregate"]
+    if type(aggregate["success_count"]) is not int:
+        raise ValueError("B* requires full-success counts for every baseline")
+    return {
+        "mean_q": aggregate["mean_q"],
+        "full_successes": aggregate["success_count"],
+        "protocol_failures": 0,
     }
-    identities = {panel["policy"]["identity_sha256"] for panel in panels.values()}
-    selected = value["selected_arm"]
+
+
+def _select_bstar(metrics: dict[str, dict]) -> str:
+    ranks = {
+        arm: (row["mean_q"], row["full_successes"], -row["protocol_failures"])
+        for arm, row in metrics.items()
+    }
+    best = max(ranks.values())
+    winners = [arm for arm, rank in ranks.items() if rank == best]
+    if len(winners) != 1:
+        raise ValueError("Frozen B* criteria do not identify a unique baseline")
+    return winners[0]
+
+
+def _verify_bstar(value: object, unseal_file_sha: str, evidence: dict) -> None:
+    metrics = {arm: _baseline_metrics(receipt) for arm, receipt in evidence.items()}
+    selected = _select_bstar(metrics)
+    keys = {
+        "schema",
+        "status",
+        "unseal_sha256",
+        "criteria",
+        "metrics",
+        "selected_arm",
+        "selected_policy_identity_sha256",
+        "bstar_sha256",
+    }
+    criteria = ["maximum_mean_q", "maximum_full_successes", "minimum_protocol_failures"]
     if (
-        value["schema"] != "npa.behavior.reporting-baseline-selection.v1"
-        or value["status"] != "complete_frozen_reporting_baseline_selected"
-        or value["candidate_selection_sha256"] != candidate_sha256
-        or selected not in panels
-        or len(identities) != 3
+        not isinstance(value, dict)
+        or set(value) != keys
+        or value["schema"] != "npa.behavior.reporting-bstar-selection.v1"
+        or value["status"] != "recomputed_unique_released_baseline_selected"
+        or value["unseal_sha256"] != unseal_file_sha
+        or value["criteria"] != criteria
+        or value["metrics"] != metrics
+        or value["selected_arm"] != selected
         or value["selected_policy_identity_sha256"]
-        != panels[selected]["policy"]["identity_sha256"]
+        != evidence[selected]["panel"]["policy"]["identity_sha256"]
     ):
-        raise ValueError("Reporting baseline selection is incomplete or inconsistent")
-    _receipt_digest(value, "selection_sha256", "Reporting baseline selection")
+        raise ValueError("Frozen B* receipt differs from recomputed selection")
+    _receipt_digest(value, "bstar_sha256", "Frozen B* selection")
 
 
-def _verify_admission(receipt: dict, panel: dict, equivalence_sha256: str) -> None:
+def _baseline_inputs(
+    storage, receipt: dict, workspace: Path
+) -> tuple[dict, dict, dict, dict]:
+    arms = {"native", "comet12", "comet50"}
+    if set(receipt["baseline_seals"]) != arms:
+        raise ValueError("Admission requires all three baseline seals")
+    if set(receipt["baseline_evidence"]) != arms:
+        raise ValueError("Admission requires all three baseline evidence receipts")
+    evidence, evidence_shas, seal_shas, panels = {}, {}, {}, {}
+    for arm in sorted(arms):
+        evidence[arm], evidence_shas[arm] = _verify_panel_evidence(
+            storage,
+            receipt["baseline_evidence"][arm],
+            workspace / arm,
+            f"{arm} evidence",
+        )
+        panels[arm] = _task_panel(evidence[arm]["panel"], "report", f"{arm} panel")
+        seal_shas[arm] = _verify_seal(receipt["baseline_seals"][arm], arm, panels[arm])
+        if evidence[arm]["seal_sha256"] != seal_shas[arm]:
+            raise ValueError(f"{arm} evidence is not bound to its frozen seal")
+    return evidence, evidence_shas, seal_shas, panels
+
+
+def _verify_admission_chain(
+    storage, workspace: Path, receipt: dict, report: dict
+) -> None:
+    development, development_sha = _verify_panel_evidence(
+        storage,
+        receipt["development_evidence"],
+        workspace / "development",
+        "Development evidence",
+    )
+    development_panel = _task_panel(
+        development["panel"], "development", "Development panel"
+    )
+    if development["seal_sha256"] is not None:
+        raise ValueError("Development evidence must precede baseline sealing")
+    selection, selection_sha = _reference(
+        receipt["candidate_selection"], "Candidate selection"
+    )
+    _verify_candidate_selection(selection, development_panel, development_sha)
+    evidence, evidence_shas, seal_shas, panels = _baseline_inputs(
+        storage, receipt, workspace
+    )
+    _same_cohort(panels, report)
+    identities = {value["policy"]["identity_sha256"] for value in panels.values()}
+    if len(identities) != 3 or _LEGACY_POLICY["identity_sha256"] in identities:
+        raise ValueError("Reporting baseline policy identities are not distinct")
+    if development_panel["registry_sha256"] != report["registry_sha256"]:
+        raise ValueError("Development and reporting registries differ")
+    development_ids = {case["case_id"] for case in development_panel["cases"]}
+    if development_ids & {case["case_id"] for case in report["cases"]}:
+        raise ValueError("Development and reporting cases overlap")
+    unseal, unseal_file_sha = _reference(receipt["unseal"], "Baseline unseal")
+    _verify_unseal(unseal, selection_sha, seal_shas, evidence_shas)
+    bstar, _ = _reference(receipt["bstar"], "Frozen B* selection")
+    _verify_bstar(bstar, unseal_file_sha, evidence)
+    if development_panel["policy"] != _LEGACY_POLICY:
+        raise ValueError("Development panel uses another specialist policy")
+
+
+def _verify_admission(
+    storage,
+    workspace: Path,
+    receipt: dict,
+    panel: dict,
+    equivalence_sha256: str,
+) -> None:
     keys = {
         "schema",
         "status",
         "legacy_policy",
         "equivalence_receipt_sha256",
-        "development_panel",
-        "development_verified_panel",
+        "development_evidence",
         "candidate_selection",
-        "baseline_selection",
+        "baseline_seals",
+        "baseline_evidence",
+        "unseal",
+        "bstar",
         "report_panel",
         "scope",
         "official_24gb_qualified",
@@ -436,37 +653,13 @@ def _verify_admission(receipt: dict, panel: dict, equivalence_sha256: str) -> No
     }
     if set(receipt) != keys:
         raise ValueError("Specialist report admission fields differ")
-    development, report = _verify_admission_panels(receipt)
-    overlap = set(case["case_id"] for case in report["cases"]) & set(
-        case["case_id"] for case in development["cases"]
-    )
-    if (
-        development["policy"] != _LEGACY_POLICY
-        or report["policy"] != _LEGACY_POLICY
-        or report != panel
-        or overlap
-    ):
-        raise ValueError("Specialist report panel differs or overlaps development")
+    report = _task_panel(receipt["report_panel"], "report", "Specialist report panel")
+    if report != panel:
+        raise ValueError("Specialist report panel differs from frozen candidate")
+    _verify_admission_chain(storage, workspace, receipt, report)
     if not _admission_header_matches(receipt, equivalence_sha256):
         raise ValueError("Specialist report authorization scope differs")
     _receipt_digest(receipt, "admission_sha256", "Specialist report admission")
-
-
-def _verify_admission_panels(receipt: dict) -> tuple[dict, dict]:
-    development = _task_panel(
-        receipt["development_panel"], "development", "Specialist development panel"
-    )
-    verified = _verified_panel(
-        receipt["development_verified_panel"],
-        development,
-        "Specialist development panel",
-    )
-    candidate_sha = _verify_candidate_selection(
-        receipt["candidate_selection"], development, verified["aggregate"]
-    )
-    _verify_baseline_selection(receipt["baseline_selection"], candidate_sha)
-    report = _task_panel(receipt["report_panel"], "report", "Specialist report panel")
-    return development, report
 
 
 def _admission_header_matches(receipt: dict, equivalence_sha256: str) -> bool:
@@ -495,12 +688,28 @@ def _report_paths(args) -> tuple[Path, str, Path, str]:
     return values
 
 
-def verify_specialist_report_admission(args, panel: dict) -> dict | None:
+def _load_report_receipts(args, runtime: dict) -> tuple[dict, str, str]:
+    equivalent_path, equivalent_sha, admission_path, admission_sha = _report_paths(args)
+    equivalence, equivalence_file_sha = _json_identity(
+        equivalent_path, equivalent_sha, "Specialist equivalence receipt"
+    )
+    _verify_equivalence(equivalence, runtime)
+    report_admission, _ = _json_identity(
+        admission_path, admission_sha, "Specialist report admission"
+    )
+    return report_admission, equivalence_file_sha, admission_sha
+
+
+def verify_specialist_report_admission(
+    args, panel: dict, storage, workspace: Path
+) -> dict | None:
     """Validate report authorization before policy startup or any case claim.
 
     Args:
         args: Campaign worker arguments containing pinned receipt paths and hashes.
         panel: Actual immutable panel loaded by the worker.
+        storage: Storage client used to retrieve original campaign evidence.
+        workspace: Empty local directory for evidence reconstruction.
     Returns:
         Validated runtime identity for report, or ``None`` for development.
     Raises:
@@ -514,23 +723,50 @@ def verify_specialist_report_admission(args, panel: dict) -> dict | None:
         if any(_report_paths_present(args)):
             raise ValueError("Specialist development does not accept report receipts")
         return None
-    equivalent_path, equivalent_sha, admission_path, admission_sha = _report_paths(args)
     runtime = specialist_runtime_identity(args)
-    equivalence, digest = _json_identity(
-        equivalent_path, equivalent_sha, "Specialist equivalence receipt"
+    report_admission, equivalence_sha, admission_sha = _load_report_receipts(
+        args, runtime
     )
-    _verify_equivalence(equivalence, runtime)
-    admission, _ = _json_identity(
-        admission_path, admission_sha, "Specialist report admission"
+    _verify_admission(
+        storage, workspace, report_admission, valid_panel, equivalence_sha
     )
-    _verify_admission(admission, valid_panel, digest)
     args._specialist_report_runtime_identity = runtime
     args._specialist_report_panel_id = valid_panel["panel_id"]
     args._specialist_report_receipts = {
-        "equivalence": equivalent_sha,
+        "equivalence": equivalence_sha,
         "admission": admission_sha,
     }
     return runtime
+
+
+def verify_specialist_preclaim_endpoint(args, panel: dict) -> None:
+    """Reject external or occupied specialist endpoints before case-store creation.
+
+    Args:
+        args: Campaign worker arguments containing the loopback host and port.
+        panel: Actual immutable panel loaded by the worker.
+    Returns:
+        None.
+    Raises:
+        ValueError: Host, case ports, or existing endpoint state is unsafe.
+    """
+    from .policy import _healthy
+
+    valid = validate_panel(panel)
+    ports = {case.get("policy_port") for case in valid["cases"]}
+    if getattr(args, "host", None) not in {"127.0.0.1", "localhost"}:
+        raise ValueError("Specialist report policy host must be loopback")
+    if ports - {None, args.port}:
+        raise ValueError("Specialist report panel contains another policy port")
+    if _healthy(args.port):
+        raise ValueError("Specialist report policy endpoint is already occupied")
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", args.port))
+    except OSError as exc:
+        raise ValueError(
+            "Specialist report policy port is occupied by another service"
+        ) from exc
 
 
 def verify_specialist_report_token(args, panel: dict) -> None:
