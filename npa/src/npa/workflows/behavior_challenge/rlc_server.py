@@ -137,30 +137,40 @@ def parser() -> argparse.ArgumentParser:
     return value
 
 
+def _verify_specialist_options(args, asset: Path | None) -> bool:
+    specialist = getattr(args, "specialist_state_contract", False)
+    if not specialist:
+        return False
+    from rlc_specialist import SUPPORTED_TASK_IDS
+
+    if asset is not None:
+        raise ValueError("Specialist state contract rejects correlation overrides")
+    if args.execution_variant != NATIVE_EXECUTION:
+        raise ValueError("Specialist state contract requires native execution")
+    if args.task_id not in SUPPORTED_TASK_IDS:
+        raise ValueError("Specialist state contract rejects unsupported task")
+    return True
+
+
+def _verify_specialist_wrapper(policy) -> None:
+    from rlc_specialist import verify_loaded_state
+
+    native = getattr(policy, "base_policy", None)
+    if native is None or native is not getattr(policy, "policy", None):
+        raise ValueError("Specialist native wrapper identity differs")
+    verify_loaded_state(native)
+
+
 def _load_stock_policy(args):
     asset = args.correlation_asset
     expected_sha256 = args.correlation_sha256
-    specialist = getattr(args, "specialist_state_contract", False)
     if (asset is None) != (expected_sha256 is None):
         raise ValueError("stock correlation requires both artifact and SHA-256")
-    if specialist:
-        from rlc_specialist import SUPPORTED_TASK_IDS
-
-        if asset is not None:
-            raise ValueError("Specialist state contract rejects correlation overrides")
-        if args.execution_variant != NATIVE_EXECUTION:
-            raise ValueError("Specialist state contract requires native execution")
-        if args.task_id not in SUPPORTED_TASK_IDS:
-            raise ValueError("Specialist state contract rejects unsupported task")
+    specialist = _verify_specialist_options(args, asset)
     if asset is None:
         policy = _load_policy(args)
         if specialist:
-            from rlc_specialist import verify_loaded_state
-
-            native = getattr(policy, "base_policy", None)
-            if native is None or native is not getattr(policy, "policy", None):
-                raise ValueError("Specialist native wrapper identity differs")
-            verify_loaded_state(native)
+            _verify_specialist_wrapper(policy)
         return policy, None
     from b1k.models.pi_behavior import PiBehavior
     from rlc_correlation import (

@@ -31,6 +31,8 @@ def _git_blob_sha1(path: Path) -> str:
 def checkpoint_manifest() -> dict:
     """Load the immutable public specialist checkpoint inventory.
 
+    Args:
+        None.
     Returns:
         The validated specialist checkpoint manifest.
     Raises:
