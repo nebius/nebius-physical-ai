@@ -153,6 +153,7 @@ likewise predates its current coherent release.
 | `npa-lichtblick` | CPU | CPU | CPU | CPU | CPU |
 | `npa-foxglove-embed` | CPU | CPU | CPU | CPU | CPU |
 | `npa-sonic-export` | CPU | CPU | CPU | CPU | CPU |
+| `npa-open3d` (unpublished registration candidate) | CPU | CPU | CPU | CPU | CPU |
 
 **verified** — the release represented by the cell ran a real capability workload on that GPU; follow the cell's linked evidence.
 **historical evidence** — a real capability workload ran on an earlier release, but does not qualify the current accepted bytes.
@@ -168,6 +169,13 @@ Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separat
 proprietary NRE consumer on RTX PRO 6000; CPU compatibility does not make that
 rendering workflow portable to B200/B300. Public release and full live-workflow
 acceptance remain pending for the ingestion candidate.
+
+`npa-open3d` is CPU by construction, not by omission: Open3D's
+`pipelines.registration` and geometry APIs have no CUDA path, so its workflow
+stages request no accelerator and would waste one if they did. Its capability is
+proven locally (a real six-stage S3 run and a golden eval that checks the
+recovered pose against ground truth); public release remains pending exact-image
+byte scans.
 
 ### Rendering is not portable across these columns
 

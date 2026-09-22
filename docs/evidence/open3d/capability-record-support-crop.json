@@ -1,0 +1,262 @@
+{
+  "artifact_hashes": {
+    "mesh-baseline/mesh.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
+    "mesh-baseline/mesh_uncropped.ply": "6112bc2311caefa4c104ea5f145138dc31486acad1d1e96839accf7f848f6a0f",
+    "mesh-baseline/result.json": "bb036a74c6cc4fe4253d048e5c0188ed5153e962618e99c907c84643beb88e13",
+    "mesh/mesh.ply": "131e9963abfcb66968a0b299413ff2cba19f60ccd266d8e77e945a4a1e7cc6fd",
+    "mesh/mesh_uncropped.ply": "98e71faa59e49dc39ec47aef63ecda1aa4a68c028d2cbad59693c84f13ddd586",
+    "mesh/result.json": "3d68b0b6738454ad3a138dd4fa74f2aad9cc1d954f843cabb7e2cfe64d526a74",
+    "multiway/fused.ply": "827049f2efb5ae5c7c301dbabbca7a00bafaa6ceea42e2a634a8124dd022ca52",
+    "multiway/pairs.jsonl": "56ce8a3b5d61ad91b2c1e16fdeba51519d7cb61f9aaf6e99f520d3c840c40b26",
+    "multiway/pose_graph.json": "fc0b59c79e341e3027bf0dd536ee1d118443820728e89f658b44b9ab6935739f",
+    "multiway/result.json": "74dadb82af2ba4b285225ae2e6b6ae1109aaa4907fd3b5681f403f81f94c3986",
+    "prepared/fragments/cloud_bin_0.pcd": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+    "prepared/fragments/cloud_bin_1.pcd": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+    "prepared/fragments/cloud_bin_2.pcd": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+    "prepared/manifest.json": "d2f9215713dc1cb3a3de5341696a0b94ac4f056dc0613e2e5f68130faa47d4f6",
+    "registered/aligned/cloud_bin_0__cloud_bin_1.ply": "56f877ff0a20296877234296ee3e439b7f3b8b3c55b684eca78e6084bb48d2ea",
+    "registered/aligned/cloud_bin_1__cloud_bin_2.ply": "b0d4bc2e357311ae6fb4d9fd07a715c83e34cca3a09bca6a2e27f4b8f55cd101",
+    "registered/pairs.jsonl": "40cb11818e53b3774821e7eee25d836be0cd907f3f0574e27313e35eb54e35ff",
+    "registered/result.json": "7f10baab26a3e3cd00b3cc26645ea9672bd0185956db86f83f53537ea1c40398",
+    "review/point_cloud.rrd": "862007dfbee10457d47e6f606b4ab7a61f5346be2c25c740d32378e45a7dd0a6",
+    "review/rrd-manifest.json": "c1562966e26920bf350f0acadd0f46e0d95af213fb6e33a60da87571acaf6cae",
+    "validated/validation.json": "75c62f59aa2680ba9dfb0952e0ff80d044152c7fc442f12b0cc61a4f931ddb78"
+  },
+  "capability": "Open3D point-cloud registration, unsupported-surface rejection, and reviewable recording",
+  "claim_scope": {
+    "explicitly_not_claimed": [
+      "Not a generally better reconstruction.",
+      "Not improved held-out accuracy: held-out tails and coverage get worse, and that is reported above.",
+      "Not collision-ready. Not navigation-ready. Not watertight, not edge-manifold.",
+      "Not visually accepted: no VLM judge passed its controls.",
+      "Not proven on a Kubernetes/SkyPilot cluster; executed as a local container against real S3."
+    ],
+    "supported_claims": [
+      "The reconstruction publishes a measured unsupported-surface fraction it did not previously report.",
+      "Surface with no observed sample within one voxel can be removed without moving the observed samples off the surface: coverage within a voxel is bit-identical at 0.9927456237186564 and sample-to-surface RMSE changes by 4.7e-05 m.",
+      "The mesh bounding box falls from 1.381x to 1.023x the fused cloud's worst axis, an independent quantity the crop rule does not define.",
+      "An occupancy-mapping consumer reading the cropped surface reports 733 fewer phantom obstacle cells (0.733 m3 less fabricated solid volume), raising precision against observation from 0.675 to 0.929 while recall of observed cells falls 0.0016.",
+      "The recording now ships a fitted-camera blueprint with independently toggleable scan and surface and the removed surface as its own entity, verified by decoding the delivered RRD bytes."
+    ],
+    "which_downstream_use_justifies_the_cropped_output": "Mapping, free-space reasoning and visual review, where a fabricated surface is worse than a hole because it asserts structure the sensor never observed. A consumer that requires closed geometry (watertight meshing, some collision pipelines) should pass --support-distance-factor 0 and accept the extrapolation knowingly; both meshes are published for exactly that choice."
+  },
+  "downstream_consumer": {
+    "cell_size": 0.1,
+    "cells": 11520,
+    "cells_with_samples": 1884,
+    "improvement": {
+      "phantom_cells_removed": 733,
+      "phantom_rate_baseline": 0.3245156482861401,
+      "phantom_rate_candidate": 0.07084188911704312,
+      "phantom_volume_removed_m3": 0.7330000000000002,
+      "recall_delta": -0.0015923566878980333
+    },
+    "independent_review": {
+      "one_cell_caveat": "compute_distance builds a BVH whose traversal order is not bit-stable, and two cell centres sit within 1e-4 of the radius, so the baseline occupied count can move by one cell between runs. The phantom counts that carry the claim (871 and 138) reproduced exactly.",
+      "reviewer_conclusion_on_the_radius": "The 0.87 radius does not flatter the candidate; it is conservative in both directions. Recomputing on the same grid the reviewer got drops of 0.2424 to 0.4882 against the published 0.2537, so the harness understates the benefit.",
+      "reviewer_sweep": "30 combinations of cell size 0.05-0.3 m against support radius 0.5-2.0 x cell, reimplemented from artifact bytes with no shared code. The candidate's phantom rate is strictly below the baseline's in all 30. Smallest improvement anywhere +0.106, where the candidate reaches exactly zero phantom cells. Recall never degrades by more than 0.0039.",
+      "status": "swept and confirmed directionally, with the occupancy step initially unreproducible"
+    },
+    "measurement_definition": {
+      "occupied": "cell centre within 0.87 * cell of the reconstructed surface (RaycastingScene.compute_distance)",
+      "radius_constant": "0.87 is the ROUNDED value of the cell's circumradius factor sqrt(3)/2 = 0.8660254, a centre-to-corner reach. Earlier prose called it 'the cell's circumradius (0.1 * 0.87)', which read as exact; it is the rounded constant that ran. The review lane measured the difference at nine supported cells out of 1884, 0.5 percent, immaterial to every conclusion.",
+      "retention_note": "The script was NOT retained alongside its output on the first pass. The review lane found that and correctly called it the one artifact in the chain that could not be audited. It was recovered by enumerating candidate occupancy definitions against the recorded counts and now reproduces every published field exactly, including the two the reviewer could not reach by surface sampling (2684 baseline and 1948 candidate occupied cells).",
+      "script": "evidence/open3d/harness/consumer_occupancy.py",
+      "supported": "cell centre within 0.87 * cell of an observed sample (KDTree radius search)",
+      "why_not_enclosed_volume": "compute_occupancy asks whether a point is inside a CLOSED surface and one of the two meshes is deliberately open. Scoring an open mesh with an inside/outside test compares the variants on incomparable terms and flatters the closed baseline: 5817 interior cells against 4474 when tried.",
+      "why_symmetric": "Both sides are a distance-to-nearest query at the same radius, so neither the surface nor the observations get a more generous test than the other."
+    },
+    "variants": {
+      "baseline": {
+        "artifact": "mesh-baseline/mesh.ply",
+        "missed_structure_cells": 71,
+        "occupied_cells": 2684,
+        "phantom_obstacle_cells": 871,
+        "phantom_obstacle_rate": 0.3245156482861401,
+        "phantom_volume_m3": 0.8710000000000002,
+        "precision_wrt_observation": 0.6754843517138599,
+        "recall_of_observed_cells": 0.9623142250530785
+      },
+      "candidate": {
+        "artifact": "mesh/mesh.ply",
+        "missed_structure_cells": 74,
+        "occupied_cells": 1948,
+        "phantom_obstacle_cells": 138,
+        "phantom_obstacle_rate": 0.07084188911704312,
+        "phantom_volume_m3": 0.13800000000000004,
+        "precision_wrt_observation": 0.9291581108829569,
+        "recall_of_observed_cells": 0.9607218683651805
+      }
+    }
+  },
+  "execution": {
+    "cluster_execution": "not yet performed; see limitations",
+    "hardware_class": "CPU only; Open3D registration and geometry APIs have no CUDA path",
+    "kind": "container, real S3 artifact store",
+    "run_id": "open3d-support-20260919T032559Z",
+    "stages": [
+      "stage-demo",
+      "register",
+      "validate",
+      "multiway",
+      "reconstruct",
+      "visualize"
+    ]
+  },
+  "inputs": {
+    "dataset": "open3d.data DemoICPPointClouds (upstream Redwood indoor scans)",
+    "fragments": {
+      "cloud_bin_0": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+      "cloud_bin_1": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+      "cloud_bin_2": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a"
+    },
+    "voxel_size": 0.05
+  },
+  "lane": "geometry",
+  "limitations": [
+    "No ground-truth pose exists for these upstream scans; absolute pose accuracy is measured only in the synthetic known-transform golden eval.",
+    "The cropped surface is not watertight and not edge-manifold. It is not certified for collision use; the occupancy consumer test measures phantom obstacle volume, not collision safety.",
+    "Held-out coverage within one voxel falls (0.883->0.851, 0.961->0.933, 0.934->0.855) even though held-out median distance is essentially unchanged. Cropping trades invented coverage for honest holes; a consumer that needs closed geometry should pass --support-distance-factor 0 and accept the extrapolation.",
+    "Floating-point results vary with container thread count; reproducibility is numeric to ~4e-06 relative on surface area, not byte-identical.",
+    "Executed as a local container against real S3. Kubernetes/SkyPilot cluster execution of the workflow spec is not yet performed.",
+    "No VLM visual acceptance: the judges false-passed invented and misaligned geometry, one of them describing geometry in a blank frame."
+  ],
+  "objective": {
+    "acceptance_gates": {
+      "G1_unsupported_area_fraction": {
+        "baseline": 0.5273236836683344,
+        "candidate": 0.0,
+        "measurement_scope": "CONSTRUCTION INVARIANT, not independent truth: the crop removes vertices whose distance to the nearest sample exceeds voxel*factor, and this gate measures the area fraction beyond that same distance. A zero here confirms the crop executed as specified; it is not evidence that the remaining surface is accurate. The independent evidence is G4 (bbox ratio, an unrelated quantity), G2/G3 (coverage and RMSE held), and G7 (a consumer with its own ground-truth definition).",
+        "threshold": "<= 0.02",
+        "verdict": "pass"
+      },
+      "G2_coverage_within_voxel": {
+        "baseline": 0.9927456237186564,
+        "candidate": 0.9927456237186564,
+        "threshold": ">= baseline - 0.005",
+        "verdict": "pass"
+      },
+      "G3_sample_to_surface_rmse": {
+        "baseline": 0.010787513107061386,
+        "candidate": 0.010834470391273499,
+        "threshold": "<= baseline + 0.001 m",
+        "verdict": "pass"
+      },
+      "G4_mesh_to_cloud_bbox_ratio": {
+        "baseline": 1.38140464377502,
+        "candidate": 1.0226582310490369,
+        "threshold": "<= 1.15",
+        "verdict": "pass"
+      },
+      "G5_held_out_median": {
+        "rows": [
+          {
+            "baseline": {
+              "fraction_within_voxel": 0.8834033613445378,
+              "median_distance": 0.006582621484994888,
+              "p95_distance": 0.13320808112621307,
+              "triangles": 26870
+            },
+            "candidate": {
+              "fraction_within_voxel": 0.8508403361344538,
+              "median_distance": 0.006840888410806656,
+              "p95_distance": 0.24850930273532867,
+              "triangles": 19745
+            },
+            "held_out_fragment": "cloud_bin_0",
+            "median_delta": 0.0002582669258117676,
+            "train_points": 4197
+          },
+          {
+            "baseline": {
+              "fraction_within_voxel": 0.9610185476265325,
+              "median_distance": 0.006276275962591171,
+              "p95_distance": 0.0374416746199131,
+              "triangles": 28851
+            },
+            "candidate": {
+              "fraction_within_voxel": 0.9327255580006287,
+              "median_distance": 0.006525903474539518,
+              "p95_distance": 0.07196248322725296,
+              "triangles": 23207
+            },
+            "held_out_fragment": "cloud_bin_1",
+            "median_delta": 0.0002496275119483471,
+            "train_points": 4826
+          },
+          {
+            "baseline": {
+              "fraction_within_voxel": 0.9335009140767825,
+              "median_distance": 0.007783007808029652,
+              "p95_distance": 0.05872269719839096,
+              "triangles": 27082
+            },
+            "candidate": {
+              "fraction_within_voxel": 0.8551188299817185,
+              "median_distance": 0.00922088697552681,
+              "p95_distance": 0.16361908614635468,
+              "triangles": 18629
+            },
+            "held_out_fragment": "cloud_bin_2",
+            "median_delta": 0.001437879167497158,
+            "train_points": 3950
+          }
+        ],
+        "tail_behaviour": "The median passes but the tails worsen materially, and the median obscures that. p95 held-out distance: cloud_bin_0 0.133208 -> 0.248509, cloud_bin_1 0.037442 -> 0.071962, cloud_bin_2 0.058723 -> 0.163619. Held-out coverage within one voxel: 0.883403 -> 0.850840, 0.961019 -> 0.932726, 0.933501 -> 0.855119. Cropping replaces surface that happened to sit near unseen points with holes, so a held-out point over a hole is now far from any surface. This is a coverage-versus-observed-support tradeoff, not a generalization improvement.",
+        "threshold": "candidate median <= baseline median + 0.05 m",
+        "verdict": "pass"
+      },
+      "G6_rrd_blueprint": {
+        "threshold": "verify clean, recording id == run id, separable entities, blueprint present",
+        "verdict": "pass"
+      },
+      "G7_downstream_consumer": {
+        "measurement_scope": "Occupancy-grid mapping quality at 0.1 m cells: whether a cell the consumer marks occupied has any observed sample supporting it. Measures fabricated obstacle volume, NOT collision safety and NOT navigation readiness, neither of which is established by this test.",
+        "result": {
+          "phantom_cells_removed": 733,
+          "phantom_rate_baseline": 0.3245156482861401,
+          "phantom_rate_candidate": 0.07084188911704312,
+          "phantom_volume_removed_m3": 0.7330000000000002,
+          "recall_delta": -0.0015923566878980333
+        },
+        "threshold": "consumer completes and difference reported",
+        "verdict": "pass"
+      },
+      "G8_vlm_visual": {
+        "reason": "all three image-capable judges failed calibration; see vlm/CALIBRATION-REPORT.md",
+        "threshold": "calibrated judge passes its labeled controls first",
+        "verdict": "unavailable"
+      }
+    },
+    "independent_recomputation": "harness/verify_run.py, recomputed from delivered bytes"
+  },
+  "provenance": {
+    "base_commit": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+    "branch": "cursor/workbench-expansion-20260918",
+    "candidate_commit": "77bff008fff489b73ee2d8cd11466a105bf9d630",
+    "commits": [
+      "77bff008f Fit the Open3D review camera to the scan, and gate the crop in the golden eval",
+      "ae994bbcf Reject Open3D surface the scan never supported, and frame the result",
+      "2a6d901f3 Add Open3D point-cloud registration and reconstruction workbench tool"
+    ],
+    "evaluation_plan_hash": "dd758d06a3df6cf3793504d355f34dfefc49b32516bb0c7aed1318fffadae122",
+    "image_digest": "sha256:e4996abccabcd1adf467a9cee929ae624dafe8e08e80b60180eb7dec8496b8b2",
+    "image_tag": "npa-open3d:0.20.0-cpu-20260918",
+    "producing_tree_identity": "46ae993d10e251913fc4942fa5cf0e4fa689dfe7",
+    "working_tree_clean_at_build": true
+  },
+  "schema": "npa.capability-record.v2",
+  "supersedes_note": "Separate record for the support-crop run. The earlier records for runs open3d-proof-20260918T234410Z and open3d-final-20260919T003804Z are retained unmodified as historical; they describe different bytes and a dirty producing tree.",
+  "vlm_eval": {
+    "best_score": "MiniMaxAI/MiniMax-M3 4/6 labeled controls",
+    "evidence": "vlm/calibration-attempts.json, vlm/CALIBRATION-REPORT.md",
+    "judges_tried": [
+      "MiniMaxAI/MiniMax-M3",
+      "google/gemma-3-27b-it",
+      "openbmb/MiniCPM-V-4_5"
+    ],
+    "status": "inconclusive-judge-failed-calibration",
+    "used_as_acceptance_gate": false
+  },
+  "work_item_id": "open3d-geometry-quality"
+}

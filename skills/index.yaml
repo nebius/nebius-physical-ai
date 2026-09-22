@@ -71,6 +71,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/curobo-benchmark.yaml
+  - name: open3d
+    category: tools
+    when_to_use: "Register overlapping point-cloud scans with real RANSAC/FPFH and ICP, optimize a multiway pose graph, reconstruct a Poisson surface, or review Open3D registration artifacts and their validators."
+    path: skills/tools/open3d/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "open3d", "register", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/open3d-registration.yaml
   - name: access-approval
     category: atomic
     when_to_use: "Prepare, verify, or resume operator-owned Hugging Face and NVIDIA NGC access for exact dependencies, including human-bound upstream approvals and consent-gated official pages; treat a successful payload probe as operationally Ready and reuse one bounded run-scoped use declaration without duplicate NPA acceptance prompts."

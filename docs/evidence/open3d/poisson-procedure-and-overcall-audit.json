@@ -1,0 +1,164 @@
+{
+  "measured_evenness": {
+    "armadillo/poisson_disk": {
+      "max_nn": 1.053466298480071,
+      "max_over_median_nn": 1.6631797608650825,
+      "median_nn": 0.6334049531315384,
+      "p99_nn": 0.8494435551273242,
+      "p99_over_median_nn": 1.3410750120088204
+    },
+    "armadillo/uniform_random": {
+      "max_nn": 1.4841034271914497,
+      "max_over_median_nn": 3.990598720567726,
+      "median_nn": 0.37189994061350085,
+      "p99_nn": 0.9554527485682044,
+      "p99_over_median_nn": 2.569112398867426
+    },
+    "icosphere/poisson_disk": {
+      "max_nn": 0.026384097247014314,
+      "max_over_median_nn": 1.6988021822750408,
+      "median_nn": 0.015531000326171383,
+      "p99_nn": 0.02084698278999111,
+      "p99_over_median_nn": 1.3422820392876906
+    },
+    "icosphere/uniform_random": {
+      "max_nn": 0.03893190862173367,
+      "max_over_median_nn": 4.191201266214011,
+      "median_nn": 0.009288961839072352,
+      "p99_nn": 0.02366420380727275,
+      "p99_over_median_nn": 2.54756174233955
+    }
+  },
+  "overcall_audit": {
+    "cells": [
+      {
+        "case": "icosphere/uniform_random",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.010651730849129154,
+        "unsupported_area_fraction": 0.8550897291847502,
+        "voxel_over_median_nn": 1.0
+      },
+      {
+        "case": "icosphere/uniform_random",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.16061156981223887,
+        "voxel_over_median_nn": 2.0
+      },
+      {
+        "case": "icosphere/uniform_random",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.009108185647130698,
+        "voxel_over_median_nn": 3.0
+      },
+      {
+        "case": "icosphere/poisson_disk",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.026954726713974867,
+        "voxel_over_median_nn": 1.0
+      },
+      {
+        "case": "icosphere/poisson_disk",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.0,
+        "voxel_over_median_nn": 2.0
+      },
+      {
+        "case": "icosphere/poisson_disk",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.0,
+        "voxel_over_median_nn": 3.0
+      },
+      {
+        "case": "armadillo/uniform_random",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.00612464463271137,
+        "unsupported_area_fraction": 0.8303087669561008,
+        "voxel_over_median_nn": 1.0
+      },
+      {
+        "case": "armadillo/uniform_random",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.1449735869461124,
+        "voxel_over_median_nn": 2.0
+      },
+      {
+        "case": "armadillo/uniform_random",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.005085346133030878,
+        "voxel_over_median_nn": 3.0
+      },
+      {
+        "case": "armadillo/poisson_disk",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.03433530040901927,
+        "voxel_over_median_nn": 1.0
+      },
+      {
+        "case": "armadillo/poisson_disk",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.0,
+        "voxel_over_median_nn": 2.0
+      },
+      {
+        "case": "armadillo/poisson_disk",
+        "over_called": false,
+        "reads_as": "near-threshold surface",
+        "share_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.0,
+        "voxel_over_median_nn": 3.0
+      }
+    ],
+    "cells_checked": 12,
+    "over_calls": 0,
+    "property_under_test": "A reconstruction with zero invented surface must never read as an extrapolated shell. The review lane withdrew their undecided-band ruling on this property, so it carries the weight that ruling would have."
+  },
+  "poisson_disk_procedure": {
+    "asked_by": "review lane, 2026-09-20T04:40Z",
+    "generator": "open3d.geometry.TriangleMesh.sample_points_poisson_disk, Open3D's own elimination-based Poisson-disk sampler. No hand-rolled blue noise.",
+    "number_of_points": 60000,
+    "open3d_version": "0.20.0",
+    "oversampling": "init_factor=3, so the sampler draws 3x the requested points uniformly before eliminating down to the target.",
+    "radius": "Not specified directly. The sampler derives the elimination radius from the requested point count and mesh surface area; only number_of_points is passed.",
+    "why": "Their reproduction attempt produced a set less even than uniform random (max/median 4.50 against 3.76) by weighted sample elimination, so it could not test the claim. This records the generator actually used."
+  },
+  "sampling_comparison": {
+    "armadillo": {
+      "poisson_is_more_even": true,
+      "poisson_max_over_median_nn": 1.6631797608650825,
+      "uniform_max_over_median_nn": 3.990598720567726,
+      "unsupported_at_1x_poisson": 0.03433530040901927,
+      "unsupported_at_1x_uniform": 0.8303087669561008,
+      "unsupported_at_2x_poisson": 0.0,
+      "unsupported_at_2x_uniform": 0.1449735869461124
+    },
+    "icosphere": {
+      "poisson_is_more_even": true,
+      "poisson_max_over_median_nn": 1.6988021822750408,
+      "uniform_max_over_median_nn": 4.191201266214011,
+      "unsupported_at_1x_poisson": 0.026954726713974867,
+      "unsupported_at_1x_uniform": 0.8550897291847502,
+      "unsupported_at_2x_poisson": 0.0,
+      "unsupported_at_2x_uniform": 0.16061156981223887
+    }
+  }
+}

@@ -1,0 +1,998 @@
+{
+  "what_this_is": "A derived, publishable view of one Open3D workflow run's JSON artifacts. It is not a copy of them: fields were selected by allowlist, not redacted.",
+  "generator": "harness/derive_public_run_report.py",
+  "selection_rule": "Deny by default. A field appears here only because a pattern in the generator's ALLOWED table names it. An unclassified field stops the generator rather than defaulting either way.",
+  "omitted_field_categories": {
+    "object-store location": {
+      "fields_dropped": 28,
+      "artifacts_affected": [
+        "graph/result.json",
+        "npa-workflow/manifest.json",
+        "pairs/result.json",
+        "prepared/manifest.json",
+        "surface/result.json"
+      ]
+    },
+    "resolved execution profile": {
+      "fields_dropped": 24,
+      "artifacts_affected": [
+        "npa-workflow/manifest.json"
+      ]
+    },
+    "run identity": {
+      "fields_dropped": 8,
+      "artifacts_affected": [
+        "graph/result.json",
+        "npa-workflow/manifest.json",
+        "npa-workflow/status.json",
+        "pairs/result.json",
+        "reports/rrd-manifest.json",
+        "surface/result.json",
+        "validation/validation.json"
+      ]
+    },
+    "run timestamp": {
+      "fields_dropped": 2,
+      "artifacts_affected": [
+        "npa-workflow/manifest.json",
+        "npa-workflow/status.json"
+      ]
+    },
+    "scheduler job identity": {
+      "fields_dropped": 1,
+      "artifacts_affected": [
+        "npa-workflow/manifest.json"
+      ]
+    }
+  },
+  "no_substitutes": "Nothing was put in place of an omitted field. There is no placeholder bucket, path or run identifier here to be mistaken for a real one.",
+  "retained_originals": {
+    "where": "The unmodified artifacts are retained in access-controlled lane evidence, not in this repository.",
+    "hashes_are_of_the_originals": "Each sha256 below is of the artifact as the run wrote it, so it identifies those bytes and deliberately matches no file here. The hash of this derived file is recorded separately, in capability-record-workflow-replay.json.",
+    "artifacts": [
+      {
+        "artifact": "npa-workflow/status.json",
+        "original_sha256": "43542b7d44453b4ead91142365bd2bd48b6136b7f20b98fa7923256d1e3a77bb"
+      },
+      {
+        "artifact": "npa-workflow/manifest.json",
+        "original_sha256": "2b6fdbef7d76d200c5cf6e6fa9e51720fae6e46b199a15ffc1df31737f9cd184"
+      },
+      {
+        "artifact": "prepared/manifest.json",
+        "original_sha256": "b0398a7ecfa4a18999c99135fe57281a4808b134b701bca1e4a80b6adb86e67a"
+      },
+      {
+        "artifact": "pairs/result.json",
+        "original_sha256": "5594227ea7e85e7e8425978d9cfa50282188458c5b28f2d915ca647f74004057"
+      },
+      {
+        "artifact": "validation/validation.json",
+        "original_sha256": "126214328d244ccd08a4b375fd4240262132814e32d091151d55bdfacbde9c88"
+      },
+      {
+        "artifact": "graph/result.json",
+        "original_sha256": "38e5a566cb831f290fed116fd63b1828e1db29e0153995c48fcb57f8e4932ec2"
+      },
+      {
+        "artifact": "graph/pose_graph.json",
+        "original_sha256": "97645b7e0825287b51e7a037d5f76ef93de9940ce498c54c23053c127b074109"
+      },
+      {
+        "artifact": "surface/result.json",
+        "original_sha256": "3f58d841a3d4c588ad1dc3fcc43026d3306e017f0262400fd42be835fb069999"
+      },
+      {
+        "artifact": "reports/rrd-manifest.json",
+        "original_sha256": "e4dc7a761ac76b162cdcf7eeb762c30455eda4a8f3c3ad7c85459fad1feb73f9"
+      }
+    ]
+  },
+  "derived_fields": {
+    "npa-workflow/status.json": {
+      "schema_version": "npa.workflow.run.v1",
+      "status": "submitted",
+      "step_count": 6,
+      "workflow": "open3d-registration"
+    },
+    "npa-workflow/manifest.json": {
+      "api_version": "npa.workflow/v0.0.1",
+      "schema_version": "npa.workflow.run.v1",
+      "status": "submitted",
+      "steps": [
+        {
+          "iteration": null,
+          "outputs": [
+            {
+              "schema": "npa.open3d.registration.v1"
+            }
+          ],
+          "resources": "cpu",
+          "state": "stage",
+          "status": "submitted",
+          "tool_ref": "workbench.open3d.stage_demo"
+        },
+        {
+          "inputs": [
+            {
+              "schema": ""
+            }
+          ],
+          "iteration": null,
+          "outputs": [
+            {
+              "schema": "npa.open3d.result.v1"
+            },
+            {
+              "schema": "application/jsonl"
+            }
+          ],
+          "resources": "cpu",
+          "state": "register",
+          "status": "submitted",
+          "tool_ref": "workbench.open3d.register"
+        },
+        {
+          "inputs": [
+            {
+              "schema": ""
+            },
+            {
+              "schema": ""
+            }
+          ],
+          "iteration": null,
+          "outputs": [
+            {
+              "schema": "npa.open3d.validation.v1"
+            }
+          ],
+          "resources": "cpu",
+          "state": "validate",
+          "status": "submitted",
+          "tool_ref": "workbench.open3d.validate"
+        },
+        {
+          "inputs": [
+            {
+              "schema": ""
+            }
+          ],
+          "iteration": null,
+          "outputs": [
+            {
+              "schema": "npa.open3d.result.v1"
+            },
+            {
+              "schema": "application/json"
+            },
+            {
+              "schema": "application/octet-stream"
+            }
+          ],
+          "resources": "cpu",
+          "state": "multiway",
+          "status": "submitted",
+          "tool_ref": "workbench.open3d.multiway"
+        },
+        {
+          "inputs": [
+            {
+              "schema": ""
+            },
+            {
+              "schema": ""
+            }
+          ],
+          "iteration": null,
+          "outputs": [
+            {
+              "schema": "npa.open3d.reconstruction.v1"
+            },
+            {
+              "schema": "application/octet-stream"
+            }
+          ],
+          "resources": "cpu",
+          "state": "reconstruct",
+          "status": "submitted",
+          "tool_ref": "workbench.open3d.reconstruct"
+        },
+        {
+          "inputs": [
+            {
+              "schema": ""
+            },
+            {
+              "schema": ""
+            }
+          ],
+          "iteration": null,
+          "outputs": [
+            {
+              "schema": "application/vnd.rerun.rrd"
+            },
+            {
+              "schema": "application/json"
+            }
+          ],
+          "resources": "cpu",
+          "state": "visualize",
+          "status": "submitted",
+          "tool_ref": "workbench.open3d.visualize"
+        }
+      ],
+      "workflow": "open3d-registration"
+    },
+    "prepared/manifest.json": {
+      "demo_data_release": "20220301-data",
+      "distance_factor": 1.5,
+      "feature_radius_factor": 5.0,
+      "fragments": [
+        {
+          "bytes": 6362965,
+          "id": "cloud_bin_0",
+          "sha256": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15"
+        },
+        {
+          "bytes": 4410901,
+          "id": "cloud_bin_1",
+          "sha256": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52"
+        },
+        {
+          "bytes": 6124949,
+          "id": "cloud_bin_2",
+          "sha256": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a"
+        }
+      ],
+      "icp_distance_factor": 0.4,
+      "icp_estimation": "point_to_plane",
+      "normal_radius_factor": 2.0,
+      "random_seed": 0,
+      "ransac_confidence": 0.999,
+      "ransac_max_iteration": 100000,
+      "schema_version": "npa.open3d.registration.v1",
+      "voxel_size": 0.05
+    },
+    "pairs/result.json": {
+      "engine": "open3d",
+      "fragment_ids": [
+        "cloud_bin_0",
+        "cloud_bin_1",
+        "cloud_bin_2"
+      ],
+      "icp_estimation": "point_to_plane",
+      "journal_sha256": "456a93871734923a132913e84258b41343555fe6a7b2c71fbf698ee47cbb4282",
+      "kind": "register",
+      "manifest_sha256": "b0398a7ecfa4a18999c99135fe57281a4808b134b701bca1e4a80b6adb86e67a",
+      "schema_version": "npa.open3d.result.v1",
+      "source_version": "0.20.0",
+      "subprocess_wall_seconds": 2.388224584981799,
+      "summary": {
+        "icp_fitness": {
+          "max": 0.7459606915615273,
+          "mean": 0.683514205513708,
+          "min": 0.6210677194658888
+        },
+        "icp_inlier_rmse": {
+          "max": 0.007243413029502884,
+          "mean": 0.006904076284217544,
+          "min": 0.0065647395389322035
+        },
+        "input_points": 336668,
+        "pair_count": 2,
+        "pairs_refined_by_icp": 2
+      },
+      "voxel_size": 0.05
+    },
+    "validation/validation.json": {
+      "journal_sha256": "456a93871734923a132913e84258b41343555fe6a7b2c71fbf698ee47cbb4282",
+      "kind": "register",
+      "pair_count": 2,
+      "schema_version": "npa.open3d.validation.v1",
+      "summary": {
+        "icp_fitness": {
+          "max": 0.7459606915615273,
+          "mean": 0.683514205513708,
+          "min": 0.6210677194658888
+        },
+        "icp_inlier_rmse": {
+          "max": 0.007243413029502884,
+          "mean": 0.006904076284217544,
+          "min": 0.0065647395389322035
+        },
+        "input_points": 336668,
+        "pair_count": 2,
+        "pairs_refined_by_icp": 2
+      },
+      "valid": true
+    },
+    "graph/result.json": {
+      "engine": "open3d",
+      "fragment_ids": [
+        "cloud_bin_0",
+        "cloud_bin_1",
+        "cloud_bin_2"
+      ],
+      "icp_estimation": "point_to_plane",
+      "journal_sha256": "271d1fe3cef50e51ad3f92382a172a8abafec9578c737b092e5fb0ea8546b358",
+      "kind": "multiway",
+      "manifest_sha256": "b0398a7ecfa4a18999c99135fe57281a4808b134b701bca1e4a80b6adb86e67a",
+      "pose_graph": {
+        "edge_prune_threshold": 0.25,
+        "edges": [
+          {
+            "confidence": 1.0,
+            "source_node_id": 0,
+            "target_node_id": 1,
+            "transformation": [
+              [
+                0.8404888517925038,
+                0.00661604647277362,
+                -0.5417884438981603,
+                0.6451772998376449
+              ],
+              [
+                -0.14732477436870328,
+                0.9650434793525484,
+                -0.21676368195880652,
+                0.8094711154423562
+              ],
+              [
+                0.5214152863790341,
+                0.26200631841274014,
+                0.8120829934446807,
+                -1.4845634994693475
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "uncertain": false
+          },
+          {
+            "confidence": 0.9924952404682896,
+            "source_node_id": 0,
+            "target_node_id": 2,
+            "transformation": [
+              [
+                0.9628228457588385,
+                -0.002496982673898528,
+                -0.27012207011345707,
+                -0.011131811530714
+              ],
+              [
+                -0.07117897154952345,
+                0.962274359107621,
+                -0.262605429900392,
+                0.8372501043047564
+              ],
+              [
+                0.2605872631077838,
+                0.27206951847192273,
+                0.9263220041780572,
+                -1.1666819203334298
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "uncertain": true
+          },
+          {
+            "confidence": 1.0,
+            "source_node_id": 1,
+            "target_node_id": 2,
+            "transformation": [
+              [
+                0.954957835286967,
+                -0.08297211391335194,
+                0.28490553019690495,
+                -0.15126500496019038
+              ],
+              [
+                0.08735599935295699,
+                0.9961735230585491,
+                -0.002690972717239176,
+                -0.014153571835031761
+              ],
+              [
+                -0.28359207006028214,
+                0.027457972792405607,
+                0.9585518230795117,
+                0.4185645110643044
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ],
+            "uncertain": false
+          }
+        ],
+        "fused_points": 6339,
+        "fused_points_before_downsample": 528065,
+        "fused_sha256": "163cd17ff6fd4049ba9166616262efd059265259e2b2d36054799028abb9d761",
+        "nodes": [
+          {
+            "fragment_id": "cloud_bin_0",
+            "points": 198835,
+            "pose": [
+              [
+                1.0,
+                3.8222361744850303e-19,
+                -2.168404344971009e-19,
+                0.0
+              ],
+              [
+                -2.6808592780598606e-19,
+                1.0000000000000002,
+                0.0,
+                -8.673617379884035e-19
+              ],
+              [
+                0.0,
+                -2.168404344971009e-19,
+                1.0000000000000002,
+                0.0
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "fragment_id": "cloud_bin_1",
+            "points": 137833,
+            "pose": [
+              [
+                0.8400312082041154,
+                -0.14668380782139992,
+                0.5223326811201348,
+                0.3483589153805527
+              ],
+              [
+                0.00634576949659991,
+                0.9653482281517105,
+                0.2608879637197715,
+                -0.394644385167759
+              ],
+              [
+                -0.5425009681582413,
+                -0.21583942857450197,
+                0.8118534600653009,
+                1.7306710593832968
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ]
+          },
+          {
+            "fragment_id": "cloud_bin_2",
+            "points": 191397,
+            "pose": [
+              [
+                0.9628059410531093,
+                -0.07172764595839135,
+                0.2604992604175764,
+                0.3765799890769947
+              ],
+              [
+                -0.002026320096143843,
+                0.9621759138886592,
+                0.272421373536275,
+                -0.48946148464918304
+              ],
+              [
+                -0.2701862577921099,
+                -0.26281677179698854,
+                0.9262433430597511,
+                1.2977534298632505
+              ],
+              [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            ]
+          }
+        ],
+        "reference_node": 0
+      },
+      "schema_version": "npa.open3d.result.v1",
+      "source_version": "0.20.0",
+      "subprocess_wall_seconds": 2.7821931450162083,
+      "summary": {
+        "icp_fitness": {
+          "max": 0.7459679467181299,
+          "mean": 0.6805316580509793,
+          "min": 0.6210677194658888
+        },
+        "icp_inlier_rmse": {
+          "max": 0.0072436580051338,
+          "mean": 0.006744201344112394,
+          "min": 0.00642420648827117
+        },
+        "input_points": 535503,
+        "pair_count": 3,
+        "pairs_refined_by_icp": 3
+      },
+      "voxel_size": 0.05
+    },
+    "graph/pose_graph.json": {
+      "edge_prune_threshold": 0.25,
+      "edges": [
+        {
+          "confidence": 1.0,
+          "source_node_id": 0,
+          "target_node_id": 1,
+          "transformation": [
+            [
+              0.8404888517925038,
+              0.00661604647277362,
+              -0.5417884438981603,
+              0.6451772998376449
+            ],
+            [
+              -0.14732477436870328,
+              0.9650434793525484,
+              -0.21676368195880652,
+              0.8094711154423562
+            ],
+            [
+              0.5214152863790341,
+              0.26200631841274014,
+              0.8120829934446807,
+              -1.4845634994693475
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "uncertain": false
+        },
+        {
+          "confidence": 0.9924952404682896,
+          "source_node_id": 0,
+          "target_node_id": 2,
+          "transformation": [
+            [
+              0.9628228457588385,
+              -0.002496982673898528,
+              -0.27012207011345707,
+              -0.011131811530714
+            ],
+            [
+              -0.07117897154952345,
+              0.962274359107621,
+              -0.262605429900392,
+              0.8372501043047564
+            ],
+            [
+              0.2605872631077838,
+              0.27206951847192273,
+              0.9263220041780572,
+              -1.1666819203334298
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "uncertain": true
+        },
+        {
+          "confidence": 1.0,
+          "source_node_id": 1,
+          "target_node_id": 2,
+          "transformation": [
+            [
+              0.954957835286967,
+              -0.08297211391335194,
+              0.28490553019690495,
+              -0.15126500496019038
+            ],
+            [
+              0.08735599935295699,
+              0.9961735230585491,
+              -0.002690972717239176,
+              -0.014153571835031761
+            ],
+            [
+              -0.28359207006028214,
+              0.027457972792405607,
+              0.9585518230795117,
+              0.4185645110643044
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "uncertain": false
+        }
+      ],
+      "fused_points": 6339,
+      "fused_points_before_downsample": 528065,
+      "fused_sha256": "163cd17ff6fd4049ba9166616262efd059265259e2b2d36054799028abb9d761",
+      "nodes": [
+        {
+          "fragment_id": "cloud_bin_0",
+          "points": 198835,
+          "pose": [
+            [
+              1.0,
+              3.8222361744850303e-19,
+              -2.168404344971009e-19,
+              0.0
+            ],
+            [
+              -2.6808592780598606e-19,
+              1.0000000000000002,
+              0.0,
+              -8.673617379884035e-19
+            ],
+            [
+              0.0,
+              -2.168404344971009e-19,
+              1.0000000000000002,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "fragment_id": "cloud_bin_1",
+          "points": 137833,
+          "pose": [
+            [
+              0.8400312082041154,
+              -0.14668380782139992,
+              0.5223326811201348,
+              0.3483589153805527
+            ],
+            [
+              0.00634576949659991,
+              0.9653482281517105,
+              0.2608879637197715,
+              -0.394644385167759
+            ],
+            [
+              -0.5425009681582413,
+              -0.21583942857450197,
+              0.8118534600653009,
+              1.7306710593832968
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "fragment_id": "cloud_bin_2",
+          "points": 191397,
+          "pose": [
+            [
+              0.9628059410531093,
+              -0.07172764595839135,
+              0.2604992604175764,
+              0.3765799890769947
+            ],
+            [
+              -0.002026320096143843,
+              0.9621759138886592,
+              0.272421373536275,
+              -0.48946148464918304
+            ],
+            [
+              -0.2701862577921099,
+              -0.26281677179698854,
+              0.9262433430597511,
+              1.2977534298632505
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      ],
+      "reference_node": 0
+    },
+    "surface/result.json": {
+      "cloud_extent": [
+        3.5620846715947905,
+        1.579709741934309,
+        2.0012166458740346
+      ],
+      "coverage": {
+        "fraction_within_two_voxels": 0.9996844928222117,
+        "fraction_within_voxel": 0.9927433349108692,
+        "sample_to_surface_p95": 0.02208942361176014,
+        "sample_to_surface_rmse": 0.010819162242114544,
+        "samples": 6339
+      },
+      "crop_justification": {
+        "note": "73.0% of the unsupported area lay more than three voxels from any sample, above the 10% mark that separates these two readings, so the crop removed surface that no observation lies near. Why it lies far out is not something this separates: thin coverage there and surface that does not belong there both read this way. Whether the surface is wrong is a separate question this cannot answer: a correct surface over a sparsely covered region reads the same way. Measured, on a cube that was exactly its own ground truth, sampled densely on five faces and sparsely on the sixth: 0.4169 of its unsupported area sat past three voxels with nothing invented anywhere. Deciding fabrication needs a reference surface. Check whether coverage of the removed region was thin before concluding anything.",
+        "removed_surface_reads_as": "far from any observation",
+        "unsupported_area_share_beyond_3_voxels": 0.7298500028435703,
+        "vertex_fraction_removed": 0.19936983920034768,
+        "vertices_removed": 3670
+      },
+      "density_quantile": 0.02,
+      "input_points": 6339,
+      "low_density_vertices_removed": 376,
+      "mesh": {
+        "bytes": 1118757,
+        "extent": [
+          3.581564784049988,
+          1.6154963970184326,
+          2.0443822145462036
+        ],
+        "is_edge_manifold": false,
+        "is_vertex_manifold": false,
+        "is_watertight": false,
+        "sha256": "52f1ff2467566dc08846e0615c399a2b1ec6da6c19c24647a93f50a5c5a748c9",
+        "surface_area": 10.514522880339383,
+        "triangle_count": 28215,
+        "vertex_count": 14738
+      },
+      "mesh_uncropped": {
+        "bytes": 1415634,
+        "extent": [
+          3.9182933270931244,
+          2.181676596403122,
+          2.717838868498802
+        ],
+        "is_edge_manifold": false,
+        "is_vertex_manifold": true,
+        "is_watertight": false,
+        "sha256": "6fe008977b57dad6078a0d581fcfad62d37f9f1ec952012fd5d7db29a1647495",
+        "surface_area": 22.24752468426992,
+        "triangle_count": 36654,
+        "vertex_count": 18408
+      },
+      "poisson_depth": 9,
+      "schema_version": "npa.open3d.reconstruction.v1",
+      "support": {
+        "max_vertex_distance_to_sample": 0.04999024550103619,
+        "median_vertex_distance_to_sample": 0.019114749023306375,
+        "p95_vertex_distance_to_sample": 0.03589556473980198,
+        "unsupported_area": 0.0,
+        "unsupported_area_beyond_1_5_voxels": 0.0,
+        "unsupported_area_beyond_3_voxels": 0.0,
+        "unsupported_area_fraction": 0.0,
+        "voxel_size": 0.05
+      },
+      "support_before_crop": {
+        "max_vertex_distance_to_sample": 0.904325373107301,
+        "median_vertex_distance_to_sample": 0.021915970172531427,
+        "p95_vertex_distance_to_sample": 0.2177125861087167,
+        "unsupported_area": 11.733001803930748,
+        "unsupported_area_beyond_1_5_voxels": 0.4843131800276271,
+        "unsupported_area_beyond_3_voxels": 0.3849116484413695,
+        "unsupported_area_fraction": 0.5273845953849617,
+        "voxel_size": 0.05
+      },
+      "support_distance_factor": 1.0,
+      "unsupported_vertices_removed": 3670
+    },
+    "reports/rrd-manifest.json": {
+      "bytes": 8101326,
+      "camera": {
+        "distance": 4.440082580089803,
+        "elevation_degrees": 28.0,
+        "eye": [
+          5.076666834717019,
+          4.388693346811067,
+          -0.5643733771617505
+        ],
+        "fov_degrees": 55.0,
+        "look_target": [
+          2.3045535340874754,
+          1.6165800461815227,
+          1.5201191306114197
+        ],
+        "pane_aspect": 0.8888888888888888,
+        "scene_extent": [
+          3.5871304959119636,
+          1.621257855424569,
+          2.0443822145462036
+        ],
+        "scene_span": 4.4357052277659665,
+        "up": [
+          0.0,
+          0.0,
+          -1.0
+        ]
+      },
+      "fused_points": 6339,
+      "logged_fragments": [
+        {
+          "decimation_step": 1,
+          "fragment_id": "cloud_bin_0",
+          "logged_points": 198835,
+          "source_points": 198835
+        },
+        {
+          "decimation_step": 1,
+          "fragment_id": "cloud_bin_1",
+          "logged_points": 137833,
+          "source_points": 137833
+        },
+        {
+          "decimation_step": 1,
+          "fragment_id": "cloud_bin_2",
+          "logged_points": 191397,
+          "source_points": 191397
+        }
+      ],
+      "mesh": {
+        "triangle_count": 28215,
+        "vertex_count": 14738
+      },
+      "schema_version": "npa.open3d.recording.v1",
+      "sha256": "b4089d51d94b832f86c024c045ed5d2e92a873d6eeaf62bcfa6d1ebcf0206436",
+      "unsupported_triangles_shown": 8439,
+      "up_axis_inference": {
+        "angle_to_snapped_axis_degrees": 19.95573279874127,
+        "measured_plane_normal": [
+          -0.34111809031252655,
+          0.010957246686592842,
+          -0.9399565879372219
+        ],
+        "plane_inlier_fraction": 0.33775043382236947,
+        "plane_inliers": 2141,
+        "source": "largest-plane-normal-snapped-to-axis",
+        "up": [
+          0.0,
+          0.0,
+          -1.0
+        ]
+      },
+      "view_cameras": {
+        "Observed scan only": {
+          "distance": 7.928247103866125,
+          "elevation_degrees": 28.0,
+          "eye": [
+            7.241938388477777,
+            6.587261869475542,
+            -2.1833618780338706
+          ],
+          "fov_degrees": 55.0,
+          "look_target": [
+            2.292030621928889,
+            1.6373541029266527,
+            1.5387246799708723
+          ],
+          "pane_aspect": 0.4444444444444444,
+          "scene_extent": [
+            3.5620846715947905,
+            1.579709741934309,
+            2.0012166458740346
+          ],
+          "scene_span": 4.380502042014824,
+          "up": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        "Removed: unsupported surface": {
+          "distance": 9.86461685891229,
+          "elevation_degrees": 28.0,
+          "eye": [
+            8.450888080100942,
+            7.4923473791930775,
+            -3.4477662894024785
+          ],
+          "fov_degrees": 55.0,
+          "look_target": [
+            2.2920306473970413,
+            1.333489946489178,
+            1.1833908036351204
+          ],
+          "pane_aspect": 0.4444444444444444,
+          "scene_extent": [
+            3.9182933270931244,
+            2.1874380548092582,
+            2.717838868498802
+          ],
+          "scene_span": 5.246385036946208,
+          "up": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        "Scene: observed scan and supported surface": {
+          "distance": 4.440082580089803,
+          "elevation_degrees": 28.0,
+          "eye": [
+            5.076666834717019,
+            4.388693346811067,
+            -0.5643733771617505
+          ],
+          "fov_degrees": 55.0,
+          "look_target": [
+            2.3045535340874754,
+            1.6165800461815227,
+            1.5201191306114197
+          ],
+          "pane_aspect": 0.8888888888888888,
+          "scene_extent": [
+            3.5871304959119636,
+            1.621257855424569,
+            2.0443822145462036
+          ],
+          "scene_span": 4.4357052277659665,
+          "up": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        },
+        "Supported surface only": {
+          "distance": 7.953484235279091,
+          "elevation_degrees": 28.0,
+          "eye": [
+            7.273000662532654,
+            6.579363589492646,
+            -2.213815542918001
+          ],
+          "fov_degrees": 55.0,
+          "look_target": [
+            2.307336390018463,
+            1.6136993169784546,
+            1.5201191306114197
+          ],
+          "pane_aspect": 0.4444444444444444,
+          "scene_extent": [
+            3.581564784049988,
+            1.6154963970184326,
+            2.0443822145462036
+          ],
+          "scene_span": 4.429100760908405,
+          "up": [
+            0.0,
+            0.0,
+            -1.0
+          ]
+        }
+      }
+    }
+  }
+}

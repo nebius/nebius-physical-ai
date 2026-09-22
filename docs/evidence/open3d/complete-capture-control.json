@@ -1,0 +1,148 @@
+{
+  "eagle_expectation_failure_explained": "Eagle was chosen as a complete 360-degree scan and reported 12.5 percent unsupported. Part of that is real (the underside and base are not captured) and part is the same discretization effect. Either way the stated expectation failed for a reason about the scene and the metric rather than about the crop.",
+  "expectation_stated_before_running": "On a complete capture: low unsupported area before the crop, little removed, coverage unchanged. A large removal would mean the crop is driven by something other than genuine lack of support.",
+  "finding": {
+    "consequence_i_am_not_burying": "At support_distance_factor 1.0 the crop removed 8.45 percent of vertices that were correct geometry. Coverage barely moved (6.6e-4) because the surface that remains still explains the samples, so the coverage guard did not catch it and could not have: coverage asks whether observations are explained, not whether correct surface was discarded. The unsupported-area metric at factor 1.0 conflates genuine fabrication with threshold discretization whenever sample spacing approaches the voxel.",
+    "does_not_invalidate": "The indoor result stands: 733 fabricated occupancy cells removed was confirmed independently by a reviewer's own reimplementation across 30 grid and radius combinations, and the removed surface there was up to 18 voxels from any sample. What changes is that the unsupported-area figure alone is not sufficient evidence of fabrication; it needs the distance scale beside it.",
+    "headline": "before > after holds, but the interesting result is a real limitation of the support metric that this sweep found and that I had not stated anywhere.",
+    "operator_guidance_this_produces": "Factor 1.0 is right when sample spacing is well below the voxel, which is the case for the indoor demo scans and for any capture voxelized at a size above its native spacing. When spacing approaches the voxel, factor 1.5 to 2.0 is the honest choice. This is a real caveat on the default, not a tuning knob for better numbers.",
+    "the_sweep_that_settles_it": "Unsupported area falls from 0.2055 at 1.0x to 0.0075 at 1.5x and 0.000084 at 2.0x, and the maximum vertex-to-sample distance is only 2.21 voxels. Genuine fabrication does not collapse like that. On the indoor demo scan the removed surface reached 0.905 m, roughly 18 voxels, which is why that result is real.",
+    "what_happened": "A watertight mesh sampled uniformly at 300k points reported 20.55 percent unsupported area before the crop. That looked at first like evidence that Poisson fabricates surface in concavities even on a complete capture. It is not.",
+    "what_it_actually_is": "The Poisson surface is essentially exactly the true surface: median vertex distance to the ground-truth mesh is 0.02 voxels, p99 is 0.16 voxels, and ZERO vertices sit further than one voxel from it. The reconstruction is correct. The 20.55 percent is a discretization artifact of measuring support at one voxel when the samples themselves are about one voxel apart: a vertex legitimately sitting between two samples can be slightly more than one voxel from the nearest one."
+  },
+  "genuinely_complete_capture": {
+    "after_crop": {
+      "extent": [
+        126.95179748535156,
+        151.2655487060547,
+        115.40264129638672
+      ],
+      "fraction_within_two_voxels": 0.9980996908960128,
+      "fraction_within_voxel": 0.992534847100449,
+      "max_vertex_distance_to_sample": 0.33365747274829016,
+      "sample_to_surface_p95": 0.034992098808288574,
+      "sample_to_surface_rmse": 0.05777278542518616,
+      "samples": 205756,
+      "surface_area": 29180.96507640922,
+      "triangles": 839754,
+      "unsupported_area_fraction": 0.0,
+      "vertices": 479256
+    },
+    "before_crop": {
+      "extent": [
+        126.95704650878906,
+        151.2655487060547,
+        115.40264129638672
+      ],
+      "fraction_within_two_voxels": 0.9983767180543945,
+      "fraction_within_voxel": 0.9931909640545111,
+      "max_vertex_distance_to_sample": 0.7112172432398024,
+      "sample_to_surface_p95": 0.02942167967557907,
+      "sample_to_surface_rmse": 0.054118428379297256,
+      "samples": 205756,
+      "surface_area": 36686.29454637682,
+      "triangles": 1038742,
+      "unsupported_area_fraction": 0.2045812901730855,
+      "vertices": 523486
+    },
+    "measurement": "support() and coverage() imported from the harness that produced independent-verification.json, not reimplemented, so a difference cannot be a measurement change.",
+    "parameters": {
+      "density_quantile": 0.02,
+      "poisson_depth": 9,
+      "support_distance_factor": 1.0,
+      "voxel": 0.3336580797020243,
+      "voxel_derivation": "2x the median nearest-neighbour distance, so the threshold scales with sample spacing rather than assuming the indoor 0.05 m"
+    },
+    "points_after_downsample": 205756,
+    "scene": "open3d.data.ArmadilloMesh, 300k uniform surface samples",
+    "triangles": {
+      "after": 839754,
+      "before": 1038742,
+      "removed_vertex_fraction": 0.08449127579343096,
+      "removed_vertices": 44230
+    },
+    "verdict": {
+      "before_greater_than_after": true,
+      "coverage_held": true,
+      "crop_removed_little": false,
+      "unsupported_area_was_already_low": false
+    },
+    "why_this_scene": "Uniform sampling of a watertight mesh, so every part of the surface is observed by construction. This is the genuinely complete capture."
+  },
+  "question": "Does the support crop damage a reconstruction that was already good? Listed by the review lane as unreviewed.",
+  "reading": "The Eagle scan failed two of the four stated expectations, and the reason is the scene rather than the tool: 12.5 percent of its Poisson surface had no sample within a voxel, because the scan has real holes at the underside and base. Coverage still held to 4e-4 there, so the crop removed fabricated surface and not surface that explained observations. The uniformly-sampled watertight mesh is the control the question actually needs, and its result is the answer.",
+  "real_scan_that_turned_out_incomplete": {
+    "after_crop": {
+      "extent": [
+        4.516895532608032,
+        8.629825830459595,
+        6.454648017883301
+      ],
+      "fraction_within_two_voxels": 0.9992441084926634,
+      "fraction_within_voxel": 0.9964043278494146,
+      "max_vertex_distance_to_sample": 0.019697552655605733,
+      "sample_to_surface_p95": 0.0068730502389371395,
+      "sample_to_surface_rmse": 0.0037334789521992207,
+      "samples": 337350,
+      "surface_area": 111.80245794800814,
+      "triangles": 973560,
+      "unsupported_area_fraction": 0.0,
+      "vertices": 506831
+    },
+    "before_crop": {
+      "extent": [
+        4.582684278488159,
+        8.700377941131592,
+        6.4875956773757935
+      ],
+      "fraction_within_two_voxels": 0.9995049651697051,
+      "fraction_within_voxel": 0.9968252556691863,
+      "max_vertex_distance_to_sample": 0.10494772354270915,
+      "sample_to_surface_p95": 0.0068397726863622665,
+      "sample_to_surface_rmse": 0.0035939691588282585,
+      "samples": 337350,
+      "surface_area": 127.7627626798137,
+      "triangles": 1091434,
+      "unsupported_area_fraction": 0.1249214121316685,
+      "vertices": 547611
+    },
+    "measurement": "support() and coverage() imported from the harness that produced independent-verification.json, not reimplemented, so a difference cannot be a measurement change.",
+    "parameters": {
+      "density_quantile": 0.02,
+      "poisson_depth": 9,
+      "support_distance_factor": 1.0,
+      "voxel": 0.019697681555263743,
+      "voxel_derivation": "2x the median nearest-neighbour distance, so the threshold scales with sample spacing rather than assuming the indoor 0.05 m"
+    },
+    "points_after_downsample": 337350,
+    "scene": "open3d.data.EaglePointCloud",
+    "triangles": {
+      "after": 973560,
+      "before": 1091434,
+      "removed_vertex_fraction": 0.07446892045630932,
+      "removed_vertices": 40780
+    },
+    "verdict": {
+      "before_greater_than_after": true,
+      "coverage_held": true,
+      "crop_removed_little": false,
+      "unsupported_area_was_already_low": false
+    },
+    "why_this_scene": "Chosen as a complete 360-degree object scan. It is not complete: see its result."
+  },
+  "threshold_sweep": {
+    "poisson_vs_true_surface": {
+      "fraction_beyond_one_voxel": 0.0,
+      "median": 0.006879260763525963,
+      "p99": 0.0550561249256134
+    },
+    "unsupported_by_threshold": {
+      "1.0": 0.20553011579310063,
+      "1.5": 0.007524040745544868,
+      "2.0": 8.432782293291118e-05,
+      "3.0": 0.0,
+      "5.0": 0.0
+    },
+    "voxel": 0.3337408001109737
+  }
+}

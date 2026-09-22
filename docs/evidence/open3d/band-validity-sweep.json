@@ -1,0 +1,106 @@
+{
+  "fabrication_definition": "Reconstructed area whose vertices lie further than one voxel from the watertight reference surface, area-weighted to match how the support metric weighs its own figure.",
+  "first_false_positive_at_spacing_over_voxel": null,
+  "held_fixed": "The voxel is derived once from the densest sampling and then held fixed, so spacing rises against it. The tool's default ties the voxel to the spacing, which pins this ratio near 0.5 and hides the effect entirely.",
+  "reading_boundary": 0.1,
+  "rows": [
+    {
+      "fabricated_area_fraction": 0.0,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 0.537936806678772,
+      "reads_as_extrapolated_shell": false,
+      "samples": 300000,
+      "share_beyond_3_voxels": 0.0,
+      "spacing_over_voxel": 0.5,
+      "unsupported_area_beyond_1_5_voxels": 0.007298067543873265,
+      "unsupported_area_beyond_3_voxels": 0.0,
+      "unsupported_area_fraction": 0.2017754015051039
+    },
+    {
+      "fabricated_area_fraction": 0.0027378386368625777,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 3.624570608139038,
+      "reads_as_extrapolated_shell": false,
+      "samples": 150000,
+      "share_beyond_3_voxels": 0.0004931354584332942,
+      "spacing_over_voxel": 0.7076716418557817,
+      "unsupported_area_beyond_1_5_voxels": 0.11445024666678671,
+      "unsupported_area_beyond_3_voxels": 0.00027908201857041614,
+      "unsupported_area_fraction": 0.5659337891804981
+    },
+    {
+      "fabricated_area_fraction": 0.29607351719616726,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 27.15056610107422,
+      "reads_as_extrapolated_shell": true,
+      "samples": 80000,
+      "share_beyond_3_voxels": 0.2802793369261255,
+      "spacing_over_voxel": 0.9602606623726753,
+      "unsupported_area_beyond_1_5_voxels": 0.608348054927377,
+      "unsupported_area_beyond_3_voxels": 0.2518769777076006,
+      "unsupported_area_fraction": 0.898664098716592
+    },
+    {
+      "fabricated_area_fraction": 0.46009112305056166,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 23.788230895996094,
+      "reads_as_extrapolated_shell": true,
+      "samples": 40000,
+      "share_beyond_3_voxels": 0.4008894138947751,
+      "spacing_over_voxel": 1.3695423272203469,
+      "unsupported_area_beyond_1_5_voxels": 0.8594025307475383,
+      "unsupported_area_beyond_3_voxels": 0.39223863266529196,
+      "unsupported_area_fraction": 0.9784210285189676
+    },
+    {
+      "fabricated_area_fraction": 0.6812752516497076,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 35.9080924987793,
+      "reads_as_extrapolated_shell": true,
+      "samples": 20000,
+      "share_beyond_3_voxels": 0.6854110215205783,
+      "spacing_over_voxel": 1.9395144758437655,
+      "unsupported_area_beyond_1_5_voxels": 0.9720228386181683,
+      "unsupported_area_beyond_3_voxels": 0.6833540110295339,
+      "unsupported_area_fraction": 0.9969988657514129
+    },
+    {
+      "fabricated_area_fraction": 0.831668492854762,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 42.170658111572266,
+      "reads_as_extrapolated_shell": true,
+      "samples": 10000,
+      "share_beyond_3_voxels": 0.8844427650110098,
+      "spacing_over_voxel": 2.736780810513354,
+      "unsupported_area_beyond_1_5_voxels": 0.9959018762728337,
+      "unsupported_area_beyond_3_voxels": 0.8840281660415864,
+      "unsupported_area_fraction": 0.9995312314308792
+    },
+    {
+      "fabricated_area_fraction": 0.9444449475080171,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 69.83251953125,
+      "reads_as_extrapolated_shell": true,
+      "samples": 5000,
+      "share_beyond_3_voxels": 0.9768923709938695,
+      "spacing_over_voxel": 3.7597490598678576,
+      "unsupported_area_beyond_1_5_voxels": 0.9995152937520899,
+      "unsupported_area_beyond_3_voxels": 0.9768195382537428,
+      "unsupported_area_fraction": 0.9999254444580701
+    },
+    {
+      "fabricated_area_fraction": 0.9802731755886571,
+      "false_positive": false,
+      "max_vertex_distance_to_truth_in_voxels": 91.0572509765625,
+      "reads_as_extrapolated_shell": true,
+      "samples": 2500,
+      "share_beyond_3_voxels": 0.9966987486164198,
+      "spacing_over_voxel": 5.44907267841111,
+      "unsupported_area_beyond_1_5_voxels": 0.9999561991760059,
+      "unsupported_area_beyond_3_voxels": 0.9966967356633192,
+      "unsupported_area_fraction": 0.9999979803796248
+    }
+  ],
+  "valid_up_to_spacing_over_voxel": 5.44907267841111,
+  "voxel_size": 0.33447614099468825
+}

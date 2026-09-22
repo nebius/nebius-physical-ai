@@ -1,0 +1,88 @@
+{
+  "capability": "Every Open3D viewer and evidence frame is framed against the geometry it actually shows",
+  "recorded_at": "2026-09-21T02:05Z",
+  "lane": "geometry",
+  "producing_source": "npa/src/npa/workbench/open3d/runner.py, evidence/open3d/harness/render_views.py",
+  "what_the_operator_reported": "A clipped/poorly framed reconstructed scene. Root independently re-inspected PR 602's four PNGs and found the top-down views clipped at the frame bottom and the baseline overview extending beyond the frame.",
+  "two_distinct_defects": {
+    "product_viewer": {
+      "where": "npa.workbench.open3d.runner._camera / _blueprint",
+      "cause": "The distance was already solved rather than guessed, so the bug was not a missing fit. One camera was fitted to the fused cloud and shared by all four Rerun views. Three of those views draw geometry inside that cloud. The fourth draws the surface the support crop removed, which lies outside the cloud by construction.",
+      "measured_before": {
+        "harness": "evidence/open3d/harness/camera_framing_probe.py",
+        "record": "evidence/open3d/camera-framing-probe.json",
+        "units": "frame half-extents; 1.0 is exactly the edge",
+        "scene: observed scan and supported surface": 0.952,
+        "observed scan only": 0.926,
+        "supported surface only": 0.952,
+        "removed: unsupported surface": 1.233,
+        "clipped_views": ["removed: unsupported surface"],
+        "fraction_of_that_view_off_screen": 0.0016
+      },
+      "measured_after": {
+        "scene: observed scan and supported surface": 0.926,
+        "observed scan only": 0.926,
+        "supported surface only": 0.926,
+        "removed: unsupported surface": 0.926,
+        "clipped_views": []
+      },
+      "fix": "One camera per view, each fitted to that view's own contents, driven by a single VIEW_GEOMETRY table so the camera and the displayed entities cannot drift apart. The first key defines the view and the view is dropped without it; later keys are context so the defining geometry is never shown floating free of the scan.",
+      "why_it_mattered": "The view that clipped is the audit view. It exists so the support crop is auditable, and a clipped audit view is worse than a missing one because it looks like the audit happened.",
+      "regression_tests": [
+        "test_every_view_frames_the_geometry_that_view_actually_shows",
+        "test_a_view_is_framed_snugly_rather_than_stranded_in_an_empty_frame",
+        "test_a_scene_with_nothing_removed_gets_no_audit_camera_rather_than_a_fake_one",
+        "test_a_cloud_only_run_still_gets_a_scene_camera"
+      ],
+      "test_design_note": "The snug test exists because without it the clipping test passes trivially by placing the eye a kilometre back. Framing fails review in both directions."
+    },
+    "evidence_renderer": {
+      "where": "evidence/open3d/harness/render_views.py",
+      "cause": "Per-viewpoint eye positions were hand-placed. They framed the overview correctly and clipped the other two viewpoints.",
+      "measured_before": {
+        "harness": "evidence/open3d/harness/frame_edge_audit.py",
+        "record": "evidence/open3d/frame-edge-audit-before.json",
+        "01-before-unsupported-surface.png": {"clipped_edges": ["right", "top"]},
+        "02-after-support-crop.png": {"clipped_edges": []},
+        "03-before-topdown.png": {"clipped_edges": ["bottom", "top"]},
+        "04-after-topdown.png": {"clipped_edges": ["bottom", "top"]}
+      },
+      "measured_after": {
+        "record": "evidence/open3d/frame-edge-audit-after.json",
+        "frames_audited": 9,
+        "clipped_frames": [],
+        "content_span_fraction_range": "0.55-0.72 horizontal, 0.65-0.85 vertical"
+      },
+      "fix": "The plan's eye supplies the view direction only. The distance and the in-plane centre are solved against the union of every frame drawn from that viewpoint, plus the reference triad.",
+      "why_the_union_and_not_each_frame": "Fitting each frame to its own contents would frame them all perfectly and destroy the property this renderer exists to guarantee: baseline and candidate share one camera, so a difference in the picture is a difference in the geometry. This is also what root's directive asks for -- same camera per pair, fitting the union. The cost is that the candidate frame is zoomed to the baseline's larger extent, which is the honest direction for a before/after.",
+      "independently_corroborated": "Root's own inspection of the four delivered PNGs reported the top-down clipped at the bottom and the baseline overview extending beyond the frame. The pixel audit found the same, plus one further clipped edge on each of those frames."
+    }
+  },
+  "legibility": {
+    "complaint": "The review lane called the frames washed out: a light grey floor on a near-white page, in both top-down frames and both overviews.",
+    "harness": "evidence/open3d/harness/background_choice_sweep.py",
+    "record": "evidence/open3d/background-choice-sweep-refit.json",
+    "what_i_expected": "A trade -- that darkening the page would buy the light floor's contrast at the dark sensor gaps' expense.",
+    "what_the_measurement_said": "No trade. The content is not bimodal: median luminance 174, only about 1% below 34. The washed-out floor is most of the picture, which is why a near-white page cost so much.",
+    "controlled_comparison_same_content_varying_only_the_page": {
+      "background_luminance_250_as_shipped": {"median_contrast": 75.7, "p05_contrast": 26.6, "low_contrast_fraction": 0.0474},
+      "background_luminance_17_as_chosen": {"median_contrast": 158.3, "p05_contrast": 60.9, "low_contrast_fraction": 0.0176},
+      "background_luminance_0_measured_optimum": {"median_contrast": 174.3, "p05_contrast": 76.9, "low_contrast_fraction": 0.0052}
+    },
+    "why_not_the_optimum": "The clipping and legibility audit defines content as differing from the page, so a page equal to a possible content value blinds the measurement to black geometry at the border -- the exact defect being measured. The offset costs about 16 levels of contrast.",
+    "confound_disclosed": "Comparing the old delivered frames directly against the new ones does not isolate the page, because the framing fix changed which pixels are drawn. In that confounded comparison the low-contrast share rises slightly (for example 1.53% to 3.67% on the candidate overview) while median contrast roughly doubles (75-84 to 152-169). In the controlled comparison the low-contrast share falls. Both readings are recorded; the controlled one is the basis for the choice.",
+    "what_was_not_done": "Geometry colours were not touched. Only the page changed. Nothing was recoloured to look better."
+  },
+  "defects_retained": "The baseline frame still shows the unsupported surface sweeping across the scene, and it is more visible on the new page than it was on the old one, not less. Sensor gaps and holes are still drawn. No camera angle was chosen to hide a defect: the view directions are unchanged from the delivered plan and only distance and centring were solved.",
+  "latent_guard_that_changed_nothing_here": "The renderer centres on the subject while framing the subject plus the reference triad, so the triad cannot drag the scan off-centre. Measured on this scene, all four triad points lie inside the scan's bounding box, so the two coincide and the rendered bytes are identical either way. It is a guard against a scene whose triad sits outside the scan, not a demonstrated fix. The triad was clipped in the delivered top-down purely because the hand-placed camera was too close.",
+  "validation": {
+    "focused_tests": "121 passed (npa/tests/workbench/test_open3d.py, npa/tests/cli/test_open3d_cli.py)",
+    "lint": "ruff check and ruff format clean on both changed files",
+    "real_capability_after_the_change": "Golden eval re-run inside the Open3D container against current source: ICP fitness 1.0000+, 3-node pose graph optimized, 7562 triangles, 0.4929 -> 0.0000 of area cropped with 0.4855 beyond three voxels, decode-verified RRD written.",
+    "renders_reproduced": "9 frames re-rendered in the container from the delivered PLY bytes; frame hashes recorded in the capture manifest."
+  },
+  "explicitly_not_proven": {
+    "rerun_ui": "These are offscreen CPU renders of the delivered PLY bytes, not captures of the Rerun web viewer. The product blueprint change is measured through the camera geometry it emits, not through a screenshot of the viewer. Root's directive is explicit that PLY renders alone do not prove the UI, so no viewer-improvement claim is made here on their basis.",
+    "collision_fitness": "Unchanged by this work and still not claimed. Framing a surface correctly says nothing about whether it is safe to collide against."
+  }
+}

@@ -32,6 +32,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
     ],
+    "open3d": [
+        "real RANSAC/FPFH global registration refined by Open3D ICP",
+        "recovered transform matches the applied ground-truth pose within 1 deg",
+        "ICP lowers the RANSAC inlier RMSE on every pair",
+        "global_optimization returns a pose graph anchored at node 0",
+        "Poisson reconstruction yields a positive-area surface",
+        "factual RRD artifact passes decoder verification",
+    ],
     "curobo": [
         "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
         "finite interpolated joint trajectories and actual FK tool path",

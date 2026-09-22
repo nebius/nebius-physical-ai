@@ -1,0 +1,60 @@
+{
+  "what_this_measures": "Which real viewer window shapes the per-pane camera fit actually survives. The fit needs an assumed window shape to turn the layout's column shares into pane aspects, and the real window is never exactly that shape.",
+  "recorded_utc": "2026-09-21T04:35:52Z",
+  "method": "Analytical, in projection space, on the geometry from the completed six-stage run (fused.ply and mesh.ply). For each candidate window aspect the pane aspect is the window aspect times that pane's column share, and the frame half-extent is the largest normalized frame coordinate any drawn point reaches. Above 1.0 the geometry leaves the pane. Pixel auditing cannot do this: the viewer paints a floor grid across the whole pane, so an edge-contact test measures the grid.",
+  "finding": "Horizontal is the binding direction in every narrow window, so the extent scales as the inverse of the window aspect and the safe set is everything at or above one boundary. That makes the assumed shape the only thing that decides which real windows are safe.",
+  "before": {
+    "assumed_window_aspect": 1.6,
+    "narrowest_safe_window_aspect": 1.4815,
+    "scene_pane": {
+      "4:3": 1.1006,
+      "3:2": 0.9783,
+      "16:10": 0.9258,
+      "16:9": 0.9258,
+      "21:9": 0.9258,
+      "1:1": 1.4675
+    },
+    "tab_pane": {
+      "4:3": 1.1111,
+      "3:2": 0.9877,
+      "16:10": 0.9259,
+      "16:9": 0.8333,
+      "21:9": 0.6349,
+      "1:1": 1.4815
+    },
+    "defect": "an ordinary 4:3 window put the geometry 11.1% outside its own tabs"
+  },
+  "after": {
+    "assumed_window_aspect": 1.3333,
+    "narrowest_safe_window_aspect": 1.2346,
+    "scene_pane": {
+      "4:3": 0.9259,
+      "3:2": 0.823,
+      "16:10": 0.7716,
+      "16:9": 0.7603,
+      "21:9": 0.7603,
+      "1:1": 1.2346
+    },
+    "tab_pane": {
+      "4:3": 0.9259,
+      "3:2": 0.823,
+      "16:10": 0.7716,
+      "16:9": 0.6944,
+      "21:9": 0.5291,
+      "1:1": 1.2346
+    },
+    "price": "emptier frames in wide windows: in 16:9 the geometry reaches 76% of the scene pane and 69% of a tab instead of 93% of both. Clipping is the unreviewable failure and margin is not, so this is the direction to err in.",
+    "scene_pane_plateau": "the scene pane stops improving at 0.7603 because vertical becomes the binding direction somewhere below 16:9; the tab pane keeps improving because it stays horizontal-bound."
+  },
+  "what_is_still_true": "This is not window-independence and no static camera offers it. A window narrower than 1.2346 -- a portrait window, or one snapped to half a wide monitor -- still clips. The boundary is stated rather than claimed away.",
+  "conservatism_found_in_the_viewer": "The naive pane model ignores the viewer's chrome, and ignoring it is safe: chrome only removes height, so the real pane is wider relative to its height than modelled. Measured on the 1024x768 capture, the scene pane is 0.972 against a modelled 0.889 and the tab is 0.476 against 0.444.",
+  "corroborating_capture": {
+    "frame": "viewer-ui/ordinary-native.png",
+    "window": "1024x768, the shape that clipped before this change",
+    "measured": "viewer-ui/ordinary-window-audit.json",
+    "provenance": "capability-record-provenance-bound-preview.json",
+    "result": "both panes unclipped, touching no edge; geometry spans 83.3% of the scene pane's width and 73.3% of the tab's",
+    "note": "An earlier frame, ordinary-window-4x3.png, showed the same result but was rendered from a recording with invented provenance and is retained only under viewer-ui/superseded-preview/. It should not be cited here."
+  },
+  "generator": "harness/pane_fit_window_aspect_sweep.py"
+}

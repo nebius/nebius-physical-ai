@@ -41,6 +41,10 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/cosmos3-super-benchmark/SKILL.md`: reproduce the fixed Cosmos3-Super vLLM-Omni serving sweep on one eight-GPU B200 or H200 node, or validate the isolated one-H200 TP-1 path, with strict MP4 validity and scope-correct throughput accounting.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator driver strategy (operator mode is unsafe on NVSwitch), the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work.
+- `skills/tools/open3d/SKILL.md`: register overlapping point-cloud scans into
+  one frame with real RANSAC/FPFH + ICP, optimize the multiway pose graph,
+  reconstruct a Poisson surface, and read the validators that reject a
+  plausible-looking but non-rigid result. CPU-only by construction.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset → `.rrd`/MP4, and time-boxed presigned Rerun share links.
 - `skills/workflows/emit-reviewable-rrd/SKILL.md`: derive factual Rerun recordings from actual workflow outputs, declare run-scoped `.rrd` artifacts, and validate their decoded timelines, entities, and provenance before handoff.

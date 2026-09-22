@@ -1,0 +1,49 @@
+{
+  "capability": "The support reading no longer claims to detect fabrication",
+  "recorded_utc": "2026-09-21T04:19:17Z",
+  "defect": {
+    "found_by": "independent root audit, at runner.py sha256 d953b02acaa55105fec8295801cd36dc4cb982fff6c876354f2c2807d1d2bf03",
+    "what_was_wrong": "crop_justification's far branch asserted that the surface it removed was invented, on the grounds that the reading's error was one-sided. It is not one-sided. A closed cube that is exactly its own ground truth, observed densely on five faces and sparsely on the sixth, puts 41.69% of its unsupported area past three voxels and read as an extrapolated shell with nothing invented anywhere in it.",
+    "second_defect": "The same branch opened with the word 'Most' at any share above 10%, so a 12% share was described as most of the unsupported area."
+  },
+  "reproduced_independently": {
+    "by": "this lane, through the shipped _support and _crop_justification with real Open3D rather than the audit's cKDTree adapter",
+    "cube_vertices": 9602,
+    "cube_triangles": 19200,
+    "max_ground_truth_distance_vertices": 0.0,
+    "max_ground_truth_distance_triangle_centroids": 0.0,
+    "even_coverage": {
+      "unsupported": 0.192187,
+      "beyond_3_voxels": 0.0,
+      "share": 0.0,
+      "reads_as": "near-threshold surface"
+    },
+    "uneven_coverage": {
+      "unsupported": 0.315729,
+      "beyond_3_voxels": 0.131615,
+      "share": 0.416859,
+      "reads_as": "far from any observation"
+    },
+    "evidence": "irregular-density-counterexample.json"
+  },
+  "fix": {
+    "classification_renamed": "'extrapolated shell' -> 'far from any observation', because that is what the measurement supports; the constant FABRICATION_AREA_SHARE was renamed FAR_BAND_AREA_SHARE for the same reason",
+    "note_rewritten": "The far branch now reports the actual share, names the 10% mark, states that whether the surface is wrong is a separate question it cannot answer, cites the cube figure, and tells the operator to check coverage of the removed region first.",
+    "most_bug": "the note now interpolates the measured share, so 12% reads as '12.0%'",
+    "superseded_conclusions": "The twelve zero-error cells and the sensitivity curve are unaltered and still cited. Only the inference drawn from them is retracted, and the retraction is recorded beside them in the constant docstring, the skill and the two test docstrings."
+  },
+  "regression_tests": {
+    "unit": [
+      "test_uneven_coverage_of_correct_geometry_reads_as_far_from_observations pins the reproduced figures and forbids the note asserting fabrication",
+      "test_far_and_near_threshold_surface_read_differently asserts the far note carries the 'separate question this cannot answer' clause and not 'invented surface'",
+      "test_evenly_sampled_correct_reconstructions_read_near_threshold keeps the twelve cells under a name that states the condition they were measured under"
+    ],
+    "functional_smoke": "_assert_uneven_coverage_is_not_called_fabrication rebuilds the cube with real Open3D and fails if either note asserts fabrication or if uneven coverage stops reaching the far band",
+    "negative_control": "Both unit tests fail against the pre-correction behaviour (label and note restored by hand) and pass after, so they detect the defect rather than describing the fix."
+  },
+  "verified": {
+    "unit_tests": "110 passed",
+    "functional_smoke": "passed in container, reporting 'far from any observation' for the demo scans (0.4929 -> 0.0000 of area, 0.4855 beyond three voxels)"
+  },
+  "what_this_does_not_claim": "The distance measurements themselves are unaffected and the indoor demo result stands. No universal statement about fabrication is made in either direction; separating sparse coverage from invented surface needs a reference the scan does not have."
+}

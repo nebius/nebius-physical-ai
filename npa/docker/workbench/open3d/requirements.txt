@@ -1,0 +1,15 @@
+# Unique to npa-open3d. The FastAPI + boto3 + numpy + rerun-sdk stack comes from
+# the npa install in this Dockerfile.
+open3d==0.20.0
+
+# Open3D's own import chain, not a workbench choice. `open3d/__init__.py` runs
+# `import open3d.visualization` unconditionally, and that package's
+# `__init__.py` unconditionally does `from .draw_plotly import ...`, which
+# imports plotly and dash. So `import open3d` fails without both, even for a
+# headless registration run — there is no supported flag that skips it
+# (OPEN3D_DISABLE_WEB_VISUALIZER only guards the Jupyter extension further
+# down). dash brings Flask and Werkzeug transitively. This image never starts a
+# visualizer or binds a port for one; the Dockerfile asserts that the modules
+# are import-only. Revisit if upstream makes the visualizer import lazy.
+plotly==7.1.0
+dash==4.4.1

@@ -464,6 +464,42 @@ images:
       layer commits; only runtime shared libraries and notices remain. No weights or populated
       runtime cache. Publication quarantined pending exact-byte security/license
       scans and independent real B200 and RTX PRO 6000 capability validation.
+  open3d:
+    dockerfile: open3d/Dockerfile
+    tier: job
+    final_user: ubuntu
+    redistribution: public
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot's Kubernetes bootstrap installs and starts its in-pod SSH runtime
+      as the non-root ubuntu user. The image deletes all build-time SSH host keys,
+      disables password and root login, starts no SSH service by default, and
+      bakes no credentials.
+    notes: >-
+      MIT Open3D 0.20.0 from the official PyPI wheel plus the exact NPA source
+      revision on the digest-pinned python:3.11-slim-trixie base shared with
+      npa-rerun-viewer. Open3D itself is MIT. Everything else baked here carries
+      its own component-specific license rather than any single family: the
+      Python dependency closure includes MPL-2.0 distributions, certifi among
+      them, and the Debian base carries the ordinary distribution package set,
+      which includes GPL, LGPL, and Artistic licensed packages. Notices reach
+      the image from more than one place: Python distributions that carry a
+      dist-info license file provide their own, OS packages provide theirs at
+      /usr/share/doc/<package>/copyright, and where an upstream ships no notice
+      the grant is supplied explicitly, as mcap's MIT grant is at
+      /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt. The exact
+      per-component inventory is retained with the image scan. That records what
+      is present and where its notices are; it is not an exhaustive license
+      certification. No model
+      weights, datasets, credentials, or accepted terms are present. The upstream
+      open3d.data demo scans are a run-time download into the runtime user's
+      cache, not a baked payload. plotly and dash (and dash's Flask/Werkzeug
+      closure) are installed only because open3d/__init__.py imports
+      open3d.visualization unconditionally, which imports them; no visualizer is
+      started and no port is exposed for one. CPU-only by design: Open3D's
+      registration and geometry pipelines have no CUDA path, so this image does
+      not derive from the CUDA base and its stages request no accelerator.
+      Publication quarantined pending exact-byte security/license scans.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service

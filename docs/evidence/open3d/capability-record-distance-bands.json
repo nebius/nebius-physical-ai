@@ -1,0 +1,352 @@
+{
+  "capability": "open3d.reconstruct distinguishes an extrapolated Poisson shell from discretization",
+  "why": "The complete-capture control on this branch found that support_distance_factor=1.0 can discard correct geometry while every published number looks healthy, and that the coverage guard cannot see it. That was recorded as prose. This measures the gap across scenes and gives the report the one number that does separate the cases.",
+  "source_commit": "e8e12b12a",
+  "image": "npa-open3d:bands2 (built from this branch, --build-arg NPA_SOURCE_SHA=bbadf70f987cd8d9f06298a9bf40a00bf6635d2f for the first build; rebuilt for the smoke assertions)",
+  "hardware": "CPU only. Open3D's registration and Poisson APIs have no CUDA path, so there is no GPU claim here and none is possible.",
+  "what_was_added": {
+    "unsupported_area_beyond_1_5_voxels": "unsupported area past 1.5 voxels, as a fraction of total surface area",
+    "unsupported_area_beyond_3_voxels": "same past 3 voxels",
+    "crop_justification": "derived reading: 'extrapolated shell' when at least 0.1 of the pre-crop unsupported area lies past three voxels, otherwise 'near-threshold surface', with a note telling the operator to raise --support-distance-factor in the latter case",
+    "validate_distance_bands": "rejects a report whose bands are not nested, since a further band is a subset of a nearer one by construction; accepts reports written before the bands existed so already-published artifacts stay verifiable"
+  },
+  "measurement_across_scenes": {
+    "harness": "evidence/open3d/harness/band_profile_across_scenes.py, which imports the tool's own _support, _coverage and _crop_justification rather than reimplementing them",
+    "output": "evidence/open3d/band-profile-across-scenes.json",
+    "scenes": {
+      "demo_scans": {
+        "what": "fused Redwood living-room fragments, a genuinely partial capture",
+        "unsupported_area_fraction": 0.5273,
+        "beyond_1_5_voxels": 0.4842,
+        "beyond_3_voxels": 0.3848,
+        "share_beyond_3_voxels": 0.7297,
+        "max_vertex_distance_in_voxels": 18.1,
+        "coverage_movement_from_crop": 0.0,
+        "reading": "extrapolated shell"
+      },
+      "golden_eval_primitives": {
+        "what": "the sampled primitives the offline container smoke uses; measured through the smoke itself, not this harness",
+        "unsupported_area_fraction": 0.4929,
+        "beyond_3_voxels": 0.4855,
+        "share_beyond_3_voxels": 0.985,
+        "reading": "extrapolated shell"
+      },
+      "eagle": {
+        "what": "real scan of a solid object, dense relative to its features but with real holes",
+        "unsupported_area_fraction": 0.1249,
+        "beyond_1_5_voxels": 0.0642,
+        "beyond_3_voxels": 0.0126,
+        "share_beyond_3_voxels": 0.1012,
+        "max_vertex_distance_in_voxels": 5.3,
+        "coverage_movement_from_crop": 0.000421,
+        "reading": "extrapolated shell, but see limitations: this share sits on the 0.1 boundary"
+      },
+      "armadillo_complete": {
+        "what": "watertight mesh sampled uniformly at 300k points, then voxelized at its own median spacing. No observation is missing anywhere, so unsupported area here is discretization by construction and any crop removes correct geometry.",
+        "unsupported_area_fraction": 0.2009,
+        "beyond_1_5_voxels": 0.0069,
+        "beyond_3_voxels": 0.0,
+        "share_beyond_3_voxels": 0.0,
+        "max_vertex_distance_in_voxels": 2.1,
+        "coverage_movement_from_crop": 0.000599,
+        "vertex_distance_to_ground_truth_in_voxels": {
+          "median": 0.021,
+          "p99": 0.165,
+          "max": 0.685
+        },
+        "reading": "near-threshold surface"
+      }
+    }
+  },
+  "findings": [
+    {
+      "claim": "The coverage guard cannot separate the cases, and is mildly anti-informative.",
+      "evidence": "Cropping moved coverage by 0.0 on the invented shell and 5.99e-04 on the complete capture. Both are negligible, and the larger movement belongs to the case where correct geometry was destroyed. Coverage asks whether the observations are still explained; surface removed from a correct reconstruction leaves the remaining surface still passing under every sample."
+    },
+    {
+      "claim": "The headline unsupported fraction cannot separate the cases, and ranks them wrong.",
+      "evidence": "The complete capture reported 0.2009 unsupported while a genuinely partial scan of a solid object reported 0.1249. Thresholding the headline number calls the correct surface the worse of the two."
+    },
+    {
+      "claim": "The share of unsupported area beyond three voxels does separate the two poles.",
+      "evidence": "0.7297 and 0.985 on the two partial captures against 0.0000 on the complete one. On the complete capture no vertex sits further than 0.685 voxels from ground truth, so there is nothing fabricated for a band to find."
+    },
+    {
+      "claim": "The headline unsupported fraction is not measuring fabrication at this threshold at all, and its magnitude depends on the sampling scheme.",
+      "evidence": "The review lane scored a reconstruction with zero error against the samples it was drawn from and measured 0.75126 unsupported. Uniform random sampling leaves gaps well above the median nearest-neighbour spacing, pushing the per-triangle maximum further out, so my 0.2055 figure is specific to its sampling scheme and does not transfer. Recorded in the docstring and the skill.",
+      "source": "review lane verdict on e8e12b12a"
+    }
+  ],
+  "regression_guards": [
+    "tests/workbench/test_open3d.py: nested bands must decrease; a non-fraction band is rejected; a report predating the bands still validates; the shell and near-threshold readings are pinned to the measured figures from both poles",
+    "tests/workbench/test_open3d.py: the Eagle share is pinned within 2 percent of the boundary, so a later change cannot quietly start treating the reading as decisive",
+    "src/npa/smoke/test_open3d_functional.py: the offline container smoke now asserts the scene it measures actually carries a shell (>= 0.30 of area beyond three voxels, reading 'extrapolated shell'). Without this, its existing before > after assertion would also pass on a complete capture whose crop was destroying correct geometry.",
+    "tests/workbench/test_open3d.py: the sweep's worst case for the headline metric is pinned \u2014 0.5659 unsupported against 0.0027 actually fabricated must still read as near-threshold surface.",
+    "tests/workbench/test_open3d.py: no test pins a floor value, deliberately. What is pinned is that a zero-error reconstruction never reads as a shell at any of the four measured headline fractions, from exactly 0.0 to 0.7513.",
+    "tests/workbench/test_open3d.py: the review lane's polar-cap curve is pinned across all three states, the Eagle share is pinned to read 'undecided', the remaining confident miss is pinned to name itself a lower bound, and the undecided note is pinned to direct the reader to the bands rather than to a verdict.",
+    "tests/workbench/test_open3d.py: the voxel-to-spacing curve is pinned by direction rather than by value -- a looser voxel may never report more unsupported area on a correct reconstruction nor detect fabrication less sensitively -- and the recommended >= 2x setting is pinned not to read a zero-error reconstruction as an invented shell."
+  ],
+  "limitations": [
+    "The 0.1 boundary is a reporting aid and nothing gates on it. Deliberately so: the Eagle scan measured 0.1012 against a boundary of 0.1, decided by the fourth decimal place. The two poles are three orders of magnitude apart, but a real scan can land on the line, and for those scenes the reading is a coin toss. This is recorded in the constant's own docstring and pinned by a test.",
+    "'near-threshold surface' does not prove a crop removed correct geometry; it says the distance profile cannot rule it out. Proving it needs a ground-truth surface, which exists only for the synthetic scene.",
+    "Three and 1.5 voxels are reporting boundaries chosen because a correct surface sampled at roughly voxel spacing had nothing past three. They are not derived from a sampling theorem.",
+    "The Armadillo figure moves slightly between runs (0.2009 here, 0.2055 in the earlier threshold sweep) because the 300k-point sampling is not seeded. The separation being measured is three orders of magnitude, so this does not affect the finding, but the fourth decimal place is not reproducible.",
+    "No GPU claim. CPU only, by construction."
+  ],
+  "vlm_evaluation": "Not applicable. This adds numbers to a JSON report; there is no new visual artifact. The VLM calibration failure recorded in evidence/open3d/vlm/CALIBRATION-REPORT.md is unchanged by this work.",
+  "independent_review": "Reviewed at e8e12b12a: review-ready, not merge-ready (draft, no CI registered). The reviewer declined to re-run my harness because it imports _support and so cannot catch a bug in _support, reimplemented the definition independently, and both corrected and strengthened my claims. My question about whether to keep the reading was answered: keep it, because the sensitivity curve shows a detector with a floor rather than a coin toss. Their corrections are applied in the commit following e8e12b12a.",
+  "validity_sweep": {
+    "question": "The 1.5 and 3 voxel boundaries are reporting choices with no derivation, so where do they stop working?",
+    "harness": "evidence/open3d/harness/band_validity_sweep.py",
+    "output": "evidence/open3d/band-validity-sweep.json",
+    "method": "Sample spacing swept from 0.50 to 5.45 voxels against a voxel held fixed, on a watertight mesh so fabrication could be measured against ground truth instead of inferred. The tool's own default ties the voxel to the spacing, which pins the ratio near 0.5 and hides this effect entirely. Fabrication is defined as reconstructed area whose vertices lie further than one voxel from the reference surface, area-weighted to match how the support metric weighs its own figure.",
+    "result": "No case where a correct surface read as an extrapolated shell.",
+    "band_share_tracks_real_fabrication": {
+      "claim": "Over the swept range the share past three voxels estimates actual fabricated area, not merely classifies it.",
+      "pairs_share_vs_actual": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0005,
+          0.0027
+        ],
+        [
+          0.2803,
+          0.2961
+        ],
+        [
+          0.4009,
+          0.4601
+        ],
+        [
+          0.6854,
+          0.6813
+        ],
+        [
+          0.8844,
+          0.8317
+        ],
+        [
+          0.9769,
+          0.9444
+        ],
+        [
+          0.9967,
+          0.9803
+        ]
+      ],
+      "max_absolute_error": 0.0592
+    },
+    "headline_fraction_fails_over_the_same_range": {
+      "worst_case": "At 0.708 voxels of spacing it reported 0.5659 unsupported area where 0.0027 of area was actually fabricated: an overstatement of roughly 200-fold.",
+      "saturation": "It reaches 0.9970 and above by 1.94 voxels of spacing and then cannot distinguish anything, while actual fabrication was still climbing from 0.68 to 0.98."
+    },
+    "not_covered": "The sweep only tests false positives \u2014 a correct surface misread as a shell. The reverse error, a genuine shell reading as near-threshold, has no ground truth to test against and rests only on the four scenes in the profile above, where the Eagle scan sits on the boundary at 0.1012.",
+    "noise": "Poisson emitted 'bad average roots: 1' at one density. The reconstruction completed and its ground-truth comparison is reported like every other row, but it is recorded here rather than dropped."
+  },
+  "false_negative_attempt": {
+    "question": "Can a genuine shell read as near-threshold? The validity sweep could not reach this direction.",
+    "harness": "evidence/open3d/harness/band_false_negative_sweep.py",
+    "output": "evidence/open3d/band-false-negative-sweep.json",
+    "result": "INCONCLUSIVE, and recorded as inconclusive rather than scored as a pass.",
+    "method": "Samples removed inside a sphere centred on the most protruding point of a watertight mesh, sweeping the radius from 0.05 to 0.45 of the bounding-box diagonal, so that fabrication could be measured against ground truth.",
+    "what_happened": "No occlusion fabricated more than 0.01 of area. At 0.45 of the diagonal, with 205947 of 300000 samples removed, only 0.0003 of reconstructed area lay further than one voxel from the true surface and the furthest vertex was 1.54 voxels out. With nothing fabricated there was no shell for the bands to miss, so the sweep cannot speak to false negatives.",
+    "why_it_is_inconclusive_by_construction": [
+      "Poisson closure over a hole in a *closed* object tracks the true surface closely, because a closed reference constrains the interpolation. The failure the crop exists for is a shell wrapped around an *open scene* -- the demo scans are a room, not an object -- and an open scene has no watertight reference by definition. The ground truth that makes the measurement possible is the same property that removes the failure mode.",
+      "The fabrication measure is unsigned distance to the whole reference mesh, so a bridge cutting through the interior can pass near some other part of the true surface and register as faithful. That is lenient in the tool's favour and it matters most on a concave object like this one. Signed distance or a per-region correspondence would be stricter; neither was implemented here."
+    ],
+    "first_attempt_discarded": "An initial parameterization used small multiples of the voxel, where nine voxels removed 208 of 300000 samples -- about a thousandth of the surface. It reported no false negative, which was a statement about the sweep and not about the bands. The harness now refuses to call a sweep with no informative row a pass.",
+    "consequence": "The false-negative direction stays open and is not claimed. It rests on the four profiled scenes, where the Eagle scan sits on the reading boundary at 0.1012. This is the main reason the reading remains ungated.",
+    "superseded_by_review_lane": {
+      "what_happened": "My conclusion that this direction could not be measured with ground truth was wrong, and the review lane measured it independently at the same time. My error was in the construction, not the goal: I occluded a watertight mesh, where Poisson closure tracks the true surface and nothing is invented. The review lane scored an icosphere against samples drawn from itself and deleted observations from a polar cap while leaving the mesh covering it, so the invented fraction is known exactly from the cap angle and genuine fabrication is present at every step.",
+      "harness": "review lane, program/review/evidence/verify_602_boundary.py",
+      "result": "The share is monotone in the invented fraction across two orders of magnitude. The sensitivity floor is near 9 percent invented area: below it a genuine shell reads as near-threshold, above it the constant never missed.",
+      "curve": [
+        {
+          "case": "perfect reconstruction",
+          "invented": 0.0,
+          "past_3v": 0.00973,
+          "share": 0.01295,
+          "reads_as": "near-threshold surface"
+        },
+        {
+          "case": "cap 20 deg",
+          "invented": 0.03,
+          "past_3v": 0.03149,
+          "share": 0.04138,
+          "reads_as": "near-threshold surface"
+        },
+        {
+          "case": "cap 30 deg",
+          "invented": 0.067,
+          "past_3v": 0.06375,
+          "share": 0.08278,
+          "reads_as": "near-threshold surface"
+        },
+        {
+          "case": "cap 35 deg",
+          "invented": 0.09,
+          "past_3v": 0.08187,
+          "share": 0.10549,
+          "reads_as": "extrapolated shell"
+        },
+        {
+          "case": "cap 90 deg",
+          "invented": 0.5,
+          "past_3v": 0.48395,
+          "share": 0.55126,
+          "reads_as": "extrapolated shell"
+        }
+      ],
+      "consequence": "The error is one-sided: no false positives across spacing 0.50 to 5.45 voxels from my sweep, no false negatives above the floor from theirs. The reading only ever under-calls fabrication. Below the floor it is confidently wrong rather than undecided, so a low value is a lower bound and not a clean bill of health -- now stated in the operator-facing note, the constant's docstring, the skill and a test."
+    }
+  },
+  "floor_across_geometry_and_sampling": {
+    "question": "Both the review lane and I flagged that the 9 percent floor was one geometry, one sampling scheme, one resolution ratio. Does it hold?",
+    "harness": "evidence/open3d/harness/floor_across_geometry_and_sampling.py, reproducing the review lane's construction rather than reinventing it so the curves are comparable",
+    "output": "evidence/open3d/floor-across-geometry-and-sampling.json",
+    "grid": "icosphere and Armadillo, each sampled uniform-random and Poisson-disk, 60000 samples, cap half-angles 0 to 90 degrees",
+    "held_in_every_cell": [
+      "The share is monotone in the invented area fraction.",
+      "A perfect reconstruction never reads as an extrapolated shell."
+    ],
+    "did_not_hold": {
+      "claim": "The floor is not a number and must not be quoted as one.",
+      "floors_by_case": {
+        "icosphere__uniform_random": 0.0289,
+        "icosphere__poisson_disk": 0.0289,
+        "armadillo__uniform_random": 0.0375,
+        "armadillo__poisson_disk": 0.0112
+      },
+      "review_lane_floor": 0.09,
+      "spread": "0.011 to 0.037 here, against 0.09 in the review lane's setup at a different resolution ratio: nearly an order of magnitude.",
+      "direction": "Every cell measured here is more sensitive than the review lane's, so their 0.09 is the conservative figure and neither supersedes the other; they are different setups."
+    },
+    "new_finding": {
+      "claim": "The headline unsupported fraction's failure is a sampling artefact, not inherent, and is fixable at capture time.",
+      "evidence": "On a reconstruction with zero error the fraction measured exactly 0.0 under Poisson-disk sampling in both geometries, against 0.1393 and 0.1636 under uniform random, and 0.7513 in the review lane's setup. Uniform random sampling leaves gaps well above the median nearest-neighbour spacing and the per-triangle maximum lands in them.",
+      "consequence": "Guidance changes from 'the fraction is broken' to 'sample evenly and it is meaningful again; otherwise read the bands'."
+    },
+    "limitations": [
+      "Two geometries and two sampling schemes is still a small grid, and resolution ratio was held at spacing/voxel 0.5 in every cell. The review lane's differing floor is most likely a resolution effect, which this does not isolate.",
+      "The invented fraction is mesh area inside the cap, so it counts surface whose observations were deleted regardless of whether Poisson would have placed it correctly anyway. That is strict against the tool in the same direction for every cell, so it does not affect the comparison."
+    ]
+  },
+  "undecided_band": {
+    "why": "Review ruling at d747fc87d, changes-required on one narrow point. The artifact contradicted its own documentation: the reporting boundary is where the reading is least trustworthy, and it was exactly where the output made its most confident assertion -- extrapolated shell, with a note calling the surface invented as settled fact -- while the other branch was properly hedged. Confidence was inverted where it should have been lowest, and a docstring saying 'treat this as a coin toss' does not travel with the JSON that a consumer actually reads.",
+    "change": "removed_surface_reads_as now has three states. Shares in the closed interval [0.05, 0.2], roughly a factor of two either side of the 0.1 boundary, emit 'undecided' with a note that declines to give a reading and directs the reader to unsupported_area_beyond_1_5_voxels and unsupported_area_beyond_3_voxels. The band itself is published in the artifact as undecided_band.",
+    "verified_in_the_real_container": {
+      "image": "npa-open3d:undecided, built from this branch",
+      "demo_scans_real_s3_run": {
+        "share": 0.7297,
+        "reads_as": "extrapolated shell"
+      },
+      "eagle": {
+        "share": 0.1012,
+        "reads_as": "undecided"
+      },
+      "armadillo_complete": {
+        "share": 0.0,
+        "reads_as": "near-threshold surface"
+      },
+      "golden_eval_primitives": {
+        "share": 0.985,
+        "reads_as": "extrapolated shell"
+      },
+      "note": "Both informative poles keep their verdict and the boundary case stops asserting one, which is exactly what the ruling required."
+    },
+    "effect_on_the_known_failure_mode": "The band covers most of the sensitivity-floor region. On the review lane's polar-cap curve the 6.7 and 9.0 percent invented cases previously received confident verdicts and now read undecided. What remains confidently wrong is narrower: a share under 0.05, about 3 percent invented area on that curve, still reads near-threshold surface, which is why that branch's note calls itself a lower bound rather than a clean bill of health. The field cannot be made to see fabrication below its floor; it can only be stopped from denying it.",
+    "why_it_settles_the_open_direction": "The reviewer's reasoning, accepted: an unmeasured failure mode is dangerous in proportion to how confidently a field speaks. A field that declines to speak near its boundary and speaks only where the evidence is three orders of magnitude wide is not resting on the untested false-negative direction. That direction stays open and documented, conditional on this band.",
+    "leniency_disclosed_in_the_constant": "At the reviewer's request, the unsigned-distance leniency is now recorded beside the constants rather than only in the evidence tree: fabrication was validated as unsigned distance to the whole reference surface, so a bridge through an object's interior can register as faithful when it passes near any other part of that surface. The bias favours this tool and is largest on concave geometry."
+  },
+  "what_sets_the_sensitivity_floor": {
+    "question": "My floor grid measured 0.011 to 0.037 invented area; the review lane measured 0.09 on the same construction. Unexplained across three heads, and the last in-lane question I owed.",
+    "resolution_ruled_out": {
+      "evidence": "evidence/open3d/floor-vs-resolution.json",
+      "range_tested": "triangle-edge-to-voxel 0.705 to 22.465, bracketing the review lane's ~1.01",
+      "finding": "No trend above noise. Floors scattered 0.0075 to 0.0197 across a 32-fold ratio range, and repeated unseeded runs moved a single cell by as much as the whole spread, so the scatter is sampling noise rather than a resolution effect."
+    },
+    "voxel_to_spacing_explains_it": {
+      "evidence": "evidence/open3d/floor-vs-voxel-multiple.json",
+      "curve": [
+        {
+          "voxel_over_spacing": 1.0,
+          "zero_error_unsupported": 0.878,
+          "floor": 0.0467
+        },
+        {
+          "voxel_over_spacing": 1.25,
+          "zero_error_unsupported": 0.7135,
+          "floor": 0.0467
+        },
+        {
+          "voxel_over_spacing": 1.5,
+          "zero_error_unsupported": 0.5069,
+          "floor": 0.0301
+        },
+        {
+          "voxel_over_spacing": 2.0,
+          "zero_error_unsupported": 0.1707,
+          "floor": 0.0168
+        },
+        {
+          "voxel_over_spacing": 3.0,
+          "zero_error_unsupported": 0.0055,
+          "floor": 0.0075
+        }
+      ],
+      "reconciliation": "The review lane's zero-error unsupported fraction of 0.75126 lands between the 1.0x and 1.25x cells, so their construction used a voxel near 1.2x their sample spacing, where this curve gives a floor of 0.0467 against their reported 0.09. Same order of magnitude, residual within the spread the geometry and sampling axes already showed. My grid sat at the tool's 2.0x default throughout, which is why it measured 0.017. The gap was a difference in setup, not a contradiction, and neither measurement was wrong.",
+      "operator_consequence": "The floor is set by the one input the caller supplies. A tight voxel costs both ways at once: it inflates unsupported_area_fraction on a correct reconstruction and blinds the reading to smaller fabrications. Both improve together as the voxel loosens, so there is no tradeoff to balance. Documented in the skill and the constant as: choose --voxel-size at or above twice the median sample spacing."
+    },
+    "harness_defect_found_and_fixed": "Both sweeps used zip(xs, xs[1:], strict=True) for the pairwise monotonicity check, which raises by construction since the tails differ in length by one. It stayed hidden while all() short-circuited on a False, and surfaced only when a check started passing. Fixed in both, and the resolution sweep's reported direction was re-derived afterwards rather than trusted."
+  },
+  "undecided_band_implemented_then_withdrawn": {
+    "what_happened": "The review lane ruled changes-required for an undecided band; I implemented it and verified it at 9dc41cabd. Their ruling had crossed my corrections in flight and they withdrew it, arguing the two-state reading was better. They were right, so it is reverted rather than kept for having been asked for.",
+    "why_the_band_was_wrong": "It would have been wrong in both error directions at once. The reading never over-calls, so above the threshold a plain assertion is sound and hedging would discard a true finding -- Eagle's 0.1012 on a real scan of a solid object with real holes is a shell. And below the floor a genuine fabrication does not read as undecided, it reads as near-threshold: confidently wrong, not unknown. Labelling both branches equally uncertain would have obscured the asymmetry that is the field's most important property.",
+    "what_was_kept_from_the_episode": "The reviewer's underlying objection was sound: a docstring does not travel with the artifact. Rather than hedging, each branch now carries its own basis in the emitted note -- the shell branch states that it has no measured false positive across twelve zero-error cells, and the near-threshold branch states that it is a lower bound and not a clean bill of health. The reader gets the calibration without losing the finding.",
+    "overcall_audit": {
+      "evidence": "evidence/open3d/poisson-procedure-and-overcall-audit.json",
+      "construction": "the surface scored is the surface sampled, so zero invented area by construction",
+      "cells": "2 geometries x 2 sampling schemes x voxel/spacing of 1, 2, 3",
+      "over_calls": "0 of 12",
+      "note": "This is an independent construction rather than the review lane's polar-cap curve, which matters because they flagged that my floor test pins their harness and their sign-off on it is therefore not independent confirmation. The one-sidedness now rests on both."
+    },
+    "circularity_acknowledged": "The floor curve pinned in tests is the review lane's measurement, taken once at one resolution ratio. Their approval of that test is not independent verification of the 9 percent figure and is not read as such. The test's docstring says so, pins the shape rather than the value, and the constant's guidance remains not to quote the floor as a number -- reinforced now that the voxel-to-spacing sweep shows the floor moving from 0.0075 to 0.0467 on one scene.",
+    "final_disposition": {
+      "outcome": "no band; two-state reading with each branch stating its own basis",
+      "sequence": "Ruled for at 04:32Z, withdrawn at 04:40Z, withdrawal reversed at 04:56Z, settled at 05:07Z that the revert was correct. I implemented the band, reverted it, restored it on the reversal, and reverted it again on the settlement. Recorded in full because the oscillation is not flattering to either lane and the final reasoning is worth keeping.",
+      "the_settled_argument": "The band is symmetric and the error structure is not. It marks [0.1, 0.2] uncertain where the reading is reliable, discarding true findings, and leaves [0, 0.05] confident where the confidently-wrong readings actually live. The reviewer's own 04:56 table contained the disproof: two cells fixed (4.7 and 6.7 percent invented), two broken (9.0 and 11.7 percent, correct shell calls lost), and the hazard at 3.0 percent retained below the band. Nearer a wash than a favourable trade, and it hides the asymmetry. Per-branch bases keep the finding and still deliver the calibration, which was the actual objection.",
+      "what_ships_instead": "Two states. The shell branch asserts plainly and states its basis in the emitted note (no measured false positive across twelve zero-error cells). The near-threshold branch states that it is a lower bound and not a clean bill of health. Neither requires the reader to have seen a docstring."
+    }
+  },
+  "one_sidedness_independently_confirmed": {
+    "by": "review lane, 2026-09-20T05:07Z, program/review/evidence/verify_602_onesided.py",
+    "construction": "Built from scratch and independent of both my twelve-cell audit and their own earlier polar-cap harness: their own icosphere and torus, own area-weighted sampling, own farthest-point thinning, own KD-tree, with the scored surface being the sampled surface.",
+    "result": "zero false shell readings in 12 of 12 cells; highest zero-error share 0.0074 against the 0.1 threshold",
+    "note": "Together with my own twelve-cell audit on a different construction, the shell branch's plain assertion now rests on two independent measurements plus their original curve."
+  },
+  "poisson_disk_claim_confirmed": {
+    "by": "review lane, 2026-09-20T05:07Z, program/review/evidence/verify_602_sampling.py",
+    "their_even_sampling_worked_this_time": "max/median 1.62 to 1.64, comparable to Open3D init_factor=3 at 1.70",
+    "result": "Even sampling zeroes the headline fraction on an independent implementation: icosphere 0.8923 uniform at 1x voxel against 0.0082 even, and exactly 0.0000 at 2x and 3x; torus 0.8918 uniform against 0.0059 even at 1x and 0.0000 at 2x.",
+    "status_change": "they withdraw the 'one substantive claim with no independent confirmation' status"
+  },
+  "voxel_ratio_curve_reproduced": {
+    "theirs": {
+      "1.0x": 0.866,
+      "1.5x": 0.516,
+      "2.0x": 0.179,
+      "3.0x": 0.007
+    },
+    "mine": {
+      "1.0x": 0.878,
+      "1.5x": 0.5069,
+      "2.0x": 0.1707,
+      "3.0x": 0.0055
+    },
+    "agreement": "two independent implementations within about 0.01",
+    "note": "They had labelled their own reconciliation sweep inconclusive; it matches. The operator guidance falling out of it -- choose --voxel-size at or above twice the median sample spacing -- is in the skill and beside the constant."
+  }
+}

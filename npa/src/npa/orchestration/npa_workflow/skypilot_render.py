@@ -54,6 +54,10 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos_evaluator": "cosmos-evaluator",
     "workbench.lancedb": "lancedb",
     "workbench.detection_training": "detection-training",
+    # CPU image on purpose: Open3D's registration and geometry pipelines have no
+    # CUDA path, so routing these stages at the CUDA base would hold an
+    # accelerator they cannot use.
+    "workbench.open3d": "open3d",
     "workbench.alpamayo2_super": "alpamayo2-super",
     "workbench.curobo": "curobo",
     "workbench.fiftyone": "fiftyone",

@@ -1,0 +1,96 @@
+{
+  "cells_with_samples": 1884,
+  "definitions": {
+    "sampled_1e5_per_m2": {
+      "baseline": {
+        "occupied": 2296,
+        "phantom": 817,
+        "phantom_rate": 0.3558362369337979,
+        "recall_of_observed": 0.785031847133758
+      },
+      "candidate": {
+        "occupied": 1450,
+        "phantom": 17,
+        "phantom_rate": 0.011724137931034483,
+        "recall_of_observed": 0.7606157112526539
+      },
+      "matches_recorded": false
+    },
+    "sampled_1e6_per_m2": {
+      "baseline": {
+        "occupied": 2310,
+        "phantom": 821,
+        "phantom_rate": 0.3554112554112554,
+        "recall_of_observed": 0.7903397027600849
+      },
+      "candidate": {
+        "occupied": 1456,
+        "phantom": 17,
+        "phantom_rate": 0.011675824175824176,
+        "recall_of_observed": 0.7638004246284501
+      },
+      "matches_recorded": false
+    },
+    "triangle_voxel_intersection_bounded": {
+      "baseline": {
+        "occupied": 3002,
+        "phantom": 1513,
+        "phantom_rate": 0.5039973351099267,
+        "recall_of_observed": 0.7903397027600849
+      },
+      "candidate": {
+        "occupied": 1469,
+        "phantom": 24,
+        "phantom_rate": 0.016337644656228726,
+        "recall_of_observed": 0.7669851380042463
+      },
+      "matches_recorded": false
+    },
+    "triangle_voxel_intersection_rebinned": {
+      "baseline": {
+        "occupied": 2296,
+        "phantom": 941,
+        "phantom_rate": 0.4098432055749129,
+        "recall_of_observed": 0.7192144373673036
+      },
+      "candidate": {
+        "occupied": 1443,
+        "phantom": 81,
+        "phantom_rate": 0.056133056133056136,
+        "recall_of_observed": 0.7229299363057324
+      },
+      "matches_recorded": false
+    },
+    "vertices_only": {
+      "baseline": {
+        "occupied": 2014,
+        "phantom": 613,
+        "phantom_rate": 0.304369414101291,
+        "recall_of_observed": 0.7436305732484076
+      },
+      "candidate": {
+        "occupied": 1381,
+        "phantom": 16,
+        "phantom_rate": 0.011585807385952208,
+        "recall_of_observed": 0.7245222929936306
+      },
+      "matches_recorded": false
+    }
+  },
+  "grid_cells": 11520,
+  "grid_dims": [
+    36,
+    16,
+    20
+  ],
+  "recorded": {
+    "baseline_occupied": 2683,
+    "baseline_phantom": 871,
+    "candidate_occupied": 1948,
+    "candidate_phantom": 138,
+    "cells_with_samples": 1884,
+    "grid_cells": 11520
+  },
+  "reproducing_definition": null,
+  "support_radius_factor": 0.87
+}

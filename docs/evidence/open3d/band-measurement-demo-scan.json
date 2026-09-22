@@ -1,0 +1,18 @@
+{
+  "baseline_uncropped": {
+    "max_in_voxels": 18.10675848320032,
+    "max_vertex_distance_to_sample": 0.905337924160016,
+    "share_beyond_3_voxels": 0.7297397768448516,
+    "unsupported_area_beyond_1_5_voxels": 0.48415286720543543,
+    "unsupported_area_beyond_3_voxels": 0.3848090672451354,
+    "unsupported_area_fraction": 0.5273236836683344
+  },
+  "candidate_cropped": {
+    "max_in_voxels": 0.9999022278460756,
+    "max_vertex_distance_to_sample": 0.04999511139230378,
+    "share_beyond_3_voxels": 0,
+    "unsupported_area_beyond_1_5_voxels": 0.0,
+    "unsupported_area_beyond_3_voxels": 0.0,
+    "unsupported_area_fraction": 0.0
+  }
+}
