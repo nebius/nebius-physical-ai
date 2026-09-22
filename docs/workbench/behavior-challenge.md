@@ -27,6 +27,13 @@ selection metrics: five cases improved and five worsened. These reused
 development cases are neither a reporting score nor proof of the 24 GB policy
 limit.
 
+The reporting comparison evaluates native RLC, Comet12, and Comet50 on the
+same ten reporting instances. Their results stay sealed until every baseline
+arm finishes and the candidate identity is fixed using development evidence.
+Then the complete baseline results determine the reporting target, before the
+fixed candidate runs. Leading the development comparison does not establish
+the strongest baseline on the reporting cohort.
+
 The [campaign control plane](behavior-campaign.md) freezes policy identities,
 assigns complete task panels across workers, and preserves per-instance progress
 in S3. Recovery verifies the original metrics and videos before reusing results.
