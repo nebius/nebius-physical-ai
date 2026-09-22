@@ -31,7 +31,7 @@ pluggy==1.6.0
 pyarrow==25.0.1
 pycparser==3.0
 pydantic==2.13.5
-pydantic_core==2.46.5
+pydantic_core==2.49.0
 Pygments==2.21.0
 PyNaCl==1.6.2
 pytest==9.1.1
