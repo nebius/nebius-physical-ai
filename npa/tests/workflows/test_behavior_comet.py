@@ -453,6 +453,59 @@ def test_source_overlay_patches_only_simulation_import(tmp_path, monkeypatch):
     assert patched.endswith("PINNED = True\n")
 
 
+def test_training_overlay_removes_only_unreachable_simulator_dataset(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source"
+    policy = source / "src/openpi/policies/b1k_policy.py"
+    loader = source / "src/openpi/training/data_loader.py"
+    policy.parent.mkdir(parents=True)
+    loader.parent.mkdir(parents=True)
+    policy.write_text(
+        "from omnigibson.learning.utils.eval_utils import PROPRIOCEPTION_INDICES\n"
+    )
+    original = (
+        "prefix\n"
+        + comet_policy._MULTIPROCESS_DATASET_START
+        + "            simulator_only_sharding()\n\n"
+        + comet_policy._MULTIPROCESS_DATASET_END
+        + "            validate_batch_size()\n"
+    )
+    loader.write_text(original)
+    monkeypatch.setattr(comet_policy, "verify_source", lambda root: {})
+    monkeypatch.setattr(
+        comet_policy, "TRAINING_DATA_LOADER_SHA256", comet_policy._digest(loader)
+    )
+
+    overlay = comet_policy.build_training_source_overlay(source, tmp_path / "overlay")
+
+    patched = (overlay / "openpi/training/data_loader.py").read_text()
+    assert loader.read_text() == original
+    assert "behavior.learning.datas.dataset" not in patched
+    assert "simulator_only_sharding" not in patched
+    assert "jax.process_count() != 1" in patched
+    assert comet_policy._MULTIPROCESS_DATASET_END in patched
+
+
+def test_training_overlay_rejects_unrecognized_loader_block(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    policy = source / "src/openpi/policies/b1k_policy.py"
+    loader = source / "src/openpi/training/data_loader.py"
+    policy.parent.mkdir(parents=True)
+    loader.parent.mkdir(parents=True)
+    policy.write_text(
+        "from omnigibson.learning.utils.eval_utils import PROPRIOCEPTION_INDICES\n"
+    )
+    loader.write_text("changed loader\n")
+    monkeypatch.setattr(comet_policy, "verify_source", lambda root: {})
+    monkeypatch.setattr(
+        comet_policy, "TRAINING_DATA_LOADER_SHA256", comet_policy._digest(loader)
+    )
+
+    with pytest.raises(ValueError, match="multi-process dataset block"):
+        comet_policy.build_training_source_overlay(source, tmp_path / "overlay")
+
+
 def test_loader_uses_pinned_config_and_upstream_wrapper(tmp_path, server, monkeypatch):
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/task_mapping.json").write_text(

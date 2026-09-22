@@ -101,6 +101,18 @@ SOURCE_FILES = {
     "src/openpi/shared/eval_b1k_wrapper.py": "7afc9498628d3295e3360a7b37eec81e98f82b4cce862409d957af3f78437779",
     "src/openpi/training/config.py": "f5a4a363b19e8956745962af494996efd51088f36692d0560c6b70b1d56c18dd",
 }
+TRAINING_DATA_LOADER_SHA256 = (
+    "5caf2dbf4ac311282cca8569394f762eeecb5aed41189cf21fb65cb337d9b4c3"
+)
+_MULTIPROCESS_DATASET_START = (
+    "        from behavior.learning.datas.dataset import MultiBehaviorLeRobotDataset\n\n"
+    "        if jax.process_count() > 1:\n"
+)
+_MULTIPROCESS_DATASET_END = "        if len(dataset) < local_batch_size:\n"
+_SINGLE_PROCESS_DATASET_GATE = (
+    "        if jax.process_count() != 1:\n"
+    '            raise ValueError("Comet training overlay requires one JAX process")\n\n'
+)
 
 
 def _digest(path: Path, algorithm: str = "sha256") -> str:
@@ -469,6 +481,34 @@ def build_source_overlay(root: Path, overlay: Path) -> Path:
         raise ValueError("Unexpected pinned Comet proprioception import")
     policy.write_text(source.replace(old, new))
     return overlay
+
+
+def build_training_source_overlay(root: Path, overlay: Path) -> Path:
+    """Build the serving overlay and remove its unused simulator dataset import.
+
+    Args:
+        root: Verified Comet source root.
+        overlay: Empty destination for the runtime source overlay.
+    Returns:
+        Overlay restricted to the qualified single-process training path.
+    Raises:
+        ValueError: Source bytes or the pinned multi-process block differ.
+    """
+    loader = root / "src/openpi/training/data_loader.py"
+    if _digest(loader) != TRAINING_DATA_LOADER_SHA256:
+        raise ValueError("Pinned Comet data loader bytes differ")
+    destination = build_source_overlay(root, overlay)
+    _restrict_training_loader(destination / "openpi/training/data_loader.py")
+    return destination
+
+
+def _restrict_training_loader(loader: Path) -> None:
+    source = loader.read_text()
+    if source.count(_MULTIPROCESS_DATASET_START) != 1:
+        raise ValueError("Pinned Comet multi-process dataset block differs")
+    start = source.index(_MULTIPROCESS_DATASET_START)
+    end = source.index(_MULTIPROCESS_DATASET_END, start)
+    loader.write_text(source[:start] + _SINGLE_PROCESS_DATASET_GATE + source[end:])
 
 
 def _stage_adapters(output: Path, profile: CometProfile) -> dict[str, str]:

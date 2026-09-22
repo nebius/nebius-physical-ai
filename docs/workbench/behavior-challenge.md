@@ -468,6 +468,15 @@ adapter does not rewrite metadata, observations, actions, videos, or global
 normalization statistics. Training must continue to bind the exact source and
 view inventories separately from this compatibility code.
 
+The pinned Comet loader imports its simulator dataset implementation even when
+the selected dataset has already been built and the run uses one JAX process.
+`build_training_source_overlay` verifies the pinned loader bytes, removes that
+unreachable simulator-only sharding branch in the copied source overlay, and
+rejects multi-process use. The original checkout stays unchanged. The native
+Comet transforms, PyTorch collation, `DataLoaderImpl`, and `train_step` remain
+the executable training path; this bridge does not substitute the objective or
+install a fake simulator package.
+
 ## Freeze the evaluation selection
 
 Prepare `recipe.json` privately. Set `policy_checkpoint_sha256` to the SHA-256
