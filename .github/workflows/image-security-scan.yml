@@ -30,10 +30,6 @@ concurrency:
 
 jobs:
   image-policy:
-    concurrency:
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'policy' || 'security' }}
-      queue: max
-      cancel-in-progress: false
     name: Image policy and complete-byte security
     runs-on: ubuntu-latest
     steps:
@@ -141,10 +137,6 @@ jobs:
           category: trivy-config
 
   base-image-cve-scan:
-    concurrency:
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'runtime' || 'security' }}
-      queue: max
-      cancel-in-progress: false
     name: Base image CVE inventory
     runs-on: ubuntu-latest
     steps:
@@ -183,6 +175,13 @@ jobs:
         run: |
           bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
           echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
+
+      - name: Reclaim unused hosted-runner SDK space
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          # CUDA images and Trivy's exports must coexist on this disposable runner.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc
+          df -h /
 
       - name: Scan all pinned bases with three local workers
         if: steps.scope.outputs.deep == 'true'
@@ -263,10 +262,6 @@ jobs:
           category: trivy-image-python-3-11-slim-trixie
 
   omniverse-payload-scan:
-    concurrency:
-      group: npa-validation-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'merge_group' && 'merge' || 'audit' }}-${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 'runtime' || 'security' }}
-      queue: max
-      cancel-in-progress: false
     name: Omniverse payload scan (built image)
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
@@ -292,7 +287,7 @@ jobs:
 
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: omniverse-payload-report
           path: omniverse-payload-report.json

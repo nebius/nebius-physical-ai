@@ -407,7 +407,7 @@ jobs:
             exit 1
           fi
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
 
@@ -636,7 +636,7 @@ jobs:
 
       - name: Retain only the public FiftyOne validation summary
         if: always() && matrix.tool == 'fiftyone' && steps.fiftyone-validation.outcome != 'skipped'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fiftyone-validation-summary
           path: ${{ runner.temp }}/fiftyone-validation/public-summary.json
@@ -687,7 +687,7 @@ jobs:
       - name: Attest exact pushed digest provenance
         if: matrix.tool != 'ncore'
         id: provenance-attestation
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
