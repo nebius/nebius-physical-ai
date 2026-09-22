@@ -805,7 +805,6 @@ def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, s
         "TEST_RESULT",
         "LINT_RESULT",
         "GUARDRAIL_RESULT",
-        "TYPECHECK_RESULT",
         "GITLEAKS_RESULT",
         "CONFIDENTIALITY_RESULT",
         "SCANNER_RESULT",
@@ -832,10 +831,11 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     workflow = yaml.safe_load(workflow_path.read_text())
     job = workflow["jobs"]["security-regression"]
     assert job["needs"] == [
+        "validation-plan",
+        "pr-precheck",
+        "queue-guardrails",
         "test-gate",
         "lint-gate",
-        "guardrails-gate",
-        "typecheck-gate",
         "gitleaks",
         "scan",
         "security-scanners",
@@ -847,10 +847,12 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     required_step = job["steps"][0]
     assert required_step["env"] == {
         "EVENT_NAME": "${{ github.event_name }}",
+        "PLAN_RESULT": "${{ needs.validation-plan.result }}",
+        "VALIDATION_MODE": "${{ needs.validation-plan.outputs.mode }}",
+        "PRECHECK_RESULT": "${{ needs.pr-precheck.result }}",
         "TEST_RESULT": "${{ needs.test-gate.result }}",
         "LINT_RESULT": "${{ needs.lint-gate.result }}",
-        "GUARDRAIL_RESULT": "${{ needs.guardrails-gate.result }}",
-        "TYPECHECK_RESULT": "${{ needs.typecheck-gate.result }}",
+        "GUARDRAIL_RESULT": "${{ github.event_name == 'merge_group' && needs.queue-guardrails.result || needs.pr-precheck.result }}",
         "GITLEAKS_RESULT": "${{ needs.gitleaks.result }}",
         "CONFIDENTIALITY_RESULT": "${{ needs.scan.result }}",
         "SCANNER_RESULT": "${{ needs.security-scanners.result }}",
@@ -862,6 +864,7 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     for name in required_step["env"]:
         if name != "EVENT_NAME":
             monkeypatch.setenv(name, "success")
+    monkeypatch.setenv("VALIDATION_MODE", "full")
     monkeypatch.setenv(prerequisite, result)
     completed = subprocess.run(["bash", "-e", "-c", required_step["run"]], check=False)
     assert (completed.returncode == 0) == (result == "success")

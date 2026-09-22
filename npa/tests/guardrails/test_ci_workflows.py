@@ -53,10 +53,9 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     jobs = workflow["jobs"]
     assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
     assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
-    assert jobs["guardrails-gate"]["uses"] == (
-        "./.github/workflows/harness-guardrails.yml"
-    )
-    assert jobs["typecheck-gate"]["uses"] == "./.github/workflows/typecheck.yml"
+    assert "guardrails-gate" not in jobs
+    precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
+    assert "npa/tests/guardrails -n auto --dist worksteal" in precheck
     assert jobs["gitleaks"]["name"] == "gitleaks"
     assert jobs["scan"]["name"] == "scan"
     required = set(jobs["security-regression"]["needs"])
@@ -70,7 +69,6 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
         "gitleaks.yml",
         "harness-guardrails.yml",
         "lint.yml",
-        "typecheck.yml",
     ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
@@ -87,7 +85,6 @@ def test_main_validation_cancels_superseded_commits() -> None:
         "gitleaks.yml",
         "harness-guardrails.yml",
         "lint.yml",
-        "typecheck.yml",
     ):
         cancellation = _load_workflow(name)["concurrency"]["cancel-in-progress"]
         assert cancellation in (
@@ -106,7 +103,7 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     shard_matrix = job["strategy"]["matrix"]["shard"]
     assert '["pull_request", "merge_group"]' in shard_matrix
     assert "[1, 2, 3, 4]" in shard_matrix
-    assert "[1, 2, 3, 4, 5]" in shard_matrix
+    assert "[1, 2, 3, 4, 5, 6, 7, 8]" in shard_matrix
     assert job["strategy"]["fail-fast"] == (
         "${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}"
     )
@@ -172,7 +169,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
         "NPA_E2E_PROJECT_ID": "project-test-00000000",
         "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
         "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
-        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 5 || 4 }}',
+        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 8 || 4 }}',
         "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
         "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
         "NPA_REQUIRE_FFMPEG": "1",
@@ -210,7 +207,11 @@ def test_required_gate_rejects_unsuccessful_children(result: str) -> None:
     for event in ("pull_request", "merge_group"):
         environment = {name: "success" for name in step["env"]}
         environment["EVENT_NAME"] = event
-        for name in environment.keys() - {"EVENT_NAME"}:
+        environment["VALIDATION_MODE"] = "full"
+        excluded = {"EVENT_NAME", "VALIDATION_MODE"}
+        if event == "merge_group":
+            excluded.add("PRECHECK_RESULT")
+        for name in environment.keys() - excluded:
             rejected = subprocess.run(
                 ["bash", "-c", step["run"]],
                 env={**os.environ, **environment, name: result},
@@ -273,7 +274,7 @@ def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
     workflow = _load_workflow("security-regression.yml")
     job = workflow["jobs"]["ci-timing-report"]
     assert job["needs"] == "security-regression"
-    assert job["if"] == "${{ !cancelled() }}"
+    assert job["if"] == "${{ !cancelled() && github.event_name != 'merge_group' }}"
     assert job["permissions"] == {"actions": "read", "contents": "read"}
     steps = job["steps"]
     assert steps[0]["with"] == {"persist-credentials": "false"}
@@ -342,10 +343,23 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
     parent = _load_workflow("security-regression.yml")
     for event in ("pull_request", "merge_group"):
         assert parent["on"][event] == ""
-    for job in ("test-gate", "lint-gate", "guardrails-gate", "gitleaks", "scan"):
+    for job in ("gitleaks", "scan"):
         assert parent["jobs"][job]["if"] == "github.event_name != 'push'"
-    for job in ("security-scanners", "security-runtime", "image-security"):
-        assert "if" not in parent["jobs"][job]
+    assert "if" not in parent["jobs"]["security-scanners"]
+    for job in (
+        "test-gate",
+        "lint-gate",
+        "security-runtime",
+        "image-security",
+    ):
+        condition = parent["jobs"][job]["if"]
+        assert "needs.validation-plan.result == 'success'" in condition
+        if job == "image-security":
+            assert "needs.validation-plan.outputs.mode == 'full'" in condition
+        else:
+            assert "retest" in condition and "contains(fromJSON" in condition
+        assert "needs.pr-precheck.result == 'success'" in condition
+        assert parent["jobs"][job]["needs"] == ["validation-plan", "pr-precheck"]
 
 
 def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:
@@ -556,66 +570,99 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
     )
 
 
-def test_blocking_mypy_runs_as_merge_gate() -> None:
-    # CI POLICY CHANGE (PR #574, closes #489): mypy used to be advisory-only
-    # and manual-dispatch-only -- the previous version of this test
-    # (test_advisory_mypy_is_manual_only) pinned exactly that: "Type check
-    # (manual)", workflow_dispatch only, continue-on-error: true. It is now a
-    # BLOCKING merge gate: the security-regression orchestrator calls
-    # typecheck.yml on PRs and merge-queue runs, and new mypy errors beyond
-    # the committed baseline fail the merge. If you are flipping this back to
-    # advisory, that is a deliberate policy reversal: say so in the PR body
-    # and update this test, don't just weaken the workflow.
+def test_advisory_mypy_is_manual_only() -> None:
     lint = _load_workflow("lint.yml")
     typecheck = _load_workflow("typecheck.yml")
-    orchestrator = _load_workflow("security-regression.yml")
 
     assert "mypy" not in lint["jobs"]
-    # No direct pull_request trigger: the orchestrator owns PR triggering so
-    # PR updates stay atomic (see test_one_pr_workflow_owns_every_merge_gate).
-    assert "pull_request" not in typecheck["on"]
-    assert "workflow_call" in typecheck["on"]
-    assert "workflow_dispatch" in typecheck["on"]
+    assert typecheck["on"] == {"workflow_dispatch": ""}
     assert set(typecheck["jobs"]) == {"mypy"}
     assert typecheck["permissions"] == {"contents": "read"}
 
-    # The check must actually be blocking: no continue-on-error anywhere on
-    # the mypy job's steps.
-    steps = typecheck["jobs"]["mypy"]["steps"]
-    for step in steps:
-        assert step.get("continue-on-error", "") != "true", step.get("name")
 
-    # The orchestrator must wire it as a required merge gate.
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_queue_reuse_requires_proof_and_fresh_security_scans(result):
+    gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
+    step = gate["steps"][0]
+    environment = {name: "skipped" for name in step["env"]}
+    environment.update(EVENT_NAME="merge_group", VALIDATION_MODE="reuse")
+    environment["GITHUB_STEP_SUMMARY"] = os.devnull
+    fresh = (
+        "PLAN_RESULT",
+        "SCANNER_RESULT",
+        "GITLEAKS_RESULT",
+        "CONFIDENTIALITY_RESULT",
+    )
+    for name in fresh:
+        environment[name] = "success"
+    for name in fresh:
+        rejected = subprocess.run(
+            ["bash", "-c", step["run"]],
+            env={**os.environ, **environment, name: result},
+            capture_output=True,
+        )
+        assert rejected.returncode != 0, (name, result)
+    accepted = subprocess.run(
+        ["bash", "-c", step["run"]],
+        env={**os.environ, **environment, "GITHUB_STEP_SUMMARY": os.devnull},
+        capture_output=True,
+    )
+    assert accepted.returncode == 0
+    environment["EVENT_NAME"] = "pull_request"
     assert (
-        orchestrator["jobs"]["typecheck-gate"]["uses"]
-        == "./.github/workflows/typecheck.yml"
-    )
-    assert "typecheck-gate" in orchestrator["jobs"]["security-regression"]["needs"]
-
-    # The original PR shipped an empty baseline that was never seeded from a
-    # real mypy run. The baseline must contain the grandfathered errors, or
-    # the first gated PR fails on pre-existing errors that are not new.
-    baseline = REPO_ROOT / "npa" / "mypy-baseline.txt"
-    assert baseline.is_file(), "mypy baseline file is missing"
-    entries = [
-        line
-        for line in baseline.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.startswith("#")
-    ]
-    assert entries, (
-        "mypy baseline is empty; seed it from a real mypy run "
-        "(or, if mypy is genuinely clean, update this test to say so)"
+        subprocess.run(
+            ["bash", "-c", step["run"]],
+            env={**os.environ, **environment},
+            capture_output=True,
+        ).returncode
+        != 0
     )
 
-    # The baseline comparison must be line-number-insensitive: grandfathered
-    # errors shift lines whenever their file is edited, and a line-sensitive
-    # diff would false-fail every future PR that touches such a file. The
-    # workflow strips `:line:` before diffing (multiset compare, so genuinely
-    # new errors of an already-seen shape are still caught).
-    baseline_step = next(
-        step for step in steps if step.get("name") == "Check against baseline"
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_changed_queue_tree_requires_every_combined_tree_check(result):
+    gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
+    step = gate["steps"][0]
+    environment = {name: "success" for name in step["env"]}
+    environment.update(
+        EVENT_NAME="merge_group",
+        VALIDATION_MODE="retest",
+        PRECHECK_RESULT="skipped",
+        IMAGE_RESULT="skipped",
     )
-    script = baseline_step["run"]
-    assert "sed -E 's|^([^:]+\\.py):[0-9]+:|\\1:|'" in script, (
-        "typecheck.yml must strip :line: before the baseline diff"
+    command = ["bash", "-c", step["run"]]
+    assert subprocess.run(command, env={**os.environ, **environment}).returncode == 0
+    required = set(environment) - {
+        "EVENT_NAME",
+        "VALIDATION_MODE",
+        "PRECHECK_RESULT",
+        "IMAGE_RESULT",
+    }
+    for name in required:
+        failed = {**os.environ, **environment, name: result}
+        assert subprocess.run(command, env=failed).returncode != 0, (name, result)
+
+
+def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
+    jobs = _load_workflow("security-regression.yml")["jobs"]
+    plan = jobs["validation-plan"]
+    command = plan["steps"][-1]["run"]
+    assert 'git show "$BASE_SHA:$policy"' in command
+    assert 'python -I "$RUNNER_TEMP/ci_queue_evidence.py"' in command
+    assert 'python -I -m venv "$validation_environment"' in command
+    assert "test -d npa && test ! -L npa" in command
+    assert "test ! -e npa/.venv && test ! -L npa/.venv" in command
+    assert plan["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read",
+    }
+    receipt = jobs["security-regression"]["steps"][-1]
+    assert receipt["if"] == "github.event_name == 'pull_request'"
+    assert "always()" not in receipt["if"]
+    assert (
+        receipt["with"]["name"]
+        == "validated-candidate-${{ github.run_attempt }}-${{ github.sha }}"
     )
+    assert receipt["with"]["if-no-files-found"] == "error"
+    assert jobs["pr-precheck"]["timeout-minutes"] == "5"
