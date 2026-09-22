@@ -123,7 +123,7 @@ def verify_rerun_entities(
     """Return row counts for required Rerun entities, raising on missing content."""
 
     try:
-        from rerun.recording import load_recording
+        from npa.viz.recordings import load_recording
     except ImportError as exc:
         if fallback_counts is not None:
             _assert_required_entity_counts(rrd_path, fallback_counts, required_entities)

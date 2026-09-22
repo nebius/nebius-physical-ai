@@ -61,7 +61,7 @@ def _write_mismatched_skeleton_predictions_json(
 
 
 def _recording_chunks(path: Path):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     return list(load_recording(path).chunks())
 

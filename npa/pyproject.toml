@@ -60,7 +60,7 @@ dependencies = [
     "lancedb==0.39.0",
     # Formerly the `viz` extra: Rerun viewer/recording integration
     # (`npa rerun`, sim-viz adapters).
-    "rerun-sdk==0.31.4",
+    "rerun-sdk==0.38.1",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
     "fastapi>=0.136.1,<0.142.0",
     # Antioch's supported declared-port bridge uses bounded, authenticated WSS

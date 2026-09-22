@@ -98,7 +98,7 @@ def _assert_fresh_objects(client, bucket, run_id) -> None:
 
 
 def _assert_recording_identity(client, bucket, prefix, run_id) -> None:
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     with tempfile.TemporaryDirectory(prefix="paidf-mp4-recordings-") as temporary:
         for name in ("quality-evidence.rrd", "sim2real.rrd"):
