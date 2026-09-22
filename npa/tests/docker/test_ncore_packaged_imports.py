@@ -58,7 +58,16 @@ for name, module in tuple(sys.modules.items()):
         {sysconfig.get_path("purelib"), sysconfig.get_path("platlib")}
     )
     result = subprocess.run(
-        [sys.executable, "-I", "-S", "-B", "-c", script, str(package_root), *dependencies],
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            script,
+            str(package_root),
+            *dependencies,
+        ],
         cwd=tmp_path,
         capture_output=True,
         text=True,
