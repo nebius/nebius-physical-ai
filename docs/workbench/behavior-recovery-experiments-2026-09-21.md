@@ -318,6 +318,21 @@ hash-verified before controller cleanup. Diagnostic SHA-256:
 No optimizer update or training checkpoint was produced. The mismatch requires
 array-level and backend diagnostics before another qualification attempt.
 
+The second attempt supplied those diagnostics. Actions, state, image masks,
+and tokenized prompts matched the CPU reference exactly; all three RGB leaves
+differed. The process used the B200 backend, while the reference used CPU.
+This narrows the mismatch to RGB data; its numerical cause remains unproven.
+The five original artifacts and failure manifest were
+downloaded and verified before controller cleanup. The array diagnostic has
+SHA-256 `687c01a8f98f10109a301f27c9ac0ac9b9f0f07b45e300737686ead62b659806`.
+
+A third qualification explicitly runs data transforms on CPU, retains the
+exact reference-batch gate, and places the accepted batch on the B200 before
+the unchanged native optimizer step. It also compares CPU and GPU transforms
+of the same decoded sample. Its 35 local checks and independent package review
+passed; GPU qualification is underway. The future eight-worker loader still
+requires separate throughput and parity evidence.
+
 ### Specialist recovery and Workbench task status
 
 The released SFT specialist completed four original development episodes; their
@@ -336,6 +351,33 @@ It verified all four terminal task states while retaining `UNKNOWN` for the
 conflicting workflow outcomes. The exact controller cleanup was then verified.
 Live status evidence SHA-256:
 `3777ec17916b8884a8d87fdceb45086e79e6e92a386b5ae46cbcf3c58fb07323`.
+
+The recovery retained those four originals and started only the six previously
+unstarted cases. Its durable ledger now records six completed cases overall;
+complete-panel original verification and scoring remain pending.
+
+### Report admission and singleton task status
+
+The native RLC and Comet12 baseline report workflows completed, and their exact
+controller cleanup was verified. Comet50 reporting continues. All baseline
+scores remain sealed until the candidate is fixed from development evidence.
+
+The completed Comet12 workflow exposed a task-name attribution gap: SkyPilot
+named its serial aggregate task after the managed job. Workbench now accepts
+that name only for a singleton and only when it matches the recorded job ID
+and name. A read-only Linux regression verified all five tasks terminal with
+no unresolved observations. Evidence SHA-256:
+`89baa614586d81f9843ea572c0545c100eb235e9088d33900dd81cac8e8a8a2b`.
+
+Specialist report admission now validates receipt bytes and structure before
+loading checkpoints. Valid receipt envelopes still require the complete
+development-selection, sealed-baseline, unseal, target-selection, and runtime
+evidence chain. A committed Linux live test passed against real S3 declarations:
+both missing and malformed authorization stopped before case state, policy, or
+evaluator startup, and the fresh output prefix remained empty. This tests the
+negative entry gates; positive report admission awaits real campaign evidence.
+Evidence SHA-256:
+`d5d865377703d77823b45c6808b5ef7378f092be026a00467ded13b0d4552ed7`.
 
 ### Sampled video observations
 
