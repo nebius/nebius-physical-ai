@@ -17,6 +17,7 @@ CANDIDATE = (
     "github.event.merge_group.head_sha || github.ref }}"
 )
 WORKFLOW_GROUPS = {
+    "merge-queue-report.yml": "merge-queue-feedback",
     "security-regression.yml": "pr-gate-" + CANDIDATE,
     "test.yml": "test-" + CANDIDATE,
     "lint.yml": "lint-" + CANDIDATE,
