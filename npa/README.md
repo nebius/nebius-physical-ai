@@ -266,7 +266,7 @@ The interpreter must provide `os.memfd_create`; some Conda builds omit it.
 Install CI's CPU checkpoint/export dependencies in this same environment:
 
 ```bash
-npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
 npa/.venv/bin/python -m pip install -e "npa[sonic]"
 umask 077  # Private files are required by publication handoff tests.
 PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
@@ -295,14 +295,23 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and merge candidates run the same full Python 3.12 suite,
+Pull requests run the full Python 3.12 suite,
 dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
 Five duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
-and CLI install checks without a duplicate subsystem job. The queue reruns
-these checks against the combined latest-main candidate. Recognized prose-only
+and CLI install checks without a duplicate subsystem job. The queue verifies
+this evidence against its combined latest-main candidate. Recognized prose-only
 edits retain smoke, documentation, lint, guardrail, and security checks while
 skipping runtime suites.
+The five-minute `pr-precheck` checks dependency inputs, lint/format, guardrails, smoke and
+full collection before expensive validation. The merge queue verifies fresh,
+successful PR evidence for its identical Git tree and repeats secret,
+confidentiality, source and dependency scans. Changed combined trees rerun
+all tests, lint, guardrails and hostile-input checks; image checks rerun when
+their inputs changed. Missing, failed or stale proof restores full queue
+validation, so older PRs can adopt the policy without a forced branch refresh. The queue target
+is ten minutes; hosted runner waiting can add delay.
+
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
 on all three supported versions. Every full Python 3.12 run publishes module
@@ -337,8 +346,8 @@ lets independent jobs use available GitHub runner capacity without shared
 repository-wide job queues. Newer commits still cancel older checks of the same
 PR. Organization runner limits can cause waiting; already queued runs retain
 their original workflow configuration until their branches are refreshed.
-Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
-parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
+Full-suite PRs retain smoke coverage in their shards; the early precheck runs
+guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
 same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
@@ -349,6 +358,16 @@ GitHub Actions dependencies daily and groups version updates into one
 regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
 
+The base-image scanner uses Docker with Buildx and the checksum-verified Trivy
+binary. From the repository root, `npa/.venv/bin/python
+npa/scripts/scan_base_images.py --inventory
+npa/docker/workbench/base-image-security.json --cache-dir <private-directory>`
+scans the full inventory. `--matrix` emits every validated entry name without
+starting a scan; `--entry-name <name>` scans exactly that existing entry and
+rejects unknown names. These options are mutually exclusive. CI isolates each
+entry on its own runner and requires every applicable result. See
+[base-image scan storage and cleanup](../docs/security/image-reproducibility.md#cve-scanning).
+
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,
 runtime, lint, guardrail, and test gates, and calls an always-reporting image
@@ -358,13 +377,11 @@ scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. All inventory entries run serially inside one
-disposable GitHub-hosted job. One Trivy database download is hard-linked into
-temporary per-image caches; unused build cache and images are released between
-entries. The cleanup mode rejects shared or remote Docker environments, and
-ordinary local scans retain their existing parallel caches without pruning.
-This baseline check does not replace the
-complete image scans required before publication.
+on fixable CRITICAL OS findings. Each base has its own runner, temporary archive,
+cache, and isolated builder. Owned build state is removed before the archive
+scan; archives and temporary scan data are cleaned after each entry. The required
+inventory aggregate fails when any applicable entry fails or does not finish.
+This baseline check does not replace complete image scans before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment

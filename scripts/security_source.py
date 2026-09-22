@@ -10,7 +10,7 @@ import subprocess
 import tokenize
 from pathlib import Path
 
-_SCANNER_VERSIONS = {"bandit": "1.9.4", "zizmor": "1.30.0"}
+_SCANNER_VERSIONS = {"bandit": "1.9.4", "zizmor": "1.30.1"}
 
 
 def _scanner_binary(scanner: str) -> str:

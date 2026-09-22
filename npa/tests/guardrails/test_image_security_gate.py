@@ -1,8 +1,11 @@
-"""Keep image security fail closed without queue-amplifying scan matrices."""
+"""Keep every image scan required while isolating each image's disk usage."""
 
-import json
 from pathlib import Path
+import os
+import subprocess
 import sys
+
+import pytest
 
 import yaml
 
@@ -68,7 +71,10 @@ def test_required_gate_calls_image_security_for_every_candidate() -> None:
         "push": {"branches": ["main"]},
     }
     image_job = workflow["jobs"]["image-security"]
-    assert image_job == {
+    assert image_job["needs"] == ["validation-plan", "pr-precheck"]
+    assert "needs.validation-plan.result == 'success'" in image_job["if"]
+    assert "needs.validation-plan.outputs.mode == 'full'" in image_job["if"]
+    assert {key: image_job[key] for key in ("uses", "permissions")} == {
         "uses": "./.github/workflows/image-security-scan.yml",
         "permissions": {
             "contents": "read",
@@ -81,7 +87,7 @@ def test_required_gate_calls_image_security_for_every_candidate() -> None:
     assert "security-runtime" in required["needs"]
 
 
-def test_reusable_scan_has_two_automatic_jobs_and_internal_scope() -> None:
+def test_reusable_scan_preserves_scope_and_required_inventory_aggregation() -> None:
     """Keep irrelevant PRs cheap without skipping the required workflow.
 
     Args:
@@ -102,41 +108,52 @@ def test_reusable_scan_has_two_automatic_jobs_and_internal_scope() -> None:
     jobs = workflow["jobs"]
     assert set(jobs) == {
         "image-policy",
+        "base-image-plan",
+        "base-image-entry",
         "base-image-cve-scan",
         "omniverse-payload-scan",
     }
-    for name in ("image-policy", "base-image-cve-scan"):
+    for name in ("image-policy", "base-image-plan"):
         job = jobs[name]
         assert "if" not in job and "strategy" not in job
         scope = _step(job, "Classify image-security scope")
         assert scope["id"] == "scope"
         assert "ci_image_security_scope.py" in scope["run"]
-        heavy_steps = job["steps"][job["steps"].index(scope) + 1 :]
-        assert heavy_steps
-        assert all("steps.scope.outputs.deep" in step["if"] for step in heavy_steps)
+        if name == "image-policy":
+            heavy_steps = job["steps"][job["steps"].index(scope) + 1 :]
+            assert heavy_steps
+            assert all("steps.scope.outputs.deep" in step["if"] for step in heavy_steps)
 
 
-def test_base_inventory_bounds_storage_without_a_matrix() -> None:
-    """Keep all inventory entries on one runner with per-image reclamation.
+def test_base_inventory_isolates_each_image_without_dropping_failed_entries() -> None:
+    """Use the complete validated inventory and retain every matrix result.
 
     Args:
         None.
     Returns:
         None.
     Raises:
-        AssertionError: Base scanning returns to queue-amplifying matrix jobs.
+        AssertionError: Coverage or failure propagation is weakened.
     """
 
-    job = _workflow("image-security-scan.yml")["jobs"]["base-image-cve-scan"]
-    assert "strategy" not in job
-    scan = _step(job, "Scan all pinned bases with disposable storage")
-    assert "scan_base_images.py" in scan["run"]
-    assert "--workers 1 --disposable-docker" in scan["run"]
-    assert "base-image-security.json" in scan["run"]
-    assert scan["env"]["TMPDIR"] == "/mnt/npa-base-scans"
-    storage = _step(job, "Prepare temporary storage for base-image scans")
-    assert "steps.scope.outputs.deep" in storage["if"]
-    assert "install -d -m 0700" in storage["run"]
+    jobs = _workflow("image-security-scan.yml")["jobs"]
+    plan = _step(jobs["base-image-plan"], "Enumerate every validated base")
+    assert "--matrix" in plan["run"] and "base-image-security.json" in plan["run"]
+    scan = jobs["base-image-entry"]
+    assert scan["needs"] == "base-image-plan"
+    assert scan["if"] == "needs.base-image-plan.outputs.deep == 'true'"
+    assert scan["strategy"] == {
+        "fail-fast": False,
+        "matrix": "${{ fromJSON(needs.base-image-plan.outputs.matrix) }}",
+    }
+    command = _step(scan, "Scan the exact inventory entry")
+    assert command["env"]["SCAN_ENTRY"] == "${{ matrix.entry }}"
+    assert '--entry-name "$SCAN_ENTRY"' in command["run"]
+    assert "base-image-security.json" in command["run"]
+    aggregate = jobs["base-image-cve-scan"]
+    assert set(aggregate["needs"]) == {"base-image-plan", "base-image-entry"}
+    assert aggregate["if"] == "always()"
+    assert "continue-on-error" not in scan and "continue-on-error" not in aggregate
 
 
 def test_sarif_uploads_preserve_existing_alert_categories() -> None:
@@ -157,42 +174,36 @@ def test_sarif_uploads_preserve_existing_alert_categories() -> None:
         ":dockerfile-static-scan"
     )
 
-    uploads = [
-        step
-        for step in jobs["base-image-cve-scan"]["steps"]
-        if "upload-sarif" in step.get("uses", "")
-    ]
-    assert all(
-        step["env"]["CODEQL_ACTION_ANALYSIS_KEY"].endswith(":base-image-cve-scan")
-        for step in uploads
-    )
+    upload = _step(jobs["base-image-entry"], "Upload base SARIF")
+    assert upload["with"]["category"] == "trivy-image-${{ matrix.entry }}"
+    assert upload["with"]["sarif_file"].endswith("/trivy-${{ matrix.entry }}.sarif")
+    assert upload["env"]["CODEQL_ACTION_ANALYSIS_KEY"].endswith(":base-image-cve-scan")
 
 
-def test_base_image_sarif_uploads_exactly_cover_inventory() -> None:
-    """Publish every scanned base under its exact, distinct report identity.
-
-    Args:
-        None.
-    Returns:
-        None.
-    Raises:
-        AssertionError: An upload is omitted, duplicated, or misidentified.
-    """
-
-    inventory = json.loads(
-        (ROOT / "npa/docker/workbench/base-image-security.json").read_text()
-    )
+@pytest.mark.parametrize(
+    "plan,deep,scan,accepted",
+    [
+        ("success", "true", "success", True),
+        ("success", "false", "skipped", True),
+        ("success", "true", "failure", False),
+        ("success", "true", "cancelled", False),
+        ("success", "true", "skipped", False),
+        ("success", "true", "", False),
+        ("failure", "true", "success", False),
+        ("cancelled", "false", "skipped", False),
+        ("skipped", "false", "skipped", False),
+        ("success", "", "success", False),
+        ("success", "false", "success", False),
+    ],
+)
+def test_actual_inventory_aggregation_fails_closed(plan, deep, scan, accepted):
+    """Execute the workflow's real status guard against incomplete inventories."""
     job = _workflow("image-security-scan.yml")["jobs"]["base-image-cve-scan"]
-    uploads = [step for step in job["steps"] if "upload-sarif" in step.get("uses", "")]
-    expected = {
-        (
-            "${{ runner.temp }}/base-image-sarif/trivy-" + entry["name"] + ".sarif",
-            "trivy-image-" + entry["name"],
-        )
-        for entry in inventory
-    }
-    actual = [
-        (step["with"]["sarif_file"], step["with"]["category"]) for step in uploads
-    ]
-    assert len(actual) == len(inventory)
-    assert set(actual) == expected
+    command = _step(job, "Require complete scoped inventory")["run"]
+    result = subprocess.run(
+        ["bash", "-c", command],
+        env={**os.environ, "PLAN_RESULT": plan, "DEEP": deep, "SCAN_RESULT": scan},
+        capture_output=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is accepted

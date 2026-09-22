@@ -5,10 +5,20 @@ runs **Security regression / security-regression**. It is the only automatic PR
 workflow and atomically owns test, lint, guardrail, gitleaks, confidentiality,
 source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
-PRs and merge-queue candidates run the same browser and focused Python
-compatibility checks alongside the complete duration-balanced Python 3.12
-coverage suite. This catches cross-subsystem failures before queue admission;
-the queue rechecks the combined candidate against the latest main revision.
+PRs run browser and focused Python compatibility checks alongside the complete
+Python 3.12 coverage suite. `pr-precheck` provides an early five-minute signal;
+it does not replace required validation. Queue candidates reuse those successful
+results only after trusted-base code verifies the current PR head, latest
+attempt, all required jobs, receipt, tested merge parent, and an identical Git
+tree through GitHub APIs. Evidence must be less than 24 hours old; no downloaded
+artifact content is trusted. Changed combined trees rerun all tests, lint,
+guardrails and hostile-input checks. A complete Git-tree comparison and the
+trusted base image-scope policy decide whether image checks must rerun too.
+Stale proof, missing results and API errors restore the full queue gate;
+all fresh tests and security checks must pass before merging. Secret, confidentiality and real
+source/dependency scanners still run against every queue candidate. Main and
+scheduled deep image audits remain in place. See the
+[queue evidence and timing contract](../../CONTRIBUTING.md#testing-requirements).
 The narrow prose-only exception described in
 [the contributor CI guide](../../CONTRIBUTING.md) retains smoke, documentation,
 lint, guardrails, and every security gate. The test selector comes from the
@@ -24,15 +34,21 @@ Organization runner limits can still cause waiting. See the
 [validation concurrency contract](../../CONTRIBUTING.md#validation-concurrency)
 for cancellation and rollout behavior, including refreshing older PR branches.
 
-The image workflow has no top-level path filter. Its two automatic jobs always
-report an internal, fail-closed scope decision. Image, packaging, workflow, and
+The image workflow has no top-level path filter. On full PR validation and main
+audits, its policy and base-inventory planning jobs always report an internal,
+fail-closed scope decision. Image, packaging, workflow, and
 security-policy changes run complete-byte, configuration, and base-image checks;
 unrelated source changes take the verified fast path. Main, scheduled, and manual
-audits always run the deep checks. All pinned bases use one Trivy database
-download and run serially inside one disposable hosted runner. Each image's
-build cache, loaded images, and temporary scan cache are released before the
-next image so large CUDA exports do not accumulate. Deep candidates block
-on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
+audits always run the deep checks. A matrix derived from every validated
+inventory entry gives each base image its own standard runner. Matrix failure
+does not cancel sibling scans, and the required aggregate rejects failed,
+cancelled, skipped, or missing deep-scan results. Each entry has a private
+archive, mutable cache, and temporary layer directory that are removed after
+scanning. Patched bases use a dedicated Buildx builder;
+its container and cache volume are removed before Trivy reads the archive.
+Unmodified bases are scanned directly from their remote digest, without loading
+the shared Docker image store. Cleanup never prunes shared images or builders.
+Deep candidates block on fixed CRITICAL OS-package vulnerabilities and HIGH/CRITICAL configuration
 findings. Their
 [patched base targets and regression tests](image-reproducibility.md#cve-scanning)
 are checked separately from the application-dependency scan.
@@ -50,7 +66,7 @@ Those boundaries motivate three complementary maintained scanners:
 | Scanner | Blocking coverage |
 |---|---|
 | Bandit 1.9.4 | All tracked Python, including scripts and tests; medium/high severity and confidence, including unsafe deserialization, injection, weak transport and unsafe APIs. |
-| zizmor 1.30.0 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
+| zizmor 1.30.1 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
 | Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
 
 The gate materializes regular files from the actual target commit and the
