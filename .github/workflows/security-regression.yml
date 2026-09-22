@@ -16,18 +16,108 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
 
 jobs:
+  validation-plan:
+    name: validation-plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      source_run: ${{ steps.plan.outputs.source_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify queue evidence using the trusted base policy
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != merge_group ]; then
+            echo 'mode=full' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          policy=npa/scripts/ci_queue_evidence.py
+          git rev-parse --verify "${BASE_SHA}^{commit}"
+          if ! git cat-file -e "$BASE_SHA:$policy"; then
+            # The installing PR still receives the complete legacy queue gate.
+            echo 'mode=full' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git show "$BASE_SHA:$policy" > "$RUNNER_TEMP/ci_queue_evidence.py"
+          git show "$BASE_SHA:scripts/ci_image_security_scope.py" > "$RUNNER_TEMP/image_scope.py"
+          test -d npa && test ! -L npa
+          test ! -e npa/.venv && test ! -L npa/.venv
+          validation_environment="$(mktemp -d "$RUNNER_TEMP/queue-validation.XXXXXXXX")"
+          python -I -m venv "$validation_environment"
+          ln -s "$validation_environment" npa/.venv
+          npa/.venv/bin/python -I "$RUNNER_TEMP/ci_queue_evidence.py" \
+            --repository "$GITHUB_REPOSITORY" --event-path "$GITHUB_EVENT_PATH" \
+            --github-output "$GITHUB_OUTPUT" --image-policy "$RUNNER_TEMP/image_scope.py"
+
+  pr-precheck:
+    name: pr-precheck
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+          cache-suffix: python-3.12
+          cache-dependency-glob: |
+            npa/pyproject.toml
+            npa/ci/requirements.txt
+            npa/ci/constraints.in
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Reject stale dependency inputs before installing
+        run: |
+          python -m venv npa/.venv
+          npa/.venv/bin/python npa/scripts/ci_requirements.py --check
+      - name: Install the constrained precheck environment
+        run: |
+          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
+          echo "$GITHUB_WORKSPACE/npa/.venv/bin" >> "$GITHUB_PATH"
+      - name: Check lint, formatting, smoke and test collection
+        run: |
+          npa/.venv/bin/python -m ruff check npa
+          npa/.venv/bin/python -m ruff format --check npa
+          npa/.venv/bin/python -m pytest npa/tests/smoke npa/tests/guardrails -n auto --dist worksteal -q
+          npa/.venv/bin/python -m pytest npa/tests --collect-only -q > "$RUNNER_TEMP/test-collection.txt"
+          tail -1 "$RUNNER_TEMP/test-collection.txt"
+      - name: Publish the early signal
+        run: |
+          echo '## PR precheck passed' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Dependency inputs, lint, formatting, guardrails, smoke tests and full test collection passed. Full tests and security checks must still pass before queue admission.' >> "$GITHUB_STEP_SUMMARY"
+
   # Independent validation jobs use available runners without shared job locks.
   # The workflow-level group above owns cancellation of superseded PR work.
   test-gate:
-    if: github.event_name != 'push'
+    needs: [validation-plan, pr-precheck]
+    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
     uses: ./.github/workflows/test.yml
 
   lint-gate:
-    if: github.event_name != 'push'
+    needs: [validation-plan, pr-precheck]
+    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') && github.event_name != 'push' }}
     uses: ./.github/workflows/lint.yml
 
-  guardrails-gate:
-    if: github.event_name != 'push'
+  queue-guardrails:
+    needs: validation-plan
+    if: ${{ !cancelled() && github.event_name == 'merge_group' && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) }}
     uses: ./.github/workflows/harness-guardrails.yml
 
   # Keep these two job names stable while their former standalone workflows
@@ -39,7 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out full history
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -73,13 +163,13 @@ jobs:
       INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
     steps:
       - name: Check out full history
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -112,6 +202,8 @@ jobs:
           fi
 
   image-security:
+    needs: [validation-plan, pr-precheck]
+    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && needs.validation-plan.outputs.mode == 'full' && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
     uses: ./.github/workflows/image-security-scan.yml
     permissions:
       contents: read
@@ -120,13 +212,14 @@ jobs:
 
   security-scanners:
     name: security-scanners
+    timeout-minutes: 7
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
           cache: pip
@@ -171,6 +264,8 @@ jobs:
             --output-dir "$RUNNER_TEMP/security-report"
 
   security-runtime:
+    needs: [validation-plan, pr-precheck]
+    if: ${{ !cancelled() && needs.validation-plan.result == 'success' && contains(fromJSON('["full", "retest"]'), needs.validation-plan.outputs.mode) && (github.event_name != 'pull_request' || needs.pr-precheck.result == 'success') }}
     name: hostile-input-runtime
     runs-on: ubuntu-latest
     env:
@@ -178,12 +273,12 @@ jobs:
       NPA_S3_BUCKET: test-bucket-00000000
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -193,8 +288,8 @@ jobs:
         run: |
           python -m venv npa/.venv
           npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
-          npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
-          npa/.venv/bin/python -c "import torch; assert torch.__version__.split('+')[0] == '2.13.0'; assert torch.version.cuda is None"
+          npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
+          npa/.venv/bin/python -c "import torch; assert torch.__version__.split('+')[0] == '2.14.0'; assert torch.version.cuda is None"
           echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Exercise hostile inputs and supported security boundaries
@@ -226,9 +321,11 @@ jobs:
   security-regression:
     name: security-regression
     needs:
+      - validation-plan
+      - pr-precheck
+      - queue-guardrails
       - test-gate
       - lint-gate
-      - guardrails-gate
       - gitleaks
       - scan
       - security-scanners
@@ -241,9 +338,12 @@ jobs:
       - name: Require every candidate gate and security audit
         env:
           EVENT_NAME: ${{ github.event_name }}
+          PLAN_RESULT: ${{ needs.validation-plan.result }}
+          VALIDATION_MODE: ${{ needs.validation-plan.outputs.mode }}
+          PRECHECK_RESULT: ${{ needs.pr-precheck.result }}
           TEST_RESULT: ${{ needs.test-gate.result }}
           LINT_RESULT: ${{ needs.lint-gate.result }}
-          GUARDRAIL_RESULT: ${{ needs.guardrails-gate.result }}
+          GUARDRAIL_RESULT: ${{ github.event_name == 'merge_group' && needs.queue-guardrails.result || needs.pr-precheck.result }}
           GITLEAKS_RESULT: ${{ needs.gitleaks.result }}
           CONFIDENTIALITY_RESULT: ${{ needs.scan.result }}
           SCANNER_RESULT: ${{ needs.security-scanners.result }}
@@ -251,8 +351,28 @@ jobs:
           RUNTIME_RESULT: ${{ needs.security-runtime.result }}
         run: |
           set -euo pipefail
+          test "$PLAN_RESULT" = success
           test "$SCANNER_RESULT" = success
-          test "$IMAGE_RESULT" = success
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$PRECHECK_RESULT" = success
+          fi
+          if [ "$VALIDATION_MODE" = reuse ]; then
+            test "$EVENT_NAME" = merge_group
+            test "$GITLEAKS_RESULT" = success
+            test "$CONFIDENTIALITY_RESULT" = success
+            for result in "$TEST_RESULT" "$LINT_RESULT" "$GUARDRAIL_RESULT" "$IMAGE_RESULT" "$RUNTIME_RESULT"; do
+              test "$result" = skipped
+            done
+            echo 'Exact-tree PR evidence and fresh security scans passed.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$VALIDATION_MODE" = retest ]; then
+            test "$EVENT_NAME" = merge_group
+            test "$IMAGE_RESULT" = skipped
+          else
+            test "$VALIDATION_MODE" = full
+            test "$IMAGE_RESULT" = success
+          fi
           test "$RUNTIME_RESULT" = success
           if [ "$EVENT_NAME" != push ]; then
             test "$TEST_RESULT" = success
@@ -262,22 +382,33 @@ jobs:
             test "$CONFIDENTIALITY_RESULT" = success
           fi
 
+      - name: Record the successfully tested PR merge commit
+        if: github.event_name == 'pull_request'
+        run: printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/validated-candidate.txt"
+      - name: Publish validation identity
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: validated-candidate-${{ github.run_attempt }}-${{ github.sha }}
+          path: ${{ runner.temp }}/validated-candidate.txt
+          if-no-files-found: error
+
   ci-timing-report:
     name: ci-timing-report
     needs: security-regression
     # Failed validation is useful evidence; superseded runs release their runners.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && github.event_name != 'merge_group' }}
     permissions:
       actions: read
       contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Check out reporting code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Read validation metadata
