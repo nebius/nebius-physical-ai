@@ -122,6 +122,28 @@ def test_identical_tree_accepts_different_merge_commit_ids(metadata):
     }
 
 
+def test_combined_planning_job_keeps_all_independent_security_evidence_required():
+    assert evidence._REQUIRED_JOBS == {
+        "pr-precheck",
+        "gitleaks",
+        "scan",
+        "security-scanners",
+        "hostile-input-runtime",
+        "security-regression",
+        "lint-gate / ruff",
+        "lint-gate / docs-drift",
+        "image-security / Image policy and complete-byte security",
+        "image-security / Base image CVE inventory",
+        "test-gate / test-scope",
+    }
+
+
+def test_previous_separate_planning_job_remains_compatible(metadata):
+    event, values = metadata
+    values["jobs"].append({"name": "validation-plan", "conclusion": "success"})
+    assert evidence.verify(REPOSITORY, event, NOW)["mode"] == "reuse"
+
+
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled", "skipped", None])
 def test_every_required_job_must_succeed(metadata, conclusion):
     event, values = metadata
