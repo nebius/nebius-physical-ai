@@ -211,6 +211,17 @@ SDK; previously published container pins retain their recorded build versions.
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+
+  Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
+  retains legacy ActorCritic checkpoint support and validates saved dimensions
+  before inference. ONNX export preserves RSL-RL 5 observation normalization.
+  The Genesis extra pins an upstream MoviePy compatibility fix by source revision
+  and archive hash so installation retains Pillow 12.3 or newer. The
+  `genesis-test` extra adds CPU checkpoint regression tests to the complete test
+  stage; the fast precheck does not install PyTorch. Genesis simulation remains
+  in the separate `genesis` extra.
+  The [Genesis skill](../skills/tools/genesis/SKILL.md#teacher-checkpoint-compatibility)
+  describes the live GPU migration check and its numerical report.
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands

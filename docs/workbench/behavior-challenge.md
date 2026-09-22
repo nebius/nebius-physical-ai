@@ -48,11 +48,14 @@ The [campaign control plane](behavior-campaign.md) freezes policy identities,
 assigns complete task panels across workers, and preserves per-instance progress
 in S3. Recovery verifies the original metrics and videos before reusing results.
 
-The latest Comet training qualification reproduced every byte of the original
-256-example batch using explicit CPU sharding before native image normalization.
-It then reached the full-parameter B200 optimizer step and ran out of GPU memory.
-All five failure artifacts were verified; no qualified optimizer update or
-checkpoint was produced. The memory configuration remains under investigation.
+Comet training qualification reproduced every byte of the original 256-example
+batch using explicit CPU sharding before native image normalization. The first
+attempt with that batch reached the full-parameter B200 optimizer and ran out of
+GPU memory. A successor allocated a larger JAX memory pool and passed the batch
+gate, but explicit compilation failed when native type checking rejected JAX's
+abstract argument metadata. Both runs' five failure artifacts were verified.
+No optimizer update or checkpoint is qualified; the compilation adapter is
+being corrected before the next attempt.
 
 **Latest completed training experiment, September 19:** both
 [matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
