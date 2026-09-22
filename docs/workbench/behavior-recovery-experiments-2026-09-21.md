@@ -310,6 +310,33 @@ and verified before controller cleanup. This check loaded no model, created no
 optimizer, and performed no training. A native B200 optimizer update and the
 future eight-worker data-loader throughput remain separate qualification gates.
 
+The subsequent B200 qualification stopped before loading the model or creating
+an optimizer: its recreated batch did not match the CPU qualification receipt.
+The failure diagnostic and all four original artifacts were downloaded and
+hash-verified before controller cleanup. Diagnostic SHA-256:
+`fc5f46002bd9b8f03d31cd3238b6173201ddc379f5f45366e86b592de484442c`.
+No optimizer update or training checkpoint was produced. The mismatch requires
+array-level and backend diagnostics before another qualification attempt.
+
+### Specialist recovery and Workbench task status
+
+The released SFT specialist completed four original development episodes; their
+metrics and videos were downloaded, hash-verified, and fully decoded. Two other
+workers rejected a loaded correlation-state mismatch before evaluator startup,
+leaving six episodes unstarted. This incomplete panel has no aggregate score.
+Recovery preserves completed episodes and the unchanged policy state check.
+
+This failure also exercised Workbench's task-activity reporting. A failed
+parallel workflow can retain running sibling tasks. Status now reports active
+and unresolved stage keys separately from workflow outcome and requires unique,
+complete scheduler observations before declaring all tasks terminal. Extra or
+duplicate rows cannot establish completion. Tests cover the mixed active case;
+a read-only Linux live regression passed after the original siblings finished.
+It verified all four terminal task states while retaining `UNKNOWN` for the
+conflicting workflow outcomes. The exact controller cleanup was then verified.
+Live status evidence SHA-256:
+`3777ec17916b8884a8d87fdceb45086e79e6e92a386b5ae46cbcf3c58fb07323`.
+
 ### Sampled video observations
 
 Eight evenly spaced frames from each of two hash-verified original videos show
