@@ -107,7 +107,7 @@ format-check:
 precheck: check-env
 	$(PYTHON) npa/scripts/ci_requirements.py --check
 	$(MAKE) lint format-check
-	$(PYTEST) tests/test_ci_requirements.py tests/test_ci_merge_precheck.py tests/test_ci_test_scope.py tests/test_merge_queue_report.py tests/guardrails/test_ci_workflows.py tests/guardrails/test_ci_concurrency.py -q
+	$(PYTEST) tests/test_ci_requirements.py tests/test_ci_merge_precheck.py tests/test_ci_precheck.py tests/test_ci_queue_evidence.py tests/test_ci_test_scope.py tests/test_merge_queue_report.py tests/guardrails/test_ci_workflows.py tests/guardrails/test_ci_concurrency.py -q
 
 # Fetch first; this deliberately reports exact commits and never edits the index.
 merge-precheck:
