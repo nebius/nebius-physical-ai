@@ -99,6 +99,43 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+def test_failed_workflow_status_exposes_running_sibling_tasks(observed_status, mocker):
+    resolution, _ = observed_status
+    resolution.runtime_state.update(
+        status="failed",
+        waves=[
+            {
+                "key": "001|workers|workers:first:-,workers:second:-",
+                "states": ["first", "second"],
+                "group": "workers",
+                "kind": "parallel",
+                "job_id": "11",
+                "attempt": 1,
+                "status": "failed",
+            }
+        ],
+    )
+    resolution.manifest.update(
+        status="failed",
+        steps=[{"state": name, "status": "failed"} for name in ("first", "second")],
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.workflow_task_statuses",
+        return_value=[
+            {"task_id": 0, "task_name": "first", "status": "FAILED"},
+            {"task_id": 1, "task_name": "second", "status": "RUNNING"},
+        ],
+    )
+    payload = _durable_workflow_status("run-test")
+    assert payload["status"] == "FAILED"
+    assert payload["live_verified"] is True
+    assert payload["scheduler_task_activity"] == {
+        "active_stage_keys": ["second"],
+        "unresolved_stage_keys": [],
+        "all_stage_tasks_terminal": False,
+    }
+
+
 @pytest.mark.parametrize("runtime_status", ["running", "failed"])
 def test_completed_observed_jobs_do_not_prove_workflow_completion(
     observed_status, runtime_status

@@ -150,6 +150,21 @@ isolated controller for that check. Storage errors fail the query instead of
 appearing as zero progress. Even when all records are complete, run the aggregate
 stage to verify original artifacts before comparing scores.
 
+A parallel workflow can fail while sibling tasks continue. Workflow status JSON
+includes `scheduler_task_activity.active_stage_keys` for those tasks, independently
+of the workflow outcome. Missing or ambiguously attributed task observations
+appear in `unresolved_stage_keys`; they cannot establish that every task has
+stopped. Use these fields only with the response's live-verification result.
+`all_stage_tasks_terminal` describes scheduler tasks, not resource cleanup.
+
+The read-only live regression uses an existing failed workflow with running
+siblings. On its Linux operator, set `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` to a
+private JSON file containing `run_id`, `project`, `isolated_config_dir`,
+`expected_active_stage_keys`, and a private `output_path`. Run
+`npa/tests/e2e/test_workflow_task_activity_live.py` with `NPA_INTEGRATION_E2E=1`.
+It records the actual status response and checks the prescribed active tasks;
+it submits, cancels, and reruns no jobs.
+
 ## Reusable panel identity
 
 A panel ID covers the pinned evaluator upstream revision and wrapper, registry

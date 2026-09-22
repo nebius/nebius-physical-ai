@@ -976,6 +976,48 @@ def _job_task_outcomes_conflict(
     )
 
 
+def _task_row_attributed(row, name, managed_job_id, attributions, observations):
+    if not row:
+        return False
+    task_name = str(row.get("task_name") or "")
+    if task_name:
+        return task_name == name
+    if not observations:
+        return True
+    members = sum(
+        item.get("managed_job_id") == managed_job_id for item in attributions.values()
+    )
+    return bool(managed_job_id) and members == 1
+
+
+def _scheduler_task_activity(stages, observed_task_keys):
+    active_states = {
+        "SUBMITTED",
+        "PENDING",
+        "STARTING",
+        "RUNNING",
+        "RECOVERING",
+        "CANCELLING",
+    }
+    active, unresolved = [], []
+    terminal_count = 0
+    for key, stage in stages.items():
+        state = _normalized_stage_state(stage["raw_task_scheduler_state"])
+        if key not in observed_task_keys:
+            unresolved.append(key)
+        elif state in active_states:
+            active.append(key)
+        elif state in TERMINAL_STEP_STATES:
+            terminal_count += 1
+        else:
+            unresolved.append(key)
+    return {
+        "active_stage_keys": active,
+        "unresolved_stage_keys": unresolved,
+        "all_stage_tasks_terminal": bool(stages) and terminal_count == len(stages),
+    }
+
+
 def build_actionable_run_status(
     manifest: RunManifest,
     *,
@@ -1012,6 +1054,7 @@ def build_actionable_run_status(
     observations = dict(job_observations or {})
     normalized_failure, failure_evidence = normalize_startup_failure(controller_output)
     stages: dict[str, dict[str, Any]] = {}
+    observed_task_keys: set[str] = set()
     active_key = ""
     active_index: int | None = None
     newest_progress: datetime | None = None
@@ -1042,6 +1085,8 @@ def build_actionable_run_status(
             if not observations
             else {}
         )
+        if _task_row_attributed(row, name, managed_job_id, attributions, observations):
+            observed_task_keys.add(key)
         scheduler_job_state = str(observation.get("status") or "").upper()
         raw_scheduler = str(
             row.get("status") or scheduler_job_state or step.get("sky_status") or ""
@@ -1290,6 +1335,7 @@ def build_actionable_run_status(
             or max(0, int((current - newest_progress).total_seconds())) > 300
         ),
         "stages": stages,
+        "scheduler_task_activity": _scheduler_task_activity(stages, observed_task_keys),
     }
 
 
