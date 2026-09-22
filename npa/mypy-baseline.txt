@@ -28,6 +28,21 @@
 #   across two runs: 988 normalized errors (0 new, 56 fixed upstream, including
 #   the 2 CI-only genesis entries which are re-appended below as before).
 
+# Re-seeded 2026-09-22 (4): main advanced 36605d4 -> 4383093c30b (#689 merge-queue
+#   prechecks/report, #721 image checks, #720 Genesis training -> RSL-RL 5) and
+#   merged. Local re-seed with the same pins (mypy 2.3.1, numpy 2.5.3,
+#   python 3.12, torch 2.13.0+cpu), clean .mypy_cache: 986 errors, 0 new vs the
+#   previous baseline after fixing the 2 new train_teacher.py errors from #720
+#   (assert-narrowed actor/critic hidden dims in to_train_cfg; the Optional fields
+#   are filled by __post_init__). CI run 35687713524 on the pre-merge head reported
+#   49 additional new errors that do not reproduce locally: pure unpinned-[full]
+#   dependency drift in CI (httpx/typer/click/packaging/matplotlib/av/pydantic
+#   releases), in files untouched by the main advance. Grandfathered below as
+#   CI ground truth, in normalized (line-number-insensitive) form, matching how
+#   the gate compares. The 9 env_pick_place.py entries reproduce locally and are
+#   carried in the re-seed as before.
+#
+# --- CI ground-truth grandfathered entries (2026-09-22, run 35687713524) ---
 src/npa/_sdk.py:47: error: "def wrapper(**kwargs: Any) -> Any" has no attribute "__npa_cli_module__"  [attr-defined]
 src/npa/_sdk.py:48: error: "def wrapper(**kwargs: Any) -> Any" has no attribute "__npa_cli_callback__"  [attr-defined]
 src/npa/adapter/groot.py:908: error: Incompatible return value type (got "dict[str, dict[str, int]]", expected "dict[str, dict[str, int | str]]")  [return-value]
@@ -520,8 +535,6 @@ src/npa/genesis/env_pick_place.py:888: error: "None" has no attribute "idx_local
 src/npa/genesis/env_pick_place.py:916: error: "None" has no attribute "get_jacobian"  [attr-defined]
 src/npa/genesis/eval_student.py:276: error: List item 0 has incompatible type "ndarray[tuple[Any, ...], dtype[Any]] | Tensor"; expected "Tensor"  [list-item]
 src/npa/genesis/eval_student.py:276: error: List item 1 has incompatible type "ndarray[tuple[Any, ...], dtype[Any]] | Tensor"; expected "Tensor"  [list-item]
-src/npa/genesis/train_teacher.py:76: error: Argument 1 to "list" has incompatible type "list[int] | None"; expected "Iterable[Any]"  [arg-type]
-src/npa/genesis/train_teacher.py:77: error: Argument 1 to "list" has incompatible type "list[int] | None"; expected "Iterable[Any]"  [arg-type]
 src/npa/genesis/tune.py:125: error: Argument 2 to "_save_env_overrides" has incompatible type "dict[str, Any] | None"; expected "dict[str, Any]"  [arg-type]
 src/npa/genesis/tune.py:132: error: Argument 2 to "_save_env_overrides" has incompatible type "dict[str, Any] | None"; expected "dict[str, Any]"  [arg-type]
 src/npa/genesis/tune.py:145: error: Argument 2 to "_save_env_overrides" has incompatible type "dict[str, Any] | None"; expected "dict[str, Any]"  [arg-type]
@@ -1016,7 +1029,52 @@ src/npa/workflows/xr1_antioch/training_data.py:104: error: Argument 1 to "module
 src/npa/workflows/xr1_antioch/training_data.py:105: error: Item "None" of "Loader | Any | None" has no attribute "exec_module"  [union-attr]
 src/npa/workflows/xr1_antioch/training_data.py:105: error: Item "None" of "ModuleSpec | None" has no attribute "loader"  [union-attr]
 src/npa/workflows/xr1_antioch/transport.py:107: error: Need type annotation for "existing" (hint: "existing: set[<type>] = ...")  [var-annotated]
-# CI ground-truth entries from typecheck-gate run 35678387257 (2026-09-22):
-# genesis is installed in CI via npa .[full] with latest unpinned deps.
-src/npa/genesis/env_pick_place.py: error: Item "int" of "Any | int" has no attribute "clone"  [union-attr]
-src/npa/genesis/env_pick_place.py: error: Unsupported target for indexed assignment ("Any | None")  [index]
+src/npa/agent_backend/foxglove_cloud.py: error: Argument 6 to "request" of "Client" has incompatible type "**dict[str, float]"; expected "Cookies | CookieJar | dict[str, str] | list[tuple[str, str]] | None"  [arg-type]
+src/npa/agent_backend/foxglove_cloud.py: error: Argument 6 to "request" of "Client" has incompatible type "**dict[str, float]"; expected "Mapping[str, Any] | None"  [arg-type]
+src/npa/agent_backend/foxglove_cloud.py: error: Argument 6 to "request" of "Client" has incompatible type "**dict[str, float]"; expected "Mapping[str, IO[bytes] | bytes | str | tuple[str | None, IO[bytes] | bytes | str] | tuple[str | None, IO[bytes] | bytes | str, str | None] | tuple[str | None, IO[bytes] | bytes | str, str | None, Mapping[str, str]]] | Sequence[tuple[str, IO[bytes] | bytes | str | tuple[str | None, IO[bytes] | bytes | str] | tuple[str | None, IO[bytes] | bytes | str, str | None] | tuple[str | None, IO[bytes] | bytes | str, str | None, Mapping[str, str]]]] | None"  [arg-type]
+src/npa/agent_backend/foxglove_cloud.py: error: Argument 6 to "request" of "Client" has incompatible type "**dict[str, float]"; expected "bool | UseClientDefault"  [arg-type]
+src/npa/agent_backend/foxglove_cloud.py: error: Argument 6 to "request" of "Client" has incompatible type "**dict[str, float]"; expected "str | bytes | Iterable[bytes] | AsyncIterable[bytes] | None"  [arg-type]
+src/npa/agent_backend/foxglove_cloud.py: error: Argument 6 to "request" of "Client" has incompatible type "**dict[str, float]"; expected "tuple[str | bytes, str | bytes] | Callable[[Request], Request] | Auth | UseClientDefault | None"  [arg-type]
+src/npa/cli/nurec/__init__.py: error: Argument "rig_mode" to "ColmapConversionRequest" has incompatible type "str"; expected "Literal['derive', 'preserve']"  [arg-type]
+src/npa/cli/workbench/curobo.py: error: Argument "mode" to "PrepareRequest" has incompatible type "str"; expected "Literal['both', 'kinematic', 'dynamics']"  [arg-type]
+src/npa/cli/workflow_shim.py: error: Argument 1 of "get_help" is incompatible with supertype "typer._click.core.Command"; supertype defines the argument type as "Context"  [override]
+src/npa/cli/workflow_shim.py: error: Argument 1 to "get_help" of "Command" has incompatible type "click.core.Context"; expected "typer._click.core.Context"  [arg-type]
+src/npa/sdk/workbench/curobo.py: error: Argument "mode" to "PrepareRequest" has incompatible type "str"; expected "Literal['both', 'kinematic', 'dynamics']"  [arg-type]
+src/npa/sdk/workbench/insights.py: error: Argument "cost_basis" to "QueryRequest" has incompatible type "str"; expected "Literal['', 'estimated', 'billed']"  [arg-type]
+src/npa/sdk/workbench/insights.py: error: Argument "direction" to "LineageRequest" has incompatible type "str"; expected "Literal['both', 'ancestors', 'descendants']"  [arg-type]
+src/npa/sdk/workbench/insights.py: error: Argument "edges" to "RecordRequest" has incompatible type "list[dict[str, Any]]"; expected "list[LineageEdge]"  [arg-type]
+src/npa/sdk/workbench/insights.py: error: Argument "group_by" to "DashboardRequest" has incompatible type "str"; expected "Literal['metric_name', 'tool', 'stage', 'workflow', 'metric_kind', 'step', 'currency', 'cost_basis', 'score_name']"  [arg-type]
+src/npa/sdk/workbench/insights.py: error: Argument "records" to "RecordRequest" has incompatible type "list[dict[str, Any]]"; expected "list[MetricRecord]"  [arg-type]
+src/npa/sdk/workbench/insights.py: error: Argument "threshold_op" to "QueryRequest" has incompatible type "str"; expected "Literal['', 'gt', 'ge', 'lt', 'le', 'eq']"  [arg-type]
+src/npa/sdk/workbench/openarm.py: error: Argument "isaac_mode" to "OpenArmRunRequest" has incompatible type "str"; expected "Literal['rollout', 'train']"  [arg-type]
+src/npa/sdk/workbench/openarm.py: error: Argument "simulator" to "OpenArmRunRequest" has incompatible type "str"; expected "Literal['mujoco', 'isaac-lab']"  [arg-type]
+src/npa/smoke/test_openarm_functional.py: error: Missing named argument "max_iterations" for "OpenArmRunRequest"  [call-arg]
+src/npa/smoke/test_openarm_functional.py: error: Missing named argument "num_envs" for "OpenArmRunRequest"  [call-arg]
+src/npa/smoke/test_openarm_functional.py: error: Missing named argument "seed" for "OpenArmRunRequest"  [call-arg]
+src/npa/smoke/test_openarm_functional.py: error: Missing named argument "task" for "OpenArmRunRequest"  [call-arg]
+src/npa/solutions/wan2_2/dependency_closure.py: error: Argument 1 to "evaluate" of "Marker" has incompatible type "Environment"; expected "Mapping[str, str | AbstractSet[str]] | None"  [arg-type]
+src/npa/solutions/wan2_2/dependency_closure.py: error: TypedDict "Environment" has no key "extra"  [typeddict-unknown-key]
+src/npa/viz/backends/matplotlib.py: error: Argument 2 to "FuncAnimation" has incompatible type "Callable[[int], list[object]]"; expected "Callable[..., Iterable[Artist] | None]"  [arg-type]
+src/npa/workbench/cosmos/checkpoint_eval.py: error: "float" object is not iterable  [misc]
+src/npa/workbench/cosmos_evaluator/attribute_verification.py: error: "VideoFrame" has no attribute "copy"  [attr-defined]
+src/npa/workbench/cosmos_evaluator/attribute_verification.py: error: Argument 1 to "paste" of "Image" has incompatible type "VideoFrame"; expected "Image | str | float | tuple[float, ...]"  [arg-type]
+src/npa/workbench/cosmos_evaluator/attribute_verification.py: error: Incompatible types in assignment (expression has type "Image", variable has type "VideoFrame")  [assignment]
+src/npa/workbench/curobo/runner.py: error: "PlanManifest" has no attribute "modes"  [attr-defined]
+src/npa/workbench/curobo/runner.py: error: Incompatible types in assignment (expression has type "BenchmarkManifest", variable has type "PlanManifest")  [assignment]
+src/npa/workbench/curobo/runtime.py: error: Argument "modes" to "BenchmarkManifest" has incompatible type "list[str] | list[Literal['kinematic', 'dynamics']]"; expected "list[Literal['kinematic', 'dynamics']]"  [arg-type]
+src/npa/workbench/curobo/schemas.py: error: Argument "default_factory" to "Field" has incompatible type "Callable[[], list[str]]"; expected "Callable[[], list[Literal['kinematic', 'dynamics']]] | Callable[[dict[str, Any]], list[Literal['kinematic', 'dynamics']]]"  [arg-type]
+src/npa/workbench/detection_training/storage.py: error: Argument "role" to "ArtifactRecord" has incompatible type "str"; expected "Literal['checkpoint', 'training_metrics', 'evaluation_metrics']"  [arg-type]
+src/npa/workbench/insights/analytics.py: error: Argument "status" to "MetricDelta" has incompatible type "str"; expected "Literal['improved', 'regressed', 'unchanged']"  [arg-type]
+src/npa/workbench/insights/service.py: error: Argument "cost_basis" to "QueryRequest" has incompatible type "str"; expected "Literal['', 'estimated', 'billed']"  [arg-type]
+src/npa/workbench/insights/service.py: error: Argument "direction" to "LineageRequest" has incompatible type "str"; expected "Literal['both', 'ancestors', 'descendants']"  [arg-type]
+src/npa/workbench/insights/service.py: error: Argument "group_by" to "DashboardRequest" has incompatible type "str"; expected "Literal['metric_name', 'tool', 'stage', 'workflow', 'metric_kind', 'step', 'currency', 'cost_basis', 'score_name']"  [arg-type]
+src/npa/workbench/insights/service.py: error: Argument "threshold_op" to "QueryRequest" has incompatible type "str"; expected "Literal['', 'gt', 'ge', 'lt', 'le', 'eq']"  [arg-type]
+src/npa/workbench/lancedb/server.py: error: Incompatible types in assignment (expression has type "dict[str, Any] | None", base class "BaseModel" defined the type as "Callable[[bool, str], dict[str, Any]]")  [assignment]
+src/npa/workbench/token_factory/__init__.py: error: Incompatible types in assignment (expression has type "Image", variable has type "ImageFile")  [assignment]
+src/npa/workflows/byof/openpi_full_droid.py: error: Argument 2 to "Blueprint" has incompatible type "object"; expected "Container | View | TopPanel | BlueprintPanel | SelectionPanel | TimePanel"  [arg-type]
+src/npa/workflows/living_lab.py: error: Incompatible types in assignment (expression has type "Image", variable has type "ImageFile")  [assignment]
+src/npa/workflows/paidf_evidence_viz.py: error: "Image" has no attribute "pts"  [attr-defined]
+src/npa/workflows/paidf_evidence_viz.py: error: "Image" has no attribute "time_base"  [attr-defined]
+src/npa/workflows/paidf_evidence_viz.py: error: "Image" has no attribute "to_image"; maybe "toqimage"?  [attr-defined]
+src/npa/workflows/paidf_evidence_viz.py: error: Incompatible types in assignment (expression has type "VideoFrame | Any", variable has type "Image")  [assignment]
+src/npa/workflows/paidf_evidence_viz.py: error: Item "OutputContainer" of "InputContainer | OutputContainer" has no attribute "decode"  [union-attr]
