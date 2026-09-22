@@ -1,0 +1,119 @@
+{
+  "cases": {
+    "light": {
+      "conditioning": "sample",
+      "input_sha256": "44013573e65c7b64f92deac1acaeb4828abb860cad3696d99e6808ddee81149e",
+      "preencode_rgb_stream_sha256": "c9e4a783b9c06fefff666f215201f47965981cec3de28ff525fe5cb1d5c364e9",
+      "selected_preencode_frames": [
+        {
+          "file": "light-frame-000.png",
+          "frame_index": 0,
+          "raw_rgb_sha256": "6239006d67f017a0e3dc38c7e2c9861f55efe8ae7d5efc42ffe7ae97120a8241",
+          "sha256": "aebe441fa0650d995ce1a4833203a505446a0987287155a47be9ed526d57fe5c"
+        }
+      ],
+      "video": {
+        "bytes": 98756,
+        "decoded_rgb_stream_sha256": "a8c853dd914a07fb254cfae52f9cbaf3173c3de918693821ece1f18ff6655c7a",
+        "duration_seconds": 0.5,
+        "file": "light-sample.mp4",
+        "fps": 50,
+        "frames": 25,
+        "height": 480,
+        "sha256": "73c8b3158b9e4185e1bbb4eec36762f1814979eb4055634e2120123f99a8d479",
+        "unique_decoded_frames": 25,
+        "width": 640
+      }
+    },
+    "main": {
+      "conditioning": "sample",
+      "input_sha256": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4",
+      "preencode_rgb_stream_sha256": "6f401d8ea04d6002faff439cc38facfc7d9baf2d4d10ff194b0423dff6e49cdc",
+      "selected_preencode_frames": [
+        {
+          "file": "main-frame-000.png",
+          "frame_index": 0,
+          "raw_rgb_sha256": "8f423d1d9a139235a3563079cdd29f41c194ded991022e8fc8e2132a44d76534",
+          "sha256": "4b295fc293f6fce7705c0a8da9fffda6252e3155dd385b5402266bc70d4abbb0"
+        },
+        {
+          "file": "main-frame-050.png",
+          "frame_index": 50,
+          "raw_rgb_sha256": "3498cfe80af6df634c7263328c4091e8656d74a3aea1ee745f87aaffbc960960",
+          "sha256": "197cf969b0f99ed23d4b861517cf2a0b90aa97da13bc1854b2988d8be24c8bc6"
+        }
+      ],
+      "video": {
+        "bytes": 248820,
+        "decoded_rgb_stream_sha256": "c58a7bff97be91d7bf39f86204a5e4af371027f3dd81bc5b13f143c718be74ee",
+        "duration_seconds": 2.0,
+        "file": "main-sample.mp4",
+        "fps": 50,
+        "frames": 100,
+        "height": 480,
+        "sha256": "7d3585dbeaccd547828464af071e8a4b04789bd47b856fd8d12f80e7e8ae9a3e",
+        "unique_decoded_frames": 100,
+        "width": 640
+      }
+    }
+  },
+  "dataset": {
+    "asset": "lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4",
+    "license": "CC-BY-4.0",
+    "reference_sha256": "caadec919abfebe7ac7f571f52d0c579dbe86ceacc0d0bdbf9a862ed1a908198",
+    "repository": "Hoshipu/RoboPro",
+    "revision": "90ec789bf4018eb9c0f75da9f69aab5c185f0fd0"
+  },
+  "image_digest": "sha256:72a7774a8f7b5262bba5cfdb01155edee1acbc9bfc9e878fd777ce158e9b25ef",
+  "limits": [
+    "These clips are generated transformations of a synthetic robot-kitchen scene, not recovered sensor truth.",
+    "Successful execution and identity checks do not establish restoration quality, robotics safety or downstream policy benefit.",
+    "The posterior-mode candidate and fixed quality gates are separate; historical quality failures remain retained.",
+    "Complete image byte scans remain pending for image publication/release readiness."
+  ],
+  "model": {
+    "architecture": "SeedVR2 3B",
+    "repository": "ByteDance-Seed/SeedVR2-3B",
+    "revision": "37255ff8cccfb01071b87f635a5948ca8d53117c"
+  },
+  "product_source": "f1de67279ef6435884bc2670781eba98000e321e",
+  "provenance_hashes": {
+    "encoder_root_acceptance": "b4bad8bcb7ca935f865d846944601bec5f42e1d9acfad62cfa8a0d53b7233106",
+    "independent_full_artifact_replay": "6439dc2cfc91233844d3b09a953fe155e9697a1bfb89ea9b79b79a5ee03fd1e8",
+    "official_freeze": "46fdc84ead890cd693f49f54b8e79d10c151b5851d205087434063d39efd12c8",
+    "official_root_acceptance": "49d7283fc9846f6a46cc955bd1c7dcee8c67dbc63d9526c27c463627a16d84fc",
+    "scientific_plan": "06277231ba8a4f06605054e56f6f186de4dad2828d9971b1a2e375faebb77924"
+  },
+  "runtime": {
+    "capability": "10.0",
+    "cuda": "13.0",
+    "driver": "580.173.02",
+    "memory_mib": 183359,
+    "mig": "Disabled",
+    "name": "NVIDIA B200",
+    "torch": "2.13.0+cu130"
+  },
+  "schema": "npa.seedvr3b.official-baseline-evidence/v1",
+  "scientific_parameters": {
+    "cfg_rescale": 0.0,
+    "cfg_scale": 1.0,
+    "fresh_process_per_arm": true,
+    "sample_steps": 1,
+    "seed": 666,
+    "sequence_parallel": 1,
+    "vae_split_size": 4
+  },
+  "scope": "Official sample controls: identity and integrity only; no candidate quality pass.",
+  "validation": {
+    "actual_gpu_execution": true,
+    "actual_image_id_checked": true,
+    "all_artifact_bytes_rehashed": 1011326651,
+    "all_artifact_files_rehashed": 173,
+    "candidate_executed_in_this_control_run": false,
+    "heldout_consumed": false,
+    "mp4_frames_fully_decoded": 125,
+    "preencode_pngs_directly_verified": 125,
+    "quality_acceptance": false,
+    "true_posterior_sample_selection_verified": true
+  }
+}
