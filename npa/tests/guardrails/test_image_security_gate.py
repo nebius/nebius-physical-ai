@@ -152,8 +152,38 @@ def test_base_inventory_isolates_each_image_without_dropping_failed_entries() ->
     assert "base-image-security.json" in command["run"]
     aggregate = jobs["base-image-cve-scan"]
     assert set(aggregate["needs"]) == {"base-image-plan", "base-image-entry"}
-    assert aggregate["if"] == "always()"
+    assert aggregate["if"] == "${{ !cancelled() }}"
     assert "continue-on-error" not in scan and "continue-on-error" not in aggregate
+
+
+@pytest.mark.parametrize("plan", ["success", "failure", "cancelled", "skipped"])
+@pytest.mark.parametrize("deep", ["true", "false", ""])
+@pytest.mark.parametrize("scan", ["success", "failure", "cancelled", "skipped"])
+def test_inventory_gate_rejects_incomplete_results(plan, deep, scan) -> None:
+    """Only complete scans or an explicit scope exclusion can pass inventory.
+
+    Args:
+        plan: Planning job result.
+        deep: Whether the plan requires complete image scans.
+        scan: Image scan matrix result.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Failed or incomplete inventory can satisfy the gate.
+    """
+    aggregate = _workflow("image-security-scan.yml")["jobs"]["base-image-cve-scan"]
+    command = _step(aggregate, "Require complete scoped inventory")["run"]
+    result = subprocess.run(
+        ["bash", "-c", command],
+        env={**os.environ, "PLAN_RESULT": plan, "DEEP": deep, "SCAN_RESULT": scan},
+        capture_output=True,
+        text=True,
+    )
+    expected = plan == "success" and (deep, scan) in {
+        ("true", "success"),
+        ("false", "skipped"),
+    }
+    assert (result.returncode == 0) == expected
 
 
 def test_sarif_uploads_preserve_existing_alert_categories() -> None:

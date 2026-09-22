@@ -348,7 +348,9 @@ For queue rejections, follow the
 The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
 lets independent jobs use available GitHub runner capacity without shared
 repository-wide job queues. Newer commits still cancel older checks of the same
-PR. Organization runner limits can cause waiting; already queued runs retain
+PR. The final image-inventory check reports failed scans but stops when a run
+is cancelled, so it cannot hold the replacement run behind an obsolete job.
+Organization runner limits can cause waiting; already queued runs retain
 their original workflow configuration until their branches are refreshed.
 Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
