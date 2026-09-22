@@ -287,6 +287,53 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 Follow-up: full / debug `train.py` once data is staged.
 
+### evo trajectory evaluation (`byof-evo.yaml`)
+
+Pinned: `MichaelGrupp/evo`
+`8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422` (`v1.35.1`).
+This is a GPL-3.0-or-later operator-built BYOF candidate; do not describe it as
+an NPA-published image without a separate conveyance/compliance decision.
+
+Hard-gate capability:
+
+- `evo_ape_rpe_trajectory_evaluation`: native `evo_ape`, `evo_rpe`, and
+  `evo_traj` commands must save decodable result archives and matched plots.
+  Exact and bounded-error controls must pass the predeclared APE/RPE thresholds;
+  nonlinear drift and malformed-input controls must fail, with zero false
+  positives and zero false negatives.
+
+Also exercised in the same live-qualified smoke:
+
+- `decoded_plot_validation`: decode the selected native metric/trajectory plots
+  and their derived review copies, require at least 800x600 pixels and
+  non-uniform RGB content, and retain their hashes across the result and capture
+  records. This is an auxiliary reviewability check, not a trajectory-quality
+  metric. It covers the six review-facing plots plus eight additional
+  `evo_ape` raw/control plots; only the six review-facing plots enter the
+  capture/review set. It does not cover the five auxiliary `evo_traj`
+  RPY/XYZ/speed plots. `synthetic_controls_speeds.png` is 651x491 and is the
+  only residual plot below the stated 800x600 floor.
+
+The same smoke evaluates the pinned upstream KITTI 00 ground truth, ORB, and
+S-PTAM examples. Treat those as representative compatibility and reviewability
+evidence, not as threshold calibration or proof of navigation success. Retain
+each error distribution, trajectory-input hash, native plot hash, derived
+review-plot hash, and decode result. The live-qualified candidate passed the
+digest-pinned CPU Kubernetes pull and execution path, all four frozen gate
+controls, and ten independent archive decodes. Its first unlabeled APE visual
+review was invalidated when exact-prompt ORB/S-PTAM cross-swaps false-passed;
+retain that failure. The corrected smoke preserves each native map and emits a
+hash-linked review copy with visible estimate/reference identity. Require
+identify-first cross-swap calibration with zero false positives before scoring
+those final plots. In `npa.evo.capture-manifest.v1`, unsuffixed
+`kitti_*_ape` keys identify the labeled review copies and `*_native` keys
+identify untouched evo maps; follow each review entry's `source_path` and
+`source_sha256` instead of guessing from the suffix. The operator-built image
+remains unpublished. Before
+registry admission, require independent review of the candidate commit and
+retained evidence; a later conveyance still needs an explicit GPL compliance
+decision.
+
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 
 Pinned: `next-state/open-dreamer` `2b10640` · base `ubuntu` + system `python3.11`

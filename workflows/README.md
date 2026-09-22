@@ -182,6 +182,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | Spec | Notes |
 | --- | --- |
 | [`byof-droid-policy-learning.yaml`](testing/byof-droid-policy-learning.yaml) | OSS registry: DROID policy learning pinned image + RLDS config smoke |
+| [`byof-evo.yaml`](testing/byof-evo.yaml) | Plan-only catalog definition; run pinned evo APE/RPE controls and matched KITTI plots through the direct BYOF runner |
 | [`byof-ltx2.yaml`](testing/byof-ltx2.yaml) | LTX-2.5 video generation and FiftyOne curation; source and gated weights fetched at runtime |
 | [`byof-maniskill.yaml`](testing/byof-maniskill.yaml) | OSS registry: ManiSkill pinned image + PickCube smoke |
 | [`byof-mujoco-playground.yaml`](testing/byof-mujoco-playground.yaml) | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |

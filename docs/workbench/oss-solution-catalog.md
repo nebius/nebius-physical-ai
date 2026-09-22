@@ -24,6 +24,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
+| evo trajectory evaluation | `MichaelGrupp/evo` `8dd6cfe0…` (`v1.35.1`) | `evo_ape_rpe_trajectory_evaluation` | metric archives + matched PNGs + `evo_trajectory_evaluation.json` | `byof-evo.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
@@ -54,6 +55,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
+| evo | `evo_ape` / `evo_rpe` / `evo_traj` | **live-qualified candidate** | `evo-live-20260920t0111z`: digest-pinned CPU Kubernetes execution passed 2 positive and 2 negative controls, decoded 10 native result archives, preserved native KITTI plots plus hash-linked labeled review copies, and passed identify-first hosted-VLM review after exact-prompt cross-swap controls; registry admission remains a maintainer decision |
 | Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
 | Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
 | Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
@@ -151,6 +153,49 @@ offline evaluation.
 | `rlds_config_generator_contract` | accepted hard gate (live) | `droid_runs_language_conditioned_rlds` module contract |
 | `droid_100_download` | accepted (live) | HTTPS metadata pull of `droid_100/1.0.0/dataset_info.json` |
 | `droid_100_config_gen` | accepted (live) | Documented `EXP_NAMES` debug subset wiring |
+
+### evo trajectory evaluation
+
+NPA pins the maintained upstream `MichaelGrupp/evo` source at
+`8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422` (`v1.35.1`). The source and
+Python package are GPL-3.0-or-later. This is an operator-built BYOF candidate,
+not a published NPA image; any future conveyance must preserve the GPL license
+and corresponding-source obligations. The
+[independently audited CPU workload proof](https://github.com/nebius/nebius-physical-ai/blob/899caeab007bd2d55221ff3bc7b195f02a828c11/docs/testing/evidence/evo-proof/README.md)
+and its [payload-scan scope correction](https://github.com/nebius/nebius-physical-ai/pull/584#issuecomment-5747248494)
+publish sanitized metrics, controls, hardware applicability, visual-review
+failures, and current merge blockers without live infrastructure identifiers.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `evo_ape` | live-qualified candidate | Native absolute pose error over translation, saved as a decoded result archive and matched error-map plot |
+| `evo_rpe` | live-qualified candidate | Native relative pose error at a declared frame or distance delta, with the complete finite error distribution retained |
+| `evo_traj` | live-qualified candidate | Native matched trajectory plots for the pinned KITTI ground truth, ORB, and S-PTAM examples |
+| `trajectory_acceptance_controls` | live-qualified candidate | The digest-pinned Kubernetes run accepted both 120-pose low-error controls and rejected nonlinear drift plus malformed input with zero false positives/negatives |
+| `decoded_plot_validation` | live-qualified auxiliary check | Six review-facing plots and eight additional `evo_ape` raw/control plots are decoded, dimension/content-checked, and hash-retained; only the six review-facing plots enter the capture/review set. Five auxiliary `evo_traj` plots are outside this check, including the 651x491 synthetic speed plot below its 800x600 floor |
+
+The integration gate is about reliable evaluation, not improving the upstream
+ORB or S-PTAM estimates. Representative KITTI metrics are reported as observed
+and are not tuned to the synthetic control threshold. Passing the gate does not
+establish navigation success, robot safety, sensor accuracy, or generalization
+to another trajectory format. The live qualification retained ten decoded
+archives and exact plot hashes and matched the local generated-image metrics.
+An exact-prompt ORB/S-PTAM cross-swap probe invalidated the first unlabeled
+per-estimate visual review with two false positives. That failed evidence is
+preserved. The corrected run keeps each native map and emits a hash-linked
+review copy with the estimate and reference visibly named; identify-first
+cross-swap calibration then had zero false positives, and both final live plots
+scored 0.95 with no critical defect. A complete filesystem/layer-history
+restricted-payload scan found no hits across 22,826 image entries; complete
+archive-byte accounting is not claimed. This remains an operator-built
+candidate, not a published NPA image; registry admission and future conveyance
+remain maintainer decisions.
+
+In `npa.evo.capture-manifest.v1`, the unsuffixed `kitti_*_ape` entries are the
+identity-labeled review copies, while the corresponding `*_native` entries are
+evo's untouched maps. Review entries link back through `source_path` and
+`source_sha256`; consumers must follow those fields rather than infer provenance
+from the key suffix.
 
 ### Open Dreamer (world model, 2-GPU minimum)
 

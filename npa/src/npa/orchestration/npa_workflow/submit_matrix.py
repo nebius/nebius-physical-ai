@@ -1215,6 +1215,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
     ),
     SubmitLiveCase(
+        "byof-evo.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
+        ),
+        notes=(
+            "The direct BYOF runner owns real build/push/pull execution. The "
+            "operator-built GPL candidate passed a retained digest-pinned CPU "
+            "Kubernetes qualification; it is not a published matrix image."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-open-dreamer.yaml",
         "multi",
         plan_only=True,
