@@ -190,6 +190,13 @@ For artifact conversion and sharing, see the
 [Foxglove export](../docs/workbench/foxglove-export.md), and
 [Rerun sharing](../docs/workbench/rerun-sharing.md).
 
+NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
+Recording inspection uses the supported streaming reader and accepts existing
+0.31.4 RRD files without rewriting their contents or provenance. A recording
+validator rejects ambiguous multi-recording files unless it selects each store
+explicitly. For a custom viewer image, use a version that supports the producing
+SDK; previously published container pins retain their recorded build versions.
+
 ## Package map
 
 - `npa.cli`: Typer CLI entrypoints
@@ -198,6 +205,17 @@ For artifact conversion and sharing, see the
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+
+  Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
+  retains legacy ActorCritic checkpoint support and validates saved dimensions
+  before inference. ONNX export preserves RSL-RL 5 observation normalization.
+  The Genesis extra pins an upstream MoviePy compatibility fix by source revision
+  and archive hash so installation retains Pillow 12.3 or newer. The
+  `genesis-test` extra adds CPU checkpoint regression tests to the complete test
+  stage; the fast precheck does not install PyTorch. Genesis simulation remains
+  in the separate `genesis` extra.
+  The [Genesis skill](../skills/tools/genesis/SKILL.md#teacher-checkpoint-compatibility)
+  describes the live GPU migration check and its numerical report.
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands
@@ -330,7 +348,9 @@ For queue rejections, follow the
 The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
 lets independent jobs use available GitHub runner capacity without shared
 repository-wide job queues. Newer commits still cancel older checks of the same
-PR. Organization runner limits can cause waiting; already queued runs retain
+PR. The final image-inventory check reports failed scans but stops when a run
+is cancelled, so it cannot hold the replacement run behind an obsolete job.
+Organization runner limits can cause waiting; already queued runs retain
 their original workflow configuration until their branches are refreshed.
 Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
