@@ -48,10 +48,6 @@ def _ledger(manifest: dict, journal: dict, response: dict, trace: dict) -> dict:
         retained == returned,
         "Original launch receipts disagree",
     )
-    require(
-        ledger["launch"]["state"] == "indeterminate",
-        "Not an indeterminate legacy launch",
-    )
     return ledger
 
 
@@ -81,7 +77,8 @@ def load_evidence(manifest: dict) -> dict:
         ValueError: Evidence is missing, ambiguous, changed, or unsupported.
     """
     require(
-        manifest.get("schema") == "npa.sky.absence.v1", "Unsupported Sky absence schema"
+        manifest.get("schema") in {"npa.sky.absence.v1", "npa.sky.zero-id-absence.v1"},
+        "Unsupported Sky absence schema",
     )
     journal = _json(manifest, "original_journal")
     require(
@@ -91,19 +88,30 @@ def load_evidence(manifest: dict) -> dict:
         "Wrong original producing operation",
     )
     response = _json(manifest, "producer_response")
-    trace = validate_trace(manifest, journal, response)
-    ledger = _ledger(manifest, journal, response, trace)
     _naming_source(manifest)
-    scope = native_scope(manifest, journal, ledger, trace)
-    registration = validate_target(manifest, scope)
+    bound = _original_scope(manifest, journal, response)
+    registration = validate_target(manifest, bound["scope"])
     require(
         registration["project_id"] == journal["project_id"],
         "Foreign registered project",
     )
     return {
         "journal": journal,
-        "scope": scope,
+        **bound,
         "registration": registration,
-        "trace": trace,
         "historical_workload_outcome": "unknown",
     }
+
+
+def _original_scope(manifest, journal, response) -> dict:
+    if manifest["schema"] == "npa.sky.zero-id-absence.v1":
+        from npa.orchestration.skypilot.absence_zero_evidence import zero_evidence
+
+        return zero_evidence(manifest, journal, response, _ledger)
+    trace = validate_trace(manifest, journal, response)
+    ledger = _ledger(manifest, journal, response, trace)
+    require(
+        ledger["launch"]["state"] == "indeterminate",
+        "Not an indeterminate legacy launch",
+    )
+    return {"scope": native_scope(manifest, journal, ledger, trace), "trace": trace}

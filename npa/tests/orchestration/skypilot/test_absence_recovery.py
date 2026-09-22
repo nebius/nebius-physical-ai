@@ -3,7 +3,7 @@
 import base64
 import copy
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -801,3 +801,373 @@ def test_provider_project_endpoint_and_ca_are_actual_bound_values(sample):
             candidate["status"]["state"] = "DELETING"
         with pytest.raises(ValueError):
             reader._provider_identity(candidate, bound)
+
+
+@pytest.fixture
+def zero_sample(sample, monkeypatch):
+    from npa.orchestration.skypilot import absence_zero_source
+
+    path, manifest, operation = sample
+    root = Path(manifest["isolated_root"])
+    journal = operation.read()
+    response = json.loads(Path(manifest["producer_response"]["path"]).read_bytes())
+    _zero_original_response(response, journal)
+    manifest["producer_response"] = put(
+        Path(manifest["producer_response"]["path"]), response
+    )
+    ledger = json.loads(Path(manifest["submission_ledger"]["path"]).read_bytes())
+    ledger["launch"] = response["launch_transaction"]
+    ledger["launch_state"] = "planned"
+    manifest["submission_ledger"] = put(
+        Path(manifest["submission_ledger"]["path"]), ledger
+    )
+    manifest.update(_zero_producer_records(path.parent, manifest, journal))
+    _zero_databases(root, manifest)
+    manifest["original_api_daemon"] = put(
+        root / "local-api/daemon.json", {"root": str(root / "local-api"), "port": 8000}
+    )
+    manifest["schema"] = "npa.sky.zero-id-absence.v1"
+    monkeypatch.setattr(absence_zero_source, "PRODUCER_SOURCE_SHA256", {})
+    path.write_text(json.dumps(manifest))
+    return path, manifest, operation
+
+
+def _zero_original_response(response, journal):
+    absent = {
+        "error": "",
+        "job_id": "",
+        "state": "absent",
+        "status": "",
+        "workload_evidence": "",
+        "workload_observable": False,
+    }
+    response["error"] = journal["last_error"]
+    response["launch_transaction"].update(
+        schema_version="npa.skypilot.launch-transaction.v1",
+        state="terminal_failure",
+        launch_sequence=1,
+        job_id="",
+        existence="absent",
+        reconciliation_error="",
+        recovery_decision="verified_absent_no_retry",
+        reconciliations=[absent, absent],
+    )
+    response["launch_transaction"]["controller"].update(
+        state="absent",
+        execution_probe={
+            "error": "",
+            "healthy": True,
+            "outcome": "controller_absent",
+            "pod_count": 0,
+        },
+    )
+
+
+def _zero_databases(root, manifest):
+    with sqlite3.connect(root / "sky-runtime/.sky/state.db") as connection:
+        connection.execute("DELETE FROM cluster_yaml")
+        connection.execute("CREATE TABLE clusters (name TEXT)")
+    spot = root / "sky-runtime/.sky/spot_jobs.db"
+    with sqlite3.connect(spot) as connection:
+        connection.execute("CREATE TABLE spot (job_id INTEGER)")
+        connection.execute("CREATE TABLE job_info (job_id INTEGER)")
+    manifest["empty_native_databases"] = {
+        name: pin(root / "sky-runtime/.sky" / name)
+        for name in ("state.db", "spot_jobs.db")
+    }
+    manifest["native_submission_config"] = put(
+        root / "submissions/example-run/skypilot-config.yaml", _zero_submission_config()
+    )
+
+
+def _zero_submission_config():
+    config = native_config()
+    config["api_server"] = {"endpoint": "http://127.0.0.1:8000"}
+    config["kubernetes"]["pod_config"] = {
+        "spec": {"imagePullSecrets": [{"name": "example-pull"}]}
+    }
+    return config
+
+
+def _zero_producer_records(directory, manifest, journal):
+    start = datetime.fromisoformat(journal["created_at"]) - timedelta(seconds=1)
+    end = datetime.fromisoformat(journal["updated_at"]) + timedelta(microseconds=100)
+    workflow = put(directory / "workflow.yaml", {"synthetic": True})
+    runner = put(directory / "runner.py", {"synthetic": True})
+    stderr = put(directory / "stderr.log", {"synthetic": "failure"})
+    root = manifest["isolated_root"]
+    checkout, commit, tree = _zero_git_source(directory)
+    argv = [
+        str(checkout / "npa/.venv/bin/python"),
+        "-m",
+        "npa.cli.main",
+        "workbench",
+        "workflow",
+        "submit",
+        workflow["path"],
+        "--project",
+        "example",
+        "--resume-run",
+        "example-run",
+        "--controller-backend",
+        "kubernetes",
+        "--infra",
+        "k8s/example-context",
+        "--isolated-config-dir",
+        root,
+    ]
+    freeze = {
+        "at": start.isoformat(),
+        "source": commit,
+        "tree": tree,
+        "argv": argv,
+        "runner_sha256": runner["sha256"],
+        "shipped_workflow_sha256": workflow["sha256"],
+        "root_user_id": "npa-" + digest(root.encode())[:12],
+    }
+    return _zero_producer_manifest(
+        directory, manifest, workflow, runner, stderr, freeze, end
+    )
+
+
+def _zero_git_source(directory):
+    checkout = directory / "producer-source"
+    checkout.mkdir()
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    git = ["git", "-C", str(checkout)]
+    subprocess.run(
+        git
+        + [
+            "-c",
+            "user.name=Example",
+            "-c",
+            "user.email=example@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "fixture",
+        ],
+        check=True,
+    )
+    head = subprocess.check_output(git + ["rev-parse", "HEAD"], text=True).strip()
+    tree = subprocess.check_output(
+        git + ["rev-parse", "HEAD^{tree}"], text=True
+    ).strip()
+    return checkout, head, tree
+
+
+def _zero_producer_manifest(directory, manifest, workflow, runner, stderr, freeze, end):
+    return {
+        "producer_freeze": put(directory / "freeze.json", freeze),
+        "producer_process": put(
+            directory / "process.json",
+            {
+                "at": end.isoformat(),
+                "returncode": 1,
+                "stdout_sha256": manifest["producer_response"]["sha256"],
+                "stderr_sha256": stderr["sha256"],
+            },
+        ),
+        "producer_runner": runner,
+        "producer_stderr": stderr,
+        "producer_workflow": workflow,
+        "producer_modules": {},
+        "producer_environment": put(
+            directory / "environment.json",
+            {
+                "NPA_CONFIG_DIR": str(directory / "config"),
+                "KUBECONFIG": manifest["original_kubeconfig"]["path"],
+            },
+        ),
+    }
+
+
+def test_zero_id_preview_and_cas_preserve_original_errors_and_historical_limits(
+    zero_sample, monkeypatch
+):
+    path, manifest, operation = zero_sample
+    original = operation.path.read_bytes()
+    bound = evidence.load_evidence(manifest)
+    assert bound["scope"]["managed_ids"] == []
+    assert bound["historical_read_limits"]["historical_queue_stdout_retained"] is False
+    monkeypatch.setattr(recovery, "_read", retained_reads)
+    recovery.reconcile_absent(path)
+    assert operation.path.read_bytes() == original
+    result = recovery.reconcile_absent(path, apply=True)
+    assert result["status"] == "reconciled-absent"
+    current = operation.read()
+    assert current["last_error"] == json.loads(original)["last_error"]
+    assert current["events"][:-1] == json.loads(original)["events"]
+    audit = json.loads(Path(current["absence_recovery"]["path"]).read_bytes())
+    assert audit["historical_read_limits"] == bound["historical_read_limits"]
+    assert audit["historical_workload_outcome"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "accepted-id",
+        "success",
+        "unknown",
+        "zero-attempt",
+        "two-attempts",
+        "ambiguous-queue",
+        "queue-id",
+        "queue-error",
+        "missing-queue",
+        "controller-present",
+        "controller-unprobed",
+        "source",
+        "runner",
+        "root",
+        "command",
+        "process-output",
+        "process-success",
+        "time",
+        "environment",
+        "ledger",
+        "native-job",
+        "native-controller",
+        "native-wal",
+        "config",
+        "api-remote",
+        "metadata",
+    ],
+)
+def test_zero_id_contradictions_refuse_without_reads_or_cas(
+    zero_sample, monkeypatch, change
+):
+    path, manifest, operation = zero_sample
+    before, lease = operation.path.read_bytes(), lease_path(operation).read_bytes()
+    _zero_mutation(manifest, change)
+    path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(
+        recovery, "_read", lambda *_: pytest.fail("invalid originals reached provider")
+    )
+    with pytest.raises((ValueError, KeyError)):
+        recovery.reconcile_absent(path, apply=True)
+    assert operation.path.read_bytes() == before
+    assert lease_path(operation).read_bytes() == lease
+
+
+def _zero_mutation(manifest, change):
+    if change in {
+        "accepted-id",
+        "success",
+        "unknown",
+        "zero-attempt",
+        "two-attempts",
+        "ambiguous-queue",
+        "queue-id",
+        "queue-error",
+        "missing-queue",
+        "controller-present",
+        "controller-unprobed",
+    }:
+        return _zero_launch_mutation(manifest, change)
+    if change.startswith("native-"):
+        return _zero_native_mutation(manifest, change)
+    key = {
+        "source": "producer_modules",
+        "runner": "producer_runner",
+        "root": "isolated_root",
+        "command": "producer_freeze",
+        "process-output": "producer_process",
+        "process-success": "producer_process",
+        "time": "producer_process",
+        "environment": "producer_environment",
+        "ledger": "submission_ledger",
+        "config": "native_submission_config",
+        "api-remote": "native_submission_config",
+        "metadata": "native_submission_config",
+    }[change]
+    _zero_record_mutation(manifest, key, change)
+
+
+def _zero_record_mutation(manifest, key, change):
+    if change == "source":
+        manifest[key] = {"unexpected": {}}
+    elif change == "root":
+        manifest[key] += "-foreign"
+    elif change == "runner":
+        Path(manifest[key]["path"]).write_text("changed")
+    else:
+        value = json.loads(Path(manifest[key]["path"]).read_bytes())
+        if change == "command":
+            value["argv"] += ["--project", "foreign"]
+        elif change == "process-output":
+            value["stdout_sha256"] = "0" * 64
+        elif change == "process-success":
+            value["returncode"] = 0
+        elif change == "time":
+            value["at"] = "2000-01-01T00:00:00+00:00"
+        elif change == "environment":
+            value["NPA_CONFIG_DIR"] += "-foreign"
+        elif change == "ledger":
+            value["project"] = "foreign"
+        elif change == "api-remote":
+            value["api_server"]["endpoint"] = "https://example.invalid"
+        elif change == "metadata":
+            value["kubernetes"]["pod_config"]["metadata"] = {"name": "hidden"}
+        elif change == "config":
+            value["kubernetes"]["custom_metadata"] = {"name": "hidden"}
+        manifest[key] = put(Path(manifest[key]["path"]), value)
+
+
+def _zero_launch_mutation(manifest, change):
+    response = json.loads(Path(manifest["producer_response"]["path"]).read_bytes())
+    launch = response["launch_transaction"]
+    if change == "accepted-id":
+        launch["job_id"] = "7"
+    elif change == "success":
+        launch["state"] = "accepted"
+    elif change == "unknown":
+        launch["existence"] = "unknown"
+    elif change == "zero-attempt":
+        launch["launch_sequence"] = 0
+    elif change == "two-attempts":
+        launch["launch_sequence"] = 2
+    elif change == "ambiguous-queue":
+        launch["reconciliations"][1]["state"] = "unknown"
+    elif change == "queue-id":
+        launch["reconciliations"][1]["job_id"] = "7"
+    elif change == "queue-error":
+        launch["reconciliations"][1]["error"] = "denied"
+    elif change == "missing-queue":
+        launch["reconciliations"].pop()
+    elif change == "controller-present":
+        launch["controller"]["state"] = "up"
+    elif change == "controller-unprobed":
+        launch["controller"]["execution_probe"]["healthy"] = False
+    manifest["producer_response"] = put(
+        Path(manifest["producer_response"]["path"]), response
+    )
+    ledger = json.loads(Path(manifest["submission_ledger"]["path"]).read_bytes())
+    ledger["launch"] = launch
+    manifest["submission_ledger"] = put(
+        Path(manifest["submission_ledger"]["path"]), ledger
+    )
+    process = json.loads(Path(manifest["producer_process"]["path"]).read_bytes())
+    process["stdout_sha256"] = manifest["producer_response"]["sha256"]
+    manifest["producer_process"] = put(
+        Path(manifest["producer_process"]["path"]), process
+    )
+
+
+def _zero_native_mutation(manifest, change):
+    name, table = (
+        ("spot_jobs.db", "spot") if change == "native-job" else ("state.db", "clusters")
+    )
+    entry = manifest["empty_native_databases"][name]
+    if change == "native-wal":
+        Path(entry["path"] + "-wal").write_bytes(b"changed")
+        return
+    with sqlite3.connect(entry["path"]) as connection:
+        statement = {
+            "spot": "INSERT INTO spot VALUES (?)",
+            "clusters": "INSERT INTO clusters VALUES (?)",
+        }[table]
+        connection.execute(statement, ("7",))
+    manifest["empty_native_databases"][name] = pin(Path(entry["path"]))

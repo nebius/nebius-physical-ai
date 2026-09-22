@@ -68,6 +68,39 @@ responses outside the repository.
   exact cluster read must independently match the original project, endpoint and
   CA. No IAM or profile change is made.
 
+## Issued attempt with no accepted managed ID
+
+The separate `npa.sky.zero-id-absence.v1` schema covers one original issued
+attempt whose terminal response and ledger agree on `terminal_failure`, empty
+managed ID, `existence=absent`, and `verified_absent_no_retry`. It refuses a
+successful, accepted, unknown, repeated, or contradictory launch. The original
+journal must remain failed and recovery-required with no recorded resources.
+
+Pin the original `producer_freeze` (argv, source/tree and runner hash),
+`producer_process` (failed exit, completion time and output hashes),
+`producer_response`, `producer_stderr`, `producer_runner`, `producer_workflow`,
+`producer_environment`, and `producer_modules`. The reviewed source module pins
+explain the original reconciliation behavior; the original Git object must
+match the recorded tree and module bytes. No retained runner is executed.
+The original argv and environment bind the root, context, operation and ledger.
+`native_submission_config` must be the original restricted Kubernetes config.
+Its local API endpoint must match the pinned same-root `original_api_daemon`
+port on `127.0.0.1`. Global Pod configuration can contain only named pull
+Secrets; metadata, name, and other Pod overrides are rejected.
+Both `empty_native_databases` (`state.db` and `spot_jobs.db`) must still be empty
+of controller and managed-job identities. Pin any nonempty WAL in
+`empty_native_wals` under its database filename; reads use private copies and
+reject changed or unbound WAL bytes.
+
+The two retained absence decisions have different origins. The first comes
+from the original healthy `controller_absent` probe. Only the second invokes
+the exact-name queue reconciliation. Historical queue stdout was not retained
+by this producer; the report explicitly records that limit. Neither record is
+relabeled as two raw queue calls or as proof of current cloud absence. Fresh
+provider identity and complete metadata reads, using the same pinned naming
+and reader authority contracts above, are still mandatory before the unchanged
+original-generation compare-and-swap transition.
+
 ## Meaning of success
 
 The collector retains raw exact controller Pod/Service responses and every page

@@ -92,6 +92,7 @@ def _audit(operation, manifest_data, evidence, output, records, lease) -> dict:
         "manifest_sha256": digest(manifest_data),
         "scope": evidence["scope"],
         "historical_workload_outcome": "unknown",
+        "historical_read_limits": evidence.get("historical_read_limits", {}),
         "provider_reads": records,
         "limits": "Fresh, separately timed reads; local locks serialize cooperating NPA writers only. Original failure remains in history. No workload success, original Pod UID, cancellation or cloud deletion is inferred.",
     }
