@@ -81,11 +81,11 @@ jobs:
       cleanup_matrix: ${{ steps.plan.outputs.cleanup_matrix }}
       cleanup_count: ${{ steps.plan.outputs.cleanup_count }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
@@ -274,11 +274,11 @@ jobs:
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Every complete-byte path requires the verified CPython 3.12 wheel.
           python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robocasa') && '3.12' || '3.11' }}
@@ -439,14 +439,14 @@ jobs:
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
       # Some public workbench Dockerfiles inherit other immutable public NPA
       # packages. Authenticate pulls here because setup-crane installs an
       # intentionally invalid placeholder credential; no registry write occurs
       # until the separately gated push step below.
       - name: Authenticate immutable public base pulls
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -705,7 +705,7 @@ jobs:
           if-no-files-found: error
           # Original logs and raw receipts stay on the runner and are not public artifacts.
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -758,7 +758,7 @@ jobs:
       - name: Attest exact pushed digest SBOM
         if: matrix.tool != 'ncore'
         id: sbom-attestation
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -937,9 +937,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.cleanup_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -998,9 +998,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1066,11 +1066,11 @@ jobs:
       EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
@@ -1079,9 +1079,9 @@ jobs:
           python -m venv npa/.venv
           npa/.venv/bin/pip install -e npa
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

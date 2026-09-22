@@ -249,14 +249,14 @@ def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
     script = (ROOT / "npa/scripts/scan_base_images.py").read_text()
     # Tokens, not one contiguous line: ruff format may split the arg list.
     assert '"--timeout"' in script and '"2562047h47m16s"' in script
-    job = _spec(SECURITY_SCAN)["jobs"]["base-image-cve-scan"]
+    job = _spec(SECURITY_SCAN)["jobs"]["base-image-entry"]
     command = next(
         step["run"]
         for step in job["steps"]
-        if step.get("name") == "Scan all pinned bases with three local workers"
+        if step.get("name") == "Scan the exact inventory entry"
     )
     assert "scan_base_images.py" in command
-    assert "--workers 3" in command
+    assert '--entry-name "$SCAN_ENTRY"' in command
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
