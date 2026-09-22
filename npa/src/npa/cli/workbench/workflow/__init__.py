@@ -876,6 +876,8 @@ def submit_cmd(
         write_manifest,
     )
 
+    explicitly_isolated = isolated_config_dir is not None
+
     if submit_timeout <= 0:
         _fail(f"--submit-timeout must be positive, got {submit_timeout}")
 
@@ -1866,7 +1868,7 @@ def submit_cmd(
                 project=project,
                 run_id=resolved_run_id,
                 force=stage_src is True,
-                persist=not runtime,
+                persist=not runtime and not explicitly_isolated,
             )
             if not staged_uri:
                 return
@@ -3930,8 +3932,8 @@ def _stage_npa_src_for_submit(
 ) -> str:
     """Upload source, optionally updating the project-level source setting.
 
-    Runtime submissions bind the returned URI into their durable run record.
-    They must not rewrite the configuration used to identify an active daemon.
+    Runtime and explicitly isolated submissions bind the returned URI to the
+    current submission. They must not rewrite shared controller configuration.
     """
     from npa.clients.config import ConfigError, persist_workflow_src_s3_uri
     from npa.orchestration.npa_workflow.src_staging import (
@@ -3957,9 +3959,9 @@ def _stage_npa_src_for_submit(
             on_status=lambda message: typer.echo(f"  {message}", err=True),
             force=force,
         )
-        # The isolated daemon verifies configuration bytes as part of its
-        # credential identity. Runtime source refreshes are run-scoped; changing
-        # this setting would invalidate an otherwise healthy owned controller.
+        # An isolated daemon verifies shared configuration bytes as part of its
+        # credential identity. Run-scoped refreshes must not invalidate another
+        # healthy owned controller by changing the project default.
         if persist:
             persist_workflow_src_s3_uri(uri, project or None)
         return uri

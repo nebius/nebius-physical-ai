@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,80 @@ def _mock_paidf_submit_boundaries(mocker) -> None:
         return_value=[],
     )
     mocker.patch("npa.controller_ownership.verify_controller_owner")
+
+
+def _source_scope_spec(tmp_path: Path, *, runtime: bool) -> Path:
+    source = PAIDF_SPEC.read_text(encoding="utf-8")
+    if runtime:
+        source = source.replace(
+            "metadata:\n", "metadata:\n  executionMode: runtime\n", 1
+        )
+    spec = tmp_path / "source-scope.yaml"
+    spec.write_text(source, encoding="utf-8")
+    return spec
+
+
+def _mock_source_scope_submit(mocker, observed: dict[str, object]) -> None:
+    def stage_source(*_args, **kwargs):
+        observed["persist"] = kwargs["persist"]
+        return "s3://real-bucket/npa-src/npa/current/"
+
+    def stop_after_source_binding(*_args, **_kwargs):
+        observed["source_uri"] = os.environ.get("NPA_SRC_S3_URI")
+        raise RuntimeError("stop after source binding")
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._stage_npa_src_for_submit",
+        side_effect=stage_source,
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_accelerators",
+        side_effect=stop_after_source_binding,
+    )
+    mocker.patch("npa.cli.workbench.workflow._submit_prerequisites", return_value=[])
+    mocker.patch(
+        "npa.orchestration.npa_workflow.paidf_preflight.static_prerequisites",
+        return_value=[],
+    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+
+
+def _mock_source_scope_input(mocker) -> None:
+    from npa.orchestration.npa_workflow.first_run_state import RunPreparation
+    from npa.workflows.data_factory_input import PreparedPaidfInput
+
+    mocker.patch(
+        "npa.workflows.data_factory_input.prepare_paidf_input",
+        return_value=PreparedPaidfInput(
+            selection="input_uri", provenance={}, reused=True
+        ),
+    )
+    mocker.patch(
+        "npa.orchestration.npa_workflow.first_run_state.prepare_run",
+        return_value=RunPreparation(
+            run_id="source-scope", generated_new=False, state_path="unused"
+        ),
+    )
+
+
+def _source_scope_argv(spec: Path, tmp_path: Path, *, runtime: bool, isolated: bool):
+    argv = [
+        "workbench",
+        "workflow",
+        "submit",
+        str(spec),
+        "--run-id",
+        "source-scope",
+        "--var",
+        "bucket=real-bucket",
+        "--no-deploy-if-absent",
+        "--stage-src",
+    ]
+    if not runtime:
+        argv.extend(["--assume-decision", "promote_checkpoint"])
+    if isolated:
+        argv.extend(["--isolated-config-dir", str(tmp_path / "controller")])
+    return argv
 
 
 class FakeStorageClient:
@@ -597,6 +672,43 @@ def test_real_submit_persists_no_submit_ledger_before_source_staging(
     assert persist_calls == [False, True]
     update_state.assert_called_once()
     assert update_state.call_args.args[2]["launch_state"] == "planned"
+
+
+@pytest.mark.parametrize(
+    ("runtime", "isolated", "expected_persist"),
+    [
+        (False, False, True),
+        (False, True, False),
+        (True, False, False),
+        (True, True, False),
+    ],
+    ids=["legacy-shared", "legacy-isolated", "runtime-shared", "runtime-isolated"],
+)
+def test_submit_scopes_staged_source_to_explicit_isolation(
+    runtime: bool,
+    isolated: bool,
+    expected_persist: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker,
+) -> None:
+    spec = _source_scope_spec(tmp_path, runtime=runtime)
+    _mock_paidf_submit_boundaries(mocker)
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.delenv("NPA_E2E_NPA_SRC_S3_URI", raising=False)
+    observed: dict[str, object] = {}
+    _mock_source_scope_submit(mocker, observed)
+    _mock_source_scope_input(mocker)
+    argv = _source_scope_argv(spec, tmp_path, runtime=runtime, isolated=isolated)
+
+    result = runner.invoke(app, argv)
+
+    assert result.exit_code == 1
+    assert str(result.exception) == "stop after source binding"
+    assert observed == {
+        "persist": expected_persist,
+        "source_uri": "s3://real-bucket/npa-src/npa/current/",
+    }
 
 
 def test_source_upload_failure_preserves_durable_no_submit_ledger(
