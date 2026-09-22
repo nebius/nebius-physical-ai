@@ -94,13 +94,16 @@ COPY --chmod=0644 docker/workbench/robotwin/runtime-lock.json \
   docker/workbench/robotwin/REDISTRIBUTION.md \
   docker/workbench/robotwin/THIRD_PARTY_NOTICES.md /opt/npa/robotwin/
 COPY --chmod=0755 docker/workbench/robotwin/robotwin_runtime.py /opt/npa/robotwin/robotwin-runtime
+COPY --chmod=0644 docker/workbench/robotwin/robotwin_fetch.py \
+  docker/workbench/robotwin/robotwin_collect.py \
+  src/npa/orchestration/npa_workflow/robotwin_customer.py /opt/npa/robotwin/
 COPY --chmod=0755 docker/workbench/robotwin/entrypoint.sh /opt/npa/robotwin/entrypoint.sh
 COPY --chmod=0755 docker/workbench/robotwin/smoke.sh /opt/npa/robotwin/smoke.sh
 
 LABEL org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
       org.nebius.npa.source-sha="${NPA_SOURCE_SHA}" \
       org.nebius.npa.payload="zero-vendor-payload" \
-      org.nebius.npa.publication-state="neutral-bootstrap-runtime-disabled"
+      org.nebius.npa.publication-state="neutral-bootstrap-customer-runtime-fetch"
 
 # TEST: exercise the declared non-root SkyPilot bootstrap contract, remove all
 # generated host keys, and prove the real runtime gate still refuses before work.

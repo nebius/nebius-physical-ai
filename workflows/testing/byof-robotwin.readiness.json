@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Python 3.12 contract tests verify immutable contract recognition, a structured customer-acceptance refusal, rejection of unsigned local assertions, an authenticated typed-boundary mock with exact bindings and replay refusal, private value-only transport, one authorized output, CPU outer/one RTX inner topology, a zero-vendor-payload boundary, and genuine missing-access/incomplete-lock refusal. No simulator success is claimed.",
+      "reason": "Contract tests cover customer-terminal and hosted authorization, exact run/manifest/terms bindings, replay refusal, immutable bootstrap delivery, hash-verified runtime downloads, archive traversal refusal, and native HDF5/video consistency. The implemented collector invokes pinned upstream successful-seed planning and replay. Actual RTX capability remains unverified.",
       "evidence": [
         "npa/.venv/bin/python -m pytest -q npa/tests/docker/test_robotwin_runtime_bootstrap.py npa/tests/workflows/test_byof_robotwin.py"
       ]
@@ -26,22 +26,22 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "No RoboTwin, CuRobo, Python runtime, or asset payload was fetched. Exact metadata identities alone are recorded in the incomplete lock.",
+      "reason": "Complete metadata-resolved runtime lock: 474 exact provider archive URLs/sizes/hashes, pinned source commits/trees/licenses, and two pinned MIT asset archives. Real payload probes and full verification run only after customer authorization.",
       "evidence": []
     },
     "credentials": {
       "status": "unverified",
-      "reason": "No manager resource context, authenticated customer assertion, upstream access probe, or credential was used. With the committed bootstrap-complete-runtime-disabled lock, normal local submit first returns runtime-delivery-technical-gates-incomplete without consuming customer authorization. After that lock and source-byte proof become complete, the next refusal remains needs_customer_acceptance and rejects the retired unsigned local entitlement file. A future authenticated customer control plane must issue and consume once a verified-issuer/customer/run/manifest/terms/activity/issuance/expiry/nonce/assertion-bound authorization for the exact CUDA 12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms. No such provider is integrated. Public artifacts must use exact-revision payload-byte probes; any gated artifact requires a customer-controlled runtime-only credential and an exact provider/artifact/revision/terms probe before provisioning. A credential is entitlement evidence only when the upstream vendor gates the exact artifact after customer acceptance.",
+      "reason": "The concrete customer-terminal notice/accept/decline path and existing hosted boundary are implemented. Decisions bind the exact run/customer/manifest/CUDA12.8.1/cuDNN9.7.1/CuRobo0.7.8 terms and activity, are private and consumed once, and are never accepted by the manager. Actual customer authorization and upstream payload probes are still required before provisioning.",
       "evidence": []
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The public bootstrap is versioned -unbuilt and publication-quarantined. Its Ubuntu base and public APT closure are immutable, but runtime delivery and its artifact lock remain disabled and the native-content policy remains incomplete, so no build, pull, scan, SBOM, provenance, or anonymous-pull claim exists.",
+      "reason": "The preceding neutral bootstrap has public development publication and anonymous pull evidence. Changed runtime-fetch code requires a newly built/scanned immutable image, SBOM/provenance and anonymous pull before live use. Supported-release promotion remains excluded pending real RTX capability.",
       "evidence": []
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The run-level operator statement is exactly noncommercial for containerization and technical workload validation/evaluation and expires with this bounded run. Only a future assertion from an authenticated customer control plane can authorize the exact CUDA/cuDNN/CuRobo terms for that bounded activity; an unsigned local file or manager context cannot, and no provider is integrated. Such authorization grants no broader service, derivative, output, or redistribution rights. The exact public ungated RoboTwin asset revision and declared outputs are classified with no signature hold. The complete runtime artifact lock, exact payload probes, native-content policy, image bytes, writable storage, manager runtime context, and STRICT RTX evidence remain technical gates. B200 is invalid.",
+      "reason": "Use remains bounded noncommercial research/evaluation. The operator entrypoint reuses the existing exact inner RTX PRO 6000 profile, image verification, selected-project storage and cleanup; the outer remote-source byte-proof refusal remains. No B200 fallback is permitted. Actual customer decision, input probes, exact-image and STRICT placement evidence, storage, and native live workload output remain required.",
       "evidence": []
     }
   }

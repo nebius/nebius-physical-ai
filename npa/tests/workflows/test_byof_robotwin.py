@@ -136,18 +136,21 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
     assert config["task"] == "beat_block_hammer"
     assert config["wait_timeout"] == -1
 
-    assert lock["status"] == "bootstrap-complete-runtime-disabled"
+    assert lock["status"] == "runtime-delivery-implemented-live-unvalidated"
     assert lock["bootstrap"]["status"] == "complete"
     assert lock["bootstrap"]["payload_class"] == "zero-vendor-payload"
     assert lock["bootstrap"]["apt"]["binary_package_count"] == 84
     assert lock["bootstrap"]["python_runtime"]["application_artifact_count"] == 0
-    assert lock["runtime_delivery"]["status"].startswith("disabled-")
+    assert lock["runtime_delivery"]["status"] == "complete"
     assert lock["runtime_delivery"]["asset_output_classification_status"] == (
         "complete-no-signature-hold"
     )
-    assert lock["runtime_delivery"]["network_side_effects_permitted"] is False
+    assert (
+        lock["runtime_delivery"]["network_side_effects_permitted"]
+        == "only-after-customer-run-authorization"
+    )
     assert lock["weights"] == []
-    assert lock["runtime_artifacts"] == []
+    assert len(lock["runtime_artifacts"]) == 474
     assert {item.get("version") for item in lock["sources"]} == {
         SOURCE_REVISION,
         "0.7.8",
@@ -183,7 +186,7 @@ def test_robotwin_runtime_lock_records_exact_deferred_boundaries() -> None:
         "customer-vendor-side-entitlement"
     )
     assert lock["access"]["customer_authorization"]["control"] == (
-        "authenticated-customer-control-plane-consume-once"
+        "customer-terminal-receipt-or-hosted-consume-once"
     )
     assert (
         lock["access"]["customer_authorization"]["manager_or_npa_acceptance"] is False

@@ -135,7 +135,7 @@ motion. The publication and state-execution facts remain valid; this run does
 not qualify RTX visual behavior. Isaac Sim/Lab and Lightwheel assets remain
 operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
-## Unbuilt BYOF bootstrap candidates excluded from publication
+## BYOF bootstrap candidates excluded from supported publication
 
 RoboTwin 2.0 remains absent from the supported public image table. Its
 `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` release candidate stays quarantined
@@ -145,7 +145,9 @@ Trusted full-SHA development publication requires complete-byte and payload
 scans, all security gates, and an anonymously verified corresponding-source annex.
 The annex covers 91 source package versions across the base and installed layers.
 Runtime vendor payload, assets, customer credentials, and outputs stay outside
-the neutral image. No real RTX result is claimed.
+the neutral image. Customer-authorized runtime delivery is implemented; the
+changed image and actual native replay still need qualification. No real RTX
+result is claimed.
 The independent runtime-use and
 output-rights decisions, bounded run-scoped `noncommercial` statement,
 customer-owned runtime credential/exact payload-probe contract, isolated

@@ -54,13 +54,17 @@ def digest(path: Path) -> str:
 
 bootstrap = runtime.get("bootstrap")
 delivery = runtime.get("runtime_delivery")
-if (
-    runtime.get("status") != "bootstrap-complete-runtime-disabled"
-    or not isinstance(bootstrap, dict)
-    or bootstrap.get("status") != "complete"
-    or not isinstance(delivery, dict)
-    or not str(delivery.get("status", "")).startswith("disabled-")
-):
+if not isinstance(bootstrap, dict) or bootstrap.get("status") != "complete" or not isinstance(delivery, dict):
+    raise SystemExit("RoboTwin neutral build refused: bootstrap/runtime boundary is invalid")
+# Reproducing the preceding immutable bootstrap remains supported. Both forms
+# build only the same neutral OS closure; runtime payload is never a build input.
+legacy = runtime.get("status") == "bootstrap-complete-runtime-disabled" and str(delivery.get("status", "")).startswith("disabled-")
+current = (
+    runtime.get("status") == "runtime-delivery-implemented-live-unvalidated"
+    and delivery.get("status") == "complete"
+    and delivery.get("network_side_effects_permitted") == "only-after-customer-run-authorization"
+)
+if not (legacy or current):
     raise SystemExit("RoboTwin neutral build refused: bootstrap/runtime boundary is invalid")
 
 apt = bootstrap.get("apt")

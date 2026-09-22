@@ -36,7 +36,7 @@ research/evaluation. It expires with the run and does not authorize hosted
 service or broader derivative/output use. Before any governed CUDA, cuDNN, or
 CuRobo runtime fetch, install, or cache mutation, a customer representative
 authorized to bind that customer must issue an owner-only, run-scoped
-entitlement for the exact CUDA 12.8.1, cuDNN 9.8.0, and CuRobo v0.7.8 terms.
+entitlement for the exact CUDA 12.8.1, cuDNN 9.7.1, and CuRobo v0.7.8 terms.
 The record is bound to customer, run, runtime-lock SHA-256, intended activity,
 exact terms, and expiry; NPA and the infrastructure manager do not accept or
 sign those terms for the customer.
@@ -50,6 +50,6 @@ output restriction on the declared HDF5, MP4, frame, or JSON evidence; CuRobo's
 underlying execution remains limited to noncommercial research/evaluation.
 A credential, private registry, runtime fetch, or writable destination is not
 permission. Customer entitlement does not grant broader service, output,
-derivative, or redistribution rights, and none of the still-missing technical
-artifact-lock, probe, native-content, built-image, storage/context, or live
-evidence gates is waived.
+derivative, or redistribution rights, and none of the probe, native-content, built-image, storage/context, or live
+evidence gates is waived. The runtime artifact lock is complete; real
+installation and GPU capability remain customer-authorized validation steps.

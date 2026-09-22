@@ -25,6 +25,7 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
     CHILD_RUNTIME_AUTH_ENV,
     CONTEXT_ENV_NAMES,
     CUSTOMER_ENTITLEMENT_ENV,
+    DECISION_ENV,
     CUSTOMER_ENTITLEMENT_NOTICE,
     CUSTOMER_TERMS,
     CUSTOMER_USE_SCOPE,
@@ -120,7 +121,7 @@ def _context_payload(tmp_path: Path, **updates: object) -> dict[str, object]:
         "source_revision": "96c1feab536306b50c26af200044fcdf126e8904",
         "curobo_revision": "d64c4b005459db10c5dd867d8b30a87d5bda9bdb",
         "asset_revision": "785feb15aa4a4f532395ad2b1d2be5f28cb561ad",
-        "runtime_lock_sha256": "81d627e54cab7841d99abde48fea3c01d1c3ecd95dbe31338a73865a28bb9df5",
+        "runtime_lock_sha256": "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e",
         "bootstrap_image": "registry.example/robotwin-private/npa-robotwin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "reservation": {
             "policy": "STRICT",
@@ -541,7 +542,7 @@ def test_customer_entitlement_is_exact_run_scoped_and_fail_closed(
 
 def test_customer_entitlement_notice_names_terms_responsibility_and_resume() -> None:
     assert "CUDA 12.8.1" in CUSTOMER_ENTITLEMENT_NOTICE
-    assert "cuDNN 9.8.0" in CUSTOMER_ENTITLEMENT_NOTICE
+    assert "cuDNN 9.7.1" in CUSTOMER_ENTITLEMENT_NOTICE
     assert "CuRobo v0.7.8" in CUSTOMER_ENTITLEMENT_NOTICE
     assert "customer representative" in CUSTOMER_ENTITLEMENT_NOTICE
     assert "Decline" in CUSTOMER_ENTITLEMENT_NOTICE
@@ -919,9 +920,7 @@ def test_worker_materialization_removes_the_file_whose_fsync_fails(
     assert str(caught.value) == "injected fsync failure"
     assert list(directory.iterdir()) == []
     recovery = caught.value.recovery_context
-    assert recovery.cleanup_outcomes == (
-        ("runtime-context.json", "missing"),
-    )
+    assert recovery.cleanup_outcomes == (("runtime-context.json", "missing"),)
     assert recovery.residual_names == ()
     assert recovery.directory_fsync == "error:OSError"
 
@@ -1264,6 +1263,7 @@ def test_live_submit_real_source_proof_refuses_before_authority_consumption(
         if name
         not in {
             PUBLIC_CONTEXT_ENV,
+            DECISION_ENV,
             CUSTOMER_ENTITLEMENT_ENV,
             MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
             MATERIALIZED_KUBECONFIG_ENV,
@@ -1324,7 +1324,9 @@ def test_invalid_config_refuses_before_assertion_is_consumed(tmp_path: Path) -> 
 
 def test_live_submit_refuses_disabled_runtime_after_context_validation(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(preflight_module, "RUNTIME_LOCK_STATUS", "incomplete")
     environment, _context_path, raw, _entitlement_path, _entitlement_raw = (
         _authorization_environment(tmp_path)
     )

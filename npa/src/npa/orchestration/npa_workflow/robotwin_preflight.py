@@ -17,6 +17,12 @@ from urllib.parse import unquote, urlparse, urlsplit
 
 import yaml
 
+from .robotwin_customer import (
+    DECISION_ENV,
+    CustomerDecisionError,
+    CustomerTerminalBoundary,
+)
+
 PUBLIC_CONTEXT_ENV = "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
 CUSTOMER_ENTITLEMENT_ENV = "NPA_BYOF_ROBOTWIN_CUSTOMER_ENTITLEMENT"
 TRANSPORT_CONTEXT_ENV = "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1"
@@ -40,6 +46,7 @@ OPTIONAL_STORAGE_SECRET_NAME = "AWS_SESSION_TOKEN"
 STORAGE_ENDPOINT_SECRET_NAMES = ("AWS_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT")
 CONTEXT_ENV_NAMES = (
     PUBLIC_CONTEXT_ENV,
+    DECISION_ENV,
     CUSTOMER_ENTITLEMENT_ENV,
     TRANSPORT_CONTEXT_ENV,
     MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
@@ -63,8 +70,8 @@ SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "81d627e54cab7841d99abde48fea3c01d1c3ecd95dbe31338a73865a28bb9df5"
-RUNTIME_LOCK_STATUS = "bootstrap-complete-runtime-disabled"
+RUNTIME_LOCK_SHA256 = "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e"
+RUNTIME_LOCK_STATUS = "complete"
 RUNTIME_AUTH_SCHEMA = "npa.byof.robotwin.inner-launch-capability.v1"
 CUSTOMER_AUTHORIZATION_SCHEMA = (
     "npa.byof.robotwin.authenticated-customer-authorization.v1"
@@ -78,10 +85,10 @@ CUSTOMER_TERMS = (
         "url": "https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html",
     },
     {
-        "id": "nvidia-cudnn-9.8.0-sla-2025-03-06",
+        "id": "nvidia-cudnn-9.7.1-sla",
         "url": (
             "https://docs.nvidia.com/deeplearning/cudnn/backend/"
-            "v9.8.0/reference/eula.html"
+            "v9.7.1/reference/eula.html"
         ),
     },
     {
@@ -94,22 +101,22 @@ CUSTOMER_ENTITLEMENT_NOTICE = " ".join(
         "RoboTwin customer runtime entitlement is required before any governed "
         "fetch, install, or cache mutation.",
         "Review CUDA 12.8.1 terms at " + CUSTOMER_TERMS[0]["url"] + ",",
-        "cuDNN 9.8.0 terms at " + CUSTOMER_TERMS[1]["url"] + ", and",
+        "cuDNN 9.7.1 terms at " + CUSTOMER_TERMS[1]["url"] + ", and",
         "CuRobo v0.7.8 noncommercial research/evaluation terms at "
         + CUSTOMER_TERMS[2]["url"]
         + ".",
         "Only a customer representative authorized to bind that customer may "
         "accept; NPA and the infrastructure manager do not accept vendor terms "
         "for the customer.",
-        "Decline by taking no action in the authenticated customer control plane; "
-        "no runtime side effect will occur.",
-        "To accept and resume, an authenticated customer control plane must issue "
-        "and consume once a run-scoped assertion bound to the verified issuer, "
+        "Review the notice and accept or decline through the customer-terminal "
+        "decision command or an authenticated hosted customer control plane; "
+        "declining starts no runtime side effect.",
+        "To accept and resume, the selected customer boundary must issue "
+        "and consume once a run-scoped assertion bound to its issuer, "
         "customer scope, run id, exact runtime-lock SHA-256, terms, intended "
         "activity, issuance, expiry, nonce, and assertion identity.",
-        f"An unsigned local file, {CUSTOMER_ENTITLEMENT_ENV}, manager context, "
-        "filesystem ownership, or self-declared provenance is never customer "
-        "authentication.",
+        f"A legacy unsigned entitlement file, {CUSTOMER_ENTITLEMENT_ENV}, or "
+        "manager context does not replace the actual customer decision.",
         "This authorization does not satisfy the separate technical artifact-lock, "
         "payload-probe, native-content, built-image, storage/context, or live gates.",
     )
@@ -303,8 +310,9 @@ def customer_acceptance_notice() -> dict[str, Any]:
         "intended_activity": CUSTOMER_USE_SCOPE,
         "terms": [dict(term) for term in CUSTOMER_TERMS],
         "customer_action": (
-            "review and accept or decline through an authenticated customer "
-            "control plane, then start a new run-scoped submission"
+            "review the notice and accept or decline through the customer-terminal "
+            "decision command or authenticated hosted customer control plane, "
+            "then resume the exact run-scoped submission"
         ),
         "local_files_authoritative": False,
         "side_effects_started": False,
@@ -326,10 +334,10 @@ class CustomerAuthorizationRequest:
 class AuthenticatedCustomerAssertion(Protocol):
     """Assertion already authenticated by a customer control plane.
 
-    This protocol deliberately has no repository implementation.  Files,
-    environment values, manager context, and self-declared provenance must not
-    be adapted into it.  A future authenticated control plane is responsible
-    for establishing issuer/customer identity before returning these fields.
+    Hosted callers authenticate at their control plane. The scoped local
+    customer-terminal boundary consumes an explicit customer decision on the
+    authenticated operator host; it does not claim an external signature.
+    Legacy entitlement files and manager context remain non-authoritative.
     """
 
     issuer: str
@@ -989,6 +997,8 @@ def _consume_customer_authorization(
     refusal_category = ""
     try:
         assertion = boundary.consume_once(request)
+    except CustomerDecisionError as failure:
+        raise _refusal("customer-decision-" + str(failure), context) from None
     except CustomerAuthorizationBoundaryRefusal as failure:
         refusal_category = failure.category
     except Exception:
@@ -1430,6 +1440,10 @@ def load_runtime_authorization(
 
     source = os.environ if environ is None else environ
     raw = read_owner_context(source)
+    if customer_authorization_boundary is None and source.get(DECISION_ENV):
+        customer_authorization_boundary = CustomerTerminalBoundary(
+            Path(source[DECISION_ENV])
+        )
     # Preserve precise context diagnostics before asking for the independent
     # customer entitlement secret.
     parsed_context = _parse_context_payload(raw)
@@ -1893,6 +1907,7 @@ def prepare_live_submit(
         if name
         not in {
             PUBLIC_CONTEXT_ENV,
+            DECISION_ENV,
             CUSTOMER_ENTITLEMENT_ENV,
             MATERIALIZED_CUSTOMER_ENTITLEMENT_ENV,
             MATERIALIZED_KUBECONFIG_ENV,

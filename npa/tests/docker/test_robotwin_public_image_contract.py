@@ -176,7 +176,7 @@ def _archive_command_stubs(directory: Path) -> None:
     directory.mkdir()
     scripts = {
         "apt-get": (
-            '#!/bin/sh\nset -eu\n'
+            "#!/bin/sh\nset -eu\n"
             'if [ "$1" = -o ]; then\n'
             'test "$2" = Acquire::https::CaInfo=/run/npa-bootstrap-ca.crt\n'
             'shift 2\nfi\ncase "$1" in\n'
@@ -308,18 +308,21 @@ def test_build_script_passes_the_dockerfile_source_sha_argument() -> None:
 
 def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None:
     lock = json.loads((IMAGE_ROOT / "runtime-lock.json").read_text())
-    assert lock["status"] == "bootstrap-complete-runtime-disabled"
+    assert lock["status"] == "runtime-delivery-implemented-live-unvalidated"
     assert lock["bootstrap"]["status"] == "complete"
     assert lock["bootstrap"]["payload_class"] == "zero-vendor-payload"
     assert lock["bootstrap"]["apt"]["binary_package_count"] == 84
     assert lock["bootstrap"]["apt"]["source_package_count"] == 63
     assert lock["bootstrap"]["python_runtime"]["application_artifact_count"] == 0
-    assert lock["runtime_delivery"]["status"].startswith("disabled-")
+    assert lock["runtime_delivery"]["status"] == "complete"
     assert lock["runtime_delivery"]["asset_output_classification_status"] == (
         "complete-no-signature-hold"
     )
-    assert lock["runtime_delivery"]["network_side_effects_permitted"] is False
-    assert lock["runtime_artifacts"] == []
+    assert (
+        lock["runtime_delivery"]["network_side_effects_permitted"]
+        == "only-after-customer-run-authorization"
+    )
+    assert len(lock["runtime_artifacts"]) == 474
     assert lock["weights"] == []
     assert lock["access"]["status"] == "not-probed"
     assert lock["access"]["timing"] == "before-provisioning"
@@ -333,7 +336,7 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
     )
     assert lock["access"]["customer_authorization"] == {
         "schema_version": "npa.byof.robotwin.authenticated-customer-authorization.v1",
-        "control": "authenticated-customer-control-plane-consume-once",
+        "control": "customer-terminal-receipt-or-hosted-consume-once",
         "bindings": [
             "verified-issuer",
             "customer-scope-id",
@@ -348,10 +351,10 @@ def test_neutral_locks_are_complete_while_runtime_delivery_is_disabled() -> None
         ],
         "unsigned_local_file_authoritative": False,
         "manager_context_authoritative": False,
-        "repository_authenticator_implementation": False,
+        "repository_authenticator_implementation": True,
         "manager_or_npa_acceptance": False,
     }
-    assert lock["cache"]["status"] == "disabled-until-runtime-delivery-approved"
+    assert lock["cache"]["status"] == "customer-authorized-node-local-ephemeral"
     assert lock["cache"]["tier"] == "node-local-ephemeral"
     assert lock["cache"]["owner_access"] == "single-customer-single-workload"
     assert lock["cache"]["contains_credentials"] is False
@@ -437,9 +440,15 @@ def test_public_native_policy_binds_actual_reviewed_content() -> None:
     )
     assert policy["schema_version"] == "npa.image-native-content-policy.v1"
     assert len(policy["entries"]) == 7
-    assert all(re.fullmatch("[0-9a-f]{64}", value) for value in policy["detector_identity"].values())
+    assert all(
+        re.fullmatch("[0-9a-f]{64}", value)
+        for value in policy["detector_identity"].values()
+    )
     for entry in policy["entries"]:
         assert entry["operational_credential"] is False
         for name in ("public_provenance", "semantic_proof"):
             proof = entry[name]
-            assert hashlib.sha256((ROOT / proof["path"]).read_bytes()).hexdigest() == proof["sha256"]
+            assert (
+                hashlib.sha256((ROOT / proof["path"]).read_bytes()).hexdigest()
+                == proof["sha256"]
+            )

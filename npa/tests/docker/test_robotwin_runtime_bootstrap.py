@@ -264,18 +264,21 @@ def test_capability_is_consumed_once_immediately_before_runtime_fetch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(runtime, "CAPABILITY_STATE_DIR", tmp_path / "capabilities")
-    monkeypatch.setattr(
-        runtime,
-        "_load_lock",
-        lambda *_args, **_kwargs: {
-            "bootstrap": {"status": "complete"},
-            "runtime_delivery": {"status": "complete"},
-        },
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setitem(
+        sys.modules,
+        "robotwin_fetch",
+        SimpleNamespace(
+            RuntimeFailure=RuntimeError,
+            validate_artifacts=lambda lock: calls.append("validated"),
+            execute=lambda lock, environment: calls.append("executed") or 0,
+        ),
     )
     environment = _environment()
-
-    with pytest.raises(runtime.Refusal, match="runtime-fetch-not-implemented"):
-        runtime.run(lock_path=LOCK, environ=environment)
+    assert runtime.run(lock_path=LOCK, environ=environment) == 0
+    assert calls == ["validated", "executed"]
     with pytest.raises(runtime.Refusal, match="capability-replayed") as caught:
         runtime.run(lock_path=LOCK, environ=environment)
 
@@ -420,9 +423,18 @@ def test_capability_rollback_fsync_failure_preserves_exact_recovery_receipt(
     assert list(state_dir.iterdir()) == []
 
 
-def test_valid_context_reaches_only_the_technical_delivery_refusal(
+def test_incomplete_delivery_refuses_before_any_runtime_side_effect(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_load_lock",
+        lambda *_: {
+            "bootstrap": {"status": "complete"},
+            "runtime_delivery": {"status": "incomplete"},
+        },
+    )
     watched = [tmp_path / name for name in ("source", "assets", "cache", "output")]
     with pytest.raises(
         runtime.Refusal,

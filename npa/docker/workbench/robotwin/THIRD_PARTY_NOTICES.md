@@ -1,6 +1,6 @@
 # Third-party notices and runtime references
 
-The unbuilt neutral recipe selects these public operating-system inputs:
+The neutral bootstrap recipe selects these public operating-system inputs:
 
 - Docker Official Image `ubuntu:22.04`, linux/amd64 manifest
   `sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986`.
@@ -12,7 +12,7 @@ The unbuilt neutral recipe selects these public operating-system inputs:
   `apt-packages.lock` records 84 exact binary packages, 63 exact source package
   versions, the signed InRelease hashes, archive hashes/sizes, and each installed
   copyright-file hash.
-- No third-party Python application distribution is selected;
+- No third-party Python application distribution is baked;
   `runtime-requirements.lock` has an artifact count of zero.
 
 The Ubuntu package archive classifies `main` as open-source software supported
@@ -44,7 +44,7 @@ Exact runtime terms presented before any governed fetch, install, or cache
 mutation:
 
 - CUDA 12.8.1 EULA: https://docs.nvidia.com/cuda/archive/12.8.1/eula/index.html
-- cuDNN 9.8.0 SLA: https://docs.nvidia.com/deeplearning/cudnn/backend/v9.8.0/reference/eula.html
+- cuDNN 9.7.1 SLA: https://docs.nvidia.com/deeplearning/cudnn/backend/v9.7.1/reference/eula.html
 - CuRobo v0.7.8 license: https://github.com/NVlabs/curobo/blob/d64c4b005459db10c5dd867d8b30a87d5bda9bdb/LICENSE
 
 Only a customer representative authorized to bind the customer may issue the

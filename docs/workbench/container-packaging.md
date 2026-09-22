@@ -16,6 +16,8 @@ zero-vendor-payload bootstrap with a working neutral build. It pins an official 
 binary packages, 63 corresponding source packages, and a complete-empty public
 Python application lock. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python
 application runtime, assets, caches, credentials, and outputs stay runtime-side.
+Customer-authorized delivery now installs the locked closure and runs the pinned
+upstream seed search/replay; exact-image and real RTX validation are still required.
 The trusted public development workflow requires its exact native content policy,
 complete-byte and payload scans, security gates, and public corresponding-source
 annex before push. Supported release quarantine remains until the separate real

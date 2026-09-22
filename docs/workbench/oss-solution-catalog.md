@@ -22,7 +22,7 @@ unique and must be tested with its own upstream-named capabilities.
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
-| RoboTwin 2.0 (**public-bootstrap candidate; unbuilt/quarantined**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | deferred `robotwin-smoke.json` + native HDF5 + MP4 | `byof-robotwin.yaml` |
+| RoboTwin 2.0 (**runtime-fetch candidate; GPU qualification pending**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | deferred `robotwin-smoke.json` + native HDF5 + MP4 | `byof-robotwin.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
@@ -157,8 +157,8 @@ pending until that normal-submit path produces genuine private live evidence.
 | `robotwin_native_hdf5_collection` | qualification pending hard gate | non-empty native HDF5 with RoboTwin provenance, action/state/vision groups, positive action count, size, and SHA-256 |
 | `robotwin_rendered_mp4` | qualification pending hard gate | fully decoded MP4 with positive dimensions and exactly `action_count + 1` frames, size, and SHA-256 |
 
-The planned public image contains none of these bytes; a future authorized
-runtime would compile pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
+The public bootstrap contains none of these bytes. Its implemented customer
+runtime compiles pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
 limits use to noncommercial research/evaluation. The operator's exact
 `noncommercial` statement for this bounded run is compatible with that field of
 use for containerization and technical workload validation/evaluation; it
@@ -172,8 +172,10 @@ zero-vendor-payload bootstrap may be eligible for public redistribution after
 exact-byte review. Public artifacts require exact-revision payload probes;
 gated artifacts additionally require the customer's own runtime-only credential
 and an exact provider/artifact/revision/terms access result before provisioning.
-No generic consent flag is used. The candidate remains unbuilt,
-publication-quarantined, and absent from the public image table. The Hugging Face
+An explicit customer-terminal decision or the existing hosted authorization
+boundary gates runtime delivery. Supported release promotion remains
+quarantined pending exact-image and real RTX qualification, and the candidate
+is absent from the supported public image table. The Hugging Face
 asset repository card classifies the exact locked `embodiments.zip` and
 `objects.zip` members at revision
 `785feb15aa4a4f532395ad2b1d2be5f28cb561ad` as MIT. Other embodiments,

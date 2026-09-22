@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zero-payload RoboTwin bootstrap with an intentionally closed runtime gate."""
+"""Zero-payload RoboTwin bootstrap with customer-authorized runtime delivery."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ SOURCE_REVISION = "96c1feab536306b50c26af200044fcdf126e8904"
 CUROBO_REVISION = "d64c4b005459db10c5dd867d8b30a87d5bda9bdb"
 ASSET_REVISION = "785feb15aa4a4f532395ad2b1d2be5f28cb561ad"
 WORKFLOW_SHA256 = "718bb6ae47c8e5e7e761303ebda9e962afa446a6b84030dade7c224cd255ece3"
-RUNTIME_LOCK_SHA256 = "81d627e54cab7841d99abde48fea3c01d1c3ecd95dbe31338a73865a28bb9df5"
+RUNTIME_LOCK_SHA256 = "af1440aa1a0b5d79a9dd1242415e4bae5a717915196a99ecddb49a29a83b457e"
 CAPABILITY_FIELDS = frozenset(
     {
         "schema_version",
@@ -71,14 +71,14 @@ class RecoveryContext:
 class Refusal(RuntimeError):
     """Fixed-category refusal safe for logs."""
 
-    def __init__(self, message: str, *, recovery_context: RecoveryContext | None = None) -> None:
+    def __init__(
+        self, message: str, *, recovery_context: RecoveryContext | None = None
+    ) -> None:
         super().__init__(message)
         self.recovery_context = recovery_context
 
 
-def _refuse(
-    category: str, *, recovery_context: RecoveryContext | None = None
-) -> None:
+def _refuse(category: str, *, recovery_context: RecoveryContext | None = None) -> None:
     raise Refusal(
         f"ROBOTWIN_RUNTIME_REFUSED:{category}",
         recovery_context=recovery_context,
@@ -284,7 +284,7 @@ def _load_lock(path: Path, expected_sha256: str) -> dict[str, Any]:
 
 
 def run(*, lock_path: Path, environ: Mapping[str, str]) -> int:
-    """Refuse before effects until runtime delivery and authority are complete."""
+    """Fetch and execute only after exact runtime and customer bindings pass."""
 
     authorization = _validate_authorization(environ)
     lock = _load_lock(lock_path, _text(authorization, "runtime_manifest_sha256"))
@@ -294,8 +294,21 @@ def run(*, lock_path: Path, environ: Mapping[str, str]) -> int:
     delivery = lock.get("runtime_delivery")
     if not isinstance(delivery, dict) or delivery.get("status") != "complete":
         _refuse("runtime-delivery-technical-gates-incomplete")
+    from robotwin_fetch import RuntimeFailure, execute, validate_artifacts
+
+    validate_artifacts(lock)
     _consume_capability(authorization)
-    _refuse("runtime-fetch-not-implemented")
+    failure = ""
+    try:
+        return execute(lock, environ)
+    except RuntimeFailure as exc:
+        failure = str(exc)
+    except Exception:
+        failure = (
+            "ROBOTWIN_RUNTIME_FAILED:unexpected-runtime-failure-private-state-retained"
+        )
+    print(failure, file=sys.stderr)
+    return 1
 
 
 def _refusal_runtime_paths(root: Path, temporary: Path) -> dict[str, Path]:
