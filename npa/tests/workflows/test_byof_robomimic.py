@@ -3583,3 +3583,53 @@ def test_public_development_execution_binds_full_sha_to_digest(monkeypatch):
     ):
         with pytest.raises(ValueError, match="exact official development digest"):
             runner._require_robomimic_public_development_image(bad)
+
+
+def test_robomimic_profile_stages_regular_entitlement_from_sky_symlink(tmp_path):
+    task = list(yaml.safe_load_all(PROFILE.read_text(encoding="utf-8")))[1]
+    original = _customer_entitlement(
+        tmp_path, project="test-project", run_id="stage-run"
+    )
+    transport = tmp_path / "transport.json"
+    transport.symlink_to(original)
+    staged = tmp_path / "private" / "entitlement.json"
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "npa_source_metadata.json").touch()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    for name in (".ready.json", "inventory.json"):
+        (runtime / name).touch()
+    setup = task["setup"].split("robomimic-entrypoint verify-runtime", 1)[0]
+    setup = setup.replace(
+        "/opt/npa-runtime-authorization/robomimic.json", str(transport)
+    )
+    env = dict(
+        os.environ,
+        NPA_BYOF_RUN_ID="stage-run",
+        BYOF_REPO_ROOT=str(source),
+        NPA_ROBOMIMIC_RUNTIME_ROOT=str(runtime),
+        NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE=str(staged),
+    )
+    subprocess.run(["bash", "-c", setup], env=env, check=True)
+    details = staged.lstat()
+    assert stat.S_ISREG(details.st_mode) and details.st_nlink == 1
+    assert details.st_uid == os.geteuid()
+    assert stat.S_IMODE(details.st_mode) == 0o400
+    assert stat.S_IMODE(staged.parent.stat().st_mode) == 0o700
+    assert staged.read_bytes() == original.read_bytes()
+    spec = importlib.util.spec_from_file_location(
+        "transport_verifier", IMAGE_ROOT / "verify_image.py"
+    )
+    verifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(verifier)
+    digest = hashlib.sha256(original.read_bytes()).hexdigest()
+    with pytest.raises(verifier.VerificationError, match="regular file"):
+        verifier._read_runtime_entitlement(transport, digest)
+    assert verifier._read_runtime_entitlement(staged, digest)["run_id"] == "stage-run"
+    # A pre-existing path cannot redirect a retry into someone else's file.
+    assert (
+        subprocess.run(["bash", "-c", setup], env=env, capture_output=True).returncode
+        != 0
+    )
+    assert staged.read_bytes() == original.read_bytes()

@@ -57,7 +57,7 @@ envs:
   # Exact identity only. The authorized live harness fills the
   # operator-selected digest of inventory.json in its run-local copy.
   NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256: ""
-  NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE: "/opt/npa-runtime-authorization/robomimic.json"
+  NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE: "/tmp/npa-runtime-authorization/robomimic.json"
   NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256: ""
   # This is a one-way digest of the customer identity, never the identity.
   NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256: ""
@@ -83,6 +83,11 @@ setup: |
   test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
   test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/.ready.json"
   test -r "${NPA_ROBOMIMIC_RUNTIME_ROOT}/inventory.json"
+  # SkyPilot transports /opt file mounts through symlinks. Keep the strict
+  # entitlement reader on a private regular copy outside the runtime PVC.
+  mkdir -m 0700 "$(dirname "${NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE}")"
+  install -m 0400 /opt/npa-runtime-authorization/robomimic.json \
+    "${NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE}"
   robomimic-entrypoint verify-runtime
   robomimic-runtime exec - <<'PY'
   import boto3
