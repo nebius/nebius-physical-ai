@@ -70,7 +70,9 @@ def test_is_object_uri(value: object, expected: bool) -> None:
         ("s3://b/p", f"s3://b/p/{DEFAULT_ONNX_NAME}"),
     ],
 )
-def test_resolve_object_onnx_uri_matches_local_semantics(output: str, expected: str) -> None:
+def test_resolve_object_onnx_uri_matches_local_semantics(
+    output: str, expected: str
+) -> None:
     assert resolve_object_onnx_uri(output) == expected
 
 
@@ -94,7 +96,9 @@ def test_stage_inputs_downloads_only_object_values(tmp_path: Path) -> None:
     assert client.downloads == [("s3://bucket/run/checkpoint.pt", staged["checkpoint"])]
 
 
-def test_stage_inputs_constructs_no_client_for_local_only_values(tmp_path: Path) -> None:
+def test_stage_inputs_constructs_no_client_for_local_only_values(
+    tmp_path: Path,
+) -> None:
     """A purely local run must not touch object storage at all."""
 
     staged = stage_inputs(
@@ -153,7 +157,9 @@ def test_publish_outputs_uploads_the_onnx_and_its_sidecar(tmp_path: Path) -> Non
     published = publish_outputs(plan, storage_client=client)
 
     assert published[str(onnx)] == f"s3://bucket/run/export/{DEFAULT_ONNX_NAME}"
-    assert published[str(sidecar)] == "s3://bucket/run/export/sonic_policy.metadata.json"
+    assert (
+        published[str(sidecar)] == "s3://bucket/run/export/sonic_policy.metadata.json"
+    )
     # Directories are skipped, and every upload lands under the ONNX's prefix.
     assert len(published) == 2
     assert all(uri.startswith("s3://bucket/run/export/") for _, uri in client.uploads)
@@ -170,9 +176,15 @@ def test_publish_outputs_is_a_no_op_for_local_outputs(tmp_path: Path) -> None:
     [
         (
             "s3://b/p/sonic_policy.onnx",
-            ("s3://b/p/sonic_policy.metadata.json", "s3://b/p/sonic_policy.onnx.metadata.json"),
+            (
+                "s3://b/p/sonic_policy.metadata.json",
+                "s3://b/p/sonic_policy.onnx.metadata.json",
+            ),
         ),
-        ("s3://b/p/model", ("s3://b/p/model.metadata.json", "s3://b/p/model.metadata.json")),
+        (
+            "s3://b/p/model",
+            ("s3://b/p/model.metadata.json", "s3://b/p/model.metadata.json"),
+        ),
     ],
 )
 def test_sidecar_uri_candidates_match_the_local_resolver(
@@ -234,7 +246,9 @@ def test_stage_eval_inputs_downloads_the_onnx_and_its_sidecar(tmp_path: Path) ->
     assert client.downloads[0][0] == "s3://bucket/run/sonic_policy.onnx"
 
 
-def test_stage_eval_inputs_falls_back_to_the_appended_sidecar_name(tmp_path: Path) -> None:
+def test_stage_eval_inputs_falls_back_to_the_appended_sidecar_name(
+    tmp_path: Path,
+) -> None:
     class OnlyAppendedSidecar(FakeStorageClient):
         def download_path(self, bucket_uri: str, local_path: str) -> str:
             if bucket_uri.endswith("sonic_policy.metadata.json"):
@@ -285,7 +299,9 @@ def test_export_onnx_round_trips_object_storage(tmp_path: Path) -> None:
 
     checkpoint = tmp_path / "checkpoint.pt"
     build_checkpoint(checkpoint, obs_dim=6, act_dim=3, hidden=8)
-    client = FakeStorageClient({"s3://bucket/run/checkpoint.pt": checkpoint.read_bytes()})
+    client = FakeStorageClient(
+        {"s3://bucket/run/checkpoint.pt": checkpoint.read_bytes()}
+    )
 
     result = export_onnx(
         checkpoint="s3://bucket/run/checkpoint.pt",

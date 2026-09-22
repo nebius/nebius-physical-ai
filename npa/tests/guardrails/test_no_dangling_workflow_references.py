@@ -38,7 +38,7 @@ SEARCH_SUFFIXES = {".md", ".py", ".sh", ".toml", ".yaml", ".yml"}
 # The declarative catalog plus the guarded raw-task/resource-profile locations
 # that remain after retirement: burst, NuRec, and BYOF profiles.
 FULL_WORKFLOW_PATH = re.compile(
-    r"(?:workflows/(?:main|testing)|"
+    r"(?:workflows/(?:main|testing|partners)|"
     r"npa/(?:workflows|src/npa/(?:burst/examples|workbench/nurec/examples|"
     r"workflows/byof/profiles)))/[A-Za-z0-9._/{}$<>*-]+\.ya?ml"
 )
@@ -77,7 +77,9 @@ def _workflow_references_in(path: Path) -> list[str]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):  # pragma: no cover - unreadable/binary
         return []
-    matches = FULL_WORKFLOW_PATH.findall(text) + RETIRED_WORKFLOW_SHORTHAND.findall(text)
+    matches = FULL_WORKFLOW_PATH.findall(text) + RETIRED_WORKFLOW_SHORTHAND.findall(
+        text
+    )
     references = (
         match
         for match in matches
@@ -110,6 +112,7 @@ def test_no_shipped_file_points_at_a_missing_workflow(path: Path) -> None:
     [
         "workflows/main/definitely-missing.yaml",
         "workflows/testing/definitely-missing.yaml",
+        "workflows/partners/antioch/definitely-missing.yaml",
         "npa/workflows/workbench/npa-workflows/definitely-missing.yaml",
         "npa/src/npa/burst/examples/definitely-missing.yaml",
         "npa/src/npa/workbench/nurec/examples/definitely-missing.yaml",
@@ -137,8 +140,7 @@ def test_guard_ignores_placeholder_paths(tmp_path: Path) -> None:
 def test_guard_rejects_retired_catalog_shorthand(tmp_path: Path) -> None:
     victim = tmp_path / "doc.md"
     victim.write_text(
-        "npa-workflows/vlm-eval-single.yaml\n"
-        "npa-workflows/definitely-missing.yaml\n",
+        "npa-workflows/vlm-eval-single.yaml\nnpa-workflows/definitely-missing.yaml\n",
         encoding="utf-8",
     )
 

@@ -2005,7 +2005,8 @@ def simulate_adversary(request, seed):
     This is NOT RL. ... a real Isaac Lab RL adversary replaces it via ``adversary_backend``.
     """
     budget_gain = min(0.25, math.log10(max(request.adversary_steps, 10)) / 40.0)
-    for index in range(request.num_scenarios): ...
+    for index in range(request.num_scenarios):
+        ...
 ```
 
 So `ADVERSARY_STEPS=200000` shifts one `log10` term and the loop is O(num_scenarios). A CPU

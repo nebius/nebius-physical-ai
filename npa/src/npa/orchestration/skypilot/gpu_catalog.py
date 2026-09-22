@@ -60,7 +60,10 @@ class NebiusGpuCatalog:
 
         entries = []
         for name in sorted(self.quantities_by_accelerator, key=str.casefold):
-            quantities = ", ".join(str(quantity) for quantity in sorted(self.quantities_by_accelerator[name]))
+            quantities = ", ".join(
+                str(quantity)
+                for quantity in sorted(self.quantities_by_accelerator[name])
+            )
             entries.append(f"{name}: {quantities}")
         return "; ".join(entries) if entries else "none"
 
@@ -81,7 +84,11 @@ def parse_nebius_gpu_catalog(output: str) -> NebiusGpuCatalog:
     quantities_by_accelerator: dict[str, frozenset[int]] = {}
     for raw_line in str(output or "").splitlines():
         line = raw_line.strip()
-        if not line or "AVAILABLE_QUANTITIES" in line or line.startswith(("WARNING:", "Hint:", "The --")):
+        if (
+            not line
+            or "AVAILABLE_QUANTITIES" in line
+            or line.startswith(("WARNING:", "Hint:", "The --"))
+        ):
             continue
         columns = re.split(r"\s{2,}", line)
         if len(columns) < 2:
@@ -91,7 +98,9 @@ def parse_nebius_gpu_catalog(output: str) -> NebiusGpuCatalog:
         if not name or not quantities:
             continue
         quantities_by_accelerator[name] = quantities
-    return NebiusGpuCatalog(quantities_by_accelerator=quantities_by_accelerator, raw_output=output)
+    return NebiusGpuCatalog(
+        quantities_by_accelerator=quantities_by_accelerator, raw_output=output
+    )
 
 
 def discover_nebius_gpu_catalog(
@@ -128,9 +137,13 @@ def discover_nebius_gpu_catalog(
                 catalog = parse_nebius_gpu_catalog(output)
                 if catalog.quantities_by_accelerator:
                     return catalog
-                errors.append(f"attempt {attempt}: SkyPilot returned an empty Nebius GPU catalog")
+                errors.append(
+                    f"attempt {attempt}: SkyPilot returned an empty Nebius GPU catalog"
+                )
             else:
-                detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
+                detail = (
+                    result.stderr or result.stdout or f"exit {result.returncode}"
+                ).strip()
                 errors.append(f"attempt {attempt}: {detail}")
         if attempt < attempts:
             sleep(backoff_seconds * attempt)
@@ -216,7 +229,9 @@ def parse_accelerator_request(candidate: str) -> AcceleratorRequest:
 def _candidate_tokens(gpu: str = "", gpu_failover: str = "") -> list[str]:
     tokens: list[str] = []
     for raw in (gpu, gpu_failover):
-        tokens.extend(token.strip() for token in str(raw or "").split(",") if token.strip())
+        tokens.extend(
+            token.strip() for token in str(raw or "").split(",") if token.strip()
+        )
     return tokens
 
 

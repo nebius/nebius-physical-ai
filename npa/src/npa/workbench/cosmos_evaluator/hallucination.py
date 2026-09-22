@@ -141,15 +141,21 @@ def _run_upstream(
     try:
         from checks.hallucination.processor import HallucinationProcessor  # type: ignore
     except Exception as exc:  # noqa: BLE001 - any import failure falls back to the port
-        _log.info("cosmos-evaluator upstream checkout at %s is not importable: %s", root, exc)
+        _log.info(
+            "cosmos-evaluator upstream checkout at %s is not importable: %s", root, exc
+        )
         return None
 
     config_dir = str(root / "checks")
     try:
-        processor = HallucinationProcessor(params=params, config_dir=config_dir, verbose="WARNING")
+        processor = HallucinationProcessor(
+            params=params, config_dir=config_dir, verbose="WARNING"
+        )
         result = processor.process(clip_id, str(original), str(augmented))
     except Exception as exc:  # noqa: BLE001 - upstream failure falls back to the port
-        _log.warning("upstream hallucination check failed (%s); using the in-repo port", exc)
+        _log.warning(
+            "upstream hallucination check failed (%s); using the in-repo port", exc
+        )
         return None
 
     payload = result.model_dump() if hasattr(result, "model_dump") else dict(result)
@@ -159,8 +165,12 @@ def _run_upstream(
         threshold=float(payload.get("threshold", params["threshold"])),
         score=float(payload.get("score", 0.0)),
         total_frames=int(payload.get("total_frames", 0)),
-        total_hallucinated_dynamic_pixels=int(payload.get("total_hallucinated_dynamic_pixels", 0)),
-        total_augmented_dynamic_pixels=int(payload.get("total_augmented_dynamic_pixels", 0)),
+        total_hallucinated_dynamic_pixels=int(
+            payload.get("total_hallucinated_dynamic_pixels", 0)
+        ),
+        total_augmented_dynamic_pixels=int(
+            payload.get("total_augmented_dynamic_pixels", 0)
+        ),
         engine=ENGINE_UPSTREAM,
     )
 
@@ -199,7 +209,9 @@ def _run_port(
                 break
             mask_o = _dynamic_mask(prev_o, curr_o, grad_thresh, blur_ksize, morph_k)
             mask_a = _dynamic_mask(prev_a, curr_a, grad_thresh, blur_ksize, morph_k)
-            hallucinated, augmented_dynamic = _hallucination_counts(mask_o, mask_a, dist_tol_px)
+            hallucinated, augmented_dynamic = _hallucination_counts(
+                mask_o, mask_a, dist_tol_px
+            )
             total_hallucinated += hallucinated
             total_augmented_dynamic += augmented_dynamic
             prev_o, prev_a = curr_o, curr_a
@@ -213,7 +225,9 @@ def _run_port(
     if total_augmented_dynamic == 0:
         score = 1.0
     else:
-        score = max(0.0, 1.0 - (float(total_hallucinated) / float(total_augmented_dynamic)))
+        score = max(
+            0.0, 1.0 - (float(total_hallucinated) / float(total_augmented_dynamic))
+        )
 
     return HallucinationResult(
         clip_id=clip_id,
@@ -264,17 +278,25 @@ def _probe_size(video: Path) -> tuple[int, int]:
     )
     raw = (proc.stdout or "").strip().splitlines()
     if proc.returncode != 0 or not raw:
-        raise CosmosEvaluatorError(f"ffprobe could not read {video.name}: {(proc.stderr or '').strip()[:200]}")
+        raise CosmosEvaluatorError(
+            f"ffprobe could not read {video.name}: {(proc.stderr or '').strip()[:200]}"
+        )
     try:
         width, height = (int(part) for part in raw[0].split("x")[:2])
     except ValueError as exc:
-        raise CosmosEvaluatorError(f"unexpected ffprobe geometry for {video.name}: {raw[0]!r}") from exc
+        raise CosmosEvaluatorError(
+            f"unexpected ffprobe geometry for {video.name}: {raw[0]!r}"
+        ) from exc
     if width <= 0 or height <= 0:
-        raise CosmosEvaluatorError(f"{video.name} has a degenerate frame size {width}x{height}")
+        raise CosmosEvaluatorError(
+            f"{video.name} has a degenerate frame size {width}x{height}"
+        )
     return height, width
 
 
-def _iter_gray_frames(video: Path, height: int, width: int) -> Generator[np.ndarray, None, None]:
+def _iter_gray_frames(
+    video: Path, height: int, width: int
+) -> Generator[np.ndarray, None, None]:
     """Yield ``height x width`` uint8 grayscale frames, scaling to match.
 
     Scaling in ffmpeg mirrors upstream's ``ensure_same_size``: the augmented clip
@@ -297,7 +319,9 @@ def _iter_gray_frames(video: Path, height: int, width: int) -> Generator[np.ndar
         "-",
     ]
     frame_bytes = height * width
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL
+    )
     try:
         assert proc.stdout is not None
         partial = False
@@ -359,7 +383,9 @@ def _dynamic_mask(
 ) -> np.ndarray:
     """Binary mask of pixels that moved between two grayscale frames."""
 
-    diff = np.abs(curr_gray.astype(np.int16) - prev_gray.astype(np.int16)).astype(np.uint8)
+    diff = np.abs(curr_gray.astype(np.int16) - prev_gray.astype(np.int16)).astype(
+        np.uint8
+    )
     kernel_size = max(1, int(blur_ksize) | 1)
     morph_size = max(1, int(morph_k) | 1)
     cv2 = _cv2()
@@ -368,7 +394,9 @@ def _dynamic_mask(
             diff = cv2.GaussianBlur(diff, (kernel_size, kernel_size), 0)
         _, mask = cv2.threshold(diff, grad_thresh, 255, cv2.THRESH_BINARY)
         if morph_size >= 3:
-            element = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (morph_size, morph_size))
+            element = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (morph_size, morph_size)
+            )
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, element)
         return mask
     if kernel_size >= 3:

@@ -15,7 +15,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE = ROOT / "npa/docker/workbench/fiftyone"
-SPEC = importlib.util.spec_from_file_location("fiftyone_source_delivery", IMAGE / "verify_source.py")
+SPEC = importlib.util.spec_from_file_location(
+    "fiftyone_source_delivery", IMAGE / "verify_source.py"
+)
 assert SPEC is not None and SPEC.loader is not None
 VERIFY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFY)
@@ -57,10 +59,14 @@ def delivery(tmp_path, monkeypatch):
     manifest["binary"]["file_bytes"] = mongod.stat().st_size
     _archive(notices / "mongodb-source.tar.gz", manifest)
     (notices / "source.json").write_text(json.dumps(manifest))
-    (notices / "version.json").write_bytes((IMAGE / "mongodb-source-version.json").read_bytes())
+    (notices / "version.json").write_bytes(
+        (IMAGE / "mongodb-source-version.json").read_bytes()
+    )
     for name in VERIFY._NOTICES:
         (notices / name).write_text("recipient notice\n")
-    (mongod.parent / "MONGODB_SOURCE.md").write_bytes((notices / "SOURCE.md").read_bytes())
+    (mongod.parent / "MONGODB_SOURCE.md").write_bytes(
+        (notices / "SOURCE.md").read_bytes()
+    )
     build = {
         "version": manifest["version"],
         "gitVersion": manifest["binary"]["git_revision"],
@@ -76,9 +82,14 @@ def delivery(tmp_path, monkeypatch):
     return notices, mongod, manifest, build
 
 
-def test_complete_delivery_checks_executable_archive_and_readable_directions(delivery, monkeypatch, capsys):
+def test_complete_delivery_checks_executable_archive_and_readable_directions(
+    delivery, monkeypatch, capsys
+):
     notices, mongod, _, _ = delivery
-    monkeypatch.setattr("sys.argv", ["verify_source", "--mongod", str(mongod), "--notices-dir", str(notices)])
+    monkeypatch.setattr(
+        "sys.argv",
+        ["verify_source", "--mongod", str(mongod), "--notices-dir", str(notices)],
+    )
     assert VERIFY.main() == 0
     report = json.loads(capsys.readouterr().out)
     assert report["source_delivery"] == "verified"
@@ -106,12 +117,15 @@ def test_missing_build_or_license_file_is_not_complete_source(delivery, required
         VERIFY._verify_archive(path, manifest["source"])
 
 
-@pytest.mark.parametrize("field,value,error", [
-    ("version", "0.0.0", "version differs"),
-    ("gitVersion", "0" * 40, "revision differs"),
-    ("modules", ["unexpected"], "undeclared modules"),
-    ("environment", {"distmod": "other", "distarch": "x86_64"}, "platform differs"),
-])
+@pytest.mark.parametrize(
+    "field,value,error",
+    [
+        ("version", "0.0.0", "version differs"),
+        ("gitVersion", "0" * 40, "revision differs"),
+        ("modules", ["unexpected"], "undeclared modules"),
+        ("environment", {"distmod": "other", "distarch": "x86_64"}, "platform differs"),
+    ],
+)
 def test_binary_identity_must_match_delivered_source(delivery, field, value, error):
     _, mongod, manifest, build = delivery
     build[field] = value
@@ -130,7 +144,9 @@ def test_changed_executable_is_rejected_before_execution(delivery, monkeypatch):
     _, mongod, manifest, _ = delivery
     mongod.write_bytes(b"a changed executable")
     calls = []
-    monkeypatch.setattr(VERIFY.subprocess, "check_output", lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(
+        VERIFY.subprocess, "check_output", lambda *args, **kwargs: calls.append(args)
+    )
     with pytest.raises(ValueError, match="executable checksum differs"):
         VERIFY._verify_binary(mongod, manifest)
     assert calls == []
@@ -153,8 +169,12 @@ def test_source_directions_must_travel_beside_the_executable(delivery):
 
 def test_source_build_metadata_identifies_public_commit(delivery):
     notices, mongod, manifest, _ = delivery
-    (notices / "version.json").write_text(json.dumps({"version": "7.0.40", "githash": "0" * 40}))
-    with pytest.raises(ValueError, match="source-build version metadata is inconsistent"):
+    (notices / "version.json").write_text(
+        json.dumps({"version": "7.0.40", "githash": "0" * 40})
+    )
+    with pytest.raises(
+        ValueError, match="source-build version metadata is inconsistent"
+    ):
         VERIFY._verify_delivery(notices, mongod, manifest)
 
 
@@ -163,10 +183,23 @@ def test_dockerfile_delivers_source_in_same_image_and_keeps_binary_pin():
     manifest = json.loads((IMAGE / "mongodb-source.json").read_text())
     assert f"ARG MONGODB_VERSION={manifest['version']}" in text
     assert f"ARG MONGODB_SHA256={manifest['binary']['archive_sha256']}" in text
-    for filename in ("mongodb-source.json", "mongodb-source-version.json", "SOURCE.md", "verify_source.py"):
+    for filename in (
+        "mongodb-source.json",
+        "mongodb-source-version.json",
+        "SOURCE.md",
+        "verify_source.py",
+    ):
         assert f"docker/workbench/fiftyone/{filename}" in text
-    assert '-o /opt/fiftyone/mongodb-notices/mongodb-source.tar.gz "$SOURCE_URL"' in text
-    assert 'cp /opt/fiftyone/mongodb-notices/SOURCE.md "$DBBIN/MONGODB_SOURCE.md"' in text
-    assert '--mongod "$DBBIN/mongod" --notices-dir /opt/fiftyone/mongodb-notices' in text
+    assert (
+        '-o /opt/fiftyone/mongodb-notices/mongodb-source.tar.gz "$SOURCE_URL"' in text
+    )
+    assert (
+        'cp /opt/fiftyone/mongodb-notices/SOURCE.md "$DBBIN/MONGODB_SOURCE.md"' in text
+    )
+    assert (
+        '--mongod "$DBBIN/mongod" --notices-dir /opt/fiftyone/mongodb-notices' in text
+    )
     assert manifest["source"]["url"].endswith(manifest["source"]["git_revision"])
-    assert manifest["source"]["git_origin_revision"] == manifest["binary"]["git_revision"]
+    assert (
+        manifest["source"]["git_origin_revision"] == manifest["binary"]["git_revision"]
+    )

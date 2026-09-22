@@ -12,8 +12,13 @@ RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
 PAIDF_COSMOS3_WORKFLOW_NAME = "paidf-cosmos3"
+NVIDIA_PAIDF_VDA_WORKFLOW_NAME = "nvidia-paidf-vda-cosmos-transfer25"
 PAIDF_INPUT_WORKFLOW_NAMES = frozenset(
-    {PAIDF_WORKFLOW_NAME, PAIDF_COSMOS3_WORKFLOW_NAME}
+    {
+        PAIDF_WORKFLOW_NAME,
+        PAIDF_COSMOS3_WORKFLOW_NAME,
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    }
 )
 
 
@@ -354,7 +359,8 @@ def _wave_members(wave: Mapping[str, Any]) -> list[tuple[str, int | None]]:
 
 
 def runtime_manifest_view(
-    manifest: RunManifest, runtime_waves: Sequence[Mapping[str, Any]],
+    manifest: RunManifest,
+    runtime_waves: Sequence[Mapping[str, Any]],
 ) -> RunManifest:
     """Include observed runtime stages omitted from an early manifest.
 
@@ -379,7 +385,9 @@ def runtime_manifest_view(
             known.add(identity)
             # Attempt outcomes come from attribution, which retains retries.
             # Copying a historical failure into the stage would make it final.
-            steps.append({"state": name, "iteration": iteration, "status": SUBMITTED_STATUS})
+            steps.append(
+                {"state": name, "iteration": iteration, "status": SUBMITTED_STATUS}
+            )
     return replace(manifest, steps=steps)
 
 
@@ -943,7 +951,8 @@ def normalize_startup_failure(controller_output: str) -> tuple[str, int]:
 
 
 def _job_task_outcomes_conflict(
-    job_state: str, task_rows: Sequence[Mapping[str, Any]],
+    job_state: str,
+    task_rows: Sequence[Mapping[str, Any]],
 ) -> bool:
     if job_state.startswith("FAILED"):
         job_state = "FAILED"
@@ -961,7 +970,9 @@ def _job_task_outcomes_conflict(
             unsuccessful_outcomes.add(state)
     if unsuccessful_outcomes:
         return job_state not in unsuccessful_outcomes
-    return all(state == "SUCCEEDED" for state in task_states) and job_state != "SUCCEEDED"
+    return (
+        all(state == "SUCCEEDED" for state in task_states) and job_state != "SUCCEEDED"
+    )
 
 
 def build_actionable_run_status(
@@ -1064,7 +1075,9 @@ def build_actionable_run_status(
                 and attempt_state != scheduler_state
             )
         )
-        job_task_conflict = _job_task_outcomes_conflict(scheduler_job_state, observed_rows)
+        job_task_conflict = _job_task_outcomes_conflict(
+            scheduler_job_state, observed_rows
+        )
         if job_task_conflict:
             outcome_conflict = True
             state = "UNKNOWN"
@@ -1314,7 +1327,8 @@ def _manifest_lifecycle_evidence(manifest: RunManifest) -> dict[str, str]:
 
 
 def runtime_workflow_lifecycle(
-    manifest: RunManifest, runtime_state: Mapping[str, Any],
+    manifest: RunManifest,
+    runtime_state: Mapping[str, Any],
 ) -> tuple[str, dict[str, Any]]:
     """Separate durable workflow lifecycle from the observed jobs' outcomes.
 
@@ -1331,7 +1345,8 @@ def runtime_workflow_lifecycle(
     manifest_status = manifest_workflow_lifecycle_state(manifest.status)
     runtime_status = _workflow_lifecycle_state(runtime_state.get("status"))
     terminal = {
-        state for state in (manifest_status, runtime_status)
+        state
+        for state in (manifest_status, runtime_status)
         if state in _WORKFLOW_TERMINAL_STATES
     }
     from_manifest = manifest_status in terminal and runtime_status not in terminal
@@ -1344,9 +1359,12 @@ def runtime_workflow_lifecycle(
         "runtime_status": runtime_status,
         "completion_recorded": "SUCCEEDED" in terminal and len(terminal) == 1,
         "driver_liveness": "unknown",
-        "source": "authoritative_manifest" if from_manifest else "durable_runtime_ledger",
+        "source": "authoritative_manifest"
+        if from_manifest
+        else "durable_runtime_ledger",
         "updated_at": (
-            manifest.updated_at if from_manifest
+            manifest.updated_at
+            if from_manifest
             else str(runtime_state.get("updated_at") or "")
         ),
     }

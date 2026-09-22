@@ -1008,9 +1008,7 @@ def test_configure_explains_why_discovery_was_skipped(monkeypatch, tmp_path) -> 
     )
 
     # manual: tenant, project, region, profile-bind(n), bucket, tokens
-    answers = "\n".join(
-        ["tenant-x", "project-x", "", "n", "b", "", "", ""]
-    ) + "\n"
+    answers = "\n".join(["tenant-x", "project-x", "", "n", "b", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1080,9 +1078,7 @@ def test_configure_binds_nebius_profile_to_selected_project(
         },
     )
 
-    answers = "\n".join(
-        ["tenant-x", "project-x", "", "", "b", "", "", "", ""]
-    ) + "\n"
+    answers = "\n".join(["tenant-x", "project-x", "", "", "b", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1111,9 +1107,7 @@ def test_configure_declining_profile_binding_leaves_it_alone(
         },
     )
 
-    answers = "\n".join(
-        ["tenant-x", "project-x", "", "n", "b", "", "", ""]
-    ) + "\n"
+    answers = "\n".join(["tenant-x", "project-x", "", "n", "b", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1353,9 +1347,9 @@ def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     # proj, tenant, region, exact existing bucket, HF, token factory, NGC
-    answers = "\n".join(
-        ["tenant-1", "project-1", "", "existing-bucket", "", "", ""]
-    ) + "\n"
+    answers = (
+        "\n".join(["tenant-1", "project-1", "", "existing-bucket", "", "", ""]) + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1451,9 +1445,7 @@ def test_configure_ngc_audit_defers_registry_credential_validity_to_provider(
         observed.append(key)
         return "reachable"
 
-    monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access", validate
-    )
+    monkeypatch.setattr("npa.workbench.nurec.nurec.check_ngc_image_access", validate)
     caplog.set_level("DEBUG", logger="npa.cli.main")
     note = cli_main._model_access_note("hf_good", secret)
 
@@ -1561,9 +1553,7 @@ def test_configure_note_lists_ngc_blocked_when_key_missing(
 def test_configure_note_keeps_optional_hf_and_ngc_credentials_non_blocking(
     monkeypatch, tmp_path
 ) -> None:
-    result = _run_reuse_bucket_configure(
-        monkeypatch, tmp_path, hf_token="", ngc_key=""
-    )
+    result = _run_reuse_bucket_configure(monkeypatch, tmp_path, hf_token="", ngc_key="")
 
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
@@ -1974,7 +1964,9 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     assert not creds.get("storage")
 
 
-def test_configure_accepts_region_without_registry_prompt(monkeypatch, tmp_path) -> None:
+def test_configure_accepts_region_without_registry_prompt(
+    monkeypatch, tmp_path
+) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -2618,9 +2610,9 @@ def test_configure_uses_default_region_without_registry_discovery(
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
 
-    answers = "\n".join(
-        ["tenant-1", "project-1", "", "existing-bucket", "", "", ""]
-    ) + "\n"
+    answers = (
+        "\n".join(["tenant-1", "project-1", "", "existing-bucket", "", "", ""]) + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output

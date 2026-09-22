@@ -32,10 +32,16 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 
-GROOT_DATA_PATH_TPL = "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
-GROOT_VIDEO_PATH_TPL = "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
+GROOT_DATA_PATH_TPL = (
+    "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet"
+)
+GROOT_VIDEO_PATH_TPL = (
+    "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4"
+)
 LEROBOT_DATA_PATH_TPL = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
-LEROBOT_VIDEO_PATH_TPL = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+LEROBOT_VIDEO_PATH_TPL = (
+    "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+)
 ADAPTER_MANIFEST = "npa_groot_adapter.json"
 GENERATED_MODALITY_CONFIG = "npa_groot_modality_config.py"
 
@@ -134,7 +140,9 @@ def lerobot_to_groot(
     _write_groot_episode_parquets(output_dir, data_table, episode_rows, info)
     _copy_or_write_stats(input_dir, output_dir)
     _write_synthetic_feature_stats(output_dir, modality, data_table)
-    _write_jsonl(meta_dir / "episodes.jsonl", _groot_episode_rows(episode_rows, data_table))
+    _write_jsonl(
+        meta_dir / "episodes.jsonl", _groot_episode_rows(episode_rows, data_table)
+    )
     _write_jsonl(meta_dir / "tasks.jsonl", task_rows or [{"task_index": 0, "task": ""}])
 
     groot_info = {**info, "features": dict(info.get("features", {}))}
@@ -246,17 +254,25 @@ def _is_sidecar_path(path: Path) -> bool:
 
 
 def _parquet_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*.parquet") if not _is_sidecar_path(path))
+    return sorted(
+        path for path in root.rglob("*.parquet") if not _is_sidecar_path(path)
+    )
 
 
 def _read_lerobot_data_table(input_dir: Path, info: dict[str, Any]) -> pa.Table:
     data_path = info.get("data_path", LEROBOT_DATA_PATH_TPL)
     files = _parquet_files(input_dir / "data")
     if not files:
-        raise GR00TAdapterError(f"No parquet data files found under {input_dir / 'data'}")
+        raise GR00TAdapterError(
+            f"No parquet data files found under {input_dir / 'data'}"
+        )
     if "episode_" in data_path:
-        return pa.concat_tables([pq.read_table(path) for path in files], promote_options="default")
-    return pa.concat_tables([pq.read_table(path) for path in files], promote_options="default")
+        return pa.concat_tables(
+            [pq.read_table(path) for path in files], promote_options="default"
+        )
+    return pa.concat_tables(
+        [pq.read_table(path) for path in files], promote_options="default"
+    )
 
 
 def _read_groot_data_table(
@@ -272,7 +288,8 @@ def _read_groot_data_table(
         files = [
             input_dir
             / data_pattern.format(
-                episode_chunk=int(row.get("episode_index", 0)) // int(info.get("chunks_size", 1000)),
+                episode_chunk=int(row.get("episode_index", 0))
+                // int(info.get("chunks_size", 1000)),
                 episode_index=int(row.get("episode_index", 0)),
             )
             for row in episode_rows
@@ -281,7 +298,9 @@ def _read_groot_data_table(
         if path.exists():
             tables.append(pq.read_table(path))
     if not tables:
-        raise GR00TAdapterError(f"No GR00T episode parquet files found under {input_dir / 'data'}")
+        raise GR00TAdapterError(
+            f"No GR00T episode parquet files found under {input_dir / 'data'}"
+        )
     return pa.concat_tables(tables, promote_options="default")
 
 
@@ -301,7 +320,10 @@ def _read_lerobot_task_rows(input_dir: Path) -> list[dict[str, Any]]:
         return jsonl_rows
     rows = _table_rows(input_dir / "meta" / "tasks.parquet")
     return [
-        {"task_index": int(row.get("task_index", idx)), "task": str(row.get("task", ""))}
+        {
+            "task_index": int(row.get("task_index", idx)),
+            "task": str(row.get("task", "")),
+        }
         for idx, row in enumerate(rows)
     ]
 
@@ -333,7 +355,9 @@ def _write_groot_episode_parquets(
     chunk_size = int(info.get("chunks_size", 1000) or 1000)
     episode_values = [int(value) for value in data_table["episode_index"].to_pylist()]
     for episode_index in _episode_indices(data_table):
-        row_indices = [idx for idx, value in enumerate(episode_values) if value == episode_index]
+        row_indices = [
+            idx for idx, value in enumerate(episode_values) if value == episode_index
+        ]
         episode_table = _take_rows(data_table, row_indices)
         chunk_index = episode_index // chunk_size
         target = output_dir / GROOT_DATA_PATH_TPL.format(
@@ -348,8 +372,12 @@ def _groot_episode_rows(
     episode_rows: list[dict[str, Any]],
     data_table: pa.Table,
 ) -> list[dict[str, Any]]:
-    by_episode = {int(row.get("episode_index", idx)): row for idx, row in enumerate(episode_rows)}
-    frame_episode_values = [int(value) for value in data_table["episode_index"].to_pylist()]
+    by_episode = {
+        int(row.get("episode_index", idx)): row for idx, row in enumerate(episode_rows)
+    }
+    frame_episode_values = [
+        int(value) for value in data_table["episode_index"].to_pylist()
+    ]
     rows = []
     for episode_index in _episode_indices(data_table):
         source = by_episode.get(episode_index, {})
@@ -439,7 +467,9 @@ def _add_synthetic_feature_columns(
     return data_table
 
 
-def _add_synthetic_info_features(info: dict[str, Any], modality: dict[str, Any]) -> None:
+def _add_synthetic_info_features(
+    info: dict[str, Any], modality: dict[str, Any]
+) -> None:
     features = info.setdefault("features", {})
     for key, dim in _synthetic_feature_specs(modality, set(features)).items():
         features[key] = {
@@ -465,14 +495,18 @@ def _zero_feature_stats(dim: int, total_frames: int) -> dict[str, Any]:
     }
 
 
-def _feature_stats_from_table(data_table: pa.Table, key: str, dim: int) -> dict[str, Any]:
+def _feature_stats_from_table(
+    data_table: pa.Table, key: str, dim: int
+) -> dict[str, Any]:
     if key not in data_table.column_names or data_table.num_rows == 0:
         return _zero_feature_stats(dim, data_table.num_rows)
     values = np.asarray(data_table[key].to_pylist(), dtype=np.float32)
     if values.ndim != 2:
         values = values.reshape(data_table.num_rows, dim)
     if values.shape[1] < dim:
-        values = np.pad(values, ((0, 0), (0, dim - values.shape[1])), constant_values=0.0)
+        values = np.pad(
+            values, ((0, 0), (0, dim - values.shape[1])), constant_values=0.0
+        )
     values = values[:, :dim]
     std = values.std(axis=0)
     std = np.where(std == 0.0, 1.0, std)
@@ -596,9 +630,13 @@ def _infer_action_space(info: dict[str, Any], *, robot_embodiment: str) -> str:
     state_dim = _feature_dim(info, "observation.state")
     action_dim = _feature_dim(info, "action")
     if action_dim <= 0:
-        raise GR00TAdapterError("Dataset action feature is missing or has zero dimensions")
+        raise GR00TAdapterError(
+            "Dataset action feature is missing or has zero dimensions"
+        )
     if state_dim <= 0:
-        raise GR00TAdapterError("Dataset observation.state feature is missing or has zero dimensions")
+        raise GR00TAdapterError(
+            "Dataset observation.state feature is missing or has zero dimensions"
+        )
 
     tag = _tag_key(robot_embodiment)
     if tag in BUILTIN_CARTESIAN_TAGS:
@@ -633,10 +671,15 @@ def _infer_action_space(info: dict[str, Any], *, robot_embodiment: str) -> str:
 
 
 def _cartesian_modality(dim: int) -> dict[str, dict[str, int]]:
-    return {key: {"start": idx, "end": idx + 1} for idx, key in enumerate(CARTESIAN_ACTION_KEYS[dim])}
+    return {
+        key: {"start": idx, "end": idx + 1}
+        for idx, key in enumerate(CARTESIAN_ACTION_KEYS[dim])
+    }
 
 
-def _builtin_cartesian_state_modality(robot_embodiment: str) -> dict[str, dict[str, int]]:
+def _builtin_cartesian_state_modality(
+    robot_embodiment: str,
+) -> dict[str, dict[str, int]]:
     tag = _tag_key(robot_embodiment)
     if tag == "simpler_env_google":
         keys = ["x", "y", "z", "rx", "ry", "rz", "rw", "gripper"]
@@ -675,19 +718,25 @@ def _contiguous_span(indices: list[int]) -> tuple[int, int] | None:
     return start, end
 
 
-def _named_joint_span(info: dict[str, Any], feature_key: str, group: str) -> tuple[int, int] | None:
+def _named_joint_span(
+    info: dict[str, Any], feature_key: str, group: str
+) -> tuple[int, int] | None:
     names = [_normalized_joint_name(name) for name in _feature_names(info, feature_key)]
     if not names:
         return None
 
     def matches(name: str) -> bool:
         if group == "left_arm":
-            return "left" in name and "hand" not in name and any(
-                token in name for token in ("shoulder", "elbow", "wrist")
+            return (
+                "left" in name
+                and "hand" not in name
+                and any(token in name for token in ("shoulder", "elbow", "wrist"))
             )
         if group == "right_arm":
-            return "right" in name and "hand" not in name and any(
-                token in name for token in ("shoulder", "elbow", "wrist")
+            return (
+                "right" in name
+                and "hand" not in name
+                and any(token in name for token in ("shoulder", "elbow", "wrist"))
             )
         if group == "left_hand":
             return "left" in name and "hand" in name
@@ -878,7 +927,12 @@ def _action_modality_for_action_space(
 
 def _language_key(robot_embodiment: str) -> str:
     key = robot_embodiment.strip().lower()
-    if key in {"libero_panda", "libero_sim", "simpler_env_google", "simpler_env_widowx"}:
+    if key in {
+        "libero_panda",
+        "libero_sim",
+        "simpler_env_google",
+        "simpler_env_widowx",
+    }:
         return "human.action.task_description"
     return "human.task_description"
 
@@ -965,7 +1019,9 @@ def _render_generated_modality_config(
     video_keys = list(modality.get("video", {}).keys())
     state_keys = list(modality.get("state", {}).keys())
     action_keys = list(modality.get("action", {}).keys())
-    language_keys = [f"annotation.{key}" for key in modality.get("annotation", {}).keys()]
+    language_keys = [
+        f"annotation.{key}" for key in modality.get("annotation", {}).keys()
+    ]
     sections: list[str] = []
     if video_keys:
         sections.append(
@@ -1055,7 +1111,11 @@ def _render_lerobot_video_path(
             episode_index=episode_index,
         ),
         input_dir / "videos" / feature_key / "chunk-000" / f"file-{file_index:03d}.mp4",
-        input_dir / "videos" / "chunk-000" / feature_key / f"episode_{episode_index:06d}.mp4",
+        input_dir
+        / "videos"
+        / "chunk-000"
+        / feature_key
+        / f"episode_{episode_index:06d}.mp4",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -1153,15 +1213,21 @@ def _copy_videos_lerobot_to_groot(
 
     if not modality.get("video"):
         return
-    rows_by_episode = {int(row.get("episode_index", idx)): row for idx, row in enumerate(episode_rows)}
-    episode_indices = sorted(rows_by_episode) or list(range(int(info.get("total_episodes", 0) or 0)))
+    rows_by_episode = {
+        int(row.get("episode_index", idx)): row for idx, row in enumerate(episode_rows)
+    }
+    episode_indices = sorted(rows_by_episode) or list(
+        range(int(info.get("total_episodes", 0) or 0))
+    )
     chunk_size = int(info.get("chunks_size", 1000) or 1000)
     for meta in modality["video"].values():
         original_key = meta["original_key"]
         sources: dict[Path, list[tuple[int, dict[str, Any]]]] = {}
         for episode_index in episode_indices:
             episode_row = rows_by_episode.get(episode_index, {})
-            src = _render_lerobot_video_path(input_dir, info, original_key, episode_index, episode_row)
+            src = _render_lerobot_video_path(
+                input_dir, info, original_key, episode_index, episode_row
+            )
             if src is None:
                 raise GR00TAdapterError(
                     f"Missing source video for {original_key!r}, episode {episode_index}"
@@ -1197,7 +1263,9 @@ def _copy_videos_lerobot_to_groot(
                 shutil.copy2(src, dst)
 
 
-def _copy_videos_groot_to_lerobot(input_dir: Path, output_dir: Path, info: dict[str, Any]) -> None:
+def _copy_videos_groot_to_lerobot(
+    input_dir: Path, output_dir: Path, info: dict[str, Any]
+) -> None:
     modality_path = input_dir / "meta" / "modality.json"
     if not modality_path.exists():
         return
@@ -1230,8 +1298,13 @@ def _write_lerobot_tasks_parquet(output_dir: Path, rows: list[dict[str, Any]]) -
         rows = [{"task_index": 0, "task": ""}]
     table = pa.table(
         {
-            "task_index": pa.array([int(row.get("task_index", idx)) for idx, row in enumerate(rows)], type=pa.int64()),
-            "task": pa.array([str(row.get("task", "")) for row in rows], type=pa.string()),
+            "task_index": pa.array(
+                [int(row.get("task_index", idx)) for idx, row in enumerate(rows)],
+                type=pa.int64(),
+            ),
+            "task": pa.array(
+                [str(row.get("task", "")) for row in rows], type=pa.string()
+            ),
         }
     )
     target = output_dir / "meta" / "tasks.parquet"
@@ -1276,7 +1349,9 @@ def _write_lerobot_episodes_parquet(
             columns.setdefault(f"videos/{feature}/file_index", []).append(episode_index)
             columns.setdefault(f"videos/{feature}/from_timestamp", []).append(0.0)
             fps = float(info.get("fps", 30) or 30)
-            columns.setdefault(f"videos/{feature}/to_timestamp", []).append(length / fps)
+            columns.setdefault(f"videos/{feature}/to_timestamp", []).append(
+                length / fps
+            )
 
     target = output_dir / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
     target.parent.mkdir(parents=True, exist_ok=True)

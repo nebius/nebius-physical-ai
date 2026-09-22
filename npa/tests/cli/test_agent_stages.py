@@ -48,7 +48,10 @@ def test_run_owns_overlay_false_for_unrelated_capture_run() -> None:
         },
         "sim2real_runs": {},
     }
-    assert run_owns_workflow_stage_overlay(state, "franka-topdown-sim-20260709t031107z") is False
+    assert (
+        run_owns_workflow_stage_overlay(state, "franka-topdown-sim-20260709t031107z")
+        is False
+    )
 
 
 def test_run_owns_overlay_true_for_latest_submit() -> None:
@@ -60,7 +63,10 @@ def test_run_owns_overlay_true_for_tracked_sim2real_submit() -> None:
     state = {
         "latest_submit": {},
         "sim2real_runs": {
-            "agent-run-tracked": {"submitted_at": "2026-07-19T00:00:00Z", "status": "submitted"}
+            "agent-run-tracked": {
+                "submitted_at": "2026-07-19T00:00:00Z",
+                "status": "submitted",
+            }
         },
         "workflow_draft": {},
     }
@@ -70,7 +76,10 @@ def test_run_owns_overlay_true_for_tracked_sim2real_submit() -> None:
 def test_run_owns_overlay_true_for_draft_plan_run_id() -> None:
     state = {
         "latest_submit": {},
-        "workflow_draft": {"name": "sim2real-vlm-rl", "plan": {"run_id": "draft-vlm-rl-loop"}},
+        "workflow_draft": {
+            "name": "sim2real-vlm-rl",
+            "plan": {"run_id": "draft-vlm-rl-loop"},
+        },
     }
     assert run_owns_workflow_stage_overlay(state, "draft-vlm-rl-loop") is True
 
@@ -121,7 +130,11 @@ def test_build_stages_keeps_unknown_draft_when_owned() -> None:
     assert by_id["augment"]["status"] == "status_unavailable"
     assert by_id["envgen"]["status"] == "status_unavailable"
     assert by_id["isaac-capture"]["status"] == "observed_output"
-    assert not {stage["status"] for stage in stages} & {"succeeded", "failed", "not_run"}
+    assert not {stage["status"] for stage in stages} & {
+        "succeeded",
+        "failed",
+        "not_run",
+    }
 
 
 def test_build_stages_marks_matched_draft_state_observed_only() -> None:
@@ -187,7 +200,10 @@ _NESTED_KEYS = [
 def test_run_stage_wrapper_detects_workflow_name_nesting() -> None:
     from npa.cli.agent_stages import run_stage_wrapper
 
-    assert run_stage_wrapper(_NESTED_KEYS, "run-1", "npa-workflow-e2e") == "tokenfactory-cosmos-gate"
+    assert (
+        run_stage_wrapper(_NESTED_KEYS, "run-1", "npa-workflow-e2e")
+        == "tokenfactory-cosmos-gate"
+    )
 
 
 def test_nested_run_exposes_real_pipeline_stages_not_wrapper() -> None:
@@ -205,7 +221,10 @@ def test_nested_run_exposes_real_pipeline_stages_not_wrapper() -> None:
 
 def test_artifact_stage_key_strips_wrapper() -> None:
     key = "npa-workflow-e2e/run-1/tokenfactory-cosmos-gate/augment/frame-00000.png"
-    assert artifact_stage_key(key, "run-1", "npa-workflow-e2e", "tokenfactory-cosmos-gate") == "augment"
+    assert (
+        artifact_stage_key(key, "run-1", "npa-workflow-e2e", "tokenfactory-cosmos-gate")
+        == "augment"
+    )
 
 
 def test_run_stage_wrapper_leaves_flat_layouts_untouched() -> None:
@@ -274,7 +293,10 @@ def test_per_state_subprefix_yields_one_named_observed_stage_each() -> None:
 
 def test_artifact_stage_key_strips_per_state_prefix() -> None:
     key = "checkpoints/sim2real-b/redteam-1/assemble-eval-contract/eval_contract.jsonl"
-    assert artifact_stage_key(key, "redteam-1", "checkpoints/sim2real-b") == "assemble-eval-contract"
+    assert (
+        artifact_stage_key(key, "redteam-1", "checkpoints/sim2real-b")
+        == "assemble-eval-contract"
+    )
 
 
 def test_no_artifacts_yields_no_fabricated_stages() -> None:
@@ -296,7 +318,11 @@ def test_owned_run_without_artifacts_shows_status_unavailable() -> None:
     # A plan declares graph membership, not an execution attempt or outcome.
     workflow_defs = [
         ("hypothesize-failures", "Hypothesize failures", ["hypothesize-failures"]),
-        ("synthesize-mitigations", "Synthesize mitigations", ["synthesize-mitigations"]),
+        (
+            "synthesize-mitigations",
+            "Synthesize mitigations",
+            ["synthesize-mitigations"],
+        ),
     ]
     stages = build_artifact_backed_stages(
         [],
@@ -307,7 +333,11 @@ def test_owned_run_without_artifacts_shows_status_unavailable() -> None:
     )
     assert stages, "owned run should still surface its declared stages"
     assert all(s["status"] == "status_unavailable" for s in stages)
-    assert not {stage["status"] for stage in stages} & {"succeeded", "failed", "not_run"}
+    assert not {stage["status"] for stage in stages} & {
+        "succeeded",
+        "failed",
+        "not_run",
+    }
 
 
 def test_artifact_only_run_has_only_observed_groups_and_grounded_summary() -> None:
@@ -324,7 +354,11 @@ def test_artifact_only_run_has_only_observed_groups_and_grounded_summary() -> No
         workflow_stage_defs=[],
         overlay_unmatched=False,
     )
-    assert [stage["stage_key"] for stage in stages] == ["capture", "evaluation", "train"]
+    assert [stage["stage_key"] for stage in stages] == [
+        "capture",
+        "evaluation",
+        "train",
+    ]
     assert {stage["status"] for stage in stages} == {"observed_output"}
     assert all(stage["artifact_count"] > 0 for stage in stages)
     summary = summarize_stage_evidence(stages)
@@ -334,7 +368,9 @@ def test_artifact_only_run_has_only_observed_groups_and_grounded_summary() -> No
     assert summary["not_run_count"] == 0
 
 
-def test_authoritative_manifest_preserves_all_explicit_statuses_with_provenance() -> None:
+def test_authoritative_manifest_preserves_all_explicit_statuses_with_provenance() -> (
+    None
+):
     documents = [
         {
             "key": "runs/run-8/npa-workflow/manifest.json",
@@ -382,10 +418,15 @@ def test_authoritative_manifest_preserves_all_explicit_statuses_with_provenance(
     assert by_id["prepare"]["wave_key"] == "001|serial|:prepare:-"
     assert "job_id" not in by_id["train"]
     assert all(stage["authority"] == "authoritative" for stage in by_id.values())
-    assert all(stage["evidence_source"].endswith("/npa-workflow/manifest.json") for stage in by_id.values())
+    assert all(
+        stage["evidence_source"].endswith("/npa-workflow/manifest.json")
+        for stage in by_id.values()
+    )
 
 
-def test_authoritative_graph_is_workflow_specific_and_artifacts_do_not_turn_it_green() -> None:
+def test_authoritative_graph_is_workflow_specific_and_artifacts_do_not_turn_it_green() -> (
+    None
+):
     parsed = parse_stage_evidence_documents(
         [
             {
@@ -494,7 +535,9 @@ def test_report_promotes_only_explicit_stage_outcomes_and_drops_secrets() -> Non
                         {"id": "scored", "status": "success", "api_key": marker},
                         {"id": "metrics-only", "score": 0.9, "api_key": marker},
                     ],
-                    "stage_outcomes": {"reviewed": {"status": "skipped", "password": marker}},
+                    "stage_outcomes": {
+                        "reviewed": {"status": "skipped", "password": marker}
+                    },
                 },
             }
         ]
@@ -664,7 +707,9 @@ def test_report_summary_uses_bounded_object_read_without_persisting_download() -
     report_block = runtime_source.split("if report_artifact:", 1)[1].split(
         "stage_summary =", 1
     )[0]
-    assert "_read_bounded_json_object(s3, run_bucket, report_artifact.key)" in report_block
+    assert (
+        "_read_bounded_json_object(s3, run_bucket, report_artifact.key)" in report_block
+    )
     assert "download_s3_uri" not in report_block
     assert "RECORDINGS_DIR" not in report_block
 

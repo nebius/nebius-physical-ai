@@ -8,7 +8,15 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG, argv_for_tool
 ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows" / "testing" / "dataset-ingest-curate.yaml"
 # The raw template is retired; the spec is the surface (EVIDENCE.md §R41).
-SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "dataset-ingest-curate.yaml"
+SKYPILOT = (
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "skypilot"
+    / "dataset-ingest-curate.yaml"
+)
 
 
 def test_workflow_validates_and_gates_on_quality() -> None:
@@ -17,10 +25,18 @@ def test_workflow_validates_and_gates_on_quality() -> None:
     assert spec.name == "dataset-ingest-curate"
     assert spec.initial == "ingest"
 
-    accept = [step.state for step in build_plan(spec, run_id="t", assume_decision="promote_checkpoint").steps]
+    accept = [
+        step.state
+        for step in build_plan(
+            spec, run_id="t", assume_decision="promote_checkpoint"
+        ).steps
+    ]
     assert accept == ["ingest", "validate", "quality-gate", "curate", "register"]
 
-    reject = [step.state for step in build_plan(spec, run_id="t", assume_decision="loop_back").steps]
+    reject = [
+        step.state
+        for step in build_plan(spec, run_id="t", assume_decision="loop_back").steps
+    ]
     assert reject == ["ingest", "validate", "quality-gate", "reject"]
 
 
@@ -66,7 +82,9 @@ def test_the_spec_runs_ingest_and_curate_and_registers_against_the_service() -> 
 
     # The default plan takes the gate's `reject` branch, so assert on the spec's states rather
     # than one traversal of them.
-    assert {"ingest", "validate", "quality-gate", "curate", "register"} <= set(spec.states)
+    assert {"ingest", "validate", "quality-gate", "curate", "register"} <= set(
+        spec.states
+    )
     # CPU throughout: the pipeline moves metadata, it does not render.
     for profile in spec.resources.values():
         assert "accelerators" not in profile, profile

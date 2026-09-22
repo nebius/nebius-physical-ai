@@ -1,0 +1,74 @@
+[
+  {
+    "lighting": "soft diffuse daylight with neutral exposure and coherent contact shadows",
+    "background": "the existing tabletop has pale oak wood grain, retaining its exact plane and boundaries",
+    "color_grade": "neutral balanced white balance; pale beige restricted to the tabletop",
+    "surface_finish": "dry matte oak with subtle lengthwise grain, no seams or planks"
+  },
+  {
+    "lighting": "soft warm studio illumination with gentle coherent shadows",
+    "background": "the existing tabletop has dark brown walnut grain, retaining its exact plane and boundaries",
+    "color_grade": "gently warm white balance while preserving the white grippers and clear cup",
+    "surface_finish": "satin walnut with restrained wood sheen, no seams or planks"
+  },
+  {
+    "lighting": "bright neutral overhead laboratory illumination with coherent contact shadows",
+    "background": "the existing tabletop is silver brushed aluminum, retaining its exact plane and boundaries",
+    "color_grade": "neutral balanced white balance with silver-gray confined to the tabletop",
+    "surface_finish": "finely brushed metal with broad soft specular reflections, not a mirror"
+  },
+  {
+    "lighting": "cool diffuse laboratory illumination with coherent contact shadows",
+    "background": "the existing tabletop is stainless steel, retaining its exact plane and boundaries",
+    "color_grade": "slightly cool white balance without recoloring robot parts or the clear cup",
+    "surface_finish": "smooth satin stainless steel with subtle broad reflections, not a mirror"
+  },
+  {
+    "lighting": "broad overcast daylight with soft coherent contact shadows",
+    "background": "the existing tabletop is fine-grained medium-gray granite, retaining its exact plane and boundaries",
+    "color_grade": "neutral low-saturation white balance preserving foreground identity colors",
+    "surface_finish": "honed stone with fine natural speckles and low gloss, no cracks or seams"
+  },
+  {
+    "lighting": "warm directional light from the upper left with coherent soft-edged shadows",
+    "background": "the existing tabletop is muted terracotta-colored stone, retaining its exact plane and boundaries",
+    "color_grade": "warm natural white balance with orange-brown restricted to the tabletop",
+    "surface_finish": "dry matte terracotta with very fine pores, no tiles or grout lines"
+  },
+  {
+    "lighting": "large neutral softbox illumination preserving visibility of dark robot joints",
+    "background": "the existing tabletop has a charcoal-black rubber surface, retaining its exact plane and boundaries",
+    "color_grade": "neutral balanced white balance with readable shadows and no crushed blacks",
+    "surface_finish": "fine-grained matte rubber with low reflectivity, no added mat or raised edges"
+  },
+  {
+    "lighting": "soft diffuse daylight with coherent contact shadows",
+    "background": "the existing tabletop is warm tan cork, retaining its exact plane and boundaries",
+    "color_grade": "neutral balanced white balance with tan restricted to the tabletop",
+    "surface_finish": "matte fine-grained cork with subtle natural pores, no seams or added objects"
+  },
+  {
+    "lighting": "bright broad neutral overhead light with highlight detail retained",
+    "background": "the existing tabletop is ivory-white ceramic, retaining its exact plane and boundaries",
+    "color_grade": "neutral high-key exposure without clipping white grippers or transparent plastic",
+    "surface_finish": "smooth glazed ceramic with soft restrained highlights, no tiles or seams"
+  },
+  {
+    "lighting": "soft neutral daylight with coherent contact shadows",
+    "background": "the existing tabletop is muted green laminate, retaining its exact plane and boundaries",
+    "color_grade": "neutral white balance with muted green restricted to the tabletop",
+    "surface_finish": "smooth matte laminate with uniform low gloss and no pattern or seams"
+  },
+  {
+    "lighting": "warm low-angle light from the left with longer coherent soft-edged shadows",
+    "background": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+    "color_grade": "warm late-afternoon white balance with preserved foreground identity colors",
+    "surface_finish": "matte gray surface with a subtle directional sheen and no added texture"
+  },
+  {
+    "lighting": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows",
+    "background": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+    "color_grade": "cool low-key treatment with visible dark joints and unclipped white grippers",
+    "surface_finish": "matte gray surface with soft low-gloss highlights and no added texture"
+  }
+]

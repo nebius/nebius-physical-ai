@@ -61,6 +61,7 @@ change hits most.
 | `test_skills_index` | A `SKILL.md` exists without an `skills/index.yaml` entry (or the reverse), frontmatter `name` disagrees with the index, or a smoke does not run. Register the skill with a passing smoke. |
 | `test_develop_skills` | A development skill names a repo path or guardrail that does not exist, or a new guardrail file is undocumented. Update the skill. |
 | `test_no_dangling_workflow_references` | A doc, skill, or script names a workflow YAML that does not exist. Repoint or remove the reference. |
+| `test_cli_docs_drift` | An `npa ...` command mentioned in `docs/workbench/`, `workflows/guides/`, or `skills/` does not resolve in the Typer tree. Update the doc/skill to the current command, or add a precise allowlist entry in `npa/tests/guardrails/test_cli_docs_drift.py` with the reason. |
 | `test_docs_green_path` | The documented path from README to a real submit is no longer runnable end to end. Update the quickstart with the new step. |
 | `test_documentation_examples` | Fix the reported Markdown link/heading, shell/Python syntax, CLI command/option, or undeclared workflow variable. Quote shell placeholders; label HTTP routes and abbreviated grammar as `text`. Keep the package README's planning example executable offline. Generated CLI references and historical command records retain separate validation scope. |
 | `test_agent_workflow_operations` | The agent operations guide omitted a lifecycle stage, exposed a non-NPA subprocess, or coupled workflow operation to a model/provider flag. Restore the fixed, provider-neutral NPA command journey. |
@@ -84,7 +85,8 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | `test_ncore_attribution` / `test_ncore_source_attribution` | NCore's exact CPython notice, immutable dual-archive proof, Git path/mode boundary, diff line mapping, or source disposition drifted. Restore the exact provenance-bound contract; never add a general exemption or hide raw findings. |
 | `test_security_source` | Source scanner output, inventory, ignore handling or stable finding identity is incomplete. Restore fail-closed scanning; run the real scanner workload in `docs/security/merge-security-gate.md`. |
 | `test_security_gate` | A regression comparison, snapshot boundary or dependency report check failed. Preserve duplicate detection and reject incomplete reports or source paths outside the snapshot. |
-| `test_image_security_gate` | The required security check stopped waiting for image scans, lost PR/merge-queue coverage, duplicated automatic runs, or changed existing alert identity. Restore the reusable workflow dependency, fail-closed result checks, distinct concurrency group, and reporting configuration. |
+| `test_security_install` | Scanner bootstrap no longer retries transient download failures or rejects permanent HTTP/checksum failures before extraction. Exercise real curl against a local HTTP fixture and preserve the pinned checksum. A hosted 504 during scanner installation is a transport failure; rerun its failed jobs after recovery, without retrying or suppressing security findings. |
+| `test_image_security_gate` | The required security check stopped waiting for image scans, lost PR/merge-queue coverage, duplicated automatic runs, or changed existing alert identity. Restore full PR image validation or trusted identical-tree queue evidence, fail-closed result checks, distinct concurrency groups, and reporting configuration. |
 | `test_security_scan_input` | The manual image-scan input became shell syntax. Pass it through a step environment variable and quote that variable in the command. |
 | `test_agent_secret_guard` | A secret path became tracked, `.gitignore` stopped covering agent/cursor secrets, or a literal secret or live IP landed in agent files. Remove it and rotate. |
 | `test_agent_no_hardcoded_data` | Agent or insights source embeds run names, answers, or infra endpoints. Resolve them from live tool observations instead. |
@@ -123,7 +125,8 @@ the current surface, never to recreate the old one.
 
 | Guardrail | Fix when it fails |
 |---|---|
-| `test_ci_workflows` | A workflow lacks the shared concurrency template, duplicates feature-branch runs, drops a PR Python compatibility version or its early regression check, or makes mypy blocking. Restore those contracts. |
+| `test_ci_concurrency` | A validation workflow introduces a shared job lock, a matrix parallelism cap, or a workflow group that can serialize unrelated candidates or collide with its caller. Restore independent job scheduling and per-candidate workflow groups as documented in `CONTRIBUTING.md`. |
+| `test_ci_workflows` | A workflow lacks per-candidate supersession, duplicates feature-branch runs, drops a PR Python compatibility version or its early regression check, or makes mypy blocking. Restore those contracts. |
 | `test_daily_vm_network` | Daily SSH access loses host-key verification or isolated staging cleanup, requests unnecessary identity permissions, or adds a PR trigger. Restore pinned host keys, direct SSH, per-run private directories, and cleanup on failure. |
 | `test_e2e_gate_reachability` | A new `NPA_*` e2e gate has no runner mapping. Wire it into `scripts/dev-vm-daily-tests.sh` or record a reviewed manual reason. |
 | `test_terraform_provisioner_shell` | Bash embedded in the agent Terraform is not syntactically valid, or an SSH wait is unbounded. Check the heredocs. |

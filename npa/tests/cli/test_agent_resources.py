@@ -14,7 +14,9 @@ from npa.cli.agent_resources import (
 )
 
 
-def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(monkeypatch) -> None:
+def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(
+    monkeypatch,
+) -> None:
     configured = configured_k8s_backends(
         {
             "k8s_context": "customer-context",
@@ -36,7 +38,9 @@ def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(monkeypatch
             }
         )
 
-    monkeypatch.setattr("npa.cli.agent_resources.subprocess.run", lambda *_a, **_kw: Result())
+    monkeypatch.setattr(
+        "npa.cli.agent_resources.subprocess.run", lambda *_a, **_kw: Result()
+    )
     discovered = discover_mk8s_accelerators("cluster-id", ["nebius"], {})
     assert discovered == {
         "available_accelerators": ["RTXPRO6000"],
@@ -65,7 +69,9 @@ def test_nested_k8s_grounding_keeps_secret_names_but_redacts_secret_values() -> 
     assert "registry_password" not in configured[0]["raw"]
 
 
-def test_build_inventory_prefers_metadata_profile_and_includes_local_resources() -> None:
+def test_build_inventory_prefers_metadata_profile_and_includes_local_resources() -> (
+    None
+):
     inventory = build_resource_inventory(
         config={
             "default_project": "demo",
@@ -80,7 +86,9 @@ def test_build_inventory_prefers_metadata_profile_and_includes_local_resources()
         env={"NEBIUS_PROFILE": "stale-profile", "NPA_AGENT_NAME": "paidf"},
         state={"latest_submit": {"run_id": "run-test"}},
         tool_refs=["workbench.cosmos_evaluator.evaluate", "workbench.fiftyone.curate"],
-        runner=_runner_for({"compute instance": {"items": [{"metadata": {"name": "paidf"}}]}}),
+        runner=_runner_for(
+            {"compute instance": {"items": [{"metadata": {"name": "paidf"}}]}}
+        ),
         generated_at="2026-08-09T00:00:00Z",
         metadata_token_available=True,
         force_refresh=True,
@@ -119,8 +127,12 @@ def test_discovers_non_empty_and_empty_categories_without_secrets() -> None:
         profile="cursor-sa",
         runner=_runner_for(
             {
-                "iam project": {"metadata": {"id": "project-test", "name": "demo-project"}},
-                "iam tenant": {"metadata": {"id": "tenant-test", "name": "demo-tenant"}},
+                "iam project": {
+                    "metadata": {"id": "project-test", "name": "demo-project"}
+                },
+                "iam tenant": {
+                    "metadata": {"id": "tenant-test", "name": "demo-tenant"}
+                },
                 "compute instance": {
                     "items": [
                         {
@@ -155,11 +167,23 @@ def test_permission_error_is_honest_and_keeps_configured_reference() -> None:
         project_id="project-test",
         tenant_id="tenant-test",
         profile="cursor-sa",
-        runner=lambda _command: (1, "", "PermissionDenied opaque-debug-token-should-not-leak"),
+        runner=lambda _command: (
+            1,
+            "",
+            "PermissionDenied opaque-debug-token-should-not-leak",
+        ),
     )
     categories = merge_configured_references(
         categories,
-        {"storage": [{"kind": "bucket", "name": "configured-bucket", "source": "staged_credentials"}]},
+        {
+            "storage": [
+                {
+                    "kind": "bucket",
+                    "name": "configured-bucket",
+                    "source": "staged_credentials",
+                }
+            ]
+        },
     )
     storage = next(item for item in categories if item["id"] == "storage")
     assert storage["status"] == "error"
@@ -175,11 +199,20 @@ def test_permission_error_is_honest_and_keeps_configured_reference() -> None:
 def test_category_states_and_summary_are_explicit() -> None:
     categories = [
         category_payload("a", "A", discovered=[{"name": "one"}]),
-        category_payload("b", "B", configured=[{"name": "two"}], discovery_attempted=False),
+        category_payload(
+            "b", "B", configured=[{"name": "two"}], discovery_attempted=False
+        ),
         category_payload("c", "C"),
-        category_payload("d", "D", error={"kind": "authentication_error", "message": "no"}),
+        category_payload(
+            "d", "D", error={"kind": "authentication_error", "message": "no"}
+        ),
     ]
-    assert [item["status"] for item in categories] == ["discovered", "configured", "empty", "error"]
+    assert [item["status"] for item in categories] == [
+        "discovered",
+        "configured",
+        "empty",
+        "error",
+    ]
     assert inventory_summary(categories) == {
         "categories": 4,
         "discovered_categories": 1,

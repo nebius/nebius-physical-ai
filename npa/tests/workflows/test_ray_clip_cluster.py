@@ -51,17 +51,25 @@ def _run_application_start(tmp_path, *, rank, gpus="1", ephemeral_start=None):
         "RAY_ADDRESS": "127.0.0.1:6380",
     }
     return subprocess.run(
-        ["bash", "-c", script], env=environment, cwd=tmp_path,
-        capture_output=True, text=True, check=False,
+        ["bash", "-c", script],
+        env=environment,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
 def _assert_disjoint_service_ports(options: dict, rank: int) -> None:
     """Reject collisions with SkyPilot management ports or application workers."""
     services = [
-        "--object-manager-port", "--node-manager-port", "--ray-client-server-port",
-        "--dashboard-agent-listen-port", "--dashboard-agent-grpc-port",
-        "--runtime-env-agent-port", "--metrics-export-port",
+        "--object-manager-port",
+        "--node-manager-port",
+        "--ray-client-server-port",
+        "--dashboard-agent-listen-port",
+        "--dashboard-agent-grpc-port",
+        "--runtime-env-agent-port",
+        "--metrics-export-port",
     ]
     if rank == 0:
         services.extend(["--port", "--dashboard-port"])
@@ -79,7 +87,9 @@ def _assert_disjoint_service_ports(options: dict, rank: int) -> None:
 
 
 @pytest.mark.parametrize(("rank", "gpus"), [(0, "1"), (1, "1"), (0, "2")])
-def test_application_ports_and_rank_are_disjoint_from_management_runtime(tmp_path, rank, gpus):
+def test_application_ports_and_rank_are_disjoint_from_management_runtime(
+    tmp_path, rank, gpus
+):
     """Require explicit application placement, private Jobs access and separate ports.
 
     Args:
@@ -116,7 +126,9 @@ def test_application_ports_and_rank_are_disjoint_from_management_runtime(tmp_pat
 
 @pytest.mark.parametrize(("ephemeral_start", "expected_exit"), [(10999, 1), (11000, 0)])
 @pytest.mark.parametrize("rank", [0, 1])
-def test_ephemeral_range_boundary_prevents_application_port_overlap(tmp_path, rank, ephemeral_start, expected_exit):
+def test_ephemeral_range_boundary_prevents_application_port_overlap(
+    tmp_path, rank, ephemeral_start, expected_exit
+):
     """Reject an overlapping host range before starting either application Ray role.
 
     Args:
@@ -129,7 +141,9 @@ def test_ephemeral_range_boundary_prevents_application_port_overlap(tmp_path, ra
     Raises:
         AssertionError: The port guard accepts overlap or rejects a disjoint range.
     """
-    result = _run_application_start(tmp_path, rank=rank, ephemeral_start=ephemeral_start)
+    result = _run_application_start(
+        tmp_path, rank=rank, ephemeral_start=ephemeral_start
+    )
     assert result.returncode == expected_exit
     if expected_exit:
         assert result.stderr == "Application ports overlap OS ephemeral range\n"
@@ -172,7 +186,9 @@ def test_cluster_mounts_only_bootstrap_and_keeps_application_submission_external
     workflow = yaml.safe_load((EXAMPLE / "cluster.yaml").read_text())
     assert workflow["file_mounts"] == {"/tmp/ray-clip-bootstrap": "./cluster"}
     assert "workdir" not in workflow
-    assert workflow["resources"]["image_id"].startswith("docker:docker.io/pytorch/pytorch@sha256:")
+    assert workflow["resources"]["image_id"].startswith(
+        "docker:docker.io/pytorch/pytorch@sha256:"
+    )
     assert workflow["resources"]["use_spot"] is False
     kubernetes = workflow["config"]["kubernetes"]
     assert kubernetes["networking"] == "portforward"
@@ -192,13 +208,17 @@ def preparation():
         ImportError: The preparation source cannot be imported.
     """
     source = EXAMPLE / "cluster/prepare.py"
-    specification = importlib.util.spec_from_file_location("clip_preparation_test", source)
+    specification = importlib.util.spec_from_file_location(
+        "clip_preparation_test", source
+    )
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
 
 
-def test_corrupt_download_never_reaches_cuda_or_readiness(preparation, tmp_path, monkeypatch):
+def test_corrupt_download_never_reaches_cuda_or_readiness(
+    preparation, tmp_path, monkeypatch
+):
     """Stop preparation after a bad model digest before CUDA or readiness output.
 
     Args:
@@ -216,9 +236,13 @@ def test_corrupt_download_never_reaches_cuda_or_readiness(preparation, tmp_path,
     model.mkdir()
     (model / "pytorch_model.bin").write_bytes(b"invalid synthetic weights")
     monkeypatch.setattr(preparation, "MODEL_DIRECTORY", model)
-    monkeypatch.setattr(preparation, "APPLICATION_ENVIRONMENT", tmp_path / "environment")
+    monkeypatch.setattr(
+        preparation, "APPLICATION_ENVIRONMENT", tmp_path / "environment"
+    )
     operations = Mock()
-    inspection = Mock(side_effect=AssertionError("Corrupt weights reached CUDA inspection"))
+    inspection = Mock(
+        side_effect=AssertionError("Corrupt weights reached CUDA inspection")
+    )
     monkeypatch.setattr(preparation.subprocess, "run", operations)
     monkeypatch.setattr(preparation.subprocess, "check_output", inspection)
     with pytest.raises(RuntimeError, match="pinned public snapshot"):
@@ -258,7 +282,9 @@ def test_dependency_failure_prevents_model_download(preparation, monkeypatch):
     command.assert_called_once()
 
 
-def test_preparation_timing_excludes_inspection_from_model_download(preparation, tmp_path, monkeypatch):
+def test_preparation_timing_excludes_inspection_from_model_download(
+    preparation, tmp_path, monkeypatch
+):
     """Keep CUDA inspection and dependency freezing outside model-download timing.
 
     Args:
@@ -275,10 +301,20 @@ def test_preparation_timing_excludes_inspection_from_model_download(preparation,
 
     destination = tmp_path / "preparation.json"
     monkeypatch.setattr(preparation, "Path", Mock(return_value=destination))
-    monkeypatch.setattr(preparation, "time", SimpleNamespace(time=Mock(return_value=150.0)))
-    monkeypatch.setattr(preparation, "_inspect_cuda_environment", Mock(return_value={"test_fixture": True}))
-    monkeypatch.setattr(preparation.subprocess, "check_output", Mock(return_value="synthetic==1\n"))
-    preparation._write_preparation_receipt(100.0, 120.0, 130.0, "synthetic-digest", "fixture-python")
+    monkeypatch.setattr(
+        preparation, "time", SimpleNamespace(time=Mock(return_value=150.0))
+    )
+    monkeypatch.setattr(
+        preparation,
+        "_inspect_cuda_environment",
+        Mock(return_value={"test_fixture": True}),
+    )
+    monkeypatch.setattr(
+        preparation.subprocess, "check_output", Mock(return_value="synthetic==1\n")
+    )
+    preparation._write_preparation_receipt(
+        100.0, 120.0, 130.0, "synthetic-digest", "fixture-python"
+    )
     receipt = json.loads(destination.read_text())
     assert receipt["dependency_preparation_seconds"] == 20.0
     assert receipt["model_fetch_and_verify_seconds"] == 10.0

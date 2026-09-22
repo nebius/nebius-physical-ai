@@ -259,7 +259,9 @@ def validate_manifest(
             isinstance(ge.timeout_seconds, bool)
             or not isinstance(ge.timeout_seconds, (int, float))
             or ge.timeout_seconds <= 0
-            or (isinstance(ge.timeout_seconds, float) and math.isnan(ge.timeout_seconds))
+            or (
+                isinstance(ge.timeout_seconds, float) and math.isnan(ge.timeout_seconds)
+            )
         ):
             report.add(name, "golden_eval.timeout_seconds must be > 0 or 'unlimited'")
 

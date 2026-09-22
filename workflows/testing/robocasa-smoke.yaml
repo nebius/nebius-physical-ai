@@ -13,6 +13,7 @@ config:
   prefix: "robocasa-smoke/{{run.id}}"
   env_id: "robocasa/PickPlaceCounterToCabinet"
   robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
+  robocasa_token_env: ROBOCASA_TOKEN
   iterations: "1"
   num_envs: "1"
   poll_seconds: "30"

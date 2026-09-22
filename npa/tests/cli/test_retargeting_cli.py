@@ -30,7 +30,9 @@ def test_removed_tools_not_advertised_in_workbench_help() -> None:
 
 def test_retargeting_command_help() -> None:
     for command in ("run", "workflow", "status", "list"):
-        result = runner.invoke(app, ["workbench", "sonic", "retargeting", command, "--help"])
+        result = runner.invoke(
+            app, ["workbench", "sonic", "retargeting", command, "--help"]
+        )
 
         assert result.exit_code == 0
         assert "Usage:" in result.output
@@ -90,7 +92,9 @@ def test_retargeting_run_writes_real_motion_lib_and_metadata(tmp_path) -> None:
     assert metadata.exists()
     copied = joblib.load(written)
     assert copied["walk"]["dof"].shape[0] == 2
-    assert json.loads(metadata.read_text(encoding="utf-8"))["embodiment"] == "unitree-g1"
+    assert (
+        json.loads(metadata.read_text(encoding="utf-8"))["embodiment"] == "unitree-g1"
+    )
 
 
 def test_retargeting_respects_env_dry_run(monkeypatch, tmp_path) -> None:
@@ -142,7 +146,9 @@ def test_retargeting_rejects_negative_frame_limit() -> None:
 
 
 def test_retargeting_workflow_path() -> None:
-    result = runner.invoke(app, ["workbench", "sonic", "retargeting", "workflow", "--output", "json"])
+    result = runner.invoke(
+        app, ["workbench", "sonic", "retargeting", "workflow", "--output", "json"]
+    )
 
     assert result.exit_code == 0
     payload = json.loads(result.output)

@@ -54,6 +54,9 @@ def test_wrapped_command_descriptions_are_joined() -> None:
     commands = converter._extract_commands(converter._clean_help(raw))
 
     assert commands == [
-        ("actions", "Generate action-conditioned train envs for a representative slice."),
+        (
+            "actions",
+            "Generate action-conditioned train envs for a representative slice.",
+        ),
         ("split", "Generate deterministic train/heldout manifests."),
     ]

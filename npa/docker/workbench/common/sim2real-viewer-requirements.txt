@@ -7,9 +7,10 @@ lz4==4.4.5
 mcap==1.4.0
 numpy==2.4.6
 pillow==12.3.0
+psutil==7.2.2
 pyarrow==25.0.1
 python-dateutil==2.9.0.post0
-rerun-sdk==0.31.4
+rerun-sdk==0.38.1
 s3transfer==0.19.2
 six==1.17.0
 typing-extensions==4.16.0

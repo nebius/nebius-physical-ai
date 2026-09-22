@@ -33,7 +33,9 @@ def _resource(
     return resource
 
 
-def _result(items: list[dict], returncode: int = 0, stderr: str = "") -> SimpleNamespace:
+def _result(
+    items: list[dict], returncode: int = 0, stderr: str = ""
+) -> SimpleNamespace:
     return SimpleNamespace(
         returncode=returncode,
         stdout=json.dumps({"items": items}),
@@ -70,7 +72,10 @@ def _mock_nebius(mocker, *, networks: list[dict], subnets: list[dict]):
 def test_explicit_override_wins_without_cli_calls(mocker) -> None:
     run = mocker.patch("npa.serverless_common.subnet.subprocess.run")
 
-    assert resolve_subnet("project-1", explicit_subnet_id=" vpcsubnet-foo ") == "vpcsubnet-foo"
+    assert (
+        resolve_subnet("project-1", explicit_subnet_id=" vpcsubnet-foo ")
+        == "vpcsubnet-foo"
+    )
     run.assert_not_called()
 
 
@@ -117,7 +122,11 @@ def test_default_network_default_subnet_selection(mocker) -> None:
         networks=[_resource("vpcnetwork-default", "default-network")],
         subnets=[
             _resource("vpcsubnet-other", "tool-subnet", network_id="vpcnetwork-other"),
-            _resource("vpcsubnet-default", "default-subnet-xyz", network_id="vpcnetwork-default"),
+            _resource(
+                "vpcsubnet-default",
+                "default-subnet-xyz",
+                network_id="vpcnetwork-default",
+            ),
         ],
     )
 
@@ -128,7 +137,9 @@ def test_single_subnet_fallback(mocker) -> None:
     _mock_nebius(
         mocker,
         networks=[_resource("vpcnetwork-tool", "tool-network")],
-        subnets=[_resource("vpcsubnet-only", "tool-subnet", network_id="vpcnetwork-tool")],
+        subnets=[
+            _resource("vpcsubnet-only", "tool-subnet", network_id="vpcnetwork-tool")
+        ],
     )
 
     assert resolve_subnet("project-1") == "vpcsubnet-only"
@@ -194,7 +205,11 @@ def test_multiple_default_networks_raise(mocker) -> None:
             _resource("vpcnetwork-default-a", "default-network"),
             _resource("vpcnetwork-default-b", "default-network"),
         ],
-        subnets=[_resource("vpcsubnet-only", "only-subnet", network_id="vpcnetwork-default-a")],
+        subnets=[
+            _resource(
+                "vpcsubnet-only", "only-subnet", network_id="vpcnetwork-default-a"
+            )
+        ],
     )
 
     with pytest.raises(SubnetResolutionError, match="multiple READY networks"):
@@ -206,8 +221,12 @@ def test_multiple_default_subnets_under_default_network_raise(mocker) -> None:
         mocker,
         networks=[_resource("vpcnetwork-default", "default-network")],
         subnets=[
-            _resource("vpcsubnet-a", "default-subnet-a", network_id="vpcnetwork-default"),
-            _resource("vpcsubnet-b", "default-subnet-b", network_id="vpcnetwork-default"),
+            _resource(
+                "vpcsubnet-a", "default-subnet-a", network_id="vpcnetwork-default"
+            ),
+            _resource(
+                "vpcsubnet-b", "default-subnet-b", network_id="vpcnetwork-default"
+            ),
         ],
     )
 
@@ -220,8 +239,12 @@ def test_custom_network_and_subnet_prefix_params(mocker) -> None:
         mocker,
         networks=[_resource("vpcnetwork-prod", "prod-network")],
         subnets=[
-            _resource("vpcsubnet-prod", "prod-subnet-main", network_id="vpcnetwork-prod"),
-            _resource("vpcsubnet-other", "default-subnet-a", network_id="vpcnetwork-other"),
+            _resource(
+                "vpcsubnet-prod", "prod-subnet-main", network_id="vpcnetwork-prod"
+            ),
+            _resource(
+                "vpcsubnet-other", "default-subnet-a", network_id="vpcnetwork-other"
+            ),
         ],
     )
 

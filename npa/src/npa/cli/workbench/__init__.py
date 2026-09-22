@@ -40,6 +40,30 @@ def _groot_light_app() -> typer.Typer:
     return light
 
 
+def _nurec_light_app() -> typer.Typer:
+    """Build the dependency-minimal NuRec surface used by viewer workers."""
+
+    from npa.cli.nurec import app as nurec_app
+
+    light = typer.Typer(
+        name="workbench",
+        help="Physical AI workbench tools.",
+        no_args_is_help=True,
+    )
+
+    @light.callback()
+    def main() -> None:
+        """Physical AI workbench tools."""
+
+        load_credentials(
+            warn=lambda msg: typer.echo(msg, err=True),
+            export_to_environment=True,
+        )
+
+    light.add_typer(nurec_app, name="nurec")
+    return light
+
+
 def _full_app() -> typer.Typer:
     """Build the complete workstation command tree on ordinary clients."""
 
@@ -63,6 +87,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.golden_eval import app as golden_eval_app
     from npa.cli.workbench.health import app as health_app
     from npa.cli.workbench.insights import app as insights_app
+    from npa.cli.workbench.isaac_arena import app as isaac_arena_app
     from npa.cli.workbench.lancedb import app as lancedb_app
     from npa.cli.workbench.leisaac import app as leisaac_app
     from npa.cli.workbench.lerobot import app as lerobot_app
@@ -78,6 +103,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.token_factory import app as token_factory_app
     from npa.cli.workbench.vlm_eval import app as vlm_eval_app
     from npa.cli.workbench.workflow import app as workflow_app
+
     full = typer.Typer(
         name="workbench",
         help="Physical AI workbench tools.",
@@ -104,6 +130,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(genesis_app, name="genesis")
     full.add_typer(groot_app, name="groot")
     full.add_typer(isaac_lab_app, name="isaac-lab")
+    full.add_typer(isaac_arena_app, name="isaac-arena")
     full.add_typer(leisaac_app, name="leisaac")
     full.add_typer(nurec_app, name="nurec")
     full.add_typer(sonic_app, name="sonic")
@@ -175,7 +202,9 @@ if _LIGHT_IMPORT:
     elif _LIGHT_TOOL in ("cosmos3-ray-serve",):
         from npa.cli.workbench.cosmos3 import app as cosmos3_app
 
-        light = typer.Typer(name="workbench", help="Physical AI workbench tools.", no_args_is_help=True)
+        light = typer.Typer(
+            name="workbench", help="Physical AI workbench tools.", no_args_is_help=True
+        )
 
         @light.callback()
         def _light_cosmos3_main() -> None:
@@ -183,8 +212,12 @@ if _LIGHT_IMPORT:
 
         light.add_typer(cosmos3_app, name="cosmos3")
         app = light
+    elif _LIGHT_TOOL == "nurec":
+        app = _nurec_light_app()
     elif _LIGHT_TOOL == "rerun-viewer":
         app = _rerun_viewer_light_app()
+    elif _LIGHT_TOOL == "isaac-arena":
+        from npa.cli.workbench.isaac_arena import app
     elif _LIGHT_TOOL == "openarm":
         from npa.cli.workbench.openarm import app as openarm_app
 

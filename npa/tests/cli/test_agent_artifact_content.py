@@ -64,7 +64,9 @@ def _artifact(
         ("unknown.payload", "download"),
     ],
 )
-def test_artifact_classification_preserves_download_fallback(key: str, expected: str) -> None:
+def test_artifact_classification_preserves_download_fallback(
+    key: str, expected: str
+) -> None:
     assert render_hint_for_object(key=key) == expected
 
 
@@ -131,11 +133,15 @@ def test_text_preview_caps_utf8_formats_json_and_redacts_secrets() -> None:
         ("bytes=0-9999", 1000, (0, 999)),
     ],
 )
-def test_single_http_byte_ranges(value: str, total: int, expected: tuple[int, int] | None) -> None:
+def test_single_http_byte_ranges(
+    value: str, total: int, expected: tuple[int, int] | None
+) -> None:
     assert parse_http_byte_range(value, total) == expected
 
 
-@pytest.mark.parametrize("value", ["items=0-1", "bytes=0-1,4-5", "bytes=1000-", "bytes=4-2"])
+@pytest.mark.parametrize(
+    "value", ["items=0-1", "bytes=0-1,4-5", "bytes=1000-", "bytes=4-2"]
+)
 def test_invalid_or_multiple_byte_ranges_are_rejected(value: str) -> None:
     with pytest.raises(ArtifactDiscoveryError):
         parse_http_byte_range(value, 1000)
@@ -319,7 +325,7 @@ def test_run_summary_recognizes_operational_two_gpu_report() -> None:
     assert summary["learning"]["artifact_contract"]["authoritative"] is True
     assert summary["learning"]["artifact_contract"]["primary_camera"] == "front"
     artifact_content_source = ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
-    assert "GROOT_ARTIFACT_PATHS[\"report\"]" in artifact_content_source
+    assert 'GROOT_ARTIFACT_PATHS["report"]' in artifact_content_source
     assert summary["loss_source"] == GROOT_ARTIFACT_PATHS["report"][0]
 
 
@@ -399,7 +405,9 @@ def test_gr00t_loss_evidence_fails_closed_when_malformed_or_nonfinite(
     assert summary["loss_validation_error"] == "malformed_or_nonfinite_loss_evidence"
 
 
-def test_candidate_training_manifest_is_a_real_loss_source_without_report_history() -> None:
+def test_candidate_training_manifest_is_a_real_loss_source_without_report_history() -> (
+    None
+):
     report = {
         "schema": "npa.groot.learning.v1",
         "evaluation_kind": "offline held-out policy evaluation",
@@ -443,7 +451,13 @@ def test_ui_makes_operational_offline_learning_primary() -> None:
 def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
     source = ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
 
-    assert '@app.api_route("/artifacts/content", methods=["GET", "HEAD"])' in source
+    assert (
+        '@app.get("/artifacts/content", operation_id="artifacts_content_get")' in source
+    )
+    assert (
+        '@app.head("/artifacts/content", operation_id="artifacts_content_head")'
+        in source
+    )
     assert "authorize_artifact_inventory_key(" in source
     assert '"X-Content-Type-Options": "nosniff"' in source
     assert '"Content-Range"' in source
@@ -464,7 +478,10 @@ def test_secure_content_endpoint_contract_is_s3_only_and_range_aware() -> None:
 
 def test_artifact_failures_are_logged_and_never_echo_raw_exception_text() -> None:
     source = ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
-    assert '_artifact_content_logger.exception("Artifact content storage request failed")' in source
+    assert (
+        '_artifact_content_logger.exception("Artifact content storage request failed")'
+        in source
+    )
     assert '"error": "artifact storage request failed"' in source
     assert '"error_code": "artifact_storage_error"' in source
     route = source.split("def artifacts_content", 1)[1].split("def artifact_file", 1)[0]
@@ -473,37 +490,60 @@ def test_artifact_failures_are_logged_and_never_echo_raw_exception_text() -> Non
     assert '"error": str(exc)' not in download
 
 
-def test_load_artifact_s3_uri_requires_inventory_run_id_with_stable_error() -> None:
+def test_load_artifact_rejects_raw_uri_and_requires_exact_inventory_source() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     block = source.split("def sim_viz_load_artifact", 1)[1].split(
         "def _foxglove_convert_run", 1
     )[0]
-    assert '"code": "run_id_required_for_s3_uri"' in block
-    assert '"contract_version": "npa.agent.load-artifact.v2"' in block
-    assert '"migration"' in block
-    assert '"required_fields": ["run_id", "s3_uri"]' in block
+    migration = source.split("def _raw_artifact_uri_migration_detail", 1)[1].split(
+        "def _exact_artifact_load_missing_fields", 1
+    )[0]
+    assert '"code": "raw_artifact_uri_not_supported"' in migration
+    assert '"contract_version": "npa.agent.load-artifact.v3"' in migration
+    assert '"migration"' in migration
+    for field in (
+        "run_id",
+        "run_ref",
+        "key",
+        "project_id",
+        "resource_bucket",
+        "resolved_prefix",
+        "source_selected",
+    ):
+        assert f'"{field}"' in migration
+    assert "not an artifact authorization selector" in migration
     assert "_resolved_artifact_for_content(" in block
     assert '"error": "artifact storage request failed"' in block
     assert '"error": str(exc)' not in block
 
 
-def test_ui_keeps_artifact_list_after_preview_errors_and_never_requires_recording() -> None:
+def test_ui_keeps_artifact_list_after_preview_errors_and_never_requires_recording() -> (
+    None
+):
     source = AGENT_UI.read_text(encoding="utf-8")
 
     assert "No RRD/MCAP recording; use the artifacts below" in source
     assert "previewArtifact" in source
     assert "host.replaceChildren" in source
-    assert "artifactList.replaceChildren" not in source[source.index("async function previewArtifact"):]
-    assert "textContent" in source[source.index("async function previewArtifact"):]
+    assert (
+        "artifactList.replaceChildren"
+        not in source[source.index("async function previewArtifact") :]
+    )
+    assert "textContent" in source[source.index("async function previewArtifact") :]
     assert "video.controls = true" in source
     video_block = source.split('} else if (render === "video") {', 1)[1].split(
         '} else if (render === "json"', 1
     )[0]
     assert "await validateVideoPreviewResponse(contentUrl);" in video_block
-    assert video_block.index("await validateVideoPreviewResponse(contentUrl);") < video_block.index(
-        "video.src = contentUrl;"
-    )
+    assert video_block.index(
+        "await validateVideoPreviewResponse(contentUrl);"
+    ) < video_block.index("video.src = contentUrl;")
     assert "Video preview response is not browser media" in source
-    assert "Video decode/playback failed after the media route passed HTTP validation" in source
+    assert (
+        "Video decode/playback failed after the media route passed HTTP validation"
+        in source
+    )
     assert "downloadArtifact" in source
-    assert '(download ? "/api/artifacts/download?" : "/api/artifacts/content?")' in source
+    assert (
+        '(download ? "/api/artifacts/download?" : "/api/artifacts/content?")' in source
+    )

@@ -122,11 +122,13 @@ def bootstrap_harness(monkeypatch):
     monkeypatch.setattr(agent.agent_llm_config, "write_agent_llm_env", llm)
     for writer in (
         "_write_agent_s3_env",
-        "_write_agent_artifact_sources_env",
         "_write_agent_operator_profile",
         "_record_remote_setup_ready",
     ):
         monkeypatch.setattr(agent, writer, Mock())
+    monkeypatch.setattr(
+        agent.agent_artifact_options, "write_artifact_sources_env", Mock()
+    )
     credentials = Mock(side_effect=[SSHError("staging interrupted"), None])
     monkeypatch.setattr(agent, "_write_agent_nebius_env", credentials)
     monkeypatch.setattr(agent, "verify_remote_deployment", Mock())
@@ -177,12 +179,20 @@ def test_receipt_is_atomic_private_and_written_only_after_success(
     sudo = tmp_path / "sudo"
     sudo.write_text('#!/bin/sh\nexec "$@"\n')
     sudo.chmod(0o700)
+    # The deployed receipt runs on GNU/Linux. Translate GNU mv's regular-file
+    # target contract for this macOS filesystem harness.
+    mv = tmp_path / "mv"
+    mv.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-fT" ]; then shift; [ "$1" = "--" ] && shift; '
+        'rm -f -- "$2"; exec /bin/mv -f -- "$@"; fi\n'
+        'exec /bin/mv "$@"\n'
+    )
+    mv.chmod(0o700)
     monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
-    receipt_script = (
-        subject._receipt_script("test-digest")
-        .replace("/opt/npa-agent", str(tmp_path))
-        .replace("mv -fT", "mv -f")
-    )  # BSD mv has no -T; target is a regular file.
+    receipt_script = subject._receipt_script("test-digest").replace(
+        "/opt/npa-agent", str(tmp_path)
+    )
     result = subprocess.run(
         ["bash", "-c", f"set -eu\n(exit {exit_code})\n" + receipt_script],
         check=False,

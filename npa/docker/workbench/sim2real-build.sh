@@ -30,7 +30,7 @@ Builds the Sim2Real reference images one at a time:
   npa-reference-policy:${ENVGEN_TAG}
   npa-lerobot-vlm-rl:${VLM_RL_TAG}
   npa-loop-eval:${EVAL_TAG}
-  npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.31.4} (skipped when SKIP_RERUN_VIEWER=1)
+  npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.38.1} (skipped when SKIP_RERUN_VIEWER=1)
 
 Set BASE_IMAGE and GENESIS_IMAGE to the pushed CUDA 13 /
 sm80-sm90-sm100-sm103-sm120 base
@@ -106,5 +106,5 @@ build_one "npa-loop-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile"
 if [ -n "${SKIP_RERUN_VIEWER:-}" ]; then
   echo "Skipping npa-rerun-viewer (SKIP_RERUN_VIEWER=${SKIP_RERUN_VIEWER})"
 else
-  build_one "npa-rerun-viewer" "${RERUN_VIEWER_TAG:-0.31.4}" "${SCRIPT_DIR}/rerun-viewer/Dockerfile" "RERUN_SDK_VERSION=${RERUN_VIEWER_TAG:-0.31.4}"
+  build_one "npa-rerun-viewer" "${RERUN_VIEWER_TAG:-0.38.1}" "${SCRIPT_DIR}/rerun-viewer/Dockerfile" "RERUN_SDK_VERSION=${RERUN_VIEWER_TAG:-0.38.1}"
 fi

@@ -45,7 +45,9 @@ def node_report(*, env: dict[str, str] | None = None) -> dict[str, Any]:
         raise MultiNodeProbeError(
             "SKYPILOT_NODE_RANK is unset; this stage must run as a SkyPilot task"
         )
-    node_ips = [ip for ip in (source.get("SKYPILOT_NODE_IPS") or "").split("\n") if ip.strip()]
+    node_ips = [
+        ip for ip in (source.get("SKYPILOT_NODE_IPS") or "").split("\n") if ip.strip()
+    ]
     return {
         "schema": SCHEMA_NODE,
         "rank": int(rank),
@@ -124,7 +126,9 @@ def verify_nodes(
             raise MultiNodeProbeError(f"no node reports found under {input_uri}")
         summary = summarize(reports, expected_nodes=int(expected_nodes))
         out = Path(tmp) / "multi_node_report.json"
-        out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        out.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         summary["written_uri"] = storage.upload_file(
             str(out), output_uri.rstrip("/") + "/multi_node_report.json"
         )

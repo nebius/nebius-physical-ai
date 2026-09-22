@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 from npa.workbench.training_config import TrainingConfigError, overrides_to_mapping
 
@@ -137,8 +144,14 @@ class TrainRequest(BaseModel):
         from .labels import detector_label_map
 
         mapped = detector_label_map(self.label_map)
-        if mapped and self.num_classes is not None and self.num_classes <= max(mapped.values()):
-            raise ValueError("num_classes must include background and every mapped detector category")
+        if (
+            mapped
+            and self.num_classes is not None
+            and self.num_classes <= max(mapped.values())
+        ):
+            raise ValueError(
+                "num_classes must include background and every mapped detector category"
+            )
         return self
 
     @field_validator("validation_filter_sql")

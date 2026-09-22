@@ -31,7 +31,9 @@ from urllib.parse import urlparse
 SCHEMA_VERSION = "npa.agent.trajectory.v1"
 LOGGER = logging.getLogger(__name__)
 _OUTBOX_LOCK = threading.RLock()
-_EPISODE_CONTEXT: ContextVar[tuple[str, str]] = ContextVar("npa_goal_episode", default=("", ""))
+_EPISODE_CONTEXT: ContextVar[tuple[str, str]] = ContextVar(
+    "npa_goal_episode", default=("", "")
+)
 
 
 def current_episode_id() -> str:
@@ -52,7 +54,10 @@ _SECRET_KEY_RE = re.compile(
     r"image[_-]?(?:data|bytes)|raw[_-]?(?:data|image)|base64)"
 )
 _SECRET_TEXT_PATTERNS = (
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)", re.DOTALL),
+    re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)",
+        re.DOTALL,
+    ),
     re.compile(r"(?i)data:[^\s,]*;base64,[^\s\"']*"),
     re.compile(
         r"(?i)(?:[a-z0-9_]*)(api[_-]?key|(?:secret|access|private)[_-]?(?:access[_-]?)?key|"
@@ -76,7 +81,9 @@ _INFRA_RE = re.compile(
     r"[a-z0-9]{12,}(?![a-z0-9])"
     r"|\bcr\.[a-z0-9-]+\.nebius\.cloud/[^\s\"'<>]+"
 )
-_IP_RE = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])[0-9a-fA-F:]*:[0-9a-fA-F:]+(?![\w:])")
+_IP_RE = re.compile(
+    r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])|(?<![\w:])[0-9a-fA-F:]*:[0-9a-fA-F:]+(?![\w:])"
+)
 # Native CLI output can occur inside JSON strings with literal escape sequences.
 _NATIVE_STYLE = r"(?:\x1b|\\+(?:u001b|x1b))\[[0-9;]*m"
 _NATIVE_START = rf"(?:(?<![\w.-])|\\+[nrt]|\\+u00(?:09|0a|0d|20)|{_NATIVE_STYLE})"
@@ -85,12 +92,14 @@ _REQUEST_UUID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 _SKY_LAUNCH_REFERENCE_RE = re.compile(
     rf"(?P<context>{_NATIVE_START}(?:{_NATIVE_STYLE})*Submitted{_NATIVE_SPACE}"
     rf"sky\.jobs\.launch{_NATIVE_SPACE}request:{_NATIVE_SPACE})"
-    rf"{_REQUEST_UUID}(?![\w-])", re.IGNORECASE,
+    rf"{_REQUEST_UUID}(?![\w-])",
+    re.IGNORECASE,
 )
 _SKY_API_REFERENCE_RE = re.compile(
     rf"(?P<context>{_NATIVE_START}(?:{_NATIVE_STYLE})*sky{_NATIVE_SPACE}api"
     rf"{_NATIVE_SPACE}(?:logs|cancel){_NATIVE_SPACE})"
-    rf"(?:{_REQUEST_UUID}|[0-9a-f]{{8}})(?![\w-])", re.IGNORECASE,
+    rf"(?:{_REQUEST_UUID}|[0-9a-f]{{8}})(?![\w-])",
+    re.IGNORECASE,
 )
 _SSH_PUBLIC_KEY_TYPE = (
     r"(?:(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp(?:256|384|521))"
@@ -151,16 +160,27 @@ def resolve_dataset_config(
         )
     parsed = urlparse(dataset_uri)
     if (
-        parsed.scheme != "s3" or not parsed.netloc or parsed.query or parsed.fragment
-        or parsed.username or parsed.password or ":" in parsed.netloc
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+        or ":" in parsed.netloc
     ):
         raise AgentRunDataError("NPA_AGENT_DATASET_URI must be an unsigned s3:// URI")
     if not active_tenant_id.strip() or not active_bucket.strip():
-        raise AgentRunDataError("verified active deployment tenant and bucket are required")
+        raise AgentRunDataError(
+            "verified active deployment tenant and bucket are required"
+        )
     if tenant_id != active_tenant_id.strip():
-        raise AgentRunDataError("agent dataset tenant does not match the active deployment")
+        raise AgentRunDataError(
+            "agent dataset tenant does not match the active deployment"
+        )
     if parsed.netloc != active_bucket.strip():
-        raise AgentRunDataError("agent dataset bucket does not match the active deployment")
+        raise AgentRunDataError(
+            "agent dataset bucket does not match the active deployment"
+        )
     return DatasetConfig(
         tenant_id=tenant_id,
         dataset_uri=dataset_uri,
@@ -200,9 +220,7 @@ def verify_destination(config: DatasetConfig, *, storage: Any | None = None) -> 
     """Prove bucket access and write/read/delete behavior before enabling."""
     s3 = _s3(storage)
     probe_key = "/".join(
-        item
-        for item in (config.prefix, ".npa-probes", uuid.uuid4().hex)
-        if item
+        item for item in (config.prefix, ".npa-probes", uuid.uuid4().hex) if item
     )
     body = b"npa-agent-dataset-probe"
     try:
@@ -235,8 +253,11 @@ def _redact_native_references(text: str) -> str:
         except (binascii.Error, ValueError):
             return match[0]
         kind = match["kind"].encode("ascii")
-        if (int.from_bytes(decoded[:4], "big") != len(kind)
-                or decoded[4:4 + len(kind)] != kind or len(decoded) <= 4 + len(kind)):
+        if (
+            int.from_bytes(decoded[:4], "big") != len(kind)
+            or decoded[4 : 4 + len(kind)] != kind
+            or len(decoded) <= 4 + len(kind)
+        ):
             return match[0]
         return match["context"] + "<infra-ref>"
 
@@ -291,10 +312,17 @@ def redact(value: Any) -> Any:
         return _redact_string(value)
     if value is None or isinstance(value, (bool, int, float)):
         return value
-    raise AgentRunDataError("trajectory values must be JSON data, never raw objects or bytes")
+    raise AgentRunDataError(
+        "trajectory values must be JSON data, never raw objects or bytes"
+    )
 
 
-def _mapping_keys(value: dict[str, Any], sanitize: Callable[[str], str], *, fixed: frozenset[str] = frozenset()) -> dict[str, str]:
+def _mapping_keys(
+    value: dict[str, Any],
+    sanitize: Callable[[str], str],
+    *,
+    fixed: frozenset[str] = frozenset(),
+) -> dict[str, str]:
     """Allocate stable names without overwriting another mapping entry.
 
     Generated hash suffixes are data too: sanitize them before use. Reserve
@@ -309,7 +337,9 @@ def _mapping_keys(value: dict[str, Any], sanitize: Callable[[str], str], *, fixe
     for key in sorted(names):
         if names[key] == key:
             continue
-        candidate = sanitize(names[key] + "-" + hashlib.sha256(key.encode()).hexdigest()[:12])
+        candidate = sanitize(
+            names[key] + "-" + hashlib.sha256(key.encode()).hexdigest()[:12]
+        )
         while candidate in used:
             candidate += "<private-ref>"
         names[key] = candidate
@@ -320,20 +350,27 @@ def _mapping_keys(value: dict[str, Any], sanitize: Callable[[str], str], *, fixe
 def _redact_identifiers(value: Any, replacements: dict[str, str]) -> Any:
     if isinstance(value, dict):
         keys = _mapping_keys(value, lambda key: _redact_identifiers(key, replacements))
-        return {keys[key]: _redact_identifiers(item, replacements) for key, item in value.items()}
+        return {
+            keys[key]: _redact_identifiers(item, replacements)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [_redact_identifiers(item, replacements) for item in value]
     if isinstance(value, str):
         # Preserve only exact internal markers. Scan surrounding text and key
         # digest suffixes too; caller-supplied text can imitate a suffix.
         parts = _REDACTION_MARKER_RE.split(value)
-        identifiers = sorted((item for item in replacements if item), key=lambda item: (-len(item), item))
+        identifiers = sorted(
+            (item for item in replacements if item), key=lambda item: (-len(item), item)
+        )
         if not identifiers:
             return value
         pattern = re.compile("|".join(re.escape(item) for item in identifiers))
         for index in range(0, len(parts), 2):
             # Substitution never rescans a newly inserted internal marker.
-            parts[index] = pattern.sub(lambda match: replacements[match.group()], parts[index])
+            parts[index] = pattern.sub(
+                lambda match: replacements[match.group()], parts[index]
+            )
         return "".join(parts)
     return value
 
@@ -358,34 +395,74 @@ def _private_replacements(config: DatasetConfig) -> dict[str, str]:
         path = Path(configured).expanduser()
         mode = path.lstat().st_mode
         if stat.S_ISLNK(mode) or not stat.S_ISREG(mode) or mode & 0o077:
-            raise AgentRunDataError("trajectory redaction configuration must be an owner-only file")
+            raise AgentRunDataError(
+                "trajectory redaction configuration must be an owner-only file"
+            )
         data = json.loads(path.read_text(encoding="utf-8"))
         literals = data.get("literals") if isinstance(data, dict) else None
-        if not isinstance(literals, list) or any(not isinstance(item, str) or not item for item in literals):
-            raise AgentRunDataError("trajectory redaction configuration requires nonempty string literals")
+        if not isinstance(literals, list) or any(
+            not isinstance(item, str) or not item for item in literals
+        ):
+            raise AgentRunDataError(
+                "trajectory redaction configuration requires nonempty string literals"
+            )
         replacements.update({literal: "<private-ref>" for literal in literals})
-    return dict(sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True))
+    return dict(
+        sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True)
+    )
 
 
 _REMOVED_FIELDS = (
-    "credential-and-environment-payloads", "private-uris-and-addresses",
-    "infra-identifiers", "operator-private-literals", "inline-data",
+    "credential-and-environment-payloads",
+    "private-uris-and-addresses",
+    "infra-identifiers",
+    "operator-private-literals",
+    "inline-data",
 )
 # None means arbitrary JSON data. Those values never acquire protocol treatment
 # recursively just because they contain a familiar field name or schema string.
 _PROTOCOL_FIELDS = {
-    (): {"schema_version": str, "episode_id": str, "session_id": str, "scope": dict,
-         "timing": dict, "request": dict, "initial_state": None, "trajectory": list,
-         "outcome": dict, "routing": dict, "versions": dict, "redaction": dict, "collection": dict},
+    (): {
+        "schema_version": str,
+        "episode_id": str,
+        "session_id": str,
+        "scope": dict,
+        "timing": dict,
+        "request": dict,
+        "initial_state": None,
+        "trajectory": list,
+        "outcome": dict,
+        "routing": dict,
+        "versions": dict,
+        "redaction": dict,
+        "collection": dict,
+    },
     ("scope",): {"tenant_id": str, "dataset_role": str},
     ("timing",): {"started_at": str, "ended_at": str, "latency_ms": int},
     ("request",): {"content": str, "intent": str},
-    ("trajectory", "event"): {"sequence": int, "phase": str, "tool": str,
-                               "arguments": None, "observation": None, "status": str},
-    ("outcome",): {"status": str, "verified": bool, "verified_by": list, "artifact_uris": list,
-                   "operator_interventions": list, "preference_pairs": list},
-    ("routing",): {"grounded": bool, "tier": str, "model": str,
-                  "input_tokens": (int, type(None)), "output_tokens": (int, type(None))},
+    ("trajectory", "event"): {
+        "sequence": int,
+        "phase": str,
+        "tool": str,
+        "arguments": None,
+        "observation": None,
+        "status": str,
+    },
+    ("outcome",): {
+        "status": str,
+        "verified": bool,
+        "verified_by": list,
+        "artifact_uris": list,
+        "operator_interventions": list,
+        "preference_pairs": list,
+    },
+    ("routing",): {
+        "grounded": bool,
+        "tier": str,
+        "model": str,
+        "input_tokens": (int, type(None)),
+        "output_tokens": (int, type(None)),
+    },
     ("versions",): {"agent": str, "tools": dict},
     ("redaction",): {"applied": bool, "fields_removed": list},
     ("collection",): {"status": str, "content_sha256": str},
@@ -393,15 +470,29 @@ _PROTOCOL_FIELDS = {
 _PROTOCOL_CONSTANTS = {
     ("schema_version",): (SCHEMA_VERSION,),
     ("scope", "dataset_role"): ("agent-finetuning-raw",),
-    ("trajectory", "event", "phase"): ("plan", "tool", "observation", "confirm", "final"),
+    ("trajectory", "event", "phase"): (
+        "plan",
+        "tool",
+        "observation",
+        "confirm",
+        "final",
+    ),
     ("trajectory", "event", "status"): ("ok", "error", "rejected", "cancelled"),
     ("outcome", "status"): ("succeeded", "failed", "refused", "cancelled"),
     ("redaction", "applied"): (True,),
     ("collection", "status"): (CollectionStatus.PENDING,),
 }
-_REQUIRED_PROTOCOL_FIELDS = {path: frozenset(_PROTOCOL_FIELDS[path]) for path in (
-    (), ("scope",), ("timing",), ("request",), ("redaction",), ("collection",),
-)}
+_REQUIRED_PROTOCOL_FIELDS = {
+    path: frozenset(_PROTOCOL_FIELDS[path])
+    for path in (
+        (),
+        ("scope",),
+        ("timing",),
+        ("request",),
+        ("redaction",),
+        ("collection",),
+    )
+}
 
 
 def _sanitize_payload(payload: dict[str, Any], config: DatasetConfig) -> dict[str, Any]:
@@ -413,7 +504,9 @@ def _sanitize_payload(payload: dict[str, Any], config: DatasetConfig) -> dict[st
     def visit(value: Any, path: tuple[str, ...] | None) -> Any:
         if path in _PROTOCOL_CONSTANTS:
             constants = _PROTOCOL_CONSTANTS[path]
-            if not any(type(value) is type(item) and value == item for item in constants):
+            if not any(
+                type(value) is type(item) and value == item for item in constants
+            ):
                 raise AgentRunDataError("invalid trajectory protocol constant")
             return value
         if path == ("redaction", "fields_removed"):
@@ -428,14 +521,22 @@ def _sanitize_payload(payload: dict[str, Any], config: DatasetConfig) -> dict[st
                 raise AgentRunDataError("invalid trajectory protocol structure")
             for key, expected in fields.items():
                 allowed = expected if isinstance(expected, tuple) else (expected,)
-                if key in value and expected is not None and type(value[key]) not in allowed:
+                if (
+                    key in value
+                    and expected is not None
+                    and type(value[key]) not in allowed
+                ):
                     raise AgentRunDataError("invalid trajectory protocol field type")
         if isinstance(value, dict):
             names = _mapping_keys(value, text, fixed=frozenset(fields))
             return {
                 names[key]: (
-                    "<redacted>" if key not in fields and _SECRET_KEY_RE.search(key)
-                    else visit(item, path + (key,) if key in fields and path is not None else None)
+                    "<redacted>"
+                    if key not in fields and _SECRET_KEY_RE.search(key)
+                    else visit(
+                        item,
+                        path + (key,) if key in fields and path is not None else None,
+                    )
                 )
                 for key, item in value.items()
             }
@@ -449,7 +550,9 @@ def _sanitize_payload(payload: dict[str, Any], config: DatasetConfig) -> dict[st
             return text(value)
         if value is None or isinstance(value, (bool, int, float)):
             return value
-        raise AgentRunDataError("trajectory values must be JSON data, never raw objects or bytes")
+        raise AgentRunDataError(
+            "trajectory values must be JSON data, never raw objects or bytes"
+        )
 
     sanitized = visit(payload, ())
     # This is the sole permitted concrete routing identifier in an episode.
@@ -458,9 +561,15 @@ def _sanitize_payload(payload: dict[str, Any], config: DatasetConfig) -> dict[st
 
 
 def _destination_digest(config: DatasetConfig) -> str:
-    return hashlib.sha256(_canonical_json({
-        "tenant_id": config.tenant_id, "bucket": config.bucket, "prefix": config.prefix,
-    }).encode()).hexdigest()
+    return hashlib.sha256(
+        _canonical_json(
+            {
+                "tenant_id": config.tenant_id,
+                "bucket": config.bucket,
+                "prefix": config.prefix,
+            }
+        ).encode()
+    ).hexdigest()
 
 
 def _content_sha256(payload: dict[str, Any]) -> str:
@@ -499,7 +608,9 @@ def _secure_outbox() -> Path:
             except FileNotFoundError:
                 continue
             if stat.S_ISLNK(mode):
-                raise AgentRunDataError("agent dataset outbox path must not contain symlinks")
+                raise AgentRunDataError(
+                    "agent dataset outbox path must not contain symlinks"
+                )
         outbox.mkdir(mode=0o700, parents=True, exist_ok=True)
         if stat.S_ISLNK(outbox.lstat().st_mode):
             raise AgentRunDataError("agent dataset outbox must not be a symlink")
@@ -512,8 +623,13 @@ def _validated_body(config: DatasetConfig, payload: dict[str, Any]) -> bytes:
     sanitized = _sanitize_payload(payload, config)
     if payload.get("schema_version") != SCHEMA_VERSION:
         raise AgentRunDataError("unsupported trajectory schema")
-    if not all(_SAFE_ID_RE.fullmatch(str(payload.get(field, ""))) for field in ("episode_id", "session_id")):
-        raise AgentRunDataError("trajectory episode and session IDs must be safe stable identifiers")
+    if not all(
+        _SAFE_ID_RE.fullmatch(str(payload.get(field, "")))
+        for field in ("episode_id", "session_id")
+    ):
+        raise AgentRunDataError(
+            "trajectory episode and session IDs must be safe stable identifiers"
+        )
     valid_timing = True
     try:
         for field in ("started_at", "ended_at"):
@@ -521,20 +637,30 @@ def _validated_body(config: DatasetConfig, payload: dict[str, Any]) -> bytes:
     except ValueError:
         valid_timing = False
     if not valid_timing:
-        raise AgentRunDataError("trajectory timestamps must remain valid after redaction")
+        raise AgentRunDataError(
+            "trajectory timestamps must remain valid after redaction"
+        )
     if payload.get("scope", {}).get("tenant_id") != config.tenant_id:
-        raise AgentRunDataError("pending trajectory tenant does not match its destination")
+        raise AgentRunDataError(
+            "pending trajectory tenant does not match its destination"
+        )
     collection = payload.get("collection", {})
     if collection.get("status") != CollectionStatus.PENDING:
-        raise AgentRunDataError("immutable raw trajectory must retain pending delivery status")
+        raise AgentRunDataError(
+            "immutable raw trajectory must retain pending delivery status"
+        )
     if collection.get("content_sha256") != _content_sha256(payload):
         raise AgentRunDataError("finalized trajectory content hash mismatch")
     if sanitized != payload:
-        raise AgentRunDataError("finalized trajectory failed pre-write privacy verification")
+        raise AgentRunDataError(
+            "finalized trajectory failed pre-write privacy verification"
+        )
     return _canonical_json(payload).encode()
 
 
-def _write_outbox(config: DatasetConfig, payload: dict[str, Any], *, conflict: bool = False) -> Path:
+def _write_outbox(
+    config: DatasetConfig, payload: dict[str, Any], *, conflict: bool = False
+) -> Path:
     """Preserve exact finalized bytes in a destination-bound private envelope."""
     body = _validated_body(config, payload)
     envelope = {
@@ -552,12 +678,20 @@ def _write_outbox(config: DatasetConfig, payload: dict[str, Any], *, conflict: b
     with _OUTBOX_LOCK:
         if path.exists():
             if not stat.S_ISREG(path.lstat().st_mode):
-                raise AgentRunDataError("agent dataset outbox record must be a regular file")
+                raise AgentRunDataError(
+                    "agent dataset outbox record must be a regular file"
+                )
             existing = json.loads(path.read_bytes())
             # Delivery diagnostics may differ, but routing and finalized bytes may not.
-            if any(existing.get(key) != envelope[key] for key in (
-                "schema_version", "destination_sha256", "payload_sha256", "payload",
-            )):
+            if any(
+                existing.get(key) != envelope[key]
+                for key in (
+                    "schema_version",
+                    "destination_sha256",
+                    "payload_sha256",
+                    "payload",
+                )
+            ):
                 raise AgentRunDataError("outbox key conflicts with different bytes")
             path.chmod(0o600)
             return path
@@ -574,12 +708,22 @@ def _write_outbox(config: DatasetConfig, payload: dict[str, Any], *, conflict: b
                 os.link(temporary, path, follow_symlinks=False)
             except FileExistsError:
                 if not stat.S_ISREG(path.lstat().st_mode):
-                    raise AgentRunDataError("agent dataset outbox record must be a regular file") from None
+                    raise AgentRunDataError(
+                        "agent dataset outbox record must be a regular file"
+                    ) from None
                 existing = json.loads(path.read_bytes())
-                if any(existing.get(key) != envelope[key] for key in (
-                    "schema_version", "destination_sha256", "payload_sha256", "payload",
-                )):
-                    raise AgentRunDataError("concurrent outbox key conflicts with different bytes") from None
+                if any(
+                    existing.get(key) != envelope[key]
+                    for key in (
+                        "schema_version",
+                        "destination_sha256",
+                        "payload_sha256",
+                        "payload",
+                    )
+                ):
+                    raise AgentRunDataError(
+                        "concurrent outbox key conflicts with different bytes"
+                    ) from None
             path.chmod(0o600)
             directory_fd = os.open(outbox, os.O_RDONLY | os.O_DIRECTORY)
             try:
@@ -596,8 +740,12 @@ def _missing_object(error: Exception) -> bool:
     if isinstance(error, KeyError):  # in-memory injected stores
         return True
     response = getattr(error, "response", {})
-    return isinstance(response, dict) and str(response.get("Error", {}).get("Code")) in {
-        "NoSuchKey", "404", "NotFound",
+    return isinstance(response, dict) and str(
+        response.get("Error", {}).get("Code")
+    ) in {
+        "NoSuchKey",
+        "404",
+        "NotFound",
     }
 
 
@@ -610,7 +758,9 @@ def _put_immutable(config: DatasetConfig, key: str, body: bytes, s3: Any) -> Non
         existing = None
     if existing is not None:
         if existing != body:
-            raise AgentRunDataConflict("immutable trajectory key contains different bytes")
+            raise AgentRunDataConflict(
+                "immutable trajectory key contains different bytes"
+            )
         return
     try:
         s3.put_object(
@@ -634,7 +784,9 @@ def _put_and_verify(config: DatasetConfig, payload: dict[str, Any], s3: Any) -> 
     # Preserve every divergent payload, but make one atomic claim per episode.
     # A competing digest remains visible and is reported as a data-quality conflict.
     episode_digest = hashlib.sha256(payload["episode_id"].encode()).hexdigest()
-    claim_key = "/".join(filter(None, (config.prefix, "episode-index", episode_digest + ".json")))
+    claim_key = "/".join(
+        filter(None, (config.prefix, "episode-index", episode_digest + ".json"))
+    )
     claim = {
         "schema_version": "npa.agent.trajectory-claim.v1",
         "episode_id": payload["episode_id"],
@@ -643,10 +795,17 @@ def _put_and_verify(config: DatasetConfig, payload: dict[str, Any], s3: Any) -> 
     _put_immutable(config, claim_key, _canonical_json(claim).encode(), s3)
     # Raw bytes never assert unverified delivery. Publish a separate immutable
     # receipt only after their exact read-after-write check has succeeded.
-    receipt_key = "/".join(filter(None, (
-        config.prefix, "receipts", episode_digest,
-        payload["collection"]["content_sha256"] + ".json",
-    )))
+    receipt_key = "/".join(
+        filter(
+            None,
+            (
+                config.prefix,
+                "receipts",
+                episode_digest,
+                payload["collection"]["content_sha256"] + ".json",
+            ),
+        )
+    )
     receipt = {
         "schema_version": "npa.agent.trajectory-receipt.v1",
         "episode_id": payload["episode_id"],
@@ -732,7 +891,9 @@ def emit_trajectory(
     except Exception as exc:
         conflict = isinstance(exc, AgentRunDataConflict)
         if conflict:
-            LOGGER.warning("trajectory content conflict; finalized record retained pending")
+            LOGGER.warning(
+                "trajectory content conflict; finalized record retained pending"
+            )
         _write_outbox(config, payload, conflict=conflict)
         return CollectionStatus.PENDING, episode_id
 
@@ -760,20 +921,31 @@ def flush_outbox(
                 continue
             envelope = json.loads(path.read_text(encoding="utf-8"))
             if envelope.get("schema_version") != "npa.agent.trajectory-outbox.v1":
-                raise AgentRunDataError("legacy outbox requires explicit destination reconciliation")
+                raise AgentRunDataError(
+                    "legacy outbox requires explicit destination reconciliation"
+                )
             if envelope.get("destination_sha256") != _destination_digest(config):
-                raise AgentRunDataError("pending trajectory belongs to a different destination")
+                raise AgentRunDataError(
+                    "pending trajectory belongs to a different destination"
+                )
             payload = envelope["payload"]
             body = _validated_body(config, payload)
             expected_name = f"{payload['episode_id']}-{payload['collection']['content_sha256']}.json"
-            if path.name != expected_name or envelope.get("payload_sha256") != hashlib.sha256(body).hexdigest():
-                raise AgentRunDataError("pending trajectory envelope integrity mismatch")
+            if (
+                path.name != expected_name
+                or envelope.get("payload_sha256") != hashlib.sha256(body).hexdigest()
+            ):
+                raise AgentRunDataError(
+                    "pending trajectory envelope integrity mismatch"
+                )
             verify_destination(config, storage=s3)
             _put_and_verify(config, payload, s3)
             path.unlink()
             flushed.append(str(payload["episode_id"]))
         except Exception:
-            LOGGER.debug("pending trajectory retained after scope, integrity or delivery failure")
+            LOGGER.debug(
+                "pending trajectory retained after scope, integrity or delivery failure"
+            )
             continue
     return flushed
 
@@ -817,10 +989,18 @@ def _episode_record(
                 {
                     "sequence": len(events),
                     "phase": "tool",
-                    "tool": str(step.get("tool") or "") if isinstance(step, dict) else "",
-                    "arguments": step.get("arguments", {}) if isinstance(step, dict) else {},
-                    "observation": step.get("observation", {}) if isinstance(step, dict) else {},
-                    "status": "ok" if isinstance(step, dict) and step.get("ok", True) else "error",
+                    "tool": str(step.get("tool") or "")
+                    if isinstance(step, dict)
+                    else "",
+                    "arguments": step.get("arguments", {})
+                    if isinstance(step, dict)
+                    else {},
+                    "observation": step.get("observation", {})
+                    if isinstance(step, dict)
+                    else {},
+                    "status": "ok"
+                    if isinstance(step, dict) and step.get("ok", True)
+                    else "error",
                 }
             )
     apis_used = response.get("apis_used", []) if isinstance(response, dict) else []
@@ -836,11 +1016,28 @@ def _episode_record(
                     "status": "ok",
                 }
             )
-    stopped = str(response.get("stopped_reason") or "") if isinstance(response, dict) else ""
-    refused = bool(response and (response.get("refused") or response.get("needs_confirmation")))
-    cancelled = isinstance(error, asyncio.CancelledError) or stopped in {"cancelled", "canceled"}
-    failed = error is not None or (isinstance(response, dict) and response.get("ok") is False)
-    outcome_status = "cancelled" if cancelled else "refused" if refused else "failed" if failed else "succeeded"
+    stopped = (
+        str(response.get("stopped_reason") or "") if isinstance(response, dict) else ""
+    )
+    refused = bool(
+        response and (response.get("refused") or response.get("needs_confirmation"))
+    )
+    cancelled = isinstance(error, asyncio.CancelledError) or stopped in {
+        "cancelled",
+        "canceled",
+    }
+    failed = error is not None or (
+        isinstance(response, dict) and response.get("ok") is False
+    )
+    outcome_status = (
+        "cancelled"
+        if cancelled
+        else "refused"
+        if refused
+        else "failed"
+        if failed
+        else "succeeded"
+    )
     if refused and isinstance(response, dict):
         events.append(
             {
@@ -859,10 +1056,18 @@ def _episode_record(
             "tool": "",
             "arguments": {},
             "observation": {
-                "response_ok": response.get("ok") if isinstance(response, dict) else False,
+                "response_ok": response.get("ok")
+                if isinstance(response, dict)
+                else False,
                 "error_type": type(error).__name__ if error else "",
             },
-            "status": "cancelled" if cancelled else "rejected" if refused else "error" if failed else "ok",
+            "status": "cancelled"
+            if cancelled
+            else "rejected"
+            if refused
+            else "error"
+            if failed
+            else "ok",
         }
     )
     usage = response.get("usage", {}) if isinstance(response, dict) else {}
@@ -875,7 +1080,10 @@ def _episode_record(
     if grounded:
         routing.update({"input_tokens": 0, "output_tokens": 0})
     elif isinstance(usage, dict):
-        for source, target in (("prompt_tokens", "input_tokens"), ("completion_tokens", "output_tokens")):
+        for source, target in (
+            ("prompt_tokens", "input_tokens"),
+            ("completion_tokens", "output_tokens"),
+        ):
             if source in usage:
                 try:
                     routing[target] = int(usage[source])
@@ -891,7 +1099,9 @@ def _episode_record(
         "episode_id": episode_id,
         "session_id": session_id,
         "request_content": _request_text(payload),
-        "intent": str(response.get("semantic_intent") or response.get("mode") or "chat") if isinstance(response, dict) else "chat",
+        "intent": str(response.get("semantic_intent") or response.get("mode") or "chat")
+        if isinstance(response, dict)
+        else "chat",
         "trajectory": events,
         "outcome": {
             "status": outcome_status,
@@ -934,7 +1144,9 @@ def goal_episode_boundary(
                 storage = storage_factory() if storage_factory else None
             except Exception:
                 storage = _UnavailableStorage()
-                LOGGER.debug("trajectory storage factory unavailable; preserving product execution")
+                LOGGER.debug(
+                    "trajectory storage factory unavailable; preserving product execution"
+                )
             try:
                 flush_outbox(
                     storage=storage,

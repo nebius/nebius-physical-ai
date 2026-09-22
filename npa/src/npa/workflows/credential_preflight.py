@@ -12,6 +12,7 @@ packages or touches infrastructure at import time.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -22,6 +23,7 @@ from npa.workflows.sim2real_health import (
     WARN,
     CheckResult,
     has_failure,
+    run_checks_concurrently,
 )
 
 # Preserve the lightweight default for hosted-inference users. The explicit
@@ -347,23 +349,55 @@ _CHECK_FUNCS: dict[str, Callable[[Any, CredentialProbes], CheckResult]] = {
 }
 
 
-def run_credential_preflight(
-    credentials: Any,
-    *,
-    probes: CredentialProbes | None = None,
-    checks: Iterable[str] | None = None,
-) -> list[CheckResult]:
-    """Run the selected credential checks and return their results in order."""
+def _validate_checks(selected: list[str]) -> None:
+    """Raise if any name in *selected* is not a supported credential check."""
 
-    active_probes = probes or CredentialProbes()
-    selected = list(checks) if checks is not None else list(CREDENTIAL_CHECKS)
     unknown = [name for name in selected if name not in _CHECK_FUNCS]
     if unknown:
         raise ValueError(
             f"unknown credential check(s): {', '.join(unknown)}. "
             f"Choices: {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
         )
-    return [_CHECK_FUNCS[name](credentials, active_probes) for name in selected]
+
+
+def run_credential_preflight(
+    credentials: Any,
+    *,
+    probes: CredentialProbes | None = None,
+    checks: Iterable[str] | None = None,
+) -> list[CheckResult]:
+    """Run the selected credential checks and return their results in order.
+
+    Each check is an independent network probe (HF, NGC, S3, Token Factory,
+    Nebius CLI); see ``run_checks_concurrently`` for the concurrency and
+    ordering contract. Duplicate ``checks`` names are preserved and each
+    re-run; the worker pool is capped at the distinct-check count, since
+    repeating one name gains nothing from proportionally more threads.
+
+    Args:
+        credentials: Resolved credentials object each check reads fields
+            from (see individual ``check_*`` functions for which fields).
+        probes: Injectable side-effecting probes; defaults to presence-only.
+        checks: Check names to run, in return order. Defaults to
+            :data:`CREDENTIAL_CHECKS`. May contain duplicates.
+
+    Returns:
+        One :class:`CheckResult` per entry in ``checks``, in that order.
+
+    Raises:
+        ValueError: ``checks`` contains a name outside
+            :data:`SUPPORTED_CREDENTIAL_CHECKS`.
+    """
+
+    active_probes = probes or CredentialProbes()
+    selected = list(checks) if checks is not None else list(CREDENTIAL_CHECKS)
+    _validate_checks(selected)
+    thunks = [
+        functools.partial(_CHECK_FUNCS[name], credentials, active_probes)
+        for name in selected
+    ]
+    max_workers = min(len(selected), len(SUPPORTED_CREDENTIAL_CHECKS))
+    return run_checks_concurrently(thunks, max_workers=max_workers)
 
 
 __all__ = [

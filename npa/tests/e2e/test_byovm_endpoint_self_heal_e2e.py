@@ -49,33 +49,45 @@ def test_pre_fix_fiftyone_byovm_alias_self_heals_status_and_load_dataset(
     project = os.environ.get("NPA_E2E_BYOVM_FIFTYONE_PROJECT", "e2e-byovm")
     name = os.environ.get("NPA_E2E_BYOVM_FIFTYONE_NAME", "pre-fix-fiftyone")
     cfg_path.parent.mkdir(parents=True)
-    cfg_path.write_text(yaml.safe_dump({
-        "projects": {
-            project: {
-                "workbenches": {
-                    name: {
-                        "endpoint": f"http://{env['host']}:{port}",
-                        "runtime": "byovm",
-                        "app_port": port,
-                        "ssh": {
-                            "host": env["host"],
-                            "user": os.environ.get("NPA_E2E_BYOVM_FIFTYONE_SSH_USER", "ubuntu"),
-                            "key_path": env["ssh_key"],
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "projects": {
+                    project: {
+                        "workbenches": {
+                            name: {
+                                "endpoint": f"http://{env['host']}:{port}",
+                                "runtime": "byovm",
+                                "app_port": port,
+                                "ssh": {
+                                    "host": env["host"],
+                                    "user": os.environ.get(
+                                        "NPA_E2E_BYOVM_FIFTYONE_SSH_USER", "ubuntu"
+                                    ),
+                                    "key_path": env["ssh_key"],
+                                },
+                            },
                         },
                     },
                 },
-            },
-        },
-    }))
+            }
+        )
+    )
 
-    status = runner.invoke(app, ["workbench", "fiftyone", "-p", project, "-n", name, "status"])
+    status = runner.invoke(
+        app, ["workbench", "fiftyone", "-p", project, "-n", name, "status"]
+    )
     assert status.exit_code == 0, status.output
 
-    healed = yaml.safe_load(cfg_path.read_text())["projects"][project]["workbenches"][name]
+    healed = yaml.safe_load(cfg_path.read_text())["projects"][project]["workbenches"][
+        name
+    ]
     assert healed["endpoint_strategy"] == "ssh_fallback"
     assert healed["service_port"] == port
 
-    dataset_name = os.environ.get("NPA_E2E_BYOVM_FIFTYONE_DATASET", "npa_e2e_endpoint_self_heal")
+    dataset_name = os.environ.get(
+        "NPA_E2E_BYOVM_FIFTYONE_DATASET", "npa_e2e_endpoint_self_heal"
+    )
     loaded = runner.invoke(
         app,
         [

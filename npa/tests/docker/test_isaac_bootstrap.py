@@ -137,6 +137,9 @@ case "${{1:-}}" in
             mkdir -p "$dist"
             printf 'Metadata-Version: 2.1\\nName: %s\\nVersion: %s\\n' "$name" "$version" \\
               > "$dist/METADATA"
+            if [ "$name" = "isaaclab" ]; then
+              printf 'License: BSD-3-Clause\\n' >> "$dist/METADATA"
+            fi
             printf 'Wheel-Version: 1.0\\n' > "$dist/WHEEL"
           done < "$reqfile"
         fi
@@ -298,6 +301,34 @@ def test_bootstrap_accepts_and_downloads_when_eula_is_unset(tmp_path: Path) -> N
     assert result.stdout.strip()
 
 
+def test_isaac3_bootstrap_verifies_the_reviewed_lab_wheel_license(
+    tmp_path: Path,
+) -> None:
+    harness = Harness(tmp_path)
+    result = harness.run(
+        "ensure",
+        ISAAC_SIM_VERSION="6.0.1.0",
+        ISAAC_LAB_VERSION="3.0.0b2.post1",
+        NPA_ISAAC_WHEELS_FILE=str(ISAAC3_WHEELS),
+        NPA_ISAAC_OSS_DEPS_FILE=str(ISAAC3_OSS_DEPS),
+        NPA_ISAAC_LAB_METADATA_LICENSE="BSD-3-Clause",
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_isaac3_bootstrap_rejects_changed_lab_wheel_license(tmp_path: Path) -> None:
+    result = Harness(tmp_path).run(
+        "ensure",
+        ISAAC_SIM_VERSION="6.0.1.0",
+        ISAAC_LAB_VERSION="3.0.0b2.post1",
+        NPA_ISAAC_WHEELS_FILE=str(ISAAC3_WHEELS),
+        NPA_ISAAC_OSS_DEPS_FILE=str(ISAAC3_OSS_DEPS),
+        NPA_ISAAC_LAB_METADATA_LICENSE="unexpected-license",
+    )
+    assert result.returncode == EX_SOFTWARE
+    assert "isaaclab wheel license" in result.stderr
+
+
 def test_refusal_links_the_terms_the_operator_is_accepting(tmp_path: Path) -> None:
     result = Harness(tmp_path).run("ensure", ACCEPT_EULA="")
     assert "nvidia.com" in result.stderr
@@ -329,9 +360,7 @@ def test_bootstrap_refuses_a_cold_cache_without_flock(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("value", ["Y", "YES", "yes", "y", "1", "true"])
-def test_bootstrap_migrates_affirmative_values(
-    tmp_path: Path, value: str
-) -> None:
+def test_bootstrap_migrates_affirmative_values(tmp_path: Path, value: str) -> None:
     harness = Harness(tmp_path)
     result = harness.run("ensure", ACCEPT_EULA=value)
     assert result.returncode == 0, result.stderr
@@ -557,6 +586,39 @@ def test_changing_bootstrap_source_changes_the_cache_stamp(tmp_path: Path) -> No
     assert before != stamp()
 
 
+def test_image_site_hook_recursively_processes_image_pth_files(tmp_path: Path) -> None:
+    """The cache interpreter must see packages exposed by image-side .pth hooks."""
+
+    harness = Harness(tmp_path)
+    image_site = harness.base_site
+    nested_site = image_site / "nested-site"
+    nested_module = nested_site / "image_nested_dependency.py"
+    nested_site.mkdir(parents=True)
+    nested_module.write_text("VALUE = 'visible'\n", encoding="utf-8")
+    (image_site / "nested-dependency.pth").write_text("nested-site\n", encoding="utf-8")
+    result = harness.run("ensure")
+    assert result.returncode == 0, result.stderr
+    cache_site = harness.stamp_dir() / "venv/lib/python3.11/site-packages"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import site; "
+                f"site.addsitedir({str(cache_site)!r}); "
+                "import image_nested_dependency as dependency; "
+                "print(dependency.VALUE)"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "visible"
+
+
 # --------------------------------------------------------------------------------------
 # Concurrency: up to 8 pods per GPU node race one cache volume
 # --------------------------------------------------------------------------------------
@@ -644,10 +706,12 @@ def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
 
 def test_baked_imageio_uses_snapshot_ffmpeg_without_nested_executable() -> None:
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
     assert "  ffmpeg \\" in installer
     assert "--no-binary imageio-ffmpeg" in installer
-    assert "test -z \"$(find \"$ISAAC_VENV\" -type f" in installer
+    assert 'test -z "$(find "$ISAAC_VENV" -type f' in installer
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
 
 
@@ -724,14 +788,21 @@ def test_isaac_image_normalizes_bootstrap_scripts_for_the_non_root_user() -> Non
 
 
 def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
-    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
     assert "ARG ISAAC_LAB_VERSION=3.0.0b2.post1" in dockerfile
     assert "ARG ISAAC_SIM_VERSION=6.0.1.0" in dockerfile
-    assert "ARG ISAAC_LAB_SRC_COMMIT=ffff603eafc6b74264a5261cc0183d6a65390d78" in dockerfile
+    assert (
+        "ARG ISAAC_LAB_SRC_COMMIT=ffff603eafc6b74264a5261cc0183d6a65390d78"
+        in dockerfile
+    )
     assert "NPA_ISAAC_PYTHON_MINOR=3.12" in dockerfile
     assert "isaac3-nvidia-wheels.txt" in dockerfile
     assert "isaac3-oss-deps.txt" in dockerfile
-    build_script = (COMMON.parent / "isaac-lab" / "build.sh").read_text(encoding="utf-8")
+    build_script = (COMMON.parent / "isaac-lab" / "build.sh").read_text(
+        encoding="utf-8"
+    )
     assert "sed -n 's/^ARG ISAAC_LAB_VERSION=//p'" in build_script
     assert "read_pin isaac-lab" not in build_script
 
@@ -740,9 +811,9 @@ def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:
     """Isaac 3 must not silently install the legacy Isaac dependency closure."""
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert 'sed -E \'/^imageio-ffmpeg==/d\' "${OSS_DEPS_FILE}"' in installer
+    assert "sed -E '/^imageio-ffmpeg==/d' \"${OSS_DEPS_FILE}\"" in installer
     assert (
-        'sed -E \'/^imageio-ffmpeg==/d\' "${COMMON_DIR}/isaac-oss-deps.txt"'
+        "sed -E '/^imageio-ffmpeg==/d' \"${COMMON_DIR}/isaac-oss-deps.txt\""
         not in installer
     )
 
@@ -765,8 +836,8 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in installer
     assert "linux-libc-dev=5.15.0-186.196" in installer
     assert "linux-libc-dev=6.8.0-138.138" in installer
-    assert 'NPA_UBUNTU_SUITE:-jammy' in installer
-    assert 'NPA_ISAAC_PYTHON_MINOR:-3.11' in installer
+    assert "NPA_UBUNTU_SUITE:-jammy" in installer
+    assert "NPA_ISAAC_PYTHON_MINOR:-3.11" in installer
     assert '"$ISAAC_PYTHON_MINOR" = 3.12' in installer
 
 
@@ -806,7 +877,10 @@ def test_isaac_image_installs_a_cli_for_skypilot_setup() -> None:
 
     assert "npa_cli.sh /usr/local/bin/npa" in dockerfile
     assert "env -u PYTHONPATH python3 -c 'import npa'" in dockerfile
-    assert 'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"' in launcher
+    assert (
+        'exec "${NPA_BAKED_PYTHON:-/opt/npa/sim/venv/bin/python}" -m npa "$@"'
+        in launcher
+    )
 
 
 def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
@@ -839,7 +913,9 @@ def test_shim_derives_internal_kit_acceptance_only_after_shared_parser() -> None
     assert "PRIVACY_CONSENT" not in shim
 
 
-def test_shim_defaults_internal_kit_acceptance_without_manual_env(tmp_path: Path) -> None:
+def test_shim_defaults_internal_kit_acceptance_without_manual_env(
+    tmp_path: Path,
+) -> None:
     harness = Harness(tmp_path)
     result = subprocess.run(
         [

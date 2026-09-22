@@ -170,7 +170,13 @@ def train_student(
         )
 
     steps = _estimate_steps(dataset_path, num_epochs, batch_size)
-    logger.info("Converted %d epochs to %d optimizer steps (dataset: %s, batch_size: %d)", num_epochs, steps, dataset_path, batch_size)
+    logger.info(
+        "Converted %d epochs to %d optimizer steps (dataset: %s, batch_size: %d)",
+        num_epochs,
+        steps,
+        dataset_path,
+        batch_size,
+    )
 
     cmd = build_train_command(
         str(dataset_path),
@@ -189,6 +195,7 @@ def train_student(
     # Force offline mode so LeRobot loads the local dataset without
     # trying to resolve repo_id on HuggingFace Hub.
     import os
+
     env = {**os.environ, "HF_HUB_OFFLINE": "1"}
 
     if stream:
@@ -206,7 +213,9 @@ def train_student(
         proc.wait()
         exit_code = proc.returncode
     else:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=86400, env=env)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=86400, env=env
+        )
         exit_code = result.returncode
 
     checkpoint_path = output_dir / "checkpoints" / "last" / "pretrained_model"
@@ -222,8 +231,7 @@ def train_student(
 
     if exit_code != 0:
         raise StudentTrainingError(
-            f"lerobot-train failed (exit {exit_code}). "
-            f"Check logs in {output_dir}"
+            f"lerobot-train failed (exit {exit_code}). Check logs in {output_dir}"
         )
 
     return outcome
