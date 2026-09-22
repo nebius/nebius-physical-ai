@@ -187,9 +187,9 @@ This baseline includes an execution modification; it is not a measurement of
 native RLC. Its score is separate from the historical 0.50 result above, whose
 policy process lifecycle differed. These ten development cases are reused;
 this result does not demonstrate generalization or a reliable full-success gain.
-Comet12 still needs the same evaluation before the baseline tournament and
-separate reporting gate can be completed. The reporting cases
-are separate within this campaign but have some historical exposure.
+The released-baseline development comparison is now complete below. The
+separate reporting gate remains outstanding; its cases have some historical
+exposure.
 
 ### Native RLC development result
 
@@ -210,7 +210,7 @@ SHA-256 is
 The transition-refresh candidate has higher development Q (0.500000), but fewer
 full successes (1/10). It therefore has not met the local task target requiring
 both Q and full successes to match or exceed the strongest qualified baseline.
-Comet12 and the separate reporting gate remain outstanding.
+The separate reporting gate remains outstanding.
 
 ### Native Comet50 development result
 
@@ -227,9 +227,33 @@ source is `13f07569cd95207147be6c5ed5f166236c88b1d6`. The verified aggregate
 artifact SHA-256 is
 `ceb168bd42c84894b12bc63a02b2a403985634a854b6fb2ebabe04770da6ba48`.
 This result ranks below the transition-refresh candidate on development Q and
-full successes. The remaining Comet12 baseline and reporting evaluation still
-determine whether the candidate meets the local task target; this result does
-not establish challenge-wide competitiveness or the official policy-GPU limit.
+full successes. Native RLC remains the stronger baseline. This result does not
+establish challenge-wide competitiveness or the official policy-GPU limit.
+
+### Native Comet12 development result
+
+The released Comet12 checkpoint completed the same ten development cases with
+mean **Q=0.400000**, **2/10 full successes**, and **7,504.7 mean simulator steps**.
+Instances 318 and 320 succeeded; 312 and 317 scored Q=2/3; 313 and 319 scored
+Q=1/3; the other four scored zero. It uses the native 32-action chunk, five-step
+replanning, three-chunk ensemble, and a fresh policy process for every episode.
+
+A separate legacy submission changed the shared staged-source setting while
+this panel was running. The controller's strict configuration-identity check
+then stopped supervision; its attempted cancellation failed on the same check.
+All episode workers continued and completed. The owned CPU operator recovered
+the complete aggregate through the frozen Workbench implementation. Every
+original metric file and video was downloaded and hashed, every video fully
+decoded, and the published aggregate read back and verified. No episodes were
+rerun. The managed workflow itself is not recorded as successful.
+
+The checkpoint revision is `a3d85eb978b58501c99f6c927a18d52ec6c1532c`,
+and Comet source is `4bb2aa7bb2da32614cac128ebb4b2f96eb66e5b5`.
+The verified aggregate artifact SHA-256 is
+`8dcaca605801685df8157609e7874fc089d7b66870ecc05f88156569b0459546`.
+Native RLC remains the strongest completed baseline on both selection metrics.
+Comet12 is the stronger of the two released Comet training parents; this result
+alone does not establish a fine-tuning gain or pass the separate reporting gate.
 
 ### Released Comet checkpoint qualification
 
