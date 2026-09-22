@@ -437,6 +437,14 @@ def test_robocasa_python_repository_uses_pinned_scoped_signing_key() -> None:
     assert "rm -f /tmp/deadsnakes-ppa.gpg.b64" in text
 
 
+def test_robocasa_image_verifies_pinned_fixture_registry_inventory() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "fixtures/fixture_registry" in text
+    assert "find . -maxdepth 1 -type f -name '*.yaml' -print0" in text
+    assert "f8bfac93dc0dffbadb943e84c078848e4ba5d67320e63a47d3cfc23ce9e93c0a" in text
+
+
 def test_robocasa_runtime_purges_vulnerable_builder_headers_before_smoke() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 

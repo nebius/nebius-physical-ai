@@ -1664,6 +1664,45 @@ def test_asset_catalog_uses_immutable_revisions() -> None:
     }
 
 
+def test_fixture_asset_publish_preserves_source_registry(tmp_path: Path) -> None:
+    fixture_archive = next(
+        archive
+        for archive in capabilities._asset_archives()
+        if archive.filename == "fixtures.zip"
+    )
+    assert fixture_archive.publish_path == "fixtures/accessories"
+    assert fixture_archive.required_path == "fixtures/accessories"
+
+    assets_root = tmp_path / "assets"
+    fixture_registry = assets_root / "fixtures" / "fixture_registry"
+    fixture_registry.mkdir(parents=True)
+    wall = fixture_registry / "wall.yaml"
+    cabinet = fixture_registry / "cabinet.yaml"
+    wall.write_text("wall: pinned-source\n", encoding="utf-8")
+    cabinet.write_text("cabinet: pinned-source\n", encoding="utf-8")
+    stale_accessory = assets_root / "fixtures" / "accessories" / "stale.txt"
+    stale_accessory.parent.mkdir(parents=True)
+    stale_accessory.write_text("stale", encoding="utf-8")
+
+    source_zip = tmp_path / "fixtures.zip"
+    with ZipFile(source_zip, "w") as archive_zip:
+        archive_zip.writestr("fixtures/accessories/stool/model.xml", "<mujoco/>")
+    receipt = capabilities._asset_receipt_path(
+        assets_root / ".npa_asset_fetch", fixture_archive
+    )
+    capabilities._stage_publish_and_receipt(
+        fixture_archive, source_zip, assets_root, receipt
+    )
+
+    assert wall.read_text(encoding="utf-8") == "wall: pinned-source\n"
+    assert cabinet.read_text(encoding="utf-8") == "cabinet: pinned-source\n"
+    assert not stale_accessory.exists()
+    assert (assets_root / "fixtures" / "accessories" / "stool" / "model.xml").read_text(
+        encoding="utf-8"
+    ) == "<mujoco/>"
+    assert capabilities._asset_receipt_is_valid(receipt, fixture_archive, assets_root)
+
+
 def test_asset_partial_fetch_retries_without_completion_receipt(tmp_path: Path) -> None:
     assets_root = tmp_path / "assets"
     state_root = assets_root / ".npa_asset_fetch"

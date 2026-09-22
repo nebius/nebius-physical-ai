@@ -231,6 +231,10 @@ RUN git init /opt/robocasa/source \
     && git -C /opt/robocasa/source checkout --detach FETCH_HEAD \
     && test "$(git -C /opt/robocasa/source rev-parse HEAD)" = \
       "${ROBOCASA_SOURCE_COMMIT}" \
+    && test "$(cd /opt/robocasa/source/robocasa/models/assets/fixtures/fixture_registry \
+      && find . -maxdepth 1 -type f -name '*.yaml' -print0 \
+      | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)" = \
+      "f8bfac93dc0dffbadb943e84c078848e4ba5d67320e63a47d3cfc23ce9e93c0a" \
     && base64 --decode /opt/robocasa/derivative/robocasa-npa-act.patch.b64 \
       > /tmp/robocasa-npa-act.patch \
     && echo \

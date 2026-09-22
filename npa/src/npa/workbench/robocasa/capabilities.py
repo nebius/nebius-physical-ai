@@ -415,7 +415,12 @@ def _asset_archives() -> tuple[_AssetArchive, ...]:
             "generative_textures",
             "generative_textures",
         ),
-        _robocasa_asset("fixtures.zip", ".", "fixtures", "fixtures/accessories"),
+        _robocasa_asset(
+            "fixtures.zip",
+            ".",
+            "fixtures/accessories",
+            "fixtures/accessories",
+        ),
         _robocasa_asset(
             "objaverse.zip", "objects", "objects/objaverse", "objects/objaverse"
         ),
