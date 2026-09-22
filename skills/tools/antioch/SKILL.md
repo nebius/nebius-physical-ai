@@ -1,12 +1,17 @@
 ---
 name: antioch
-description: Use when deploying, operating, debugging, or composing the Antioch Workbench integration and its offline policy-data contract.
+description: Use when deploying, operating, debugging, or composing the Antioch Workbench integration, live OpenPI inference, and dataset-based policy training.
 ---
 
 # Antioch Workbench
 
 Use the supported structured Antioch CLI only. Never call undocumented HTTP
 endpoints, print identity/config/environment data, or inspect unrelated runs.
+
+Start at [the partner catalog](../../../workflows/partners/antioch/README.md).
+The live OpenPI pickup runs pretrained-policy inference. The separate
+`antioch-offline-policy-train.yaml` collects a completed dataset before ACT
+training; "offline" describes the learning input, not provider connectivity.
 
 ## Before spending
 

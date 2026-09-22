@@ -1,5 +1,11 @@
 # Antioch + OpenPI live example
 
+This project is the simulator source for the
+[partner live pickup runbook](../../../workflows/partners/antioch/openpi-live-pickup.md).
+It performs inference with a pretrained π0.5 checkpoint and does not train or
+update model weights. Dataset-based ACT training is a separate entry in the
+[Antioch workflow catalog](../../../workflows/partners/antioch/README.md).
+
 This public-source project runs a real Isaac Sim Franka scene in an Antioch
 livestream and sends its two current 224x224 camera frames and robot state to an
 external OpenPI pi0.5 DROID policy. It applies only validated finite `[15, 8]`

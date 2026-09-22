@@ -86,7 +86,7 @@ skills:
         path: npa/tests/agent_eval/test_access_approval.py
   - name: antioch
     category: tools
-    when_to_use: "Deploy, operate, debug, or compose Antioch simulation and strict offline policy-data collection."
+    when_to_use: "Deploy, operate, debug, or compose Antioch simulation, live OpenPI inference, and dataset-based policy training."
     path: skills/tools/antioch/SKILL.md
     smoke:
       - type: cli_help
@@ -94,7 +94,7 @@ skills:
         contains: "input-path"
       - type: npa_workflow_yaml
         paths:
-          - workflows/testing/antioch-offline-policy-train.yaml
+          - workflows/partners/antioch/antioch-offline-policy-train.yaml
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."

@@ -5,8 +5,10 @@ metadata:
   name: antioch-offline-policy-train
   description: >
     Run an immutable Antioch simulation suite through the deployed CPU control
-    plane, validate its explicit offline trajectory contract, and train a real
-    LeRobot ACT policy. This is offline imitation learning, not online PPO/RSL-RL.
+    plane, validate its trajectory export, and train a LeRobot ACT policy from
+    the completed dataset. The default cartpole example runs one optimizer step
+    to check the data and checkpoint path. Live OpenPI pickup uses a separate
+    pretrained-policy inference runbook.
 
 config:
   bucket: example-bucket

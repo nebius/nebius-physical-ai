@@ -10,7 +10,7 @@ from npa.orchestration.npa_workflow import build_plan, load_spec
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SPEC_PATH = REPO_ROOT / "workflows/testing/antioch-offline-policy-train.yaml"
+SPEC_PATH = REPO_ROOT / "workflows/partners/antioch/antioch-offline-policy-train.yaml"
 
 
 def _option_value(argv: list[str], option: str) -> str:

@@ -6,6 +6,12 @@ CLI, reconciles retries, collects checks/logs/results/Rerun files, and optionall
 publishes a strict LeRobotDataset v3 for offline policy training. Antioch executes
 simulation on its managed infrastructure; this image contains no simulator.
 
+Choose a flow in the [Antioch partner catalog](../../workflows/partners/antioch/README.md).
+The live OpenPI π0.5 pickup performs inference with an existing checkpoint.
+The separate ACT training workflow learns from a completed trajectory dataset;
+that dataset-based learning is what "offline" means here. Collection and training
+still use remote services.
+
 ## Authentication and runtime boundary
 
 Install Antioch's CLI normally and authenticate once as the operator. Confirm the
@@ -123,11 +129,12 @@ redacted form. It does not construct undocumented service URLs.
 
 ## Continuing OpenPI live demonstration
 
-`npa/examples/antioch-openpi-live` is a separate live-control example, not an
-offline dataset claim. It renders a real Franka scene and two current policy
-cameras, sends observations through an authenticated TLS connection to the
+The [OpenPI live pickup runbook](../../workflows/partners/antioch/openpi-live-pickup.md)
+uses `npa/examples/antioch-openpi-live` for pretrained-policy inference. It renders
+a real Franka scene and two current policy cameras, sends observations through
+an authenticated TLS connection to the
 persistent OpenPI service, requires exact finite `[15, 8]` action chunks, and
-applies at most five validated targets per observation at a nominal 15 Hz. Joint
+executes up to 15 validated targets per pickup chunk at 15 Hz of simulation time. Joint
 limits, a per-target delta bound, a response-age deadline, and reconnect backoff
 fail closed into safe hold. Report measured rates and latency; this is not hard
 real-time control.
@@ -443,9 +450,13 @@ the idempotent operation record before the remote run starts. Collection always
 uses those immutable values. Missing metadata fails before submission; there is
 no cartpole fallback and a later collector cannot silently relabel a dataset.
 
-The executable example
-`workflows/testing/antioch-offline-policy-train.yaml` follows
-collection with real LeRobot ACT training and publishes a genuine checkpoint.
+The [partner workflow](../../workflows/partners/antioch/antioch-offline-policy-train.yaml)
+follows collection with LeRobot ACT training and publishes a checkpoint.
+Its defaults use cartpole trajectories and one optimizer step to exercise the
+data and checkpoint path. They do not establish policy learning or reproduce
+the live π0.5 cube pickup. Training starts after collection completes and uses
+the saved dataset; the live pickup instead queries an existing π0.5 checkpoint
+as the simulation advances.
 The `workbench.antioch.run` toolRef reads its idempotency state identity from
 `config.antioch_state_id`. When a workflow contains multiple Antioch stages, set
 a distinct `antioch_state_id` in each state's `params`; retries of the same stage

@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "d1789891ea67c663402fe932df551ba78b2c9756bef8ef6268699cc8eddb0b00",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and the two-stage plan passed after relocation to the partner catalog.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/partners/antioch/antioch-offline-policy-train.yaml --json",
+        "npa workbench workflow plan-spec workflows/partners/antioch/antioch-offline-policy-train.yaml --run-id preview --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The resolved plan collects a completed Antioch dataset, then trains LeRobot ACT. Config, resources, stage graph, I/O and workflow identity are unchanged by relocation. Defaults exercise one training step on cartpole data; this flow does not train or run the live pi0.5 pickup.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_antioch_workflow.py",
+        "antioch-offline-policy-train.yaml"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The example bucket must be replaced by an authorized writable destination; no storage operation was performed during catalog relocation.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "An immutable Antioch project and valid trajectory artifacts must be staged and checked with their consuming readers before execution.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Antioch adapter authentication and S3 access must be checked privately for the intended run; this documentation change performs no provider calls.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The adapter and LeRobot worker images must be selected and checked for the submitted run; no image was built or pulled for this relocation.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The separately deployed Antioch adapter, simulator capacity, and configured trainer GPU must be checked before execution; no simulation or training was launched.",
+      "evidence": []
+    }
+  }
+}

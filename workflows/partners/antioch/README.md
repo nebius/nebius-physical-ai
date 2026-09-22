@@ -1,4 +1,39 @@
-# Antioch → Nebius XR1 robot learning
+# Antioch workflows
+
+Choose the entry for the operation you want to run:
+
+| Operation | Entry | Execution |
+| --- | --- | --- |
+| Live π0.5 cube pickup | [OpenPI live pickup runbook](openpi-live-pickup.md) | Antioch simulation sends current cameras and state to a pretrained OpenPI policy on Nebius and applies its actions. No weights are trained. |
+| Collect trajectories and train ACT | [ACT workflow YAML](antioch-offline-policy-train.yaml) | Collect an immutable dataset through the Antioch adapter, then train LeRobot ACT on Nebius. |
+| Fine-tune and evaluate XR1 | [XR1 training YAML](xr1-antioch-finetune.yaml) and the runbook below | Collect robot demonstrations, fine-tune XR1 on Nebius, then evaluate the selected checkpoint in Antioch. |
+
+"Offline training" means training from a completed, saved dataset. Collection
+and training can both use remote services. The recorded OpenPI pickup is a
+separate live inference flow: observations and actions pass between the simulator
+and an existing policy while the scenario runs.
+
+## Dataset-based ACT training
+
+The ACT workflow first waits for Antioch collection and its `_SUCCESS.json`, then
+passes the exported LeRobotDataset v3 to the policy trainer. Its cartpole defaults
+and single optimizer step exercise data conversion and checkpoint publication;
+they do not establish learned task performance or train the π0.5 pickup policy.
+
+Validate and inspect this partner workflow from the repository root:
+
+```bash
+npa workbench workflow validate-spec workflows/partners/antioch/antioch-offline-policy-train.yaml --json
+npa workbench workflow plan-spec workflows/partners/antioch/antioch-offline-policy-train.yaml --run-id preview --json
+```
+
+The example bucket, staged project, deployed adapter, credentials, and trainer
+image must be prepared for a real run. See the
+[adapter guide](../../../docs/workbench/antioch.md) and
+[readiness record](antioch-offline-policy-train.readiness.json). Validation and
+planning do not launch simulation or training.
+
+## Antioch → Nebius XR1 robot learning
 
 This pipeline fine-tunes **Xiaomi-Robotics-1 5B** on simulated dual-Franka
 pick-and-place demonstrations and evaluates the resulting robot action policy
@@ -16,7 +51,7 @@ publication. Antioch collection, transfer, and closed-loop evaluation are
 operator steps documented in the [complete runbook](../../../docs/workbench/cookbooks/xr1-antioch.md).
 The YAML alone does not launch the entire simulation loop.
 
-## Run it
+### Run it
 
 Follow the [Antioch Workbench skill](../../../skills/workflows/antioch-workbench/SKILL.md)
 for project setup, SDK version, credentials, collection, training, and evaluation.
@@ -40,7 +75,7 @@ The YAML declares their S3 contracts and publishes the selected model under
 short-lived signed GET/PUT URLs; static S3 keys stay with the operator and
 Nebius training worker. Transfers are verified by complete readback.
 
-## Recorded result
+### Recorded result
 
 The [measured evidence](../../../docs/workbench/evidence/xr1-antioch-rtxpro.json)
 records the training YAML checksum and the run results.
