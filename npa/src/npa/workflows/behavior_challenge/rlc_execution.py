@@ -17,11 +17,13 @@ _NATIVE = "native"
 _FINAL_STAGE_BACKTRACK = "final-stage-backtrack"
 _ADAPTIVE_SHORT_CHUNK = "adaptive-short-chunk"
 _ADAPTIVE_TRANSITION_REFRESH = "adaptive-short-chunk-transition-refresh"
+_NATIVE_TRANSITION_REFRESH = "native-stage-transition-refresh"
 _STOCK_VARIANTS = (
     _NATIVE,
     _FINAL_STAGE_BACKTRACK,
     _ADAPTIVE_SHORT_CHUNK,
     _ADAPTIVE_TRANSITION_REFRESH,
+    _NATIVE_TRANSITION_REFRESH,
 )
 _NATIVE_EXECUTION = (26, 4, 20, 3, 2)
 _NATIVE_WRAPPER_SHA256 = (
@@ -145,6 +147,8 @@ def configure_execution(policy: Any, variant: str) -> Any:
     _verify_native_policy(policy)
     if variant == _FINAL_STAGE_BACKTRACK:
         return _FinalStageBacktrackPolicy(policy)
+    if variant == _NATIVE_TRANSITION_REFRESH:
+        return _NativeTransitionRefreshPolicy(policy)
     if variant == _ADAPTIVE_TRANSITION_REFRESH:
         return _AdaptiveTransitionRefreshPolicy(policy)
     return _AdaptiveShortChunkPolicy(policy)
@@ -163,17 +167,10 @@ def execution_provenance(variant: str, *, selected: bool) -> Mapping[str, Any] |
     """
     if variant == _NATIVE:
         return None
-    adaptive_variants = {_ADAPTIVE_SHORT_CHUNK, _ADAPTIVE_TRANSITION_REFRESH}
-    if variant in adaptive_variants and selected:
+    if variant in {_NATIVE_TRANSITION_REFRESH, _ADAPTIVE_TRANSITION_REFRESH}:
+        return _refresh_provenance(variant, selected=selected)
+    if variant == _ADAPTIVE_SHORT_CHUNK and selected:
         raise ValueError("Adaptive short chunks are supported for stock weights only")
-    if variant == _ADAPTIVE_TRANSITION_REFRESH:
-        return MappingProxyType(
-            {
-                "parent_variant": _ADAPTIVE_SHORT_CHUNK,
-                "intervention": "refresh_action_queue_after_accepted_stage_transition",
-                "evaluation": "experimental_no_aggregate_gain_established",
-            }
-        )
     identity = _EXPERIMENT_IDENTITIES.get((variant, selected))
     if identity is None:
         raise ValueError("Unsupported RLC execution variant")
@@ -185,6 +182,34 @@ def execution_provenance(variant: str, *, selected: bool) -> Mapping[str, Any] |
             "evaluation": "experimental_no_aggregate_gain_established",
         }
     )
+
+
+def _refresh_provenance(variant: str, *, selected: bool) -> Mapping[str, Any]:
+    if selected:
+        raise ValueError("Stage refresh is supported for stock weights only")
+    native = variant == _NATIVE_TRANSITION_REFRESH
+    provenance: dict[str, Any] = {
+        "parent_variant": _NATIVE if native else _ADAPTIVE_SHORT_CHUNK,
+        "intervention": "refresh_action_queue_after_accepted_stage_transition",
+        "evaluation": "experimental_no_aggregate_gain_established",
+    }
+    if native:
+        provenance.update(
+            intervention=(
+                "refresh_action_queue_and_inpainting_prefix_after_accepted_stage_transition"
+            ),
+            native_settings={
+                "actions_to_execute": 26,
+                "actions_to_keep": 4,
+                "execute_in_n_steps": 20,
+                "prediction_history": 3,
+                "votes_to_promote": 2,
+            },
+            shorter_chunks=False,
+            bounded_resamples=1,
+            transition_source="native_classifier_vote",
+        )
+    return MappingProxyType(provenance)
 
 
 class _EpisodeTelemetry:
@@ -492,3 +517,36 @@ class _AdaptiveTransitionRefreshPolicy(_AdaptiveShortChunkPolicy):
         }
         self._telemetry["events"].append(event)
         _LOGGER.info("%s%s", _HORIZON_EVENT, json.dumps(event, sort_keys=True))
+
+
+class _NativeTransitionRefreshPolicy(_AdaptiveTransitionRefreshPolicy):
+    """Isolate stage refresh while preserving every native execution setting."""
+
+    _VARIANT = _NATIVE_TRANSITION_REFRESH
+
+    def __init__(self, policy: Any) -> None:
+        super().__init__(policy)
+        self._native_stage_update = policy.update_current_stage
+        self._vote_transition: tuple[int, int] | None = None
+        policy.update_current_stage = MethodType(self._observe_stage_vote, policy)
+
+    def _observe_stage_vote(self, native_self: Any, logits: Any) -> Any:
+        before = int(native_self.current_stage)
+        result = self._native_stage_update(logits)
+        after = int(native_self.current_stage)
+        if after != before:
+            self._vote_transition = (before, after)
+        return result
+
+    def _act_once(self, observation: Mapping[str, Any]) -> tuple[Any, int, int]:
+        self._vote_transition = None
+        action, _before, after = super()._act_once(observation)
+        if self._vote_transition is None:
+            return action, after, after
+        before, after = self._vote_transition
+        return action, before, after
+
+    def _select_profile(self) -> str:
+        if self.policy.config != self._native_config:
+            raise ValueError("Native stage refresh execution settings changed")
+        return "coarse"

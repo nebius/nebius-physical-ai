@@ -241,6 +241,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
             "final-stage-backtrack",
             "adaptive-short-chunk",
             "adaptive-short-chunk-transition-refresh",
+            "native-stage-transition-refresh",
         },
         "rlc-selected": {"native", "transition-refresh", "final-stage-backtrack"},
         "comet12": {"native"},

@@ -273,6 +273,7 @@ def test_stock_server_execution_variant_parser_keeps_native_default(server):
         "final-stage-backtrack",
         "adaptive-short-chunk",
         "adaptive-short-chunk-transition-refresh",
+        "native-stage-transition-refresh",
     ):
         parsed = server.parser().parse_args([*common, "--execution-variant", variant])
         assert parsed.execution_variant == variant

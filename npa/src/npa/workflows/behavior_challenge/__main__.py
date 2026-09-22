@@ -35,6 +35,7 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
             "final-stage-backtrack",
             "adaptive-short-chunk",
             "adaptive-short-chunk-transition-refresh",
+            "native-stage-transition-refresh",
         ),
         default="native",
     )

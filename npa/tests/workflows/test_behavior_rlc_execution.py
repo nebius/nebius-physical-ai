@@ -288,6 +288,111 @@ def test_adaptive_pinned_native_act_keeps_queue_across_profile_boundary():
     assert telemetry["transition_queue_refreshes"] == 0
 
 
+@pytest.mark.parametrize("stage", [0, 4, 5])
+def test_native_stage_refresh_matches_native_without_accepted_transition(stage):
+    control = B1KPolicyWrapper()
+    control_calls = install_pinned_native_act(control)
+    refreshed = B1KPolicyWrapper()
+    refresh_calls = install_pinned_native_act(refreshed)
+    wrapper = rlc_execution.configure_execution(
+        refreshed, "native-stage-transition-refresh"
+    )
+    original_config = refreshed.config
+    control.current_stage = refreshed.current_stage = stage
+    observation = {
+        "task_id": np.array([1]),
+        "robot_r1::proprio": np.zeros(61, dtype=np.float32),
+    }
+    for _ in range(65):
+        expected = control.act(observation).value
+        actual = wrapper.act(observation).value
+        np.testing.assert_array_equal(actual, expected)
+        assert refreshed.config is original_config
+        assert refreshed.step_count == control.step_count
+        assert refreshed.action_index == control.action_index
+        np.testing.assert_array_equal(refreshed.last_actions, control.last_actions)
+    assert len(refresh_calls) == len(control_calls) == 4
+    for actual, expected in zip(refresh_calls, control_calls, strict=True):
+        assert actual["stage"] == expected["stage"] == stage
+        np.testing.assert_array_equal(
+            actual["initial_actions"], expected["initial_actions"]
+        )
+    assert wrapper.telemetry()["transition_queue_refreshes"] == 0
+    assert wrapper.telemetry()["precision_predictions"] == 0
+
+
+def test_native_stage_refresh_preserves_task0_correction_reset(monkeypatch):
+    """A native correction reset is not a classifier-vote transition."""
+
+    monkeypatch.setitem(TASK_NUM_STAGES, 0, 6)
+
+    def task0_stage_reset(task_id, stage, _state, actions):
+        assert task_id == 0
+        return actions, 2 if stage == 4 else stage
+
+    monkeypatch.setattr(pinned_native, "apply_correction_rules", task0_stage_reset)
+    control = B1KPolicyWrapper()
+    control_calls = install_pinned_native_act(control)
+    refreshed = B1KPolicyWrapper()
+    refresh_calls = install_pinned_native_act(refreshed)
+    wrapper = rlc_execution.configure_execution(
+        refreshed, "native-stage-transition-refresh"
+    )
+    control.current_stage = refreshed.current_stage = 4
+    observation = {
+        "task_id": np.array([0]),
+        "robot_r1::proprio": np.zeros(61, dtype=np.float32),
+    }
+
+    expected = control.act(observation)
+    actual = wrapper.act(observation)
+    np.testing.assert_array_equal(actual.value, expected.value)
+    assert [call["stage"] for call in control_calls] == [4]
+    assert [call["stage"] for call in refresh_calls] == [4]
+    assert refreshed.current_stage == control.current_stage == 2
+    assert refreshed.prediction_count == control.prediction_count == 1
+    assert refreshed.action_index == control.action_index == 1
+    assert refreshed.step_count == control.step_count == 1
+    np.testing.assert_array_equal(refreshed.last_actions, control.last_actions)
+    np.testing.assert_array_equal(
+        refreshed.next_initial_actions, control.next_initial_actions
+    )
+    telemetry = wrapper.telemetry()
+    assert telemetry["accepted_stage_transitions"] == 0
+    assert telemetry["transition_queue_refreshes"] == 0
+
+
+def test_native_stage_refresh_rejects_execution_setting_changes():
+    native = B1KPolicyWrapper()
+    wrapper = rlc_execution.configure_execution(
+        native, "native-stage-transition-refresh"
+    )
+    native.config = dataclasses.replace(native.config, execute_in_n_steps=10)
+    with pytest.raises(ValueError, match="execution settings changed"):
+        wrapper.act({})
+    assert native.prediction_count == 0
+
+
+def test_native_stage_refresh_provenance_is_stock_only():
+    provenance = rlc_execution.execution_provenance(
+        "native-stage-transition-refresh", selected=False
+    )
+    assert provenance["parent_variant"] == "native"
+    assert provenance["native_settings"] == {
+        "actions_to_execute": 26,
+        "actions_to_keep": 4,
+        "execute_in_n_steps": 20,
+        "prediction_history": 3,
+        "votes_to_promote": 2,
+    }
+    assert provenance["shorter_chunks"] is False
+    assert provenance["bounded_resamples"] == 1
+    with pytest.raises(ValueError, match="stock weights only"):
+        rlc_execution.execution_provenance(
+            "native-stage-transition-refresh", selected=True
+        )
+
+
 def test_adaptive_transition_refresh_no_transition_matches_adaptive_control():
     control_native = B1KPolicyWrapper()
     control_calls = install_pinned_native_act(control_native)
@@ -315,12 +420,19 @@ def test_adaptive_transition_refresh_no_transition_matches_adaptive_control():
     assert refresh.telemetry()["transition_queue_refreshes"] == 0
 
 
-def test_adaptive_transition_refresh_discards_once_and_resamples_new_stage():
+@pytest.mark.parametrize(
+    ("variant", "steps", "coarse", "precision"),
+    [
+        ("adaptive-short-chunk-transition-refresh", 10, 1, 1),
+        ("native-stage-transition-refresh", 20, 2, 0),
+    ],
+)
+def test_transition_refresh_discards_once_and_resamples_new_stage(
+    variant, steps, coarse, precision
+):
     native = B1KPolicyWrapper()
     calls = install_pinned_native_act(native)
-    policy = rlc_execution.configure_execution(
-        native, "adaptive-short-chunk-transition-refresh"
-    )
+    policy = rlc_execution.configure_execution(native, variant)
     native.current_stage = 3
     native.prediction_history.extend((4, 4))
     observation = {
@@ -332,14 +444,14 @@ def test_adaptive_transition_refresh_discards_once_and_resamples_new_stage():
 
     assert [call["stage"] for call in calls] == [3, 4]
     assert native.current_stage == 4
-    assert native.config.execute_in_n_steps == 10
-    assert native.last_actions is not None and native.last_actions.shape == (10, 23)
+    assert native.config.execute_in_n_steps == steps
+    assert native.last_actions is not None and native.last_actions.shape == (steps, 23)
     assert native.action_index == 1
     assert native.step_count == 1
     telemetry = policy.telemetry()
     assert telemetry["predictions"] == 2
-    assert telemetry["coarse_predictions"] == 1
-    assert telemetry["precision_predictions"] == 1
+    assert telemetry["coarse_predictions"] == coarse
+    assert telemetry["precision_predictions"] == precision
     assert telemetry["accepted_stage_transitions"] == 1
     assert telemetry["transition_queue_refreshes"] == 1
     refresh_event = next(
@@ -356,21 +468,27 @@ def test_adaptive_transition_refresh_discards_once_and_resamples_new_stage():
     assert policy.telemetry()["transition_queue_refreshes"] == 1
 
 
-def test_adaptive_transition_refresh_is_bounded_when_resample_transitions_again():
+@pytest.mark.parametrize(
+    "variant",
+    ["adaptive-short-chunk-transition-refresh", "native-stage-transition-refresh"],
+)
+def test_transition_refresh_is_bounded_when_resample_transitions_again(variant):
     native = B1KPolicyWrapper()
+
+    def accepted_stage_update(self, _logits):
+        self.current_stage += 1
 
     def transition_every_prediction(self, observation):
         self.prediction_count += 1
         self.last_actions = np.ones((self.config.execute_in_n_steps, 23))
         self.action_index = 1
         self.next_initial_actions = np.ones((4, 23))
-        self.current_stage += 1
+        self.update_current_stage(None)
         return observation
 
+    native.update_current_stage = MethodType(accepted_stage_update, native)
     native.act = MethodType(transition_every_prediction, native)
-    policy = rlc_execution.configure_execution(
-        native, "adaptive-short-chunk-transition-refresh"
-    )
+    policy = rlc_execution.configure_execution(native, variant)
 
     with pytest.raises(RuntimeError, match="bounded transition refresh"):
         policy.act({"task_id": np.array([1])})
@@ -381,12 +499,14 @@ def test_adaptive_transition_refresh_is_bounded_when_resample_transitions_again(
     assert policy.telemetry()["transition_queue_refreshes"] == 2
 
 
-def test_adaptive_transition_refresh_reset_clears_episode_state():
+@pytest.mark.parametrize(
+    "variant",
+    ["adaptive-short-chunk-transition-refresh", "native-stage-transition-refresh"],
+)
+def test_transition_refresh_reset_clears_episode_state(variant):
     native = B1KPolicyWrapper()
     install_pinned_native_act(native)
-    policy = rlc_execution.configure_execution(
-        native, "adaptive-short-chunk-transition-refresh"
-    )
+    policy = rlc_execution.configure_execution(native, variant)
     native.current_stage = 3
     native.prediction_history.extend((4, 4))
     observation = {
@@ -405,7 +525,7 @@ def test_adaptive_transition_refresh_reset_clears_episode_state():
     assert not native.prediction_history
     assert policy.telemetry()["observations"] == 0
     assert policy.telemetry()["transition_queue_refreshes"] == 0
-    assert policy.telemetry()["variant"] == "adaptive-short-chunk-transition-refresh"
+    assert policy.telemetry()["variant"] == variant
 
 
 def test_reset_restores_native_execution_defaults():

@@ -165,6 +165,19 @@ Hugging Face revision `89545bc1b7aa7f2e687bc0032d091f132d715d4e` of
 Source and weights remain runtime inputs; Workbench does not redistribute them.
 Retain upstream attribution and satisfy the existing OpenPI/Gemma use terms.
 
+For a controlled stock-policy experiment, choose
+`--policy-execution-variant native-stage-transition-refresh`. It preserves the
+native 26-action prefix, four retained actions, 20-step execution interval, and
+two-of-three stage vote. When that vote accepts a stage change, it discards the
+old stage's queue and inpainting prefix, then samples once from the new stage
+using the same observation. The returned action advances the simulator step
+counter once. A second stage change during that resample fails explicitly.
+This separates queue refresh from the shorter late-stage chunks used by
+`adaptive-short-chunk-transition-refresh`; neither option is the default.
+The native-timing variant has no measured task score yet. It uses only native
+policy state and the permitted observations, without evaluator case identities
+or goal predicates.
+
 For a holdout-selected matched-training export, use
 `--policy-kind rlc-selected` with the same four paths and three additional
 regular files: `--policy-selected-export-receipt`,

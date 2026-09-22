@@ -129,6 +129,7 @@ def parser() -> argparse.ArgumentParser:
             "final-stage-backtrack",
             "adaptive-short-chunk",
             "adaptive-short-chunk-transition-refresh",
+            "native-stage-transition-refresh",
         ),
         default=NATIVE_EXECUTION,
     )
