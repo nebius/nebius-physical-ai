@@ -253,10 +253,34 @@ bootstrap_ssh_keygen() {
     exec "$real_ssh_keygen" -A
 }
 
+bootstrap_bash() {
+    # Ordinary user shells keep their normal behavior. Under sudo this is a
+    # verifier, never a root shell: only the pinned SSH-limit argv is accepted.
+    if [ "$(id -u)" -ne 0 ]; then
+        exec /bin/bash "$@"
+    fi
+    expected='echo "MaxSessions 200" >> /etc/ssh/sshd_config; echo "MaxStartups 150:30:200" >> /etc/ssh/sshd_config; (systemctl reload sshd || service ssh reload); '
+    if [ "$#" -ne 2 ] || [ "$1" != -c ] || [ "$2" != "$expected" ]; then
+        printf '%s\n' 'NPA SSH setup refuses unreviewed root shell argv' >&2
+        exit 87
+    fi
+    if [ -L /etc/ssh/sshd_config ] || [ ! -f /etc/ssh/sshd_config ] \
+        || [ "$(stat -c '%u:%a' /etc/ssh/sshd_config)" != "$guard_owner_uid:644" ] \
+        || ! cmp -s /opt/npa/libero/sshd_config /etc/ssh/sshd_config; then
+        printf '%s\n' 'NPA SSH setup requires the unchanged root-owned baked config' >&2
+        exit 87
+    fi
+    effective=$(/usr/sbin/sshd -T -f /etc/ssh/sshd_config) || exit $?
+    printf '%s\n' "$effective" | grep -qx 'maxsessions 200' || exit 87
+    printf '%s\n' "$effective" | grep -qx 'maxstartups 150:30:200' || exit 87
+    printf '%s\n' 'NPA_SKYPILOT_SSH_LIMITS_VERIFIED status=0 config_changed=false'
+}
+
 case "$(basename "$0")" in
     apt-get) bootstrap_apt_get "$@" ;;
     timeout) bootstrap_timeout "$@" ;;
     ssh-keygen) bootstrap_ssh_keygen "$@" ;;
+    bash) bootstrap_bash "$@" ;;
     npa-skypilot-bootstrap-guard)
         [ "${1:-}" = verify ] \
             || { printf '%s\n' 'usage: npa-skypilot-bootstrap-guard verify' >&2; exit 64; }

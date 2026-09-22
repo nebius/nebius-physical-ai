@@ -836,6 +836,11 @@ def _submission_global_config(runtime, controller_backend, infra, *, documents=(
         controller_backend=controller_backend,
         infra="k8s/" + controller if controller else infra,
     )
+    if controller:
+        # Credential mounts are gathered even for disabled clouds. This path
+        # uses Kubernetes only and must never transport Nebius credentials.
+        config["allowed_clouds"] = ["kubernetes"]
+        config.setdefault("nebius", {})["remote_identity"] = "NO_UPLOAD"
     if context:
         kubernetes = config.setdefault("kubernetes", {})
         if not isinstance(kubernetes, dict):

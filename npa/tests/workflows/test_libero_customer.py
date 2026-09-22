@@ -290,6 +290,8 @@ def test_controller_config_separates_verified_contexts_without_worker_profile_ch
         documents=docs, extra_env=env,
     )
     assert configured["kubernetes"]["allowed_contexts"] == ["unit-worker", "unit-controller"]
+    assert configured["allowed_clouds"] == ["kubernetes"]
+    assert configured["nebius"]["remote_identity"] == "NO_UPLOAD"
     assert configured["jobs"]["controller"]["resources"]["region"] == "unit-controller"
     assert configured["kubernetes"]["context_configs"] == {
         "unit-worker": {
@@ -307,6 +309,8 @@ def test_controller_config_separates_verified_contexts_without_worker_profile_ch
     assert ordinary["kubernetes"]["allowed_contexts"] == ["unit-worker"]
     assert ordinary["jobs"]["controller"]["resources"]["region"] == "unit-worker"
     assert "context_configs" not in ordinary["kubernetes"]
+    assert "allowed_clouds" not in ordinary
+    assert "nebius" not in ordinary
 
 
 @pytest.mark.parametrize("lifted", [False, True])
@@ -337,7 +341,7 @@ def test_customer_worker_startup_hook_retains_signed_bytes_and_refuses_conflicts
     assert driver().libero_executable_profile_bytes(docs) == signed
 
 
-@pytest.mark.parametrize("controller_drift", [None, "workload-context", "other-context", "gpu-controller", "worker-credentials", "missing-controller-credentials"])
+@pytest.mark.parametrize("controller_drift", [None, "workload-context", "other-context", "gpu-controller", "worker-credentials", "missing-controller-credentials", "provider-credentials", "other-cloud"])
 def test_customer_preflight_preserves_only_verified_context_pair(monkeypatch, tmp_path, controller_drift):
     from npa import execution_preflight as preflight
     from npa.orchestration.skypilot import workflow
@@ -360,6 +364,10 @@ def test_customer_preflight_preserves_only_verified_context_pair(monkeypatch, tm
         configured["kubernetes"]["context_configs"]["unit-worker"]["remote_identity"] = "LOCAL_CREDENTIALS"
     elif controller_drift == "missing-controller-credentials":
         configured["kubernetes"]["context_configs"]["unit-controller"]["remote_identity"] = "SERVICE_ACCOUNT"
+    elif controller_drift == "provider-credentials":
+        configured["nebius"]["remote_identity"] = "LOCAL_CREDENTIALS"
+    elif controller_drift == "other-cloud":
+        configured["allowed_clouds"].append("nebius")
     elif controller_drift:
         controller["region"] = "unit-worker" if controller_drift == "workload-context" else "foreign-context"
     observed = {}
@@ -372,7 +380,7 @@ def test_customer_preflight_preserves_only_verified_context_pair(monkeypatch, tm
     monkeypatch.setattr(preflight, "verify_execution_target", lambda *_a, **_k: {"checks": {}})
     kwargs = dict(project="unit", infra="k8s/unit-worker", extra_env=env, global_config=configured)
     if controller_drift:
-        expected = "controller-only kubeconfig" if "credentials" in controller_drift else "verified CPU context"
+        expected = "controller-only kubeconfig" if "credentials" in controller_drift or controller_drift == "other-cloud" else "verified CPU context"
         with pytest.raises(preflight.ExecutionPreflightError, match=expected):
             preflight.preflight_skypilot_submission(docs, **kwargs)
         assert not observed

@@ -51,6 +51,7 @@ RUN set -eux; \
     test "$(dpkg-query -W -f='${Version}' linux-libc-dev)" = '6.1.180-1'; \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
     install -D -m 0644 /etc/ssh/sshd_config /opt/npa/libero/sshd_config; \
+    printf '%s\n' 'MaxSessions 200' 'MaxStartups 150:30:200' >> /opt/npa/libero/sshd_config; \
     rm -rf /var/lib/apt/lists/*; \
     groupadd --gid 1001 npa-libero-exec; \
     useradd --no-log-init --uid 1000 --create-home --shell /bin/bash ubuntu; \
@@ -65,12 +66,14 @@ RUN set -eux; \
     install -d -m 0755 /run/sshd /run/npa/libero /opt/npa/libero; \
     printf '%s\n' \
       'Cmnd_Alias NPA_SKYPILOT_SSH = /usr/local/bin/ssh-keygen -A, /usr/sbin/service ssh start, /usr/sbin/service ssh restart' \
+      'Cmnd_Alias NPA_SKYPILOT_SSH_LIMITS = /usr/local/bin/bash -c *' \
       'Cmnd_Alias NPA_SKYPILOT_APT = /usr/local/sbin/apt-get update, /usr/local/sbin/apt-get update *, /usr/local/sbin/apt-get install, /usr/local/sbin/apt-get install *' \
       'Cmnd_Alias NPA_LIBERO_EXEC = /opt/npa/libero/runtime-bootstrap.py execute' \
       'Cmnd_Alias NPA_LIBERO_TERMINATE = /opt/npa/libero/runtime-bootstrap.py terminate' \
       'Defaults!NPA_LIBERO_EXEC closefrom_override' \
       'Defaults!NPA_LIBERO_EXEC env_keep += "NPA_LIBERO_RUNTIME_DELIVERY NPA_BYOF_RUN_ID NPA_SMOKE_OUTPUT_DIR NPA_LIBERO_BOOTSTRAP_RECEIPT NPA_LIBERO_CUSTOMER_AUTHORIZATION_SHA256 NPA_LIBERO_AUTHENTICATED_CALLER_SHA256 NPA_LIBERO_CUSTOMER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_EXECUTABLE_PROFILE_SHA256 NPA_LIBERO_EXPECTED_CUSTOMER_AUTHORIZATION_EXPIRES_AT NPA_LIBERO_EXPECTED_CUSTOMER_SIGNER_PUBLIC_KEY_SHA256 NPA_LIBERO_EXPECTED_CANONICAL_BUILD_METADATA_SHA256 NPA_LIBERO_EXPECTED_PUBLICATION_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_INFRASTRUCTURE_BUNDLE_SHA256 NPA_LIBERO_EXPECTED_ALLOWED_NODE_SHA256 NPA_LIBERO_EXPECTED_CLUSTER_IDENTITY_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_UID_SHA256 NPA_LIBERO_EXPECTED_NAMESPACE_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_EXTERNAL_RBAC_INVENTORY_SHA256 NPA_LIBERO_EXPECTED_RBAC_SPEC_SHA256 NPA_LIBERO_EXPECTED_ROLE_BINDING_UID_SHA256 NPA_LIBERO_EXPECTED_ROLE_UID_SHA256 NPA_LIBERO_EXPECTED_SERVICE_ACCOUNT_UID_SHA256 NPA_LIBERO_EXPECTED_PAYLOAD_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_EXECUTION_KUBECONFIG_SHA256 NPA_LIBERO_EXPECTED_SKYPILOT_CONFIG_SHA256 BYOF_REPO_ROOT BYOF_SMOKE_COMMAND BYOF_SOLUTION_NAME BYOF_CAPABILITY_NAME BYOF_SMOKE_ARTIFACT_NAME BYOF_IMAGE LIBERO_RUNTIME_ROOT NVIDIA_DRIVER_CAPABILITIES NVIDIA_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES HOSTNAME KUBERNETES_SERVICE_HOST KUBERNETES_SERVICE_PORT"' \
       'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH' \
+      'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_SSH_LIMITS' \
       'ubuntu ALL=(root) NOPASSWD: NPA_SKYPILOT_APT' \
       'ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_EXEC' \
       'ubuntu ALL=(npa-libero-exec) NOPASSWD: NPA_LIBERO_TERMINATE' \
@@ -98,6 +101,7 @@ RUN set -eux; \
     ln -s npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get; \
     ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/timeout; \
     ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/ssh-keygen; \
+    ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/bash; \
     ln -s /workspace/.cache/npa/libero/current/source /opt/byof; \
     /usr/local/sbin/npa-skypilot-bootstrap-guard verify; \
     /opt/npa/libero/runtime-bootstrap.py status | grep -F '"materialized": false'; \

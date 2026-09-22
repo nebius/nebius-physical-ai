@@ -247,6 +247,45 @@ def test_skypilot_ssh_key_helper_accepts_only_runtime_host_key_generation(
     assert calls.read_text(encoding="utf-8") == "-A\n"
 
 
+def test_skypilot_root_shell_dispatch_only_verifies_exact_baked_ssh_limits(tmp_path) -> None:
+    source = (IMAGE_ROOT / "skypilot-bootstrap-guard.sh").read_text()
+    expected = 'echo "MaxSessions 200" >> /etc/ssh/sshd_config; echo "MaxStartups 150:30:200" >> /etc/ssh/sshd_config; (systemctl reload sshd || service ssh reload); '
+    current, baked = tmp_path / "current.conf", tmp_path / "baked.conf"
+    for path in (current, baked):
+        path.write_text("MaxSessions 200\nMaxStartups 150:30:200\n")
+        path.chmod(0o644)
+    fake_id = tmp_path / "id"
+    fake_id.write_text("#!/bin/sh\nprintf '0\\n'\n")
+    fake_id.chmod(0o755)
+    daemon = tmp_path / "sshd"
+    daemon.write_text("#!/bin/sh\nprintf 'maxsessions 200\\nmaxstartups 150:30:200\\n'\n")
+    daemon.chmod(0o755)
+    # Redirect only verifier filesystem operands; the accepted argv stays exact.
+    source = source.replace("guard_owner_uid=0", f"guard_owner_uid={os.getuid()}")
+    source = source.replace("/usr/sbin/sshd", str(daemon))
+    before, rest = source.split("    if [ -L /etc/ssh/sshd_config ]", 1)
+    rest = rest.replace("/etc/ssh/sshd_config", str(current)).replace("/opt/npa/libero/sshd_config", str(baked))
+    guard = tmp_path / "bash"
+    guard.write_text(before + "    if [ -L " + str(current) + " ]" + rest)
+    guard.chmod(0o755)
+    environment = {"PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
+    def run(args):
+        return subprocess.run([guard, *args], env=environment, capture_output=True, text=True)
+    accepted = run(["-c", expected])
+    assert accepted.returncode == 0, accepted.stderr
+    assert "SSH_LIMITS_VERIFIED" in accepted.stdout
+    assert current.read_bytes() == baked.read_bytes()
+    for args in (["-c", "id"], ["-c", expected + "id"], ["-c", expected, "extra"], ["-s"], []):
+        assert run(args).returncode == 87
+    current.write_text("MaxSessions 1\n")
+    assert run(["-c", expected]).returncode == 87
+    current.unlink()
+    current.symlink_to(baked)
+    assert run(["-c", expected]).returncode == 87
+    fake_id.write_text("#!/bin/sh\nprintf '1000\\n'\n")
+    assert run(["-c", "printf user-shell"]).stdout == "user-shell"
+
+
 def test_skypilot_failure_sentinels_do_not_follow_preplaced_symlinks(tmp_path) -> None:
     guard_source = (IMAGE_ROOT / "skypilot-bootstrap-guard.sh").read_text(
         encoding="utf-8"

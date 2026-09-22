@@ -1352,7 +1352,9 @@ def preflight_skypilot_submission(
             raise ExecutionPreflightError("cluster_owner", "LIBERO controller differs from its verified CPU context")
         contexts = ((global_config or {}).get("kubernetes") or {}).get("context_configs") or {}
         if (
-            (contexts.get(customer_controller) or {}).get("remote_identity") != "LOCAL_CREDENTIALS"
+            (global_config or {}).get("allowed_clouds") != ["kubernetes"]
+            or ((global_config or {}).get("nebius") or {}).get("remote_identity") != "NO_UPLOAD"
+            or (contexts.get(customer_controller) or {}).get("remote_identity") != "LOCAL_CREDENTIALS"
             or (contexts.get(infra.split("/", 1)[1]) or {}).get("remote_identity") != "NO_UPLOAD"
         ):
             raise ExecutionPreflightError("credentials", "LIBERO requires controller-only kubeconfig transport")
