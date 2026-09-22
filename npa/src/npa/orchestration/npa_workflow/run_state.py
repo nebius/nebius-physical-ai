@@ -12,8 +12,13 @@ RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
 PAIDF_COSMOS3_WORKFLOW_NAME = "paidf-cosmos3"
+NVIDIA_PAIDF_VDA_WORKFLOW_NAME = "nvidia-paidf-vda-cosmos-transfer25"
 PAIDF_INPUT_WORKFLOW_NAMES = frozenset(
-    {PAIDF_WORKFLOW_NAME, PAIDF_COSMOS3_WORKFLOW_NAME}
+    {
+        PAIDF_WORKFLOW_NAME,
+        PAIDF_COSMOS3_WORKFLOW_NAME,
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    }
 )
 
 

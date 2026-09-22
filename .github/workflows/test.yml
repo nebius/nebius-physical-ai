@@ -23,7 +23,6 @@ jobs:
       prose_only: ${{ steps.scope.outputs.prose_only }}
       full_suite: ${{ steps.scope.outputs.full_suite }}
       browser: ${{ steps.scope.outputs.browser }}
-      test_paths: ${{ steps.scope.outputs.test_paths }}
     steps:
       - name: Check out comparison history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -51,8 +50,10 @@ jobs:
             git rev-parse --verify "${BASE_SHA}^{commit}"
             if git cat-file -e "${BASE_SHA}:${policy}"; then
               git show "${BASE_SHA}:${policy}" > "${RUNNER_TEMP}/ci_test_scope.py"
+              # Older base policies narrow PR tests. Use their queue policy
+              # for both events so rollout also checks the full PR candidate.
               npa/.venv/bin/python "${RUNNER_TEMP}/ci_test_scope.py" \
-                --base "$BASE_SHA" --head "$GITHUB_SHA" --event "$EVENT_NAME" \
+                --base "$BASE_SHA" --head "$GITHUB_SHA" --event merge_group \
                 --github-output "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -62,7 +63,6 @@ jobs:
             echo 'prose_only=false'
             echo 'full_suite=true'
             echo 'browser=true'
-            echo 'test_paths=[]'
           } >> "$GITHUB_OUTPUT"
 
   browser-mocked:
@@ -86,7 +86,7 @@ jobs:
             npa/ci/requirements.txt
             npa/ci/constraints.in
       - name: Set up Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -105,19 +105,16 @@ jobs:
         run: npm run --prefix npa/tests/browser cy:mock
 
       - name: Set up Python 3.10 compatibility
-        if: github.event_name != 'pull_request'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.10"
 
       - name: Install Python 3.10 compatibility environment
-        if: github.event_name != 'pull_request'
         run: |
           python -m venv npa/.venv-3.10
           uv pip install --python npa/.venv-3.10/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
 
       - name: Run Python 3.10 compatibility regressions
-        if: github.event_name != 'pull_request'
         run: |
           npa/.venv-3.10/bin/python -m pytest \
             npa/tests/guardrails/test_ci_workflows.py \
@@ -127,19 +124,16 @@ jobs:
             -q
 
       - name: Set up Python 3.14 compatibility
-        if: github.event_name != 'pull_request'
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
 
       - name: Install Python 3.14 compatibility environment
-        if: github.event_name != 'pull_request'
         run: |
           python -m venv npa/.venv-3.14
           uv pip install --python npa/.venv-3.14/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
 
       - name: Run Python 3.14 compatibility regressions
-        if: github.event_name != 'pull_request'
         run: |
           npa/.venv-3.14/bin/python -m pytest \
             npa/tests/guardrails/test_ci_workflows.py \
@@ -151,7 +145,8 @@ jobs:
   pr-smoke:
     name: pr-smoke
     needs: scope
-    if: github.event_name == 'pull_request' || needs.scope.outputs.prose_only == 'true'
+    # Full shards already collect these tests and run the CLI install check.
+    if: needs.scope.outputs.prose_only == 'true' && needs.scope.outputs.full_suite == 'false'
     runs-on: ubuntu-latest
     env:
       NPA_PROJECT_ID: project-test-00000000
@@ -343,7 +338,7 @@ jobs:
             --cov=src/npa --cov-report=
 
       - name: Upload coverage shard
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.python-version }}-${{ matrix.shard }}
           path: npa/.coverage.${{ matrix.python-version }}.${{ matrix.shard }}
@@ -351,7 +346,7 @@ jobs:
 
       - name: Upload Python 3.12 timing shard
         if: always() && matrix.python-version == '3.12' && hashFiles('npa/ci-timings-*.json') != ''
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-timings-${{ matrix.shard }}
           path: npa/ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
@@ -373,72 +368,12 @@ jobs:
         if: always() && matrix.python-version == '3.12' && matrix.shard == 1
         run: ./scripts/check-source-drift.sh
 
-  affected-tests:
-    name: affected-tests
-    needs: scope
-    if: github.event_name == 'pull_request' && needs.scope.outputs.full_suite == 'false' && needs.scope.outputs.test_paths != '[]'
-    runs-on: ubuntu-latest
-    env:
-      NPA_PROJECT_ID: project-test-00000000
-      NPA_S3_BUCKET: test-bucket-00000000
-      NPA_REQUIRE_FFMPEG: "1"
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-      - name: Set up cached uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-        with:
-          version: "0.12.5"
-          enable-cache: true
-          cache-suffix: python-3.12
-          cache-dependency-glob: |
-            npa/pyproject.toml
-            npa/ci/requirements.txt
-            npa/ci/constraints.in
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-      - name: Install affected test dependencies
-        run: |
-          test -s /etc/apt/sources.list.d/ubuntu.sources
-          apt_options=(
-            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
-            -o Dir::Etc::sourceparts=-
-          )
-          sudo apt-get "${apt_options[@]}" update
-          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
-          python -m venv npa/.venv
-          uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter]"
-          uv pip install --python npa/.venv/bin/python --torch-backend cpu \
-            -c npa/ci/requirements.txt -e "npa[sonic]"
-          npa/.venv/bin/python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
-          echo "${GITHUB_WORKSPACE}/npa/.venv/bin" >> "$GITHUB_PATH"
-      - name: Run affected subsystem tests
-        env:
-          TEST_PATHS: ${{ needs.scope.outputs.test_paths }}
-        run: |
-          npa/.venv/bin/python - <<'PY'
-          import json
-          import os
-          import subprocess
-          import sys
-
-          paths = json.loads(os.environ["TEST_PATHS"])
-          if not paths:
-              raise SystemExit("Affected tests require a non-empty selection")
-          subprocess.run(
-              [sys.executable, "-m", "pytest", *paths, "-n", "auto", "--dist", "worksteal", "-q"],
-              check=True,
-          )
-          PY
-
   coverage:
     name: coverage
     needs: [scope, test]
-    if: ${{ always() && needs.scope.outputs.full_suite != 'false' }}
+    # Failed shards already fail test-gate. Do not reserve another runner after
+    # failure or keep a superseded reusable workflow alive during cancellation.
+    if: ${{ !cancelled() && needs.scope.outputs.full_suite != 'false' && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Require successful pytest shards
@@ -464,7 +399,7 @@ jobs:
           npa/.venv/bin/python -m pip install "coverage[toml]==7.16.0"
 
       - name: Download coverage shards
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: coverage-*
           path: npa/coverage-data
@@ -479,7 +414,7 @@ jobs:
           .venv/bin/python -m coverage report --show-missing --fail-under=60
 
       - name: Download Python 3.12 timing shards
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: ci-timings-*
           path: npa/ci-timing-data
@@ -492,7 +427,7 @@ jobs:
             --output npa/ci-test-durations.json
 
       - name: Upload Python 3.12 duration profile
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-test-durations-${{ github.sha }}
           path: npa/ci-test-durations.json

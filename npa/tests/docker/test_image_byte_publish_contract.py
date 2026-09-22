@@ -307,6 +307,21 @@ def test_minimal_curobo_base_gets_the_unchanged_critical_vulnerability_gate():
     assert "--exit-code" in scanner and '"0" if sarif else "1"' in scanner
 
 
+def test_fiftyone_base_gets_the_unchanged_critical_vulnerability_gate():
+    inventory = json.loads(
+        (ROOT / "npa/docker/workbench/base-image-security.json").read_text()
+    )
+    dockerfile = ROOT / "npa/docker/workbench/fiftyone/Dockerfile"
+    base = dockerfile.read_text().split("FROM ", 1)[1].splitlines()[0]
+    entries = [entry for entry in inventory if entry["image"] == base]
+
+    assert len(entries) == 1
+    assert entries[0]["purge_linux_libc_dev"] is False
+    scanner = (ROOT / "npa/scripts/scan_base_images.py").read_text()
+    assert re.search(r'"--severity",\s*"CRITICAL"', scanner)
+    assert re.search(r'"--exit-code",\s*"0" if sarif else "1"', scanner)
+
+
 def test_publisher_policy_pin_matches_the_reviewed_product_catalog():
     # This verifies the checked-in binding; it does not authorize a changed file.
     policy = ROOT / "npa/scripts/image_byte_scan/public_policies/curobo-v2.json"

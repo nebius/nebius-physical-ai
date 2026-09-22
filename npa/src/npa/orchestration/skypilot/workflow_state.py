@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import functools
+import itertools
 import json
 import os
 import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 from urllib.parse import urlparse
 
 import boto3
@@ -21,6 +24,15 @@ from npa.clients.config import resolve_project_storage
 from npa.clients.credentials import load_credentials, storage_endpoint_url
 
 UTC = timezone.utc
+
+# Bounded worker count for concurrently fetching candidate run manifests.
+# Each fetch reuses one caller-shared boto3 client (see
+# ``_iter_candidate_manifests_bounded`` and its callers): boto3 clients are
+# safe to call concurrently once built, but the boto3 module-level default
+# session used to *construct* a client is not documented as safe to use
+# concurrently, so every candidate must not build its own client on its own
+# thread.
+_MANIFEST_FETCH_WORKERS = 8
 
 
 DEFAULT_WORKFLOW_MOUNT_PATH = "/mnt/npa-workflow-state"
@@ -308,8 +320,22 @@ def write_manifest(
     return payload
 
 
-def read_manifest(state: WorkflowS3Config) -> dict[str, Any]:
-    return get_json(state, "manifest.json")
+def read_manifest(state: WorkflowS3Config, *, client: Any = None) -> dict[str, Any]:
+    """Read one run's ``manifest.json``.
+
+    Args:
+        state: The run's bucket/prefix/credentials.
+        client: Optional pre-built boto3 client to reuse; see ``get_text``.
+
+    Returns:
+        The parsed manifest JSON object.
+
+    Raises:
+        WorkflowStateError: The manifest is missing, unreadable, or not
+            valid JSON (see ``get_json``).
+    """
+
+    return get_json(state, "manifest.json", client=client)
 
 
 def read_stage_status(state: WorkflowS3Config, stage: str) -> dict[str, Any] | None:
@@ -341,55 +367,157 @@ def list_artifacts(state: WorkflowS3Config, stage: str | None = None) -> list[st
     return sorted(objects)
 
 
+def _iter_manifest_candidate_keys(
+    client: Any, *, bucket: str, prefix: str
+) -> Iterator[str]:
+    """Yield every ``.../manifest.json`` key below *prefix*, one page at a time."""
+
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for item in page.get("Contents", []) or []:
+            key = str(item.get("Key") or "")
+            if key.endswith("/manifest.json"):
+                yield key
+
+
+def _child_run_state(
+    state_parent: WorkflowS3Config, run_prefix: str
+) -> WorkflowS3Config:
+    return WorkflowS3Config(
+        bucket=state_parent.bucket,
+        prefix=run_prefix,
+        endpoint_url=state_parent.endpoint_url,
+        aws_access_key_id=state_parent.aws_access_key_id,
+        aws_secret_access_key=state_parent.aws_secret_access_key,
+        project=state_parent.project,
+    )
+
+
+def _fetch_candidate_manifest(
+    state_parent: WorkflowS3Config, client: Any, key: str
+) -> tuple[str, WorkflowS3Config, dict[str, Any] | None]:
+    """Read one candidate's manifest, folding a missing/unreadable one to ``None``.
+
+    Runs inside a worker thread as part of the bounded concurrent fetch in
+    ``list_runs`` / ``discover_workflow_run_state``; *client* is one boto3
+    client shared across the whole listing operation (see ``get_text``).
+    """
+
+    run_prefix = key.removesuffix("/manifest.json")
+    state = _child_run_state(state_parent, run_prefix)
+    try:
+        manifest = read_manifest(state, client=client)
+    except WorkflowStateError:
+        return run_prefix, state, None
+    return run_prefix, state, manifest
+
+
+def _iter_candidate_manifests_bounded(
+    state_parent: WorkflowS3Config, client: Any, prefix: str
+) -> Iterator[tuple[str, WorkflowS3Config, dict[str, Any] | None]]:
+    """Fetch candidate manifests concurrently in bounded, page-sized batches.
+
+    Batches (rather than one global bounded pool) keep the result order tied
+    to S3 listing order at batch granularity, so ``list_runs``'s early exit
+    once ``limit`` valid runs are found still reflects listing order the way
+    the previous serial loop did, while still overlapping each batch's
+    ``_MANIFEST_FETCH_WORKERS`` network round trips. A batch is never larger
+    than the worker count, so a bucket with many historical runs is never
+    submitted to the pool in one shot.
+    """
+
+    keys = _iter_manifest_candidate_keys(
+        client, bucket=state_parent.bucket, prefix=prefix
+    )
+    with ThreadPoolExecutor(max_workers=_MANIFEST_FETCH_WORKERS) as executor:
+        while True:
+            batch = list(itertools.islice(keys, _MANIFEST_FETCH_WORKERS))
+            if not batch:
+                return
+            fetch = functools.partial(_fetch_candidate_manifest, state_parent, client)
+            yield from executor.map(fetch, batch)
+
+
+def _scan_prefix(state_parent: WorkflowS3Config) -> str:
+    """Normalize a bucket-relative scan prefix to end with ``/`` when non-empty."""
+
+    prefix = state_parent.prefix.strip("/")
+    return prefix + "/" if prefix else prefix
+
+
+def _run_summary(
+    run_prefix: str, run_state: WorkflowS3Config, manifest: dict[str, Any]
+) -> dict[str, Any]:
+    """Build one ``list_runs`` summary row from an already-validated manifest."""
+
+    return {
+        "run_id": manifest.get("run_id", run_prefix.rsplit("/", 1)[-1]),
+        "workflow_name": manifest.get("workflow_name") or manifest.get("workflow", ""),
+        "run_prefix_uri": run_state.uri,
+        "updated_at": manifest.get("updated_at", ""),
+        "sky_job_id": manifest.get("sky_job_id", ""),
+    }
+
+
+def _collect_valid_runs(
+    candidates: Iterator[tuple[str, WorkflowS3Config, dict[str, Any] | None]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Collect up to ``limit`` valid run summaries from *candidates*.
+
+    Component-level ``manifest.json`` files (for example npa-src package
+    metadata or PAIDF configs) fail the durable-manifest check and are
+    skipped rather than presented as misleading runs. ``candidates`` is
+    explicitly closed rather than left to the collector: on the early-exit
+    path it is still suspended mid-batch inside its own
+    ``with ThreadPoolExecutor`` block, and closing it now joins that
+    batch's already-submitted fetches before this function returns.
+    """
+
+    runs: list[dict[str, Any]] = []
+    try:
+        for run_prefix, run_state, manifest in candidates:
+            if manifest is None or not is_durable_workflow_manifest(manifest):
+                continue
+            runs.append(_run_summary(run_prefix, run_state, manifest))
+            if len(runs) >= limit:
+                break
+    finally:
+        candidates.close()
+    return runs
+
+
 def list_runs(
     *,
     state_parent: WorkflowS3Config,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    prefix = state_parent.prefix.strip("/")
-    if prefix and not prefix.endswith("/"):
-        prefix += "/"
-    paginator = state_parent.client().get_paginator("list_objects_v2")
-    runs: list[dict[str, Any]] = []
-    for page in paginator.paginate(Bucket=state_parent.bucket, Prefix=prefix):
-        for item in page.get("Contents", []):
-            key = str(item.get("Key", ""))
-            if not key.endswith("/manifest.json"):
-                continue
-            run_prefix = key.removesuffix("/manifest.json")
-            run_state = WorkflowS3Config(
-                bucket=state_parent.bucket,
-                prefix=run_prefix,
-                endpoint_url=state_parent.endpoint_url,
-                aws_access_key_id=state_parent.aws_access_key_id,
-                aws_secret_access_key=state_parent.aws_secret_access_key,
-                project=state_parent.project,
-            )
-            try:
-                manifest = read_manifest(run_state)
-            except WorkflowStateError:
-                continue
-            if not is_durable_workflow_manifest(manifest):
-                # Buckets also contain component/config manifests (for example
-                # npa-src package metadata and PAIDF configs/cosmos_augmented
-                # manifests).  A filename alone does not make those workflow
-                # runs, and presenting their parent directories as runs is
-                # actively misleading.
-                continue
-            runs.append(
-                {
-                    "run_id": manifest.get("run_id", run_prefix.rsplit("/", 1)[-1]),
-                    "workflow_name": manifest.get("workflow_name")
-                    or manifest.get("workflow", ""),
-                    "run_prefix_uri": run_state.uri,
-                    "updated_at": manifest.get("updated_at", ""),
-                    "sky_job_id": manifest.get("sky_job_id", ""),
-                }
-            )
-            if len(runs) >= limit:
-                return sorted(
-                    runs, key=lambda item: str(item.get("updated_at", "")), reverse=True
-                )
+    """List durable workflow runs below a bucket prefix, newest first.
+
+    Candidate manifests are fetched concurrently (bounded by
+    ``_MANIFEST_FETCH_WORKERS``); listing stops once ``limit`` valid runs
+    are found, in the same page-by-page order the previous serial
+    implementation used, so this pays at most one extra partial batch of
+    fetches beyond ``limit`` rather than scanning the whole bucket.
+
+    Args:
+        state_parent: Bucket/base-prefix/credentials to scan below.
+        limit: Maximum number of runs to return.
+
+    Returns:
+        Up to ``limit`` run summary dicts (``run_id``, ``workflow_name``,
+        ``run_prefix_uri``, ``updated_at``, ``sky_job_id``), sorted by
+        ``updated_at`` descending.
+
+    Raises:
+        botocore.exceptions.ClientError: The provider rejected the listing.
+    """
+
+    prefix = _scan_prefix(state_parent)
+    client = state_parent.client()
+    candidates = _iter_candidate_manifests_bounded(state_parent, client, prefix)
+    runs = _collect_valid_runs(candidates, limit=limit)
     return sorted(runs, key=lambda item: str(item.get("updated_at", "")), reverse=True)
 
 
@@ -417,6 +545,32 @@ def is_durable_workflow_manifest(payload: Mapping[str, Any]) -> bool:
     )
 
 
+def _newest_matching_state(
+    candidates: Iterator[tuple[str, WorkflowS3Config, dict[str, Any] | None]],
+    *,
+    wanted: str,
+) -> WorkflowS3Config | None:
+    """Find the newest durable manifest declaring ``run_id == wanted``.
+
+    Reads every candidate (no early exit: a retried/migrated run can leave
+    more than one durable copy anywhere in the tree, so the newest cannot be
+    known until all are read) and tie-breaks equal ``updated_at`` values by
+    run prefix, descending, for a deterministic pick.
+    """
+
+    matches: list[tuple[str, str, WorkflowS3Config]] = []
+    for run_prefix, state, manifest in candidates:
+        if manifest is None or not is_durable_workflow_manifest(manifest):
+            continue
+        if str(manifest.get("run_id") or "").strip() != wanted:
+            continue
+        matches.append((str(manifest.get("updated_at") or ""), run_prefix, state))
+    if not matches:
+        return None
+    matches.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    return matches[0][2]
+
+
 def discover_workflow_run_state(
     *,
     state_parent: WorkflowS3Config,
@@ -424,52 +578,33 @@ def discover_workflow_run_state(
 ) -> WorkflowS3Config | None:
     """Find a durable manifest by its declared run id below a bucket prefix.
 
-    Declarative workflows store their state beside the workflow artifacts, e.g.
-    ``physical-ai-data-factory/<run>/npa-workflow/manifest.json``.  The project
-    configuration only supplies a bucket/base prefix, so status/log/artifact
-    commands need to discover that manifest instead of assuming
-    ``<bucket>/<run>/manifest.json``.
+    Declarative workflows store their state beside the workflow artifacts,
+    e.g. ``physical-ai-data-factory/<run>/npa-workflow/manifest.json``. The
+    project configuration only supplies a bucket/base prefix, so status/log/
+    artifact commands need to discover that manifest instead of assuming
+    ``<bucket>/<run>/manifest.json``. Candidates are fetched concurrently
+    (bounded by ``_MANIFEST_FETCH_WORKERS``); see ``_newest_matching_state``
+    for the no-early-exit and tie-break contract.
+
+    Args:
+        state_parent: Bucket/base-prefix/credentials to scan below.
+        run_id: The exact run id to find.
+
+    Returns:
+        The matching run's :class:`WorkflowS3Config`, or ``None`` if
+        ``run_id`` is empty or no durable manifest declares it.
+
+    Raises:
+        botocore.exceptions.ClientError: The provider rejected the listing.
     """
 
     wanted = str(run_id or "").strip()
     if not wanted:
         return None
-    prefix = state_parent.prefix.strip("/")
-    if prefix:
-        prefix += "/"
-    paginator = state_parent.client().get_paginator("list_objects_v2")
-    candidates: list[tuple[str, str, WorkflowS3Config]] = []
-    for page in paginator.paginate(Bucket=state_parent.bucket, Prefix=prefix):
-        for item in page.get("Contents", []) or []:
-            key = str(item.get("Key") or "")
-            if not key.endswith("/manifest.json"):
-                continue
-            run_prefix = key.removesuffix("/manifest.json")
-            state = WorkflowS3Config(
-                bucket=state_parent.bucket,
-                prefix=run_prefix,
-                endpoint_url=state_parent.endpoint_url,
-                aws_access_key_id=state_parent.aws_access_key_id,
-                aws_secret_access_key=state_parent.aws_secret_access_key,
-                project=state_parent.project,
-            )
-            try:
-                manifest = read_manifest(state)
-            except WorkflowStateError:
-                continue
-            if not is_durable_workflow_manifest(manifest):
-                continue
-            if str(manifest.get("run_id") or "").strip() != wanted:
-                continue
-            # Prefer the newest declaration if a retried/migrated run left more
-            # than one durable copy.  Prefix is the deterministic tie-breaker.
-            candidates.append(
-                (str(manifest.get("updated_at") or ""), run_prefix, state)
-            )
-    if not candidates:
-        return None
-    candidates.sort(key=lambda row: (row[0], row[1]), reverse=True)
-    return candidates[0][2]
+    prefix = _scan_prefix(state_parent)
+    client = state_parent.client()
+    candidates = _iter_candidate_manifests_bounded(state_parent, client, prefix)
+    return _newest_matching_state(candidates, wanted=wanted)
 
 
 def put_json(state: WorkflowS3Config, *parts: str, payload: Mapping[str, Any]) -> None:
@@ -482,8 +617,26 @@ def put_json(state: WorkflowS3Config, *parts: str, payload: Mapping[str, Any]) -
     )
 
 
-def get_json(state: WorkflowS3Config, *parts: str) -> dict[str, Any]:
-    text = get_text(state, *parts)
+def get_json(
+    state: WorkflowS3Config, *parts: str, client: Any = None
+) -> dict[str, Any]:
+    """Read one object and parse it as a JSON object.
+
+    Args:
+        state: Bucket/prefix/credentials to read from.
+        *parts: Path segments joined onto ``state.prefix`` to form the key.
+        client: Optional pre-built boto3 client to reuse; see ``get_text``.
+
+    Returns:
+        The parsed JSON object.
+
+    Raises:
+        WorkflowStateError: The object is missing/unreadable (from
+            ``get_text``), is not valid JSON, or does not decode to a JSON
+            object.
+    """
+
+    text = get_text(state, *parts, client=client)
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -495,15 +648,43 @@ def get_json(state: WorkflowS3Config, *parts: str) -> dict[str, Any]:
     return payload
 
 
-def get_text(state: WorkflowS3Config, *parts: str) -> str:
+def get_text(state: WorkflowS3Config, *parts: str, client: Any = None) -> str:
+    """Read one object as text.
+
+    Pass ``client`` when the caller is reading many objects from the same
+    bucket/endpoint concurrently (see ``list_runs`` / ``discover_workflow_run_state``):
+    it reuses one already-built client instead of each call building its own
+    through ``state.client()``, which constructs clients through boto3's
+    shared default session and is not documented as safe to do concurrently.
+
+    Args:
+        state: Bucket/prefix/credentials to read from.
+        *parts: Path segments joined onto ``state.prefix`` to form the key.
+        client: Optional pre-built boto3 client to reuse instead of calling
+            ``state.client()``.
+
+    Returns:
+        The object's bytes, decoded as UTF-8 (invalid bytes replaced).
+
+    Raises:
+        WorkflowStateError: The client could not be built, or the provider
+            rejected the GET (missing object, auth failure, or any other
+            provider error).
+    """
+
     key = _key(state.prefix, *parts)
     try:
-        response = state.client().get_object(Bucket=state.bucket, Key=key)
+        s3 = client if client is not None else state.client()
+        response = s3.get_object(Bucket=state.bucket, Key=key)
     except Exception as exc:  # boto3 exposes provider-specific ClientError payloads.
         raise WorkflowStateError(
             f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}"
         ) from exc
-    return response["Body"].read().decode("utf-8", errors="replace")
+    body = response["Body"]
+    try:
+        return body.read().decode("utf-8", errors="replace")
+    finally:
+        body.close()
 
 
 def workflow_state_error_is_missing(exc: BaseException) -> bool:

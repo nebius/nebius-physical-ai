@@ -142,6 +142,10 @@ def _run_component_command(*args: Any, **kwargs: Any) -> Any:
     return _compat_call("_run_component_command", *args, **kwargs)
 
 
+def _split_component_command(*args: Any, **kwargs: Any) -> Any:
+    return _compat_call("_split_component_command", *args, **kwargs)
+
+
 def _run_genesis_heldout_rollouts(*args: Any, **kwargs: Any) -> Any:
     return _compat_call("_run_genesis_heldout_rollouts", *args, **kwargs)
 
@@ -281,16 +285,21 @@ def run_heldout_eval(
     # Lab), instead of the scalar action-bias adapter rollout. Gate on a genuine
     # trainer (a real checkpoint must exist) + a ready K8s image; the reference
     # trainer has no Isaac checkpoint, so it keeps the adapter/reference path.
-    eval_command = config.byo_eval_command.strip()
-    if (
-        not eval_command
-        and config.sim_backend == SIM_BACKEND_ISAAC
+    eval_argv: list[str] | None = None
+    eval_env: dict[str, str] = {}
+    if config.byo_eval_command.strip():
+        eval_argv, eval_env = _split_component_command(
+            config.byo_eval_command, component="heldout_eval"
+        )
+    elif (
+        config.sim_backend == SIM_BACKEND_ISAAC
         and config.byo_trainer_command.strip()
         and config.s3_bucket.strip()
         and _heldout_k8s_image_ready(config)
     ):
-        eval_command = "python3 -m npa.workflows.sim2real.byo_isaac_eval"
-    if eval_command:
+        # Internally generated default: already argv, never touches a shell.
+        eval_argv = ["python3", "-m", "npa.workflows.sim2real.byo_isaac_eval"]
+    if eval_argv is not None:
         if (
             config.s3_bucket.strip()
             and os.environ.get("NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS", "").strip()
@@ -301,8 +310,9 @@ def run_heldout_eval(
                 f"real {evaluation_split} evaluation requires an exact durable "
                 "scenario-records S3 URI"
             )
+        env.update(eval_env)
         invocation = _run_component_command(
-            eval_command,
+            eval_argv,
             cwd=local_dir,
             env=env,
             component="heldout_eval",
