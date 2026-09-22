@@ -16,7 +16,7 @@ import re
 import pytest
 from typer.testing import CliRunner
 
-from npa.cli.openvla import app as openvla_app
+from npa.cli.workbench.openvla import app as openvla_app
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.workflows.byof import openvla_pipeline as pipe
 

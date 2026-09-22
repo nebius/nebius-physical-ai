@@ -61,7 +61,6 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.insights.record": "public lineage/metrics ingestion primitive",
     "workbench.isaac_lab.byof_repo": "public Isaac Lab BYOF primitive",
     "workbench.lerobot.eval": "public LeRobot evaluation primitive",
-    "workbench.openvla.train": "public OpenVLA fine-tuning primitive (upstream argv planning; eval plan-only)",
     "workbench.openvla.serve": "public OpenVLA serving primitive (upstream argv planning; eval plan-only)",
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",

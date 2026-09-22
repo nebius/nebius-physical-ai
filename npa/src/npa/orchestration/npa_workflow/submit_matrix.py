@@ -175,6 +175,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "openvla-train.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "OpenVLA workbench pipeline stages are stubs in this release: "
+            "train prints an upstream argv plan (not implemented), so the "
+            "spec exercises config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the openvla/train three-tier contract "
+            "(CLI <-> SDK <-> spec); real OpenVLA-OFT fine-tuning lands with "
+            "nebius/nebius-physical-ai#500. Base weights resolve at runtime "
+            "through the HF Hub cache."
+        ),
+    ),
+    SubmitLiveCase(
         "alpamayo2-super-inference.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

@@ -71,7 +71,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
-    from npa.cli.openvla import app as openvla_app
+    from npa.cli.workbench.openvla import app as openvla_app
     from npa.cli.workbench.openarm import app as openarm_app
     from npa.cli.workbench.robocasa import app as robocasa_app
     from npa.cli.workbench.scenario_gen import app as scenario_gen_app
