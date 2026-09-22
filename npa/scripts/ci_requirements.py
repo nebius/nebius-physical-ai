@@ -28,7 +28,7 @@ def _fingerprint(root: Path) -> str:
         "dependencies": project["dependencies"],
         "extras": {
             extra: project["optional-dependencies"][extra]
-            for extra in ("dev", "adapter", "sonic")
+            for extra in ("dev", "adapter", "sonic", "genesis-test")
         },
         "constraints": (root / "npa/ci/constraints.in").read_text(),
         "uv": _UV_VERSION,
@@ -60,6 +60,8 @@ def _update(root: Path, upgrade: bool) -> None:
         "adapter",
         "--extra",
         "sonic",
+        "--extra",
+        "genesis-test",
         "--constraints",
         "npa/ci/constraints.in",
         "--universal",
@@ -97,6 +99,8 @@ def _validate_linux_wheels(root: Path) -> None:
                     "adapter",
                     "--extra",
                     "sonic",
+                    "--extra",
+                    "genesis-test",
                     "--constraints",
                     "npa/ci/requirements.txt",
                     "--torch-backend",
