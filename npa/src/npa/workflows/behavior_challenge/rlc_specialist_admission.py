@@ -118,6 +118,7 @@ def specialist_runtime_identity(args) -> dict:
         or args.policy_execution_variant != "native"
     ):
         raise ValueError("Specialist runtime identity requires native execution")
+    _verify_source_checkouts(args, rlc_policy)
     archive = Path(args.policy_archive)
     checkpoint = {"sha256": file_digest(archive), "bytes": archive.stat().st_size}
     if checkpoint != _LEGACY_POLICY["artifacts"]["checkpoint"]:
@@ -134,6 +135,20 @@ def specialist_runtime_identity(args) -> dict:
         "contracts": _runtime_contracts(rlc_specialist),
     }
     return _identity(payload)
+
+
+def _verify_source_checkouts(args, rlc_policy) -> None:
+    for relative, revision in (
+        (".", rlc_policy.SOURCE_COMMIT),
+        ("openpi", rlc_policy.OPENPI_COMMIT),
+        ("BEHAVIOR-1K", rlc_policy.BEHAVIOR_COMMIT),
+    ):
+        rlc_policy._verify_checkout(args.policy_root / relative, revision)
+    task_id, _ = rlc_policy._task_checkpoint(
+        args.policy_root, args.upstream_root, _TASK
+    )
+    if task_id != 1:
+        raise ValueError("Specialist task mapping differs from frozen task1")
 
 
 def _verified_runtime_files() -> dict[str, dict]:

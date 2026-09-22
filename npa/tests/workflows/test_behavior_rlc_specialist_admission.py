@@ -121,6 +121,8 @@ def admitted(tmp_path, monkeypatch):
         return original_digest(path)
 
     monkeypatch.setattr(admission, "file_digest", digest)
+    monkeypatch.setattr(rlc_policy, "_verify_checkout", lambda *_: None)
+    monkeypatch.setattr(rlc_policy, "_task_checkpoint", lambda *_: (1, "checkpoint_2"))
     monkeypatch.setattr(
         Path,
         "stat",
@@ -134,6 +136,8 @@ def admitted(tmp_path, monkeypatch):
         policy_kind="rlc-specialist",
         policy_execution_variant="native",
         policy_archive=archive,
+        policy_root=tmp_path / "rlc",
+        upstream_root=tmp_path / "upstream",
     )
     runtime = admission.specialist_runtime_identity(args)
     equivalence = _equivalence(runtime)
@@ -284,6 +288,14 @@ def test_runtime_identity_rejects_changed_staged_development_byte(
     monkeypatch.setattr(admission, "_LEGACY_RUNTIME_FILES", expected)
 
     with pytest.raises(ValueError, match="staged runtime bytes differ"):
+        admission.specialist_runtime_identity(args)
+
+
+def test_runtime_identity_rejects_changed_upstream_task_mapping(admitted, monkeypatch):
+    args, _, _ = admitted
+    monkeypatch.setattr(rlc_policy, "_task_checkpoint", lambda *_: (0, "checkpoint_2"))
+
+    with pytest.raises(ValueError, match="task mapping differs"):
         admission.specialist_runtime_identity(args)
 
 
