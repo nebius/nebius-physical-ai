@@ -71,6 +71,14 @@ def _write_json(path: Path, value: Any) -> None:
     _write(path, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode())
 
 
+def _record_launch(path: Path, value: Any) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write((json.dumps(value, sort_keys=True) + "\n").encode())
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 def _sha(value: str | bytes) -> str:
     return hashlib.sha256(value.encode() if isinstance(value, str) else value).hexdigest()
 
@@ -371,6 +379,7 @@ def submit(args: argparse.Namespace) -> None:
             config_path=Path(target["config_path"]), controller_backend="kubernetes",
             infra="k8s/" + target["context"], extra_env=environment,
             secret_envs=SECRET_NAMES, project=target["project"],
+            transaction_recorder=lambda value: _record_launch(args.output / "launch-transactions.jsonl", value),
         )
         job_id = managed._exact_scheduler_job_id(result.job_id)
         _write_json(args.output / "submission.json", {"run_id": run_id, "scheduler_job_id": job_id})

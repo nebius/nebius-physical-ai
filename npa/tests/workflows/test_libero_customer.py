@@ -142,6 +142,7 @@ def test_key_and_api_cleaned_when_preparation_fails_after_creation(monkeypatch, 
 def test_submit_failure_preserves_ambiguous_launch_recovery(monkeypatch, tmp_path, attempted):
     module, args, calls = _submit_fixture(monkeypatch, tmp_path)
     def fail(*_a, **_k):
+        _k["transaction_recorder"]({"libero_unverified_candidate_job_id": "42"})
         raise SkyPilotSubmitError("synthetic launch failure", launch_attempted=attempted)
     monkeypatch.setattr(module, "submit_workflow", fail)
     with pytest.raises(SkyPilotSubmitError):
@@ -149,6 +150,9 @@ def test_submit_failure_preserves_ambiguous_launch_recovery(monkeypatch, tmp_pat
     receipt = json.loads((args.output / "cleanup.json").read_text())
     assert receipt["ok"] is (attempted is False)
     assert calls == (["stop-api", "delete-key"] if attempted is False else [])
+    journal = args.output / "launch-transactions.jsonl"
+    assert json.loads(journal.read_text()) == {"libero_unverified_candidate_job_id": "42"}
+    assert journal.stat().st_mode & 0o777 == 0o600
 
 
 def test_missing_customer_evidence_has_no_kubernetes_effect(monkeypatch, tmp_path):

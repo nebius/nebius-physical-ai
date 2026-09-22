@@ -78,6 +78,7 @@ HEALTHY_CONTROLLER_STATUS = "UP"
 # preflight burned the whole timeout and failed a submit that would have worked.
 READY_CONTROLLER_STATUSES = frozenset({HEALTHY_CONTROLLER_STATUS, "STOPPED"})
 LIBERO_OWNER_BINDING_SCHEMA = "npa.libero.owner-binding.v1"
+LIBERO_PENDING_SUBMISSION_TIME = "LIBERO exact managed job is PENDING; awaiting provider submission timestamp"
 
 
 @dataclass(frozen=True)
@@ -1060,6 +1061,7 @@ def submit_workflow(
     libero_binding_error = ""
     libero_launch_succeeded = False
     launch_started_at: float | None = None
+    last_transaction_payload: dict[str, Any] = {}
     try:
         prepared = _prepare_workflow_submission(
             yaml_path,
@@ -1330,38 +1332,53 @@ def submit_workflow(
                 )
                 from npa.execution_preflight import libero_executable_profile_sha256
 
-                (
-                    verified_job_id,
-                    plausible_job_ids,
-                    launch_binding_error,
-                ) = _libero_launch_binding_candidates(
-                    parsed_job_id,
-                    run_id,
-                    env=env,
-                    sky_executable=sky_executable,
-                    cwd=stable_cwd,
-                    expected_profile_sha256=libero_executable_profile_sha256(docs),
-                    launch_started_at=launch_started_at,
-                )
-                if verified_job_id:
-                    bound_libero_job_id = verified_job_id
-                    unverified_libero_job_id = ""
-                    unverified_libero_job_ids = ()
-                    libero_binding_error = ""
-                else:
-                    unverified_libero_job_ids = plausible_job_ids
-                    unverified_libero_job_id = (
-                        parsed_job_id if parsed_job_id.isdigit() else ""
+                binding_deadline = transaction_clock() + recovery_policy.deadline_seconds
+                binding_sequence = 0
+                while True:
+                    (
+                        verified_job_id,
+                        plausible_job_ids,
+                        launch_binding_error,
+                    ) = _libero_launch_binding_candidates(
+                        parsed_job_id,
+                        run_id,
+                        env=env,
+                        sky_executable=sky_executable,
+                        cwd=stable_cwd,
+                        expected_profile_sha256=libero_executable_profile_sha256(docs),
+                        launch_started_at=launch_started_at,
                     )
-                    libero_binding_error = launch_binding_error
-                    if unverified_libero_job_id:
-                        # Keep the historical scalar for compatibility while
-                        # also retaining every plausible immutable candidate.
-                        unverified_libero_job_ids = tuple(
-                            dict.fromkeys(
-                                (unverified_libero_job_id, *plausible_job_ids)
-                            )
+                    if verified_job_id:
+                        bound_libero_job_id = verified_job_id
+                        unverified_libero_job_id = ""
+                        unverified_libero_job_ids = ()
+                        libero_binding_error = ""
+                    else:
+                        unverified_libero_job_ids = plausible_job_ids
+                        unverified_libero_job_id = (
+                            parsed_job_id if parsed_job_id.isdigit() else ""
                         )
+                        libero_binding_error = launch_binding_error
+                        if unverified_libero_job_id:
+                            # Keep the historical scalar for compatibility while
+                            # also retaining every plausible immutable candidate.
+                            unverified_libero_job_ids = tuple(
+                                dict.fromkeys(
+                                    (unverified_libero_job_id, *plausible_job_ids)
+                                )
+                            )
+                    # Journal the actual immutable candidate before waiting. SkyPilot
+                    # leaves submitted_at unset while the controller queues this ID.
+                    _record_with_controller(last_transaction_payload)
+                    if launch_binding_error != LIBERO_PENDING_SUBMISSION_TIME:
+                        break
+                    remaining = binding_deadline - transaction_clock()
+                    if remaining <= 0:
+                        break
+                    binding_sequence += 1
+                    transaction_sleeper(min(remaining, recovery_policy.delay(
+                        binding_sequence, random_value=random_source()
+                    )))
                 if not verified_job_id and not libero_binding_error:
                     # Defensive fallback for a malformed resolver result.
                     unverified_libero_job_id = parsed_job_id
@@ -1394,6 +1411,8 @@ def submit_workflow(
             random_source = _random.random
 
         def _record_with_controller(payload: dict[str, Any]) -> None:
+            nonlocal last_transaction_payload
+            last_transaction_payload = dict(payload)
             if transaction_recorder is None:
                 return
             enriched = dict(payload)
@@ -2338,6 +2357,14 @@ def _libero_launch_binding_candidates(
             "LIBERO launch returned success without an exact queue/name/profile "
             "binding; preserving indeterminate state and refusing retry"
         )
+    elif (
+        launch_started_at is not None
+        and candidate_rows
+        and all(str(row.get("status") or "").upper() == "PENDING" for row in candidate_rows)
+        and all(row.get("submitted_at") is None for row in candidate_rows)
+        and all(_managed_job_submission_time(row) is None for row in candidate_rows)
+    ):
+        error = LIBERO_PENDING_SUBMISSION_TIME
     else:
         error = (
             "LIBERO launch ID was not uniquely attributable to the exact queue "

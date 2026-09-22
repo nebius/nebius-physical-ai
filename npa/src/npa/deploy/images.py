@@ -80,6 +80,7 @@ LIBERO_BUILD_INPUT_PATHS = (
     "npa/docker/workbench/libero/runtime-manifest.json",
     "npa/docker/workbench/libero/runtime-requirements.txt",
     "npa/docker/workbench/libero/skypilot-bootstrap-guard.sh",
+    "npa/docker/workbench/libero/skypilot-startup.py",
     "npa/docker/workbench/libero/smoke.sh",
 )
 LIBERO_PUBLICATION_ENFORCEMENT_PATHS = (

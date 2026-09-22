@@ -11,6 +11,8 @@ resources:
   disk_size: 100
   image_id: docker:<explicit-npa-libero-candidate>@sha256:<digest>
   kubernetes:
+    post_provision_runcmd:
+    - exec /usr/local/bin/python /opt/npa/libero/skypilot-startup.py "$BASH_EXECUTION_STRING"
     pod_config:
       spec:
         serviceAccountName: npa-byof-libero-payload
@@ -55,7 +57,7 @@ resources:
           - name: libero-ssh
             mountPath: /etc/ssh
           - name: libero-home
-            mountPath: /home/ubuntu
+            mountPath: /home
         volumes:
         - name: libero-customer-run-key
           configMap:

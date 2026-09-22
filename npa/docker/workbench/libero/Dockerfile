@@ -87,6 +87,7 @@ COPY docker/workbench/libero/libero_smoke.py /opt/npa/libero/libero_smoke.py
 COPY docker/workbench/libero/REDISTRIBUTION.md /opt/npa/libero/REDISTRIBUTION.md
 COPY docker/workbench/libero/THIRD_PARTY_NOTICES.md /opt/npa/libero/THIRD_PARTY_NOTICES.md
 COPY docker/workbench/libero/skypilot-bootstrap-guard.sh /usr/local/sbin/npa-skypilot-bootstrap-guard
+COPY docker/workbench/libero/skypilot-startup.py /opt/npa/libero/skypilot-startup.py
 COPY docker/workbench/libero/entrypoint.sh /usr/local/bin/npa-libero-entrypoint
 COPY docker/workbench/libero/smoke.sh /opt/npa/libero/smoke.sh
 

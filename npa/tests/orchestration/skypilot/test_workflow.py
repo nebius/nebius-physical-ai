@@ -382,6 +382,81 @@ def test_libero_reconciliation_promotes_candidate_atomically(
     assert "libero_binding_error" not in result.launch_transaction
 
 
+@pytest.mark.parametrize("outcome", ["ready", "conflict", "competing", "still_pending"])
+def test_libero_pending_timestamp_keeps_one_launch_and_journals_candidate(
+    monkeypatch, tmp_path, outcome
+) -> None:
+    from npa.orchestration.skypilot.launch_transaction import (
+        EvidenceState, RecoveryPolicy, StabilityResult,
+    )
+
+    yaml_path = tmp_path / "libero.yaml"
+    yaml_path.write_text("name: libero\nrun: 'true'\n")
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(workflow_module, "run_launch_transaction", _REAL_RUN_LAUNCH_TRANSACTION)
+    monkeypatch.setattr(workflow_module, "_execution_preflight", lambda *_a, **_k: (
+        None, {"checks": {"libero_customer_authorization_validated": "validated"}}, {},
+    ))
+    monkeypatch.setattr(workflow_module, "wait_for_api_stability", lambda *_a, **_k: (
+        StabilityResult(EvidenceState.READY, FailureCategory.NONE)
+    ))
+    monkeypatch.setattr(workflow_module.time, "time", lambda: 100.0)
+    clock = [0.0]
+    records, sleeps, launches = [], [], []
+    observations = 0
+
+    def sleep(delay):
+        # The exact candidate must already be durable when waiting begins.
+        assert records[-1]["libero_owner_binding"]["job_id"] == "42"
+        assert records[-1]["libero_owner_binding"]["state"] == "candidate"
+        sleeps.append(delay)
+        clock[0] += delay
+
+    def fake_run(command, **_kwargs):
+        nonlocal observations
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        if command[1:3] == ["jobs", "launch"]:
+            launches.append(command)
+            return subprocess.CompletedProcess(command, 0, stdout="Job submitted, ID: 42\n", stderr="")
+        assert command[1:3] == ["jobs", "queue"]
+        rows = []
+        if launches:
+            observations += 1
+            row = {"job_id": 42, "job_name": "libero-timestamp-unit", "status": "PENDING", "submitted_at": None}
+            rows.append(row)
+            if observations > 1:
+                if outcome == "ready":
+                    row["submitted_at"] = 101.0
+                elif outcome == "conflict":
+                    row["metadata"] = {"executable_profile_sha256": "b" * 64}
+                elif outcome == "competing":
+                    rows.append({**row, "job_id": 43})
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(rows), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    kwargs = dict(
+        isolated_config_dir=tmp_path / "sky-state", sky_bin=sky_bin,
+        launch_lock_root=tmp_path / "locks", transaction_recorder=records.append,
+        transaction_clock=lambda: clock[0], transaction_sleeper=sleep,
+        transaction_random=lambda: 0.5,
+        recovery_policy=RecoveryPolicy(deadline_seconds=2, initial_backoff_seconds=1, cap_backoff_seconds=1),
+    )
+    if outcome == "ready":
+        result = submit_workflow(yaml_path, "libero-timestamp-unit", **kwargs)
+        assert result.job_id == "42"
+        assert result.launch_transaction["libero_owner_binding"]["state"] == "verified"
+        assert records[-1]["libero_owner_binding"]["state"] == "verified"
+    else:
+        with pytest.raises(SkyPilotSubmitError) as caught:
+            submit_workflow(yaml_path, "libero-timestamp-unit", **kwargs)
+        assert caught.value.transaction.state is LaunchState.INDETERMINATE
+        assert records[-1]["libero_owner_binding"] == records[-2]["libero_owner_binding"]
+        assert records[-1]["libero_owner_binding"]["state"] == "candidate"
+    assert len(launches) == 1
+    assert sleeps == ([1, 1] if outcome == "still_pending" else [1])
+
+
 def test_libero_submit_refuses_any_post_preflight_profile_change(
     monkeypatch, tmp_path
 ) -> None:
@@ -3093,6 +3168,34 @@ def test_libero_launch_binding_accepts_omitted_optional_queue_profile(
         )
         == ""
     )
+
+
+@pytest.mark.parametrize("mutation", ["none", "conflict", "competing", "invalid_time", "stale_time", "wrong_name", "no_id"])
+def test_libero_only_polls_unique_pending_id_without_provider_time(monkeypatch, mutation):
+    row = {"job_id": 126, "job_name": "exact-run", "status": "PENDING", "submitted_at": None}
+    rows = [row]
+    if mutation == "conflict":
+        row["metadata"] = {"executable_profile_sha256": "b" * 64}
+    elif mutation == "competing":
+        rows.append({**row, "job_id": 127})
+    elif mutation == "invalid_time":
+        row["submitted_at"] = "malformed"
+    elif mutation == "stale_time":
+        row["submitted_at"] = 50.0
+    elif mutation == "wrong_name":
+        row["job_name"] = "different-run"
+    monkeypatch.setattr(workflow_module.subprocess, "run", lambda cmd, **_k: (
+        subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(rows), stderr="")
+    ))
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "" if mutation == "no_id" else "126", "exact-run", env={},
+        sky_executable="sky", cwd="/durable", expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+    assert verified == ""
+    assert (error == workflow_module.LIBERO_PENDING_SUBMISSION_TIME) is (mutation == "none")
+    if mutation == "none":
+        assert plausible == ("126",)
 
 
 def test_libero_launch_binding_groups_task_rows_by_unique_job_id(monkeypatch) -> None:
