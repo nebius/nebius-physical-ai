@@ -289,7 +289,7 @@ def _rrd_document(chunks: list[Any], entity: str) -> dict[str, Any]:
 
 def _rrd(root: Path, recording_id: str) -> dict[str, Any]:
     from PIL import Image
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
     from npa.workflows.data_factory_viz import _frame_index, _grouped_images, _subsample
 
     path = root / "reports/sim2real.rrd"
