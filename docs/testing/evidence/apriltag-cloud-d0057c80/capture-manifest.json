@@ -1,0 +1,61 @@
+{
+  "captures": {
+    "33369213973_9d9bb4cc96_c": {
+      "height": 629,
+      "legend": {
+        "detected": "magenta",
+        "expected": "cyan"
+      },
+      "path": "annotations/33369213973_9d9bb4cc96_c_detections.png",
+      "sha256": "4512047fbbea2e349f72f4d9691aa06939b43300a2498f195ed0b285f209881b",
+      "source_path": "inputs/33369213973_9d9bb4cc96_c.jpg",
+      "source_sha256": "6f2888334e65440576a6424928a230b82461b1a0a42d87d3b8835d6385901481",
+      "width": 799
+    },
+    "34085369442_304b6bafd9_c": {
+      "height": 629,
+      "legend": {
+        "detected": "magenta",
+        "expected": "cyan"
+      },
+      "path": "annotations/34085369442_304b6bafd9_c_detections.png",
+      "sha256": "fac47dcc68d2b3a23cd69b6c86cdcac8d157d260a0dc4592eff428651e77943c",
+      "source_path": "inputs/34085369442_304b6bafd9_c.jpg",
+      "source_sha256": "386c70bbd4d98dc0954d053240e73824fa8e07bdf8dc7f99ea50cac872b9b065",
+      "width": 799
+    },
+    "34139872896_defdb2f8d9_c": {
+      "height": 629,
+      "legend": {
+        "detected": "magenta",
+        "expected": "cyan"
+      },
+      "path": "annotations/34139872896_defdb2f8d9_c_detections.png",
+      "sha256": "6df49800c829b1e03d59105cd4dea5be1645e254bfd0f9a2505975004c4ad285",
+      "source_path": "inputs/34139872896_defdb2f8d9_c.jpg",
+      "source_sha256": "435a619d642e2d50fb32224dc8e12992b08c2a596b02deee3fba497d3bff672a",
+      "width": 799
+    }
+  },
+  "controls": {
+    "blank": {
+      "expected_detections": 0,
+      "observed_detections": 0,
+      "passed": true,
+      "sha256": "96accbb2c9def382b2ac007b997f32a1b481f666bb68c3e6b51aa44dce0edd02"
+    },
+    "fixed_noise": {
+      "expected_detections": 0,
+      "observed_detections": 0,
+      "passed": true,
+      "seed": 20260920,
+      "sha256": "f506804aeabfe91a605130114dd632995480d1ea571d3da04dc8c70a513b9d3c"
+    }
+  },
+  "execution": {
+    "source_commit": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
+    "image_digest": "sha256:7bb4606386f4487eeeb6953ee5843a1e4698a485eac4cde3cbdd7f3a69d6612e",
+    "retained_original_sha256": "0e73bbd804b91b3bfc4c3aa94a1abb87afa6d575e50bf8374af1fcd88d23914b"
+  },
+  "schema": "npa.apriltag.capture-manifest.v1"
+}

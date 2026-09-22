@@ -1,0 +1,175 @@
+{
+  "aggregate": {
+    "corner_rmse_px": 2.7388904934718525e-05,
+    "detected_detections": 47,
+    "expected_detections": 47,
+    "false_negative": 0,
+    "false_positive": 0,
+    "images": 3,
+    "true_positive": 47
+  },
+  "capabilities_exercised": [
+    "native_apriltag_ctest",
+    "real_image_fiducial_detection",
+    "labeled_corner_accuracy",
+    "blank_and_noise_false_positive_controls",
+    "camera_consumer_observation_export",
+    "source_linked_annotation_capture"
+  ],
+  "capability": "apriltag_real_image_fiducial_detection",
+  "capture_manifest_sha256": "8527384cbbccf7ec314b12001271139ade0f8d58aae43f39399d18fd3216ce74",
+  "cases": {
+    "33369213973_9d9bb4cc96_c": {
+      "annotation": {
+        "height": 629,
+        "legend": {
+          "detected": "magenta",
+          "expected": "cyan"
+        },
+        "path": "annotations/33369213973_9d9bb4cc96_c_detections.png",
+        "sha256": "4512047fbbea2e349f72f4d9691aa06939b43300a2498f195ed0b285f209881b",
+        "source_path": "inputs/33369213973_9d9bb4cc96_c.jpg",
+        "source_sha256": "6f2888334e65440576a6424928a230b82461b1a0a42d87d3b8835d6385901481",
+        "width": 799
+      },
+      "corner_absolute_error_px_max": 4.995117194539489e-05,
+      "corner_rmse_px": 2.6654275422164356e-05,
+      "decoded_gray_sha256": "aafabeb48a26c021e1c5f42a41bbea0f4fece88348c8b300a1026ab63b3666b9",
+      "decoder": "upstream common/pjpeg baseline grayscale",
+      "detected_count": 12,
+      "expected_count": 12,
+      "false_negative": 0,
+      "false_positive": 0,
+      "labels_sha256": "0237b369c1873bd1e603d185573266030e59945cbe7f55ddf958337eaaefd002",
+      "passed": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "source_dimensions": [
+        799,
+        533
+      ],
+      "source_sha256": "6f2888334e65440576a6424928a230b82461b1a0a42d87d3b8835d6385901481",
+      "true_positive": 12
+    },
+    "34085369442_304b6bafd9_c": {
+      "annotation": {
+        "height": 629,
+        "legend": {
+          "detected": "magenta",
+          "expected": "cyan"
+        },
+        "path": "annotations/34085369442_304b6bafd9_c_detections.png",
+        "sha256": "fac47dcc68d2b3a23cd69b6c86cdcac8d157d260a0dc4592eff428651e77943c",
+        "source_path": "inputs/34085369442_304b6bafd9_c.jpg",
+        "source_sha256": "386c70bbd4d98dc0954d053240e73824fa8e07bdf8dc7f99ea50cac872b9b065",
+        "width": 799
+      },
+      "corner_absolute_error_px_max": 4.949951173216505e-05,
+      "corner_rmse_px": 2.790197750174625e-05,
+      "decoded_gray_sha256": "621d0401437d33a7f86af0b2534ff98475d08606fa3c5a592ab080d8931f5257",
+      "decoder": "upstream common/pjpeg baseline grayscale",
+      "detected_count": 25,
+      "expected_count": 25,
+      "false_negative": 0,
+      "false_positive": 0,
+      "labels_sha256": "521300049f229c66f98ac35b9354b1a638ed8dd5724d20a96f17e21625905eb6",
+      "passed": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "source_dimensions": [
+        799,
+        533
+      ],
+      "source_sha256": "386c70bbd4d98dc0954d053240e73824fa8e07bdf8dc7f99ea50cac872b9b065",
+      "true_positive": 25
+    },
+    "34139872896_defdb2f8d9_c": {
+      "annotation": {
+        "height": 629,
+        "legend": {
+          "detected": "magenta",
+          "expected": "cyan"
+        },
+        "path": "annotations/34139872896_defdb2f8d9_c_detections.png",
+        "sha256": "6df49800c829b1e03d59105cd4dea5be1645e254bfd0f9a2505975004c4ad285",
+        "source_path": "inputs/34139872896_defdb2f8d9_c.jpg",
+        "source_sha256": "435a619d642e2d50fb32224dc8e12992b08c2a596b02deee3fba497d3bff672a",
+        "width": 799
+      },
+      "corner_absolute_error_px_max": 4.931640626182343e-05,
+      "corner_rmse_px": 2.696059317507183e-05,
+      "decoded_gray_sha256": "9cd5818f7c8c98efd062e74b6d97e575db2c197c5b7bf407191928fa63f1c272",
+      "decoder": "upstream common/pjpeg baseline grayscale",
+      "detected_count": 10,
+      "expected_count": 10,
+      "false_negative": 0,
+      "false_positive": 0,
+      "labels_sha256": "2361b3340286253eb67e8cfa467a6e9bb02e49b11d1ee8ee117aae9614bbf9bb",
+      "passed": true,
+      "precision": 1.0,
+      "recall": 1.0,
+      "source_dimensions": [
+        799,
+        533
+      ],
+      "source_sha256": "435a619d642e2d50fb32224dc8e12992b08c2a596b02deee3fba497d3bff672a",
+      "true_positive": 10
+    }
+  },
+  "consumer_artifact": {
+    "observation_count": 47,
+    "path": "fiducial_observations.json",
+    "sha256": "5c97cf0386d500b46a6a5d1d57d56aec52fbe3590229aa9149de483d5dbad53a",
+    "retained_original_sha256": "e337e1dfe9227eed4c77ca837e3dca1ae5293f312ed3ca09e4e21499448dfd10"
+  },
+  "controls": {
+    "blank": {
+      "expected_detections": 0,
+      "observed_detections": 0,
+      "passed": true,
+      "sha256": "96accbb2c9def382b2ac007b997f32a1b481f666bb68c3e6b51aa44dce0edd02"
+    },
+    "fixed_noise": {
+      "expected_detections": 0,
+      "observed_detections": 0,
+      "passed": true,
+      "seed": 20260920,
+      "sha256": "f506804aeabfe91a605130114dd632995480d1ea571d3da04dc8c70a513b9d3c"
+    }
+  },
+  "evaluation_plan_sha256": "542dae723ce69d9d61201a3e7e2753220eb8e1aeee600e5906772997fc92ccfd",
+  "execution": {
+    "source_commit": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
+    "image_digest": "sha256:7bb4606386f4487eeeb6953ee5843a1e4698a485eac4cde3cbdd7f3a69d6612e",
+    "retained_original_sha256": "ccb62f4cd0914ac8728196875f0c76c55980d19d450940b1c49221c1d589ae7f"
+  },
+  "limitations": [
+    "The three upstream photographs do not establish generalization to arbitrary cameras, lighting, blur, occlusion, or tag families.",
+    "Corner detection does not establish camera-pose accuracy without calibrated intrinsics and known tag geometry.",
+    "No navigation success, robot safety, or sensor-calibration accuracy claim is made."
+  ],
+  "native_ctest": {
+    "passed": 3,
+    "total": 3,
+    "returncode": 0,
+    "retained_log_sha256": "ad5e0e20bc1b6d3e01b43b6a497ea715d47e44b9d17f42b92accc35cfd40f83b"
+  },
+  "schema": "npa.workbench.apriltag.fiducial-evaluation.v1",
+  "solution": "apriltag",
+  "thresholds": {
+    "aggregate_corner_rmse_px_max": 0.1,
+    "blank_false_detections_max": 0,
+    "corner_coordinate_absolute_error_px_max": 0.1,
+    "noise_false_detections_max": 0,
+    "per_image_precision_min": 1.0,
+    "per_image_recall_min": 1.0
+  },
+  "upstream": {
+    "commit": "94be783968e5091bcc9972c72c84fd63efce2935",
+    "license": "BSD-2-Clause",
+    "release": "v3.4.5",
+    "repo": "https://github.com/AprilRobotics/apriltag.git",
+    "test_data_license": "CC-BY-SA-2.0"
+  },
+  "retained_original_capture_manifest_sha256": "0e73bbd804b91b3bfc4c3aa94a1abb87afa6d575e50bf8374af1fcd88d23914b"
+}

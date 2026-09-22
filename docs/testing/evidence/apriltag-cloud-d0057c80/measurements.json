@@ -1,0 +1,66 @@
+{
+  "source_head": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
+  "artifact_objects_rehashed": 24,
+  "actual_cloud_job": "SUCCEEDED",
+  "matched_detections": 47,
+  "false_positive": 0,
+  "false_negative": 0,
+  "aggregate_corner_rmse_px": 2.7388904934718522e-05,
+  "coordinate_differences": 376,
+  "cases": [
+    {
+      "case": "33369213973_9d9bb4cc96_c",
+      "upstream_labels": 12,
+      "observations": 12,
+      "matched": 12,
+      "corner_rmse_px": 2.6654275422164356e-05,
+      "max_absolute_corner_difference_px": 4.995117194539489e-05
+    },
+    {
+      "case": "34085369442_304b6bafd9_c",
+      "upstream_labels": 25,
+      "observations": 25,
+      "matched": 25,
+      "corner_rmse_px": 2.790197750174625e-05,
+      "max_absolute_corner_difference_px": 4.949951173216505e-05
+    },
+    {
+      "case": "34139872896_defdb2f8d9_c",
+      "upstream_labels": 10,
+      "observations": 10,
+      "matched": 10,
+      "corner_rmse_px": 2.696059317507183e-05,
+      "max_absolute_corner_difference_px": 4.931640626182343e-05
+    }
+  ],
+  "blank_and_fixed_seed_noise_pixels_verified": true,
+  "native_ctest_passed": 3,
+  "scope": "Corner parity with four-decimal upstream regression references, not physical localization accuracy. Same fresh overlay pixels as prior actual calibrated Kimi-K3 review; no fresh provider call or holdout/generalization claim.",
+  "schema": "npa.public-apriltag-cloud-verification.v1",
+  "observed_at": "2026-09-22T00:53:07.113922+00:00",
+  "image_index": "sha256:7bb4606386f4487eeeb6953ee5843a1e4698a485eac4cde3cbdd7f3a69d6612e",
+  "root_numeric_receipt_sha256": "eccd960347a504ef4ab745ed959e8f7868192e005b2d5d595c16ed7feb155c3b",
+  "root_lifecycle_receipt_sha256": "cc129c291b55f157229aeeb6f65ed13ecae997a9b62d4e5b642566511a649b6f",
+  "actual_pod_image_digest_verified": true,
+  "cleanup": {
+    "supported_controller_cleanup_verified": true,
+    "exact_absent_objects": 5,
+    "fresh_raw_read_responses": 7,
+    "complete_metadata_lists": 2,
+    "foreign_controller_uids_preserved": 4,
+    "scope": "Owned task Pod, controller Pod, two Services and pull Secret absent; original cluster retained."
+  },
+  "bootstrap_dependency_delta": {
+    "added": {
+      "boto3": "1.43.99",
+      "botocore": "1.43.99",
+      "jmespath": "1.1.0",
+      "python-dateutil": "2.9.0.post0",
+      "s3transfer": "0.19.2",
+      "six": "1.17.0",
+      "urllib3": "2.8.0"
+    },
+    "removed": {},
+    "changed": {}
+  }
+}

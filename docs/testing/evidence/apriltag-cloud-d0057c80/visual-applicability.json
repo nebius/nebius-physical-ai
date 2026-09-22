@@ -1,0 +1,40 @@
+{
+  "schema": "npa.public-apriltag-visual-applicability.v1",
+  "cases": [
+    {
+      "case": "33369213973_9d9bb4cc96_c",
+      "current_cloud_overlay_sha256": "4512047fbbea2e349f72f4d9691aa06939b43300a2498f195ed0b285f209881b",
+      "prior_review_sheet_sha256": "97144c7d25a4efe4bd5150a63155f1bce897b8c2c3f3308738b21c90d8f114cb",
+      "review_sheet_overlay_y": 112,
+      "entire_overlay_pixel_equal_to_prior_vlm_input_at_2x_nearest": true,
+      "prior_submitted_png_sha256": "6200c46a3dd743926d44c7c945c75cdbe5648177b8756b6249abda71d02b6c44",
+      "retained_visual_score": 0.95,
+      "new_provider_call": false
+    },
+    {
+      "case": "34085369442_304b6bafd9_c",
+      "current_cloud_overlay_sha256": "fac47dcc68d2b3a23cd69b6c86cdcac8d157d260a0dc4592eff428651e77943c",
+      "prior_review_sheet_sha256": "7197707947693e2b167b5d8ef59c5d52da91df0eec0fc41fd58148ac0c630fc6",
+      "review_sheet_overlay_y": 112,
+      "entire_overlay_pixel_equal_to_prior_vlm_input_at_2x_nearest": true,
+      "prior_submitted_png_sha256": "2f7627f555768144f031179c3a720ad09e44812a81981cd1fc7ec3291c2628cb",
+      "retained_visual_score": 0.95,
+      "new_provider_call": false
+    },
+    {
+      "case": "34139872896_defdb2f8d9_c",
+      "current_cloud_overlay_sha256": "6df49800c829b1e03d59105cd4dea5be1645e254bfd0f9a2505975004c4ad285",
+      "prior_review_sheet_sha256": "4ba0905341dd6392eff43a81536f11cfecd62b638ffbe77109e744921de949d6",
+      "review_sheet_overlay_y": 112,
+      "entire_overlay_pixel_equal_to_prior_vlm_input_at_2x_nearest": true,
+      "prior_submitted_png_sha256": "29fbaf9c9446d3f29f60aa11b72bb7fc1ab60cd43d0cd8dd7bdbf5d6100e3866",
+      "retained_visual_score": 0.95,
+      "new_provider_call": false
+    }
+  ],
+  "prior_model": "moonshotai/Kimi-K3",
+  "prior_evaluator_source": "a26a868e3bed68d48eb6fd91638e1e1d3d048474",
+  "prior_proof": "https://github.com/nebius/nebius-physical-ai/blob/e5f4210090dac2d1a1880bdffdc33a9e042c102b/docs/testing/evidence/apriltag-kimi-k3-production-census/README.md",
+  "new_provider_calls": 0,
+  "scope": "The complete fresh cloud overlay matches the entire corresponding 2x nearest-neighbor image in each previously submitted review sheet. Prior actual model responses remain evidence for those identical pixels, not a new model run. Review addresses presentation only; prior calibration overlap and resolution limits remain."
+}
