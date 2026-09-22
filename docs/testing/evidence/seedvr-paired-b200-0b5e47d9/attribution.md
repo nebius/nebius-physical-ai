@@ -1,0 +1,5 @@
+# Attribution
+
+Source: [RoboPro, Hoshipu](https://huggingface.co/datasets/Hoshipu/RoboPro/blob/90ec789bf4018eb9c0f75da9f69aab5c185f0fd0/lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4), exact revision `90ec789bf4018eb9c0f75da9f69aab5c185f0fd0`, asset `lerobot/roboreal_all_80tasks/videos/chunk-000/observation.images.cam_high/episode_000000.mp4`. The retained source manifest records CC BY 4.0 ([license](https://creativecommons.org/licenses/by/4.0/)); its original hash and exact source video hash are included in measurements.json. The main clip is spatially degraded then restored by SeedVR2; the light clip is a 25-frame source-resolution control. Both outputs were encoded as H.264 MP4. These transformations do not imply endorsement by the dataset authors.
+
+Restoration model: [ByteDance SeedVR](https://github.com/ByteDance-Seed/SeedVR), upstream revision `e4de8c24441a67e1b7df56abea10645059bb1185`; 7B model revision `eb0c4281d41ba3767d4f14370f0e37e9e9180c16`. Software/model payloads are not redistributed in this evidence pack.
