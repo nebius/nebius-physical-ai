@@ -71,6 +71,13 @@ override `robocasa_endpoint` in the workflow. For a private image, create the
 named pull secret in the selected namespace and pass `--image-pull-secret`.
 The pod and container both enforce `runAsNonRoot`.
 
+The service pod requests `32Gi` of local ephemeral storage by default. Override
+that scheduler request with `--ephemeral-storage-request` after measuring the
+workload's writable usage. The option sets a request, not a storage limit, and
+image layers consume node imagefs separately, so confirm enough imagefs
+headroom for both the immutable image and the pod's writable data before
+launching a run.
+
 The `0.1.1` image uses a CUDA 12.4 base with the pinned PyTorch 2.13.0+cu129
 runtime; this is the first available CUDA 12 wheel set that clears the declared
 Torch dependency vulnerabilities. The image rebuilds exact upstream RoboCasa
