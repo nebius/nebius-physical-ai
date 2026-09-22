@@ -107,7 +107,7 @@ workflow YAMLs remain unchanged from `main`.
 | Entry | Notes |
 | --- | --- |
 | [OpenPI live pickup runbook](partners/antioch/openpi-live-pickup.md) | Operator-managed Antioch simulation ↔ pretrained π0.5 inference on Nebius, with finite physical checks and native recording. Uses the live deployment commands. |
-| [`antioch-offline-policy-train.yaml`](partners/antioch/antioch-offline-policy-train.yaml) | Antioch trajectory collection → completed LeRobotDataset v3 → ACT training. Defaults exercise the cartpole data/checkpoint path with one optimizer step; [readiness](partners/antioch/antioch-offline-policy-train.readiness.json). |
+| [`antioch-offline-policy-train.yaml`](partners/antioch/antioch-offline-policy-train.yaml) | Antioch trajectory collection → completed LeRobotDataset v3 → ACT training. Defaults exercise the cartpole data/checkpoint path with one optimizer step. |
 | [`xr1-antioch-finetune.yaml`](partners/antioch/xr1-antioch-finetune.yaml) | [Antioch pipeline](partners/antioch/README.md): robot demonstrations → Nebius S3 → native XR1 fine-tuning on eight RTX PRO 6000 GPUs → Antioch held-out evaluation → results and recordings in S3. |
 
 ### Testing and reference workflows

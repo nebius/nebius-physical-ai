@@ -29,9 +29,8 @@ npa workbench workflow plan-spec workflows/partners/antioch/antioch-offline-poli
 
 The example bucket, staged project, deployed adapter, credentials, and trainer
 image must be prepared for a real run. See the
-[adapter guide](../../../docs/workbench/antioch.md) and
-[readiness record](antioch-offline-policy-train.readiness.json). Validation and
-planning do not launch simulation or training.
+[adapter guide](../../../docs/workbench/antioch.md). Validation and planning do
+not launch simulation or training.
 
 ## Antioch → Nebius XR1 robot learning
 
