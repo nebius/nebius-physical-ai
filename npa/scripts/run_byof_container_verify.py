@@ -30,6 +30,8 @@ from npa.orchestration.skypilot._bin import (
     resolve_sky_bin,
 )
 from npa.orchestration.skypilot.cleanup import sky_environment
+from npa.orchestration.skypilot.workflow import workflow_task_statuses
+from npa.orchestration.skypilot.workflow_state import cancel_workflow_job
 from npa.orchestration.skypilot.signal_teardown import (
     SignalTeardown,
     install_teardown_signal_handlers,
@@ -393,6 +395,8 @@ def _wait_for_terminal(
     sky_bin: str,
     wait_timeout: int,
     poll_interval: int,
+    isolated_config_dir: Path | None = None,
+    config_path: Path | None = None,
 ) -> tuple[Any, dict[str, Any]]:
     """Poll with explicit immediate, bounded, or indefinite semantics."""
 
@@ -405,7 +409,12 @@ def _wait_for_terminal(
     )
     deadline = None if wait_timeout == -1 else time.time() + wait_timeout
     statuses: list[str] = []
-    final = workflow_status(run_id, sky_bin=sky_bin)
+    final = workflow_status(
+        run_id,
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+    )
     statuses.append(final.status)
     polls = 1
     while (
@@ -414,7 +423,12 @@ def _wait_for_terminal(
         and (deadline is None or time.time() < deadline)
     ):
         time.sleep(max(poll_interval, 1))
-        final = workflow_status(run_id, sky_bin=sky_bin)
+        final = workflow_status(
+            run_id,
+            sky_bin=sky_bin,
+            isolated_config_dir=isolated_config_dir,
+            config_path=config_path,
+        )
         statuses.append(final.status)
         polls += 1
     diagnostics = {
@@ -435,6 +449,37 @@ def _wait_for_terminal(
             "workflow is not terminal; inspect SkyPilot controller/job and pod events"
         )
     return final, diagnostics
+
+
+def _cleanup_managed_job(
+    job_id: str,
+    *,
+    run_id: str,
+    sky_bin: str,
+    isolated_config_dir: Path | None,
+    config_path: Path | None,
+    poll_interval: int,
+) -> None:
+    """Cancel only the submitted scheduler identity before observer teardown."""
+    scope = dict(
+        sky_bin=sky_bin,
+        isolated_config_dir=isolated_config_dir,
+        config_path=config_path,
+    )
+    rows = workflow_task_statuses(job_id, raise_on_error=True, **scope)
+    if len(rows) != 1 or rows[0]["job_id"] != job_id or rows[0]["task_name"] != run_id:
+        raise RuntimeError("managed BYOF cleanup could not verify exact job ID/name")
+    if rows[0]["status"] not in TERMINAL_STATUSES:
+        result = cancel_workflow_job(
+            job_id=job_id, run_id=run_id, also_down_cluster=False, **scope
+        )
+        if result["cancel_returncode"] != 0:
+            raise RuntimeError("managed BYOF exact-job cancellation failed")
+        final, _ = _wait_for_terminal(
+            job_id, wait_timeout=-1, poll_interval=poll_interval, **scope
+        )
+        if final.error or final.status not in TERMINAL_STATUSES:
+            raise RuntimeError("managed BYOF cancellation lacks terminal proof")
 
 
 def _submit_and_wait(args: argparse.Namespace) -> int:
@@ -506,9 +551,21 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                 sky_bin=sky_bin,
                 poll_interval=max(float(args.poll_interval), 0.0),
             )
-            previous_handlers = install_teardown_signal_handlers(
-                teardown_guard.teardown
-            )
+            managed_job_id = ""
+
+            def cleanup_managed_job():
+                if managed_job_id:
+                    _cleanup_managed_job(
+                        managed_job_id,
+                        run_id=run_id,
+                        sky_bin=sky_bin,
+                        isolated_config_dir=args.isolated_config_dir,
+                        config_path=teardown_guard.config_path,
+                        poll_interval=args.poll_interval,
+                    )
+                return teardown_guard.teardown()
+
+            previous_handlers = install_teardown_signal_handlers(cleanup_managed_job)
             summary: dict[str, Any] | None = None
             return_code = 1
             try:
@@ -526,6 +583,11 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     ),
                     timeout=args.submit_timeout,
                 )
+                managed_job_id = str(result.job_id)
+                if not managed_job_id.isdecimal():
+                    raise RuntimeError(
+                        "managed BYOF submission returned no numeric job ID"
+                    )
                 submitted_config_path = (
                     Path(result.log_paths["config"])
                     if result.log_paths.get("config")
@@ -538,10 +600,12 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
                     "outputs": outputs,
                 }
                 final, wait_diagnostics = _wait_for_terminal(
-                    run_id,
+                    managed_job_id,
                     sky_bin=sky_bin,
                     wait_timeout=args.wait_timeout,
                     poll_interval=args.poll_interval,
+                    isolated_config_dir=args.isolated_config_dir,
+                    config_path=submitted_config_path,
                 )
                 summary["final"] = final.__dict__
                 summary["wait"] = wait_diagnostics
@@ -554,7 +618,7 @@ def _submit_and_wait(args: argparse.Namespace) -> int:
             finally:
                 restore_signal_handlers(previous_handlers)
                 if args.cleanup:
-                    teardown_guard.teardown()
+                    cleanup_managed_job()
             print(json.dumps(summary or {"run_id": run_id}, indent=2, sort_keys=True))
             return return_code
         finally:

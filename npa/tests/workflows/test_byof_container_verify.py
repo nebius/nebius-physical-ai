@@ -743,3 +743,146 @@ def test_submit_and_wait_restores_kubeconfig_after_direct_launch(
     assert module._submit_and_wait(args) == 0
     assert os.environ.get("KUBECONFIG") == original
     assert ["/opt/sky", "api", "stop"] in seen_cmds
+
+
+def test_managed_wait_and_cleanup_use_returned_scheduler_id(monkeypatch, tmp_path):
+    module = _load_module()
+    from npa.orchestration.skypilot.workflow import WorkflowResult
+
+    monkeypatch.setenv("NPA_BYOF_REFRESH_SKY_API", "0")
+    monkeypatch.setattr(module, "resolve_sky_bin", lambda *_a, **_k: "/opt/sky")
+    monkeypatch.setattr(module, "render_workflow", lambda *_a, **_k: [])
+    monkeypatch.setattr(module, "preflight_output_storage", lambda **_k: None)
+    monkeypatch.setattr(
+        module, "_normalize_kubeconfig_current_context", lambda *_a: None
+    )
+    monkeypatch.setattr(module, "_ensure_infra_enabled", lambda **_k: None)
+    monkeypatch.setattr(
+        module, "install_teardown_signal_handlers", lambda _callback: {}
+    )
+    monkeypatch.setattr(module, "restore_signal_handlers", lambda _handlers: None)
+    observed = []
+    config = tmp_path / "sky.yaml"
+    state = tmp_path / "state"
+
+    def submit(_yaml, run_id, **kwargs):
+        assert run_id == "byof-logical-run"
+        assert Path(kwargs["isolated_config_dir"]) == state
+        return WorkflowResult(
+            status="SUBMITTED",
+            job_id="17",
+            returncode=0,
+            log_paths={"config": str(config)},
+        )
+
+    def status(job_id, **kwargs):
+        observed.append(("status", job_id))
+        assert job_id == "17"
+        assert Path(kwargs["isolated_config_dir"]) == state
+        assert kwargs["config_path"] == config
+        return WorkflowResult(status="SUCCEEDED", job_id=job_id, returncode=0)
+
+    def rows(job_id, **kwargs):
+        observed.append(("identity", job_id))
+        assert kwargs["raise_on_error"] is True
+        return [
+            {"job_id": job_id, "task_name": "byof-logical-run", "status": "SUCCEEDED"}
+        ]
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(module, "workflow_task_statuses", rows)
+    monkeypatch.setattr(
+        module.SignalTeardown,
+        "teardown",
+        lambda _self: observed.append(("teardown", "")),
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: pytest.fail("cancelled terminal job"),
+    )
+    args = module._parse_args(
+        [
+            "--no-direct-launch",
+            "--run-id",
+            "byof-logical-run",
+            "--config-path",
+            str(config),
+            "--isolated-config-dir",
+            str(state),
+            "--infra",
+            "k8s/demo",
+            "--output-root",
+            "s3://bucket/prefix",
+        ]
+    )
+    assert module._submit_and_wait(args) == 0
+    assert observed == [("status", "17"), ("identity", "17"), ("teardown", "")]
+
+
+@pytest.mark.parametrize("mismatch", ["job_id", "task_name", "absent"])
+def test_managed_cleanup_refuses_wrong_identity(monkeypatch, mismatch):
+    module = _load_module()
+    row = {"job_id": "17", "task_name": "byof-logical-run", "status": "RUNNING"}
+    row[mismatch] = "wrong"
+    monkeypatch.setattr(
+        module,
+        "workflow_task_statuses",
+        lambda *_a, **_k: [] if mismatch == "absent" else [row],
+    )
+    monkeypatch.setattr(
+        module,
+        "cancel_workflow_job",
+        lambda **_k: pytest.fail("cancelled unverified job"),
+    )
+    with pytest.raises(RuntimeError, match="exact job ID/name"):
+        module._cleanup_managed_job(
+            "17",
+            run_id="byof-logical-run",
+            sky_bin="sky",
+            isolated_config_dir=None,
+            config_path=None,
+            poll_interval=1,
+        )
+
+
+def test_managed_cleanup_cancels_exact_id_then_waits_terminal(monkeypatch):
+    module = _load_module()
+    from npa.orchestration.skypilot.workflow import WorkflowResult
+
+    events = []
+    monkeypatch.setattr(
+        module,
+        "workflow_task_statuses",
+        lambda *_a, **_k: [
+            {"job_id": "17", "task_name": "byof-logical-run", "status": "RUNNING"}
+        ],
+    )
+
+    def cancel(**kwargs):
+        assert kwargs["job_id"] == "17" and kwargs["run_id"] == "byof-logical-run"
+        assert kwargs["also_down_cluster"] is False
+        events.append("cancel")
+        return {"cancel_returncode": 0}
+
+    statuses = iter(["CANCELLING", "CANCELLED"])
+
+    def status(job_id, **_kwargs):
+        assert job_id == "17"
+        value = next(statuses)
+        events.append(value)
+        return WorkflowResult(status=value, job_id=job_id, returncode=0)
+
+    monkeypatch.setattr(module, "cancel_workflow_job", cancel)
+    monkeypatch.setattr(module, "workflow_status", status)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    module._cleanup_managed_job(
+        "17",
+        run_id="byof-logical-run",
+        sky_bin="sky",
+        isolated_config_dir=None,
+        config_path=None,
+        poll_interval=1,
+    )
+    assert events == ["cancel", "CANCELLING", "CANCELLED"]
