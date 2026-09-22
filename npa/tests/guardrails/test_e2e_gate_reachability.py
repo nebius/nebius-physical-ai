@@ -16,6 +16,18 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
+        "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
+        "run with docs/workbench/token-factory-robot-sdg.md"
+    ),
+    "NPA_TOKEN_FACTORY_SDG_LIVE": (
+        "requires operator-owned Token Factory credentials for paid synthetic-data routing, generation and review; "
+        "run with the command in docs/workbench/token-factory-sdg.md"
+    ),
+    "NPA_JEV_ROUTING_LIVE": (
+        "uses operator-owned TypeSafe and Token Factory credentials for paid routing/cache experiments; "
+        "run with the documented command in docs/workbench/jev-routing.md"
+    ),
     "NPA_ALPAMAYO_RAY_REPORT_URI": (
         "read-only artifact verification requires an operator-selected completed Alpamayo Ray report in private storage"
     ),
@@ -107,6 +119,9 @@ MANUAL_GATES = {
         "targets an operator-selected retained RTX cluster and creates live graphics validation pods"
     ),
     "NPA_TEST_GROOT_NGC_E2E": "gated NGC model access remains a product-specific manual test",
+    "NPA_E2E_INSIGHTS_BUCKET_ROOT": (
+        "bucket-root metadata listing requires an explicitly selected operator-owned validation bucket"
+    ),
     "NPA_E2E_CLEAR_WORKBENCH_IMAGES": "optional negative-path knob, not a suite gate",
     "NPA_SRC_S3_URI": "runtime source-staging prerequisite, not an authorization gate",
     "NPA_PREEMPTIBLE_E2E": "destructive preemptible VM suite remains operator-selected",

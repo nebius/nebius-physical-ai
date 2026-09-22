@@ -251,6 +251,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment, required
 checks, and PR process. [The package README](npa/README.md#developing-and-testing-npa)
 has the shortest test commands. Update the relevant documentation and
 [root skill](skills/index.yaml) when changing behavior.
+Run `make precheck` for fast local CI checks. After committing, fetch main and run
+`make merge-precheck` to check the combined dependency inputs. The
+[merge-readiness guide](CONTRIBUTING.md#merge-readiness-and-queue-rejections)
+also explains the automatic PR comments for merge-queue rejections.
 Security disclosures: [SECURITY.md](SECURITY.md).
 
 ## License

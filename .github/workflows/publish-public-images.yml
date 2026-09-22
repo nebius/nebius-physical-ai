@@ -51,6 +51,13 @@ on:
         description: "Exact failed/superseded dev tags to delete without promotion"
         required: false
         default: ""
+  push:
+    branches: [main]
+    paths:
+      - "npa/docker/workbench/**"
+  schedule:
+    # Weekly dev image refresh so dev-<sha> tags track HEAD automatically
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -74,11 +81,11 @@ jobs:
       cleanup_matrix: ${{ steps.plan.outputs.cleanup_matrix }}
       cleanup_count: ${{ steps.plan.outputs.cleanup_count }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
@@ -95,6 +102,8 @@ jobs:
           BUILD_TOOLS: ${{ inputs.build_development_tools }}
           CLEANUP_TOOLS: ${{ inputs.cleanup_development_tools }}
           LEROBOT_VERSION: ${{ inputs.lerobot_version }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           NPA_PUBLIC_REGISTRY="$TARGET" npa/.venv/bin/python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -105,7 +114,11 @@ jobs:
 
           import yaml
 
-          from npa.deploy.images import development_image_for_tool, development_tag
+          from npa.deploy.images import (
+              CONTAINER_IMAGE_NAMES,
+              development_image_for_tool,
+              development_tag,
+          )
 
           target = os.environ["TARGET"].strip().rstrip("/")
           sha = os.environ["DEVELOPMENT_SHA"].strip().lower()
@@ -118,9 +131,64 @@ jobs:
                   raise SystemExit(f"duplicate tool in {name}")
               return values
 
+          def _tool_name_for_key(key: str) -> str:
+              # The contract key is the tool name: development_image_for_tool
+              # resolves image names from it (e.g. `sim2real-control`).
+              return key
+
+          def _automatic_build_tools(event_name: str, entries: dict, sha: str) -> list[str]:
+              public_keys = [
+                  key
+                  for key, entry in entries.items()
+                  if isinstance(entry, dict)
+                  and entry.get("redistribution") == "public"
+                  and key in CONTAINER_IMAGE_NAMES
+              ]
+              if event_name == "schedule":
+                  # Weekly refresh: rebuild every public development image.
+                  return sorted(_tool_name_for_key(key) for key in public_keys)
+              if event_name != "push":
+                  return []
+              # Push: rebuild the public tools whose workbench inputs changed.
+              # Anything unmappable (shared files, new branch with no `before`
+              # SHA) falls back to the full public set.
+              before = os.environ.get("EVENT_BEFORE", "").strip()
+              if not before or set(before) == {"0"}:
+                  changed: list[str] = []
+              else:
+                  changed = subprocess.check_output(
+                      ["git", "diff", "--name-only", before, sha,
+                       "--", "npa/docker/workbench/"],
+                      text=True,
+                  ).splitlines()
+              dir_to_keys: dict[str, list[str]] = {}
+              for key in public_keys:
+                  top = str(entries[key].get("dockerfile", "")).split("/", 1)[0]
+                  dir_to_keys.setdefault(top, []).append(key)
+              keys: set[str] = set()
+              unmapped = not changed
+              for path in changed:
+                  parts = path.split("/")
+                  if len(parts) >= 4 and parts[2] == "workbench":
+                      mapped = dir_to_keys.get(parts[3], [])
+                      if mapped:
+                          keys.update(mapped)
+                          continue
+                  unmapped = True
+              if unmapped or not keys:
+                  keys = set(public_keys)
+              return sorted(_tool_name_for_key(key) for key in keys)
+
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
+          # #504: automatic triggers (push/schedule) must build dev images so
+          # dev-<sha> tags track HEAD; `inputs.*` is undefined on those events,
+          # so derive the tool list instead of resolving an empty matrix.
+          if not build_tools:
+              build_tools = _automatic_build_tools(
+                  os.environ.get("EVENT_NAME", ""), entries, sha
+              )
           lerobot_version = os.environ.get("LEROBOT_VERSION", "").strip()
           if lerobot_version:
               manifest = json.loads(Path("npa/src/npa/deploy/lerobot_version_manifest.json").read_text())
@@ -206,11 +274,11 @@ jobs:
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Both complete-byte paths require the verified CPython 3.12 wheel.
           python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}
@@ -341,16 +409,16 @@ jobs:
             exit 1
           fi
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
       # Some public workbench Dockerfiles inherit other immutable public NPA
       # packages. Authenticate pulls here because setup-crane installs an
       # intentionally invalid placeholder credential; no registry write occurs
       # until the separately gated push step below.
       - name: Authenticate immutable public base pulls
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -575,14 +643,14 @@ jobs:
 
       - name: Retain only the public FiftyOne validation summary
         if: always() && matrix.tool == 'fiftyone' && steps.fiftyone-validation.outcome != 'skipped'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fiftyone-validation-summary
           path: ${{ runner.temp }}/fiftyone-validation/public-summary.json
           if-no-files-found: error
           # Original logs and raw receipts stay on the runner and are not public artifacts.
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -626,7 +694,7 @@ jobs:
       - name: Attest exact pushed digest provenance
         if: matrix.tool != 'ncore'
         id: provenance-attestation
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -635,7 +703,7 @@ jobs:
       - name: Attest exact pushed digest SBOM
         if: matrix.tool != 'ncore'
         id: sbom-attestation
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ${{ steps.push.outputs.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -794,9 +862,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.cleanup_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -855,9 +923,9 @@ jobs:
         include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
     runs-on: ubuntu-latest
     steps:
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -923,11 +991,11 @@ jobs:
       EXPECTED_SOURCE_DIGEST: ${{ inputs.expected_source_digest }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
@@ -936,9 +1004,9 @@ jobs:
           python -m venv npa/.venv
           npa/.venv/bin/pip install -e npa
 
-      - uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -960,7 +1028,9 @@ jobs:
           fi
 
       - name: Promote exact validated digests and verify public parity
-        if: ${{ inputs.dry_run == false }}
+        # Manual dispatch only: inputs.* is undefined on push/schedule events,
+        # so automatic runs can never satisfy this condition.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}
         run: |
           args=(--target "$TARGET" --development-sha "$DEVELOPMENT_SHA")
           if [ -n "$SELECTED_TOOLS" ]; then

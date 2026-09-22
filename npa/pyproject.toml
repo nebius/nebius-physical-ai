@@ -20,23 +20,25 @@ requires-python = ">=3.10"
 # APIs move between minor releases and the workbench tools are written against
 # the pinned ones.
 dependencies = [
+    # Require the upstream TLS hostname and process-worker fixes in every install.
+    "anyio>=4.14.2",
     "typer>=0.24",
     # Imported directly (npa.cli.workflow_shim); typer >= 0.27 no longer
     # depends on click, so it must be declared here.
     "click>=8.3.3",
-    "httpx>=0.27",
-    "paramiko>=5.0",
-    "bcrypt>=5.0",
-    "pyyaml>=6.0",
-    "rich>=13.0",
-    "boto3>=1.34",
-    "jinja2>=3.1.6",
+    "httpx>=0.27,<0.29",
+    "paramiko>=5.0,<6.0",
+    "bcrypt>=5.0,<6.0",
+    "pyyaml>=6.0,<7.0",
+    "rich>=13.0,<16.0",
+    "boto3>=1.34,<2.0",
+    "jinja2>=3.1.6,<4.0",
     # Official API client matched to the production Kubernetes 1.33 cluster.
     # Sim2Real uses typed Job/Pod conditions instead of parsing kubectl prose.
-    "kubernetes==33.1.0",
+    "kubernetes==36.0.3",
     "numpy>=1.24",
     "pyarrow>=23.0.1",
-    "pillow>=12.3.0",
+    "pillow>=12.3.0,<13.0",
     # MCAP writer for the lichtblick viewer's frames->MCAP export (pure-Python).
     # Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
     # [tool.mypy] override) and the writer/reader pin the 1.x record API.
@@ -55,17 +57,17 @@ dependencies = [
     "scipy>=1.10",
     # Formerly the `lancedb` extra: LanceDB workbench tool (local server,
     # BDD100K import, materialized views).
-    "lancedb==0.30.2",
+    "lancedb==0.39.0",
     # Formerly the `viz` extra: Rerun viewer/recording integration
     # (`npa rerun`, sim-viz adapters).
-    "rerun-sdk==0.31.4",
+    "rerun-sdk==0.38.1",
     # Formerly the `server` extra: FastAPI policy/eval + agent backend server.
-    "fastapi~=0.136.1",
+    "fastapi>=0.136.1,<0.142.0",
     "python-multipart>=0.0.31",
 ]
 
 [project.optional-dependencies]
-studio = ["edge-tts==7.2.7"]
+studio = ["edge-tts==7.2.8"]
 # SkyPilot is installed in an isolated venv outside NPA's package environment; see docs/orchestration/skypilot-setup.md.
 orchestration = []
 # Back-compat aliases. The `data`, `foxglove`, `lancedb`, `viz`, `server`, and
@@ -95,8 +97,10 @@ leisaac = [
     "imageio-ffmpeg==0.6.0",
 ]
 genesis = [
-    "genesis-world",
-    "rsl-rl-lib==2.2.4",
+    "genesis-world>=1.4.1,<2.0",
+    # Upstream compatibility fix preserves the repository Pillow security minimum.
+    "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9",
+    "rsl-rl-lib==5.5.1",
     "torch>=2.13.0",
     "torchvision>=0.28.0",
     "tensorboard>=2.14",
@@ -107,9 +111,16 @@ adapter = [
     "numpy>=1.24",
     "pyarrow>=23.0.1",
 ]
+robot-sdg = [
+    "gymnasium-robotics==1.4.2",
+    "mujoco==3.13.0",
+]
 groot = [
     "nvidia-gr00t-sdk==0.1.0",
 ]
+# CPU learning/checkpoint tests are installed only in the complete test stage.
+genesis-test = ["rsl-rl-lib==5.5.1"]
+
 sonic = [
     "torch>=2.13.0",
     "onnx>=1.22.0",
@@ -124,9 +135,9 @@ dev = [
     # Actual loopback HTTP regression coverage for deployed service boundaries.
     "uvicorn>=0.52.4",
     # The served agent audit explicitly selects Uvicorn's websockets protocol.
-    "websockets>=10,<16",
+    "websockets>=10,<18",
     # Daily public DROID staging tests use the OpenPI image's GCS client.
-    "google-cloud-storage==3.13.1",
+    "google-cloud-storage==3.14.1",
     # Test-only media runtime for the LeIsaac dataset/PAIDF integration tests.
     # Keep this explicit development dependency out of core and `full`; the
     # LeIsaac image separately removes and scans bundled static FFmpeg bytes.
@@ -148,9 +159,9 @@ dev = [
 [dependency-groups]
 dev = [
     "uvicorn>=0.52.4",
-    "websockets>=10,<16",
-    "google-cloud-storage==3.13.1",
-    "fastapi~=0.136.1",
+    "websockets>=10,<18",
+    "google-cloud-storage==3.14.1",
+    "fastapi>=0.136.1,<0.142.0",
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
     "h5py==3.16.0",
@@ -317,3 +328,6 @@ markers = [
     "token_factory_e2e: live Nebius Token Factory API tests that require a real NEBIUS_TOKEN_FACTORY_KEY.",
     "agent_live: live NPA agent VM HTTPS tests gated on NPA_AGENT_LIVE=1 and NPA_INTEGRATION_E2E=1.",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
