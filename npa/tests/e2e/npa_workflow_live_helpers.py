@@ -1750,7 +1750,7 @@ def _assert_nurec_rrd(
     import sys
 
     import yaml
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     path = local / "reports/sim2real.rrd"
     verified = subprocess.run(
