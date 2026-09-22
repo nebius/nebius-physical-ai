@@ -1936,6 +1936,7 @@ def submit_workflow(
                     sky_executable=sky_executable, secret_envs=secret_envs,
                     environment=env, timeout=timeout, cwd=stable_cwd,
                     log_dir=submission_dir, controller_backend=controller_backend,
+                    controller_absent=(controller_health.state is ControllerState.ABSENT),
                     robotwin_image_sha256=(
                         hashlib.sha256(robotwin_authorization.bootstrap_image.encode()).hexdigest()
                         if robotwin_submit_context.layer == "inner" else ""
@@ -2962,6 +2963,15 @@ def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
 
     if controller_backend != "kubernetes":
         raise NativeResultUnavailable("native cleanup has no verified non-Kubernetes context")
+    if kwargs.get("controller_absent"):
+        kwargs["controller"] = _ensure_native_controller(
+            yaml_path=kwargs["yaml_path"], isolated_dir=kwargs["isolated_dir"],
+            controller=kwargs["controller"], context=kwargs["context"],
+            sky_executable=kwargs["sky_executable"], environment=cleanup.environment,
+            log_dir=kwargs["log_dir"], timeout=kwargs["timeout"], cwd=kwargs["cwd"],
+        )
+        if cleanup.requested:
+            raise NativeResultUnavailable("interrupted controller ensure; recovery context retained")
     payload_keys = ("yaml_path", "run_id", "isolated_dir", "controller", "context",
                     "sky_executable", "secret_envs", "environment")
     payload = _native_launch_payload(**{key: kwargs[key] for key in payload_keys})
@@ -2977,6 +2987,44 @@ def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
     cleanup.context_check = context_check
     cleanup.job_id = result.job_id
     return result
+
+
+def _ensure_native_controller(*, yaml_path, isolated_dir, controller, context,
+                              sky_executable, environment, log_dir, timeout, cwd):
+    """Provision a controller through the owned API before binding its incarnation."""
+    from npa.orchestration.skypilot import _managed_job_api as native
+
+    binding = _native_api_context_digest(
+        isolated_dir=isolated_dir, sky_executable=sky_executable, environment=environment
+    )
+    payload = {
+        "mode": "ensure_controller", "attempt": uuid.uuid4().hex, "context": binding,
+        "yaml": Path(yaml_path).read_text(), "isolated_dir": str(isolated_dir),
+        "controller": controller, "kube_context": context,
+        "sky_executable": sky_executable, "secrets": [],
+    }
+    path = log_dir / f"controller-ensure-{payload['attempt']}.jsonl"
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        _invoke_native_bridge({**payload, "descriptor": descriptor}, environment, cwd, timeout)
+        if _native_api_context_digest(
+            isolated_dir=isolated_dir, sky_executable=sky_executable, environment=environment
+        ) != binding:
+            raise native.NativeResultUnavailable("controller ensure API changed")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        data = os.read(descriptor, native.MAX_OBSERVATION_BYTES + 1)
+        name, incarnation = native.decode_controller_observation(
+            data, attempt=payload["attempt"], context=binding
+        )
+        actual = _native_context_digest(
+            isolated_dir=isolated_dir, controller=name, context=context,
+            sky_executable=sky_executable, environment=environment,
+        )
+        if actual != incarnation or (controller and name != controller):
+            raise native.NativeResultUnavailable("controller ensure incarnation changed")
+        return name
+    finally:
+        os.close(descriptor)
 
 
 def _run_native_launch(payload, *, environment, control_environment, log_dir, timeout, cwd):
@@ -3225,7 +3273,7 @@ def _controller_probe_environment(environment: Mapping[str, str]) -> dict[str, s
     }
 
 
-def _native_context_digest(*, isolated_dir, controller, context, sky_executable, environment):
+def _native_api_context_digest(*, isolated_dir, sky_executable, environment):
     from npa.orchestration.skypilot import local_api
     from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable, observation_digest
 
@@ -3238,19 +3286,12 @@ def _native_context_digest(*, isolated_dir, controller, context, sky_executable,
         if not process or not local_api._listener_owned(record, process):
             raise NativeResultUnavailable("owned API identity is unavailable")
         _check_native_environment(record, environment, sky_executable)
-        runtime_value = str(environment.get("SKY_RUNTIME_DIR") or "").strip()
-        runtime_home = Path(environment.get("HOME") or Path.home())
-        if runtime_value == "~":
-            runtime_dir = runtime_home
-        elif runtime_value.startswith("~/"):
-            runtime_dir = runtime_home / runtime_value[2:]
-        else:
-            runtime_dir = Path(runtime_value)
-        if not runtime_value or not runtime_dir.is_absolute():
-            raise NativeResultUnavailable("native request store runtime is unavailable")
-        if runtime_dir.resolve() != runtime_dir:
-            raise NativeResultUnavailable("native request store runtime is not owner-bound")
-        store = runtime_dir / ".sky" / "api_server" / "requests.db"
+        # Pinned SkyPilot requests._init_db_within_lock expands the constant
+        # ~/.sky/api_server/requests.db against HOME, not SKY_RUNTIME_DIR.
+        home = Path(str(environment.get("HOME") or ""))
+        if not home.is_absolute() or home.resolve() != home:
+            raise NativeResultUnavailable("native request store home is not owner-bound")
+        store = home / ".sky" / "api_server" / "requests.db"
         metadata = store.lstat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
             raise NativeResultUnavailable("native request store is not owner-bound")
@@ -3258,6 +3299,15 @@ def _native_context_digest(*, isolated_dir, controller, context, sky_executable,
                "store": [metadata.st_dev, metadata.st_ino],
                "config": record["config_sha256"], "files": record.get("identity_files"),
                "endpoint": local_api._endpoint(record)}
+    return observation_digest(api)
+
+
+def _native_context_digest(*, isolated_dir, controller, context, sky_executable, environment):
+    from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable, observation_digest
+
+    api = _native_api_context_digest(
+        isolated_dir=isolated_dir, sky_executable=sky_executable, environment=environment
+    )
     probe = _probe_kubernetes_controller_cwd(
         controller,
         context=context,

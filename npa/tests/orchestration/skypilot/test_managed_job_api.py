@@ -14,6 +14,64 @@ REQUEST = "00000000-0000-4000-8000-000000000001"
 CONTEXT = "c" * 64
 
 
+@pytest.mark.parametrize(
+    "failure", ("", "present", "api-drift", "wrong-handle", "job-id", "no-incarnation", "request-failure")
+)
+def test_controller_provision_receipt_never_grants_managed_job_ownership(failure):
+    name = "sky-jobs-controller-synthetic"
+    calls, rows = [], []
+    task = object()
+    dag = object()
+
+    def launch(value, **kwargs):
+        assert value is task
+        assert kwargs == {
+            "cluster_name": name, "retry_until_up": True, "fast": True,
+            "_disable_controller_check": True, "_need_confirmation": False,
+        }
+        calls.append("controller-launch")
+        return REQUEST
+
+    def get(request):
+        assert request == REQUEST
+        calls.append("get")
+        if failure == "request-failure":
+            raise RuntimeError("synthetic request failure")
+        return (
+            1 if failure == "job-id" else None,
+            SimpleNamespace(cluster_name="foreign" if failure == "wrong-handle" else name),
+        )
+
+    sky = SimpleNamespace(
+        __version__=bridge.SKY_VERSION, __commit__=bridge.SKY_SOURCE_COMMIT,
+        launch=launch, get=get,
+    )
+    payload = {"attempt": "synthetic-ensure", "context": CONTEXT, "controller": "", "yaml": "synthetic"}
+    kwargs = dict(
+        sky=sky, load_dag=lambda _text: dag,
+        prepare_controller=lambda value: (name, task) if value is dag else None,
+        verify_absent=lambda _name: failure != "present",
+        verify_context=lambda: "d" * 64 if failure == "api-drift" and calls else CONTEXT,
+        verify_incarnation=lambda _name: "" if failure == "no-incarnation" else "e" * 64,
+        observe=rows.append,
+    )
+    if failure:
+        with pytest.raises((bridge.NativeResultUnavailable, RuntimeError)):
+            bridge._ensure_controller_native(payload, **kwargs)
+        assert not any(row["event"] == "controller_result" for row in rows)
+        assert calls == ([] if failure == "present" else ["controller-launch"] if failure == "api-drift" else ["controller-launch", "get"])
+        return
+    bridge._ensure_controller_native(payload, **kwargs)
+    raw = b"".join(json.dumps(row).encode() + b"\n" for row in rows)
+    assert bridge.decode_controller_observation(raw, attempt=payload["attempt"], context=CONTEXT) == (name, "e" * 64)
+    with pytest.raises(bridge.NativeResultUnavailable):
+        bridge.decode_observation(raw, attempt=payload["attempt"], context=CONTEXT, task_count=1)
+    with pytest.raises(bridge.NativeResultUnavailable):
+        bridge.decode_controller_observation(raw, attempt="other-attempt", context=CONTEXT)
+    with pytest.raises(bridge.NativeResultUnavailable):
+        bridge.decode_controller_observation(raw.splitlines(keepends=True)[0], attempt=payload["attempt"], context=CONTEXT)
+
+
 def _payload():
     return {
         "attempt": "synthetic-attempt",

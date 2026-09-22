@@ -3864,12 +3864,13 @@ def test_native_controller_probe_environment_excludes_launch_secrets() -> None:
     }
 
 
+@pytest.mark.parametrize("database_home", (True, False))
 def test_native_context_digest_sanitizes_kubectl_environment(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, database_home
 ) -> None:
     home = tmp_path / "home"
     runtime = tmp_path / "runtime"
-    store = runtime / ".sky" / "api_server"
+    store = (home if database_home else runtime) / ".sky" / "api_server"
     store.mkdir(parents=True)
     (store / "requests.db").write_text("synthetic", encoding="utf-8")
     config = tmp_path / "global.yaml"
@@ -3917,19 +3918,62 @@ def test_native_context_digest_sanitizes_kubectl_environment(
         return workflow_module.ControllerExecutionProbe(True, "cwd_live", identity="i")
 
     monkeypatch.setattr(workflow_module, "_probe_kubernetes_controller_cwd", probe)
-    workflow_module._native_context_digest(
+    kwargs = dict(
         isolated_dir=tmp_path,
         controller="synthetic-controller",
         context="",
         sky_executable=sky_executable,
         environment=environment,
     )
+    if not database_home:
+        with pytest.raises(FileNotFoundError):
+            workflow_module._native_context_digest(**kwargs)
+        assert observed == {}
+        return
+    workflow_module._native_context_digest(**kwargs)
     assert observed == {
         "HOME": str(home),
         "PATH": "/usr/bin",
         "LANG": "C.UTF-8",
         "KUBECONFIG": str(tmp_path / "kubeconfig"),
     }
+
+
+@pytest.mark.parametrize("changed", ("", "api", "incarnation"))
+def test_cold_controller_ensure_rechecks_owned_api_and_real_incarnation(monkeypatch, tmp_path, changed):
+    from npa.orchestration.skypilot import _managed_job_api as native
+
+    path = tmp_path / "workflow.yaml"
+    path.write_text("name: synthetic\nresources:\n  cloud: kubernetes\n")
+    probes = []
+
+    def api(**_kwargs):
+        probes.append("api")
+        return "d" * 64 if changed == "api" and len(probes) > 1 else "c" * 64
+
+    def invoke(payload, environment, _cwd, _timeout):
+        assert payload["mode"] == "ensure_controller" and payload["secrets"] == []
+        assert environment == {"KUBECONFIG": "synthetic-private-binding"}
+        request = {
+            "event": "controller_request", "attempt": payload["attempt"],
+            "context": payload["context"], "request_id": "00000000-0000-4000-8000-000000000001",
+            "controller": "sky-jobs-controller-synthetic",
+        }
+        native._append_observation(payload["descriptor"], request)
+        native._append_observation(payload["descriptor"], {
+            **request, "event": "controller_result", "incarnation": "e" * 64,
+        })
+
+    monkeypatch.setattr(workflow_module, "_native_api_context_digest", api)
+    monkeypatch.setattr(workflow_module, "_invoke_native_bridge", invoke)
+    monkeypatch.setattr(workflow_module, "_native_context_digest", lambda **_k: "f" * 64 if changed == "incarnation" else "e" * 64)
+    kwargs = dict(yaml_path=path, isolated_dir=tmp_path, controller="", context="", sky_executable="/synthetic/sky", environment={"KUBECONFIG": "synthetic-private-binding"}, log_dir=tmp_path, timeout=1, cwd=tmp_path)
+    if changed:
+        with pytest.raises(native.NativeResultUnavailable):
+            workflow_module._ensure_native_controller(**kwargs)
+    else:
+        assert workflow_module._ensure_native_controller(**kwargs) == "sky-jobs-controller-synthetic"
+    assert len(list(tmp_path.glob("controller-ensure-*.jsonl"))) == 1
 
 
 def test_controller_up_is_rejected_when_execution_probe_fails(monkeypatch) -> None:

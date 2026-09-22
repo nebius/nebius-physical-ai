@@ -44,6 +44,11 @@ _SOURCE_HASHES = {
     "skylet/job_lib.py": "937f8e4518aa70c8c93c9825cb8f7272ba1ce453c34cda982931114678a63fdf",
     "skylet/services.py": "c181b243b58a3ace56646d527e2a8d8577443956b7f54444b27d01957db7a02e",
     "server/constants.py": "1e88b0b837500c9bcfb886422db53b5c7049af02aeb4eaf5230b3a58678290f5",
+    "utils/controller_utils.py": (
+        "e00b1e4ac2" "49a32763b9ae3c5a4e970f40098a7b671100818e90ced6f1fa186c"
+    ),
+    "utils/common.py": "b2604e6629d52d36c7837b5968b4e55c642839b2490aa230e8865091a4f7df46",
+    "templates/jobs-controller-provision.yaml.j2": "d04fd84bce03559968227beab07235707d025f8481d24fa015afdfe7b17c7249",
 }
 _REQUEST_ID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -161,6 +166,82 @@ def _append_observation(descriptor: int, record: Mapping[str, Any]) -> None:
         _require(written > 0)
         data = data[written:]
     os.fsync(descriptor)
+
+
+def decode_controller_observation(data: bytes, *, attempt: str, context: str) -> tuple[str, str]:
+    """Decode a controller provision request; it conveys no managed-job ownership."""
+    _require(0 < len(data) <= MAX_OBSERVATION_BYTES and data.endswith(b"\n"))
+    try:
+        rows = [json.loads(line, object_pairs_hook=_unique_mapping) for line in data.splitlines()]
+        _require(len(rows) == 2 and all(type(row) is dict for row in rows))
+        request, result = rows
+        fields = {"event", "attempt", "context", "request_id", "controller"}
+        _require(set(request) == fields and set(result) == fields | {"incarnation"})
+        _require(request["event"] == "controller_request" and result["event"] == "controller_result")
+        _require(re.fullmatch(r"[a-f0-9]{64}", context) is not None)
+        _require(_request_id(request["request_id"]) == result["request_id"])
+        for key, value in (("attempt", attempt), ("context", context), ("controller", request["controller"])):
+            _require(request[key] == result[key] == value)
+        _require(re.fullmatch(r"sky-jobs-controller-[a-z0-9-]+", request["controller"]) is not None)
+        _require(re.fullmatch(r"[a-f0-9]{64}", result["incarnation"]) is not None)
+        return request["controller"], result["incarnation"]
+    except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
+        raise NativeResultUnavailable("controller ensure result incomplete; context retained") from None
+
+
+def _controller_provision_task(dag):
+    """Use the pinned upstream controller-only template and resource selector."""
+    from sky import Task, skypilot_config
+    from sky.jobs import constants
+    from sky.skylet import constants as skylet_constants
+    from sky.utils import common, common_utils, controller_utils
+
+    controller = controller_utils.Controllers.JOBS_CONTROLLER
+    name = controller.value.cluster_name
+    resources = controller_utils.get_controller_resources(
+        controller=controller,
+        task_resources=[resource for task in dag.tasks for resource in task.resources],
+    )
+    variables = {
+        "dag_name": "ensure_controller_up",
+        "job_controller_indicator_file": constants.JOB_CONTROLLER_INDICATOR_FILE,
+        **controller_utils.controller_only_vars_to_fill(controller),
+    }
+    path = Path(constants.JOBS_CONTROLLER_YAML_PREFIX).expanduser() / "npa-ensure-controller.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with skypilot_config.local_active_workspace_ctx(skylet_constants.SKYPILOT_DEFAULT_WORKSPACE):
+        with common.with_server_user():
+            common_utils.fill_template(constants.JOBS_CONTROLLER_PROVISION_TEMPLATE, variables, output_path=str(path))
+            task = Task.from_yaml(str(path))
+            task.set_resources(resources)
+    _require(task.run is None)
+    return name, task
+
+
+def _ensure_controller_native(payload, *, sky, load_dag, prepare_controller,
+                              verify_absent, verify_context, verify_incarnation, observe):
+    _require(sky.__version__ == SKY_VERSION and sky.__commit__ == SKY_SOURCE_COMMIT)
+    _require(verify_context() == payload["context"])
+    dag = load_dag(payload["yaml"])
+    name, task = prepare_controller(dag)
+    _require(not payload["controller"] or name == payload["controller"])
+    _require(verify_absent(name))
+    _require(verify_context() == payload["context"])
+    request_id = _request_id(sky.launch(
+        task, cluster_name=name, retry_until_up=True, fast=True,
+        _disable_controller_check=True, _need_confirmation=False,
+    ))
+    request = {"event": "controller_request", "attempt": payload["attempt"],
+               "context": payload["context"], "request_id": request_id, "controller": name}
+    observe(request)
+    _require(verify_context() == payload["context"])
+    result = sky.get(request_id)
+    _require(type(result) is tuple and len(result) == 2 and result[0] is None)
+    _require(getattr(result[1], "cluster_name", None) == name)
+    _require(verify_context() == payload["context"])
+    incarnation = verify_incarnation(name)
+    _require(re.fullmatch(r"[a-f0-9]{64}", incarnation) is not None)
+    observe({**request, "event": "controller_result", "incarnation": incarnation})
 
 
 def _launch_native(payload, *, sky, load_dag, observe, verify_context) -> None:
@@ -282,9 +363,19 @@ def _main() -> int:
     _require(len(raw) <= MAX_OBSERVATION_BYTES)
     payload = json.loads(raw, object_pairs_hook=_unique_mapping)
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-    from npa.orchestration.skypilot.workflow import _native_context_digest
+    from npa.orchestration.skypilot.workflow import (
+        _controller_probe_environment,
+        _native_api_context_digest,
+        _native_context_digest,
+        _probe_kubernetes_controller_cwd,
+    )
 
     def verify_context():
+        if payload.get("mode") == "ensure_controller":
+            return _native_api_context_digest(
+                isolated_dir=Path(payload["isolated_dir"]),
+                sky_executable=payload["sky_executable"], environment=os.environ,
+            )
         return _native_context_digest(
             isolated_dir=Path(payload["isolated_dir"]),
             controller=payload["controller"],
@@ -302,6 +393,31 @@ def _main() -> int:
     from sky.utils.dag_utils import load_dag_from_yaml_str
 
     _require(Path(sky.__file__).parent == root)
+    if payload.get("mode") == "ensure_controller":
+        def absent(name):
+            probe = _probe_kubernetes_controller_cwd(
+                name, context=payload["kube_context"],
+                env=_controller_probe_environment(os.environ),
+                use_current_context=not payload["kube_context"],
+            )
+            return not probe.healthy and probe.outcome == "head_pod_ambiguous" and probe.pod_count == 0
+
+        def incarnation(name):
+            return _native_context_digest(
+                isolated_dir=Path(payload["isolated_dir"]), controller=name,
+                context=payload["kube_context"], sky_executable=payload["sky_executable"],
+                environment=os.environ,
+            )
+
+        with contextlib.redirect_stdout(sys.stderr):
+            _ensure_controller_native(
+                payload, sky=sky, load_dag=load_dag_from_yaml_str,
+                prepare_controller=_controller_provision_task, verify_absent=absent,
+                verify_context=verify_context, verify_incarnation=incarnation,
+                observe=lambda row: _append_observation(payload["descriptor"], row),
+            )
+        _verify_native_sources(root)
+        return 0
     payload["secrets"] = [(name, os.environ[name]) for name in payload["secrets"]]
     run_bridge(
         payload,
