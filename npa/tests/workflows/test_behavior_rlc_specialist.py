@@ -124,11 +124,20 @@ def test_specialist_raw_topology_rejects_wrong_leaf_set(tmp_path):
         rlc_specialist._verify_raw_topology(tmp_path)
 
 
-@pytest.mark.parametrize("defect", ["correlation-hash", "parameter-dtype"])
+@pytest.mark.parametrize(
+    "defect",
+    ["correlation-hash", "parameter-dtype", "parameter-path", "parameter-shape"],
+)
 def test_specialist_loaded_state_requires_exact_native_contract(monkeypatch, defect):
     model = SimpleNamespace(correlation_loaded=True)
     policy = SimpleNamespace(_model=model)
-    monkeypatch.setattr(rlc_specialist, "_state_rows", lambda _model: _state_rows())
+    correct = _state_rows()
+    monkeypatch.setattr(
+        rlc_specialist,
+        "TOPOLOGY_SHA256",
+        rlc_specialist._loaded_topology_sha256(correct),
+    )
+    monkeypatch.setattr(rlc_specialist, "_state_rows", lambda _model: correct)
 
     summary = rlc_specialist.verify_loaded_state(policy)
 
@@ -138,8 +147,12 @@ def test_specialist_loaded_state_requires_exact_native_contract(monkeypatch, def
     wrong = _state_rows()
     if defect == "correlation-hash":
         wrong[-1] = {**wrong[-1], "sha256": "0" * 64}
-    else:
+    elif defect == "parameter-dtype":
         wrong[0] = {**wrong[0], "dtype": "float32"}
+    elif defect == "parameter-path":
+        wrong[0] = {**wrong[0], "path": "param/replaced"}
+    else:
+        wrong[0] = {**wrong[0], "shape": [2]}
     monkeypatch.setattr(rlc_specialist, "_state_rows", lambda _model: wrong)
     with pytest.raises(ValueError, match="post-load native state differs"):
         rlc_specialist.verify_loaded_state(policy)
@@ -237,3 +250,26 @@ def test_managed_cli_exposes_specialist_kind():
 
     assert args.policy_kind == "rlc-specialist"
     assert args.policy_execution_variant == "native"
+
+
+def test_specialist_cannot_skip_managed_paths(tmp_path):
+    args = argparse.Namespace(
+        policy_kind="rlc-specialist",
+        policy_execution_variant="native",
+        policy_root=None,
+        policy_python=None,
+        policy_checkpoint=None,
+        policy_archive=None,
+        policy_selected_export_receipt=None,
+        policy_correlation_manifest=None,
+        policy_validation_receipt=None,
+        policy_stock_correlation_asset=None,
+        policy_stock_correlation_sha256=None,
+        policy_task_name=None,
+    )
+
+    from npa.workflows.behavior_challenge import policy
+
+    with pytest.raises(ValueError, match="requires all four policy paths"):
+        with policy.managed_policy(args, {"recipe": {}}, tmp_path):
+            pass

@@ -237,6 +237,7 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         bool(getattr(args, field, None)) for field in STOCK_RLC_CORRELATION_FIELDS
     ]
     selected_kind = getattr(args, "policy_kind", "official") == "rlc-selected"
+    specialist_kind = getattr(args, "policy_kind", "official") == "rlc-specialist"
     execution_variant = getattr(args, "policy_execution_variant", "native")
     variants = {
         "official": {"native"},
@@ -274,6 +275,8 @@ def managed_policy(args: argparse.Namespace, plan: dict, output: Path):
         raise ValueError("Stock RLC correlation requires --policy-kind rlc")
     if selected_kind and not all(selected):
         raise ValueError("Selected RLC policy requires all four policy paths")
+    if specialist_kind and not all(selected):
+        raise ValueError("Released RLC specialist requires all four policy paths")
     if comet_kind and not all(selected):
         label = "Comet12" if policy_kind == "comet12" else "Comet50"
         raise ValueError(f"{label} policy requires all four policy paths")

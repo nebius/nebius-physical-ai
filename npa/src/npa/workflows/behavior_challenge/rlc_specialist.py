@@ -118,6 +118,15 @@ def _state_rows(model) -> list[dict]:
     return sorted(rows, key=lambda row: row["path"])
 
 
+def _loaded_topology_sha256(rows: list[dict]) -> str:
+    topology = [
+        {"path": row["path"], "shape": row["shape"]}
+        for row in sorted(rows, key=lambda row: row["path"])
+    ]
+    encoded = json.dumps(topology, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def verify_loaded_state(policy) -> dict:
     """Require the exact qualified native state before server readiness.
 
@@ -142,6 +151,7 @@ def verify_loaded_state(policy) -> dict:
     )
     if (
         len(rows) != 75
+        or _loaded_topology_sha256(rows) != TOPOLOGY_SHA256
         or params != 74
         or correlations != [expected_correlation]
         or getattr(policy._model, "correlation_loaded", None) is not True

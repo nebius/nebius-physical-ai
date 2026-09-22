@@ -184,8 +184,9 @@ at revision `5f0354b905ef5a5673c38eab364e439926f08e70` for task IDs
 1, 7, 18, and 21 only. It uses the unchanged pinned RLC native server and the
 same three RGB images plus 61-element proprioception adapter. Before readiness,
 the runner verifies the complete 17-file release inventory, raw 75-leaf
-topology, 74 BF16 parameter leaves, and the canonical FP32 correlation
-intermediate. Only `native` execution is accepted. The available RTX smoke
+topology, the loaded path-and-shape topology, 74 BF16 parameter leaves, and the
+canonical FP32 correlation intermediate. Only `native` execution is accepted.
+The available RTX smoke
 proved model loading and finite synthetic task-1 wire actions; it did not prove
 the official single-24 GB policy-memory requirement or rank the checkpoint on a
 complete 2026 rollout panel. This profile is admitted only for local development

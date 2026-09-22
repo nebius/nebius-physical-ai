@@ -299,7 +299,10 @@ def test_specialist_server_verifies_loaded_state_before_return(server, monkeypat
     monkeypatch.setitem(
         sys.modules,
         "rlc_specialist",
-        SimpleNamespace(verify_loaded_state=lambda policy: calls.append(policy)),
+        SimpleNamespace(
+            SUPPORTED_TASK_IDS=frozenset({1, 7, 18, 21}),
+            verify_loaded_state=lambda policy: calls.append(policy),
+        ),
     )
 
     loaded, receipt = server._load_stock_policy(
@@ -307,12 +310,46 @@ def test_specialist_server_verifies_loaded_state_before_return(server, monkeypat
             correlation_asset=None,
             correlation_sha256=None,
             specialist_state_contract=True,
+            execution_variant="native",
+            task_id=1,
         )
     )
 
     assert loaded is wrapper
     assert receipt is None
     assert calls == [native]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"correlation_asset": Path("/correlation"), "correlation_sha256": "a" * 64},
+            "rejects correlation overrides",
+        ),
+        ({"execution_variant": "final-stage-backtrack"}, "requires native execution"),
+        ({"task_id": 0}, "rejects unsupported task"),
+    ],
+)
+def test_direct_specialist_server_rejects_contract_bypasses(
+    server, monkeypatch, overrides, message
+):
+    monkeypatch.setitem(
+        sys.modules,
+        "rlc_specialist",
+        SimpleNamespace(SUPPORTED_TASK_IDS=frozenset({1, 7, 18, 21})),
+    )
+    values = {
+        "correlation_asset": None,
+        "correlation_sha256": None,
+        "specialist_state_contract": True,
+        "execution_variant": "native",
+        "task_id": 1,
+    }
+    values.update(overrides)
+
+    with pytest.raises(ValueError, match=message):
+        server._load_stock_policy(SimpleNamespace(**values))
 
 
 def test_adapter_inventory_stages_execution_module_for_both_weight_paths(tmp_path):

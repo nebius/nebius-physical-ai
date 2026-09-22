@@ -140,11 +140,21 @@ def parser() -> argparse.ArgumentParser:
 def _load_stock_policy(args):
     asset = args.correlation_asset
     expected_sha256 = args.correlation_sha256
+    specialist = getattr(args, "specialist_state_contract", False)
     if (asset is None) != (expected_sha256 is None):
         raise ValueError("stock correlation requires both artifact and SHA-256")
+    if specialist:
+        from rlc_specialist import SUPPORTED_TASK_IDS
+
+        if asset is not None:
+            raise ValueError("Specialist state contract rejects correlation overrides")
+        if args.execution_variant != NATIVE_EXECUTION:
+            raise ValueError("Specialist state contract requires native execution")
+        if args.task_id not in SUPPORTED_TASK_IDS:
+            raise ValueError("Specialist state contract rejects unsupported task")
     if asset is None:
         policy = _load_policy(args)
-        if getattr(args, "specialist_state_contract", False):
+        if specialist:
             from rlc_specialist import verify_loaded_state
 
             native = getattr(policy, "base_policy", None)
