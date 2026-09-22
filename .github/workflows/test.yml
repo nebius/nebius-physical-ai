@@ -25,12 +25,12 @@ jobs:
       browser: ${{ steps.scope.outputs.browser }}
     steps:
       - name: Check out comparison history
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Check CI dependency pins
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up cached uv
@@ -94,7 +94,7 @@ jobs:
       - name: Install browser test dependencies
         run: npm ci --prefix npa/tests/browser
       - name: Set up Python for the production UI renderer
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Install the production UI renderer
@@ -105,7 +105,7 @@ jobs:
         run: npm run --prefix npa/tests/browser cy:mock
 
       - name: Set up Python 3.10 compatibility
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.10"
 
@@ -124,7 +124,7 @@ jobs:
             -q
 
       - name: Set up Python 3.14 compatibility
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
 
@@ -153,7 +153,7 @@ jobs:
       NPA_S3_BUCKET: test-bucket-00000000
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up cached uv
@@ -168,7 +168,7 @@ jobs:
             npa/ci/constraints.in
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -212,16 +212,16 @@ jobs:
         # Candidates needing the full suite use the primary interpreter.
         # Scheduled/manual audits keep all supported versions.
         python-version: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '["3.12"]' || '["3.10", "3.12", "3.14"]') }}
-        # Candidates use one extra shard to keep feedback prompt.
+        # Candidates split all tests across eight shards for a shorter critical path.
         # The periodic three-version audit retains four per interpreter.
-        shard: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '[1, 2, 3, 4, 5]' || '[1, 2, 3, 4]') }}
+        shard: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '[1, 2, 3, 4, 5, 6, 7, 8]' || '[1, 2, 3, 4]') }}
     env:
       NPA_PROJECT_ID: project-test-00000000
       NPA_S3_BUCKET: test-bucket-00000000
       NPA_E2E_PROJECT_ID: project-test-00000000
       NPA_E2E_GROOT_BUCKET: test-bucket-00000000
       NPA_CI_SHARD_INDEX: ${{ matrix.shard }}
-      NPA_CI_TOTAL_SHARDS: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 5 || 4 }}
+      NPA_CI_TOTAL_SHARDS: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && 8 || 4 }}
       COVERAGE_FILE: .coverage.${{ matrix.python-version }}.${{ matrix.shard }}
       NPA_CI_TIMING_OUTPUT: ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json
       # The LTX-2.5 output validator decides whether a GPU run produced anything
@@ -232,7 +232,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up cached uv
@@ -261,7 +261,7 @@ jobs:
           ffprobe -version
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -382,12 +382,12 @@ jobs:
         run: test "$TEST_RESULT" = success
 
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
