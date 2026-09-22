@@ -631,7 +631,7 @@ _EXPECTED_POLICY_AST_HASHES = {
     "hosted-response": "79ec961221a6cd29d6d156785c0d0e4ea3a9643127cea8c144809b37e8f87507",
     "hosted-call": "68dc806c6fa6ab3ea35e3984137761411a7a1a88f4751a782dce7ba18bb8cbb0",
     "backend-verdict": "1c24916a004f460e53009dd11a0840f79606d22ada0a08e68fb933ef01547545",
-    "evidence-verdict": "4bb91f68e0fa7ecf98ec40e3c907ef9ce820e9c1745f80016106ce7e95e01680"
+    "evidence-verdict": "4bb91f68e0fa7ecf98ec40e3c907ef9ce820e9c1745f80016106ce7e95e01680",
 }
 
 
