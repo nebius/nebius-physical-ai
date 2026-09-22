@@ -462,9 +462,10 @@ def build_source_overlay(root: Path, overlay: Path) -> Path:
         root: Verified Comet source root.
         overlay: Empty destination for the runtime source overlay.
     Returns:
-        Overlay root containing the patched ``openpi`` package.
+        Overlay root containing the patched ``openpi`` package and its adapter.
     Raises:
         ValueError: The pinned import seam occurs other than exactly once.
+        FileExistsError: The destination package or adapter already exists.
     """
     verify_source(root)
     destination = overlay / "openpi"
@@ -480,6 +481,8 @@ def build_source_overlay(root: Path, overlay: Path) -> Path:
     if source.count(old) != 1:
         raise ValueError("Unexpected pinned Comet proprioception import")
     policy.write_text(source.replace(old, new))
+    with (overlay / "comet_policy.py").open("xb") as adapter:
+        adapter.write(Path(__file__).read_bytes())
     return overlay
 
 

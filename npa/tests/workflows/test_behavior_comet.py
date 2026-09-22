@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 from types import ModuleType, SimpleNamespace
 import sys
 from unittest.mock import Mock
@@ -451,6 +452,24 @@ def test_source_overlay_patches_only_simulation_import(tmp_path, monkeypatch):
     patched = (overlay / "openpi/policies/b1k_policy.py").read_text()
     assert "from comet_policy import PROPRIOCEPTION_INDICES" in patched
     assert patched.endswith("PINNED = True\n")
+    subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; from pathlib import Path; "
+            "sys.path.insert(0, sys.argv[1]); "
+            "from openpi.policies import b1k_policy; "
+            "import comet_policy; "
+            "assert b1k_policy.PROPRIOCEPTION_INDICES == comet_policy.PROPRIOCEPTION_INDICES; "
+            "assert Path(comet_policy.__file__).resolve() == Path(sys.argv[1]) / 'comet_policy.py'",
+            str(overlay),
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_training_overlay_removes_only_unreachable_simulator_dataset(

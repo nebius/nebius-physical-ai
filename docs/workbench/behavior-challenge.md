@@ -535,6 +535,9 @@ rejects multi-process use. The original checkout stays unchanged. The native
 Comet transforms, PyTorch collation, `DataLoaderImpl`, and `train_step` remain
 the executable training path; this bridge does not substitute the objective or
 install a fake simulator package.
+Both source-overlay builders include the exact `comet_policy.py` adapter that
+the patched import requires. A fresh interpreter or spawned data worker can
+resolve that import with just the overlay on its source path.
 
 ## Freeze the evaluation selection
 
