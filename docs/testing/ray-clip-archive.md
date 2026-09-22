@@ -65,9 +65,12 @@ Advanced results additionally require execution identity, complete committed
 shards and successful actor-cleanup evidence. A cancelled tree is insufficient.
 
 Before opening Lance, it validates the local manifest and transaction against
-the initial-version format emitted by the current recipe (LanceDB 0.30.2,
-Lance writer 4.0.0, data format 2.0). Every fragment must reference inventoried
-local data. Shallow clones, extra versions, indexes, deletions, external row
+the initial-version formats emitted by LanceDB 0.30.2 (Lance writer 4.0.0,
+data format 2.0) and 0.39.0 (Lance writer 12.0.0, data format 2.0 or 2.2).
+The newer writer's optional `latest_version_hint.json` must contain only integer
+version 1. Manifest, fragment and data-footer versions must agree, and every
+fragment must reference inventoried local data. Shallow clones, extra versions,
+indexes, deletions, external row
 metadata, branches, extensions and unknown metadata are unsupported and rejected
 before any Lance reader runs. This restriction prevents a restored table from
 silently depending on files outside its result tree. Keep the recipe's original

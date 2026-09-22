@@ -17,6 +17,7 @@ CANDIDATE = (
     "github.event.merge_group.head_sha || github.ref }}"
 )
 WORKFLOW_GROUPS = {
+    "merge-queue-report.yml": "merge-queue-feedback",
     "security-regression.yml": "pr-gate-" + CANDIDATE,
     "test.yml": "test-" + CANDIDATE,
     "lint.yml": "lint-" + CANDIDATE,
@@ -25,6 +26,29 @@ WORKFLOW_GROUPS = {
     "confidentiality-scan.yml": "confidentiality-${{ github.ref }}",
     "gitleaks.yml": "gitleaks-${{ github.ref }}",
     "typecheck.yml": None,
+}
+
+PRIORITY_JOBS = {
+    "security-regression.yml": {
+        "gitleaks",
+        "pr-precheck",
+        "scan",
+        "security-scanners",
+        "security-regression",
+    },
+    "test.yml": {"scope", "coverage"},
+    "image-security-scan.yml": {"base-image-plan", "base-image-cve-scan"},
+}
+TEST_JOBS = {
+    "security-regression.yml": {"security-runtime"},
+    "test.yml": {"test", "browser-mocked", "pr-smoke"},
+    "lint.yml": {"ruff", "docs-drift"},
+    "harness-guardrails.yml": {"guardrails"},
+    "image-security-scan.yml": {
+        "image-policy",
+        "base-image-entry",
+        "omniverse-payload-scan",
+    },
 }
 
 
@@ -74,3 +98,32 @@ def test_workflow_groups_isolate_candidates_and_reusable_children(name: str) -> 
         child = job["uses"].removeprefix("./.github/workflows/")
         assert child in WORKFLOW_GROUPS
         assert WORKFLOW_GROUPS[child] != group
+
+
+@pytest.mark.parametrize("name", WORKFLOW_GROUPS)
+def test_candidate_runner_roles_keep_bulk_work_out_of_priority_capacity(name):
+    """Reserve configured priority labels for short candidate gates only.
+
+    Args:
+        name: Workflow with concrete or reusable jobs.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Candidate or background work reaches the wrong pool.
+    """
+    for job_id, job in _workflow(name)["jobs"].items():
+        if "runs-on" not in job:
+            continue
+        role = None
+        if job_id in PRIORITY_JOBS.get(name, set()):
+            role = "PRIORITY"
+        elif job_id in TEST_JOBS.get(name, set()):
+            role = "TEST"
+        if role is None:
+            assert job["runs-on"] == "ubuntu-latest"
+            continue
+        expected = (
+            '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) '
+            f"&& (vars.NPA_CI_{role}_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}}}"
+        )
+        assert job["runs-on"] == expected, (name, job_id)
