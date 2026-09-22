@@ -365,3 +365,89 @@ def test_prepare_runtime_uses_separate_storage_clients(tmp_path: Path) -> None:
     assert set(manifest_storage.calls) == {MANIFEST_URI}
     assert MANIFEST_URI not in archive_storage.calls
     assert all(uri.endswith(".tar.gz") for uri in archive_storage.calls)
+
+
+@pytest.mark.parametrize("legacy_manifest_replaced", [False, True])
+def test_changed_manifest_preserves_ready_cache_before_restore(
+    tmp_path: Path, legacy_manifest_replaced: bool
+) -> None:
+    objects, manifest = _runtime_objects()
+    _, manifests, archives, home, workspace = _run(tmp_path, objects, manifest)
+    changed = json.loads(manifest)
+    changed["archives"] = changed["archives"][:1]
+    requested = (json.dumps(changed, sort_keys=True) + "\n").encode()
+    manifests.objects[MANIFEST_URI] = requested
+    cache = workspace / ".npa-runtime-cache"
+    if legacy_manifest_replaced:
+        (cache / "runtime-manifest.json").write_bytes(requested)
+    before = {p.name: p.read_bytes() for p in cache.glob("*.json")}
+    archive_calls = list(archives.calls)
+    shutil.rmtree(home / ".local/python")
+
+    with pytest.raises(ValueError, match="different manifest.*isolated workspace"):
+        prepare_runtime(
+            manifests, archives, MANIFEST_URI, _sha(requested), home, workspace
+        )
+
+    assert {p.name: p.read_bytes() for p in cache.glob("*.json")} == before
+    assert archives.calls == archive_calls
+    assert not (home / ".local/python").exists()
+    assert (cache / "python-base/bin/python").read_bytes() == b"immutable-python"
+    assert (workspace / "data/original").read_bytes() == b"shared"
+
+
+def test_changed_manifest_does_not_clean_interrupted_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    objects, manifest = _runtime_objects()
+    original = runtime_cache._extract_archive
+
+    def interrupt(archive: Path, home: Path, allowed: list[Any]) -> None:
+        original(archive, home, allowed)
+        raise RuntimeError("interrupted")
+
+    monkeypatch.setattr(runtime_cache, "_extract_archive", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        _run(tmp_path, objects, manifest)
+    home, workspace = tmp_path / "home", tmp_path / "home/work"
+    changed = json.loads(manifest)
+    changed["archives"] = changed["archives"][:1]
+    requested = json.dumps(changed).encode()
+    manifests = FakeStorage({MANIFEST_URI: requested})
+    archives = FakeStorage(objects)
+    python = home / ".local/python/bin/python"
+    inode = python.stat().st_ino
+
+    with pytest.raises(ValueError, match="different manifest"):
+        prepare_runtime(
+            manifests, archives, MANIFEST_URI, _sha(requested), home, workspace
+        )
+
+    assert archives.calls == []
+    assert python.stat().st_ino == inode
+    assert python.read_bytes() == b"immutable-python"
+    assert (
+        workspace / ".npa-runtime-cache/runtime-manifest.json"
+    ).read_bytes() == manifest
+
+
+@pytest.mark.parametrize("name", ["runtime-manifest.json", "runtime-ready.json"])
+def test_runtime_cache_rejects_identity_symlink(tmp_path: Path, name: str) -> None:
+    objects, manifest = _runtime_objects()
+    _, manifests, archives, home, workspace = _run(tmp_path, objects, manifest)
+    path = workspace / ".npa-runtime-cache" / name
+    original = path.read_bytes()
+    target = tmp_path / "other.json"
+    target.write_bytes(original)
+    path.unlink()
+    path.symlink_to(target)
+    calls = list(archives.calls)
+
+    with pytest.raises(ValueError, match="safe regular file"):
+        prepare_runtime(
+            manifests, archives, MANIFEST_URI, _sha(manifest), home, workspace
+        )
+
+    assert target.read_bytes() == original
+    assert path.is_symlink()
+    assert archives.calls == calls

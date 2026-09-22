@@ -419,8 +419,30 @@ def _prepare_state(workspace: Path, manifest_bytes: bytes) -> Path:
     if state_root.is_symlink() or (state_root.exists() and not state_root.is_dir()):
         raise ValueError("Runtime cache state path is not a safe directory")
     state_root.mkdir(exist_ok=True)
-    _atomic_bytes(state_root / "runtime-manifest.json", manifest_bytes)
+    _bind_cached_manifest(state_root, manifest_bytes)
     return state_root
+
+
+def _bind_cached_manifest(state_root: Path, manifest_bytes: bytes) -> None:
+    """Reject a different runtime before changing shared restore state."""
+    manifest_path = state_root / "runtime-manifest.json"
+    ready_path = state_root / "runtime-ready.json"
+    for path in (manifest_path, ready_path):
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError("Runtime cache identity path is not a safe regular file")
+    mismatch = manifest_path.exists() and manifest_path.read_bytes() != manifest_bytes
+    if ready_path.exists():
+        ready = _load_json(ready_path, "runtime ready receipt")
+        mismatch |= (
+            ready.get("manifest_sha256") != hashlib.sha256(manifest_bytes).hexdigest()
+        )
+    if mismatch:
+        raise ValueError(
+            "Runtime cache belongs to a different manifest; use an isolated "
+            "workspace matching the requested manifest's allowed directories"
+        )
+    if not manifest_path.exists():
+        _atomic_bytes(manifest_path, manifest_bytes)
 
 
 def _restore_archives(

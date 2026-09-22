@@ -410,6 +410,13 @@ fetching Gemma-derived checkpoints; see the
 GR00T's gated dependencies require exact artifact access. Neither choice is
 authorized by the BEHAVIOR Data Bundle acceptance alone.
 
+`prepare_runtime` binds each workspace cache to one exact runtime manifest.
+Use a separate volume or workspace for a different manifest, with mount paths
+matching that manifest's allowed directories. This also applies when a
+training-only manifest shares its base archive with a simulation manifest.
+Workbench rejects a conflicting manifest before changing cache metadata or
+restoring archives, and preserves the existing runtime receipt.
+
 ### Supervise the official radio policy in the worker
 
 An operator workflow can append these four arguments to the internal `evaluate`
@@ -551,6 +558,18 @@ install a fake simulator package.
 Both source-overlay builders include the exact `comet_policy.py` adapter that
 the patched import requires. A fresh interpreter or spawned data worker can
 resolve that import with just the overlay on its source path.
+
+For restartable single-process training, `CommittedCursor` records the next
+drop-last batch whose optimizer update has not completed. `NativeCursorSampler`
+replays Torch 2.7.1's shared-generator `RandomSampler` order, including its one
+worker-base-seed draw, and skips only batches covered by that durable cursor.
+Call `advance_after_update(..., update_completed=True)` only after the native
+optimizer update finishes. Persist the resulting cursor with its matching
+checkpoint and restore that pair after interruption. Prefetched batches remain
+disposable: a fresh process recreates its persistent-worker queue from the
+restored cursor. This utility covers deterministic shuffle order for one
+process with persistent workers. It does not establish checkpoint completeness,
+fresh-process update equivalence, GPU resume admission, or model quality.
 
 ## Freeze the evaluation selection
 
