@@ -1,0 +1,73 @@
+{
+  "at": "2026-09-22T02:48:28.756999+00:00",
+  "status": "PASS_SCOPED_RUNTIME_AND_CLEANUP",
+  "source": "2a90905570d9cb134da527be78ebfecb0bd841c8",
+  "image_producer": "e62ab7073b8b8235decd7d8013ac58b7bba802b1",
+  "image_index": "a6c05625dd796ed1c25f3192a5078a604da64e76d7a0d96531d88cc4954587c0",
+  "rehash_file_count": 808,
+  "rehashed_bytes": 47310228,
+  "managed_stages": [
+    {
+      "stage": "stage",
+      "status": "SUCCEEDED",
+      "duration_seconds": 19.03429412841797
+    },
+    {
+      "stage": "register",
+      "status": "SUCCEEDED",
+      "duration_seconds": 19.477575540542603
+    },
+    {
+      "stage": "validate",
+      "status": "SUCCEEDED",
+      "duration_seconds": 16.664583683013916
+    },
+    {
+      "stage": "multiway",
+      "status": "SUCCEEDED",
+      "duration_seconds": 19.74435520172119
+    },
+    {
+      "stage": "reconstruct",
+      "status": "SUCCEEDED",
+      "duration_seconds": 19.937791347503662
+    },
+    {
+      "stage": "visualize",
+      "status": "SUCCEEDED",
+      "duration_seconds": 19.579314470291138
+    }
+  ],
+  "actual_task_uids": 6,
+  "observed_modules_per_task": 8,
+  "observed_distributions_per_task": 123,
+  "durable_objects": 20,
+  "declared_outputs": 11,
+  "numerical_checks": 24,
+  "rrd_lineage_components": 6,
+  "typed_absences": 22,
+  "raw_gets": 24,
+  "complete_inventory_counts": {
+    "pods": 43,
+    "services": 21
+  },
+  "foreign_controller_uids_preserved": 6,
+  "raw_receipt_sha256": {
+    "final_lifecycle": "5d93cb2e13353ce34ec71fab26f6beec55e3e80fd64684291455aef230a897d7",
+    "numerical_review": "49c239025eee2510952df987a38aa7877b0c4b8ca3d760f286c4bb3c6a4b3140",
+    "rrd_lineage": "8d7d09349c395cca5fa365a2f69d8c24618f63b49abce3dd6dd72d77d27c4f65",
+    "managed_history": "e3dae1971d28a1641b83c3e94646050f76e76a7735447ceb3320bb5e760be41e",
+    "cleanup_responses": "bf71efdf27d9b36d8cf59927c4c87ea19ea3384d987ff87004d91507208caf3a",
+    "foreign_before": "3c44c23bac8d95de8d47fb7cce5f538a6fac14fbbfbf04157f19b0af9176406d"
+  },
+  "limits": [
+    "CPU legacy geometry execution; no GPU or new visual-model call.",
+    "Durable workflow status.json records submitted; terminal success is established separately from actual managed queue stdout.",
+    "Open, nonmanifold mesh; sample agreement is not physical truth or absolute accuracy.",
+    "Current-main integration and PR readiness remain separate."
+  ],
+  "root_audit_sha256": "3f9ba0b07263bd97f8b2650a645426987e8220b48d7656482832c87d4c2f8826",
+  "historical_attempts": "Earlier incomplete lifecycle, storage discovery failure and zero-ID recovery remain distinct. This managed replay is new. The first prelaunch lease refusal, incorrect0.19 verifier assertion, cleanup environment-selector refusal and stale-auth timeout are retained.",
+  "version_correction": "The image was always Open3D0.20.0. Original source blob, baked inventory, eight module hashes and123 package versions were checked before correcting one external verifier literal; workload source and outputs were unchanged.",
+  "cleanup_repair": "Refreshed only an owned canonical Kubernetes auth configuration through the supported same-cluster helper, preserving original bytes and registration. Final supported cleanup plus separately timed native absence reads passed."
+}

@@ -1,0 +1,105 @@
+{
+  "checks": {
+    "fragment_byte_hashes": true,
+    "source_manifest_digest": true,
+    "pair_journal_digest": true,
+    "graph_journal_digest": true,
+    "fused_byte_hash": true,
+    "mesh_byte_hashes": true,
+    "rrd_bytes_hash": true,
+    "pairs_pair_count": true,
+    "pairs_icp_fitness_summary": true,
+    "pairs_icp_inlier_rmse_summary": true,
+    "pairs_proper_rigid_transforms": true,
+    "pairs_fitness_matches_correspondence_fraction": true,
+    "graph_pair_count": true,
+    "graph_icp_fitness_summary": true,
+    "graph_icp_inlier_rmse_summary": true,
+    "graph_proper_rigid_transforms": true,
+    "graph_fitness_matches_correspondence_fraction": true,
+    "fused_points_count": true,
+    "supported_mesh_counts": true,
+    "supported_vertex_distance_metrics": true,
+    "supported_reported_unsupported_area": true,
+    "uncropped_vertex_distance_metrics": true,
+    "uncropped_reported_unsupported_area": true,
+    "coverage_metrics_recomputed": true
+  },
+  "metrics": {
+    "pairs_icp_fitness": {
+      "min": 0.6210677194658888,
+      "mean": 0.6835178330920093,
+      "max": 0.7459679467181299
+    },
+    "pairs_icp_inlier_rmse": {
+      "min": 0.0065647407143716715,
+      "mean": 0.006904199581332356,
+      "max": 0.007243658448293041
+    },
+    "graph_icp_fitness": {
+      "min": 0.6210677194658888,
+      "mean": 0.6805316580509793,
+      "max": 0.7459679467181299
+    },
+    "graph_icp_inlier_rmse": {
+      "min": 0.006424206387243553,
+      "mean": 0.0067442013104365185,
+      "max": 0.007243658005133791
+    },
+    "supported": {
+      "vertices": 14736,
+      "triangles": 28205,
+      "surface_area": 10.514116082434999,
+      "max_vertex_distance_to_sample": 0.04999511139230366,
+      "median_vertex_distance_to_sample": 0.019093557124310198,
+      "p95_vertex_distance_to_sample": 0.03597749538510586,
+      "unsupported_triangle_area": 0.0,
+      "unsupported_area_fraction": 0.0,
+      "is_watertight": false,
+      "is_edge_manifold": false,
+      "is_vertex_manifold": false
+    },
+    "uncropped": {
+      "vertices": 18413,
+      "triangles": 36660,
+      "surface_area": 22.24490164723382,
+      "max_vertex_distance_to_sample": 0.9053384889501609,
+      "median_vertex_distance_to_sample": 0.021895147769687182,
+      "p95_vertex_distance_to_sample": 0.21817263423627406,
+      "unsupported_triangle_area": 11.730785564798822,
+      "unsupported_area_fraction": 0.5273471535558603,
+      "is_watertight": false,
+      "is_edge_manifold": false,
+      "is_vertex_manifold": true
+    },
+    "coverage": {
+      "fraction_within_voxel": 0.9927456237186564,
+      "fraction_within_two_voxels": 0.9996845923355937,
+      "sample_to_surface_rmse": 0.01083447691053152,
+      "sample_to_surface_p95": 0.022179409861564636
+    }
+  },
+  "artifact_sha256": {
+    "reports/point_cloud.rrd": "98ceaf5ad6527a3eb91ce2e2eee8488542d3288447b0bfc7b55f87c8d4e733b4",
+    "reports/rrd-manifest.json": "b640554ae30d91231318b02032e7681e2e27e48f899b5319e2b31a1b63ddf15e",
+    "validation/validation.json": "39a4872d23c92d9b93d60407eff03e7fda30b98b90b97cd0f4c02ae83027a5d6",
+    "npa-workflow/status.json": "6cea8c4282ae2e40ac522f44f7947875d8539bcff356d009f21075822156242e",
+    "npa-workflow/manifest.json": "5736e9370fb3bdf2d646acbe8bf24da2fad501a4ea530feb2614ad742a72c59b",
+    "graph/pairs.jsonl": "a9b57ba7fa423fdee2afdd31c0047c9912dfba114fe7042a4ee489145ced2c98",
+    "graph/pose_graph.json": "567e1ddf2d5625e551d8cc9d9742cc456632aa9f50469c7723db70ab29833b19",
+    "graph/result.json": "cca5ffa631b72424dac7ac688ca4da79a9216c89aab758afc409e006e29d0373",
+    "graph/fused.ply": "5dcb45420ff676eb5545b351c715805f160930399b29e609fcd9958fd8799bc6",
+    "pairs/pairs.jsonl": "06c6563aa00f42e8b0e73bce1f8a638a53c3576db33465662863e6ea77db2cc9",
+    "pairs/result.json": "5716db985c0713a8b829dee810452b02a991950df98e739d153ce5d0a4f68f5e",
+    "pairs/aligned/cloud_bin_1__cloud_bin_2.ply": "7e5421a44de1bbeacd14dab2e229ac8bfa560282a8e8886d37b4ab3ff9a2a1e4",
+    "pairs/aligned/cloud_bin_0__cloud_bin_1.ply": "6b79c1d1ff52539570e2e7b5ab9714fb2f0f1dd5e4fd43b159b82e096d424d32",
+    "prepared/manifest.json": "bdfb84102724be00b08c54483b62b3a412f701216768746a47168d80c9b5cfc3",
+    "prepared/fragments/cloud_bin_2.pcd": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+    "prepared/fragments/cloud_bin_1.pcd": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+    "prepared/fragments/cloud_bin_0.pcd": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+    "surface/mesh.ply": "dffc02660c135ac88ed7723724e11c5c12405a7b5cb125b88fe17c5e1dd2b24a",
+    "surface/result.json": "84b93d6be317fec939ee9cb486312279930cb58f1ba13bd0924d4859d97c4442",
+    "surface/mesh_uncropped.ply": "17d37bae29c4145ffea9d4be5befa85d73b96b1d04be2c683a75e5f249f43e96"
+  },
+  "scope": "Current managed replay on the public synthetic living-room benchmark. These are correspondence and sample-support measurements, not ground-truth pose accuracy or robot safety."
+}

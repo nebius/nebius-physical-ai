@@ -1,0 +1,63 @@
+{
+  "schema": "npa.open3d.independent-rrd-lineage.v1",
+  "entities": {
+    "/world/fragments/cloud_bin_0": {
+      "point_count": 198835,
+      "fragment_index": 0,
+      "recorded_float32_sha256": "2bf863b280efa15be37d1102bedcf89f9bc1428502d2781db56b9a5ba54aec46",
+      "from_source_pose_float32_sha256": "2bf863b280efa15be37d1102bedcf89f9bc1428502d2781db56b9a5ba54aec46",
+      "bitwise_equal": true,
+      "max_float32_coordinate_difference": 0.0
+    },
+    "/world/fragments/cloud_bin_1": {
+      "point_count": 137833,
+      "fragment_index": 1,
+      "recorded_float32_sha256": "15e1f8839ec2565300cbed7641b85e7aed410b1d4b5733131c3eb780ca34d27f",
+      "from_source_pose_float32_sha256": "15e1f8839ec2565300cbed7641b85e7aed410b1d4b5733131c3eb780ca34d27f",
+      "bitwise_equal": true,
+      "max_float32_coordinate_difference": 0.0
+    },
+    "/world/fragments/cloud_bin_2": {
+      "point_count": 191397,
+      "fragment_index": 2,
+      "recorded_float32_sha256": "2ae0466c6f5e33e9daf7d443dd5f0d7bea09e2c3c400b83d78a2680257446aa7",
+      "from_source_pose_float32_sha256": "2ae0466c6f5e33e9daf7d443dd5f0d7bea09e2c3c400b83d78a2680257446aa7",
+      "bitwise_equal": true,
+      "max_float32_coordinate_difference": 0.0
+    },
+    "/world/fused": {
+      "point_count": 6341,
+      "recorded_float32_sha256": "aab4af6b0cb7da48c755882bb3c4a1da1b92caa01a40a3cf9784be2ecb7babc6",
+      "from_source_float32_sha256": "aab4af6b0cb7da48c755882bb3c4a1da1b92caa01a40a3cf9784be2ecb7babc6",
+      "bitwise_equal": true
+    },
+    "/world/mesh/Mesh3D:vertex_positions": {
+      "shape": [
+        14736,
+        3
+      ],
+      "recorded_sha256": "0363a6d8d230941f7ee51cd8e387077bd535ef652d4788c65a98e5b23b940b31",
+      "source_sha256": "0363a6d8d230941f7ee51cd8e387077bd535ef652d4788c65a98e5b23b940b31",
+      "bitwise_equal": true
+    },
+    "/world/mesh/Mesh3D:triangle_indices": {
+      "shape": [
+        28205,
+        3
+      ],
+      "recorded_sha256": "abd60c3f9099096f0dc3adde53cf2a5076e4b3f3a4f35598423ad2f6f82795c1",
+      "source_sha256": "abd60c3f9099096f0dc3adde53cf2a5076e4b3f3a4f35598423ad2f6f82795c1",
+      "bitwise_equal": true
+    }
+  },
+  "checks": {
+    "/world/fragments/cloud_bin_0": true,
+    "/world/fragments/cloud_bin_1": true,
+    "/world/fragments/cloud_bin_2": true,
+    "/world/fused": true,
+    "Mesh3D:vertex_positions": true,
+    "Mesh3D:triangle_indices": true
+  },
+  "all_checked_data_equal": true,
+  "limitations": "Checks fragment/fused positions, fragment_index and supported mesh positions/indices against actual source PCD/pose/PLY. Does not yet certify every color/normal/unsupported-mesh component or public-export metadata."
+}

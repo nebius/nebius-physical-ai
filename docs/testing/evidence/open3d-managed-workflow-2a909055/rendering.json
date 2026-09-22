@@ -1,0 +1,25 @@
+{
+  "inputs": [
+    {
+      "path": "graph/fused.ply",
+      "sha256": "5dcb45420ff676eb5545b351c715805f160930399b29e609fcd9958fd8799bc6",
+      "vertices": 6341,
+      "triangles": 0
+    },
+    {
+      "path": "surface/mesh.ply",
+      "sha256": "dffc02660c135ac88ed7723724e11c5c12405a7b5cb125b88fe17c5e1dd2b24a",
+      "vertices": 14736,
+      "triangles": 28205
+    },
+    {
+      "path": "surface/mesh_uncropped.ply",
+      "sha256": "17d37bae29c4145ffea9d4be5befa85d73b96b1d04be2c683a75e5f249f43e96",
+      "vertices": 18413,
+      "triangles": 36660
+    }
+  ],
+  "output_sha256": "d52b6721fc5992cd95ee6cad46b0c88ef103b1243ad8f51acff89a21ff411288",
+  "renderer_sha256": "7eb081307f73b21a7e40b34969dfee5eec464ffbaeda22b9e2a7addd8812cc66",
+  "method": "Direct numeric PLY decoding and orthographic Matplotlib rasterization; all points/faces included; mean measured vertex colors per triangle. Common bounds/view; no generated or edited scene content."
+}
