@@ -216,6 +216,7 @@ def _run_phase(plan, root):
 def _publish_result(request, plan, result, root, work):
     from npa.clients.storage import StorageClient
     from npa.workbench.flex_pi.training_artifacts import publish_json
+    from npa.workbench.flex_pi.training_cleanup import cleanup_checkpoint_copies
 
     storage = StorageClient.from_environment()
     destination = request.output_path.rstrip("/")
@@ -229,8 +230,9 @@ def _publish_result(request, plan, result, root, work):
         path = work / filename
         if path.is_file():
             storage.upload_file(str(path), destination + "/" + filename)
+    copies = None
     if request.mode in {"train", "profile-resume"}:
-        _verify_fresh_resume(plan, result, root, work, destination, storage)
+        copies = _verify_fresh_resume(plan, result, root, work, destination, storage)
     result.update({k: v for k, v in _plan(request).items() if k != "execution"})
     result["execution"] = {
         key: value
@@ -240,6 +242,8 @@ def _publish_result(request, plan, result, root, work):
     publish_json(
         result, root / "published-result.json", destination + "/result.json", storage
     )
+    if copies:
+        cleanup_checkpoint_copies(work, **copies)
     return result
 
 
@@ -252,7 +256,8 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
 
     checkpoint = result["checkpoint"]
     source = destination + "/checkpoint"
-    manifest = publish_checkpoint(Path(checkpoint["state_path"]), source, storage)
+    original = Path(checkpoint["state_path"])
+    manifest = publish_checkpoint(original, source, storage)
     restore = work / "restored-state"
     restore_checkpoint(manifest, source, restore, storage)
     publish_json(
@@ -261,17 +266,7 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
     qualification = _qualify_memory_fill(plan, root, work, checkpoint=restore)
     if qualification:
         result["memory_fill_qualification"].append(qualification)
-    resume_plan = {
-        **plan,
-        "work_directory": str(work / "resume"),
-        "resume_directory": str(restore),
-        "normalization_file": str(restore / "dataset_stats.json"),
-        "resume_probe_kind": "profile"
-        if plan["execution"]["mode"] == "profile-resume"
-        else "full",
-        "execution": {**plan["execution"], "mode": "resume"},
-    }
-    resumed = _run_phase(resume_plan, root)
+    resumed = _run_phase(_resume_plan(plan, work, restore), root)
     _assert_resume_parity(result, resumed)
     checkpoint.pop("state_path")
     verified_key = (
@@ -282,6 +277,25 @@ def _verify_fresh_resume(plan, result, root, work, destination, storage):
     result[verified_key] = True
     result["checkpoint_read_after_write_verified"] = True
     result["resume"] = resumed
+    return {
+        "original": original,
+        "restored": restore,
+        "step": checkpoint["step"],
+        "manifest": manifest,
+    }
+
+
+def _resume_plan(plan, work, restore):
+    return {
+        **plan,
+        "work_directory": str(work / "resume"),
+        "resume_directory": str(restore),
+        "normalization_file": str(restore / "dataset_stats.json"),
+        "resume_probe_kind": "profile"
+        if plan["execution"]["mode"] == "profile-resume"
+        else "full",
+        "execution": {**plan["execution"], "mode": "resume"},
+    }
 
 
 def _assert_resume_parity(result, resumed):

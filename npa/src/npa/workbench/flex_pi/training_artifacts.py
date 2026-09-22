@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import tempfile
 
 from npa.clients.storage import StorageClient, safe_s3_download_target
 from npa.workbench.flex_pi.runtime import FlexPiError
@@ -99,7 +100,7 @@ def restore_checkpoint(
 
 
 def publish_json(payload, path: Path, destination: str, storage: StorageClient):
-    """Write and publish one finite JSON artifact.
+    """Write, publish and verify one finite JSON artifact by exact byte readback.
 
     Args:
         payload: JSON-serializable evidence.
@@ -110,6 +111,16 @@ def publish_json(payload, path: Path, destination: str, storage: StorageClient):
         None.
     Raises:
         ValueError: The payload contains a nonfinite number.
+        FlexPiError: Published bytes differ from the staged JSON artifact.
     """
     path.write_text(json.dumps(payload, indent=2, allow_nan=False))
     storage.upload_file(str(path), destination)
+    with tempfile.TemporaryDirectory(
+        prefix="json-readback-", dir=path.parent
+    ) as directory:
+        readback = Path(directory) / "artifact.json"
+        storage.download_file(destination, str(readback))
+        if path.read_bytes() != readback.read_bytes():
+            raise FlexPiError(
+                "JSON artifact read-after-write content verification failed"
+            )

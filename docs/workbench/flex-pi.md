@@ -371,3 +371,12 @@ anchors from the frozen permutation, and their complete loaded state and next
 update must match. The probe update is excluded from throughput. Its separate
 `profile_checkpoint_resume_verified` result never claims a complete epoch or
 full validation; `--mode train` retains the final epoch-boundary resume gate.
+
+After checkpoint byte readback, matching fresh-process continuation, and final
+result JSON readback succeed, the adapter removes the two local copies of the
+published checkpoint state from that invocation's persistent working directory.
+It verifies their paths and hashes before removal. Unexpected files, unpublished
+upstream weight files, qualification/resume diagnostics, shared downloaded assets,
+and failed runs remain available for operator-managed retention. A cleanup failure
+warns on stderr and preserves the successful published result. Profile-only and
+dry-run calls do not perform this cleanup.
