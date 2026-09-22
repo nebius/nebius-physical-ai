@@ -47,6 +47,48 @@ def test_deploy_help() -> None:
     assert "--image" in result.stdout
     assert "--expected-image-source-sha" in result.stdout
     assert "--create-namespace" in result.stdout
+    assert "--ephemeral-storage-request" in result.stdout
+
+
+@pytest.mark.parametrize("quantity", ["", "0Gi", "32", "32G", "-1Gi", "1.5Gi"])
+def test_deploy_rejects_invalid_ephemeral_storage_request(quantity: str) -> None:
+    with pytest.raises(typer.Exit):
+        deploy_module._validated_ephemeral_storage_request(quantity)
+
+
+@pytest.mark.parametrize(
+    ("storage_args", "expected_request"),
+    [([], "32Gi"), (["--ephemeral-storage-request", "48Gi"], "48Gi")],
+)
+def test_deploy_dry_run_renders_ephemeral_storage_request(
+    monkeypatch: pytest.MonkeyPatch,
+    storage_args: list[str],
+    expected_request: str,
+) -> None:
+    monkeypatch.setattr(deploy_module, "_resolve_kubeconfig", lambda **_kwargs: "")
+    monkeypatch.setattr(deploy_module, "_service_env", lambda **_kwargs: {})
+
+    result = runner.invoke(
+        robocasa_app,
+        [
+            "deploy",
+            "--dry-run",
+            "--image",
+            "example.invalid/npa-robocasa@sha256:" + "1" * 64,
+            "--expected-image-source-sha",
+            "2" * 40,
+            *storage_args,
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    manifest = json.loads(result.stdout)
+    deployment = next(
+        item for item in manifest["items"] if item["kind"] == "Deployment"
+    )
+    resources = deployment["spec"]["template"]["spec"]["containers"][0]["resources"]
+    assert resources["requests"]["ephemeral-storage"] == expected_request
+    assert "ephemeral-storage" not in resources["limits"]
 
 
 def test_deploy_service_env_prefers_project_scoped_storage(

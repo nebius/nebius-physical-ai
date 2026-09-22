@@ -22,6 +22,8 @@ from npa.cli.workbench.robocasa.helpers import OutputFormat, emit, fail
 DEFAULT_NAME = "npa-robocasa"
 DEFAULT_NAMESPACE = "default"
 DEFAULT_GPU_TYPE = "l40s"
+DEFAULT_EPHEMERAL_STORAGE_REQUEST = "32Gi"
+_KUBERNETES_STORAGE_QUANTITY_PATTERN = re.compile(r"^[1-9][0-9]*(?:Mi|Gi|Ti)$")
 _SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _IMMUTABLE_IMAGE_PATTERN = re.compile(
     r"^(?P<name>\S+)@(?P<digest>sha256:[0-9a-f]{64})$"
@@ -87,6 +89,11 @@ def deploy_cmd(
         "",
         "--image-pull-secret",
         help="Existing operator-managed Kubernetes imagePullSecret for a private registry.",
+    ),
+    ephemeral_storage_request: str = typer.Option(
+        DEFAULT_EPHEMERAL_STORAGE_REQUEST,
+        "--ephemeral-storage-request",
+        help="Scheduler-visible local ephemeral-storage request, such as 32Gi.",
     ),
     token_env: str = typer.Option(
         DEFAULT_TOKEN_ENV,
@@ -177,6 +184,9 @@ def deploy_cmd(
         node_selector_key=node_selector_key,
         node_selector_value=selector_value,
         image_pull_secret=image_pull_secret,
+        ephemeral_storage_request=_validated_ephemeral_storage_request(
+            ephemeral_storage_request
+        ),
         auth_mode=auth_mode,
         token_env=token_env,
     )
@@ -230,6 +240,15 @@ def _validated_image_identity(image: str, source_sha: str) -> tuple[str, str, st
     return resolved_image, resolved_source_sha, manifest_digest
 
 
+def _validated_ephemeral_storage_request(value: str) -> str:
+    request = value.strip()
+    if not _KUBERNETES_STORAGE_QUANTITY_PATTERN.fullmatch(request):
+        fail(
+            "--ephemeral-storage-request must be a positive whole Mi, Gi, or Ti quantity"
+        )
+    return request
+
+
 def _kubernetes_manifest(
     *,
     project: str,
@@ -246,6 +265,7 @@ def _kubernetes_manifest(
     image_pull_secret: str,
     auth_mode: str,
     token_env: str,
+    ephemeral_storage_request: str = DEFAULT_EPHEMERAL_STORAGE_REQUEST,
 ) -> dict[str, Any]:
     env = _service_env(
         project=project,
@@ -273,6 +293,7 @@ def _kubernetes_manifest(
                 node_selector_key=node_selector_key,
                 node_selector_value=node_selector_value,
                 image_pull_secret=image_pull_secret,
+                ephemeral_storage_request=ephemeral_storage_request,
                 env_checksum=env_checksum,
             ),
             _service_manifest(name, namespace, port),
@@ -311,6 +332,7 @@ def _deployment_manifest(
     node_selector_key: str,
     node_selector_value: str,
     image_pull_secret: str,
+    ephemeral_storage_request: str,
     env_checksum: str,
 ) -> dict[str, Any]:
     labels = _deployment_labels(name)
@@ -321,6 +343,7 @@ def _deployment_manifest(
         node_selector_key=node_selector_key,
         node_selector_value=node_selector_value,
         image_pull_secret=image_pull_secret,
+        ephemeral_storage_request=ephemeral_storage_request,
     )
     return {
         "apiVersion": "apps/v1",
@@ -356,6 +379,7 @@ def _pod_spec(
     node_selector_key: str,
     node_selector_value: str,
     image_pull_secret: str,
+    ephemeral_storage_request: str,
 ) -> dict[str, Any]:
     spec: dict[str, Any] = {
         "automountServiceAccountToken": False,
@@ -374,14 +398,18 @@ def _pod_spec(
             "runAsUser": 1000,
             "runAsGroup": 1000,
         },
-        "containers": [_service_container(name, image, port)],
+        "containers": [
+            _service_container(name, image, port, ephemeral_storage_request)
+        ],
     }
     if image_pull_secret:
         spec["imagePullSecrets"] = [{"name": image_pull_secret}]
     return spec
 
 
-def _service_container(name: str, image: str, port: int) -> dict[str, Any]:
+def _service_container(
+    name: str, image: str, port: int, ephemeral_storage_request: str
+) -> dict[str, Any]:
     return {
         "name": "service",
         "image": image,
@@ -390,7 +418,10 @@ def _service_container(name: str, image: str, port: int) -> dict[str, Any]:
         "envFrom": [{"secretRef": {"name": f"{name}-env"}}],
         "resources": {
             "limits": {"nvidia.com/gpu": "1"},
-            "requests": {"nvidia.com/gpu": "1"},
+            "requests": {
+                "ephemeral-storage": ephemeral_storage_request,
+                "nvidia.com/gpu": "1",
+            },
         },
         "readinessProbe": {
             "httpGet": {"path": "/health", "port": "http"},
