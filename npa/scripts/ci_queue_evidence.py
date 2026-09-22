@@ -14,7 +14,6 @@ from collections.abc import Callable
 
 _WORKFLOW = ".github/workflows/security-regression.yml"
 _REQUIRED_JOBS = {
-    "validation-plan",
     "pr-precheck",
     "gitleaks",
     "scan",

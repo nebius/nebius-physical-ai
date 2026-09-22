@@ -832,7 +832,6 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     workflow = yaml.safe_load(workflow_path.read_text())
     job = workflow["jobs"]["security-regression"]
     assert job["needs"] == [
-        "validation-plan",
         "pr-precheck",
         "queue-guardrails",
         "test-gate",
@@ -849,8 +848,8 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     required_step = job["steps"][0]
     assert required_step["env"] == {
         "EVENT_NAME": "${{ github.event_name }}",
-        "PLAN_RESULT": "${{ needs.validation-plan.result }}",
-        "VALIDATION_MODE": "${{ needs.validation-plan.outputs.mode }}",
+        "PLAN_RESULT": "${{ needs.gitleaks.result }}",
+        "VALIDATION_MODE": "${{ needs.gitleaks.outputs.mode }}",
         "PRECHECK_RESULT": "${{ needs.pr-precheck.result }}",
         "TEST_RESULT": "${{ needs.test-gate.result }}",
         "LINT_RESULT": "${{ needs.lint-gate.result }}",

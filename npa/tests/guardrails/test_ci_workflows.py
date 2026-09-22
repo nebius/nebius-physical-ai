@@ -56,8 +56,8 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     assert jobs["typecheck-gate"]["uses"] == "./.github/workflows/typecheck.yml"
     assert "guardrails-gate" not in jobs
     precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
-    assert "npa/tests/guardrails -n auto --dist worksteal" in precheck
-    assert jobs["gitleaks"]["name"] == "gitleaks"
+    assert "bash npa/scripts/ci_precheck.sh" in precheck
+    assert jobs["gitleaks"]["name"].endswith("|| 'gitleaks' }}")
     assert jobs["scan"]["name"] == "scan"
     required = set(jobs["security-regression"]["needs"])
     assert required == set(jobs) - {"security-regression", "ci-timing-report"}
@@ -345,8 +345,9 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
     parent = _load_workflow("security-regression.yml")
     for event in ("pull_request", "merge_group"):
         assert parent["on"][event] == ""
-    for job in ("gitleaks", "scan"):
-        assert parent["jobs"][job]["if"] == "github.event_name != 'push'"
+    assert parent["jobs"]["scan"]["if"] == "github.event_name != 'push'"
+    leaks = _step("security-regression.yml", "gitleaks", "Reject committed secrets")
+    assert leaks["if"] == "github.event_name != 'push'"
     assert "if" not in parent["jobs"]["security-scanners"]
     for job in (
         "test-gate",
@@ -355,13 +356,13 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
         "image-security",
     ):
         condition = parent["jobs"][job]["if"]
-        assert "needs.validation-plan.result == 'success'" in condition
+        assert "needs.gitleaks.result == 'success'" in condition
         if job == "image-security":
-            assert "needs.validation-plan.outputs.mode == 'full'" in condition
+            assert "needs.gitleaks.outputs.mode == 'full'" in condition
         else:
             assert "retest" in condition and "contains(fromJSON" in condition
         assert "needs.pr-precheck.result == 'success'" in condition
-        assert parent["jobs"][job]["needs"] == ["validation-plan", "pr-precheck"]
+        assert parent["jobs"][job]["needs"] == ["gitleaks", "pr-precheck"]
 
 
 def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:
@@ -769,8 +770,8 @@ def test_changed_queue_tree_requires_every_combined_tree_check(result):
 
 def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
     jobs = _load_workflow("security-regression.yml")["jobs"]
-    plan = jobs["validation-plan"]
-    command = plan["steps"][-1]["run"]
+    plan = jobs["gitleaks"]
+    command = next(step["run"] for step in plan["steps"] if step.get("id") == "plan")
     assert 'git show "$BASE_SHA:$policy"' in command
     assert 'python -I "$RUNNER_TEMP/ci_queue_evidence.py"' in command
     assert 'python -I -m venv "$validation_environment"' in command
