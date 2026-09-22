@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-22T05:24:22.999378+00:00",
+  "status": "PASS_ACTUAL_ENCODER_MECHANISM_ONLY",
+  "source": "f1de67279ef6435884bc2670781eba98000e321e",
+  "image": "sha256:72a7774a8f7b5262bba5cfdb01155edee1acbc9bfc9e878fd777ce158e9b25ef",
+  "freeze_sha256": "51720fc1f1b911e218b8165e383280fb2679b4694de465aec9e1ff3be46ae444",
+  "root_replay_receipt_sha256": "94ba58d432bbed1b32a7a9464cb5f3dc0482fcec7198187590c94916b54ae6e3",
+  "metadata_packet_files_rehashed": 27,
+  "actual_raw_files_reverified": 84,
+  "actual_raw_bytes_reverified": 1464559248,
+  "actual_runtime": {
+    "model": "NVIDIA B200",
+    "capability": "10.0",
+    "driver": "580.173.02",
+    "memory_mib": 183359,
+    "mig": "Disabled",
+    "torch": "2.13.0+cu130",
+    "cuda": "13.0"
+  },
+  "review": "Root separately executed the hash-pinned independent verifier over every real tensor/RNG member; actual posterior selection byte equality and paired RNG/noise equality passed, selected conditioning differs. Actual Pod/Job identity, imageID, exit0/no-restart and frozen inputs/models verified.",
+  "quality_claim": false,
+  "heldout_consumed": false,
+  "merge_ready": false,
+  "next_gate": "Concrete frozen restoration quality sample-control run, then candidate comparison under unchanged objective and critical predicates."
+}

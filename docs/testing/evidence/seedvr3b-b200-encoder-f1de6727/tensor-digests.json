@@ -1,0 +1,558 @@
+{
+  "main-sample": {
+    "source": "f1de67279ef6435884bc2670781eba98000e321e",
+    "image_digest": "sha256:72a7774a8f7b5262bba5cfdb01155edee1acbc9bfc9e878fd777ce158e9b25ef",
+    "freeze_sha256": "51720fc1f1b911e218b8165e383280fb2679b4694de465aec9e1ff3be46ae444",
+    "input_sha256": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4",
+    "calls": {
+      "runner_encode": 1,
+      "sync_stop": 1,
+      "wrapper_encode": 1
+    },
+    "tensors": {
+      "augmentation_noise": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "829390616853dbcd80340fea488fbe0a127408bcd45ac218593d2a59202fdb1c",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "boundary_conditioning": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "605f2ef5c301a8f108baece90fc13f50430a0bac478a3c57adb275ee04ab5308",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "conditioning": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "605f2ef5c301a8f108baece90fc13f50430a0bac478a3c57adb275ee04ab5308",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "diffusion_noise": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "ef9718fb37b7d58827b5d8fe3d6dbeb8024d26d43ba7f8ae91e5cb5b3cfb2cfa",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "padded_input": {
+        "bytes": 372326400,
+        "dtype": "torch.float32",
+        "sha256": "fe7ac545f7edcffb0a31f62d10e12e9b4aa7f388344154e3683f9c3a33223fbe",
+        "shape": [
+          3,
+          101,
+          480,
+          640
+        ]
+      },
+      "posterior_logvar": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "1ad0215769e6001a5cdbe1688f22609e2603a5857ec0d9166102baacb3efa91b",
+        "shape": [
+          1,
+          16,
+          26,
+          60,
+          80
+        ]
+      },
+      "posterior_mean": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "4b14eb2989872b5df192f2b6f9f59a6ff41489d753229234ccb9b818e9fd53a5",
+        "shape": [
+          1,
+          16,
+          26,
+          60,
+          80
+        ]
+      },
+      "posterior_sample": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "e151465ba23c2d6207471a25dd7abc30c8621b4c70d2bf762e7e2b096b29155e",
+        "shape": [
+          1,
+          16,
+          26,
+          60,
+          80
+        ]
+      },
+      "wrapper_input": {
+        "bytes": 186163200,
+        "dtype": "torch.bfloat16",
+        "sha256": "40da1ce348809a8b4356163f7ede5c09b2151a4979bbd8ff1b2988529d3ec742",
+        "shape": [
+          1,
+          3,
+          101,
+          480,
+          640
+        ]
+      }
+    },
+    "rng_state_sha256": {
+      "encode_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "b253d8de1645d3b56cb4c140c5d8b13e56aa7a8b997a7e7ba8c6d556552993c7"
+      ],
+      "encode_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ],
+      "noise_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "ee2f17cdd176f263c83e5b4cd9c6e3b6b3cca847f7015f884e81d9ad9d499f0e"
+      ],
+      "wrapper_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "b253d8de1645d3b56cb4c140c5d8b13e56aa7a8b997a7e7ba8c6d556552993c7"
+      ],
+      "wrapper_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ]
+    },
+    "actual_arm_result_sha256": "285a48f75281d347c1416fd7428723d25552ca7ac08cbfc1ad80b57f8217d708"
+  },
+  "main-posterior-mode": {
+    "source": "f1de67279ef6435884bc2670781eba98000e321e",
+    "image_digest": "sha256:72a7774a8f7b5262bba5cfdb01155edee1acbc9bfc9e878fd777ce158e9b25ef",
+    "freeze_sha256": "51720fc1f1b911e218b8165e383280fb2679b4694de465aec9e1ff3be46ae444",
+    "input_sha256": "974d9cc1aa9d531b18afe6f0dec75473ceb8e3cb7a6787392c4a8bcb0fb3f4b4",
+    "calls": {
+      "runner_encode": 1,
+      "sync_stop": 1,
+      "wrapper_encode": 1
+    },
+    "tensors": {
+      "augmentation_noise": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "829390616853dbcd80340fea488fbe0a127408bcd45ac218593d2a59202fdb1c",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "boundary_conditioning": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "c23c6be5fda106d41d000f7e96c19e720694df30e2ec6629b95b5c6d90f23d69",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "conditioning": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "c23c6be5fda106d41d000f7e96c19e720694df30e2ec6629b95b5c6d90f23d69",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "diffusion_noise": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "ef9718fb37b7d58827b5d8fe3d6dbeb8024d26d43ba7f8ae91e5cb5b3cfb2cfa",
+        "shape": [
+          26,
+          60,
+          80,
+          16
+        ]
+      },
+      "padded_input": {
+        "bytes": 372326400,
+        "dtype": "torch.float32",
+        "sha256": "fe7ac545f7edcffb0a31f62d10e12e9b4aa7f388344154e3683f9c3a33223fbe",
+        "shape": [
+          3,
+          101,
+          480,
+          640
+        ]
+      },
+      "posterior_logvar": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "1ad0215769e6001a5cdbe1688f22609e2603a5857ec0d9166102baacb3efa91b",
+        "shape": [
+          1,
+          16,
+          26,
+          60,
+          80
+        ]
+      },
+      "posterior_mean": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "4b14eb2989872b5df192f2b6f9f59a6ff41489d753229234ccb9b818e9fd53a5",
+        "shape": [
+          1,
+          16,
+          26,
+          60,
+          80
+        ]
+      },
+      "posterior_sample": {
+        "bytes": 3993600,
+        "dtype": "torch.bfloat16",
+        "sha256": "e151465ba23c2d6207471a25dd7abc30c8621b4c70d2bf762e7e2b096b29155e",
+        "shape": [
+          1,
+          16,
+          26,
+          60,
+          80
+        ]
+      },
+      "wrapper_input": {
+        "bytes": 186163200,
+        "dtype": "torch.bfloat16",
+        "sha256": "40da1ce348809a8b4356163f7ede5c09b2151a4979bbd8ff1b2988529d3ec742",
+        "shape": [
+          1,
+          3,
+          101,
+          480,
+          640
+        ]
+      }
+    },
+    "rng_state_sha256": {
+      "encode_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "b253d8de1645d3b56cb4c140c5d8b13e56aa7a8b997a7e7ba8c6d556552993c7"
+      ],
+      "encode_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ],
+      "noise_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "ee2f17cdd176f263c83e5b4cd9c6e3b6b3cca847f7015f884e81d9ad9d499f0e"
+      ],
+      "wrapper_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "b253d8de1645d3b56cb4c140c5d8b13e56aa7a8b997a7e7ba8c6d556552993c7"
+      ],
+      "wrapper_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ]
+    },
+    "actual_arm_result_sha256": "b61d7a47e8937abf2c3ec4ad9b8b7a7633c5dda3cd7fc1891055c69e9223d7fa"
+  },
+  "light-sample": {
+    "source": "f1de67279ef6435884bc2670781eba98000e321e",
+    "image_digest": "sha256:72a7774a8f7b5262bba5cfdb01155edee1acbc9bfc9e878fd777ce158e9b25ef",
+    "freeze_sha256": "51720fc1f1b911e218b8165e383280fb2679b4694de465aec9e1ff3be46ae444",
+    "input_sha256": "44013573e65c7b64f92deac1acaeb4828abb860cad3696d99e6808ddee81149e",
+    "calls": {
+      "runner_encode": 1,
+      "sync_stop": 1,
+      "wrapper_encode": 1
+    },
+    "tensors": {
+      "augmentation_noise": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "366060b5cfb25c38a12c81177a8aa56d6f2d460b9e27c1090f00607ff0ecc811",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "boundary_conditioning": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "fac4e6cc8fa4439a8f03f8f9296c5503a29a8300185c2fb672fffe908c421735",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "conditioning": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "fac4e6cc8fa4439a8f03f8f9296c5503a29a8300185c2fb672fffe908c421735",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "diffusion_noise": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "08e18a730edaa56152e84d31e74bd84ca211896ec28c2c08e6d1bc066b979b9f",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "padded_input": {
+        "bytes": 92160000,
+        "dtype": "torch.float32",
+        "sha256": "d65b26993690d0f39cec337f1a8fd989ab8b8ab9457b8ebf958f4b3a7098b12b",
+        "shape": [
+          3,
+          25,
+          480,
+          640
+        ]
+      },
+      "posterior_logvar": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "6d158a280ff37510337b907f71945cbd5c082540322b298ebbfe8c6e3e089ca7",
+        "shape": [
+          1,
+          16,
+          7,
+          60,
+          80
+        ]
+      },
+      "posterior_mean": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "8366bd0cb96859ef3db64f2fc301c6b2caea5c9e6e4c21c3202060bc3dca1231",
+        "shape": [
+          1,
+          16,
+          7,
+          60,
+          80
+        ]
+      },
+      "posterior_sample": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "7549c254545ab1a29a12fbdc5ebbf8471deacb4a72012accfb341990212d6539",
+        "shape": [
+          1,
+          16,
+          7,
+          60,
+          80
+        ]
+      },
+      "wrapper_input": {
+        "bytes": 46080000,
+        "dtype": "torch.bfloat16",
+        "sha256": "98140162ad7bf9200184ab2ebaa984a83a0ee5b1e225463b807c436a56e9de0a",
+        "shape": [
+          1,
+          3,
+          25,
+          480,
+          640
+        ]
+      }
+    },
+    "rng_state_sha256": {
+      "encode_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "62ebe93825b2d2554ff1629f1717c105c53cfb62bc06034c60eb428304b0f487"
+      ],
+      "encode_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ],
+      "noise_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c2f40de01f890759348703b84202ca257de4184b3f928207676507c1e5bbda52"
+      ],
+      "wrapper_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "62ebe93825b2d2554ff1629f1717c105c53cfb62bc06034c60eb428304b0f487"
+      ],
+      "wrapper_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ]
+    },
+    "actual_arm_result_sha256": "43f3633f11244cced43c3658b2b60c103146879ef15f7542fea3517e992041af"
+  },
+  "light-posterior-mode": {
+    "source": "f1de67279ef6435884bc2670781eba98000e321e",
+    "image_digest": "sha256:72a7774a8f7b5262bba5cfdb01155edee1acbc9bfc9e878fd777ce158e9b25ef",
+    "freeze_sha256": "51720fc1f1b911e218b8165e383280fb2679b4694de465aec9e1ff3be46ae444",
+    "input_sha256": "44013573e65c7b64f92deac1acaeb4828abb860cad3696d99e6808ddee81149e",
+    "calls": {
+      "runner_encode": 1,
+      "sync_stop": 1,
+      "wrapper_encode": 1
+    },
+    "tensors": {
+      "augmentation_noise": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "366060b5cfb25c38a12c81177a8aa56d6f2d460b9e27c1090f00607ff0ecc811",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "boundary_conditioning": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "eb8e25f92d731d99637c4b54c0392e101596eaca1aa6199b99e9694ffe7faca0",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "conditioning": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "eb8e25f92d731d99637c4b54c0392e101596eaca1aa6199b99e9694ffe7faca0",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "diffusion_noise": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "08e18a730edaa56152e84d31e74bd84ca211896ec28c2c08e6d1bc066b979b9f",
+        "shape": [
+          7,
+          60,
+          80,
+          16
+        ]
+      },
+      "padded_input": {
+        "bytes": 92160000,
+        "dtype": "torch.float32",
+        "sha256": "d65b26993690d0f39cec337f1a8fd989ab8b8ab9457b8ebf958f4b3a7098b12b",
+        "shape": [
+          3,
+          25,
+          480,
+          640
+        ]
+      },
+      "posterior_logvar": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "6d158a280ff37510337b907f71945cbd5c082540322b298ebbfe8c6e3e089ca7",
+        "shape": [
+          1,
+          16,
+          7,
+          60,
+          80
+        ]
+      },
+      "posterior_mean": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "8366bd0cb96859ef3db64f2fc301c6b2caea5c9e6e4c21c3202060bc3dca1231",
+        "shape": [
+          1,
+          16,
+          7,
+          60,
+          80
+        ]
+      },
+      "posterior_sample": {
+        "bytes": 1075200,
+        "dtype": "torch.bfloat16",
+        "sha256": "7549c254545ab1a29a12fbdc5ebbf8471deacb4a72012accfb341990212d6539",
+        "shape": [
+          1,
+          16,
+          7,
+          60,
+          80
+        ]
+      },
+      "wrapper_input": {
+        "bytes": 46080000,
+        "dtype": "torch.bfloat16",
+        "sha256": "98140162ad7bf9200184ab2ebaa984a83a0ee5b1e225463b807c436a56e9de0a",
+        "shape": [
+          1,
+          3,
+          25,
+          480,
+          640
+        ]
+      }
+    },
+    "rng_state_sha256": {
+      "encode_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "62ebe93825b2d2554ff1629f1717c105c53cfb62bc06034c60eb428304b0f487"
+      ],
+      "encode_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ],
+      "noise_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c2f40de01f890759348703b84202ca257de4184b3f928207676507c1e5bbda52"
+      ],
+      "wrapper_after": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "62ebe93825b2d2554ff1629f1717c105c53cfb62bc06034c60eb428304b0f487"
+      ],
+      "wrapper_before": [
+        "bd811fb69321174f253cc4887e6c889128f31765e0972299adb89d77a1929359",
+        "c3e294a73dfb0be2ecaf10eb3a1fdffc9f39dcc1a64b48d584874d4ce1d9f998"
+      ]
+    },
+    "actual_arm_result_sha256": "835d0954df701fadc12db2398f6fc19a49c8d52da214bf1a05818477ac2f1071"
+  }
+}
