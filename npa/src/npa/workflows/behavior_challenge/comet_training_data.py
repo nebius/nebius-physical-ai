@@ -1,4 +1,4 @@
-"""Build the released task-1 LeRobot view used by Comet training.
+"""Build task-isolated LeRobot views for Comet training and holdout scoring.
 
 This module owns only the dataset boundary. The pinned Comet source still owns
 its B1K state transform, normalization, model, and training loop.
@@ -21,6 +21,11 @@ DATASET_REPOSITORY = "behavior-1k/2026-challenge-demos"
 DATASET_REVISION = "4f50b44796641a4d526a19d9aeadc8aa51e2f2c2"
 TASK_ID = 1
 TASK_NAME = "picking_up_trash"
+TASK_NAMES = {
+    0: "turning_on_radio",
+    TASK_ID: TASK_NAME,
+    22: "putting_shoes_on_rack",
+}
 FPS = 30
 ACTION_HORIZON = 32
 ACTION_DIMENSION = 23
@@ -48,11 +53,40 @@ def load_task1_episodes(
     Raises:
         ValueError: The partition or split contract differs.
     """
+    return load_task_episodes(
+        path, partition, task_id=TASK_ID, expected_split_sha256=expected_split_sha256
+    )
+
+
+def load_task_episodes(
+    path: Path, partition: str, *, task_id: int, expected_split_sha256: str
+) -> tuple[int, ...]:
+    """Load one immutable task partition from a reviewed split.
+
+    Args:
+        path: Reviewed JSON split containing the requested task.
+        partition: Either ``training`` or ``holdout``.
+        task_id: Supported task 0, 1, or 22.
+        expected_split_sha256: Approved SHA-256 of the raw split bytes.
+    Returns:
+        Ordered episode identifiers for the requested task and partition.
+    Raises:
+        ValueError: Task, partition, split identity, or membership differs.
+    """
+    _task_name(task_id)
     split = _load_bound_split(path, expected_split_sha256)
-    return _partition_episodes(split, partition)
+    return _partition_episodes(split, partition, task_id=task_id)
 
 
-def _partition_episodes(split: Mapping[str, Any], partition: str) -> tuple[int, ...]:
+def _task_name(task_id: int) -> str:
+    if type(task_id) is not int or task_id not in TASK_NAMES:
+        raise ValueError("Comet dataset supports only task IDs 0, 1, and 22")
+    return TASK_NAMES[task_id]
+
+
+def _partition_episodes(
+    split: Mapping[str, Any], partition: str, *, task_id: int = TASK_ID
+) -> tuple[int, ...]:
     if partition not in {"training", "holdout"}:
         raise ValueError("partition must be training or holdout")
     if (
@@ -60,24 +94,26 @@ def _partition_episodes(split: Mapping[str, Any], partition: str) -> tuple[int, 
         or split.get("revision") != DATASET_REVISION
     ):
         raise ValueError("Episode split identity differs")
-    row = split.get("tasks", {}).get(str(TASK_ID), {})
+    row = split.get("tasks", {}).get(str(task_id), {})
     training = row.get("training")
     holdout = row.get("holdout")
     if (
-        row.get("name") != TASK_NAME
+        row.get("name") != _task_name(task_id)
         or not isinstance(training, list)
         or not isinstance(holdout, list)
         or len(training) != 180
         or len(holdout) != 20
     ):
-        raise ValueError("Task-1 episode split differs")
+        raise ValueError(f"Task-{task_id} episode split differs")
     combined = training + holdout
     if (
         any(type(value) is not int or value < 0 for value in combined)
         or len(set(combined)) != 200
         or set(training) & set(holdout)
     ):
-        raise ValueError("Task-1 episode split overlaps or contains invalid IDs")
+        raise ValueError(
+            f"Task-{task_id} episode split overlaps or contains invalid IDs"
+        )
     return tuple(training if partition == "training" else holdout)
 
 
@@ -188,25 +224,29 @@ def _validate_v3_info(root: Path) -> dict[str, Any]:
     return info
 
 
-def _validate_task_metadata(root: Path) -> None:
+def _validate_task_metadata(root: Path, task_id: int = TASK_ID) -> None:
     tasks_path = root / "meta/tasks.jsonl"
     if tasks_path.is_symlink() or not tasks_path.is_file():
         raise ValueError("LeRobot v3 task metadata is absent")
     rows = [json.loads(line) for line in tasks_path.read_text().splitlines()]
-    matches = [row for row in rows if row.get("task_index") == TASK_ID]
-    if len(matches) != 1 or matches[0].get("task_name") != TASK_NAME:
-        raise ValueError("LeRobot v3 task-1 identity differs")
+    matches = [row for row in rows if row.get("task_index") == task_id]
+    if (
+        len(matches) != 1
+        or type(matches[0].get("task_index")) is not int
+        or matches[0].get("task_name") != _task_name(task_id)
+    ):
+        raise ValueError(f"LeRobot v3 task-{task_id} identity differs")
 
 
-def _episode_metadata_rows(root: Path) -> list[dict[str, Any]]:
+def _episode_metadata_rows(root: Path, task_id: int = TASK_ID) -> list[dict[str, Any]]:
     import pyarrow.parquet as parquet
 
-    path = root / f"meta/episodes/chunk-{TASK_ID:03d}/file-000.parquet"
+    path = root / f"meta/episodes/chunk-{task_id:03d}/file-000.parquet"
     if path.is_symlink() or not path.is_file():
-        raise ValueError("LeRobot v3 task-1 episode metadata is absent")
+        raise ValueError(f"LeRobot v3 task-{task_id} episode metadata is absent")
     rows = parquet.read_table(path).to_pylist()
     if len(rows) != 200 or len({row.get("episode_index") for row in rows}) != 200:
-        raise ValueError("LeRobot v3 task-1 episode inventory differs")
+        raise ValueError(f"LeRobot v3 task-{task_id} episode inventory differs")
     return rows
 
 
@@ -277,22 +317,27 @@ def _is_numeric_scalar(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _load_locations(root: Path, episodes: Sequence[int]) -> dict[int, _EpisodeLocation]:
+def _load_locations(
+    root: Path, episodes: Sequence[int], *, task_id: int = TASK_ID
+) -> dict[int, _EpisodeLocation]:
+    task_name = _task_name(task_id)
     info = _validate_v3_info(root)
-    _validate_task_metadata(root)
+    _validate_task_metadata(root, task_id)
     _regular_json(root / "meta/stats.json")
     requested = set(episodes)
     rows = [
         row
-        for row in _episode_metadata_rows(root)
+        for row in _episode_metadata_rows(root, task_id)
         if row.get("episode_index") in requested
     ]
     if {row.get("episode_index") for row in rows} != requested:
         raise ValueError(
-            "Requested task-1 episodes are absent from LeRobot v3 metadata"
+            f"Requested task-{task_id} episodes are absent from LeRobot v3 metadata"
         )
     if any(
-        row.get("task_index") != TASK_ID or row.get("tasks") != [TASK_NAME]
+        type(row.get("task_index")) is not int
+        or row.get("task_index") != task_id
+        or row.get("tasks") != [task_name]
         for row in rows
     ):
         raise ValueError("LeRobot v3 episode task identity differs")
@@ -313,8 +358,9 @@ class _PackedV3Dataset:
         if repo_id != DATASET_REPOSITORY:
             raise ValueError("LeRobot repository identity differs")
         root, episodes = Path(kwargs.pop("root")), tuple(kwargs.pop("episodes"))
+        task_id = kwargs.pop("task_id", TASK_ID)
         self._validate_options(kwargs)
-        self.locations = _load_locations(root, episodes)
+        self.locations = _load_locations(root, episodes, task_id=task_id)
         self.episodes = episodes
         self.meta = _PackedV3Metadata(self.locations)
         self._starts = self._episode_starts()
@@ -464,16 +510,19 @@ class _Uint8LeRobotDataset:
         return sample
 
 
-class CometTask1Dataset:
-    """Expose one isolated task-1 partition with explicit terminal actions.
+class CometTaskDataset:
+    """Expose one isolated task partition with explicit terminal actions.
 
     Args:
         root: Extracted LeRobot dataset root.
         split_path: Reviewed 180/20 episode split.
+        task_id: Supported task 0, 1, or 22.
         expected_split_sha256: Approved SHA-256 of the raw split bytes.
         partition: Isolated partition to expose.
         dataset_factory: Optional LeRobot-compatible factory for testing or the
-            pinned runtime.
+            pinned runtime, including a task_id keyword for anchor tasks.
+    Returns:
+        None.
     Raises:
         ValueError: Split or episode metadata violates the contract.
     """
@@ -483,16 +532,20 @@ class CometTask1Dataset:
         root: str | Path,
         split_path: str | Path,
         *,
+        task_id: int,
         expected_split_sha256: str,
         partition: str = "training",
         dataset_factory: Callable[..., Any] | None = None,
     ) -> None:
-        self.episodes = load_task1_episodes(
+        self.task_name = _task_name(task_id)
+        self.episodes = load_task_episodes(
             Path(split_path),
             partition,
+            task_id=task_id,
             expected_split_sha256=expected_split_sha256,
         )
         factory = dataset_factory or _default_dataset_factory
+        task_options = {} if task_id == TASK_ID else {"task_id": task_id}
         self.dataset = factory(
             DATASET_REPOSITORY,
             root=Path(root),
@@ -502,6 +555,7 @@ class CometTask1Dataset:
             video_backend="pyav",
             return_uint8=True,
             tolerance_s=ALIGNMENT_TOLERANCE_SECONDS,
+            **task_options,
         )
         self.episode_lengths = _episode_lengths(self.dataset.meta, self.episodes)
 
@@ -535,7 +589,7 @@ class CometTask1Dataset:
             "action": actions,
             "action_valid_mask": valid,
             "action_is_pad": ~valid,
-            "prompt": TASK_NAME,
+            "prompt": self.task_name,
             "episode_index": np.asarray(episode),
             "frame_index": np.asarray(frame),
         }
@@ -544,6 +598,40 @@ class CometTask1Dataset:
                 sample, role, camera
             )
         return result
+
+
+class CometTask1Dataset(CometTaskDataset):
+    """Retain the task-1 reader interface for existing training workflows.
+
+    Args:
+        root: Extracted LeRobot dataset root.
+        split_path: Reviewed 180/20 episode split.
+        expected_split_sha256: Approved SHA-256 of the raw split bytes.
+        partition: Either ``training`` or ``holdout``.
+        dataset_factory: Optional LeRobot-compatible dataset factory.
+    Returns:
+        None.
+    Raises:
+        ValueError: Split or episode metadata violates the task-1 contract.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        split_path: str | Path,
+        *,
+        expected_split_sha256: str,
+        partition: str = "training",
+        dataset_factory: Callable[..., Any] | None = None,
+    ) -> None:
+        super().__init__(
+            root,
+            split_path,
+            task_id=TASK_ID,
+            expected_split_sha256=expected_split_sha256,
+            partition=partition,
+            dataset_factory=dataset_factory,
+        )
 
 
 def _validated_state_actions(

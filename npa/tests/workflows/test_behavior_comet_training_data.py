@@ -160,6 +160,158 @@ def test_factory_receives_exact_partition_alignment_and_horizon(tmp_path):
     assert len(dataset) == 1
 
 
+def _three_task_split(path: Path) -> str:
+    rows = {}
+    for task_id, name in data.TASK_NAMES.items():
+        first = task_id * 200
+        rows[str(task_id)] = {
+            "name": name,
+            "training": list(range(first, first + 180)),
+            "holdout": list(range(first + 180, first + 200)),
+        }
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "npa.behavior.panel-episode-split.v1",
+                "revision": data.DATASET_REVISION,
+                "tasks": rows,
+            }
+        )
+    )
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("task_id", [0, 1, 22])
+def test_task_reader_keeps_holdout_membership_prompt_and_terminal_actions(
+    tmp_path, task_id
+):
+    split = tmp_path / "split.json"
+    digest = _three_task_split(split)
+    episode = task_id * 200 + 180
+    sample = _sample(episode, frame=39)
+    calls = []
+
+    def factory(*args, **kwargs):
+        calls.append(kwargs)
+        return _Dataset(sample, kwargs["episodes"])
+
+    dataset = data.CometTaskDataset(
+        tmp_path,
+        split,
+        task_id=task_id,
+        partition="holdout",
+        expected_split_sha256=digest,
+        dataset_factory=factory,
+    )
+    row = dataset[0]
+    assert dataset.episodes == tuple(range(episode, episode + 20))
+    assert row["prompt"] == data.TASK_NAMES[task_id]
+    assert int(row["episode_index"]) == episode
+    np.testing.assert_array_equal(row["action_valid_mask"], np.arange(32) == 0)
+    np.testing.assert_array_equal(
+        row["action"], np.repeat(sample["action"][:1], 32, axis=0)
+    )
+    assert calls[0].get("task_id", 1) == task_id
+
+
+def test_task1_compatibility_reader_matches_parameterized_reader(tmp_path):
+    split = tmp_path / "split.json"
+    digest = _three_task_split(split)
+
+    def factory(*args, **kwargs):
+        return _Dataset(_sample(200, frame=39), kwargs["episodes"])
+
+    arguments = dict(expected_split_sha256=digest, dataset_factory=factory)
+    legacy = data.CometTask1Dataset(tmp_path, split, **arguments)
+    general = data.CometTaskDataset(tmp_path, split, task_id=1, **arguments)
+    assert legacy.episodes == general.episodes
+    assert legacy[0].keys() == general[0].keys()
+    for key, value in legacy[0].items():
+        np.testing.assert_array_equal(value, general[0][key])
+
+
+@pytest.mark.parametrize("task_id", [True, False, "1", -1, 2, 100])
+def test_task_reader_rejects_unsupported_or_untyped_task_before_loading(
+    tmp_path, task_id
+):
+    with pytest.raises(ValueError, match="task IDs"):
+        data.CometTaskDataset(
+            tmp_path,
+            tmp_path / "absent.json",
+            task_id=task_id,
+            expected_split_sha256="a" * 64,
+        )
+
+
+@pytest.mark.parametrize("task_id", [0, 22])
+def test_anchor_split_rejects_wrong_task_name_and_partition_overlap(tmp_path, task_id):
+    split = tmp_path / "split.json"
+    _three_task_split(split)
+    value = json.loads(split.read_text())
+    task = value["tasks"][str(task_id)]
+    task["name"] = data.TASK_NAME
+    split.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="split differs"):
+        data.load_task_episodes(
+            split,
+            "holdout",
+            task_id=task_id,
+            expected_split_sha256=hashlib.sha256(split.read_bytes()).hexdigest(),
+        )
+    task["name"] = data.TASK_NAMES[task_id]
+    task["holdout"][0] = task["training"][0]
+    split.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="overlaps"):
+        data.load_task_episodes(
+            split,
+            "holdout",
+            task_id=task_id,
+            expected_split_sha256=hashlib.sha256(split.read_bytes()).hexdigest(),
+        )
+
+
+@pytest.mark.parametrize("task_id", [0, 22])
+def test_packed_anchor_metadata_uses_selected_task_chunk_and_identity(
+    tmp_path, task_id
+):
+    root = _v3_metadata(tmp_path)
+    old = root / "meta/episodes/chunk-001/file-000.parquet"
+    rows = pq.read_table(old).to_pylist()
+    for row in rows:
+        row["task_index"] = task_id
+        row["tasks"] = [data.TASK_NAMES[task_id]]
+    target = root / f"meta/episodes/chunk-{task_id:03d}/file-000.parquet"
+    target.parent.mkdir()
+    pq.write_table(pa.Table.from_pylist(rows), target)
+    (root / "meta/tasks.jsonl").write_text(
+        json.dumps(
+            {
+                "task_index": task_id,
+                "task_name": data.TASK_NAMES[task_id],
+            }
+        )
+        + "\n"
+    )
+    locations = data._load_locations(root, [200, 201], task_id=task_id)
+    assert locations[201].dataset_from == 1040
+    assert locations[201].video_offsets != locations[200].video_offsets
+    rows[0]["task_index"] = 1
+    pq.write_table(pa.Table.from_pylist(rows), target)
+    with pytest.raises(ValueError, match="task identity"):
+        data._load_locations(root, [200], task_id=task_id)
+
+
+@pytest.mark.parametrize(("task_id", "malformed"), [(0, False), (1, True)])
+def test_task_metadata_rejects_boolean_aliases(tmp_path, task_id, malformed):
+    root = _v3_metadata(tmp_path)
+    (root / "meta/tasks.jsonl").write_text(
+        json.dumps({"task_index": malformed, "task_name": data.TASK_NAMES[task_id]})
+        + "\n"
+    )
+    with pytest.raises(ValueError, match="identity differs"):
+        data._validate_task_metadata(root, task_id)
+
+
 def test_v3_metadata_maps_shared_data_and_video_without_relabeling(tmp_path):
     root = _v3_metadata(tmp_path)
 

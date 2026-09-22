@@ -48,6 +48,12 @@ The [campaign control plane](behavior-campaign.md) freezes policy identities,
 assigns complete task panels across workers, and preserves per-instance progress
 in S3. Recovery verifies the original metrics and videos before reusing results.
 
+The latest Comet training qualification reproduced every byte of the original
+256-example batch using explicit CPU sharding before native image normalization.
+It then reached the full-parameter B200 optimizer step and ran out of GPU memory.
+All five failure artifacts were verified; no qualified optimizer update or
+checkpoint was produced. The memory configuration remains under investigation.
+
 **Latest completed training experiment, September 19:** both
 [matched training arms](behavior-matched-results-2026-09-19.md) completed 3,600
 updates, full holdout selection, and selected-model export. GPU validation found
@@ -508,6 +514,15 @@ the reviewed training/holdout split. The source dataset remains read-only; the
 adapter does not rewrite metadata, observations, actions, videos, or global
 normalization statistics. Training must continue to bind the exact source and
 view inventories separately from this compatibility code.
+
+`CometTaskDataset(..., task_id=0, partition="holdout", ...)` exposes the same
+checked dataset boundary for radio (task 0), trash (task 1), and putting shoes
+on a rack (task 22). It binds the selected task's name, 180/20 split, episode
+metadata chunk, and output prompt. This lets a checkpoint scorer measure the
+two anchor tasks without relabeling trash examples. `CometTask1Dataset` retains
+its existing interface and task-1 output. The anchor readers have local
+contract tests; real anchor decoding, model-loss scoring, and checkpoint
+selection still require separate runtime qualification.
 
 The pinned Comet loader imports its simulator dataset implementation even when
 the selected dataset has already been built and the run uses one JAX process.
