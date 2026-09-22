@@ -2924,7 +2924,7 @@ def _read_text(path: Path) -> str:
 
 
 def _native_launch_payload(*, yaml_path, run_id, isolated_dir, controller, context,
-                           sky_executable, secret_envs, environment):
+                           sky_executable, secret_envs, environment, controller_cloud_name=""):
     from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable
 
     if isolated_dir is None or not controller:
@@ -2940,6 +2940,7 @@ def _native_launch_payload(*, yaml_path, run_id, isolated_dir, controller, conte
         "attempt": uuid.uuid4().hex, "name": run_id,
         "yaml": Path(yaml_path).read_text(encoding="utf-8"), "task_count": task_count,
         "isolated_dir": str(Path(isolated_dir).absolute()), "controller": controller,
+        "controller_cloud_name": controller_cloud_name,
         "kube_context": context, "sky_executable": sky_executable,
         "secrets": [name for name in secret_envs or () if environment.get(name)],
     }
@@ -2964,7 +2965,7 @@ def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
     if controller_backend != "kubernetes":
         raise NativeResultUnavailable("native cleanup has no verified non-Kubernetes context")
     if kwargs.get("controller_absent"):
-        kwargs["controller"] = _ensure_native_controller(
+        kwargs["controller"], kwargs["controller_cloud_name"] = _ensure_native_controller(
             yaml_path=kwargs["yaml_path"], isolated_dir=kwargs["isolated_dir"],
             controller=kwargs["controller"], context=kwargs["context"],
             sky_executable=kwargs["sky_executable"], environment=cleanup.environment,
@@ -2974,7 +2975,10 @@ def _launch_with_native_cleanup(cleanup, *, controller_backend, **kwargs):
             raise NativeResultUnavailable("interrupted controller ensure; recovery context retained")
     payload_keys = ("yaml_path", "run_id", "isolated_dir", "controller", "context",
                     "sky_executable", "secret_envs", "environment")
-    payload = _native_launch_payload(**{key: kwargs[key] for key in payload_keys})
+    payload = _native_launch_payload(
+        **{key: kwargs[key] for key in payload_keys},
+        controller_cloud_name=kwargs.get("controller_cloud_name", ""),
+    )
     if kwargs.get("robotwin_image_sha256"):
         payload["robotwin_image_sha256"] = kwargs["robotwin_image_sha256"]
     result, context_check = _run_native_launch(
@@ -3013,16 +3017,17 @@ def _ensure_native_controller(*, yaml_path, isolated_dir, controller, context,
             raise native.NativeResultUnavailable("controller ensure API changed")
         os.lseek(descriptor, 0, os.SEEK_SET)
         data = os.read(descriptor, native.MAX_OBSERVATION_BYTES + 1)
-        name, incarnation = native.decode_controller_observation(
+        name, cloud_name, incarnation = native.decode_controller_observation(
             data, attempt=payload["attempt"], context=binding
         )
         actual = _native_context_digest(
-            isolated_dir=isolated_dir, controller=name, context=context,
+            isolated_dir=isolated_dir, controller=name, controller_cloud_name=cloud_name,
+            context=context,
             sky_executable=sky_executable, environment=environment,
         )
         if actual != incarnation or (controller and name != controller):
             raise native.NativeResultUnavailable("controller ensure incarnation changed")
-        return name
+        return name, cloud_name
     finally:
         os.close(descriptor)
 
@@ -3033,6 +3038,7 @@ def _run_native_launch(payload, *, environment, control_environment, log_dir, ti
     def context_check():
         return _native_context_digest(
             isolated_dir=Path(payload["isolated_dir"]), controller=payload["controller"],
+            controller_cloud_name=payload.get("controller_cloud_name", ""),
             context=payload["kube_context"], sky_executable=payload["sky_executable"],
             environment=control_environment,
         )
@@ -3302,14 +3308,32 @@ def _native_api_context_digest(*, isolated_dir, sky_executable, environment):
     return observation_digest(api)
 
 
-def _native_context_digest(*, isolated_dir, controller, context, sky_executable, environment):
+def _native_controller_namespace_empty(*, context, environment, runner=subprocess.run):
+    """Require authoritative absence in the selected namespace, without guessing names."""
+    command = [shutil.which("kubectl") or "kubectl"]
+    if context:
+        command += ["--context", context]
+    command += ["get", "pods", "--selector", "skypilot-cluster-name", "--output", "json"]
+    try:
+        result = runner(
+            command, env=_controller_probe_environment(environment), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False,
+        )
+        payload = json.loads(result.stdout)
+        return result.returncode == 0 and isinstance(payload, dict) and payload.get("items") == []
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def _native_context_digest(*, isolated_dir, controller, context, sky_executable, environment,
+                           controller_cloud_name=""):
     from npa.orchestration.skypilot._managed_job_api import NativeResultUnavailable, observation_digest
 
     api = _native_api_context_digest(
         isolated_dir=isolated_dir, sky_executable=sky_executable, environment=environment
     )
     probe = _probe_kubernetes_controller_cwd(
-        controller,
+        controller_cloud_name or controller,
         context=context,
         env=_controller_probe_environment(environment),
         use_current_context=not context,

@@ -15,10 +15,11 @@ CONTEXT = "c" * 64
 
 
 @pytest.mark.parametrize(
-    "failure", ("", "present", "api-drift", "wrong-handle", "job-id", "no-incarnation", "request-failure")
+    "failure", ("", "present", "api-drift", "wrong-handle", "job-id", "no-incarnation", "request-failure", "missing-provider", "invalid-provider")
 )
 def test_controller_provision_receipt_never_grants_managed_job_ownership(failure):
     name = "sky-jobs-controller-synthetic"
+    provider = "sky-jobs-controller-shortened-synthetic"
     calls, rows = [], []
     task = object()
     dag = object()
@@ -39,7 +40,10 @@ def test_controller_provision_receipt_never_grants_managed_job_ownership(failure
             raise RuntimeError("synthetic request failure")
         return (
             1 if failure == "job-id" else None,
-            SimpleNamespace(cluster_name="foreign" if failure == "wrong-handle" else name),
+            SimpleNamespace(
+                cluster_name="foreign" if failure == "wrong-handle" else name,
+                cluster_name_on_cloud=(None if failure == "missing-provider" else "bad/name" if failure == "invalid-provider" else provider),
+            ),
         )
 
     sky = SimpleNamespace(
@@ -47,12 +51,16 @@ def test_controller_provision_receipt_never_grants_managed_job_ownership(failure
         launch=launch, get=get,
     )
     payload = {"attempt": "synthetic-ensure", "context": CONTEXT, "controller": "", "yaml": "synthetic"}
+    def incarnation(logical, cloud):
+        assert logical == name and cloud == provider
+        return "" if failure == "no-incarnation" else "e" * 64
+
     kwargs = dict(
         sky=sky, load_dag=lambda _text: dag,
         prepare_controller=lambda value: (name, task) if value is dag else None,
         verify_absent=lambda _name: failure != "present",
         verify_context=lambda: "d" * 64 if failure == "api-drift" and calls else CONTEXT,
-        verify_incarnation=lambda _name: "" if failure == "no-incarnation" else "e" * 64,
+        verify_incarnation=incarnation,
         observe=rows.append,
     )
     if failure:
@@ -63,7 +71,14 @@ def test_controller_provision_receipt_never_grants_managed_job_ownership(failure
         return
     bridge._ensure_controller_native(payload, **kwargs)
     raw = b"".join(json.dumps(row).encode() + b"\n" for row in rows)
-    assert bridge.decode_controller_observation(raw, attempt=payload["attempt"], context=CONTEXT) == (name, "e" * 64)
+    assert bridge.decode_controller_observation(raw, attempt=payload["attempt"], context=CONTEXT) == (name, provider, "e" * 64)
+    missing_provider = [dict(row) for row in rows]
+    missing_provider[1].pop("controller_cloud_name")
+    with pytest.raises(bridge.NativeResultUnavailable):
+        bridge.decode_controller_observation(
+            b"".join(json.dumps(row).encode() + b"\n" for row in missing_provider),
+            attempt=payload["attempt"], context=CONTEXT,
+        )
     with pytest.raises(bridge.NativeResultUnavailable):
         bridge.decode_observation(raw, attempt=payload["attempt"], context=CONTEXT, task_count=1)
     with pytest.raises(bridge.NativeResultUnavailable):

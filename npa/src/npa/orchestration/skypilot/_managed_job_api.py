@@ -168,7 +168,7 @@ def _append_observation(descriptor: int, record: Mapping[str, Any]) -> None:
     os.fsync(descriptor)
 
 
-def decode_controller_observation(data: bytes, *, attempt: str, context: str) -> tuple[str, str]:
+def decode_controller_observation(data: bytes, *, attempt: str, context: str) -> tuple[str, str, str]:
     """Decode a controller provision request; it conveys no managed-job ownership."""
     _require(0 < len(data) <= MAX_OBSERVATION_BYTES and data.endswith(b"\n"))
     try:
@@ -176,7 +176,7 @@ def decode_controller_observation(data: bytes, *, attempt: str, context: str) ->
         _require(len(rows) == 2 and all(type(row) is dict for row in rows))
         request, result = rows
         fields = {"event", "attempt", "context", "request_id", "controller"}
-        _require(set(request) == fields and set(result) == fields | {"incarnation"})
+        _require(set(request) == fields and set(result) == fields | {"incarnation", "controller_cloud_name"})
         _require(request["event"] == "controller_request" and result["event"] == "controller_result")
         _require(re.fullmatch(r"[a-f0-9]{64}", context) is not None)
         _require(_request_id(request["request_id"]) == result["request_id"])
@@ -184,9 +184,16 @@ def decode_controller_observation(data: bytes, *, attempt: str, context: str) ->
             _require(request[key] == result[key] == value)
         _require(re.fullmatch(r"sky-jobs-controller-[a-z0-9-]+", request["controller"]) is not None)
         _require(re.fullmatch(r"[a-f0-9]{64}", result["incarnation"]) is not None)
-        return request["controller"], result["incarnation"]
+        _controller_cloud_name(result["controller_cloud_name"])
+        return request["controller"], result["controller_cloud_name"], result["incarnation"]
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
         raise NativeResultUnavailable("controller ensure result incomplete; context retained") from None
+
+
+def _controller_cloud_name(value):
+    _require(isinstance(value, str) and len(value) <= 63)
+    _require(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", value) is not None)
+    return value
 
 
 def _controller_provision_task(dag):
@@ -239,9 +246,11 @@ def _ensure_controller_native(payload, *, sky, load_dag, prepare_controller,
     _require(type(result) is tuple and len(result) == 2 and result[0] is None)
     _require(getattr(result[1], "cluster_name", None) == name)
     _require(verify_context() == payload["context"])
-    incarnation = verify_incarnation(name)
+    cloud_name = _controller_cloud_name(getattr(result[1], "cluster_name_on_cloud", None))
+    incarnation = verify_incarnation(name, cloud_name)
     _require(re.fullmatch(r"[a-f0-9]{64}", incarnation) is not None)
-    observe({**request, "event": "controller_result", "incarnation": incarnation})
+    observe({**request, "event": "controller_result", "incarnation": incarnation,
+             "controller_cloud_name": cloud_name})
 
 
 def _launch_native(payload, *, sky, load_dag, observe, verify_context) -> None:
@@ -364,10 +373,9 @@ def _main() -> int:
     payload = json.loads(raw, object_pairs_hook=_unique_mapping)
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from npa.orchestration.skypilot.workflow import (
-        _controller_probe_environment,
         _native_api_context_digest,
         _native_context_digest,
-        _probe_kubernetes_controller_cwd,
+        _native_controller_namespace_empty,
     )
 
     def verify_context():
@@ -379,6 +387,7 @@ def _main() -> int:
         return _native_context_digest(
             isolated_dir=Path(payload["isolated_dir"]),
             controller=payload["controller"],
+            controller_cloud_name=payload.get("controller_cloud_name", ""),
             context=payload["kube_context"],
             sky_executable=payload["sky_executable"],
             environment=os.environ,
@@ -394,19 +403,16 @@ def _main() -> int:
 
     _require(Path(sky.__file__).parent == root)
     if payload.get("mode") == "ensure_controller":
-        def absent(name):
-            probe = _probe_kubernetes_controller_cwd(
-                name, context=payload["kube_context"],
-                env=_controller_probe_environment(os.environ),
-                use_current_context=not payload["kube_context"],
+        def absent(_name):
+            return _native_controller_namespace_empty(
+                context=payload["kube_context"], environment=os.environ,
             )
-            return not probe.healthy and probe.outcome == "head_pod_ambiguous" and probe.pod_count == 0
 
-        def incarnation(name):
+        def incarnation(name, cloud_name):
             return _native_context_digest(
                 isolated_dir=Path(payload["isolated_dir"]), controller=name,
-                context=payload["kube_context"], sky_executable=payload["sky_executable"],
-                environment=os.environ,
+                controller_cloud_name=cloud_name, context=payload["kube_context"],
+                sky_executable=payload["sky_executable"], environment=os.environ,
             )
 
         with contextlib.redirect_stdout(sys.stderr):
