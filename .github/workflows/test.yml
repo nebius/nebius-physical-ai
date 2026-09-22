@@ -290,8 +290,8 @@ jobs:
         # tests, so install their supported extra after selecting CPU wheels.
         run: |
           uv pip install --python npa/.venv/bin/python --torch-backend cpu \
-            -c npa/ci/requirements.txt -e "npa[sonic]"
-          npa/.venv/bin/python -c "import torch, onnx, onnxscript, onnxruntime; assert torch.version.cuda is None"
+            -c npa/ci/requirements.txt -e "npa[sonic,genesis-test]"
+          npa/.venv/bin/python -c "import torch, onnx, onnxscript, onnxruntime, rsl_rl; assert torch.version.cuda is None"
 
       - name: Verify checked-out CLI flags
         if: matrix.python-version == '3.12' && matrix.shard == 1

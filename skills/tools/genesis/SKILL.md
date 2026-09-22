@@ -24,3 +24,13 @@ BatchRenderer/Madrona is deferred; do not prioritize it. There is no platform es
 ## Validation
 
 E2E: 8/8 passing except visual demo generation.
+
+## Teacher checkpoint compatibility
+
+The RSL-RL 5 migration uses separate MLP actor and critic configurations and
+TensorDict observation groups. Preserve deterministic legacy ActorCritic loading
+and the current MLPModel checkpoint path. Load external checkpoints only with
+`weights_only=True`; never route them through the upstream unrestricted runner
+loader. Validate action and observation widths, normalization, and real ONNX
+outputs. CPU PPO round trips cover the framework contract; promotion still
+requires the Genesis GPU workload and camera-demo checks.
