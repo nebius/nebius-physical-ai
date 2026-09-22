@@ -252,7 +252,7 @@ The interpreter must provide `os.memfd_create`; some Conda builds omit it.
 Install CI's CPU checkpoint/export dependencies in this same environment:
 
 ```bash
-npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
 npa/.venv/bin/python -m pip install -e "npa[sonic]"
 umask 077  # Private files are required by publication handoff tests.
 PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
@@ -281,14 +281,23 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and merge candidates run the same full Python 3.12 suite,
+Pull requests run the full Python 3.12 suite,
 dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
 Five duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
-and CLI install checks without a duplicate subsystem job. The queue reruns
-these checks against the combined latest-main candidate. Recognized prose-only
+and CLI install checks without a duplicate subsystem job. The queue verifies
+this evidence against its combined latest-main candidate. Recognized prose-only
 edits retain smoke, documentation, lint, guardrail, and security checks while
 skipping runtime suites.
+The five-minute `pr-precheck` checks dependency inputs, lint/format, guardrails, smoke and
+full collection before expensive validation. The merge queue verifies fresh,
+successful PR evidence for its identical Git tree and repeats secret,
+confidentiality, source and dependency scans. Changed combined trees rerun
+all tests, lint, guardrails and hostile-input checks; image checks rerun when
+their inputs changed. Missing, failed or stale proof restores full queue
+validation, so older PRs can adopt the policy without a forced branch refresh. The queue target
+is ten minutes; hosted runner waiting can add delay.
+
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
 on all three supported versions. Every full Python 3.12 run publishes module
@@ -323,8 +332,8 @@ lets independent jobs use available GitHub runner capacity without shared
 repository-wide job queues. Newer commits still cancel older checks of the same
 PR. Organization runner limits can cause waiting; already queued runs retain
 their original workflow configuration until their branches are refreshed.
-Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
-parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
+Full-suite PRs retain smoke coverage in their shards; the early precheck runs
+guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
 same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
