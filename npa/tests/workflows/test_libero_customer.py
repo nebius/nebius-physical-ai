@@ -87,7 +87,7 @@ def _submit_fixture(monkeypatch, tmp_path):
     packet.mkdir()
     request = {"run_id": "libero-synthetic-customer-test", "workflow_profile_sha256": module._sha(b"profile")}
     authorization = {"customer_identity_sha256": "a" * 64, "expires_at": "2099-01-01T00:00:00Z", "signature": {"public_key_sha256": "b" * 64}}
-    target = {name: "synthetic-" + name for name in ("project", "context", "namespace", "namespace_uid", "allowed_node", "kubeconfig", "config_path", "deny_policy_uid", "fetch_policy_uid")}
+    target = {name: "synthetic-" + name for name in ("project", "context", "controller_context", "namespace", "namespace_uid", "allowed_node", "kubeconfig", "config_path", "deny_policy_uid", "fetch_policy_uid")}
     target["isolated_config_dir"] = str(tmp_path / "sky")
     target_path = tmp_path / "target.json"
     monkeypatch.setattr(module, "_json", lambda path: target if path == target_path else request)
@@ -99,6 +99,7 @@ def _submit_fixture(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "_profile", lambda *_a: [{}, {"name": "synthetic", "envs": {}}])
     monkeypatch.setattr(module, "libero_executable_profile_bytes", lambda _docs: b"profile")
     monkeypatch.setattr(module, "validate_authorization", lambda *_a, **_k: (authorization, "e" * 64))
+    monkeypatch.setattr(module, "controller_context", lambda *_a, **_k: target["controller_context"])
     namespace = SimpleNamespace(metadata=SimpleNamespace(uid=target["namespace_uid"], labels={"npa-libero-run": request["run_id"]}))
     account = SimpleNamespace(automount_service_account_token=False, secrets=[], metadata=SimpleNamespace(uid="account"))
     calls = []
@@ -191,3 +192,129 @@ def test_authorize_uses_nonseekable_terminal_and_declines_without_writing(monkey
     finally:
         os.close(master)
         os.close(slave)
+
+
+def _context_fixture(tmp_path):
+    config = {
+        "contexts": [
+            {"name": "unit-worker", "context": {"cluster": "unit-cluster", "user": "unit-user", "namespace": "unit-workload"}},
+            {"name": "unit-controller", "context": {"cluster": "unit-cluster", "user": "unit-user", "namespace": "unit-management"}},
+        ],
+        "clusters": [{"name": "unit-cluster", "cluster": {"server": "https://cluster.example.invalid", "certificate-authority-data": "synthetic-ca"}}],
+        "users": [{"name": "unit-user", "user": {"token": "synthetic-token"}}],
+    }
+    path = tmp_path / "kubeconfig"
+    path.write_text(yaml.safe_dump(config))
+    path.chmod(0o600)
+    env = {"KUBECONFIG": str(path), customer.CONTROLLER_CONTEXT_ENV: "unit-controller"}
+    return config, path, env
+
+
+@pytest.mark.parametrize("mutation", ["cluster", "user", "namespace", "missing_namespace", "missing_controller", "same_context", "duplicate", "ca", "insecure", "http", "target_namespace", "extra_context", "extra_cluster", "extra_user"])
+def test_controller_context_rejects_identity_or_namespace_drift(tmp_path, mutation):
+    config, path, env = _context_fixture(tmp_path)
+    context = config["contexts"][1]["context"]
+    cluster = config["clusters"][0]["cluster"]
+    if mutation in {"cluster", "user"}:
+        context[mutation] = "different-" + mutation
+    elif mutation == "namespace":
+        context["namespace"] = "unit-workload"
+    elif mutation == "missing_namespace":
+        context.pop("namespace")
+    elif mutation == "missing_controller":
+        env.pop(customer.CONTROLLER_CONTEXT_ENV)
+    elif mutation == "same_context":
+        env[customer.CONTROLLER_CONTEXT_ENV] = "unit-worker"
+    elif mutation == "duplicate":
+        config["contexts"].append(config["contexts"][0])
+    elif mutation.startswith("extra_"):
+        kind = mutation.removeprefix("extra_") + "s"
+        config[kind].append({**config[kind][0], "name": "unrelated-identity"})
+    elif mutation == "ca":
+        cluster.pop("certificate-authority-data")
+    elif mutation == "insecure":
+        cluster["insecure-skip-tls-verify"] = True
+    elif mutation == "http":
+        cluster["server"] = "http://cluster.example.invalid"
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError):
+        customer.controller_context(env, "unit-worker", workload_namespace=(
+            "different-workload" if mutation == "target_namespace" else "unit-workload"
+        ))
+
+
+def test_controller_config_separates_verified_contexts_without_worker_profile_change(tmp_path):
+    from npa.orchestration.skypilot import workflow
+
+    _, _, env = _context_fixture(tmp_path)
+    docs = list(yaml.safe_load_all(customer.PROFILE.read_text()))
+    profile = driver().libero_executable_profile_bytes(docs)
+    base = tmp_path / "sky.yaml"
+    base.write_text("kubernetes:\n  allowed_contexts: [unrelated-context]\n")
+    configured = workflow._submission_global_config(
+        SimpleNamespace(global_config_path=base), "kubernetes", "k8s/unit-worker",
+        documents=docs, extra_env=env,
+    )
+    assert configured["kubernetes"]["allowed_contexts"] == ["unit-worker", "unit-controller"]
+    assert configured["jobs"]["controller"]["resources"]["region"] == "unit-controller"
+    assert configured["kubernetes"]["context_configs"] == {
+        "unit-worker": {"remote_identity": "NO_UPLOAD"},
+        "unit-controller": {"remote_identity": "LOCAL_CREDENTIALS"},
+    }
+    assert profile == driver().libero_executable_profile_bytes(docs)
+    assert customer.controller_context(env, "unit-worker", workload_namespace="unit-workload") == "unit-controller"
+    ordinary = workflow._submission_global_config(
+        SimpleNamespace(global_config_path=base), "kubernetes", "k8s/unit-worker",
+        documents=[{"resources": {"cloud": "kubernetes"}}], extra_env=env,
+    )
+    assert ordinary["kubernetes"]["allowed_contexts"] == ["unit-worker"]
+    assert ordinary["jobs"]["controller"]["resources"]["region"] == "unit-worker"
+
+
+@pytest.mark.parametrize("controller_drift", [None, "workload-context", "other-context", "gpu-controller", "worker-credentials", "missing-controller-credentials"])
+def test_customer_preflight_preserves_only_verified_context_pair(monkeypatch, tmp_path, controller_drift):
+    from npa import execution_preflight as preflight
+    from npa.orchestration.skypilot import workflow
+
+    _, _, env = _context_fixture(tmp_path)
+    docs = list(yaml.safe_load_all(customer.PROFILE.read_text()))
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-libero@sha256:" + "d" * 64
+    docs[1]["resources"]["image_id"] = "docker:" + image
+    docs[1]["envs"]["BYOF_IMAGE"] = image
+    base = tmp_path / "sky.yaml"
+    base.write_text("kubernetes:\n  pod_config:\n    spec:\n      serviceAccountName: skypilot-service-account\n")
+    configured = workflow._submission_global_config(
+        SimpleNamespace(global_config_path=base), "kubernetes", "k8s/unit-worker",
+        documents=docs, extra_env=env,
+    )
+    controller = configured["jobs"]["controller"]["resources"]
+    if controller_drift == "gpu-controller":
+        controller["accelerators"] = "B200:1"
+    elif controller_drift == "worker-credentials":
+        configured["kubernetes"]["context_configs"]["unit-worker"]["remote_identity"] = "LOCAL_CREDENTIALS"
+    elif controller_drift == "missing-controller-credentials":
+        configured["kubernetes"]["context_configs"]["unit-controller"]["remote_identity"] = "SERVICE_ACCOUNT"
+    elif controller_drift:
+        controller["region"] = "unit-worker" if controller_drift == "workload-context" else "foreign-context"
+    observed = {}
+    def resolve_target(**kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(context=kwargs["context"], credentials=kwargs["credentials"])
+    monkeypatch.setattr(preflight, "_validate_libero_runtime_authorization", lambda *_a, **_k: {})
+    monkeypatch.setattr(preflight, "resolve_execution_target", resolve_target)
+    monkeypatch.setattr(preflight, "verify_worker_environment", lambda *_a: None)
+    monkeypatch.setattr(preflight, "verify_execution_target", lambda *_a, **_k: {"checks": {}})
+    kwargs = dict(project="unit", infra="k8s/unit-worker", extra_env=env, global_config=configured)
+    if controller_drift:
+        expected = "controller-only kubeconfig" if "credentials" in controller_drift else "verified CPU context"
+        with pytest.raises(preflight.ExecutionPreflightError, match=expected):
+            preflight.preflight_skypilot_submission(docs, **kwargs)
+        assert not observed
+    else:
+        _, report, injected = preflight.preflight_skypilot_submission(docs, **kwargs)
+        assert report["checks"]["libero_customer_run"] is True
+        assert not injected
+        assert observed["context"] == "unit-worker"
+        assert configured["kubernetes"]["allowed_contexts"] == ["unit-worker", "unit-controller"]
+        assert configured["jobs"]["controller"]["resources"]["region"] == "unit-controller"
+        assert docs[1]["resources"]["region"] == "unit-worker"

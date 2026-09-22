@@ -1324,14 +1324,36 @@ def preflight_skypilot_submission(
         (document, document.get("resources") or {}) for document in documents
     ]
     controller = ((global_config or {}).get("jobs") or {}).get("controller") or {}
+    customer_controller = ""
+    if customer_run:
+        from npa.workflows.byof.libero_customer import controller_context
+
+        try:
+            customer_controller = controller_context(process_env, infra.split("/", 1)[1])
+        except (OSError, ValueError) as exc:
+            raise ExecutionPreflightError("cluster_owner", "LIBERO controller namespace identity is invalid") from exc
+        controller_resources = controller.get("resources") or {}
+        if (
+            controller_resources.get("cloud") != "kubernetes"
+            or controller_resources.get("region") != customer_controller
+            or controller_resources.get("accelerators")
+        ):
+            raise ExecutionPreflightError("cluster_owner", "LIBERO controller differs from its verified CPU context")
+        contexts = ((global_config or {}).get("kubernetes") or {}).get("context_configs") or {}
+        if (
+            (contexts.get(customer_controller) or {}).get("remote_identity") != "LOCAL_CREDENTIALS"
+            or (contexts.get(infra.split("/", 1)[1]) or {}).get("remote_identity") != "NO_UPLOAD"
+        ):
+            raise ExecutionPreflightError("credentials", "LIBERO requires controller-only kubeconfig transport")
     if controller.get("resources"):
         if not isinstance(controller["resources"], Mapping):
             raise ExecutionPreflightError(
                 "scope", "controller resources must identify one execution target"
             )
-        task_resources.append(
-            ({"resources": controller["resources"]}, controller["resources"])
-        )
+        if not customer_run:
+            task_resources.append(
+                ({"resources": controller["resources"]}, controller["resources"])
+            )
     default_cloud = "nebius" if infra.split("/", 1)[0] == "nebius" else "kubernetes"
     native_documents = []
     kubernetes_documents = []
@@ -1407,7 +1429,7 @@ def preflight_skypilot_submission(
             raise ExecutionPreflightError(
                 "cluster_owner", "Kubernetes runtime configuration must be a mapping"
             )
-        kube_config["allowed_contexts"] = [context]
+        kube_config["allowed_contexts"] = [context, customer_controller] if customer_run else [context]
     for document in documents:
         envs = document.setdefault("envs", {})
         bucket = process_env.get("NPA_S3_BUCKET")

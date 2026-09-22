@@ -822,22 +822,32 @@ class _PreparedWorkflowSubmission:
     env: dict[str, str] = field(default_factory=dict)
 
 
-def _submission_global_config(runtime, controller_backend, infra):
+def _submission_global_config(runtime, controller_backend, infra, *, documents=(), extra_env=None):
+    from npa.workflows.byof.libero_customer import controller_context, selected
+
+    context = _controller_region_from_infra(infra, controller_backend)
+    controller = None
+    if selected(documents):
+        controller = controller_context({**os.environ, **(extra_env or {})}, context or "")
     config = _controller_config_for_execution(
         _load_base_config(runtime.global_config_path),
         controller_backend=controller_backend,
-        infra=infra,
+        infra="k8s/" + controller if controller else infra,
     )
-    context = _controller_region_from_infra(infra, controller_backend)
     if context:
         kubernetes = config.setdefault("kubernetes", {})
         if not isinstance(kubernetes, dict):
             raise ValueError(
                 "SkyPilot global config kubernetes section must be a mapping"
             )
-        # The selected workload and controller share this exact context; other
-        # operator settings, including pod configuration, retain their values.
-        kubernetes["allowed_contexts"] = [context]
+        # Customer LIBERO separates namespaces through verified same-cluster
+        # aliases. Ordinary submissions retain their single exact context.
+        kubernetes["allowed_contexts"] = [context, controller] if controller else [context]
+        if controller:
+            contexts = kubernetes.setdefault("context_configs", {})
+            # Only the controller receives the private two-context kubeconfig.
+            contexts.setdefault(controller, {})["remote_identity"] = "LOCAL_CREDENTIALS"
+            contexts.setdefault(context, {})["remote_identity"] = "NO_UPLOAD"
     return config
 
 
@@ -928,7 +938,9 @@ def _prepare_workflow_submission(
     if not docs:
         raise ValueError("SkyPilot YAML is empty")
     executable = str(ensure_skypilot_version(runtime.sky_bin))
-    global_config = _submission_global_config(runtime, controller_backend, infra)
+    global_config = _submission_global_config(
+        runtime, controller_backend, infra, documents=docs, extra_env=extra_env
+    )
     env, libero_submission = _preflight_prepared_submission(
         runtime,
         docs,

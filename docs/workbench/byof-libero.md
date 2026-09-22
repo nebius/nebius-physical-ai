@@ -49,7 +49,7 @@ returns only `customer-authorization.json` and `customer-public-key.b64` through
 the private handoff. NPA never runs this acknowledgement on the customer's behalf.
 
 The resource owner supplies a private target JSON with exactly `project`,
-`context`, `namespace`, `namespace_uid`, `allowed_node`, `kubeconfig`, `config_path`,
+`context`, `controller_context`, `namespace`, `namespace_uid`, `allowed_node`, `kubeconfig`, `config_path`,
 `isolated_config_dir`, `deny_policy_uid`, and `fetch_policy_uid`. The dedicated
 namespace bears `npa-libero-run=<exact-run-id>`, has no pre-existing Pods, and uses
 the tokenless `npa-byof-libero-payload` account. Its two owner-provisioned policies
@@ -57,6 +57,15 @@ are `libero-deny-egress` (all Pods, Egress, no allowed destinations) and
 `libero-fetch-egress` (all Pods, Egress, initially all destinations). The controller
 checks their UIDs, removes only the exact fetch allowance after verified runtime
 materialization, proves the observed egress change, then releases training.
+
+The private kubeconfig contains exactly the workload and controller contexts,
+one shared cluster with an HTTPS endpoint and embedded CA, and one shared user.
+Each context selects a distinct explicit namespace. NPA places the CPU controller
+in its context and allowlists only that verified pair. The controller uses
+`LOCAL_CREDENTIALS`; the workload uses `NO_UPLOAD` and retains its tokenless
+payload identity. Select the exact owned CPU and GPU nodes separately through
+`kubernetes.context_configs.<context>.allowed_nodes.names` in the private
+SkyPilot config. A global GPU-only node filter would also constrain the controller.
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_libero_customer.py submit \

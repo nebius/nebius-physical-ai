@@ -37,8 +37,8 @@ from npa.orchestration.skypilot.cleanup import cleanup_launched_workflow
 from npa.orchestration.skypilot.launch_transaction import is_terminal_failure_job_status
 from npa.orchestration.skypilot.local_api import stop_isolated_api
 from npa.workflows.byof.libero_customer import (
-    IMAGE_FILE_ENV, KEY_FILE_ENV, MODE, PROFILE, SECRET_NAMES,
-    image_manifest, private_bytes, validate_authorization, validate_profile,
+    CONTROLLER_CONTEXT_ENV, IMAGE_FILE_ENV, KEY_FILE_ENV, MODE, PROFILE, SECRET_NAMES,
+    controller_context, image_manifest, private_bytes, validate_authorization, validate_profile,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -307,15 +307,17 @@ def submit(args: argparse.Namespace) -> None:
         environment, image_manifest=manifest, run_id=request["run_id"], profile_sha256=_sha(profile)
     )
     target = _json(args.target)
-    required = {"project", "context", "namespace", "namespace_uid", "allowed_node", "kubeconfig", "config_path", "isolated_config_dir", "deny_policy_uid", "fetch_policy_uid"}
+    required = {"project", "context", "controller_context", "namespace", "namespace_uid", "allowed_node", "kubeconfig", "config_path", "isolated_config_dir", "deny_policy_uid", "fetch_policy_uid"}
     if set(target) != required or any(not isinstance(v, str) or not v for v in target.values()):
         raise ValueError("customer target requires the exact owner-provided fields")
     for field in ("kubeconfig", "config_path"):
         private_bytes(Path(target[field]))
+    environment["KUBECONFIG"] = target["kubeconfig"]
+    environment[CONTROLLER_CONTEXT_ENV] = target["controller_context"]
+    controller_context(environment, target["context"], workload_namespace=target["namespace"])
     run_id = request["run_id"]
     runtime_dir = Path(target["isolated_config_dir"])
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
-    environment["KUBECONFIG"] = target["kubeconfig"]
     api_client = config.new_client_from_config(config_file=target["kubeconfig"], context=target["context"])
     core, network = client.CoreV1Api(api_client), client.NetworkingV1Api(api_client)
     namespace = core.read_namespace(target["namespace"])

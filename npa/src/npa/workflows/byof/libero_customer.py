@@ -15,6 +15,7 @@ import os
 import stat
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -22,6 +23,7 @@ MODE = "customer-run-v1"
 MODE_ENV = "NPA_LIBERO_RUNTIME_DELIVERY"
 KEY_FILE_ENV = "NPA_LIBERO_CUSTOMER_RUN_PUBLIC_KEY_FILE"
 IMAGE_FILE_ENV = "NPA_LIBERO_CUSTOMER_IMAGE_MANIFEST_FILE"
+CONTROLLER_CONTEXT_ENV = "NPA_LIBERO_CUSTOMER_CONTROLLER_CONTEXT"
 PROFILE = Path(__file__).parent / "profiles/byof-solution-smoke-libero-customer-b200-gpu.yaml"
 SECRET_NAMES = (
     "NPA_LIBERO_CUSTOMER_AUTHORIZATION_B64",
@@ -47,6 +49,60 @@ def selected(documents: Sequence[Mapping[str, Any]]) -> bool:
     if modes != {MODE}:
         raise ValueError("LIBERO customer profile has mixed or unknown delivery modes")
     return True
+
+
+def controller_context(
+    process_env: Mapping[str, str], workload_context: str, *, workload_namespace: str | None = None,
+) -> str:
+    """Separate namespaces using two explicit aliases of the same private identity."""
+    controller = process_env.get(CONTROLLER_CONTEXT_ENV, "")
+    kubeconfig = process_env.get("KUBECONFIG", "")
+    if not controller or not workload_context or controller == workload_context or not kubeconfig:
+        raise ValueError("LIBERO requires distinct explicit controller and workload contexts")
+    config = yaml.safe_load(private_bytes(Path(kubeconfig)))
+    if not isinstance(config, dict):
+        raise ValueError("LIBERO private kubeconfig must be a mapping")
+
+    def inventory(kind: str) -> dict[str, Any]:
+        records = config.get(kind) or []
+        if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+            raise ValueError("LIBERO kubeconfig inventory is invalid")
+        if any(not isinstance(item.get("name"), str) or not item["name"] for item in records):
+            raise ValueError("LIBERO kubeconfig inventory has missing names")
+        result = {item.get("name"): item for item in records}
+        if len(result) != len(records):
+            raise ValueError("LIBERO kubeconfig inventory has duplicate names")
+        return result
+
+    contexts = inventory("contexts")
+    if set(contexts) != {workload_context, controller}:
+        raise ValueError("LIBERO kubeconfig must contain only the two authorized contexts")
+    worker = (contexts.get(workload_context) or {}).get("context") or {}
+    manager = (contexts.get(controller) or {}).get("context") or {}
+    if (
+        not isinstance(worker, dict) or not isinstance(manager, dict)
+        or not worker.get("cluster") or worker.get("cluster") != manager.get("cluster")
+        or not worker.get("user") or worker.get("user") != manager.get("user")
+        or not worker.get("namespace") or not manager.get("namespace")
+        or worker["namespace"] == manager["namespace"]
+        or (workload_namespace is not None and worker["namespace"] != workload_namespace)
+    ):
+        raise ValueError("LIBERO contexts require the same cluster and user with distinct explicit namespaces")
+    clusters, users = inventory("clusters"), inventory("users")
+    if set(clusters) != {worker["cluster"]} or set(users) != {worker["user"]}:
+        raise ValueError("LIBERO kubeconfig must contain only its one shared cluster and user")
+    cluster = clusters[worker["cluster"]].get("cluster") or {}
+    user = users[worker["user"]].get("user") or {}
+    if not isinstance(cluster, dict) or not isinstance(user, dict):
+        raise ValueError("LIBERO kubeconfig cluster or user is invalid")
+    endpoint = urlsplit(cluster.get("server") or "")
+    if (
+        endpoint.scheme != "https" or not endpoint.hostname or endpoint.username or endpoint.password
+        or endpoint.query or endpoint.fragment or cluster.get("insecure-skip-tls-verify")
+        or not cluster.get("certificate-authority-data") or not user
+    ):
+        raise ValueError("LIBERO contexts require one verified HTTPS endpoint, embedded CA and user")
+    return controller
 
 
 def validate_profile(documents: Sequence[Mapping[str, Any]]) -> None:
