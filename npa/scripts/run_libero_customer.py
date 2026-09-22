@@ -30,6 +30,7 @@ import yaml
 from npa.deploy.images import (
     libero_customer_acceptance_notification,
     libero_customer_authorization_signature_payload,
+    libero_image_manifest,
 )
 from npa.execution_preflight import libero_executable_profile_bytes
 from npa.orchestration.skypilot import submit_workflow, workflow_status
@@ -248,7 +249,11 @@ def _observe(core, binding, job_id: str, managed, target: dict[str, Any]):
 
 
 def _proof(root: Path, observation: dict[str, Any]) -> dict[str, Any]:
-    smoke = _module("npa_libero_proof_contract", REPO / "npa/docker/workbench/libero/libero_smoke.py")
+    runtime_bytes = (REPO / "npa/docker/workbench/libero/runtime-manifest.json").read_bytes()
+    if _sha(runtime_bytes) != libero_image_manifest()["runtime_manifest_sha256"]:
+        raise ValueError("LIBERO proof runtime manifest differs from its pinned identity")
+    contract = json.loads(runtime_bytes)
+    language_files = {item["filename"]: item["sha256"] for item in contract["language_model"]["files"]}
     report = json.loads((root / "libero-smoke.json").read_bytes())
     train, split = report.get("training", {}), report.get("split", {})
     heldout, action = report.get("heldout_metrics", {}), report.get("reloaded_action", {})
@@ -257,15 +262,15 @@ def _proof(root: Path, observation: dict[str, Any]) -> dict[str, Any]:
     source, dataset, language = (report.get(name, {}) for name in ("source", "dataset", "task_language_model"))
     if not (
         report.get("status") == "passed" and report.get("exit_status") == 0
-        and source.get("observed_revision") == smoke.SOURCE_REF
+        and source.get("observed_revision") == contract["source"]["revision"]
         and source.get("source_prune_path_absent") is True and source.get("git_objects_absent") is True
-        and dataset.get("observed_sha256") == smoke.DATASET_SHA256
-        and dataset.get("observed_size_bytes") == smoke.DATASET_SIZE
+        and dataset.get("observed_sha256") == contract["demonstration"]["sha256"]
+        and dataset.get("observed_size_bytes") == contract["demonstration"]["size_bytes"]
         and language.get("embedding_method") == "upstream_LIBERO_bert_pooler_output"
         and language.get("embedding_finite") is True
-        and language.get("source_sha256") == smoke.TASK_EMBEDDING_SOURCE_SHA256
-        and set(language.get("files", {})) == set(smoke.LANGUAGE_MODEL_FILES)
-        and all(language["files"][name].get("observed_sha256") == record[1] for name, record in smoke.LANGUAGE_MODEL_FILES.items())
+        and language.get("source_sha256") == contract["task"]["embedding_source"]["sha256"]
+        and set(language.get("files", {})) == set(language_files)
+        and all(language["files"][name].get("observed_sha256") == digest for name, digest in language_files.items())
         and train.get("optimizer_steps") == train.get("requested_optimizer_steps") == 8
         and train.get("all_losses_finite") is True
         and math.isfinite(float(train.get("parameter_max_abs_delta", 0)))

@@ -27,6 +27,64 @@ def driver():
     return module
 
 
+@pytest.mark.parametrize("mutation", [None, "checkpoint", "source", "dataset", "language", "observation"])
+def test_retrieved_proof_uses_inert_pinned_contract(monkeypatch, tmp_path, mutation):
+    module = driver()
+    monkeypatch.delenv("NPA_SMOKE_OUTPUT_DIR", raising=False)
+    monkeypatch.setattr(module, "_module", lambda *_a: pytest.fail("proof executed a workload module"))
+    contract = json.loads((ROOT / "npa/docker/workbench/libero/runtime-manifest.json").read_bytes())
+    checkpoint = tmp_path / "libero-bc-rnn-smoke.pth"
+    checkpoint.write_bytes(b"synthetic checkpoint bytes; verification must only hash")
+    observation = {"pod_observed_image_digest": "sha256:" + "a" * 64}
+    report = {
+        "status": "passed", "exit_status": 0,
+        "source": {"observed_revision": contract["source"]["revision"],
+                   "source_prune_path_absent": True, "git_objects_absent": True},
+        "dataset": {"observed_sha256": contract["demonstration"]["sha256"],
+                    "observed_size_bytes": contract["demonstration"]["size_bytes"]},
+        "task_language_model": {
+            "embedding_method": "upstream_LIBERO_bert_pooler_output", "embedding_finite": True,
+            "source_sha256": contract["task"]["embedding_source"]["sha256"],
+            "files": {item["filename"]: {"observed_sha256": item["sha256"]}
+                      for item in contract["language_model"]["files"]},
+        },
+        "training": {"optimizer_steps": 8, "requested_optimizer_steps": 8,
+                     "all_losses_finite": True, "parameter_max_abs_delta": 0.1},
+        "split": {"disjoint": True, "train_demo_count": 40, "heldout_demo_count": 10,
+                  "train_sample_count": 4020, "heldout_sample_count": 1048},
+        "heldout_metrics": {"evaluated_sample_count": 1048, "negative_log_likelihood": 0.1},
+        "reloaded_action": {"finite": True, "evaluated_sample_count": 1048, "shape": [8, 7]},
+        "checkpoint": {"strict_state_dict_load": True, "sha256": module._sha(checkpoint.read_bytes())},
+        "runtime": {"gpu_count": 1, "compute_capability": [10, 0], "gpu_model": "B200", **observation},
+    }
+    if mutation == "checkpoint":
+        checkpoint.write_bytes(b"changed bytes")
+    elif mutation == "source":
+        report["source"]["observed_revision"] = "b" * 40
+    elif mutation == "dataset":
+        report["dataset"]["observed_sha256"] = "b" * 64
+    elif mutation == "language":
+        report["task_language_model"]["files"]["config.json"]["observed_sha256"] = "b" * 64
+    elif mutation == "observation":
+        report["runtime"]["pod_observed_image_digest"] = "sha256:" + "b" * 64
+    (tmp_path / "libero-smoke.json").write_text(json.dumps(report))
+    if mutation:
+        with pytest.raises(ValueError, match="does not establish"):
+            module._proof(tmp_path, observation)
+    else:
+        assert module._proof(tmp_path, observation) == report
+
+
+def test_retrieved_proof_refuses_changed_runtime_contract(monkeypatch, tmp_path):
+    module = driver()
+    monkeypatch.setattr(module, "REPO", tmp_path)
+    path = tmp_path / "npa/docker/workbench/libero/runtime-manifest.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{}")
+    with pytest.raises(ValueError, match="pinned identity"):
+        module._proof(tmp_path, {})
+
+
 @pytest.mark.parametrize("mutation", ["setup", "token", "credential", "sidecar", "privileged", "mount", "mode", "root_uid", "missing_uid"])
 def test_customer_profile_rejects_workload_expansion(mutation):
     docs = list(yaml.safe_load_all(customer.PROFILE.read_text()))
