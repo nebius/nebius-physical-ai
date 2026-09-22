@@ -30,7 +30,9 @@ ARTIFACTS_MODULE = (
 
 
 def test_agent_media_preview_contract_present_in_source() -> None:
-    source = AGENT_MODULE.read_text(encoding="utf-8") + AGENT_UI.read_text(encoding="utf-8")
+    source = AGENT_MODULE.read_text(encoding="utf-8") + AGENT_UI.read_text(
+        encoding="utf-8"
+    )
     contract_source = (
         source
         + AGENT_CONTRACTS_MODULE.read_text(encoding="utf-8")
@@ -43,8 +45,14 @@ def test_agent_media_preview_contract_present_in_source() -> None:
         )
     # Anti-patterns that previously broke MP4 playback under basic auth.
     assert '`<video controls src="${{previewUrl}}">`' not in source
-    assert 'host.innerHTML = `<video controls src="${{previewUrl}}"></video>`' not in source
-    assert 'host.innerHTML = `<img alt="artifact image" src="${{previewUrl}}" />`' not in source
+    assert (
+        'host.innerHTML = `<video controls src="${{previewUrl}}"></video>`'
+        not in source
+    )
+    assert (
+        'host.innerHTML = `<img alt="artifact image" src="${{previewUrl}}" />`'
+        not in source
+    )
 
 
 def test_artifact_media_type_covers_inline_render_extensions() -> None:
@@ -60,7 +68,9 @@ def test_artifact_media_type_covers_inline_render_extensions() -> None:
     assert artifact_media_type("path/with/dirs/video.MP4") == "video/mp4"
 
 
-@pytest.mark.parametrize("ext", sorted(_VIDEO_EXTENSIONS | _IMAGE_EXTENSIONS | _TEXT_EXTENSIONS | {".json"}))
+@pytest.mark.parametrize(
+    "ext", sorted(_VIDEO_EXTENSIONS | _IMAGE_EXTENSIONS | _TEXT_EXTENSIONS | {".json"})
+)
 def test_artifact_media_type_aligned_with_render_hint(ext: str) -> None:
     key = f"run/artifacts/object{ext}"
     render = render_hint_for_object(key=key)
@@ -86,9 +96,9 @@ def test_embedded_artifacts_source_includes_media_type_helper() -> None:
 
 
 def test_bootstrap_embeds_artifacts_module_with_media_type() -> None:
-    source = AGENT_MODULE.read_text(encoding="utf-8") + ARTIFACT_CONTENT_MODULE.read_text(
+    source = AGENT_MODULE.read_text(
         encoding="utf-8"
-    )
+    ) + ARTIFACT_CONTENT_MODULE.read_text(encoding="utf-8")
     assert "_AGENT_ARTIFACTS_EMBED" in source
     assert "content_type = artifact_media_type(str(artifact.key))" in source
     assert '"X-Content-Type-Options": "nosniff"' in source

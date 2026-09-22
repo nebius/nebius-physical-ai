@@ -404,9 +404,13 @@ def _redirect_policy_cache_to_durable_storage(deployment: dict[str, Any]) -> Non
         if container.get("name") != "openpi-policy":
             continue
         env = [
-            item for item in container.get("env", []) if item.get("name") not in cache_env
+            item
+            for item in container.get("env", [])
+            if item.get("name") not in cache_env
         ]
-        env.extend({"name": key, "value": value} for key, value in sorted(cache_env.items()))
+        env.extend(
+            {"name": key, "value": value} for key, value in sorted(cache_env.items())
+        )
         container["env"] = env
 
 

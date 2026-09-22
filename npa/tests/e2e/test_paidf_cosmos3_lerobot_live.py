@@ -52,8 +52,11 @@ def test_completed_public_lerobot_v3_pipeline() -> None:
     assert provenance["camera"] == "observation.images.top"
     _assert_example_timeline(read)
     _assert_paidf_live_artifacts(
-        spec="paidf-cosmos3.yaml", waves=runtime["waves"], bucket=parsed.netloc,
-        run_id=run_id, e2e_project=project,
+        spec="paidf-cosmos3.yaml",
+        waves=runtime["waves"],
+        bucket=parsed.netloc,
+        run_id=run_id,
+        e2e_project=project,
     )
 
 
@@ -72,7 +75,9 @@ def _assert_example_timeline(read) -> None:
 
 
 def _assert_fresh_run(client, bucket, run_id, waves) -> None:
-    fresh_after = datetime.fromisoformat(os.environ["NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"])
+    fresh_after = datetime.fromisoformat(
+        os.environ["NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"]
+    )
     assert fresh_after.tzinfo is not None, "Freshness timestamp must include UTC offset"
     assert all(wave["replayed"] is False for wave in waves)
     assert all(wave["adopted"] is False for wave in waves)

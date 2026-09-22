@@ -16,14 +16,18 @@ def main() -> int:
 
     source_sha = os.environ.get("NPA_IMAGE_SOURCE_SHA", "")
     if len(source_sha) != 40 or any(ch not in "0123456789abcdef" for ch in source_sha):
-        raise RuntimeError("NPA_IMAGE_SOURCE_SHA must be an exact lowercase 40-hex commit")
+        raise RuntimeError(
+            "NPA_IMAGE_SOURCE_SHA must be an exact lowercase 40-hex commit"
+        )
 
     override = os.environ.get("NPA_SIM2REAL_WORKFLOW", "")
     workflow = (
         Path(override) if override else resolve_npa_workflow_spec("sim2real.yaml")
     )
     if workflow is None:
-        raise RuntimeError("The canonical sim2real.yaml is missing from the image catalog")
+        raise RuntimeError(
+            "The canonical sim2real.yaml is missing from the image catalog"
+        )
     spec = load_spec(workflow)
     plans = {
         decision: build_plan(
@@ -66,7 +70,9 @@ def main() -> int:
     output_dir = Path(os.environ.get("NPA_SMOKE_OUTPUT_DIR", "/tmp/npa-golden"))
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / "sim2real-control-functional.json"
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps({**report, "report": str(output)}, sort_keys=True))
     return 0
 

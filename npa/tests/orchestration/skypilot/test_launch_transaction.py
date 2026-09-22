@@ -173,15 +173,60 @@ def test_readiness_interruption_is_prompt_and_typed() -> None:
 @pytest.mark.parametrize(
     ("phase", "detail", "state", "category"),
     [
-        ("launch", "connect: connection refused", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT),
-        ("launch", "HTTP 429 Too Many Requests", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_RATE_LIMIT),
-        ("launch", "503 Service Unavailable", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_SERVER),
-        ("launch", "TLS handshake timeout", EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT),
-        ("launch", "forbidden: cannot list pods", EvidenceState.TERMINAL, FailureCategory.RBAC),
-        ("launch", "x509: certificate expired", EvidenceState.TERMINAL, FailureCategory.CERTIFICATE),
-        ("launch", "context not found", EvidenceState.TERMINAL, FailureCategory.CONTEXT),
-        ("launch", "task timed out running user code", EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN),
-        ("workload", "connection refused", EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN),
+        (
+            "launch",
+            "connect: connection refused",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_TRANSPORT,
+        ),
+        (
+            "launch",
+            "HTTP 429 Too Many Requests",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_RATE_LIMIT,
+        ),
+        (
+            "launch",
+            "503 Service Unavailable",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_SERVER,
+        ),
+        (
+            "launch",
+            "TLS handshake timeout",
+            EvidenceState.TRANSIENT_UNAVAILABLE,
+            FailureCategory.KUBERNETES_TRANSPORT,
+        ),
+        (
+            "launch",
+            "forbidden: cannot list pods",
+            EvidenceState.TERMINAL,
+            FailureCategory.RBAC,
+        ),
+        (
+            "launch",
+            "x509: certificate expired",
+            EvidenceState.TERMINAL,
+            FailureCategory.CERTIFICATE,
+        ),
+        (
+            "launch",
+            "context not found",
+            EvidenceState.TERMINAL,
+            FailureCategory.CONTEXT,
+        ),
+        (
+            "launch",
+            "task timed out running user code",
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+        ),
+        (
+            "workload",
+            "connection refused",
+            EvidenceState.AMBIGUOUS,
+            FailureCategory.UNKNOWN,
+        ),
     ],
 )
 def test_failure_taxonomy_is_phase_aware(
@@ -248,15 +293,17 @@ def test_launch_accepted_but_client_failed_is_adopted() -> None:
         logical_id="accepted",
         readiness=_stable,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND,
-            "41",
-            "PENDING",
-            workload_observable=True,
-            workload_evidence="scheduler_state",
-        )
-        if exists
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                "41",
+                "PENDING",
+                workload_observable=True,
+                workload_evidence="scheduler_state",
+            )
+            if exists
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
     )
     assert result.state is LaunchState.ADOPTED
@@ -283,15 +330,17 @@ def test_getcwd_rsync_failure_rejects_phantom_pending_queue_record() -> None:
             logical_id="getcwd-rsync-phantom",
             readiness=_stable,
             launch=launch,
-            reconcile=lambda: ReconciliationEvidence(
-                ReconciliationState.FOUND,
-                "125",
-                "PENDING",
-                workload_observable=False,
-                workload_evidence="",
-            )
-            if exists
-            else ReconciliationEvidence(ReconciliationState.ABSENT),
+            reconcile=lambda: (
+                ReconciliationEvidence(
+                    ReconciliationState.FOUND,
+                    "125",
+                    "PENDING",
+                    workload_observable=False,
+                    workload_evidence="",
+                )
+                if exists
+                else ReconciliationEvidence(ReconciliationState.ABSENT)
+            ),
             classify_launch_error=_transient,
         )
 
@@ -326,10 +375,7 @@ def test_resume_rejects_existing_unobservable_phantom_record() -> None:
         )
 
     assert caught.value.result.state is LaunchState.INDETERMINATE
-    assert (
-        caught.value.result.recovery_decision
-        == "block_unobservable_existing_record"
-    )
+    assert caught.value.result.recovery_decision == "block_unobservable_existing_record"
 
 
 def test_resume_relaunches_instead_of_adopting_cancelled_job() -> None:
@@ -388,11 +434,11 @@ def test_authoritative_absence_allows_one_safe_retry() -> None:
         logical_id="safe-retry",
         readiness=_stable,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, "9", "PENDING"
-        )
-        if exists
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(ReconciliationState.FOUND, "9", "PENDING")
+            if exists
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
         recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
         clock=clock,
@@ -426,7 +472,10 @@ def test_repeated_transient_failure_stops_at_recovery_deadline() -> None:
             sleeper=clock.sleep,
             random_source=lambda: 0.5,
         )
-    assert caught.value.result.recovery_decision == "recovery_deadline_exhausted_verified_absent"
+    assert (
+        caught.value.result.recovery_decision
+        == "recovery_deadline_exhausted_verified_absent"
+    )
     assert caught.value.result.state is LaunchState.TRANSIENT_API_FAILURE
     assert caught.value.result.existence == "absent"
     assert launches == 2
@@ -664,11 +713,11 @@ def test_hermetic_incident_boundary_recovers_without_cancellation() -> None:
         logical_id=logical_launch_identity("project", "paidf-run", "wave-001", "1"),
         readiness=readiness,
         launch=launch,
-        reconcile=lambda: ReconciliationEvidence(
-            ReconciliationState.FOUND, exact_job, "PENDING"
-        )
-        if exact_job
-        else ReconciliationEvidence(ReconciliationState.ABSENT),
+        reconcile=lambda: (
+            ReconciliationEvidence(ReconciliationState.FOUND, exact_job, "PENDING")
+            if exact_job
+            else ReconciliationEvidence(ReconciliationState.ABSENT)
+        ),
         classify_launch_error=_transient,
         recovery_policy=RecoveryPolicy(30, 1, 1, 2, 0),
         clock=clock,
@@ -690,32 +739,51 @@ _CREDENTIAL_RPC_TRANSPORT = (
 
 def test_credential_exec_internal_stream_close_is_typed_transport() -> None:
     assert classify_failure(phase="launch", stderr=_CREDENTIAL_RPC_TRANSPORT) == (
-        EvidenceState.TRANSIENT_UNAVAILABLE, FailureCategory.KUBERNETES_TRANSPORT,
+        EvidenceState.TRANSIENT_UNAVAILABLE,
+        FailureCategory.KUBERNETES_TRANSPORT,
     )
     assert classify_failure(phase="workload", stderr=_CREDENTIAL_RPC_TRANSPORT) == (
-        EvidenceState.AMBIGUOUS, FailureCategory.UNKNOWN,
+        EvidenceState.AMBIGUOUS,
+        FailureCategory.UNKNOWN,
     )
 
 
-@pytest.mark.parametrize("denial,category", [
-    ("Unauthorized", FailureCategory.AUTH),
-    ("credentials expired", FailureCategory.AUTH),
-    ("exec plugin authentication failed", FailureCategory.AUTH),
-    ("Forbidden", FailureCategory.RBAC),
-    ("Invalid pod_config", FailureCategory.SCHEMA),
-    ("credential configuration changed after verification", FailureCategory.IDENTITY),
-])
+@pytest.mark.parametrize(
+    "denial,category",
+    [
+        ("Unauthorized", FailureCategory.AUTH),
+        ("credentials expired", FailureCategory.AUTH),
+        ("exec plugin authentication failed", FailureCategory.AUTH),
+        ("Forbidden", FailureCategory.RBAC),
+        ("Invalid pod_config", FailureCategory.SCHEMA),
+        (
+            "credential configuration changed after verification",
+            FailureCategory.IDENTITY,
+        ),
+    ],
+)
 def test_real_denial_precedes_credential_transport(denial, category) -> None:
-    state, actual = classify_failure(phase="launch", stderr=_CREDENTIAL_RPC_TRANSPORT + "\n" + denial)
+    state, actual = classify_failure(
+        phase="launch", stderr=_CREDENTIAL_RPC_TRANSPORT + "\n" + denial
+    )
     assert state is EvidenceState.TERMINAL and actual is category
 
 
-def test_typed_transport_still_refuses_unobservable_reserved_row(tmp_path: Path) -> None:
+def test_typed_transport_still_refuses_unobservable_reserved_row(
+    tmp_path: Path,
+) -> None:
     launches = []
-    evidence = iter([
-        ReconciliationEvidence(ReconciliationState.ABSENT),
-        ReconciliationEvidence(ReconciliationState.FOUND, job_id="41", status="PENDING", workload_observable=False),
-    ])
+    evidence = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND,
+                job_id="41",
+                status="PENDING",
+                workload_observable=False,
+            ),
+        ]
+    )
 
     def launch():
         launches.append(True)
@@ -723,30 +791,48 @@ def test_typed_transport_still_refuses_unobservable_reserved_row(tmp_path: Path)
 
     with pytest.raises(LaunchTransactionError) as caught:
         run_launch_transaction(
-            logical_id="partial-transport", readiness=_stable, launch=launch,
-            reconcile=lambda: next(evidence), classify_launch_error=_transient, lock_root=tmp_path,
+            logical_id="partial-transport",
+            readiness=_stable,
+            launch=launch,
+            reconcile=lambda: next(evidence),
+            classify_launch_error=_transient,
+            lock_root=tmp_path,
         )
     result = caught.value.result
-    assert result.category is FailureCategory.KUBERNETES_TRANSPORT and result.job_id == "41"
-    assert result.recovery_decision == "reject_unobservable_queue_record_after_launch_failure"
+    assert (
+        result.category is FailureCategory.KUBERNETES_TRANSPORT
+        and result.job_id == "41"
+    )
+    assert (
+        result.recovery_decision
+        == "reject_unobservable_queue_record_after_launch_failure"
+    )
     assert len(launches) == 1
 
 
 def test_non_idempotent_intent_is_durable_before_provider_post(tmp_path: Path) -> None:
     sequence = []
-    evidence = iter([
-        ReconciliationEvidence(ReconciliationState.ABSENT),
-        ReconciliationEvidence(ReconciliationState.FOUND, job_id="42", status="PENDING"),
-    ])
+    evidence = iter(
+        [
+            ReconciliationEvidence(ReconciliationState.ABSENT),
+            ReconciliationEvidence(
+                ReconciliationState.FOUND, job_id="42", status="PENDING"
+            ),
+        ]
+    )
 
     def launch():
         assert sequence[-1] == 1
         return "accepted"
 
     run_launch_transaction(
-        logical_id="durable-intent", readiness=_stable, launch=launch,
-        reconcile=lambda: next(evidence), classify_launch_error=_transient,
-        lock_root=tmp_path, record=lambda payload: sequence.append(payload["launch_sequence"]),
+        logical_id="durable-intent",
+        readiness=_stable,
+        launch=launch,
+        reconcile=lambda: next(evidence),
+        classify_launch_error=_transient,
+        lock_root=tmp_path,
+        record=lambda payload: sequence.append(payload["launch_sequence"]),
     )
     assert sequence[-1] == 1
 
@@ -764,10 +850,13 @@ def test_failed_non_idempotent_intent_write_prevents_post(tmp_path: Path) -> Non
 
     with pytest.raises(OSError, match="durable store unavailable"):
         run_launch_transaction(
-            logical_id="intent-write-failure", readiness=_stable,
+            logical_id="intent-write-failure",
+            readiness=_stable,
             launch=launch,
             reconcile=lambda: ReconciliationEvidence(ReconciliationState.ABSENT),
-            classify_launch_error=_transient, lock_root=tmp_path, record=record,
+            classify_launch_error=_transient,
+            lock_root=tmp_path,
+            record=record,
         )
     assert posts == []
 
@@ -775,7 +864,13 @@ def test_failed_non_idempotent_intent_write_prevents_post(tmp_path: Path) -> Non
 def test_submit_diagnostic_does_not_mislabel_credential_transport_as_auth() -> None:
     from npa.orchestration.skypilot.workflow import _format_submit_error
 
-    result = subprocess.CompletedProcess(["sky", "jobs", "launch"], 1, "", _CREDENTIAL_RPC_TRANSPORT)
-    assert _format_submit_error(result.args, result).startswith("SkyPilot transport failure")
-    denied = subprocess.CompletedProcess(result.args, 1, "", _CREDENTIAL_RPC_TRANSPORT + "\nUnauthorized")
+    result = subprocess.CompletedProcess(
+        ["sky", "jobs", "launch"], 1, "", _CREDENTIAL_RPC_TRANSPORT
+    )
+    assert _format_submit_error(result.args, result).startswith(
+        "SkyPilot transport failure"
+    )
+    denied = subprocess.CompletedProcess(
+        result.args, 1, "", _CREDENTIAL_RPC_TRANSPORT + "\nUnauthorized"
+    )
     assert _format_submit_error(denied.args, denied).startswith("SkyPilot auth failure")

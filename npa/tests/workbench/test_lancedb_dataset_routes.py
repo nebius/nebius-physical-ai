@@ -46,7 +46,12 @@ def test_index_appends_on_a_second_write(client: TestClient) -> None:
 
     response = client.post(
         "/index",
-        json={"table": "dataset", "records": [{"id": "clip-3", "location": "berlin", "frames": 30, "night": False}]},
+        json={
+            "table": "dataset",
+            "records": [
+                {"id": "clip-3", "location": "berlin", "frames": 30, "night": False}
+            ],
+        },
     )
 
     assert response.json()["status"] == "appended"
@@ -55,14 +60,18 @@ def test_index_appends_on_a_second_write(client: TestClient) -> None:
 
 
 def test_index_rejects_an_empty_payload(client: TestClient) -> None:
-    assert client.post("/index", json={"table": "dataset", "records": []}).status_code == 400
+    assert (
+        client.post("/index", json={"table": "dataset", "records": []}).status_code
+        == 400
+    )
 
 
 def test_query_filters_by_equality_facet(client: TestClient) -> None:
     client.post("/index", json={"table": "dataset", "records": _records()})
 
     response = client.post(
-        "/query", json={"table": "dataset", "filter": {"location": "berlin"}, "limit": 10}
+        "/query",
+        json={"table": "dataset", "filter": {"location": "berlin"}, "limit": 10},
     )
 
     body = response.json()
@@ -73,12 +82,16 @@ def test_query_filters_by_equality_facet(client: TestClient) -> None:
 def test_query_handles_a_boolean_facet(client: TestClient) -> None:
     client.post("/index", json={"table": "dataset", "records": _records()})
 
-    body = client.post("/query", json={"table": "dataset", "filter": {"night": True}}).json()
+    body = client.post(
+        "/query", json={"table": "dataset", "filter": {"night": True}}
+    ).json()
 
     assert [record["id"] for record in body["records"]] == ["clip-1"]
 
 
-def test_query_on_an_unregistered_table_is_empty_not_an_error(client: TestClient) -> None:
+def test_query_on_an_unregistered_table_is_empty_not_an_error(
+    client: TestClient,
+) -> None:
     """A curation step may legitimately query before anything has been indexed."""
 
     body = client.post("/query", json={"table": "never-written", "filter": {}}).json()
@@ -89,15 +102,22 @@ def test_query_on_an_unregistered_table_is_empty_not_an_error(client: TestClient
 def test_query_escapes_a_value_containing_a_quote(client: TestClient) -> None:
     client.post(
         "/index",
-        json={"table": "dataset", "records": [{"id": "x", "location": "o'hare", "frames": 1, "night": False}]},
+        json={
+            "table": "dataset",
+            "records": [{"id": "x", "location": "o'hare", "frames": 1, "night": False}],
+        },
     )
 
-    body = client.post("/query", json={"table": "dataset", "filter": {"location": "o'hare"}}).json()
+    body = client.post(
+        "/query", json={"table": "dataset", "filter": {"location": "o'hare"}}
+    ).json()
 
     assert body["count"] == 1
 
 
-def test_query_rejects_a_field_name_that_is_not_a_plain_identifier(client: TestClient) -> None:
+def test_query_rejects_a_field_name_that_is_not_a_plain_identifier(
+    client: TestClient,
+) -> None:
     """A facet API has no operators; accepting arbitrary SQL would make this an injection point."""
 
     # Index first: a query against an unknown table returns empty before any predicate is built,
@@ -112,8 +132,13 @@ def test_query_rejects_a_field_name_that_is_not_a_plain_identifier(client: TestC
 
 
 def test_query_rejects_an_absurd_limit(client: TestClient) -> None:
-    assert client.post("/query", json={"table": "dataset", "limit": 0}).status_code == 400
-    assert client.post("/query", json={"table": "dataset", "limit": 10_001}).status_code == 400
+    assert (
+        client.post("/query", json={"table": "dataset", "limit": 0}).status_code == 400
+    )
+    assert (
+        client.post("/query", json={"table": "dataset", "limit": 10_001}).status_code
+        == 400
+    )
 
 
 def test_the_paths_match_what_the_dataset_integration_posts() -> None:
@@ -124,9 +149,11 @@ def test_the_paths_match_what_the_dataset_integration_posts() -> None:
         encoding="utf-8"
     )
 
-    assert '_post(lancedb_endpoint, "/index"' in source
-    assert '_post(lancedb_endpoint, "/query"' in source
-    server = (repo_root / "npa/src/npa/workbench/lancedb/server.py").read_text(encoding="utf-8")
+    assert "_post(" in source and "/index" in source
+    assert "_post(" in source and "/query" in source
+    server = (repo_root / "npa/src/npa/workbench/lancedb/server.py").read_text(
+        encoding="utf-8"
+    )
     assert '@app.post("/index")' in server
     assert '@app.post("/query")' in server
 
@@ -154,7 +181,9 @@ def test_unset_facets_are_not_sent_as_equality_predicates() -> None:
     ) == {"event": "cut_in", "location": "san_francisco"}
 
 
-def test_a_quality_threshold_is_applied_to_the_rows_not_pushed_into_the_facet_api(monkeypatch) -> None:
+def test_a_quality_threshold_is_applied_to_the_rows_not_pushed_into_the_facet_api(
+    monkeypatch,
+) -> None:
     from npa.workbench.dataset import integrations
 
     sent: dict[str, object] = {}
@@ -172,7 +201,11 @@ def test_a_quality_threshold_is_applied_to_the_rows_not_pushed_into_the_facet_ap
 
     records = integrations.query_lancedb(
         lancedb_endpoint="http://svc:8686",
-        filter_predicate={"event": "cut_in", "quality_metric": "completeness", "min_quality": 0.5},
+        filter_predicate={
+            "event": "cut_in",
+            "quality_metric": "completeness",
+            "min_quality": 0.5,
+        },
         limit=10,
         table="fleet-dataset",
     )

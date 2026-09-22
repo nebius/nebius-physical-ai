@@ -42,7 +42,9 @@ def test_deploy_public_ip_flag_is_opt_in(monkeypatch) -> None:
             return kubeconfig_path
 
     monkeypatch.setattr(deploy_mod, "MK8sClient", FakeClient)
-    monkeypatch.setattr(deploy_mod, "resolve_project_id", lambda project_id="": "project-a")
+    monkeypatch.setattr(
+        deploy_mod, "resolve_project_id", lambda project_id="": "project-a"
+    )
     monkeypatch.setattr(deploy_mod, "resolve_subnet", lambda project_id: "vpcsubnet-a")
     monkeypatch.setattr(deploy_mod, "save_cluster_state", lambda *args, **kwargs: None)
 
@@ -50,6 +52,8 @@ def test_deploy_public_ip_flag_is_opt_in(monkeypatch) -> None:
     assert result.exit_code == 0
     assert seen_configs[-1].public_node_ip is False
 
-    result = runner.invoke(app, ["deploy", "--name", "cluster-a", "--no-wait", "--public-ip"])
+    result = runner.invoke(
+        app, ["deploy", "--name", "cluster-a", "--no-wait", "--public-ip"]
+    )
     assert result.exit_code == 0
     assert seen_configs[-1].public_node_ip is True

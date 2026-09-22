@@ -7,9 +7,17 @@ import io
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
+from packaging.requirements import Requirement
+from packaging.version import Version
 import pytest
 import yaml
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 
 
 @pytest.fixture
@@ -25,18 +33,35 @@ def security_modules(monkeypatch: pytest.MonkeyPatch):
     """
     scripts = Path(__file__).resolve().parents[3] / "scripts"
     monkeypatch.syspath_prepend(str(scripts))
-    return importlib.import_module("security_gate"), importlib.import_module("security_dependencies")
+    return importlib.import_module("security_gate"), importlib.import_module(
+        "security_dependencies"
+    )
 
 
 def _finding(path: str = "module.py", line: int = 4) -> dict:
-    return {"scanner": "bandit", "path": path, "rule": "B307",
-            "identity": "synthetic-expression", "line": line, "message": "Synthetic finding"}
+    return {
+        "scanner": "bandit",
+        "path": path,
+        "rule": "B307",
+        "identity": "synthetic-expression",
+        "line": line,
+        "message": "Synthetic finding",
+    }
 
 
-@pytest.mark.parametrize("baseline_count,candidate_count,added_count", [
-    (1, 1, 0), (1, 0, 0), (0, 1, 1), (1, 2, 1), (2, 1, 0),
-])
-def test_comparison_counts_occurrences(security_modules, baseline_count, candidate_count, added_count):
+@pytest.mark.parametrize(
+    "baseline_count,candidate_count,added_count",
+    [
+        (1, 1, 0),
+        (1, 0, 0),
+        (0, 1, 1),
+        (1, 2, 1),
+        (2, 1, 0),
+    ],
+)
+def test_comparison_counts_occurrences(
+    security_modules, baseline_count, candidate_count, added_count
+):
     """Count duplicate findings without treating removals as regressions.
 
     Args:
@@ -50,7 +75,9 @@ def test_comparison_counts_occurrences(security_modules, baseline_count, candida
         AssertionError: Duplicate or removal handling changes.
     """
     gate, _ = security_modules
-    findings = gate.regressions([_finding()] * baseline_count, [_finding()] * candidate_count)
+    findings = gate.regressions(
+        [_finding()] * baseline_count, [_finding()] * candidate_count
+    )
     assert len(findings) == added_count
 
 
@@ -87,8 +114,162 @@ def test_comparison_rejects_changed_finding_identity(security_modules, field):
     assert gate.regressions([_finding()], [changed]) == [changed]
 
 
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+        "npa/pyproject.toml",
+        "npa/pyproject.toml (resolved core + dev)",
+        "npa/tests/browser/package-lock.json",
+        "scripts/security-requirements.txt",
+    ],
+)
+def test_unchanged_application_vulnerabilities_block(security_modules, manifest):
+    """Reject a newly disclosed advisory even when the pin is unchanged.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        manifest: Application or CI dependency input.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Baseline subtraction hides an outstanding vulnerability.
+    """
+    gate, _ = security_modules
+    finding = dict(_finding(manifest), scanner="trivy", rule="synthetic-advisory")
+    assert gate.regressions([finding], [finding]) == []
+    assert gate.blocking_findings([finding], [finding]) == [finding]
+    assert gate.blocking_findings([], [finding]) == [finding]
+    assert gate.blocking_findings([finding], [finding, finding]) == [finding, finding]
+    assert gate.blocking_findings([finding], []) == []
+
+
+def test_vendor_dependencies_keep_regression_enforcement(security_modules):
+    """Retain differential enforcement for separately validated tool runtimes.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A new vendor vulnerability passes or source policy changes.
+    """
+    gate, _ = security_modules
+    finding = dict(
+        _finding("npa/docker/workbench/tool/requirements.txt"), scanner="trivy"
+    )
+    assert gate.blocking_findings([finding], [finding]) == []
+    assert gate.blocking_findings([], [finding]) == [finding]
+    assert gate.blocking_findings([_finding()], [_finding()]) == []
+
+
+@pytest.mark.parametrize("patched", [False, True])
+def test_gate_exit_rejects_unchanged_application_vulnerability(
+    security_modules, monkeypatch, tmp_path, patched
+):
+    """Exercise the CLI decision and summary for unchanged and fixed dependencies.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        monkeypatch: Supplies completed scanner results and isolated snapshots.
+        tmp_path: Private source/report parent directory.
+        patched: Whether the candidate removed the vulnerable pin.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A vulnerable candidate returns success or misreports findings.
+    """
+    gate, _ = security_modules
+    output = tmp_path / "report"
+    arguments = SimpleNamespace(
+        repo_root=tmp_path / "repo", output_dir=output, base="base", head="head"
+    )
+    finding = dict(_finding("npa/requirements-lock.txt"), scanner="trivy")
+    reports = iter([[finding], [] if patched else [finding]])
+    monkeypatch.setattr(gate, "_arguments", lambda: arguments)
+    monkeypatch.setattr(
+        gate, "_snapshot_revision", lambda root, revision, destination: revision
+    )
+    monkeypatch.setattr(gate, "_scan", lambda *args: next(reports))
+    monkeypatch.setattr(gate.os, "umask", lambda mode: 0o077)
+    assert gate.main() == (0 if patched else 1)
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["regressions"] == []
+    assert summary["blocking_findings"] == ([] if patched else [finding])
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "npa/pyproject.toml",
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+    ],
+)
+def test_required_application_inventory_cannot_disappear(
+    security_modules, tmp_path, missing
+):
+    """Reject deletion of a required manifest before accepting scanner results.
+
+    Args:
+        security_modules: Checked-out scanner policy.
+        tmp_path: Isolated source directory.
+        missing: Required dependency input removed by the candidate.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Removing an inventory bypasses dependency scanning.
+    """
+    gate, _ = security_modules
+    for manifest in (
+        "npa/pyproject.toml",
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+    ):
+        if manifest != missing:
+            path = tmp_path / manifest
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("")
+    with pytest.raises(ValueError, match="manifest is missing"):
+        gate._scan(tmp_path, tmp_path / "report", tmp_path / "cache")
+
+
+def test_anyio_security_floor_and_checked_in_pins():
+    """Prevent ordinary installs or retained locks from selecting affected AnyIO.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: An install declaration or checked-in pin permits vulnerable AnyIO.
+    """
+    root = Path(__file__).resolve().parents[3]
+    project = tomllib.loads((root / "npa/pyproject.toml").read_text())["project"]
+    requirement = next(
+        Requirement(item)
+        for item in project["dependencies"]
+        if Requirement(item).name == "anyio"
+    )
+    assert not requirement.url
+    assert "4.14.1" not in requirement.specifier
+    assert "4.14.2" in requirement.specifier
+    for manifest in ("npa/requirements-lock.txt", "npa/ci/requirements.txt"):
+        pin = next(
+            line
+            for line in (root / manifest).read_text().splitlines()
+            if line.startswith("anyio==")
+        )
+        version = Version(pin.split("==")[1])
+        assert version >= Version("4.14.2")
+        assert version in requirement.specifier
+
+
 @pytest.mark.parametrize("nested", [False, True])
-def test_working_snapshot_rejects_symlink_escapes(security_modules, monkeypatch, tmp_path, nested):
+def test_working_snapshot_rejects_symlink_escapes(
+    security_modules, monkeypatch, tmp_path, nested
+):
     """Reject leaf and parent-directory symlinks before copying outside bytes.
 
     Args:
@@ -109,14 +290,18 @@ def test_working_snapshot_rejects_symlink_escapes(security_modules, monkeypatch,
     (outside / "fixture.py").write_text("synthetic = True\n")
     relative = "nested/fixture.py" if nested else "fixture.py"
     link = source / ("nested" if nested else "fixture.py")
-    link.symlink_to(outside if nested else outside / "fixture.py", target_is_directory=nested)
+    link.symlink_to(
+        outside if nested else outside / "fixture.py", target_is_directory=nested
+    )
     monkeypatch.setattr(gate, "_git", lambda *arguments: relative.encode() + b"\0")
     with pytest.raises(ValueError, match="symlink|outside|contain"):
         gate._snapshot_working(source, tmp_path / "snapshot")
     assert not (tmp_path / "snapshot" / relative).exists()
 
 
-def test_working_snapshot_preserves_scannable_files(security_modules, monkeypatch, tmp_path):
+def test_working_snapshot_preserves_scannable_files(
+    security_modules, monkeypatch, tmp_path
+):
     """Copy candidate files while allowing deleted files and known aliases.
 
     Args:
@@ -146,7 +331,9 @@ def _blob_batch(digest: str, content: bytes) -> bytes:
 
 
 @pytest.mark.parametrize("mode,kind", [("120000", "blob"), ("160000", "commit")])
-def test_revision_snapshot_rejects_unsupported_source_entries(security_modules, monkeypatch, tmp_path, mode, kind):
+def test_revision_snapshot_rejects_unsupported_source_entries(
+    security_modules, monkeypatch, tmp_path, mode, kind
+):
     """Fail closed on source symlinks and submodules outside the policy.
 
     Args:
@@ -181,14 +368,23 @@ def test_revision_snapshot_rejects_blob_path_traversal(security_modules, tmp_pat
     gate, _ = security_modules
     stream = io.BytesIO(_blob_batch("synthetic-digest", b"synthetic = True\n"))
     with pytest.raises(ValueError, match="escapes"):
-        gate._write_blobs([("../outside.py", "synthetic-digest")], stream, tmp_path / "snapshot")
+        gate._write_blobs(
+            [("../outside.py", "synthetic-digest")], stream, tmp_path / "snapshot"
+        )
     assert not (tmp_path / "outside.py").exists()
 
 
-@pytest.mark.parametrize("payload", [b"other-digest blob 1\nx\n",
-                                   b"synthetic-digest commit 1\nx\n",
-                                   b"synthetic-digest blob 100\nshort\n"])
-def test_revision_snapshot_rejects_incomplete_blob_stream(security_modules, tmp_path, payload):
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"other-digest blob 1\nx\n",
+        b"synthetic-digest commit 1\nx\n",
+        b"synthetic-digest blob 100\nshort\n",
+    ],
+)
+def test_revision_snapshot_rejects_incomplete_blob_stream(
+    security_modules, tmp_path, payload
+):
     """Abort when Git returns a mismatched or incomplete source object.
 
     Args:
@@ -202,11 +398,15 @@ def test_revision_snapshot_rejects_incomplete_blob_stream(security_modules, tmp_
     """
     gate, _ = security_modules
     with pytest.raises(ValueError, match="source object"):
-        gate._write_blobs([("module.py", "synthetic-digest")], io.BytesIO(payload), tmp_path)
+        gate._write_blobs(
+            [("module.py", "synthetic-digest")], io.BytesIO(payload), tmp_path
+        )
     assert not (tmp_path / "module.py").exists()
 
 
-def test_revision_snapshot_preserves_export_ignored_and_substituted_bytes(security_modules, monkeypatch, tmp_path):
+def test_revision_snapshot_preserves_export_ignored_and_substituted_bytes(
+    security_modules, monkeypatch, tmp_path
+):
     """Materialize vulnerable blobs despite candidate export attributes.
 
     Args:
@@ -225,11 +425,15 @@ def test_revision_snapshot_preserves_export_ignored_and_substituted_bytes(securi
     tree += b"100644 blob source-digest\tvulnerable.py\0"
     replies = iter([b"synthetic-commit\n", tree])
     monkeypatch.setattr(gate, "_git", lambda *arguments: next(replies))
-    batch = _blob_batch("attribute-digest", attributes) + _blob_batch("source-digest", vulnerable)
+    batch = _blob_batch("attribute-digest", attributes) + _blob_batch(
+        "source-digest", vulnerable
+    )
+
     def _read_objects(command, **arguments):
         assert command[-2:] == ["cat-file", "--batch"]
         assert arguments["input"] == b"attribute-digest\nsource-digest\n"
         return subprocess.CompletedProcess(command, 0, stdout=batch)
+
     monkeypatch.setattr(gate.subprocess, "run", _read_objects)
     destination = tmp_path / "snapshot"
     assert gate._snapshot_revision(tmp_path, "base", destination) == "synthetic-commit"
@@ -237,8 +441,10 @@ def test_revision_snapshot_preserves_export_ignored_and_substituted_bytes(securi
     assert (destination / "vulnerable.py").read_bytes() == vulnerable
 
 
-@pytest.mark.parametrize("report", [{}, {"SchemaVersion": 1, "Results": []},
-                                     {"SchemaVersion": 2, "Results": None}])
+@pytest.mark.parametrize(
+    "report",
+    [{}, {"SchemaVersion": 1, "Results": []}, {"SchemaVersion": 2, "Results": None}],
+)
 def test_dependency_report_rejects_incomplete_schema(security_modules, report):
     """Reject reports that cannot establish a completed vulnerability scan.
 
@@ -266,12 +472,17 @@ def test_dependency_report_rejects_unknown_inventory_target(security_modules):
         AssertionError: Unknown report targets silently disappear.
     """
     _, dependencies = security_modules
-    report = {"SchemaVersion": 2, "Results": [{"Target": "unknown", "Vulnerabilities": []}]}
+    report = {
+        "SchemaVersion": 2,
+        "Results": [{"Target": "unknown", "Vulnerabilities": []}],
+    }
     with pytest.raises((KeyError, ValueError)):
         dependencies._findings(report, {})
 
 
-@pytest.mark.parametrize("section", ["dependencies", "devDependencies", "optionalDependencies"])
+@pytest.mark.parametrize(
+    "section", ["dependencies", "devDependencies", "optionalDependencies"]
+)
 def test_npm_dependencies_require_a_lock(security_modules, tmp_path, section):
     """Reject new npm dependencies that have no auditable package lock.
 
@@ -290,7 +501,9 @@ def test_npm_dependencies_require_a_lock(security_modules, tmp_path, section):
         dependencies._validate_npm_manifests(tmp_path)
 
 
-@pytest.mark.parametrize("section", ["dependencies", "devDependencies", "optionalDependencies"])
+@pytest.mark.parametrize(
+    "section", ["dependencies", "devDependencies", "optionalDependencies"]
+)
 def test_npm_manifest_and_lock_must_match(security_modules, tmp_path, section):
     """Reject changed package declarations hidden behind an unchanged lock.
 
@@ -347,8 +560,10 @@ def test_dependency_scan_rejects_invalid_json(security_modules, monkeypatch, tmp
     root = tmp_path / "source"
     root.mkdir()
     (root / "requirements.txt").write_text("requests==2.19.1\n")
+
     def _truncated_report(arguments, directory):
         (directory / "trivy.json").write_text('{"SchemaVersion":')
+
     monkeypatch.setattr(dependencies, "_scanner_versions", lambda output: None)
     monkeypatch.setattr(dependencies, "_run", _truncated_report)
     with pytest.raises((ValueError, RuntimeError, json.JSONDecodeError)):
@@ -356,7 +571,9 @@ def test_dependency_scan_rejects_invalid_json(security_modules, monkeypatch, tmp
 
 
 @pytest.mark.parametrize("packages", [[], [{"Name": "requests", "Version": "2.19.0"}]])
-def test_dependency_coverage_rejects_dropped_or_changed_packages(security_modules, tmp_path, packages):
+def test_dependency_coverage_rejects_dropped_or_changed_packages(
+    security_modules, tmp_path, packages
+):
     """Require scanner inventory to contain each declared package version.
 
     Args:
@@ -374,7 +591,9 @@ def test_dependency_coverage_rejects_dropped_or_changed_packages(security_module
     source.write_text("requests==2.19.1\n")
     report = {"Results": [{"Target": "requirements.txt", "Packages": packages}]}
     with pytest.raises(ValueError, match="omitted"):
-        dependencies._validate_coverage(report, {"requirements.txt": "requirements.txt"}, tmp_path)
+        dependencies._validate_coverage(
+            report, {"requirements.txt": "requirements.txt"}, tmp_path
+        )
 
 
 def test_dependency_coverage_rejects_missing_manifest(security_modules, tmp_path):
@@ -393,10 +612,14 @@ def test_dependency_coverage_rejects_missing_manifest(security_modules, tmp_path
     source.parent.mkdir()
     source.write_text("requests==2.19.1\n")
     with pytest.raises(ValueError, match="omitted"):
-        dependencies._validate_coverage({"Results": []}, {"requirements.txt": "requirements.txt"}, tmp_path)
+        dependencies._validate_coverage(
+            {"Results": []}, {"requirements.txt": "requirements.txt"}, tmp_path
+        )
 
 
-def test_dependency_resolution_failure_does_not_reuse_partial_output(security_modules, monkeypatch, tmp_path):
+def test_dependency_resolution_failure_does_not_reuse_partial_output(
+    security_modules, monkeypatch, tmp_path
+):
     """Propagate resolver failure without treating partial pins as validated.
 
     Args:
@@ -413,15 +636,19 @@ def test_dependency_resolution_failure_does_not_reuse_partial_output(security_mo
     output.mkdir()
     cache = tmp_path / "cache"
     cache.mkdir()
+
     def _failed_resolver(arguments, directory):
         raise RuntimeError("synthetic uv failure")
+
     monkeypatch.setattr(dependencies, "_run", _failed_resolver)
     project = {"dependencies": ["requests>=2"], "optional-dependencies": {"dev": []}}
     with pytest.raises(RuntimeError, match="synthetic uv failure"):
         dependencies._resolve_project(project, output, cache)
 
 
-def test_dependency_process_failure_is_actionable(security_modules, monkeypatch, tmp_path):
+def test_dependency_process_failure_is_actionable(
+    security_modules, monkeypatch, tmp_path
+):
     """Make failed scanner and resolver exit codes abort with a report pointer.
 
     Args:
@@ -435,13 +662,17 @@ def test_dependency_process_failure_is_actionable(security_modules, monkeypatch,
     """
     _, dependencies = security_modules
     result = subprocess.CompletedProcess(["uv"], 7)
-    monkeypatch.setattr(dependencies.subprocess, "run", lambda *arguments, **keywords: result)
+    monkeypatch.setattr(
+        dependencies.subprocess, "run", lambda *arguments, **keywords: result
+    )
     with pytest.raises(RuntimeError, match="commands.log"):
         dependencies._run(["uv", "pip", "compile"], tmp_path)
 
 
 @pytest.mark.parametrize("private", [True, False])
-def test_regression_reports_require_owner_only_directory(security_modules, monkeypatch, tmp_path, private):
+def test_regression_reports_require_owner_only_directory(
+    security_modules, monkeypatch, tmp_path, private
+):
     """Require private existing output directories before writing scanner reports.
 
     Args:
@@ -466,7 +697,9 @@ def test_regression_reports_require_owner_only_directory(security_modules, monke
         regression._private_output(output)
 
 
-def test_regression_reports_use_checkout_not_trusted_policy_location(security_modules, monkeypatch, tmp_path):
+def test_regression_reports_use_checkout_not_trusted_policy_location(
+    security_modules, monkeypatch, tmp_path
+):
     """Allow external trusted policy scripts without treating all temporary files as source.
 
     Args:
@@ -482,7 +715,11 @@ def test_regression_reports_use_checkout_not_trusted_policy_location(security_mo
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     monkeypatch.chdir(checkout)
-    monkeypatch.setattr(regression, "__file__", str(tmp_path / "trusted-policy/security_regression_checks.py"))
+    monkeypatch.setattr(
+        regression,
+        "__file__",
+        str(tmp_path / "trusted-policy/security_regression_checks.py"),
+    )
     monkeypatch.setattr(regression.os, "umask", lambda mode: 0o077)
     output = tmp_path / "reports"
     output.mkdir(mode=0o700)
@@ -492,14 +729,19 @@ def test_regression_reports_use_checkout_not_trusted_policy_location(security_mo
     assert not (checkout / "reports").exists()
 
 
-@pytest.mark.parametrize("declaration", [
-    "requests==2.19.1 --hash=sha256:" + "0" * 64,
-    "requests==2.19.1 --hash sha256:" + "0" * 64,
-    "requests==2.19.1\t# retained exact pin",
-    "requests==2.19.1 \\\n        --hash=sha256:" + "0" * 64,
-    "requests==2.19.1 --config-settings=setting=value",
-])
-def test_python_pins_survive_requirement_options(security_modules, tmp_path, declaration):
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "requests==2.19.1 --hash=sha256:" + "0" * 64,
+        "requests==2.19.1 --hash sha256:" + "0" * 64,
+        "requests==2.19.1\t# retained exact pin",
+        "requests==2.19.1 \\\n        --hash=sha256:" + "0" * 64,
+        "requests==2.19.1 --config-settings=setting=value",
+    ],
+)
+def test_python_pins_survive_requirement_options(
+    security_modules, tmp_path, declaration
+):
     """Retain vulnerable pins written with supported pip options and comments.
 
     Args:
@@ -518,10 +760,14 @@ def test_python_pins_survive_requirement_options(security_modules, tmp_path, dec
     output = tmp_path / "report"
     inventory = dependencies._inventory(root, output, tmp_path / "cache")
     target = next(iter(inventory))
-    assert dependencies._expected_packages(output / "inputs" / target) == {("requests", "2.19.1")}
+    assert dependencies._expected_packages(output / "inputs" / target) == {
+        ("requests", "2.19.1")
+    }
 
 
-@pytest.mark.parametrize("section", ["dependencies", "devDependencies", "optionalDependencies"])
+@pytest.mark.parametrize(
+    "section", ["dependencies", "devDependencies", "optionalDependencies"]
+)
 def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, section):
     """Reject a safe lock version that conceals a vulnerable exact declaration.
 
@@ -537,9 +783,13 @@ def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, s
     _, dependencies = security_modules
     project = {section: {"minimist": "1.2.0"}}
     (tmp_path / "package.json").write_text(json.dumps(project))
-    lock = {"lockfileVersion": 3, "packages": {
-        "": project, "node_modules/minimist": {"version": "1.2.8"},
-    }}
+    lock = {
+        "lockfileVersion": 3,
+        "packages": {
+            "": project,
+            "node_modules/minimist": {"version": "1.2.8"},
+        },
+    }
     (tmp_path / "package-lock.json").write_text(json.dumps(lock))
     with pytest.raises(ValueError, match="contradicts its exact version pin"):
         dependencies._validate_npm_manifests(tmp_path)
@@ -562,9 +812,7 @@ def test_npm_lock_rejects_changed_exact_resolution(security_modules, tmp_path, s
         "RUNTIME_RESULT",
     ],
 )
-def test_required_security_check_propagates_failure(
-    monkeypatch, result, prerequisite
-):
+def test_required_security_check_propagates_failure(monkeypatch, result, prerequisite):
     """Fail the required check unless every security job passed.
 
     Args:
@@ -576,27 +824,35 @@ def test_required_security_check_propagates_failure(
     Raises:
         AssertionError: A security failure can become a passing required check.
     """
-    workflow_path = Path(__file__).resolve().parents[3] / ".github/workflows/security-regression.yml"
+    workflow_path = (
+        Path(__file__).resolve().parents[3]
+        / ".github/workflows/security-regression.yml"
+    )
     workflow = yaml.safe_load(workflow_path.read_text())
     job = workflow["jobs"]["security-regression"]
     assert job["needs"] == [
+        "validation-plan",
+        "pr-precheck",
+        "queue-guardrails",
         "test-gate",
         "lint-gate",
-        "guardrails-gate",
         "gitleaks",
         "scan",
         "security-scanners",
         "image-security",
         "security-runtime",
     ]
-    assert job["if"] == "${{ always() }}"
+    assert job["if"] == "${{ !cancelled() }}"
     assert "continue-on-error" not in job
     required_step = job["steps"][0]
     assert required_step["env"] == {
         "EVENT_NAME": "${{ github.event_name }}",
+        "PLAN_RESULT": "${{ needs.validation-plan.result }}",
+        "VALIDATION_MODE": "${{ needs.validation-plan.outputs.mode }}",
+        "PRECHECK_RESULT": "${{ needs.pr-precheck.result }}",
         "TEST_RESULT": "${{ needs.test-gate.result }}",
         "LINT_RESULT": "${{ needs.lint-gate.result }}",
-        "GUARDRAIL_RESULT": "${{ needs.guardrails-gate.result }}",
+        "GUARDRAIL_RESULT": "${{ github.event_name == 'merge_group' && needs.queue-guardrails.result || needs.pr-precheck.result }}",
         "GITLEAKS_RESULT": "${{ needs.gitleaks.result }}",
         "CONFIDENTIALITY_RESULT": "${{ needs.scan.result }}",
         "SCANNER_RESULT": "${{ needs.security-scanners.result }}",
@@ -608,6 +864,7 @@ def test_required_security_check_propagates_failure(
     for name in required_step["env"]:
         if name != "EVENT_NAME":
             monkeypatch.setenv(name, "success")
+    monkeypatch.setenv("VALIDATION_MODE", "full")
     monkeypatch.setenv(prerequisite, result)
     completed = subprocess.run(["bash", "-e", "-c", required_step["run"]], check=False)
     assert (completed.returncode == 0) == (result == "success")

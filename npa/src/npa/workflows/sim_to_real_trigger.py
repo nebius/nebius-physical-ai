@@ -648,7 +648,9 @@ def _default_pipeline_spec() -> Path:
 
     path = resolve_npa_workflow_spec(Path(DEFAULT_PIPELINE_SPEC).name)
     if path is None:
-        raise SimToRealTriggerError(f"sim2real workflow spec not found: {DEFAULT_PIPELINE_SPEC}")
+        raise SimToRealTriggerError(
+            f"sim2real workflow spec not found: {DEFAULT_PIPELINE_SPEC}"
+        )
     return path
 
 

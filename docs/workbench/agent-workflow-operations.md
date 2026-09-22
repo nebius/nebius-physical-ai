@@ -28,6 +28,23 @@ using subprocesses must invoke only the fixed `npa ...` operations below. It
 must not invoke an execution backend, a cluster client, a terminal multiplexer,
 or an arbitrary shell command.
 
+### Agent UI execution
+
+The **Prepare run** control in the Agent UI is intentionally two-step. The first
+request validates the exact YAML and produces its scheduler plan without
+launching a workload. The UI then presents a single-use confirmation bound to
+the YAML digest, run ID, project, and Kubernetes target. Confirming it invokes
+`npa workbench workflow submit --runtime` on the agent VM and waits for the
+durable runtime result. If infrastructure is absent, the UI asks separately to
+confirm provisioning first, then asks again before workflow execution. The
+artifact-backed Stages panel is the run's evidence surface; it does not infer a
+successful stage merely from the presence of an artifact.
+
+An agent-authored template must make every input artifact concrete. When chat
+creates an input (such as a prompt JSONL), the YAML includes a real preparation
+stage that writes the declared durable URI before a consuming tool stage starts;
+an assumed or VM-local input path is not a runnable handoff.
+
 <a id="read-only-preparation"></a>
 
 ## Validate, plan, and check images

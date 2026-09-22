@@ -18,11 +18,18 @@ def _items(arguments: list[str]) -> list[dict]:
     return items
 
 
-def _project_sources(item: dict, fallback: str | None, aliases: dict[str, str]) -> list[dict]:
+def _project_sources(
+    item: dict, fallback: str | None, aliases: dict[str, str]
+) -> list[dict]:
     metadata = item.get("metadata", {})
     project_id = metadata.get("id")
     region = item.get("status", {}).get("region") or item.get("spec", {}).get("region")
-    if not isinstance(project_id, str) or not project_id or not isinstance(region, str) or not region:
+    if (
+        not isinstance(project_id, str)
+        or not project_id
+        or not isinstance(region, str)
+        or not region
+    ):
         raise ValueError("Project inventory lacks an identity or region")
     if not all(character.isalnum() or character == "-" for character in region):
         raise ValueError("Project inventory has an invalid region")
@@ -31,9 +38,14 @@ def _project_sources(item: dict, fallback: str | None, aliases: dict[str, str]) 
         name = bucket.get("metadata", {}).get("name")
         if not isinstance(name, str) or not name:
             raise ValueError("Bucket inventory lacks a name")
-        rows.append({"resource_project_id": project_id, "bucket": name,
-                     "project": aliases.get(project_id, fallback),
-                     "endpoint": f"https://storage.{region}.nebius.cloud"})
+        rows.append(
+            {
+                "resource_project_id": project_id,
+                "bucket": name,
+                "project": aliases.get(project_id, fallback),
+                "endpoint": f"https://storage.{region}.nebius.cloud",
+            }
+        )
     return rows
 
 
@@ -51,10 +63,15 @@ def tenant_sources(project: str | None) -> tuple[list[dict], list[dict]]:
     environment = resolve_environment(project)
     if environment is None or not environment.tenant_id:
         raise ValueError("--discover-tenant requires a configured tenant")
-    aliases = {value.get("project_id"): name for name, value in sorted(list_projects().items())
-               if value.get("project_id") and value.get("tenant_id") == environment.tenant_id}
+    aliases = {
+        value.get("project_id"): name
+        for name, value in sorted(list_projects().items())
+        if value.get("project_id") and value.get("tenant_id") == environment.tenant_id
+    }
     try:
-        projects = _items(["iam", "project", "list", "--parent-id", environment.tenant_id])
+        projects = _items(
+            ["iam", "project", "list", "--parent-id", environment.tenant_id]
+        )
     except (NebiusError, ValueError, OSError) as error:
         return [], [{"operation": "list_tenant_projects", "code": type(error).__name__}]
     rows, errors = [], []
@@ -62,6 +79,11 @@ def tenant_sources(project: str | None) -> tuple[list[dict], list[dict]]:
         try:
             rows.extend(_project_sources(item, project, aliases))
         except (NebiusError, ValueError, OSError) as error:
-            errors.append({"operation": "list_project_buckets", "code": type(error).__name__,
-                           "resource_project_id": item.get("metadata", {}).get("id")})
+            errors.append(
+                {
+                    "operation": "list_project_buckets",
+                    "code": type(error).__name__,
+                    "resource_project_id": item.get("metadata", {}).get("id"),
+                }
+            )
     return rows, errors

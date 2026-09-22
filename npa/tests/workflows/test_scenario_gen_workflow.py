@@ -9,7 +9,15 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = ROOT / "workflows" / "testing" / "adversarial-scenario-hardening.yaml"
 SMOKE = ROOT / "workflows" / "testing" / "scenario-gen-smoke.yaml"
 #: Retired in favour of SMOKE; asserted absent below.
-SKYPILOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "scenario-gen-adversarial.yaml"
+SKYPILOT = (
+    ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "skypilot"
+    / "scenario-gen-adversarial.yaml"
+)
 
 
 def test_workflow_validates_and_expands_hardening_loop() -> None:
@@ -80,7 +88,10 @@ def test_smoke_spec_runs_the_same_two_commands_the_retired_template_did() -> Non
     assert steps[0].argv[:4] == ["npa", "workbench", "scenario-gen", "generate"]
     assert steps[1].argv[:4] == ["npa", "workbench", "scenario-gen", "rank"]
     # rank consumes exactly the manifest generate declared.
-    assert steps[0].outputs[0]["uri"] == steps[1].argv[steps[1].argv.index("--input-path") + 1]
+    assert (
+        steps[0].outputs[0]["uri"]
+        == steps[1].argv[steps[1].argv.index("--input-path") + 1]
+    )
 
 
 def test_the_cli_cannot_select_an_rl_adversary_backend() -> None:

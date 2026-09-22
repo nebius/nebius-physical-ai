@@ -135,7 +135,9 @@ def evaluate_cmd(
     object_name: str = typer.Option("", "--object"),
     record_video: bool = typer.Option(False, "--record-video/--no-record-video"),
     video_profile: str = typer.Option(
-        "standard", "--video-profile", help="Native capture profile: standard or film (4K)."
+        "standard",
+        "--video-profile",
+        help="Native capture profile: standard or film (4K).",
     ),
     run_id: str = typer.Option("", "--run-id"),
     runtime_image: str = typer.Option("", "--runtime-image"),

@@ -538,7 +538,8 @@ _CAPABILITY_MANIFEST = {
                 name: {
                     "native_resolution": (
                         list(capture_profile(name).resolution)
-                        if capture_profile(name).resolution is not None else None
+                        if capture_profile(name).resolution is not None
+                        else None
                     ),
                     "minimum_settling_renders": capture_profile(name).settling_renders,
                     "settings": render_settings(capture_profile(name)),

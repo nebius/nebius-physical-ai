@@ -1,0 +1,134 @@
+{
+  "chunks_size": 1000,
+  "codebase_version": "v3.0",
+  "data_files_size_in_mb": 100,
+  "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+  "features": {
+    "action": {
+      "dtype": "float32",
+      "fps": 30.0,
+      "names": [
+        "main_shoulder_pan",
+        "main_shoulder_lift",
+        "main_elbow_flex",
+        "main_wrist_flex",
+        "main_wrist_roll",
+        "main_gripper"
+      ],
+      "shape": [
+        6
+      ]
+    },
+    "episode_index": {
+      "dtype": "int64",
+      "fps": 30.0,
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "frame_index": {
+      "dtype": "int64",
+      "fps": 30.0,
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "index": {
+      "dtype": "int64",
+      "fps": 30.0,
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "observation.images.top": {
+      "dtype": "video",
+      "info": {
+        "has_audio": false,
+        "video.channels": 3,
+        "video.codec": "av1",
+        "video.fps": 30.0,
+        "video.height": 480,
+        "video.is_depth_map": false,
+        "video.pix_fmt": "yuv420p",
+        "video.width": 640
+      },
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ],
+      "shape": [
+        480,
+        640,
+        3
+      ]
+    },
+    "observation.images.wrist": {
+      "dtype": "video",
+      "info": {
+        "has_audio": false,
+        "video.channels": 3,
+        "video.codec": "av1",
+        "video.fps": 30.0,
+        "video.height": 480,
+        "video.is_depth_map": false,
+        "video.pix_fmt": "yuv420p",
+        "video.width": 640
+      },
+      "names": [
+        "height",
+        "width",
+        "channels"
+      ],
+      "shape": [
+        480,
+        640,
+        3
+      ]
+    },
+    "observation.state": {
+      "dtype": "float32",
+      "fps": 30.0,
+      "names": [
+        "main_shoulder_pan",
+        "main_shoulder_lift",
+        "main_elbow_flex",
+        "main_wrist_flex",
+        "main_wrist_roll",
+        "main_gripper"
+      ],
+      "shape": [
+        6
+      ]
+    },
+    "task_index": {
+      "dtype": "int64",
+      "fps": 30.0,
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "timestamp": {
+      "dtype": "float32",
+      "fps": 30.0,
+      "names": null,
+      "shape": [
+        1
+      ]
+    }
+  },
+  "fps": 30,
+  "robot_type": "so100",
+  "splits": {
+    "train": "0:1"
+  },
+  "total_episodes": 1,
+  "total_frames": 454,
+  "total_tasks": 1,
+  "video_files_size_in_mb": 500,
+  "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+}

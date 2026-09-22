@@ -52,7 +52,9 @@ def test_invalid_node_shape_rejected() -> None:
         ClusterConfig(name="cluster-a", node_platform="cpu-e2", node_preset="4vcpu-8gb")
 
 
-def test_project_id_resolution_prefers_explicit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_project_id_resolution_prefers_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_CLUSTER_PROJECT_ID", "project-env")
 
     assert resolve_project_id("project-explicit") == "project-explicit"

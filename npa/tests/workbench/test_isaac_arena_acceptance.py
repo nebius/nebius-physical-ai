@@ -843,7 +843,8 @@ def test_film_acceptance_requires_resolution_scaled_evidence_filter():
 
     proof = _proof()
     proof["capture"]["physics_freeze"]["rendering"].update(
-        profile="film", minimum_settling_renders=32,
+        profile="film",
+        minimum_settling_renders=32,
     )
     with pytest.raises(IsaacArenaError, match="video is not bound"):
         qualify_visual_acceptance(**proof)

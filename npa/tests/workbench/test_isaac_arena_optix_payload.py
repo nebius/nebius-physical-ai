@@ -50,7 +50,9 @@ def test_identical_existing_native_weights_are_read_without_writing(weights):
     target.write_bytes(source.read_bytes())
     before = target.stat()
     mounts.write_text("100 99 8:1 / / rw - ext4 /dev/root rw\n")
-    assert optix_payload._prepare_optix_weights(extracted)["placement"] == "native_runtime"
+    assert (
+        optix_payload._prepare_optix_weights(extracted)["placement"] == "native_runtime"
+    )
     assert target.stat().st_ino == before.st_ino
     assert target.stat().st_mtime_ns == before.st_mtime_ns
 
@@ -93,15 +95,24 @@ def test_container_root_overlay_does_not_authorize_a_bind_mount(weights, mountpo
     paths = {"parent": target.parent, "target": target, "ancestor": target.parents[2]}
     # The same major/minor and fstype are deliberately insufficient: mount ID
     # and mount root distinguish this otherwise identical-looking bind mount.
-    mounts.write_text(mounts.read_text()
-                      + f"101 100 0:1 /host {paths[mountpoint]} rw - overlay overlay rw\n")
+    mounts.write_text(
+        mounts.read_text()
+        + f"101 100 0:1 /host {paths[mountpoint]} rw - overlay overlay rw\n"
+    )
     with pytest.raises(IsaacArenaError, match="mounted destination"):
         optix_payload._prepare_optix_weights(extracted)
     assert not target.exists()
 
 
-@pytest.mark.parametrize("mountinfo", ["", "malformed", "100 99 8:1 / / rw - ext4 /dev/root rw\n",
-                                     "100 99 0:1 /host/subtree / rw - overlay overlay rw\n"])
+@pytest.mark.parametrize(
+    "mountinfo",
+    [
+        "",
+        "malformed",
+        "100 99 8:1 / / rw - ext4 /dev/root rw\n",
+        "100 99 0:1 /host/subtree / rw - overlay overlay rw\n",
+    ],
+)
 def test_unknown_or_host_root_mount_is_rejected(weights, mountinfo):
     extracted, _, target, mounts = weights
     mounts.write_text(mountinfo)
@@ -121,7 +132,9 @@ def test_shared_writable_directory_is_rejected(weights, mode):
 
 def test_destination_owner_must_be_task_user(weights, monkeypatch):
     extracted, _, target, _ = weights
-    monkeypatch.setattr(optix_payload.os, "geteuid", lambda: target.parent.stat().st_uid + 1)
+    monkeypatch.setattr(
+        optix_payload.os, "geteuid", lambda: target.parent.stat().st_uid + 1
+    )
     with pytest.raises(IsaacArenaError, match="private writable directory"):
         optix_payload._prepare_optix_weights(extracted)
 
@@ -137,7 +150,9 @@ def test_parent_symlink_is_rejected(weights):
 
 
 @pytest.mark.parametrize("identical", [False, True])
-def test_racing_destination_creation_cannot_overwrite_bytes(weights, monkeypatch, identical):
+def test_racing_destination_creation_cannot_overwrite_bytes(
+    weights, monkeypatch, identical
+):
     extracted, source, target, _ = weights
     link = os.link
     contents = source.read_bytes() if identical else b"racing-native-payload"
@@ -156,25 +171,34 @@ def test_racing_destination_creation_cannot_overwrite_bytes(weights, monkeypatch
     assert list(target.parent.iterdir()) == [target]
 
 
-def test_copy_corruption_is_rejected_before_destination_publication(weights, monkeypatch):
+def test_copy_corruption_is_rejected_before_destination_publication(
+    weights, monkeypatch
+):
     extracted, _, target, _ = weights
-    monkeypatch.setattr(optix_payload.shutil, "copyfileobj",
-                        lambda source, copy: copy.write(b"corrupted"))
+    monkeypatch.setattr(
+        optix_payload.shutil,
+        "copyfileobj",
+        lambda source, copy: copy.write(b"corrupted"),
+    )
     with pytest.raises(IsaacArenaError, match="hash verification"):
         optix_payload._prepare_optix_weights(extracted)
     assert not target.exists()
     assert not list(target.parent.iterdir())
 
 
-def test_mount_change_after_directory_open_is_rejected_before_first_write(weights, monkeypatch):
+def test_mount_change_after_directory_open_is_rejected_before_first_write(
+    weights, monkeypatch
+):
     extracted, _, target, mounts = weights
     open_file = os.open
 
     def remount(path, flags, *args, **kwargs):
         descriptor = open_file(path, flags, *args, **kwargs)
         if path == target.parent:
-            mounts.write_text(mounts.read_text()
-                              + f"101 100 0:1 /host {target.parent} rw - overlay overlay rw\n")
+            mounts.write_text(
+                mounts.read_text()
+                + f"101 100 0:1 /host {target.parent} rw - overlay overlay rw\n"
+            )
         return descriptor
 
     monkeypatch.setattr(optix_payload.os, "open", remount)
@@ -183,7 +207,9 @@ def test_mount_change_after_directory_open_is_rejected_before_first_write(weight
     assert not list(target.parent.iterdir())
 
 
-def test_directory_replacement_after_open_is_rejected_before_first_write(weights, monkeypatch):
+def test_directory_replacement_after_open_is_rejected_before_first_write(
+    weights, monkeypatch
+):
     extracted, _, target, _ = weights
     open_file = os.open
     original = target.parent.with_name("original")
@@ -202,12 +228,15 @@ def test_directory_replacement_after_open_is_rejected_before_first_write(weights
     assert not list(original.iterdir())
 
 
-@pytest.mark.parametrize("message", [
-    "Unable to load denoiser weights: Could not open optix denoiser weights file",
-    "optixDenoiserCreate(ctx, kind, options, &denoiser) failed.",
-    "Optix Error: OPTIX_ERROR_INTERNAL_ERROR.",
-    "[Error] [rtx.optixdenoising.plugin] New native failure description",
-])
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Unable to load denoiser weights: Could not open optix denoiser weights file",
+        "optixDenoiserCreate(ctx, kind, options, &denoiser) failed.",
+        "Optix Error: OPTIX_ERROR_INTERNAL_ERROR.",
+        "[Error] [rtx.optixdenoising.plugin] New native failure description",
+    ],
+)
 def test_renderer_failure_cannot_pass_from_settings_readback(message):
     with pytest.raises(IsaacArenaError, match="settings alone do not prove denoising"):
         _require_optix_runtime("OptiX enabled=true\n" + message)

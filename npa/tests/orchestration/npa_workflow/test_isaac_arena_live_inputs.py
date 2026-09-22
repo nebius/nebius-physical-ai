@@ -152,7 +152,10 @@ def test_arena_live_seed_rejects_invalid_prefix_before_io(live_inputs, monkeypat
 def test_replay_workflow_preserves_optional_scene_selection_through_cli(
     monkeypatch, tmp_path, extra_object
 ):
-    path = Path(__file__).resolve().parents[4] / "workflows/testing/isaac-arena-evaluation-rtxpro.yaml"
+    path = (
+        Path(__file__).resolve().parents[4]
+        / "workflows/testing/isaac-arena-evaluation-rtxpro.yaml"
+    )
     spec = load_spec(path)
     assert spec.config["object"] == ""
     spec.config["object"] = extra_object
@@ -163,9 +166,9 @@ def test_replay_workflow_preserves_optional_scene_selection_through_cli(
     native = []
 
     def execute(request):
-        native.extend(build_evaluation_argv(
-            request, output_dir=tmp_path, local_input=replay
-        ))
+        native.extend(
+            build_evaluation_argv(request, output_dir=tmp_path, local_input=replay)
+        )
         return {"status": "test-only-argv"}
 
     monkeypatch.setattr("npa.cli.workbench.isaac_arena.evaluate", execute)

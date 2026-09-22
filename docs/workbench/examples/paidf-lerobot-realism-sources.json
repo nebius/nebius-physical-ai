@@ -1,0 +1,85 @@
+{
+  "schema": "npa.paidf.realism-sources.v1",
+  "conditioning_fps": 24,
+  "selections": [
+    {
+      "dataset": "lerobot/aloha_static_cups_open",
+      "revision": "d793c969cf716001dcca18a0842c3d7e9de9e41b",
+      "license": "mit",
+      "episode": 0,
+      "camera": "observation.images.cam_high",
+      "source_interval_seconds": [
+        0.0,
+        8.0
+      ],
+      "source_dimensions": [
+        640,
+        480
+      ],
+      "prepared_frames": 192,
+      "review_focus": [
+        "Transparent cup and lid remain distinct and transparent.",
+        "Grasp, lid separation and release match the source."
+      ],
+      "downloaded_sha256": {
+        "README.md": "867fc9e411134bd23c9b4f5ebab563f8b0b7ee9050f4d0f4a80ccc9a11fc974d",
+        "meta/info.json": "be87ae6b467494da61ccc14a10118e7918237a8b4b88c5451ada29c7d4062263",
+        "meta/episodes/chunk-000/file-000.parquet": "bef9464f78ab53603fdf67a1f39fa498a389831d2cba118faf906bff5239a7e7",
+        "videos/observation.images.cam_high/chunk-000/file-000.mp4": "681a1081eb3c8324ee449927da2c043517dee628a3f34c9229f0414476a112ff"
+      }
+    },
+    {
+      "dataset": "lerobot/aloha_static_coffee",
+      "revision": "b144896feb1f37398a862927b22cd3abdf005a6b",
+      "license": "mit",
+      "episode": 0,
+      "camera": "observation.images.cam_high",
+      "source_interval_seconds": [
+        0.0,
+        22.0
+      ],
+      "source_dimensions": [
+        640,
+        480
+      ],
+      "prepared_frames": 528,
+      "review_focus": [
+        "Capsule, cup, machine controls and tray retain their identities.",
+        "Capsule placement, cup movement, button contacts and final state match the recording."
+      ],
+      "downloaded_sha256": {
+        "README.md": "da783ef780c38b7a85c85db2a03dad304adfcd1de48b69b0618cf1eeab4024c8",
+        "meta/info.json": "b01266672ae75793cfc0ad4d769ae8601a194ec009b0cac4b443df70b517757e",
+        "meta/episodes/chunk-000/file-000.parquet": "171893969f80829430ee6e91c4a92a0a07cb2ebf57ae14a93bc103eaf91a2524",
+        "videos/observation.images.cam_high/chunk-000/file-000.mp4": "ee637bd6e56353ecc762bc7408f76c430674b0536e5a0a2eb51bf4e3640942f0"
+      }
+    },
+    {
+      "dataset": "lerobot/xarm_lift_medium",
+      "revision": "79efb0e3cef0e530ddec4b8569b190966ab45808",
+      "license": "mit",
+      "episode": 0,
+      "camera": "observation.image",
+      "source_interval_seconds": [
+        0.0,
+        1.666667
+      ],
+      "source_dimensions": [
+        84,
+        84
+      ],
+      "prepared_frames": 40,
+      "review_focus": [
+        "The turquoise cube remains a single cube with the same color.",
+        "The black fingers contact and lift it along the source trajectory.",
+        "Upsampling the 84x84 source does not count as evidence of recovered geometry."
+      ],
+      "downloaded_sha256": {
+        "README.md": "0650cf886bcb149939b686bdd38f0ba5f683076888808481c6b33257f117eb79",
+        "meta/info.json": "2dd3ea80750521bdd4601f4031c1ed425066c1c83ae3b7feabe01c36287dc635",
+        "meta/episodes/chunk-000/file-000.parquet": "cecb7e76eb61a872521fcada2f2b28e9fed5e84d9b970fcfa2caf23192d14da6",
+        "videos/observation.image/chunk-000/file-000.mp4": "3a4928a60b5dc334915fe8a4fe3a152bd9aa9e6d7cbb571402457ceb71ae0f2d"
+      }
+    }
+  ]
+}

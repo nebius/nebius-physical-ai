@@ -1068,7 +1068,9 @@ def _physics_freeze_proof(capture: dict[str, Any], total: int) -> dict[str, Any]
         capture.get("physics_clock") != "native_physx_step_events_since_capture_setup"
         or not isinstance(rows, list)
         or len(rows) != total + 1
-        or not all(_freeze_row_valid(row, step, minimum) for step, row in enumerate(rows))
+        or not all(
+            _freeze_row_valid(row, step, minimum) for step, row in enumerate(rows)
+        )
     ):
         raise IsaacArenaError(
             "missing or inconsistent render-only physics freeze evidence"
@@ -1119,7 +1121,9 @@ def verify_capture_evidence(
     terminal = _capture_step_mapping(task_motion, total)
     physics_freeze = _physics_freeze_proof(capture, total)
     dimensions = (metadata["width"], metadata["height"])
-    _verify_profile_dimensions(physics_freeze["rendering"], dimensions, expected_profile)
+    _verify_profile_dimensions(
+        physics_freeze["rendering"], dimensions, expected_profile
+    )
     initial = _verify_capture_png(run_dir, capture.get("initial"), 0, dimensions)
     final = _verify_capture_png(run_dir, capture["terminals"][0], terminal, dimensions)
     comparison = _terminal_frame_comparison(raw_mp4, run_dir / final["path"], terminal)
@@ -1152,4 +1156,6 @@ def _verify_profile_dimensions(
     if expected_profile is not None and profile.name != expected_profile:
         raise IsaacArenaError("capture profile differs from the requested profile")
     if profile.resolution is not None and dimensions != profile.resolution:
-        raise IsaacArenaError("capture dimensions differ from the native profile resolution")
+        raise IsaacArenaError(
+            "capture dimensions differ from the native profile resolution"
+        )

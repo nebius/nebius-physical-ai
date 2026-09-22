@@ -49,15 +49,21 @@ def test_native_film_capture_matches_successful_gpu_episode():
     steps = ground_truth["task_motion"]["episode_length"]
     raw = paths[video["simulator_capture"]["source_mp4_sha256"]]
     verified = verify_capture_evidence(
-        raw.parent, raw, task_motion=ground_truth["task_motion"],
-        expected_steps=steps, expected_profile="film",
+        raw.parent,
+        raw,
+        task_motion=ground_truth["task_motion"],
+        expected_steps=steps,
+        expected_profile="film",
     )
     assert verified["physics_freeze"]["verified_capture_count"] == steps + 1
     accepted = qualify_visual_acceptance(
         environment=result["request"]["environment"],
-        policy_type=result["request"]["policy_type"], evidence=result["input"],
-        summary=result["summary"], ground_truth=ground_truth,
-        capture=verified, video=video,
+        policy_type=result["request"]["policy_type"],
+        evidence=result["input"],
+        summary=result["summary"],
+        ground_truth=ground_truth,
+        capture=verified,
+        video=video,
     )
     assert accepted["qualified"] is True
     assert accepted["actions"]["padding_steps"] == 0

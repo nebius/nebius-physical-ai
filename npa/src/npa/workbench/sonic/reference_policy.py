@@ -95,7 +95,9 @@ def gait_constants(
     return amplitude, phase_offset
 
 
-def reference_action(obs: torch.Tensor, *, action_dim: int = DEFAULT_ACTION_DIM) -> torch.Tensor:
+def reference_action(
+    obs: torch.Tensor, *, action_dim: int = DEFAULT_ACTION_DIM
+) -> torch.Tensor:
     """Teacher joint targets for a batch of raw observations.
 
     A command-conditioned central pattern generator with per-joint damping: the
@@ -154,7 +156,8 @@ def sample_observations(
         "base_ang_vel": 0.4 * _randn(3),
         "projected_gravity": gravity + 0.05 * _randn(3),
         "velocity_commands": torch.cat(
-            [1.5 * (_rand(1) - 0.2), 0.4 * (_rand(1) - 0.5), 0.6 * (_rand(1) - 0.5)], dim=-1
+            [1.5 * (_rand(1) - 0.2), 0.4 * (_rand(1) - 0.5), 0.6 * (_rand(1) - 0.5)],
+            dim=-1,
         ),
         "gait_phase": torch.cat([torch.sin(angle), torch.cos(angle)], dim=-1),
         "joint_pos": 0.3 * _randn(23),

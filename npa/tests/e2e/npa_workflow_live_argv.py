@@ -11,11 +11,7 @@ def _project_args(project: str | None) -> list[str]:
 
 
 def _assume_args(assume_decision: str) -> list[str]:
-    return (
-        ["--assume-decision", assume_decision]
-        if assume_decision.strip()
-        else []
-    )
+    return ["--assume-decision", assume_decision] if assume_decision.strip() else []
 
 
 def _preset_args(preset: str) -> list[str]:

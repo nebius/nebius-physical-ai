@@ -26,23 +26,36 @@ pytestmark = [
 
 
 def _assert_owned_readiness(kubeconfig, context, sky, session):
-    _executable, environment, _override = terraform_lifecycle._check_skypilot_kubernetes(
-        kubeconfig, context, sky_bin=sky,
+    _executable, environment, _override = (
+        terraform_lifecycle._check_skypilot_kubernetes(
+            kubeconfig,
+            context,
+            sky_bin=sky,
+        )
     )
     scope = Path(environment["NPA_SKYPILOT_ISOLATED_API_DIR"])
     assert scope == session.scope
     assert Path(environment["KUBECONFIG"]).resolve() == kubeconfig
     assert (Path(environment["HOME"]) / ".kube/config").resolve() == kubeconfig
-    configuration = yaml.safe_load(Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text())
+    configuration = yaml.safe_load(
+        Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text()
+    )
     assert configuration["kubernetes"]["allowed_contexts"] == [context]
-    with urlopen(environment["SKYPILOT_API_SERVER_ENDPOINT"] + "/api/health") as response:
+    with urlopen(
+        environment["SKYPILOT_API_SERVER_ENDPOINT"] + "/api/health"
+    ) as response:
         health = json.load(response)
     assert health["version"] == "0.12.2"
     assert health["status"].lower() == "healthy"
-    catalog = discover_kubernetes_gpu_catalog(context=context, kubeconfig=kubeconfig, sky_bin=sky)
+    catalog = discover_kubernetes_gpu_catalog(
+        context=context, kubeconfig=kubeconfig, sky_bin=sky
+    )
     assert not catalog.is_empty
     accelerator = terraform_lifecycle._detect_skypilot_gpu(
-        sky, f"k8s/{context}", environment, config_override=_override,
+        sky,
+        f"k8s/{context}",
+        environment,
+        config_override=_override,
         cwd=session.scope,
     )
     name, quantity = accelerator.rsplit(":", 1)
@@ -54,7 +67,9 @@ def test_cluster_sky_readiness_and_ambient_api_refusal(monkeypatch) -> None:
     context = os.environ.get("NPA_TEST_CLUSTER_ISOLATION_CONTEXT", "")
     sky = os.environ.get("NPA_SKYPILOT_BIN", "")
     if not all((selected, context, sky)):
-        pytest.fail("Live cluster isolation requires explicit kubeconfig, context, and SkyPilot binary")
+        pytest.fail(
+            "Live cluster isolation requires explicit kubeconfig, context, and SkyPilot binary"
+        )
     kubeconfig = Path(selected).resolve(strict=True)
     with cluster_validation_session(kubeconfig, context) as session:
         _assert_owned_readiness(kubeconfig, context, sky, session)

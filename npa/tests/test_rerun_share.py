@@ -371,12 +371,8 @@ def test_share_cli_routes_source_and_target_project_credentials(mocker) -> None:
     )
 
     assert result.exit_code == 0
-    s3_client_for_project.assert_any_call(
-        "project-source", allow_host_creds=False
-    )
-    s3_client_for_project.assert_any_call(
-        "project-target", allow_host_creds=False
-    )
+    s3_client_for_project.assert_any_call("project-source", allow_host_creds=False)
+    s3_client_for_project.assert_any_call("project-target", allow_host_creds=False)
     assert s3_client_for_project.call_count == 2
     assert target_s3.put_calls == [
         (

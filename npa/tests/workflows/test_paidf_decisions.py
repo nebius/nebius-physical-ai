@@ -123,16 +123,12 @@ class TestCandidateManifest:
 class TestDecisionManifest:
     def test_full_coverage_passes(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "reject"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "reject"})
         assert validate_decision_manifest(decisions, candidates=manifest)
 
     def test_review_is_a_valid_state(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "review", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "review", "cand-002": "accept"})
         validate_decision_manifest(decisions, candidates=manifest)
 
     def test_missing_decision_fails_closed(self) -> None:
@@ -152,51 +148,39 @@ class TestDecisionManifest:
 
     def test_duplicate_decision_fails(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         decisions["decisions"].append(dict(decisions["decisions"][0]))
         with pytest.raises(PaidfContractError, match="more than one decision"):
             validate_decision_manifest(decisions, candidates=manifest)
 
     def test_invalid_state_fails(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "maybe", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "maybe", "cand-002": "accept"})
         with pytest.raises(PaidfContractError, match="accept, reject, review"):
             validate_decision_manifest(decisions, candidates=manifest)
 
     def test_provider_must_have_exactly_name_and_role(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         del decisions["provider"]["role"]
         with pytest.raises(PaidfContractError, match="exactly name and role"):
             validate_decision_manifest(decisions, candidates=manifest)
 
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         decisions["provider"]["mode"] = "automated"
         with pytest.raises(PaidfContractError, match="exactly name and role"):
             validate_decision_manifest(decisions, candidates=manifest)
 
     def test_provider_role_must_be_curation_or_evaluation(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         decisions["provider"]["role"] = "simulation"
         with pytest.raises(PaidfContractError, match="curation or evaluation"):
             validate_decision_manifest(decisions, candidates=manifest)
 
     def test_missing_decided_at_fails(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         del decisions["decisions"][0]["decided_at"]
         with pytest.raises(PaidfContractError, match="exactly"):
             validate_decision_manifest(decisions, candidates=manifest)
@@ -213,27 +197,21 @@ class TestDecisionManifest:
     )
     def test_malformed_decided_at_fails(self, bad_timestamp: object) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         decisions["decisions"][0]["decided_at"] = bad_timestamp
         with pytest.raises(PaidfContractError, match="canonical UTC seconds"):
             validate_decision_manifest(decisions, candidates=manifest)
 
     def test_non_calendar_decided_at_fails(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         decisions["decisions"][0]["decided_at"] = "2026-02-30T00:00:00Z"
         with pytest.raises(PaidfContractError, match="real calendar time"):
             validate_decision_manifest(decisions, candidates=manifest)
 
     def test_incomplete_decision_fields_fail(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "accept"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "accept"})
         del decisions["decisions"][0]["reason"]
         with pytest.raises(PaidfContractError, match="must contain exactly"):
             validate_decision_manifest(decisions, candidates=manifest)
@@ -242,9 +220,7 @@ class TestDecisionManifest:
 class TestReconcileDecisions:
     def test_keep_drop_and_review_exclusion(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "review"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "review"})
         result = reconcile_decisions(manifest, decisions)
         assert result["schema"] == RECONCILIATION_SCHEMA
         assert [entry["candidate_id"] for entry in result["keep"]] == ["cand-001"]
@@ -255,18 +231,14 @@ class TestReconcileDecisions:
 
     def test_reject_excluded_from_training(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "reject", "cand-002": "reject"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "reject", "cand-002": "reject"})
         result = reconcile_decisions(manifest, decisions)
         assert result["keep"] == []
         assert result["totals"]["unresolved_review"] == 0
 
     def test_reconciliation_carries_the_decision_provider(self) -> None:
         manifest = _manifest()
-        decisions = _decisions(
-            manifest, {"cand-001": "accept", "cand-002": "reject"}
-        )
+        decisions = _decisions(manifest, {"cand-001": "accept", "cand-002": "reject"})
         result = reconcile_decisions(manifest, decisions)
         assert result["provider"] == decisions["provider"]
 

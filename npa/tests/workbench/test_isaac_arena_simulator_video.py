@@ -657,11 +657,14 @@ def test_capture_refuses_wrong_startup_renderer_registration(
     assert env.renders == 0
 
 
-@pytest.mark.parametrize("setting", [
-    "/rtx/directLighting/sampledLighting/samplesPerPixel",
-    "/rtx/indirectDiffuse/fetchSampleCount",
-    "/rtx/reflections/sampledLighting/samplesPerPixel",
-])
+@pytest.mark.parametrize(
+    "setting",
+    [
+        "/rtx/directLighting/sampledLighting/samplesPerPixel",
+        "/rtx/indirectDiffuse/fetchSampleCount",
+        "/rtx/reflections/sampledLighting/samplesPerPixel",
+    ],
+)
 def test_capture_refuses_lighting_sample_reduction_after_render(
     simulator_modules, tmp_path: Path, setting: str
 ) -> None:
@@ -760,7 +763,10 @@ def test_film_capture_converges_without_changing_actions_or_camera(
     monkeypatch.setenv("NPA_ISAAC_ARENA_VIDEO_PROFILE", "film")
     env = _AutoResetEnvironment(tmp_path, simulator_modules)
     assert env.cfg.viewer.resolution == (1280, 720)
-    assert (env.cfg.video_recorder.window_width, env.cfg.video_recorder.window_height) == (3840, 2160)
+    assert (
+        env.cfg.video_recorder.window_width,
+        env.cfg.video_recorder.window_height,
+    ) == (3840, 2160)
     assert env.cfg.viewer.eye == (1, 2, 3)
     assert env.cfg.sim.render.samples_per_pixel == 128
     env.reset()
@@ -773,4 +779,6 @@ def test_film_capture_converges_without_changing_actions_or_camera(
     assert env.renders == 4 * 33
     assert env.physics_time == 0.06
     _assert_freeze_trace(evidence, [0, 1, 2, 3])
-    assert all(row["settling_render_calls"] == 32 for row in evidence["physics_freeze_checks"])
+    assert all(
+        row["settling_render_calls"] == 32 for row in evidence["physics_freeze_checks"]
+    )

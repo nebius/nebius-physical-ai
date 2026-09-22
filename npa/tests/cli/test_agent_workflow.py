@@ -38,9 +38,7 @@ from npa.cli.main import app
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_YAML = (
-    REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
-)
+EXAMPLE_YAML = REPO_ROOT / "workflows/testing/sim2real-two-step-agent.yaml"
 
 _GOLDEN_YAMLS = [
     "nurec-reconstruct.yaml",
@@ -459,10 +457,9 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
 def test_embedded_agent_uses_the_exact_canonical_sim2real_yaml() -> None:
     from npa.cli.agent_contracts import _embedded_agent_workflow_source
 
-    canonical = (
-        REPO_ROOT
-        / "workflows" / "main" / "sim2real.yaml"
-    ).read_text(encoding="utf-8")
+    canonical = (REPO_ROOT / "workflows" / "main" / "sim2real.yaml").read_text(
+        encoding="utf-8"
+    )
     source = _embedded_agent_workflow_source()
 
     assert f"_EMBEDDED_CANONICAL_SIM2REAL_YAML = {canonical!r}" in source
@@ -675,6 +672,21 @@ def test_vlm_rl_loop_is_reachable_when_explicitly_requested() -> None:
             "create PAIDF yaml",
             "create_data_factory_workflow",
             "physical-ai-data-factory",
+        ),
+        (
+            "create a PAIDF defect image generation manual ROI workflow",
+            "create_data_factory_workflow",
+            "paidf-defect-image-generation",
+        ),
+        (
+            "create a PAIDF image attribute augmentation workflow",
+            "create_data_factory_workflow",
+            "paidf-image-attribute-augmentation",
+        ),
+        (
+            "create a PAIDF event video generation workflow",
+            "create_data_factory_workflow",
+            "paidf-event-video-generation",
         ),
         ("create VLM-RL loop workflow", "create_vlm_rl_workflow", "vlm-rl-loop"),
         ("create near sim realism yaml", "create_workflow", "two-step"),
@@ -918,6 +930,23 @@ def test_choose_template_selects_data_factory() -> None:
         intent="create_data_factory_workflow",
     )
     assert selection["template"] == "physical-ai-data-factory"
+
+
+@pytest.mark.parametrize(
+    ("alias", "workflow_name"),
+    [
+        ("dig", "paidf-defect-image-generation"),
+        ("iaa", "paidf-image-attribute-augmentation"),
+        ("evg", "paidf-event-video-generation"),
+    ],
+)
+def test_paidf_agent_aliases_render_shipped_native_specs(
+    alias: str, workflow_name: str
+) -> None:
+    rendered = yaml.safe_load(generate_workflow_yaml(alias, bucket="agent-bucket"))
+    assert rendered["metadata"]["name"] == workflow_name
+    assert rendered["config"]["bucket"] == "agent-bucket"
+    assert rendered["apiVersion"] == "npa.workflow/v0.0.1"
 
 
 def test_data_factory_draft_from_intent_and_text_is_runnable() -> None:
@@ -1296,6 +1325,28 @@ def test_generate_workflow_yaml_dispatcher() -> None:
     assert "sim2real-two-step" in default
 
 
+def test_cpu_workflow_draft_binds_the_discovered_kubernetes_context() -> None:
+    draft = generate_workflow_draft(
+        template="token-factory-deployment-review",
+        bucket="unit-bucket",
+        infrastructure={
+            "project": "unit",
+            "has_infra": True,
+            "configured": [
+                {
+                    "cluster_name": "unit-cluster",
+                    "context": "unit-context",
+                    "kubeconfig": str(Path.cwd() / "unit-kubeconfig"),
+                }
+            ],
+        },
+    )
+
+    spec = yaml.safe_load(draft["yaml"])
+    assert draft["runnable"] is True
+    assert spec["resources"]["cpu"]["infra"] == "k8s/unit-context"
+
+
 def test_vlm_rl_draft_keeps_canonical_resource_profiles_without_live_infra() -> None:
     draft = generate_workflow_draft(
         template="vlm-rl-loop",
@@ -1386,6 +1437,55 @@ def test_generate_workflow_draft_returns_selection_and_valid_yaml() -> None:
     assert "\n\n  scene_uri:" in draft["yaml"]
 
 
+def test_deployment_review_draft_is_runnable_and_chains_real_artifacts() -> None:
+    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+
+    draft = generate_workflow_draft(
+        user_text="create a Token Factory deployment readiness review workflow",
+        intent="create_workflow",
+        bucket="run-bucket",
+        tool_refs=frozenset(TOOL_CATALOG),
+    )
+
+    assert draft["template"] == "token-factory-deployment-review"
+    assert draft["validation"]["ok"] is True
+    assert draft["plan"]["ok"] is True
+    assert draft["runnable"] is True
+    spec = yaml.safe_load(draft["yaml"])
+    assert (
+        "token_factory_deployment_input"
+        in spec["states"]["prepare-prompts"]["run"]["shell"]
+    )
+    assert spec["states"]["prepare-prompts"]["outputs"] == [
+        {
+            "uri": "{{config.prompts_uri}}",
+            "schema": "npa.token_factory.prompts.v1",
+        }
+    ]
+    assert spec["states"]["generate-recommendations"]["toolRef"] == (
+        "workbench.token_factory.generate"
+    )
+    assert spec["states"]["generate-recommendations"]["needs"] == ["prepare-prompts"]
+    assert spec["states"]["triage-recommendations"]["toolRef"] == (
+        "workbench.token_factory.triage"
+    )
+    assert spec["resources"]["cpu"] == {
+        "cloud": "kubernetes",
+        "cpus": 1,
+        "memory": "4Gi",
+    }
+    assert spec["config"]["artifacts_uri"].endswith("/")
+
+
+def test_deployment_review_beats_generic_gate_for_the_chat_intent() -> None:
+    selection = choose_workflow_template(
+        user_text="Create a Token Factory deployment readiness review workflow.",
+        intent="create_gate_workflow",
+    )
+
+    assert selection["template"] == "token-factory-deployment-review"
+
+
 def test_generate_workflow_draft_sets_not_runnable_when_plan_fails(monkeypatch) -> None:
     monkeypatch.setattr(
         "npa.cli.agent_workflow.plan_workflow_yaml_text",
@@ -1405,9 +1505,7 @@ def test_every_agent_template_toolref_resolves_catalog() -> None:
     for template in _TEMPLATES:
         spec = yaml.safe_load(generate_workflow_yaml(template))
         emitted.extend(
-            state["toolRef"]
-            for state in spec["states"].values()
-            if "toolRef" in state
+            state["toolRef"] for state in spec["states"].values() if "toolRef" in state
         )
 
     unknown = sorted(set(emitted) - set(TOOL_CATALOG))

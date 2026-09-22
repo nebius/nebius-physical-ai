@@ -299,11 +299,27 @@ def test_film_evidence_preserves_4k_and_rejects_static_noise(tmp_path, moving):
     small = tmp_path / "scene.mp4"
     _encode(small, _add_noise(_scene(45, moving=moving), "fine", 7))
     source = tmp_path / "native-4k.mp4"
-    subprocess.run([
-        "ffmpeg", "-v", "error", "-i", str(small),
-        "-vf", "scale=3840:2160", "-c:v", "libx264", "-preset", "ultrafast",
-        "-crf", "18", "-pix_fmt", "yuv420p", str(source),
-    ], check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(small),
+            "-vf",
+            "scale=3840:2160",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            str(source),
+        ],
+        check=True,
+    )
     original = hashlib.sha256(source.read_bytes()).hexdigest()
     derivative, record = denoise_mp4(source, video_profile="film")
     assert hashlib.sha256(source.read_bytes()).hexdigest() == original
@@ -315,7 +331,9 @@ def test_film_evidence_preserves_4k_and_rejects_static_noise(tmp_path, moving):
         assert metadata["frame_count"] == 45
         assert metadata["motion"]["changed_frame_pairs"] >= 2
     else:
-        with pytest.raises(IsaacArenaError, match="noise-resistant coherent scene motion"):
+        with pytest.raises(
+            IsaacArenaError, match="noise-resistant coherent scene motion"
+        ):
             probe_mp4(derivative)
 
 

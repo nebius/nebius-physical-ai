@@ -22,8 +22,7 @@ def test_isaac_lab_byovm_multi_gpu_training_distributes_envs(
 ) -> None:
     gpu_names = query_gpu_names(byovm_target)
     supported = any(
-        "L40S" in name.upper() or "RTX PRO 6000" in name.upper()
-        for name in gpu_names
+        "L40S" in name.upper() or "RTX PRO 6000" in name.upper() for name in gpu_names
     )
     if not supported:
         pytest.skip("Isaac Lab BYOVM multi-GPU test requires L40S or RTX PRO 6000 GPUs")
@@ -35,7 +34,10 @@ def test_isaac_lab_byovm_multi_gpu_training_distributes_envs(
     name = f"isaac-lab-{unique_name}"
     output_uri = f"{s3_prefix}isaac-lab/train/"
     try:
-        run_npa(deploy_byovm_args("isaac-lab", byovm_target, name, requested_gpus), timeout=3600)
+        run_npa(
+            deploy_byovm_args("isaac-lab", byovm_target, name, requested_gpus),
+            timeout=3600,
+        )
 
         result = run_npa(
             [

@@ -1,0 +1,56 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# The interactive edit happens in FiftyOne. This CPU gate consumes the derived
+# LeRobot dataset only after review and emits row-level, Parquet-bound proof.
+# Submit with a run-scoped bucket override:
+#   npa workbench workflow submit lerobot-subtask-proof.yaml \
+#     --run-id <new-run-id> --var bucket=<configured-bucket>
+
+metadata:
+  name: lerobot-subtask-proof
+  description: >
+    Verify complete subtask_index labels in a reviewed LeRobot v3 dataset,
+    resolve one grasp frame through the subtask catalog, and publish durable
+    proof bound to the source Parquet SHA-256.
+
+config:
+  bucket: example-bucket
+  prefix: "lerobot-subtask-proof/{{run.id}}"
+  source_overlay: true
+  expected_subtask: grasp
+  reviewed_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/reviewed-dataset/"
+  proof_uri: "s3://{{config.bucket}}/{{config.prefix}}/proof/subtask-proof.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 4Gi
+
+initial: prove-subtask
+
+states:
+  prove-subtask:
+    description: >
+      Read real LeRobot Parquet rows, validate full subtask coverage, and prove
+      one grasp frame without modifying the reviewed dataset.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.lerobot_subtask_proof
+        - --dataset-uri
+        - "{{config.reviewed_dataset_uri}}"
+        - --proof-uri
+        - "{{config.proof_uri}}"
+        - --expected-label
+        - "{{config.expected_subtask}}"
+    inputs:
+      - uri: "{{config.reviewed_dataset_uri}}"
+        schema: lerobot.dataset.v3.subtasks
+    outputs:
+      - uri: "{{config.proof_uri}}"
+        schema: npa.lerobot.subtask_proof.v1
+    terminal: true

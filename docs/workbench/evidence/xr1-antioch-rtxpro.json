@@ -1,0 +1,535 @@
+{
+  "schema": "npa.xr1-antioch.validation.v1",
+  "status": "completed",
+  "model": "Xiaomi-Robotics-1-5B",
+  "task": "Dual-Franka physical pick-and-place in Isaac Sim 6.0.1",
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "training_gpu_count": 8,
+  "demonstrations": {
+    "train": {
+      "episodes": 64,
+      "physical_successes": 60
+    },
+    "validation": {
+      "episodes": 16,
+      "physical_successes": 16
+    }
+  },
+  "training_input_qualification": "Successful demonstrations only; failed episodes remain evidence",
+  "sealed_test_trials": 32,
+  "dataset_s3_readback_verified": true,
+  "baseline": {
+    "checkpoint_sha256": "94d55a79122050a654b379664b644e874ff90d64ccd30a6a633f816555bcecf7",
+    "trials": 32,
+    "successes": 0,
+    "complete": true,
+    "expert_fallback": false,
+    "failure_reason": "Policy requested targets outside the declared robot workspace"
+  },
+  "statistics_sha256": "bbbdc0e11e862383e22638328276b50fb07a64b25c07a4dc7825c8c908f855e4",
+  "simulation_sha256": "a32b4fa1c7397fa93550f422992c5335f1d6baf8a8cb41565e118dea102a85ac",
+  "runtime": {
+    "source_revision": "0dd7aef8dc87296246aae812a1f59ccb708e5546",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "capability": [
+      12,
+      0
+    ],
+    "torch": "2.8.0+cu128",
+    "cuda": "12.8",
+    "flash_attention_forward_backward": true,
+    "fused_adam_update": true
+  },
+  "initial_native_validation_loss": 6.915093898773193,
+  "target_optimizer_steps": 10000,
+  "candidate_evaluation": {
+    "schema": "npa.xr1-antioch.comparison.v1",
+    "pairs": [
+      {
+        "seed": 3000,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3001,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3002,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3003,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3004,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3005,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3006,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3007,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3008,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3009,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3010,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3011,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3012,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3013,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3014,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3015,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3016,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3017,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3018,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3019,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3020,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3021,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3022,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3023,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3024,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3025,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3026,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3027,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3028,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3029,
+        "baseline": false,
+        "candidate": true
+      },
+      {
+        "seed": 3030,
+        "baseline": false,
+        "candidate": false
+      },
+      {
+        "seed": 3031,
+        "baseline": false,
+        "candidate": false
+      }
+    ],
+    "baseline": {
+      "successes": 0,
+      "trials": 32,
+      "success_rate": 0.0,
+      "wilson_95_interval": [
+        0.0,
+        0.1071791982550706
+      ]
+    },
+    "candidate": {
+      "successes": 8,
+      "trials": 32,
+      "success_rate": 0.25,
+      "wilson_95_interval": [
+        0.1325240091850904,
+        0.4210655899424448
+      ]
+    },
+    "statistics_sha256": "bbbdc0e11e862383e22638328276b50fb07a64b25c07a4dc7825c8c908f855e4",
+    "simulation_sha256": "a32b4fa1c7397fa93550f422992c5335f1d6baf8a8cb41565e118dea102a85ac",
+    "baseline_sha256": "94d55a79122050a654b379664b644e874ff90d64ccd30a6a633f816555bcecf7",
+    "candidate_sha256": "4283378c257562d4849f2f8ec2fdeca49ed253bb54e9dedad3be16b03814503b",
+    "paired_wins": 8,
+    "paired_losses": 0,
+    "mcnemar_exact_two_sided_p": 0.0078125,
+    "observed_improvement": true,
+    "supported_improvement": true,
+    "scope": "dual-Franka simulated pick-and-place; no real-robot validation"
+  },
+  "video": {
+    "duration_seconds": 53.2,
+    "sha256": "03d443ad0a58255db02d0b470a6ae791cb6ac945624e8762187b0870ea7ce92b",
+    "contents": "Continuous recording of actual Workbench commands, S3/Antioch round trip, model verification, and native demonstration/baseline camera playback"
+  },
+  "limits": [
+    "Simulated dual-Franka pick-and-place only; real-robot transfer has not been tested.",
+    "One fine-tuning run; paired intervals describe scenario variability, not variation between training runs.",
+    "Sixty successful training demonstrations and sixteen disjoint validation demonstrations.",
+    "Inference pauses simulation; 20 Hz camera/control timestamps do not establish real-time deployment.",
+    "Private infrastructure locations, access credentials, and raw operational logs remain outside Git."
+  ],
+  "native_training_compatibility": {
+    "native_supervised_backward": true,
+    "finite_gradients": true,
+    "parameters_with_gradients": 4724266496,
+    "losses": {
+      "loss": 9.034319877624512,
+      "loss_mse": 3.279144048690796,
+      "loss_freq": 5.986536502838135,
+      "loss_l1": 1.3105442523956299,
+      "loss_score": 1.5058788061141968
+    },
+    "seconds": 1.3235344209824689,
+    "maximum_gpu_memory_bytes": 20011101696,
+    "scope": "native training compatibility test only; no checkpoint exported"
+  },
+  "validation": {
+    "linux_full_unit": {
+      "passed": 23718,
+      "skipped": 154,
+      "xpassed": 1,
+      "seconds": 492.66
+    },
+    "focused_xr1": 40,
+    "smoke": 114,
+    "guardrails": 3800,
+    "security_runtime": 783,
+    "native_scanner_new_findings": 0
+  },
+  "restricted_checkpoint_load": {
+    "restricted_native_checkpoint_load": true,
+    "model_tensors": 1135,
+    "optimizer_step": 1000,
+    "deepspeed_step": 1000,
+    "bytes": 11004716909
+  },
+  "restricted_loader_prediction_max_difference": 0.0,
+  "intermediate_validation": {
+    "optimizer_step": 1000,
+    "evaluation_split": "validation",
+    "seed": 2000,
+    "success": false,
+    "maximum_height_m": [
+      0.020000753924250603,
+      0.2031833827495575
+    ],
+    "failure_reason": "Policy requested a Cartesian target outside the declared robot workspace",
+    "recorded_frames": 163,
+    "checkpoint_sha256": "0d345cd2bb0cc1d57b25587f11628fb6cb08f21ca08f50301e7e65710c161579",
+    "expert_fallback": false
+  },
+  "intermediate_video": {
+    "duration_seconds": 363.68,
+    "raw_sha256": "53dcd30220aa1b43bddf68908e3a631c89a66d513950b881653384b2813264c0",
+    "raw_bytes": 19819318,
+    "checkpoint_sha256": "0d345cd2bb0cc1d57b25587f11628fb6cb08f21ca08f50301e7e65710c161579",
+    "optimizer_steps": 1000,
+    "evaluation_split": "validation",
+    "seed": 2000,
+    "success": false,
+    "contents": "Continuous actual checkpoint publication, full S3 readback, Antioch download, learned-policy validation rollout, result publication, and native three-camera playback."
+  },
+  "intermediate_validation_step6000": {
+    "optimizer_step": 6000,
+    "evaluation_split": "validation",
+    "seed": 2000,
+    "success": false,
+    "maximum_height_m": [
+      0.15651178359985352,
+      0.1574873924255371
+    ],
+    "placement_error_m": [
+      0.3710494036716835,
+      0.29978662134944734
+    ],
+    "released": [
+      false,
+      false
+    ],
+    "failure_reason": "Policy requested a Cartesian target outside the declared robot workspace",
+    "recorded_frames": 145,
+    "checkpoint_sha256": "adba48fe9bdf0608905bba57388af5c156c9b6c28367ecfc06c484ff319d609f",
+    "expert_fallback": false,
+    "changed_parameters": 4578154318,
+    "final_selected_checkpoint": false
+  },
+  "actuator_contract_replay": {
+    "success": true,
+    "arm_success": [
+      true,
+      true
+    ],
+    "maximum_height_m": [
+      0.28353574872016907,
+      0.2759661078453064
+    ],
+    "placement_error_m": [
+      0.0012140866327896445,
+      0.000673212975771323
+    ],
+    "final_speed_m_s": [
+      9.313225746154785e-09,
+      7.744304216019084e-07
+    ],
+    "settling_drift_m": [
+      1.228781230931777e-07,
+      3.6534368480110223e-06
+    ],
+    "solver_velocity_m_s": [
+      [
+        0.000682842219248414,
+        0.0001976663916138932,
+        0.04666854441165924
+      ],
+      [
+        -0.0005546840257011354,
+        -0.001110073528252542,
+        0.04632188379764557
+      ]
+    ],
+    "released": [
+      true,
+      true
+    ],
+    "schema": "npa.xr1-antioch.actuator-replay.v1",
+    "seed": 2000,
+    "split": "validation",
+    "learned_policy": false,
+    "uses_recorded_expert_actions": true,
+    "purpose": "Physical conformance of recorded targets through the sealed 20 Hz policy actuator path",
+    "source_success": true,
+    "source_frames": 327,
+    "recorded_frames": 327,
+    "control_hz": 20
+  },
+  "evaluation_recovery": {
+    "cause": "Antioch CLI default command deadline interrupted the cohort",
+    "completed_trials_preserved": 25,
+    "unfinished_trials_resumed": 7,
+    "completed_recordings_hash_verified_unchanged": true,
+    "incomplete_attempt_retained": true,
+    "attachment_sdk": "antioch-sim==0.4.236",
+    "attachment_deadline": null,
+    "per_prediction_noise_seed_preserved": true
+  },
+  "candidate_failure_summary": {
+    "workspace_violations": 15,
+    "remaining_task_failures_at_horizon": 9,
+    "total_failures": 24,
+    "per_arm_successes": [
+      12,
+      12
+    ],
+    "trials": 32
+  },
+  "compute_cleanup": {
+    "training_cluster_destroyed": true,
+    "training_project_instances_remaining": 0,
+    "antioch_live_sessions_remaining": 0,
+    "owned_local_api_processes_remaining": 0,
+    "s3_artifacts_retained": true
+  },
+  "post_evaluation_session_loss": {
+    "phase": "After complete evaluation and verified S3 publication",
+    "reason": "Antioch backing machine generation lost",
+    "original_session_released": true,
+    "optional_restoration_waited_for_capacity": true,
+    "optional_restore_performed": false,
+    "queued_replacement_released": true,
+    "original_verified_transfer_receipt_retained_in_s3": true
+  },
+  "reference_workflow": "workflows/partners/antioch/xr1-antioch-finetune.yaml",
+  "reference_workflow_sha256": "d7955bdc2e2aa6bf6fe62b40c691a44e114d6eded1427e5dacb0d2873d811a3c",
+  "training": {
+    "optimizer_steps": 10000,
+    "checkpoint_selection": "minimum held-out native XR1 loss",
+    "best_validation_loss": 0.22013111412525177,
+    "changed_parameters": 4587619329,
+    "total_parameters": 5502178816,
+    "closed_loop_evaluation_required": true,
+    "count_scope": "Serialized state-dictionary tensor values; tied entries may repeat.",
+    "selected_optimizer_step": 9000,
+    "candidate_sha256": "4283378c257562d4849f2f8ec2fdeca49ed253bb54e9dedad3be16b03814503b",
+    "candidate_bytes": 10226684826
+  },
+  "validation_history": [
+    {
+      "optimizer_step": 0,
+      "baseline": true,
+      "loss": 6.915093898773193
+    },
+    {
+      "optimizer_step": 1000,
+      "baseline": false,
+      "loss": 0.6419300436973572
+    },
+    {
+      "optimizer_step": 2000,
+      "baseline": false,
+      "loss": 0.4747487008571625
+    },
+    {
+      "optimizer_step": 3000,
+      "baseline": false,
+      "loss": 0.4995051324367523
+    },
+    {
+      "optimizer_step": 4000,
+      "baseline": false,
+      "loss": 0.37754756212234497
+    },
+    {
+      "optimizer_step": 5000,
+      "baseline": false,
+      "loss": 0.3134070336818695
+    },
+    {
+      "optimizer_step": 6000,
+      "baseline": false,
+      "loss": 0.2812286615371704
+    },
+    {
+      "optimizer_step": 7000,
+      "baseline": false,
+      "loss": 0.2713325023651123
+    },
+    {
+      "optimizer_step": 8000,
+      "baseline": false,
+      "loss": 0.22735896706581116
+    },
+    {
+      "optimizer_step": 9000,
+      "baseline": false,
+      "loss": 0.22013111412525177
+    },
+    {
+      "optimizer_step": 10000,
+      "baseline": false,
+      "loss": 0.22705721855163574
+    }
+  ],
+  "final_video": {
+    "raw": {
+      "sha256": "d3dcd437aff696e1ca548f5d936fa45f30a748a55d08f500ba73e985348f12d0",
+      "bytes": 8046703,
+      "duration_seconds": 115.36,
+      "width": 1400,
+      "height": 900,
+      "full_decode_verified": true
+    },
+    "playback": {
+      "sha256": "4124510215e06ad273648ea2d846db42070e6f8476277844741a5d756114dd5c",
+      "bytes": 8567135,
+      "duration_seconds": 115.36,
+      "width": 1400,
+      "height": 900,
+      "full_decode_verified": true
+    },
+    "selection": {
+      "seed": 3000,
+      "success": true,
+      "selection": "first successful episode, otherwise first sealed seed",
+      "full_cohort_trials": 32
+    },
+    "candidate_sha256": "4283378c257562d4849f2f8ec2fdeca49ed253bb54e9dedad3be16b03814503b",
+    "contents": "Continuous actual S3 full-checkpoint readback, original verified Antioch download receipt and full paired results read from S3, and native three-camera playback. The original session was lost after evaluation; this recording does not claim a new live Antioch probe."
+  },
+  "native_video_verification": {
+    "baseline": {
+      "videos": 96,
+      "decoded_frames": 2985,
+      "trials": 32
+    },
+    "candidate": {
+      "videos": 96,
+      "decoded_frames": 28650,
+      "trials": 32
+    }
+  },
+  "pipeline_completed": true,
+  "learned_task_improvement_demonstrated": true,
+  "physical_robot_tested": false,
+  "ready_for_robot_deployment": false,
+  "execution_source_archive_sha256": "f2ead1c8ee9f8782e4f460170c5be02c6f588472ab4a18b1b4becd56e9276b5c",
+  "post_launch_hardening": "The public change additionally restricts checkpoint decoding and HTTPS transfers. Restricted decoding was verified on the actual base and native trained checkpoints; inference outputs were identical. The optimizer execution used the recorded source archive."
+}

@@ -42,7 +42,8 @@ def legacy_rtx_kit_args(video_profile: str = "standard") -> str:
         return str(value).lower() if type(value) is bool else str(value)
 
     return " ".join(
-        f"--{key}={encode(value)}" for key, value in render_settings(capture_profile(video_profile)).items()
+        f"--{key}={encode(value)}"
+        for key, value in render_settings(capture_profile(video_profile)).items()
     )
 
 
@@ -475,7 +476,9 @@ def configure_video_capture(env_cfg: Any) -> None:
     if profile.resolution is not None:
         # Arena's renderer-backed recorder owns its dimensions independently
         # of the interactive viewer configuration.
-        env_cfg.video_recorder.window_width, env_cfg.video_recorder.window_height = profile.resolution
+        env_cfg.video_recorder.window_width, env_cfg.video_recorder.window_height = (
+            profile.resolution
+        )
     # Isaac Lab applies this native Replicator bridge after raw Carb settings;
     # make both configuration paths request the same supported temporal mode.
     env_cfg.sim.render.antialiasing_mode = "TAA"

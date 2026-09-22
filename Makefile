@@ -31,12 +31,14 @@ LIVE_DESELECT := -m "not e2e and not e2e_serverless and not e2e_skypilot and not
 NPA_BIN_FOR_PYTHON = NPA_BIN="$${NPA_BIN:-$$(bin=$$(command -v $(PYTHON) 2>/dev/null) \
 	&& [ -x "$$(dirname "$$bin")/npa" ] && printf '%s' "$$(dirname "$$bin")/npa" || true)}"
 
-.PHONY: help install-dev test test-smoke test-all test-e2e test-guardrails \
-	lint format docs docs-check check
+.PHONY: help install-dev check-env test-prereqs test test-smoke test-all test-e2e \
+	test-guardrails lint format format-check precheck merge-precheck docs docs-check check
 
 help:
 	@echo "Targets:"
-	@echo "  install-dev      Install npa with dev/test tooling into the active venv"
+	@echo "  install-dev      Install npa with the dev+adapter extras CONTRIBUTING.md requires"
+	@echo "  check-env        Fail fast if PYTHON would import npa from another checkout"
+	@echo "  test-prereqs     Report (non-blocking) which full-suite/CI-parity tools are missing"
 	@echo "  test             Fast default: full unit suite, no live/GPU/network"
 	@echo "  test-smoke       Quickest check: onboarding CLI smoke tests only"
 	@echo "  test-all         Alias for 'test' (no live tests)"
@@ -44,33 +46,52 @@ help:
 	@echo "  test-e2e         Opt-in live suite (requires real Nebius infra + NPA_INTEGRATION_E2E=1)"
 	@echo "  lint             Ruff lint"
 	@echo "  format           Ruff autofix + format"
+	@echo "  format-check     Ruff formatting check without changing files"
+	@echo "  precheck         Fast local pins, lint, format, and CI contract checks"
+	@echo "  merge-precheck   Check committed HEAD merged with fetched origin/main"
 	@echo "  docs             Regenerate the CLI reference under docs/cli/"
 	@echo "  docs-check       Fail if docs/cli/ has drifted from 'npa --help'"
-	@echo "  check            The reproducible PR gates: lint, docs-check, test"
+	@echo "  check            The reproducible PR gates: precheck, docs-check, test"
 	@echo "                   (no coverage floor; see CONTRIBUTING.md)"
 	@echo "Interpreter: $(PYTHON)"
 	@echo "Override it with: make test PYTHON=/path/to/venv/bin/python"
 
 install-dev:
-	$(PYTHON) -m pip install -e "npa[dev]"
+	$(PYTHON) -m pip install -e "npa[dev,adapter]"
+
+# A venv shared (e.g. symlinked) across worktrees/clones keeps whichever
+# checkout last ran `pip install -e`, so $(PYTHON) can silently import a
+# DIFFERENT checkout's npa while pytest collects THIS checkout's test files.
+# Catch that before spending minutes on a run whose result would be
+# meaningless. See npa/scripts/check_dev_environment.py for the exact failure
+# modes this catches and how to fix each one.
+check-env:
+	$(PYTHON) npa/scripts/check_dev_environment.py --repo-root "$(CURDIR)"
+
+# Non-blocking: reports which optional prerequisites are missing, and their
+# verified real consequence (some self-skip; the adapter extra instead makes
+# pytest fail to collect outright). Also reports temp-disk headroom. Never
+# exits non-zero itself; see npa/scripts/check_test_prereqs.py.
+test-prereqs:
+	$(PYTHON) npa/scripts/check_test_prereqs.py
 
 # Fast default: every unit test, with live/GPU/e2e markers deselected.
-test:
+test: check-env
 	$(PYTEST) tests/ --ignore=tests/e2e $(LIVE_DESELECT) --timeout=180 -q
 
 # Tightest loop: just the first-time-user CLI smoke guards (sub-second).
-test-smoke:
+test-smoke: check-env
 	$(PYTEST) tests/cli/test_main.py tests/cli/test_onboarding_smoke.py -q
 
 test-all: test
 
 # The harness-guardrails PR gate. Adding a tool, spec, toolRef, image or skill
 # usually lands here first, so it is worth running before the full suite.
-test-guardrails:
+test-guardrails: check-env
 	$(PYTEST) tests/guardrails -q
 
 # Opt-in: launches real Nebius infrastructure. Read docs/testing/ first.
-test-e2e:
+test-e2e: check-env
 	cd npa && NPA_INTEGRATION_E2E=1 $(PYTHON) -m pytest tests/e2e -q
 
 lint:
@@ -78,6 +99,19 @@ lint:
 
 format:
 	cd npa && $(PYTHON) -m ruff check --fix . && $(PYTHON) -m ruff format .
+
+format-check:
+	cd npa && $(PYTHON) -m ruff format --check .
+
+# Keep cheap failures ahead of docs generation and the full suite, even with -j.
+precheck: check-env
+	$(PYTHON) npa/scripts/ci_requirements.py --check
+	$(MAKE) lint format-check
+	$(PYTEST) tests/test_ci_requirements.py tests/test_ci_merge_precheck.py tests/test_ci_test_scope.py tests/test_merge_queue_report.py tests/guardrails/test_ci_workflows.py tests/guardrails/test_ci_concurrency.py -q
+
+# Fetch first; this deliberately reports exact commits and never edits the index.
+merge-precheck:
+	$(PYTHON) npa/scripts/ci_merge_precheck.py --base origin/main --head HEAD
 
 # docs/cli/ is generated and drift-gated in CI. Regenerate and commit it whenever
 # a command, flag or help string changes.
@@ -87,5 +121,6 @@ docs:
 docs-check:
 	$(NPA_BIN_FOR_PYTHON) bash scripts/build_docs.sh --check
 
-# Mirrors the blocking PR gates so a contributor can reproduce them in one command.
-check: lint docs-check test
+# Run the reproducible local subset in cost order; Linux CI also enforces coverage.
+check: precheck
+	$(MAKE) docs-check test

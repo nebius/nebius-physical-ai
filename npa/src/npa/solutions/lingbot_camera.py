@@ -28,10 +28,13 @@ def _checkpoint(cache: Path) -> Path:
     from huggingface_hub import snapshot_download
 
     model = Path(snapshot_download(MODEL_ID, revision=MODEL_REF))
-    tokenizer = Path(snapshot_download(
-        "google/umt5-xxl", revision=TEXT_ENCODER_REF,
-        allow_patterns=["*token*", "*.json", "*.model"],
-    ))
+    tokenizer = Path(
+        snapshot_download(
+            "google/umt5-xxl",
+            revision=TEXT_ENCODER_REF,
+            allow_patterns=["*token*", "*.json", "*.model"],
+        )
+    )
     # Upstream selects camera conditioning from the checkpoint directory name.
     overlay = cache / "lingbot-world-base-cam"
     overlay.mkdir(parents=True, exist_ok=False)
@@ -54,24 +57,56 @@ def _controls(directory: Path) -> dict:
     poses[:, 0, 0], poses[:, 0, 2] = np.cos(angles), np.sin(angles)
     poses[:, 2, 0], poses[:, 2, 2] = -np.sin(angles), np.cos(angles)
     poses[:, 0, 3], poses[:, 2, 3] = 0.7 * smooth, 1.5 * smooth
-    intrinsics = np.repeat(np.array([[900, 900, 640, 360]], dtype=np.float32), 161, axis=0)
+    intrinsics = np.repeat(
+        np.array([[900, 900, 640, 360]], dtype=np.float32), 161, axis=0
+    )
     np.save(directory / "poses.npy", poses)
     np.save(directory / "intrinsics.npy", intrinsics)
-    return {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in directory.iterdir()}
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in directory.iterdir()
+    }
 
 
 def _command(checkpoint, image, output, prompt, seed, degree):
     return [
-        sys.executable, "-m", "torch.distributed.run", "--standalone", "--nnodes=1",
-        f"--nproc_per_node={degree}", str(Path(__file__)), "--task", "i2v-A14B",
-        "--size", "720*1280", "--ckpt_dir", str(checkpoint), "--image", str(image),
-        "--action_path", str(output / "controls"), "--dit_fsdp", "--t5_fsdp",
-        "--ulysses_size", str(degree), "--frame_num", "161", "--sample_steps", "70",
-        "--base_seed", str(seed), "--prompt", prompt, "--save_file", str(output / "video.mp4"),
+        sys.executable,
+        "-m",
+        "torch.distributed.run",
+        "--standalone",
+        "--nnodes=1",
+        f"--nproc_per_node={degree}",
+        str(Path(__file__)),
+        "--task",
+        "i2v-A14B",
+        "--size",
+        "720*1280",
+        "--ckpt_dir",
+        str(checkpoint),
+        "--image",
+        str(image),
+        "--action_path",
+        str(output / "controls"),
+        "--dit_fsdp",
+        "--t5_fsdp",
+        "--ulysses_size",
+        str(degree),
+        "--frame_num",
+        "161",
+        "--sample_steps",
+        "70",
+        "--base_seed",
+        str(seed),
+        "--prompt",
+        prompt,
+        "--save_file",
+        str(output / "video.mp4"),
     ]
 
 
-def generate_camera_video(image: Path, prompt: str, seed: int, output: Path, degree: int = 4) -> dict:
+def generate_camera_video(
+    image: Path, prompt: str, seed: int, output: Path, degree: int = 4
+) -> dict:
     """Generate a world continuation with the native authored-camera path.
 
     Args:
@@ -92,7 +127,9 @@ def generate_camera_video(image: Path, prompt: str, seed: int, output: Path, deg
     from PIL import Image
 
     if degree not in (2, 4) or torch.cuda.device_count() != degree:
-        raise ValueError("LingBot camera capability requires exactly two or four CUDA GPUs")
+        raise ValueError(
+            "LingBot camera capability requires exactly two or four CUDA GPUs"
+        )
     if not prompt.strip() or type(seed) is not int or seed < 0:
         raise ValueError("A nonempty prompt and nonnegative integer seed are required")
     with Image.open(image) as decoded:
@@ -106,9 +143,15 @@ def generate_camera_video(image: Path, prompt: str, seed: int, output: Path, deg
         checkpoint = _checkpoint(Path(cache))
         command = _command(checkpoint, source, output, prompt, seed, degree)
         _run(command, output)
-    ranks = [json.loads((output / f"rank-{rank}.json").read_text()) for rank in range(degree)]
-    if any(row["calls"]["all_to_all"] < 1 or row["calls"]["attention"] < 1 for row in ranks):
-        raise RuntimeError("Every distributed rank must exercise attention and all-to-all")
+    ranks = [
+        json.loads((output / f"rank-{rank}.json").read_text()) for rank in range(degree)
+    ]
+    if any(
+        row["calls"]["all_to_all"] < 1 or row["calls"]["attention"] < 1 for row in ranks
+    ):
+        raise RuntimeError(
+            "Every distributed rank must exercise attention and all-to-all"
+        )
     return _evidence(image, source, prompt, seed, output, controls, ranks)
 
 
@@ -116,31 +159,54 @@ def _run(command, output):
     # FSDP and Ulysses issue collectives on different streams. Preserve host
     # launch order across NCCL communicators to prevent collective deadlocks.
     environment = dict(
-        os.environ, LINGBOT_OUTPUT=str(output), NCCL_CUMEM_ENABLE="0",
-        NCCL_CUMEM_HOST_ENABLE="0", NCCL_NVLS_ENABLE="0", NCCL_IB_DISABLE="1",
-        NCCL_SOCKET_IFNAME="=eth0", TORCH_NCCL_USE_COMM_NONBLOCKING="1",
+        os.environ,
+        LINGBOT_OUTPUT=str(output),
+        NCCL_CUMEM_ENABLE="0",
+        NCCL_CUMEM_HOST_ENABLE="0",
+        NCCL_NVLS_ENABLE="0",
+        NCCL_IB_DISABLE="1",
+        NCCL_SOCKET_IFNAME="=eth0",
+        TORCH_NCCL_USE_COMM_NONBLOCKING="1",
         NCCL_LAUNCH_ORDER_IMPLICIT="1",
     )
     with (output / "native-generation.log").open("w") as log:
-        subprocess.run(command, cwd="/opt/byof", env=environment,
-                       stdout=log, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(
+            command,
+            cwd="/opt/byof",
+            env=environment,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
 
 
 def _evidence(original, image, prompt, seed, output, controls, ranks):
     return {
         "schema": "npa.workbench.byof.lingbot_camera.v1",
-        "solution": "lingbot-world", "capability": "lingbot_world_camera_conditioned_video",
-        "upstream_repo": SOURCE_REPO, "upstream_ref": SOURCE_REF,
-        "model_id": MODEL_ID, "model_ref": MODEL_REF, "tokenizer_ref": TEXT_ENCODER_REF,
+        "solution": "lingbot-world",
+        "capability": "lingbot_world_camera_conditioned_video",
+        "upstream_repo": SOURCE_REPO,
+        "upstream_ref": SOURCE_REF,
+        "model_id": MODEL_ID,
+        "model_ref": MODEL_REF,
+        "tokenizer_ref": TEXT_ENCODER_REF,
         "input_sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
         "normalized_input_sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
-        "prompt": prompt, "seed": seed, "controls": controls, "ranks": ranks,
+        "prompt": prompt,
+        "seed": seed,
+        "controls": controls,
+        "ranks": ranks,
         "conditioning": "Authored camera trajectory and approximate intrinsics",
         "collective_launch_order": "NCCL_LAUNCH_ORDER_IMPLICIT=1",
-        "weights_baked": False, "observed": validate_video(output / "video.mp4", 161),
-        "capabilities_exercised": ["lingbot_world_camera_conditioned_video",
-                                   "distributed_rank_validation", "decoded_mp4_validation"],
-        "deferred": [], "not_claimed": ["robot_action_conditioning", "training", "real_time"],
+        "weights_baked": False,
+        "observed": validate_video(output / "video.mp4", 161),
+        "capabilities_exercised": [
+            "lingbot_world_camera_conditioned_video",
+            "distributed_rank_validation",
+            "decoded_mp4_validation",
+        ],
+        "deferred": [],
+        "not_claimed": ["robot_action_conditioning", "training", "real_time"],
     }
 
 
@@ -168,10 +234,18 @@ def _rank():
     ulysses.all_to_all = all_to_all
     runpy.run_path("/opt/byof/generate.py", run_name="__main__")
     rank = int(os.environ["RANK"])
-    evidence = dict(rank=rank, world_size=int(os.environ["WORLD_SIZE"]), calls=calls,
-                    device=torch.cuda.get_device_name(rank), torch=torch.__version__,
-                    cuda=torch.version.cuda, attention_backend="upstream PyTorch SDPA fallback")
-    (Path(os.environ["LINGBOT_OUTPUT"]) / f"rank-{rank}.json").write_text(json.dumps(evidence))
+    evidence = dict(
+        rank=rank,
+        world_size=int(os.environ["WORLD_SIZE"]),
+        calls=calls,
+        device=torch.cuda.get_device_name(rank),
+        torch=torch.__version__,
+        cuda=torch.version.cuda,
+        attention_backend="upstream PyTorch SDPA fallback",
+    )
+    (Path(os.environ["LINGBOT_OUTPUT"]) / f"rank-{rank}.json").write_text(
+        json.dumps(evidence)
+    )
 
 
 if __name__ == "__main__":

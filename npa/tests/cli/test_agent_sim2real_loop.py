@@ -19,7 +19,9 @@ def test_drive_sim2real_intent_matches_paraphrases():
 
 
 def test_drive_sim2real_grounded_reply_mentions_gate_and_confirmation():
-    reply = agent_chat.build_grounded_reply("drive_sim2real", {"sim_viz": {"run_id": "r1"}}, [])
+    reply = agent_chat.build_grounded_reply(
+        "drive_sim2real", {"sim_viz": {"run_id": "r1"}}, []
+    )
     assert "promote_checkpoint" in reply
     assert "loop_back" in reply
     assert "confirmation" in reply.lower()
@@ -27,7 +29,11 @@ def test_drive_sim2real_grounded_reply_mentions_gate_and_confirmation():
 
 
 def _status_for(run_id: str, stage: str = "stage_10_eval_heldout") -> dict:
-    return {"ok": True, "sim_viz": {"run_id": run_id, "stage": stage}, "run": {"run_id": run_id}}
+    return {
+        "ok": True,
+        "sim_viz": {"run_id": run_id, "stage": stage},
+        "run": {"run_id": run_id},
+    }
 
 
 def test_evaluate_gate_promotes_when_success_meets_threshold():
@@ -43,7 +49,9 @@ def test_evaluate_gate_loops_back_below_threshold():
 
 
 def test_evaluate_gate_honors_explicit_engine_decision():
-    ev = L.evaluate_gate({"decision": "loop_back_to_inner_loop", "success_rate": 0.99, "threshold": 0.1})
+    ev = L.evaluate_gate(
+        {"decision": "loop_back_to_inner_loop", "success_rate": 0.99, "threshold": 0.1}
+    )
     assert ev["decision"] == L.DECISION_LOOP_BACK
 
 
@@ -253,10 +261,15 @@ def test_drive_propose_then_confirm_round_trip_auto_run_id():
     factory = lambda: "agent-drive-abcd"  # noqa: E731 - deterministic for the test
 
     # 1) Propose (no token): route resolves cfg, drive returns needs_confirmation.
-    cfg = L.resolve_drive_config({"threshold": 0.8}, has_confirm_token=False, run_id_factory=factory)
+    cfg = L.resolve_drive_config(
+        {"threshold": 0.8}, has_confirm_token=False, run_id_factory=factory
+    )
     proposed = L.drive_sim2real_loop(
-        "drive", config=cfg, launch=lambda c: {"ok": True, "run_id": c["run_id"]},
-        status=_status, gate=_gate,
+        "drive",
+        config=cfg,
+        launch=lambda c: {"ok": True, "run_id": c["run_id"]},
+        status=_status,
+        gate=_gate,
     )
     assert proposed["needs_confirmation"] is True
     issued_digest = proposed["proposed_action"]["digest"]
@@ -264,14 +277,24 @@ def test_drive_propose_then_confirm_round_trip_auto_run_id():
 
     # 2) Confirm: route reuses the pending cfg + issued token/digest -> launches.
     cfg2 = L.resolve_drive_config(
-        {"threshold": 0.8}, pending_config=cfg, has_confirm_token=True, run_id_factory=factory
+        {"threshold": 0.8},
+        pending_config=cfg,
+        has_confirm_token=True,
+        run_id_factory=factory,
     )
     launched = {"n": 0}
     confirmed = L.drive_sim2real_loop(
-        "drive", config=cfg2,
-        launch=lambda c: (launched.__setitem__("n", launched["n"] + 1), {"ok": True, "run_id": c["run_id"]})[1],
-        status=_status, gate=_gate,
-        confirm_token=token, session_token=token, confirm_digest=issued_digest,
+        "drive",
+        config=cfg2,
+        launch=lambda c: (
+            launched.__setitem__("n", launched["n"] + 1),
+            {"ok": True, "run_id": c["run_id"]},
+        )[1],
+        status=_status,
+        gate=_gate,
+        confirm_token=token,
+        session_token=token,
+        confirm_digest=issued_digest,
     )
     assert launched["n"] == 1
     assert confirmed["stopped_reason"] == L.STOP_PROMOTED
@@ -289,7 +312,9 @@ def test_gate_with_config_threshold_fills_missing_threshold():
     assert ev["has_signal"] is True
     assert ev["decision"] == L.DECISION_PROMOTE
     # A report threshold is never overwritten by the config default.
-    keep = L.gate_with_config_threshold(lambda rid, it: {"success_rate": 0.9, "threshold": 0.95}, 0.1)
+    keep = L.gate_with_config_threshold(
+        lambda rid, it: {"success_rate": 0.9, "threshold": 0.95}, 0.1
+    )
     assert keep("run", 1)["threshold"] == 0.95
 
 
@@ -301,7 +326,10 @@ def test_drive_confirm_token_is_bound_to_config_digest():
     result_ok = L.drive_sim2real_loop(
         "drive",
         config=proposed_cfg,
-        launch=lambda cfg: (launched.__setitem__("count", launched["count"] + 1), {"ok": True, "run_id": "run-d"})[1],
+        launch=lambda cfg: (
+            launched.__setitem__("count", launched["count"] + 1),
+            {"ok": True, "run_id": "run-d"},
+        )[1],
         status=lambda rid: _status_for(rid),
         gate=lambda rid, it: {"success_rate": 1.0, "threshold": 0.8},
         confirm_token="t",

@@ -28,7 +28,7 @@ Rendering needs FFmpeg, Pillow and NumPy; narration additionally needs edge-tts.
 Credentials belong in external NPA configuration, never in a studio project.
 """
 
-_LAUNCHER = '''#!/bin/sh
+_LAUNCHER = """#!/bin/sh
 set -eu
 STUDIO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 if [ -n "${NPA_STUDIO_PYTHON:-}" ]; then
@@ -38,14 +38,18 @@ if [ -x "$STUDIO_DIR/.venv/bin/python" ]; then
   exec "$STUDIO_DIR/.venv/bin/python" -m npa studio --registry "$STUDIO_DIR/studio.json" "$@"
 fi
 exec npa studio --registry "$STUDIO_DIR/studio.json" "$@"
-'''
+"""
 
 
 def _init_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Create a portable local film studio.")
     parser.add_argument("--directory", type=Path, required=True)
-    parser.add_argument("--renderer", type=Path, default=Path(__file__).with_name("studio_renderer"),
-                        help="Trusted local renderer override; defaults to the installed renderer.")
+    parser.add_argument(
+        "--renderer",
+        type=Path,
+        default=Path(__file__).with_name("studio_renderer"),
+        help="Trusted local renderer override; defaults to the installed renderer.",
+    )
     return parser
 
 
@@ -60,7 +64,11 @@ def _initialize(arguments: list[str]) -> int:
     for path in sorted(source.glob("*.py")):
         shutil.copy2(path, destination / path.name)
     for name in ("brand", "fonts"):
-        shutil.copytree(source / name, destination / name, ignore=shutil.ignore_patterns(".*", "__pycache__"))
+        shutil.copytree(
+            source / name,
+            destination / name,
+            ignore=shutil.ignore_patterns(".*", "__pycache__"),
+        )
     if (source / "requirements.txt").is_file():
         shutil.copy2(source / "requirements.txt", destination / "requirements.txt")
     registry = {"renderer": "renderer", "projects": {}}
@@ -103,7 +111,13 @@ def _dispatch(arguments: list[str]) -> int:
         raise ValueError("Studio renderer must name a local directory")
     source = (registry.parent / renderer).resolve()
     _validate_renderer(source)
-    command = [sys.executable, str(source / "studio.py"), "--registry", str(registry), *options]
+    command = [
+        sys.executable,
+        str(source / "studio.py"),
+        "--registry",
+        str(registry),
+        *options,
+    ]
     return subprocess.run(command, check=False).returncode
 
 

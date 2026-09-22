@@ -5,19 +5,41 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 # Pre-PR Validation
 
-Every pull request has one automatic candidate workflow. It runs lint, docs
-drift, guardrails, smoke feedback, security regressions, secret scanning, and
-confidentiality scanning. Recognized subsystem changes also run affected Python
-tests, with Cypress for agent/browser changes. Unknown or shared changes receive
-the full suite before queue admission. The merge queue runs browser and focused
-compatibility checks alongside the complete five-shard Python 3.12 coverage suite
-against the latest `main`, except for narrowly recognized prose edits. Those keep
-smoke and every documentation, repository, and security gate. See
-`CONTRIBUTING.md` for the trusted-base selector and conservative exception rules.
-A daily audit covers all supported Python versions without competing with the
-next merge-queue candidate after every merge.
+Every pull request has one automatic candidate workflow. PRs
+run the complete eight-shard Python 3.12 coverage suite, Cypress, focused
+Python 3.10/3.14 compatibility checks, lint, docs drift, guardrails, security
+regressions, secret scanning, and confidentiality scanning. Cross-subsystem
+coverage must pass before queue admission. Full shards include smoke and CLI
+install tests without duplicate subsystem jobs. Only narrowly recognized prose
+edits skip runtime suites; those retain smoke and every documentation,
+repository, and security gate. See `CONTRIBUTING.md` for the trusted-base selector,
+which uses the base's merge-candidate policy for both events during rollout.
+The queue verifies successful, less-than-24-hour PR evidence for the identical
+combined Git tree using trusted-base `ci_queue_evidence.py`, then reruns fresh
+secret, confidentiality and source/dependency scans. Changed combined trees rerun
+all tests, lint, guardrails and hostile-input checks; image checks rerun when the
+trusted base policy identifies changed image inputs. Missing, failed or stale
+evidence restores the full queue gate, which must pass before merging. Older
+PRs can adopt the policy without a forced branch refresh.
+`pr-precheck` gives a five-minute early signal without replacing full admission.
+The queue execution target is ten minutes; hosted-runner waits can add delay.
+A daily audit covers all supported Python versions instead of starting a full
+audit after every merge. Independent validation jobs use available GitHub runner
+capacity without job-level concurrency locks or matrix `max-parallel` caps.
+Preserve per-PR supersession on the parent and distinct workflow group prefixes
+for reusable children. Merge candidates use their own SHA-specific groups.
+The aggregate gate uses `!cancelled()` to report failed dependencies while
+allowing obsolete runs to terminate; `always()` can keep their final job queued
+ahead of the replacement candidate.
+`test_ci_concurrency` rejects shared validation locks and matrix caps;
+`test_ci_workflows` guards cancellation and required results. See the contributor
+concurrency guide for organization runner limits and rollout behavior. Refresh
+older PR branches after a scheduling change lands; rerunning an old commit
+retains its original workflow configuration.
 `Security regression / security-regression` requires
-every candidate component and the reusable image-security workflow.
+every PR component and image-security validation, or verified identical-tree
+evidence plus fresh security scans for queue candidates. Changed combined trees
+require fresh test results and any affected image checks.
 The required workflows have no top-level path filters. Image scope is classified
 inside always-reporting jobs: image, packaging, workflow, or security-policy
 changes run the deep checks; unrelated source changes take the fast path. Main,
@@ -34,14 +56,26 @@ This skill is the gate map.
 ## Use The Repo Virtualenv
 
 `npa/.venv/bin/python` (Python 3.12). Never bare `python`. The `make` targets
-default `PYTHON` to bare `python` and `cd` into `npa/` first, so pass an
-absolute path:
+select that virtualenv automatically and use its absolute path before changing
+into `npa/`. Override `PYTHON` only for a different environment:
 
 ```bash
 make test PYTHON=/workspace/npa/.venv/bin/python
 ```
 
+If that venv is shared across checkouts (worktree, agent sandbox) rather than
+installed fresh in this one, `make test`/`test-smoke`/`test-guardrails` fail
+fast via `make check-env` before running anything, rather than silently
+testing a different checkout's code — see `testing-conventions` for why.
+
 ## The Ladder
+
+Start with `make precheck` for dependency fingerprints, lint, formatting, and
+focused CI contracts. It reads the working tree and fails before expensive tests.
+Before pushing committed work, run `git fetch origin main` and
+`make merge-precheck` to catch combined-tree conflicts and stale CI fingerprints
+without altering your checkout or index. This second command checks committed
+HEAD only; neither command replaces the full Linux or security gates.
 
 ```bash
 # 1. Lint — seconds. This matches CI and `make lint` across all of npa/.
@@ -93,7 +127,7 @@ The security job exercises hostile inputs and supported paths, including real
 CPU checkpoint decoding, authenticated transports, private staging, storage
 containment, and isolated controller cleanup. Use the clone's own development
 virtualenv with `npa[dev,adapter]`. CI additionally installs the official CPU
-`torch==2.13.0` wheel and asserts the version and CPU runtime before testing, so
+`torch==2.14.0` wheel and asserts the version and CPU runtime before testing, so
 checkpoint cases cannot silently skip. Its exact test command from the repo root
 is:
 
@@ -137,13 +171,19 @@ sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
 Run the equivalent coverage floor from the package directory. Merge-queue CI
-uses five deterministic, duration-balanced shards; the daily three-interpreter
+uses eight deterministic, duration-balanced shards; the daily three-interpreter
 audit retains four per interpreter. Both merge their coverage data:
 
 ```bash
 cd npa
 .venv/bin/python -m pytest tests/ -v --tb=short --cov=src/npa --cov-report=term-missing --cov-fail-under=60
 ```
+
+Dependabot groups daily version updates across Python, npm, and GitHub Actions
+into one `dependencies` PR. Review overlapping package declarations together;
+a bot edit of `npa/ci/requirements.txt` does not prove its input fingerprint is
+current. Regenerate the CI pins after Python declaration changes and run the
+combined candidate through the same required gates.
 
 Keep the coverage source scoped to `src/npa`. Selecting the import name with
 `--cov=npa` can also trace temporary test modules that deliberately impersonate
@@ -166,11 +206,22 @@ Before investigating a failure, check whether it is one of these:
   venv: `PATH="$PWD/npa/.venv/bin:$PATH"`.
 
 When a failure looks unrelated to your change, confirm it against a clean base
-before spending time on it:
+before spending time on it. `git worktree add` never brings an untracked
+`npa/.venv` (it is gitignored), so the new worktree needs one of:
 
 ```bash
 git worktree add /tmp/main-check origin/main
-cd /tmp/main-check && npa/.venv/bin/python -m pytest <the failing test> -q
+
+# Option A: this worktree's own venv (works standalone, costs an install).
+python3 -m venv /tmp/main-check/npa/.venv
+/tmp/main-check/npa/.venv/bin/pip install -e "/tmp/main-check/npa[dev,adapter]"
+/tmp/main-check/npa/.venv/bin/python -m pytest /tmp/main-check/npa/tests/<the failing test> -q
+
+# Option B: reuse this checkout's already-installed venv, corrected with
+# PYTHONPATH so it resolves `main-check`'s source, not this checkout's
+# (see "Use The Repo Virtualenv" above for why the correction is required).
+PYTHONPATH=/tmp/main-check/npa/src npa/.venv/bin/python -m pytest \
+  /tmp/main-check/npa/tests/<the failing test> -q
 ```
 
 The shared dev/operator VM has both of those binaries, so the full suite passes

@@ -30,13 +30,20 @@ from npa.clients.http import HTTPClient, ServerError
 from npa.deploy.images import container_image_for_tool
 
 from ._serverless_fallback import FallbackChain, ensure_serverless_phase0
-from ._serverless_images import resolve_serverless_gpu_preset, resolve_serverless_gpu_type
+from ._serverless_images import (
+    resolve_serverless_gpu_preset,
+    resolve_serverless_gpu_type,
+)
 
 
 pytestmark = pytest.mark.e2e_serverless
 COSMOS_E2E_INFER_MAX_WAIT = 2400.0
 COSMOS_E2E_INFER_POLL_INTERVAL = 30.0
-DRY_RUN_ENABLED = os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
+DRY_RUN_ENABLED = os.environ.get("NPA_DRY_RUN", "").lower() in {
+    "1",
+    "true",
+    "yes",
+} or os.environ.get(
     "DRY_RUN",
     "",
 ).lower() in {"1", "true", "yes"}
@@ -50,7 +57,9 @@ def _skip_if_not_e2e() -> None:
 
 
 def _image() -> str:
-    return os.environ.get("NPA_E2E_SERVERLESS_IMAGE") or container_image_for_tool("cosmos")
+    return os.environ.get("NPA_E2E_SERVERLESS_IMAGE") or container_image_for_tool(
+        "cosmos"
+    )
 
 
 def _platform() -> str:
@@ -105,7 +114,16 @@ def _subnet_id(project_id: str) -> str:
     if override:
         return override
     result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            "nebius",
+            "vpc",
+            "subnet",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
+        ],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -113,7 +131,9 @@ def _subnet_id(project_id: str) -> str:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Unable to list subnets for {project_id}: {result.stderr.strip()}")
+        raise RuntimeError(
+            f"Unable to list subnets for {project_id}: {result.stderr.strip()}"
+        )
     data = json.loads(result.stdout or "{}")
     items = data.get("items") if isinstance(data, dict) else data
     if not isinstance(items, list) or not items:
@@ -122,17 +142,23 @@ def _subnet_id(project_id: str) -> str:
         if not isinstance(item, dict):
             continue
         if str(((item.get("status") or {}).get("state") or "")).upper() == "READY":
-            subnet_id = ((item.get("metadata") or {}).get("id") or "")
+            subnet_id = (item.get("metadata") or {}).get("id") or ""
             if subnet_id:
                 return str(subnet_id)
     first = items[0]
-    subnet_id = ((first.get("metadata") or {}).get("id") or "") if isinstance(first, dict) else ""
+    subnet_id = (
+        ((first.get("metadata") or {}).get("id") or "")
+        if isinstance(first, dict)
+        else ""
+    )
     if not subnet_id:
         raise RuntimeError(f"Could not parse subnet ID for {project_id}")
     return str(subnet_id)
 
 
-def _run_npa(args: list[str], *, timeout: int = 900) -> subprocess.CompletedProcess[str]:
+def _run_npa(
+    args: list[str], *, timeout: int = 900
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     repo_src = Path(__file__).resolve().parents[2] / "src"
     env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")
@@ -169,14 +195,18 @@ def _wait_for_inference_job(endpoint_url: str, job_id: str) -> dict[str, object]
     )
 
 
-def _endpoint_spec(project_id: str, name: str, *, platform: str | None = None) -> EndpointSpec:
+def _endpoint_spec(
+    project_id: str, name: str, *, platform: str | None = None
+) -> EndpointSpec:
     resolved_platform = (platform or "").strip() or _platform()
     return EndpointSpec(
         name=name,
         project_id=project_id,
         image=_image(),
         platform=resolved_platform,
-        preset=resolve_serverless_gpu_preset("1gpu-16vcpu-200gb", platform=resolved_platform),
+        preset=resolve_serverless_gpu_preset(
+            "1gpu-16vcpu-200gb", platform=resolved_platform
+        ),
         container_ports=[8080],
         env={
             "COSMOS_MODEL_ID": DEFAULT_MODEL,
@@ -192,7 +222,9 @@ def _endpoint_spec(project_id: str, name: str, *, platform: str | None = None) -
     )
 
 
-def _create_with_fallback(client: ServerlessClient, name: str) -> tuple[str, EndpointInfo]:
+def _create_with_fallback(
+    client: ServerlessClient, name: str
+) -> tuple[str, EndpointInfo]:
     """Create the endpoint, rotating across projects *and* GPU families.
 
     On not-enough-resources (NER) for a project we rotate to the next project;
@@ -269,7 +301,9 @@ def cosmos_endpoint() -> Iterator[dict[str, str]]:
             }
         )
 
-        running = client.wait_for_running(project_id, info.id or name, timeout=900, poll_interval=15)
+        running = client.wait_for_running(
+            project_id, info.id or name, timeout=900, poll_interval=15
+        )
         state["url"] = running.url or info.url
         update_workbench_serverless_endpoint(
             project_key,
@@ -422,7 +456,9 @@ def test_e2e_cli_infer_prompt(cosmos_endpoint: dict[str, str]) -> None:
     assert completed.get("status") == "completed"
 
 
-def test_e2e_cli_deploy_dry_run_uses_selected_project(cosmos_endpoint: dict[str, str]) -> None:
+def test_e2e_cli_deploy_dry_run_uses_selected_project(
+    cosmos_endpoint: dict[str, str],
+) -> None:
     result = _run_npa(
         [
             "workbench",
@@ -455,8 +491,12 @@ def test_e2e_cli_deploy_dry_run_uses_selected_project(cosmos_endpoint: dict[str,
 
 
 @pytest.mark.e2e
-@pytest.mark.skipif(DRY_RUN_ENABLED, reason="Cosmos autoscale e2e configures a live endpoint")
-def test_e2e_cli_autoscale_configures_running_endpoint(cosmos_endpoint: dict[str, str]) -> None:
+@pytest.mark.skipif(
+    DRY_RUN_ENABLED, reason="Cosmos autoscale e2e configures a live endpoint"
+)
+def test_e2e_cli_autoscale_configures_running_endpoint(
+    cosmos_endpoint: dict[str, str],
+) -> None:
     result = _run_npa(
         [
             "workbench",

@@ -1291,10 +1291,20 @@ def test_cli_sdk_and_terms_share_supported_contract(tmp_path: Path) -> None:
 
 
 def test_film_profile_cli_sdk_and_runtime_agree(tmp_path):
-    cli = CliRunner().invoke(app, [
-        "workbench", "isaac-arena", "evaluate", "--output-path", str(tmp_path),
-        "--record-video", "--video-profile", "film", "--dry-run",
-    ])
+    cli = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "isaac-arena",
+            "evaluate",
+            "--output-path",
+            str(tmp_path),
+            "--record-video",
+            "--video-profile",
+            "film",
+            "--dry-run",
+        ],
+    )
     assert cli.exit_code == 0, cli.output
     cli_result = json.loads(cli.output)
     sdk_result = sdk_evaluate(
@@ -1308,9 +1318,11 @@ def test_film_profile_cli_sdk_and_runtime_agree(tmp_path):
 @pytest.mark.parametrize("profile", ["", "unknown", None, []])
 def test_capture_profile_rejects_unsupported_values(profile, tmp_path):
     with pytest.raises(IsaacArenaError, match="video_profile"):
-        evaluate(IsaacArenaRequest(
-            output_path=str(tmp_path), video_profile=profile, dry_run=True
-        ))
+        evaluate(
+            IsaacArenaRequest(
+                output_path=str(tmp_path), video_profile=profile, dry_run=True
+            )
+        )
 
 
 def test_film_requires_video(tmp_path):
