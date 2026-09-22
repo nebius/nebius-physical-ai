@@ -1,0 +1,30 @@
+{
+  "published_source": "04f64f4a966ad6f9b5e9b66703704ff714150570",
+  "published_tree": "76b3a4d3e272ac792305a3244a133c4242ec3a1f",
+  "full_suite_source": "63515dd64a1c94e3966c8e94c7ce84309bc8a9bf",
+  "full_suite": {
+    "passed": 25690,
+    "skipped": 155,
+    "non_strict_xpassed": 1,
+    "failed": 0,
+    "errors": 0
+  },
+  "pre_pr_gates": 10,
+  "native_security": {
+    "current_main": "f9fafced122235312566b1f62ce590aa7f1e5604",
+    "baseline_findings": 607,
+    "candidate_findings": 607,
+    "blocking_regressions": 0
+  },
+  "final_adjustment": "Represent four source-file SHA-256 pins as explicit pairs. All four resulting mapping entries and all other 3344 tracked files are identical to the full-tested source.",
+  "focused_consumers_on_final_tree": 157,
+  "final_tree_equal_to_focused_source": "3ce6387b1e7780923cd4e13048891cde9b19ae0e",
+  "actual_live_producer": "b4c6568101e835e60e494206c6ec7ef71d908b61",
+  "publication_history": "One signed fast-forward commit above the existing public head; private intermediate validation sources are retained. No public history was rewritten.",
+  "aggregate_and_new_history_secret_scans": "PASS; zero findings, no suppression",
+  "github_ci": "Pending on this exact published source at preparation time",
+  "private_receipt_sha256": {
+    "full_verdict": "801b2824650bb13c2daa33e7626acfa195588cf8118f577c9f4f9f33bb9bf7f9",
+    "final_tree_and_publication_checks": "b060792e37b193e64350e9b256525979b0e3b9b50ae1ca1641aef4abd65f79d0"
+  }
+}

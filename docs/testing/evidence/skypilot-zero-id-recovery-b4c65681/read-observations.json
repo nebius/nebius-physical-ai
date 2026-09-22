@@ -1,0 +1,50 @@
+[
+  {
+    "role": "provider identity",
+    "observed_at": "2026-09-22T00:48:11.922015+00:00",
+    "method": "GET",
+    "status": 0,
+    "status_semantics": "Provider command exit code",
+    "raw_response_sha256": "c62703212042ffbdc960e0058e8418c25ef1662c112ce1337ca67837dc75d270"
+  },
+  {
+    "role": "controller Pod",
+    "observed_at": "2026-09-22T00:48:12.034638+00:00",
+    "method": "GET",
+    "status": 404,
+    "status_semantics": "HTTP response",
+    "raw_response_sha256": "ffd23abff7e684da861698c1aadfb1b34a53e7ead4ac433054c75ec80390b8dc"
+  },
+  {
+    "role": "controller Service",
+    "observed_at": "2026-09-22T00:48:12.038197+00:00",
+    "method": "GET",
+    "status": 404,
+    "status_semantics": "HTTP response",
+    "raw_response_sha256": "816e246b7208083ba44ce5e0c4bc9ea7aae5fe33869838946985c85de23b7280"
+  },
+  {
+    "role": "controller SSH Service",
+    "observed_at": "2026-09-22T00:48:12.041533+00:00",
+    "method": "GET",
+    "status": 404,
+    "status_semantics": "HTTP response",
+    "raw_response_sha256": "c7f2f9443de2d60b3185d8ad2fd68a6e7f74709bb3c9740075cc77c4ed0480bb"
+  },
+  {
+    "role": "complete Pod metadata",
+    "observed_at": "2026-09-22T00:48:12.049073+00:00",
+    "method": "GET",
+    "status": 200,
+    "status_semantics": "HTTP response",
+    "raw_response_sha256": "0506b4e041a8f3f29950cb6fc7252cb5f798a8b68c0fb387d474345139615e23"
+  },
+  {
+    "role": "complete Service metadata",
+    "observed_at": "2026-09-22T00:48:12.055654+00:00",
+    "method": "GET",
+    "status": 200,
+    "status_semantics": "HTTP response",
+    "raw_response_sha256": "3a173fd37149eb18e4575577c2e6731faf35511978f88284e1c6d92c594acbf6"
+  }
+]

@@ -1,0 +1,46 @@
+{
+  "schema": "npa.public.zero-id-recovery-evidence.v1",
+  "recorded_at": "2026-09-22T01:29:35.086029+00:00",
+  "actual_execution_source": "b4c6568101e835e60e494206c6ec7ef71d908b61",
+  "actual_execution_tree": "b5a99d21064754c460444a88aa75c7f454f9aad6",
+  "started_at": "2026-09-22T00:48:10.143220+00:00",
+  "finished_at": "2026-09-22T00:48:12.294790+00:00",
+  "returncode": 0,
+  "original_failure": "One issued managed-job launch failed storage-capability preflight before an accepted native job ID.",
+  "accepted_native_job_ids": 0,
+  "prospective_review": true,
+  "fresh_read_count": 6,
+  "provider_identity_reads": 1,
+  "exact_controller_resource_not_found_reads": 3,
+  "complete_metadata_lists": {
+    "pods": 41,
+    "services": 21
+  },
+  "original_error_preserved": true,
+  "all_prior_events_preserved": true,
+  "appended_absence_events": 1,
+  "original_manifest_unchanged": true,
+  "final_local_operation_phase": "destroyed",
+  "final_local_lease_phase": "destroyed",
+  "phase_interpretation": "Current resource absence reconciled; not proof of a historical cloud deletion or workload success.",
+  "historical_workload_outcome": "unknown",
+  "cloud_mutations": false,
+  "hardware_applicability": "Host CPU and real provider/Kubernetes control-plane reads. No GPU workload is involved.",
+  "historical_read_limits": {
+    "first_decision": "Controller-derived absence; not a queue call.",
+    "second_decision": "Original source-bound queue reconciliation.",
+    "historical_queue_stdout_retained": false,
+    "claim": "Fresh reads prove current absence only."
+  },
+  "retained_private_evidence_hashes": {
+    "actual_execution_receipt": "93d69f17e84940ea2789184ec8937b6ba44a90271546518292f7a948d9956f6c",
+    "independent_actual_execution_audit": "7d0b99f3c8b572524784034902f715107645a3c5c4ebbe10d5f77080a3146b45",
+    "prospective_apply_review": "c9ab9f0cf242fa25528eaa7a0e2758289a2e52055f6a261701ea3b1b2b356e2b",
+    "original_journal": "486f44882aa0cb35b0e3e8bf142d6bcf1f13002c2b80795f0eb7c929508738f2",
+    "updated_journal": "45107d5b0c3a2de49d9aa10b447b7ec2f486dedfe90eef5f708ab70b677e4b3b",
+    "original_lease": "adf99cccadb0f8cf8efeac14442a7121904f8a0562167ccf04c88835577d97dd",
+    "updated_lease": "a59e426714bea3dd249b07ba80eab7f59577a05fbf53e6eb888507e4c84270e1",
+    "raw_read_inventory": "7c871f66da06537739a8eb8b504d2bfa9eb2c7c103036f09d376fe1ed7042bde",
+    "canonical_reconciliation": "68728ce74a5d3cd1404913eac6394d173c5ba9878e0be48547c62d31e150b7d5"
+  }
+}
