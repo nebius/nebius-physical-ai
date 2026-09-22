@@ -18,8 +18,10 @@ from npa.cli.fiftyone import (
     FIFTYONE_HEALTH_RETRIES,
     FIFTYONE_HEALTH_BACKOFF_SEC,
     FIFTYONE_VERSION,
+    _lerobot_importer_source,
     _run_fiftyone_command,
 )
+from npa.cli.fiftyone.subtasks import _subtask_export_python_script
 from npa.cli.main import app
 from npa.clients.ssh import SSHError
 from npa.clients import config as config_module
@@ -70,6 +72,7 @@ def _active_endpoint(url: str):
         "launch",
         "curate",
         "eval",
+        "export-lerobot-subtasks",
         "load-dataset",
         "restart",
         "open",
@@ -101,6 +104,73 @@ def test_fiftyone_load_dataset_help_includes_format_flag() -> None:
     assert result.exit_code == 0
     assert "--format" in output
     assert "lerobot" in output
+
+
+def test_fiftyone_export_lerobot_subtasks_requires_s3_output(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            str(tmp_path / "derived"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--output-path must be an s3:// URI" in result.output
+
+
+def test_fiftyone_export_lerobot_subtasks_returns_remote_report(mocker) -> None:
+    ssh = mocker.Mock()
+    ssh.run.return_value = (
+        0,
+        json.dumps(
+            {
+                "status": "exported",
+                "dataset_name": "review",
+                "segment_count": 3,
+                "output_path": "s3://bucket/derived/",
+            }
+        ),
+        "",
+    )
+    mocker.patch("npa.cli.fiftyone._get_ssh_config", return_value=_cfg())
+    mocker.patch("npa.cli.fiftyone.SSHClient", return_value=ssh)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "export-lerobot-subtasks",
+            "--dataset-name",
+            "review",
+            "--output-path",
+            "s3://bucket/derived/",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.output)["segment_count"] == 3
+    remote_command = ssh.run.call_args.args[0]
+    assert "export_fiftyone_subtasks_to_s3" in remote_command
+    assert "subtask:" in remote_command
+
+
+def test_fiftyone_subtask_export_embedded_python_compiles() -> None:
+    script = _subtask_export_python_script("review", "s3://bucket/derived/")
+
+    compile(script, "<fiftyone-subtask-export>", "exec")
+
+
+def test_fiftyone_bundled_lerobot_importer_compiles() -> None:
+    compile(_lerobot_importer_source(), "<fiftyone-lerobot-importer>", "exec")
 
 
 def test_fiftyone_deploy_defaults_to_cpu_without_gpu_flags(
@@ -490,7 +560,10 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     assert "FIFTYONE_DEFAULT_APP_ADDRESS=127.0.0.1" in install_cmd
     assert "FIFTYONE_DEFAULT_APP_PORT=5151" in install_cmd
     assert 'service_group="$(id -gn "$service_user")"' in install_cmd
-    assert 'sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"' in install_cmd
+    assert (
+        'sudo chown "$service_user:$service_group" "$fiftyone_env_stage/env"'
+        in install_cmd
+    )
     assert "lerobot[pusht" not in install_cmd
     assert "Installing LeRobot" not in install_cmd
     assert "TimeoutStopSec=15" in install_cmd
@@ -498,7 +571,13 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     assert update_status.call_args_list[0].args == ("proj", "curate-gpu", "installing")
     assert update_status.call_args_list[1].args == ("proj", "curate-gpu", "provisioned")
     assert update_status.call_args_list[-1].args == ("proj", "curate-gpu", "healthy")
-    health.assert_called_once_with(ssh, 5151, path="/", retries=FIFTYONE_HEALTH_RETRIES, backoff=FIFTYONE_HEALTH_BACKOFF_SEC)
+    health.assert_called_once_with(
+        ssh,
+        5151,
+        path="/",
+        retries=FIFTYONE_HEALTH_RETRIES,
+        backoff=FIFTYONE_HEALTH_BACKOFF_SEC,
+    )
 
 
 def test_fiftyone_deploy_runtime_container_starts_image(tmp_path: Path, mocker) -> None:
@@ -782,7 +861,9 @@ def test_fiftyone_deploy_writes_config_before_readiness_and_warns_on_timeout(
     mocker.patch("npa.cli.fiftyone.write_manifest")
     mocker.patch(
         "npa.cli.fiftyone.health_check_ssh",
-        side_effect=lambda *_args, **_kwargs: events.append(("health", "timeout")) or False,
+        side_effect=lambda *_args, **_kwargs: (
+            events.append(("health", "timeout")) or False
+        ),
     )
 
     result = runner.invoke(
@@ -1382,7 +1463,9 @@ def test_fiftyone_load_dataset_lerobot_format_uses_remote_importer(
     assert f'SOURCE = "{source}"' in cmd
     assert 'FORMAT = "lerobot"' in cmd
     assert "npa_fiftyone_lerobot_importer.py" in cmd
+    assert "_npa_fiftyone_lerobot_subtasks" in cmd
     assert "def import_lerobot_dataset(" in cmd
+    assert "def existing_subtask_segments(" in cmd
     assert "stale estimatedDocumentCount" in cmd
     assert "import_lerobot_dataset(NAME, SOURCE, DATASETS_DIR)" in cmd
 
@@ -1557,7 +1640,10 @@ def test_fiftyone_datasets_list_queries_graphql(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     post = mocker.patch("npa.cli.fiftyone.httpx.post", return_value=response)
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(
         app,
@@ -1579,7 +1665,10 @@ def test_fiftyone_status_checks_app_port_url(mocker) -> None:
     mocker.patch("npa.cli.fiftyone.resolve_ssh_config", return_value=_cfg())
     get = mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(
         app,
@@ -1713,7 +1802,8 @@ def test_fiftyone_open_port_forwards_and_cleans_up(mocker) -> None:
             "svc/npa-fiftyone",
             "6161:5151",
         ],
-        stdout=-1, stderr=-2,
+        stdout=-1,
+        stderr=-2,
     )
     process.terminate.assert_called_once()
     process.wait.assert_called()
@@ -1824,7 +1914,10 @@ def test_fiftyone_status_reports_http_error(mocker) -> None:
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", return_value=response)
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 
@@ -1840,7 +1933,10 @@ def test_fiftyone_status_reports_provisioning_when_unreachable(mocker) -> None:
     )
     mocker.patch("npa.cli.fiftyone.httpx.get", side_effect=httpx.ConnectError("down"))
 
-    mocker.patch("npa.cli.fiftyone.service_endpoint", return_value=_active_endpoint("http://127.0.0.1:15151"))
+    mocker.patch(
+        "npa.cli.fiftyone.service_endpoint",
+        return_value=_active_endpoint("http://127.0.0.1:15151"),
+    )
 
     result = runner.invoke(app, ["workbench", "fiftyone", "status"])
 

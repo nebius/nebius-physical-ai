@@ -59,6 +59,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",
+    "workbench.isaac_arena": "isaac-arena",
     "workbench.openarm": "openarm",
     "workbench.lerobot": "lerobot",
     "workbench.sonic": "sonic",
@@ -74,9 +75,24 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.groot": "groot",
 }
 
+# Runtime-fetch images intentionally carry the tool runtime but not the NPA CLI
+# distribution.  Their generated setup installs NPA from the operator's
+# content-addressed source copy before invoking a toolRef.  This is an image
+# capability, not a tenant workaround: a changed image can retire an entry only
+# when it genuinely bakes a compatible NPA CLI.
+IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
+
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workflow.paidf": (),
+    "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
+    "workflow.paidf.run_evg_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
+    "workflow.paidf.postprocess_iaa": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_captioning": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_visual_qa": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
     "workbench.openpi": (OPENPI_TERMS_ENV,),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
@@ -103,6 +119,9 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # Alpamayo2-Super fetches both its OpenMDW checkpoint and the separately
     # gated PhysicalAI-AV sample under the operator's accepted HF identity.
     "workbench.alpamayo2_super": ("HF_TOKEN",),
+    # Isaac is fetched after non-secret run-scoped ACCEPT_EULA; policy inputs
+    # and output storage use the standard workflow S3 credential contract.
+    "workbench.isaac_arena": (),
     # The default GEAR-SONIC and GR00T-N1.7 assets are public. Callers may still
     # pass HF_TOKEN for rate limits or private overrides, but it is not a preflight.
     "workbench.sonic": (),
@@ -118,6 +137,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
     "workflow.groot.publish_learning": "viz",
@@ -144,7 +164,7 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.transfer_report": (
         ("python:av", "av>=12,<17"),
         ("python:matplotlib", "matplotlib>=3.8,<4"),
-        ("python:rerun", "rerun-sdk>=0.29,<0.32"),
+        ("python:rerun", "rerun-sdk==0.38.1"),
     ),
     "workbench.alpamayo2_super.sweep": (
         ('python:ray;assert(ray.__version__=="2.58.0")', "ray[default]==2.58.0"),
@@ -218,6 +238,9 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
+    # creates a separate vendor venv before installing XR1's pinned packages.
+    "workflow.xr1": ("/opt/conda/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
@@ -387,9 +410,7 @@ def normalize_resources(
     # operators can retarget without editing the committed blueprint; otherwise
     # submit-time resolution supplies a per-profile remap.
     accel_override = str(_os.environ.get("NPA_WORKFLOW_GPU_ACCELERATOR") or "").strip()
-    gpu_memory_override = str(
-        _os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or ""
-    ).strip()
+    gpu_memory_override = str(_os.environ.get("NPA_WORKFLOW_GPU_MEMORY") or "").strip()
     overrides = dict(accelerator_overrides or {})
 
     out: dict[str, Any] = {}
@@ -662,6 +683,18 @@ def tool_image_key(tool_ref: str) -> str | None:
     return TOOL_REF_IMAGE_TOOL.get(best)
 
 
+def tool_requires_staged_npa_source(tool_ref: str) -> bool:
+    """Return whether a tool's selected runtime image needs staged NPA source.
+
+    A non-empty image reference alone does not prove it includes the NPA CLI.
+    Runtime-fetch images deliberately omit that distribution to keep their
+    published payload narrow, so the submit preflight must stage source even
+    though image routing itself succeeds.
+    """
+
+    return tool_image_key(tool_ref) in IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE
+
+
 def resolve_task_image(
     tool_ref: str,
     resources: Mapping[str, Any],
@@ -906,6 +939,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    if tool_ref == "workbench.token_factory.robot_sdg":
+        return "export MUJOCO_GL=osmesa\nexport PYOPENGL_PLATFORM=osmesa\n"
     content_agents_pythonpath = (
         'if [ -n "$PYTHONPATH" ]; then\n'
         '  export PYTHONPATH="/opt/npa-runtime:/opt/content-agents:'
@@ -928,7 +963,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
         return content_agents_pythonpath + (
             "/opt/venv/bin/python -m npa.workflows.content_agents bootstrap-runtime\n"
             "if ! python3 -c 'import ctypes; "
-            'ctypes.CDLL("libGLX_nvidia.so.0")' "' >/dev/null 2>&1; then\n"
+            'ctypes.CDLL("libGLX_nvidia.so.0")'
+            "' >/dev/null 2>&1; then\n"
             "  echo 'OVRTX requires NVIDIA GPU Operator graphics driver mounts; "
             "libGLX_nvidia.so.0 is unavailable' >&2\n"
             "  exit 1\n"
@@ -1132,7 +1168,7 @@ def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
 #: NVIDIA's documented, run-scoped gate on Isaac acquisition/use.
 ISAAC_EULA_ENV = "ACCEPT_EULA"
 #: Image keys in TOOL_REF_IMAGE_TOOL that resolve to an Isaac-based image.
-ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "sonic"})
+ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "isaac-arena", "sonic"})
 
 
 def routes_at_an_isaac_image(
@@ -1173,7 +1209,7 @@ def routes_at_an_isaac_image(
     raw = resources or {}
     image = str(resolved_image or raw.get("image") or raw.get("image_id") or "").lower()
     image = image.removeprefix("docker:")
-    if "isaac-lab" in image or "npa-sonic" in image:
+    if any(name in image for name in ("isaac-lab", "npa-isaac-arena", "npa-sonic")):
         return True
     pod = ((raw.get("kubernetes") or {}).get("pod_config") or {}).get("spec") or {}
     for container in pod.get("containers") or []:
@@ -1259,7 +1295,16 @@ def default_npa_setup() -> str:
         "  fi\n"
         "}\n"
         "if ! command -v npa >/dev/null 2>&1; then\n"
-        "  if [ -d /opt/nebius-physical-ai/npa ]; then\n"
+        # The active runtime-fetch images intentionally ship the installable
+        # project under /opt/npa but not a shell-visible `npa` launcher. Recording
+        # that tree alone is insufficient: the first task then skips the legacy
+        # branch, has no staged source URI, and exits before its GPU command runs.
+        # Install from the image-local source before falling back to the legacy
+        # layout or external source staging.
+        "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
+        "    npa_pip_install -e /opt/npa\n"
+        "    npa_record_src_root /opt/npa\n"
+        "  elif [ -d /opt/nebius-physical-ai/npa ]; then\n"
         "    npa_pip_install -e /opt/nebius-physical-ai/npa\n"
         "    npa_record_src_root /opt/nebius-physical-ai/npa\n"
         "  else\n"
@@ -1458,7 +1503,7 @@ def default_npa_setup() -> str:
 #: two ever diverge. (An earlier version imported a ``_rerun_pin`` symbol that does
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
-NUREC_RERUN_PIN = "rerun-sdk==0.31.4"
+NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -1601,14 +1646,14 @@ def render_setup_for_tool(
             '  echo "Content Agents baked interpreter is unavailable" >&2\n'
             "  exit 69\n"
             "fi\n"
-            '"$npa_baked_python" - <<\'PY\'\n'
+            "\"$npa_baked_python\" - <<'PY'\n"
             "from npa.workflows.content_agents import inspect_image\n"
             "payload = inspect_image()\n"
             "if payload.get('status') != 'image-ready':\n"
             "    raise SystemExit('Content Agents image boundary is not ready')\n"
             "print('Content Agents narrow baked runtime verified')\n"
             "PY\n"
-            'printf \'%s\\n\' "$npa_baked_python" > /tmp/npa-python\n'
+            "printf '%s\\n' \"$npa_baked_python\" > /tmp/npa-python\n"
         )
     require_baked = str(config.get("require_baked_npa") or "").strip().lower()
     if require_baked in {"1", "true", "yes", "on"}:
@@ -1655,7 +1700,7 @@ def render_setup_for_tool(
             "fi\n"
             'npa_baked_pythonpath=""\n'
             "if [ -d /opt/npa/src ]; then\n"
-            '  npa_baked_pythonpath=/opt/npa/src\n'
+            "  npa_baked_pythonpath=/opt/npa/src\n"
             '  export PYTHONPATH="$npa_baked_pythonpath${PYTHONPATH:+:$PYTHONPATH}"\n'
             "fi\n"
             "\"$npa_baked_python\" - <<'PY'\n"
@@ -1679,6 +1724,14 @@ def render_setup_for_tool(
             "fi\n"
         )
     parts = [default_npa_setup()]
+    if tool_ref == "workbench.token_factory.robot_sdg":
+        parts.append(
+            'if [ "$(id -u)" = 0 ]; then\n'
+            "  apt-get update && apt-get install -y --no-install-recommends libosmesa6 ffmpeg\n"
+            "else\n"
+            "  sudo apt-get update && sudo apt-get install -y --no-install-recommends libosmesa6 ffmpeg\n"
+            "fi\n"
+        )
     parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))
     extra = tool_pip_extra(tool_ref)
     if extra:
@@ -1719,6 +1772,10 @@ def render_setup_for_tool(
         # Installing into the interpreter npa was installed into (recorded by
         # default_npa_setup) avoids a second, npa-less python winning on PATH.
         parts.append(
+            # SkyPilot reconstructs a task environment and does not reliably
+            # preserve capability selectors declared only by the container.
+            # Bind the narrow CLI to the toolRef that owns this invocation.
+            "export NPA_LIGHT_WORKBENCH_TOOL=nurec\n"
             "set -e\n"
             "if ! command -v ffmpeg >/dev/null 2>&1; then\n"
             "  export DEBIAN_FRONTEND=noninteractive\n"
@@ -1775,6 +1832,20 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
             if name not in seen:
                 seen.add(name)
                 hints.append(name)
+        # RoboCasa endpoints use a bearer token whose variable name is part of
+        # the workflow config.  Read the already-resolved argv rather than
+        # guessing a fixed variable name, so a deployment can use a scoped
+        # token without silently dropping it at submit time.
+        if tool_ref == "workbench.robocasa" or tool_ref.startswith(
+            "workbench.robocasa."
+        ):
+            for index, arg in enumerate(step.argv[:-1]):
+                if arg != "--token-env":
+                    continue
+                name = step.argv[index + 1]
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) and name not in seen:
+                    seen.add(name)
+                    hints.append(name)
     return tuple(hints)
 
 
@@ -1942,11 +2013,18 @@ def build_skypilot_task_doc(
         "NPA_WORKFLOW_RUN_ID": run_id,
         "NPA_WORKFLOW_STATE": str(scheduler_task["name"]),
         # Retain output roles for the shared raw/rendered SDK submission gate.
-        "NPA_EXECUTION_OUTPUTS": json.dumps([
-            {"uri": output["uri"], "kind": output.get("kind") or ("directory" if str(output["uri"]).endswith("/") else "file")}
-            for output in scheduler_task.get("outputs") or []
-            if str(output.get("uri") or "").startswith("s3://")
-        ], separators=(",", ":")),
+        "NPA_EXECUTION_OUTPUTS": json.dumps(
+            [
+                {
+                    "uri": output["uri"],
+                    "kind": output.get("kind")
+                    or ("directory" if str(output["uri"]).endswith("/") else "file"),
+                }
+                for output in scheduler_task.get("outputs") or []
+                if str(output.get("uri") or "").startswith("s3://")
+            ],
+            separators=(",", ":"),
+        ),
     }
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
@@ -2022,9 +2100,10 @@ def build_skypilot_task_doc(
     # other cloud SkyPilot hands us a fresh VM, so only an explicit
     # NPA_MODEL_CACHE_DIR -- the operator saying the path is already there --
     # can be honored, and the env must not name a path nothing backs.
-    cache_on_kubernetes = (
-        str(resources.get("cloud") or "").strip().lower() in {"kubernetes", "k8s"}
-    )
+    cache_on_kubernetes = str(resources.get("cloud") or "").strip().lower() in {
+        "kubernetes",
+        "k8s",
+    }
     cache_root = resolve_model_cache_root(
         runtime=RUNTIME_KUBERNETES if cache_on_kubernetes else RUNTIME_PREMOUNTED
     )
@@ -2105,7 +2184,9 @@ def build_skypilot_task_doc(
         # downloads its model here so the eval's readiness window is not spent on
         # it), and SkyPilot runs it in a different shell than run -- so the cache
         # tree has to exist in both.
-        doc["setup"] = render_model_cache_shell(cache_root, mounted=cache_mounted) + setup
+        doc["setup"] = (
+            render_model_cache_shell(cache_root, mounted=cache_mounted) + setup
+        )
     # When no workbench image is pinned, point setup at an existing S3 copy of
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
@@ -2142,7 +2223,13 @@ def build_skypilot_task_doc(
         # Opt-in overlay: reinstall branch npa ON TOP of a baked image (--no-deps),
         # used to run un-imaged branch code on GPU without rebuilding the image.
         if (
-            str(os.environ.get("NPA_SRC_OVERLAY") or spec.config.get("source_overlay") or "").strip().lower()
+            str(
+                os.environ.get("NPA_SRC_OVERLAY")
+                or spec.config.get("source_overlay")
+                or ""
+            )
+            .strip()
+            .lower()
             in {"1", "true"}
             and src_uri
         ):

@@ -34,13 +34,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out full history
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
@@ -77,6 +77,7 @@ jobs:
             npa/tests/docker/test_image_payload_scan.py \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \
+            npa/tests/guardrails/test_workbench_image_k8s_prereqs.py \
             -q
 
       - name: Exercise exact native complete-byte scanner dependencies
@@ -128,25 +129,28 @@ jobs:
           always() && steps.scope.outputs.deep == 'true' &&
           (github.event_name == 'push' || github.event_name == 'schedule' ||
           github.event_name == 'workflow_dispatch')
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config
 
-  base-image-cve-scan:
-    name: Base image CVE inventory
+  base-image-plan:
+    name: Plan base image CVE inventory
     runs-on: ubuntu-latest
+    outputs:
+      deep: ${{ steps.scope.outputs.deep }}
+      matrix: ${{ steps.inventory.outputs.matrix }}
     steps:
       - name: Check out full history
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -169,16 +173,56 @@ jobs:
           echo "deep=$deep" >> "$GITHUB_OUTPUT"
           echo "deep base-image security: $deep"
 
+      - name: Enumerate every validated base
+        id: inventory
+        run: |
+          set -euo pipefail
+          matrix="$(npa/.venv/bin/python npa/scripts/scan_base_images.py \
+            --inventory npa/docker/workbench/base-image-security.json \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" --matrix)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  base-image-entry:
+    name: Base image CVE / ${{ matrix.entry }}
+    needs: base-image-plan
+    if: needs.base-image-plan.outputs.deep == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.base-image-plan.outputs.matrix) }}
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Create validation environment
+        run: python -m venv npa/.venv
+
+      - name: Record available scan storage
+        run: df -B1 "$RUNNER_TEMP" /var/lib/docker
+
       - name: Install checksum-verified Trivy
-        if: steps.scope.outputs.deep == 'true'
         run: |
           bash scripts/security_install.sh "$RUNNER_TEMP/security-tools"
           echo "$RUNNER_TEMP/security-tools" >> "$GITHUB_PATH"
 
-      - name: Scan all pinned bases with three local workers
-        if: steps.scope.outputs.deep == 'true'
+      - name: Reclaim unused hosted-runner SDK space
+        run: |
+          # CUDA images and Trivy's exports must coexist on this disposable runner.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc
+          df -h /
+
+      - name: Scan the exact inventory entry
         env:
           EVENT_NAME: ${{ github.event_name }}
+          SCAN_ENTRY: ${{ matrix.entry }}
         run: |
           set -euo pipefail
           report_args=()
@@ -187,71 +231,41 @@ jobs:
           fi
           npa/.venv/bin/python npa/scripts/scan_base_images.py \
             --inventory npa/docker/workbench/base-image-security.json \
-            --cache-dir "$RUNNER_TEMP/trivy-cache" --workers 3 \
-            "${report_args[@]}"
+            --entry-name "$SCAN_ENTRY" --workers 1 \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" "${report_args[@]}"
 
-      - name: Upload CUDA 12.4 SARIF
-        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+      - name: Record remaining scan storage
+        if: always()
+        run: df -B1 "$RUNNER_TEMP" /var/lib/docker
+
+      - name: Upload base SARIF
+        if: always() && github.event_name != 'pull_request' && github.event_name != 'merge_group'
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
-          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-4-1-devel-ubuntu22-04.sarif
-          category: trivy-image-nvidia-cuda-12-4-1-devel-ubuntu22-04
+          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-${{ matrix.entry }}.sarif
+          category: trivy-image-${{ matrix.entry }}
 
-      - name: Upload CUDA 12.6 SARIF
-        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+  base-image-cve-scan:
+    name: Base image CVE inventory
+    needs: [base-image-plan, base-image-entry]
+    # Report scan failures, but release superseded runs without waiting for a runner.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require complete scoped inventory
         env:
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
-        with:
-          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-6-3-devel-ubuntu22-04.sarif
-          category: trivy-image-nvidia-cuda-12-6-3-devel-ubuntu22-04
-
-      - name: Upload CUDA 12.8 Ubuntu 22.04 SARIF
-        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        env:
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
-        with:
-          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04.sarif
-          category: trivy-image-nvidia-cuda-12-8-1-cudnn-devel-ubuntu22-04
-
-      - name: Upload CUDA 12.8 Ubuntu 24.04 SARIF
-        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        env:
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
-        with:
-          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04.sarif
-          category: trivy-image-nvidia-cuda-12-8-1-cudnn-devel-ubuntu24-04
-
-      - name: Upload CUDA 13 cuDNN SARIF
-        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        env:
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
-        with:
-          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04.sarif
-          category: trivy-image-nvidia-cuda-13-0-2-cudnn-devel-ubuntu24-04
-
-      - name: Upload CUDA 13 base SARIF
-        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        env:
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
-        with:
-          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-nvidia-cuda-13-0-2-base-ubuntu24-04.sarif
-          category: trivy-image-nvidia-cuda-13-0-2-base-ubuntu24-04
-
-      - name: Upload Python base SARIF
-        if: always() && steps.scope.outputs.deep == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
-        env:
-          CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
-        with:
-          sarif_file: ${{ runner.temp }}/base-image-sarif/trivy-python-3-11-slim-trixie.sarif
-          category: trivy-image-python-3-11-slim-trixie
+          PLAN_RESULT: ${{ needs.base-image-plan.result }}
+          DEEP: ${{ needs.base-image-plan.outputs.deep }}
+          SCAN_RESULT: ${{ needs.base-image-entry.result }}
+        run: |
+          set -euo pipefail
+          test "$PLAN_RESULT" = success
+          case "$DEEP:$SCAN_RESULT" in
+            true:success|false:skipped) ;;
+            *) echo "Base-image inventory did not complete successfully" >&2; exit 1 ;;
+          esac
 
   omniverse-payload-scan:
     name: Omniverse payload scan (built image)
@@ -259,15 +273,15 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
     steps:
       - name: Check out repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 
       - name: Install crane
-        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+        uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
       - name: Scan the public development image for a baked Omniverse Kit payload
         env:
@@ -279,7 +293,7 @@ jobs:
 
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: omniverse-payload-report
           path: omniverse-payload-report.json

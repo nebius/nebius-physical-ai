@@ -68,14 +68,13 @@ def test_agent_source_uses_configured_bucket_assert() -> None:
     assert "_assert_s3_uri_in_agent_bucket" in source
     assert "configured_agent_s3_buckets" in source
     assert "_AGENT_S3_GUARD_EMBED" in source
-    # Cross-project reads are narrower than arbitrary bucket access: the run id
-    # and exact discovered object key must both match. Mutation/write scope is
-    # still represented by the configured-bucket guard above.
+    # All caller-supplied artifact reads are narrower than arbitrary bucket
+    # access: the run id and exact discovered object key must both match.
+    # Mutation/write scope is still represented by the configured-bucket guard
+    # above.
     assert "def _resolve_accessible_run_artifact(" in source
     assert "artifact is not a discovered object for this run" in source
-    assert (
-        "cross-project s3_uri requires a run_id and exact discovered artifact" in source
-    )
+    assert "s3_uri requires a run_id and exact discovered artifact membership" in source
 
 
 def test_soperator_rejects_spec_path() -> None:
@@ -134,13 +133,14 @@ def test_agent_embeds_state_lock() -> None:
     assert "_AGENT_STATE_EMBED" in source
 
 
-def test_legacy_state_save_preserves_latest_atomic_leisaac_namespace() -> None:
+def test_legacy_state_save_preserves_latest_atomic_namespaces() -> None:
     stale = {
         "chat_history": [{"role": "user", "content": "done"}],
         "leisaac": {
             "run_id": "live-run",
             "bundle_selection": {"robot": {"name": "old-robot"}},
         },
+        "agent_act": {"confirmation": {"action": "old"}},
     }
     latest = {
         "chat_history": [],
@@ -152,21 +152,29 @@ def test_legacy_state_save_preserves_latest_atomic_leisaac_namespace() -> None:
                 "device": {"name": "keyboard"},
             },
         },
+        "agent_act": {"confirmation": {"action": "latest"}},
+        "workflow_executions": {"run": {"state": "succeeded"}},
     }
 
-    merged = preserve_latest_namespaces(stale, latest, ("leisaac",))
+    merged = preserve_latest_namespaces(
+        stale, latest, ("leisaac", "agent_act", "workflow_executions")
+    )
 
     assert merged["chat_history"] == stale["chat_history"]
     assert merged["leisaac"] == latest["leisaac"]
     assert merged["leisaac"] is not latest["leisaac"]
+    assert merged["agent_act"] == latest["agent_act"]
+    assert merged["agent_act"] is not latest["agent_act"]
+    assert merged["workflow_executions"] == latest["workflow_executions"]
+    assert merged["workflow_executions"] is not latest["workflow_executions"]
 
 
-def test_rendered_agent_legacy_save_preserves_atomic_leisaac_namespace() -> None:
+def test_rendered_agent_legacy_save_preserves_atomic_namespaces() -> None:
     source = AGENT_PY.read_text(encoding="utf-8")
     block = source.split("def _save_state(state: dict) -> None:", 1)[1].split(
         "def _mutate_state", 1
     )[0]
-    assert 'preserve_latest_namespaces(state, latest, ("leisaac",))' in block
+    assert "workflow_executions" in block
 
 
 def test_resolve_workflow_yaml_no_draft_fallback() -> None:

@@ -157,6 +157,7 @@ def solved_row(monkeypatch):
                 )
             )
         )
+
     result = SimpleNamespace(
         success=Tensor(True),
         get_interpolated_plan=lambda: path,
@@ -187,8 +188,15 @@ def solved_row(monkeypatch):
             # Locked/mimic fingers are returned in the full interpolation. Put
             # them between active joints so slicing the first seven is invalid.
             names = [
-                "left_finger", "joint6", "joint2", "joint0", "right_finger",
-                "joint5", "joint1", "joint4", "joint3",
+                "left_finger",
+                "joint6",
+                "joint2",
+                "joint0",
+                "right_finger",
+                "joint5",
+                "joint1",
+                "joint4",
+                "joint3",
             ]
             for field in ("position", "velocity", "acceleration", "jerk"):
                 source = getattr(path, field).data
@@ -240,8 +248,15 @@ def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solv
     row = solved_row(include_fingers=True)
     trajectory = row["trajectory"]
     assert trajectory["joint_names"] == [
-        "left_finger", "joint6", "joint2", "joint0", "right_finger",
-        "joint5", "joint1", "joint4", "joint3",
+        "left_finger",
+        "joint6",
+        "joint2",
+        "joint0",
+        "right_finger",
+        "joint5",
+        "joint1",
+        "joint4",
+        "joint3",
     ]
     for field in ("position", "velocity", "acceleration", "jerk"):
         assert np.asarray(trajectory[field]).shape == (2, 9)

@@ -102,7 +102,30 @@ The composition requires
 `video2video`: selecting a text-to-video or image-to-video mode fails before GPU
 inference rather than producing a misleading source-conditioned claim.
 
-The canonical workflow enables `structural_control: edge`. `conditioning_fps`
+`caption_model` defaults to `MiniMaxAI/MiniMax-M3` for the original
+and accepted-variant captions and for Cosmos Evaluator's visual questions.
+Token Factory availability is key-scoped and can change, so run
+`npa workbench token-factory models` before execution and override
+`caption_model` with another reachable vision model when needed.
+
+The canonical workflow enables `structural_control: edge`. The optional
+`transfer_edge_threshold` selects a native Canny preset from `very_low`, `low`,
+`medium` (default), `high`, and `very_high`; the native control receipt records
+the actual preset and verified pixel hash. Lower thresholds retain weaker
+edges, which can help expose small or dark features, but also admit noise.
+Inspect the controls and qualify the generated output independently.
+`transfer_rgb_weight` optionally adds native RGB conditioning to retain source
+color and surface cues that edges omit. Zero (the default) disables it; a
+positive weight is relative to edge weight 1. This uses the framework's `blur`
+hint with its `none` preset and verified lossless RGB controls. It changes model
+conditioning, never output-pixel blending, and can suppress the requested edit.
+`transfer_first_chunk_conditional_frames` separately controls whether the original
+RGB first frame anchors generation. Its compatibility default is 1; set 0 with
+edge transfer to test a changed appearance from the first frame. Complete source
+edges remain active, and later windows retain five generated overlap frames.
+Releasing the first-frame anchor may reduce object-identity preservation; review
+paired clips before adopting it. Native receipts record both conditioning counts.
+`conditioning_fps`
 defaults to 24; preparation letterboxes to 832×480 and preserves duration within
 one prepared frame. `transfer_chunk_frames` defaults to 93 and `control_guidance`
 to 1.5. Native chunks cover every prepared source frame, including a final
@@ -139,6 +162,19 @@ native structural controls across the complete prepared video. Inspect visual
 identity, motion and contacts independently of successful timeline validation;
 lowering a quality threshold changes acceptance criteria without improving pixels.
 
+### Task-specific appearance profiles
+
+`appearance_profiles_json` defaults to an empty string (the starter profiles).
+Supply a JSON array with `lighting`, `background`, `color_grade`, and
+`surface_finish` in every profile to select plausible edits for the chosen
+camera and task. The manifest retains those profiles and evaluator choices.
+Source captions sampled across the episode are separated from the requested
+appearance edit in the effective prompt. `caption_instruction` supplies task
+context from `augment_subject` and asks for uncertainty when features are unclear;
+override it for the selected camera and inspect the resulting captions. See the
+[realistic manipulation guide](paidf-realistic-augmentation.md) for battery
+insertion, controlled sampling experiments and review criteria.
+
 ## Artifact contract
 
 Every successful generation pass preserves the downstream layout:
@@ -153,6 +189,20 @@ cosmos_augmented/
     source_edges.mkv
     transfer.json
 ```
+
+Each successful variant is published as soon as generation and alignment checks
+finish. `cosmos_augmented/generation-progress.json` records the requested,
+published and failed counts, with clip IDs and failure phases. A blocked or
+failed variant still fails the stage; the batch does not write a new successful
+`manifest.json`. Other completed variants remain available as review evidence.
+Consumers must use the committed manifest, never infer a complete batch by
+listing the prefix. Progress evidence is not a training-data promotion signal.
+Recovery remains at workflow-stage granularity; retaining variants does not
+skip them automatically when a failed stage is retried.
+
+Concurrent generations lease distinct available GPUs. A faster variant can
+release its GPU to the next waiting variant without assigning that work to a GPU
+still occupied by another generation.
 
 Each metadata file records the real engine (`nvidia-cosmos/cosmos-framework`),
 `video2video` mode, source-video conditioning, checkpoint, seed, guidance,
@@ -217,6 +267,19 @@ and `NPA_PAIDF_REPAIR_DIR` set to a private local readback directory. It require
 saved raw-output hashes, uploads through the real publisher, and verifies exact
 bytes after S3 readback. This proves publication fidelity only.
 
+The B200 validation also ran against the pinned RoboPro physical capture. Its
+initial and refined Cosmos passes retained 27,090,575-byte and 25,931,172-byte
+raw model videos with upstream guardrails enabled and weights fetched at runtime.
+The then-current publisher evaluated source/model composites rather than those
+raw bytes: at a validation-only `0.40` threshold, the composites scored
+`0.154068` and `0.256552`; the second pass cleared hallucination and appearance
+checks but not temporal consistency or the required 4/4 attributes. The workflow
+therefore failed closed after the bounded refinement, retaining 98 artifacts and
+a 316,545-byte Rerun quality-evidence recording. This is historical pre-fix
+rejection-path evidence, not validation of the current full-video structural
+transfer path or an accepted-quality claim. It does not change the workflow's
+current exploratory thresholds or the stricter values operators may select.
+
 ## Optional Cosmos 3 versus Transfer 2.5 comparison
 
 This workflow makes no superiority claim. A reproducible comparison uses one
@@ -225,7 +288,7 @@ variant count and seeds, and the same Cosmos Evaluator threshold/check modes:
 
 1. stage the fixture once under a private run prefix;
 2. run `paidf-cosmos3.yaml` with one configured variant;
-3. run `physical-ai-data-factory.yaml` with `n_augmentations=1`, the same fixture,
+3. run `nvidia-paidf-vda-cosmos-transfer25.yaml` with `n_augmentations=1`, the same fixture,
    sampled appearance combination, and evaluator configuration;
 4. retain each engine's unmodified `cosmos_augmented/manifest.json` and
    `grade/cosmos_evaluator.json`;

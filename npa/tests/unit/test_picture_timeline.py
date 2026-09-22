@@ -18,21 +18,49 @@ def clips(tmp_path):
     result = []
     for index, (color, frames) in enumerate((("red", 33), ("blue", 33), ("green", 30))):
         path = tmp_path / f"source {index}'s.mp4"
-        subprocess.run([
-            "ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"color={color}:s=64x36:r=30",
-            "-frames:v", str(frames), "-c:v", "libx264", "-pix_fmt", "yuv420p", str(path),
-        ], check=True)
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color={color}:s=64x36:r=30",
+                "-frames:v",
+                str(frames),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                str(path),
+            ],
+            check=True,
+        )
         result.append(path)
-    return [timeline.PictureShot(result[0], 30, tail_frames=3),
-            timeline.PictureShot(result[1], 30, head_frames=3),
-            timeline.PictureShot(result[2], 30)]
+    return [
+        timeline.PictureShot(result[0], 30, tail_frames=3),
+        timeline.PictureShot(result[1], 30, head_frames=3),
+        timeline.PictureShot(result[2], 30),
+    ]
 
 
 def _frames(path):
-    raw = subprocess.check_output([
-        "ffmpeg", "-v", "error", "-xerror", "-i", str(path), "-pix_fmt", "rgb24",
-        "-f", "rawvideo", "pipe:1",
-    ])
+    raw = subprocess.check_output(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(path),
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+    )
     return np.frombuffer(raw, dtype=np.uint8).reshape(-1, 36, 64, 3).astype(float)
 
 
@@ -77,7 +105,9 @@ def test_failed_encoding_preserves_previous_delivery(clips, tmp_path, monkeypatc
     assert output.read_bytes() == b"previous delivery"
 
 
-def test_mid_assembly_source_edit_preserves_previous_delivery(clips, tmp_path, monkeypatch):
+def test_mid_assembly_source_edit_preserves_previous_delivery(
+    clips, tmp_path, monkeypatch
+):
     output = tmp_path / "picture.mp4"
     output.write_bytes(b"previous delivery")
     concatenate = timeline._concatenate
@@ -92,27 +122,46 @@ def test_mid_assembly_source_edit_preserves_previous_delivery(clips, tmp_path, m
     assert output.read_bytes() == b"previous delivery"
 
 
-@pytest.mark.parametrize("shots, fps, message", [
-    ([], 30, "needs shots"),
-    ([timeline.PictureShot(Path("unused"), 30)], True, "integer fps"),
-    ([timeline.PictureShot(Path("unused"), 30, head_frames=1)], 30, "first head"),
-    ([timeline.PictureShot(Path("unused"), 30, tail_frames=1)], 30, "last tail"),
-    ([timeline.PictureShot(Path("unused"), 30.0)], 30, "integers"),
-    ([timeline.PictureShot(Path("unused"), 0)], 30, "clear body"),
-    ([timeline.PictureShot(Path("a"), 30, tail_frames=3),
-      timeline.PictureShot(Path("b"), 30, head_frames=2)], 30, "must match"),
-    ([timeline.PictureShot(Path("a"), 2, tail_frames=2),
-      timeline.PictureShot(Path("b"), 30, head_frames=2)], 30, "clear body"),
-])
+@pytest.mark.parametrize(
+    "shots, fps, message",
+    [
+        ([], 30, "needs shots"),
+        ([timeline.PictureShot(Path("unused"), 30)], True, "integer fps"),
+        ([timeline.PictureShot(Path("unused"), 30, head_frames=1)], 30, "first head"),
+        ([timeline.PictureShot(Path("unused"), 30, tail_frames=1)], 30, "last tail"),
+        ([timeline.PictureShot(Path("unused"), 30.0)], 30, "integers"),
+        ([timeline.PictureShot(Path("unused"), 0)], 30, "clear body"),
+        (
+            [
+                timeline.PictureShot(Path("a"), 30, tail_frames=3),
+                timeline.PictureShot(Path("b"), 30, head_frames=2),
+            ],
+            30,
+            "must match",
+        ),
+        (
+            [
+                timeline.PictureShot(Path("a"), 2, tail_frames=2),
+                timeline.PictureShot(Path("b"), 30, head_frames=2),
+            ],
+            30,
+            "clear body",
+        ),
+    ],
+)
 def test_invalid_edits_fail_before_reading_media(shots, fps, message, tmp_path):
     with pytest.raises(ValueError, match=message):
-        timeline.assemble_picture(shots, tmp_path / "out.mp4", cache_dir=tmp_path / "cache", fps=fps)
+        timeline.assemble_picture(
+            shots, tmp_path / "out.mp4", cache_dir=tmp_path / "cache", fps=fps
+        )
 
 
 def test_missing_handle_frames_are_rejected(clips, tmp_path):
     wrong = [timeline.PictureShot(clips[0].path, 31, tail_frames=3), *clips[1:]]
     with pytest.raises(ValueError, match="frame count"):
-        timeline.assemble_picture(wrong, tmp_path / "out.mp4", cache_dir=tmp_path / "cache")
+        timeline.assemble_picture(
+            wrong, tmp_path / "out.mp4", cache_dir=tmp_path / "cache"
+        )
 
 
 def test_output_cannot_replace_source(clips, tmp_path):
@@ -127,13 +176,21 @@ def test_cut_only_single_shot_uses_all_frames(clips, tmp_path):
     assert _frames(output).shape[0] == 30
     video = timeline._probe(output)
     assert video["color_range"] == "tv"
-    assert all(video[key] == "bt709" for key in ("color_space", "color_transfer", "color_primaries"))
-    assert json.loads(next((tmp_path / "cache").glob("picture/*/cache-receipt.json")).read_text())["files"]
+    assert all(
+        video[key] == "bt709"
+        for key in ("color_space", "color_transfer", "color_primaries")
+    )
+    assert json.loads(
+        next((tmp_path / "cache").glob("picture/*/cache-receipt.json")).read_text()
+    )["files"]
 
 
 def test_middle_shot_can_have_both_handles_without_timeline_drift(clips, tmp_path):
-    shots = [clips[0], timeline.PictureShot(clips[1].path, 27, head_frames=3, tail_frames=3),
-             timeline.PictureShot(clips[2].path, 27, head_frames=3)]
+    shots = [
+        clips[0],
+        timeline.PictureShot(clips[1].path, 27, head_frames=3, tail_frames=3),
+        timeline.PictureShot(clips[2].path, 27, head_frames=3),
+    ]
     output = tmp_path / "picture.mp4"
     report = timeline.assemble_picture(shots, output, cache_dir=tmp_path / "cache")
     pixels = _frames(output).mean(axis=(1, 2))
@@ -145,4 +202,6 @@ def test_middle_shot_can_have_both_handles_without_timeline_drift(clips, tmp_pat
 
 def test_frame_rate_mismatch_is_rejected(clips, tmp_path):
     with pytest.raises(ValueError, match="constant 24 fps"):
-        timeline.assemble_picture(clips, tmp_path / "out.mp4", cache_dir=tmp_path / "cache", fps=24)
+        timeline.assemble_picture(
+            clips, tmp_path / "out.mp4", cache_dir=tmp_path / "cache", fps=24
+        )

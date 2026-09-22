@@ -24,6 +24,16 @@ still accepted for customer-provided tasks and guarded tool-specific examples.
 
 ## Invocation
 
+External schedulers may queue existing-cluster submissions when `workflow submit`
+returns exit code **75**: a supported per-node shape is temporarily unavailable,
+or active GPU pods still await placement, and no provider launch was attempted.
+Retry with the same run identity and pinned inputs after capacity changes. NPA
+does not create a queue or reserve capacity from this observation. Other failures,
+including ambiguous launch outcomes, require diagnosis/reconciliation before retry.
+Exact fit includes GPU, CPU, memory, ephemeral storage, pod slots and placement
+constraints. Integer GPU counts such as six are supported within the node maximum;
+free GPUs on different nodes cannot be combined to satisfy one rank.
+
 Run isolated workflow setup, submission, monitoring, recovery, and cleanup on
 one Linux operator host with `/proc` mounted. The owned local API verifies
 process and socket identity through Linux procfs; macOS supports local

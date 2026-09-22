@@ -32,7 +32,9 @@ def default_state_dir() -> Path:
 
 class RunStore:
     def __init__(self, directory: str | Path | None = None, *, scope: str = ""):
-        self.directory = Path(directory) if directory is not None else default_state_dir()
+        self.directory = (
+            Path(directory) if directory is not None else default_state_dir()
+        )
         self.scope = scope.rstrip("/")
         self._owner_file = None
 
@@ -47,13 +49,21 @@ class RunStore:
         os.chmod(path, 0o600)
         try:
             connection.execute("PRAGMA synchronous=FULL")
-            connection.execute("CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            connection.execute("CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, record TEXT NOT NULL)")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS runs (run_id TEXT PRIMARY KEY, record TEXT NOT NULL)"
+            )
             connection.commit()
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute("SELECT value FROM metadata WHERE key='scope'").fetchone()
+            row = connection.execute(
+                "SELECT value FROM metadata WHERE key='scope'"
+            ).fetchone()
             if row is None:
-                connection.execute("INSERT INTO metadata VALUES ('scope', ?)", (self.scope,))
+                connection.execute(
+                    "INSERT INTO metadata VALUES ('scope', ?)", (self.scope,)
+                )
             elif row[0] != self.scope:
                 raise RunStoreError("run store belongs to a different output scope")
             yield connection
@@ -72,19 +82,29 @@ class RunStore:
             fcntl.flock(owner_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             owner_file.close()
-            raise RunStoreError("another detection service process owns this state directory; use one worker") from exc
+            raise RunStoreError(
+                "another detection service process owns this state directory; use one worker"
+            ) from exc
         self._owner_file = owner_file
         try:
             with self.connection() as connection:
-                for run_id, record in connection.execute("SELECT run_id, record FROM runs").fetchall():
+                for run_id, record in connection.execute(
+                    "SELECT run_id, record FROM runs"
+                ).fetchall():
                     status = StatusResponse.model_validate_json(record)
                     if status.status not in TERMINAL:
-                        updated = status.model_copy(update={
-                            "status": "interrupted",
-                            "error": "service process stopped before a terminal result was committed; automatic resume is unavailable",
-                            "updated_at": _now(), "revision": status.revision + 1,
-                        })
-                        connection.execute("UPDATE runs SET record=? WHERE run_id=?", (updated.model_dump_json(), run_id))
+                        updated = status.model_copy(
+                            update={
+                                "status": "interrupted",
+                                "error": "service process stopped before a terminal result was committed; automatic resume is unavailable",
+                                "updated_at": _now(),
+                                "revision": status.revision + 1,
+                            }
+                        )
+                        connection.execute(
+                            "UPDATE runs SET record=? WHERE run_id=?",
+                            (updated.model_dump_json(), run_id),
+                        )
         except BaseException:
             self.close()
             raise
@@ -97,26 +117,37 @@ class RunStore:
 
     def create(self, status: StatusResponse) -> StatusResponse:
         now = _now()
-        status = status.model_copy(update={"created_at": now, "updated_at": now, "revision": 1})
+        status = status.model_copy(
+            update={"created_at": now, "updated_at": now, "revision": 1}
+        )
         with self.connection() as connection:
-            connection.execute("INSERT INTO runs VALUES (?, ?)", (status.run_id, status.model_dump_json()))
+            connection.execute(
+                "INSERT INTO runs VALUES (?, ?)",
+                (status.run_id, status.model_dump_json()),
+            )
         return status
 
     def get(self, run_id: str) -> StatusResponse:
         with self.connection() as connection:
-            row = connection.execute("SELECT record FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            row = connection.execute(
+                "SELECT record FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
         if row is None:
             raise KeyError(run_id)
         return StatusResponse.model_validate_json(row[0])
 
     def list(self) -> list[StatusResponse]:
         with self.connection() as connection:
-            rows = connection.execute("SELECT record FROM runs ORDER BY rowid").fetchall()
+            rows = connection.execute(
+                "SELECT record FROM runs ORDER BY rowid"
+            ).fetchall()
         return [StatusResponse.model_validate_json(row[0]) for row in rows]
 
     def update(self, run_id: str, **changes: Any) -> StatusResponse:
         with self.connection() as connection:
-            row = connection.execute("SELECT record FROM runs WHERE run_id=?", (run_id,)).fetchone()
+            row = connection.execute(
+                "SELECT record FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
             if row is None:
                 raise KeyError(run_id)
             current = StatusResponse.model_validate_json(row[0])
@@ -124,20 +155,51 @@ class RunStore:
                 raise RunStoreError("terminal run records cannot be overwritten")
             epochs = changes.get("epochs_completed", current.epochs_completed)
             if epochs < current.epochs_completed or epochs > current.total_epochs:
-                raise RunStoreError("run progress must be monotonic and within the requested epochs")
-            updated = StatusResponse.model_validate({
-                **current.model_dump(), **changes, "updated_at": _now(), "revision": current.revision + 1,
-            })
+                raise RunStoreError(
+                    "run progress must be monotonic and within the requested epochs"
+                )
+            updated = StatusResponse.model_validate(
+                {
+                    **current.model_dump(),
+                    **changes,
+                    "updated_at": _now(),
+                    "revision": current.revision + 1,
+                }
+            )
             if updated.status == "completed":
-                checkpoints = [artifact for artifact in updated.artifacts if artifact.role == "checkpoint" and artifact.epoch == updated.total_epochs]
-                metrics = [artifact for artifact in updated.artifacts if artifact.role == "training_metrics"]
-                train_complete = epochs == updated.total_epochs and bool(checkpoints) and bool(metrics)
-                eval_complete = updated.evaluation is not None and any(artifact.role == "evaluation_metrics" for artifact in updated.artifacts)
-                if not (train_complete if updated.kind == "train" else eval_complete) or any(
-                    not artifact.exists or not artifact.integrity_verified for artifact in updated.artifacts
+                checkpoints = [
+                    artifact
+                    for artifact in updated.artifacts
+                    if artifact.role == "checkpoint"
+                    and artifact.epoch == updated.total_epochs
+                ]
+                metrics = [
+                    artifact
+                    for artifact in updated.artifacts
+                    if artifact.role == "training_metrics"
+                ]
+                train_complete = (
+                    epochs == updated.total_epochs
+                    and bool(checkpoints)
+                    and bool(metrics)
+                )
+                eval_complete = updated.evaluation is not None and any(
+                    artifact.role == "evaluation_metrics"
+                    for artifact in updated.artifacts
+                )
+                if not (
+                    train_complete if updated.kind == "train" else eval_complete
+                ) or any(
+                    not artifact.exists or not artifact.integrity_verified
+                    for artifact in updated.artifacts
                 ):
-                    raise RunStoreError("completed runs require their result and verified checkpoint/metrics artifacts")
-            connection.execute("UPDATE runs SET record=? WHERE run_id=?", (updated.model_dump_json(), run_id))
+                    raise RunStoreError(
+                        "completed runs require their result and verified checkpoint/metrics artifacts"
+                    )
+            connection.execute(
+                "UPDATE runs SET record=? WHERE run_id=?",
+                (updated.model_dump_json(), run_id),
+            )
         return updated
 
 

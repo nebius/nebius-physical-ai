@@ -590,3 +590,16 @@ exact validation/gold lineage. Pipeline completion proves orchestration, not
 policy efficacy; report the measured strict success without weakening it. The
 [architecture/resume contract](../../architecture/sim2real-compositional-workflow.md)
 defines the 14 ComponentRecords and restart audit.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

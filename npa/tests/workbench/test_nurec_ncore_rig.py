@@ -55,7 +55,10 @@ def test_reference_camera_ties_break_deterministically_by_id() -> None:
 
     assert select_reference_camera(trajectories) == "cameraA"
     # Same answer regardless of insertion order.
-    assert select_reference_camera({"cameraA": _traj(10), "cameraB": _traj(10)}) == "cameraA"
+    assert (
+        select_reference_camera({"cameraA": _traj(10), "cameraB": _traj(10)})
+        == "cameraA"
+    )
 
 
 def test_reference_camera_honours_an_explicit_preference() -> None:
@@ -228,7 +231,12 @@ def test_publish_carries_the_sidecar_so_the_next_pod_finds_the_reference_camera(
 ) -> None:
     meta = _derived_sequence(tmp_path)
     (meta.parent / RIG_SIDECAR_NAME).write_text(
-        json.dumps({"reference_camera": "camera1", "poses_component_group": DERIVED_POSES_GROUP})
+        json.dumps(
+            {
+                "reference_camera": "camera1",
+                "poses_component_group": DERIVED_POSES_GROUP,
+            }
+        )
     )
     destination = tmp_path / "published"
 
@@ -268,7 +276,9 @@ def test_published_sequence_round_trips_through_a_zip(tmp_path: Path) -> None:
     extracted = tmp_path / "extracted"
     extract_archive(archive, extracted)
 
-    assert (extracted / "scene.ncore4-camera1.zarr.itar").read_bytes() == b"camera1-shard-bytes"
+    assert (
+        extracted / "scene.ncore4-camera1.zarr.itar"
+    ).read_bytes() == b"camera1-shard-bytes"
 
 
 def test_derived_meta_rejects_non_basename_store_paths(tmp_path: Path) -> None:
@@ -285,7 +295,9 @@ def test_derived_meta_rejects_non_basename_store_paths(tmp_path: Path) -> None:
     # The guard lives after the reader/writer calls, so drive it directly on the
     # shape get_sequence_meta returns.
     meta = {"component_stores": [{"path": "/abs/scene.ncore4.zarr.itar"}]}
-    recorded = [str(store.get("path", "")) for store in meta.get("component_stores", [])]
+    recorded = [
+        str(store.get("path", "")) for store in meta.get("component_stores", [])
+    ]
     unexpected = [name for name in recorded if "/" in name or not name]
 
     assert unexpected == ["/abs/scene.ncore4.zarr.itar"]

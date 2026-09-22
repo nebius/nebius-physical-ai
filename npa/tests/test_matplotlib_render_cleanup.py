@@ -36,11 +36,23 @@ def _render(output_path: Path) -> None:
         [[[0, 0, 0], [0, 0, 1]], [[0, 0, 0], [0.5, 0, 1]], [[0, 0, 0], [1, 0, 1]]],
         dtype=np.float32,
     )
-    backend.render(skeleton, None, "single", output_path, (320, 240), 3, 1.0, "Synthetic motion", [(0, 1)])
+    backend.render(
+        skeleton,
+        None,
+        "single",
+        output_path,
+        (320, 240),
+        3,
+        1.0,
+        "Synthetic motion",
+        [(0, 1)],
+    )
 
 
 @pytest.mark.parametrize("failure_stage", ["layout", "frame", "save"])
-def test_render_failure_closes_only_its_figure(tmp_path, monkeypatch, caller_figure, failure_stage):
+def test_render_failure_closes_only_its_figure(
+    tmp_path, monkeypatch, caller_figure, failure_stage
+):
     expected_figures = set(plt.get_fignums())
     error = RuntimeError(f"{failure_stage} failed")
 
@@ -86,7 +98,9 @@ def test_repeated_ffmpeg_failures_do_not_accumulate_figures(tmp_path, caller_fig
 
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg is required")
-def test_successful_mp4_is_decodable_and_preserves_caller_figure(tmp_path, caller_figure):
+def test_successful_mp4_is_decodable_and_preserves_caller_figure(
+    tmp_path, caller_figure
+):
     output = tmp_path / "motion.mp4"
     expected_figures = set(plt.get_fignums())
 
@@ -100,7 +114,9 @@ def test_successful_mp4_is_decodable_and_preserves_caller_figure(tmp_path, calle
         assert stream.average_rate == 3
         frames = list(container.decode(video=0))
     assert len(frames) == 3
-    assert [float(frame.pts * frame.time_base) for frame in frames] == pytest.approx([0, 1 / 3, 2 / 3])
+    assert [float(frame.pts * frame.time_base) for frame in frames] == pytest.approx(
+        [0, 1 / 3, 2 / 3]
+    )
     images = [frame.to_ndarray(format="rgb24") for frame in frames]
     assert all(image.std() > 0 for image in images)
     assert not np.array_equal(images[0], images[-1])

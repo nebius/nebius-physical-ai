@@ -38,6 +38,7 @@ import os
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -82,6 +83,8 @@ TERMINAL_FAIL = frozenset(
         "STOPPED",
     }
 )
+SCHEDULER_OBSERVATION_SCHEMA = "npa.skypilot.managed-job-observation.v1"
+SCHEDULER_OBSERVATION_SOURCE = "exact_managed_job_status"
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
@@ -153,19 +156,23 @@ def _declared_output_uri(output: Any) -> str:
 
     if isinstance(output, Mapping):
         uri = str(output.get("uri") or "").strip()
-        return uri.rstrip("/") + "/" if output.get("kind") == "directory" and uri else uri
+        return (
+            uri.rstrip("/") + "/" if output.get("kind") == "directory" and uri else uri
+        )
     return str(output or "").strip()
 
 
-
-def _verified_absent_pre_id_attempt(attempt: WaveAttempt, record: Mapping[str, Any]) -> bool:
+def _verified_absent_pre_id_attempt(
+    attempt: WaveAttempt, record: Mapping[str, Any]
+) -> bool:
     """Preserve verified launch absence across a later storage-read block."""
     if attempt.job_id:
         return False
     if attempt.recovery_decision == "verified_absent_no_retry":
         return True
     if attempt.recovery_decision not in {
-        "resume_block_output_present", "resume_block_output_indeterminate",
+        "resume_block_output_present",
+        "resume_block_output_indeterminate",
     }:
         return False
     return any(
@@ -448,6 +455,63 @@ def wave_key(steps: Sequence[PlanStep], *, group: str, sequence_number: int) -> 
     return f"{sequence_number:03d}|{group or 'serial'}|" + ",".join(parts)
 
 
+def _record_reached_running(record: Mapping[str, Any]) -> bool:
+    """Return whether independent, typed scheduler evidence proves execution.
+
+    Submission acknowledgements, queue text, task summaries, and legacy free-form
+    observations are not adoption authority. The persisted observation must come
+    from a successful exact managed-job status query and bind every launch/fence
+    identity field to the wave record being considered.
+    """
+
+    expected_strings = {
+        "wave_key": str(record.get("key") or ""),
+        "job_id": str(record.get("job_id") or ""),
+        "job_name": str(record.get("job_name") or ""),
+        "logical_launch_id": str(record.get("logical_launch_id") or ""),
+    }
+    try:
+        expected_numbers = {
+            "attempt": int(record.get("attempt") or 0),
+            "scheduler_fence_sequence": int(
+                record.get("scheduler_fence_sequence") or 0
+            ),
+            "launch_sequence": int(record.get("launch_sequence") or 0),
+        }
+    except (TypeError, ValueError):
+        return False
+    if (
+        not all(expected_strings.values())
+        or expected_numbers["attempt"] < 1
+        or expected_numbers["scheduler_fence_sequence"] < 1
+        or expected_numbers["launch_sequence"] < 0
+    ):
+        return False
+    for item in record.get("observations") or []:
+        if not isinstance(item, Mapping):
+            continue
+        if (
+            item.get("schema") != SCHEDULER_OBSERVATION_SCHEMA
+            or item.get("source") != SCHEDULER_OBSERVATION_SOURCE
+            or str(item.get("scheduler_state") or "").upper() != "RUNNING"
+        ):
+            continue
+        if any(
+            str(item.get(key) or "") != value for key, value in expected_strings.items()
+        ):
+            continue
+        try:
+            observed_numbers = {key: int(item.get(key)) for key in expected_numbers}
+            observed_at = str(item.get("observed_at") or "")
+            timestamp = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if timestamp.tzinfo is None or observed_numbers != expected_numbers:
+            continue
+        return True
+    return False
+
+
 class SkyPilotWaveExecutor:
     """Execute planned steps as SkyPilot managed jobs, one wave at a time.
 
@@ -589,7 +653,8 @@ class SkyPilotWaveExecutor:
         self, steps: Sequence[PlanStep], *, kind: str, group: str
     ) -> WaveAttempt:
         from npa.orchestration.npa_workflow.launch_recovery import (
-            _recover_partial_launch, _resume_launch_recovery,
+            _recover_partial_launch,
+            _resume_launch_recovery,
         )
 
         self._sequence += 1
@@ -651,20 +716,7 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
-                observations = latest.get("observations") or []
-                reached_running = any(
-                    isinstance(item, Mapping)
-                    and (
-                        str(item.get("scheduler_state") or "").upper()
-                        == "RUNNING"
-                        or "RUNNING"
-                        in {
-                            str(value or "").upper()
-                            for value in (item.get("statuses") or {}).values()
-                        }
-                    )
-                    for item in observations
-                )
+                reached_running = _record_reached_running(latest)
                 if (
                     self.options.adopt_absent_in_flight_outputs
                     and reached_running
@@ -827,7 +879,11 @@ class SkyPilotWaveExecutor:
                     self.options.max_infrastructure_recoveries
                 ),
             )
-            if reserved is not None and reserved.existing_attempt is not None and attempt_offset == 0:
+            if (
+                reserved is not None
+                and reserved.existing_attempt is not None
+                and attempt_offset == 0
+            ):
                 attempt = reserved.existing_attempt
             self.attempts.append(attempt)
             try:
@@ -866,7 +922,9 @@ class SkyPilotWaveExecutor:
                     # operator-requested payload retry. Preserve every attempt
                     # and continue under the same run ID with a new exact job.
                     infrastructure_recoveries += 1
-                    reservation = dict(attempt.partial_launch.get("recovery_reservation") or {})
+                    reservation = dict(
+                        attempt.partial_launch.get("recovery_reservation") or {}
+                    )
                     attempt_count += 1
                 elif isinstance(exc, SupervisedWaveFailure) or (
                     attempt.recovery_decision == "block_relaunch"
@@ -902,11 +960,16 @@ class SkyPilotWaveExecutor:
             if (
                 status != "CANCELLED"
                 or (record.get("cancellation") or {}).get("state") != "verified"
-                or not all(record.get(key) for key in ("job_id", "job_name", "logical_launch_id"))
+                or not all(
+                    record.get(key)
+                    for key in ("job_id", "job_name", "logical_launch_id")
+                )
                 or not outputs
             ):
                 return None
-            evidence = self._reconcile_exact(str(record["job_name"]), str(record["job_id"]))
+            evidence = self._reconcile_exact(
+                str(record["job_name"]), str(record["job_id"])
+            )
             status = str(getattr(evidence, "status", "") or "").upper()
             if (
                 getattr(evidence, "outcome", "") != "found"
@@ -918,9 +981,12 @@ class SkyPilotWaveExecutor:
         if not self._outputs_exist(outputs):
             return None
         return {
-            "outcome": "found", "source": source, "status": status,
+            "outcome": "found",
+            "source": source,
+            "status": status,
             "job_id": str(record.get("job_id") or ""),
-            "declared_outputs_valid": True, "checked_at": utc_now(),
+            "declared_outputs_valid": True,
+            "checked_at": utc_now(),
         }
 
     @staticmethod
@@ -956,9 +1022,7 @@ class SkyPilotWaveExecutor:
             outputs=list(record.get("outputs") or []),
             error=str(record.get("error") or ""),
             logical_launch_id=str(record.get("logical_launch_id") or ""),
-            scheduler_fence_sequence=int(
-                record.get("scheduler_fence_sequence") or 0
-            ),
+            scheduler_fence_sequence=int(record.get("scheduler_fence_sequence") or 0),
             launch_sequence=int(record.get("launch_sequence") or 0),
             error_category=str(record.get("error_category") or ""),
             readiness=list(record.get("readiness") or []),
@@ -1083,19 +1147,7 @@ class SkyPilotWaveExecutor:
                 self.ledger.record(attempt)
                 return attempt
         elif outcome == "absent":
-            observations = record.get("observations") or []
-            reached_running = any(
-                isinstance(item, Mapping)
-                and (
-                    str(item.get("scheduler_state") or "").upper() == "RUNNING"
-                    or "RUNNING"
-                    in {
-                        str(value or "").upper()
-                        for value in (item.get("statuses") or {}).values()
-                    }
-                )
-                for item in observations
-            )
+            reached_running = _record_reached_running(record)
             explicit_output_adoption = (
                 self.options.adopt_absent_in_flight_outputs
                 and reached_running
@@ -1640,6 +1692,7 @@ class SkyPilotWaveExecutor:
             WorkflowRunSupervisor,
             validate_declared_outputs,
         )
+
         if self.ledger.store is None:
             raise NpaWorkflowError(
                 "runtime supervision requires a durable run-state store"
@@ -1678,10 +1731,9 @@ class SkyPilotWaveExecutor:
             preflight=preflight,
             checkpoint=checkpoint,
             infrastructure_recoveries=attempt.infrastructure_recovery_count,
-            max_infrastructure_recoveries=(
-                self.options.max_infrastructure_recoveries
-            ),
+            max_infrastructure_recoveries=(self.options.max_infrastructure_recoveries),
         )
+
         def cancel_exact(current: AttemptIdentity) -> Mapping[str, Any]:
             state, error = self._cancel(
                 current.provider_job_id, current.provider_job_name
@@ -1873,7 +1925,16 @@ class SkyPilotWaveExecutor:
             if str(task.get("status") or "").upper() in {"RUNNING", "RECOVERING"}
         ]
         observation = {
+            "schema": SCHEDULER_OBSERVATION_SCHEMA,
+            "source": SCHEDULER_OBSERVATION_SOURCE,
             "observed_at": utc_now(),
+            "wave_key": attempt.key,
+            "job_id": attempt.job_id or job_id,
+            "job_name": attempt.job_name,
+            "logical_launch_id": attempt.logical_launch_id,
+            "attempt": attempt.attempt,
+            "scheduler_fence_sequence": attempt.scheduler_fence_sequence,
+            "launch_sequence": attempt.launch_sequence,
             "scheduler_state": scheduler_state or "UNKNOWN",
             "running": sorted(running),
             "running_count": len(running),
@@ -1952,7 +2013,9 @@ class SkyPilotWaveExecutor:
                     "logical_launch_id": attempt.logical_launch_id,
                     "project": self.options.project,
                     "transaction_recorder": lambda payload: (
-                        self._record_launch_transaction(attempt, payload, rendered_wave_sha256)
+                        self._record_launch_transaction(
+                            attempt, payload, rendered_wave_sha256
+                        )
                     ),
                 }
             )
@@ -2005,7 +2068,11 @@ class SkyPilotWaveExecutor:
         )
 
     def _record_submit_preflight(
-        self, attempt: WaveAttempt, rendered_wave_sha256: str, *, source: str = "default_sdk_submit"
+        self,
+        attempt: WaveAttempt,
+        rendered_wave_sha256: str,
+        *,
+        source: str = "default_sdk_submit",
     ) -> None:
         # Returning from the default SDK proves its mandatory wave gate passed.
         # This is a submit-time observation, not a new free-capacity check at poll.
@@ -2022,9 +2089,14 @@ class SkyPilotWaveExecutor:
         )
 
     def _record_launch_transaction(
-        self, attempt: WaveAttempt, payload: Mapping[str, Any], rendered_wave_sha256: str = ""
+        self,
+        attempt: WaveAttempt,
+        payload: Mapping[str, Any],
+        rendered_wave_sha256: str = "",
     ) -> None:
-        from npa.orchestration.npa_workflow.launch_recovery import _capture_partial_launch
+        from npa.orchestration.npa_workflow.launch_recovery import (
+            _capture_partial_launch,
+        )
 
         if rendered_wave_sha256:
             _capture_partial_launch(attempt, payload, rendered_wave_sha256, self.run_id)
@@ -2136,8 +2208,7 @@ class SkyPilotWaveExecutor:
             for verification_attempt in range(CANCELLATION_VERIFY_ATTEMPTS):
                 try:
                     observed = str(
-                        getattr(self._status(str(job_id)), "status", "")
-                        or "UNKNOWN"
+                        getattr(self._status(str(job_id)), "status", "") or "UNKNOWN"
                     ).upper()
                     verification_error = ""
                 except Exception as verify_exc:  # noqa: BLE001 - retry exact query
@@ -2596,9 +2667,7 @@ def run_workflow_runtime(
             )
         migrations = ledger.state.plan_migrations
         if len(migrations) >= MAX_TERMINAL_PLAN_MIGRATIONS:
-            raise NpaWorkflowError(
-                "terminal plan migration limit reached for this run"
-            )
+            raise NpaWorkflowError("terminal plan migration limit reached for this run")
         seen_fingerprints: set[str] = set()
         expected_old = ""
         for index, migration in enumerate(migrations, 1):

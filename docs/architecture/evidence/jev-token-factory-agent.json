@@ -1,0 +1,64 @@
+{
+  "mode": "token_factory_rendered_fallback",
+  "records": [
+    {
+      "expected_model": "nvidia/Nemotron-3_5-Lightning",
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "provider": "token_factory",
+      "usage": {
+        "prompt_tokens": 5453,
+        "completion_tokens": 20,
+        "total_tokens": 5787,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 5453,
+        "cached_tokens": 0,
+        "semantic_tokens": 314
+      },
+      "routing": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "question_revision": "npa-generation-model-v1",
+        "status": "unavailable",
+        "selected_model": null,
+        "usage": {},
+        "latency_seconds": 0.0,
+        "reason": "missing_credential",
+        "served_model": "nvidia/Nemotron-3_5-Lightning",
+        "baseline_tier": "cheap"
+      },
+      "required_words_present": true,
+      "reply_sha256": "5a0e5efe19a40d73febffb1c7238b3d1483e8b211c6834dd7484222b529666e8"
+    },
+    {
+      "expected_model": "MiniMaxAI/MiniMax-M3",
+      "model": "MiniMaxAI/MiniMax-M3",
+      "provider": "token_factory",
+      "usage": {
+        "prompt_tokens": 5336,
+        "completion_tokens": 727,
+        "total_tokens": 6386,
+        "prompt_cache_hit_tokens": 3328,
+        "prompt_cache_miss_tokens": 2008,
+        "cached_tokens": 3328,
+        "semantic_tokens": 323
+      },
+      "routing": {
+        "provider": "typesafe",
+        "model": "jev-1.13.0",
+        "question_revision": "npa-generation-model-v1",
+        "status": "unavailable",
+        "selected_model": null,
+        "usage": {},
+        "latency_seconds": 0.0,
+        "reason": "missing_credential",
+        "served_model": "MiniMaxAI/MiniMax-M3",
+        "baseline_tier": "reasoning"
+      },
+      "required_words_present": true,
+      "reply_sha256": "2798a4d1617ba2dc359040e24827f8d845d91dc8310d7d3a92142edd9c74c2e8"
+    }
+  ],
+  "measured_at": "2026-09-20",
+  "scope": "Real local rendered agent /chat with live Token Factory; missing Jev key exercised the existing tier fallback. No Jev inference or remote deployment.",
+  "baseline_revision": "d22893238d75efbb05a69eb75bca1b82eb5fe280"
+}

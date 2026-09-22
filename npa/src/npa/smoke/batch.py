@@ -66,7 +66,10 @@ def iter_containers(
             continue
         if not include_foundation and specs[name].foundation:
             continue
-        if not include_blocked and specs[name].golden_eval.status == "blocked-on-upstream":
+        if (
+            not include_blocked
+            and specs[name].golden_eval.status == "blocked-on-upstream"
+        ):
             continue
         names.append(name)
     return names
@@ -118,7 +121,10 @@ def run_container_eval(
                 status=ge.status,
                 gpu=ge.gpu,
                 command=ge.command,
-                detail={"error": "UnlimitedServerlessUnsupported", "message": UNLIMITED_SERVERLESS_ERROR},
+                detail={
+                    "error": "UnlimitedServerlessUnsupported",
+                    "message": UNLIMITED_SERVERLESS_ERROR,
+                },
             )
         from npa.clients.serverless import ServerlessClientError
         from npa.smoke.serverless_runner import submit_golden_eval

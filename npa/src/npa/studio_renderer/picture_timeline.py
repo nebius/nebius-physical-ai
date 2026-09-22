@@ -38,10 +38,20 @@ class PictureShot:
 
 
 def _probe(path):
-    result = subprocess.check_output([
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_streams", "-of", "json", str(path),
-    ], text=True)
+    result = subprocess.check_output(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_streams",
+            "-of",
+            "json",
+            str(path),
+        ],
+        text=True,
+    )
     streams = json.loads(result)["streams"]
     if not streams:
         raise ValueError(f"Picture has no video stream: {path}")
@@ -70,7 +80,10 @@ def _verify_video(path, frames, fps, size=None):
     actual_size = (video["width"], video["height"])
     if int(video.get("nb_frames", -1)) != frames:
         raise ValueError(f"Picture frame count does not match the edit: {path}")
-    if Fraction(video["r_frame_rate"]) != fps or Fraction(video["avg_frame_rate"]) != fps:
+    if (
+        Fraction(video["r_frame_rate"]) != fps
+        or Fraction(video["avg_frame_rate"]) != fps
+    ):
         raise ValueError(f"Picture must use constant {fps} fps: {path}")
     if abs(float(video.get("duration", 0)) - frames / fps) > 0.001:
         raise ValueError(f"Picture duration does not match the edit: {path}")
@@ -85,15 +98,26 @@ def _source_records(shots, fps):
     records, size = [], None
     for shot in shots:
         path = Path(shot.path)
-        size = _verify_video(path, shot.frames + shot.head_frames + shot.tail_frames, fps, size)
-        records.append({"sha256": _hash(path), "frames": shot.frames,
-                        "head_frames": shot.head_frames, "tail_frames": shot.tail_frames})
+        size = _verify_video(
+            path, shot.frames + shot.head_frames + shot.tail_frames, fps, size
+        )
+        records.append(
+            {
+                "sha256": _hash(path),
+                "frames": shot.frames,
+                "head_frames": shot.head_frames,
+                "tail_frames": shot.tail_frames,
+            }
+        )
     return records, size
 
 
 def _segments(shots):
     for index, shot in enumerate(shots):
-        yield [(index, 2 * shot.head_frames)], shot.frames - shot.head_frames - shot.tail_frames
+        yield (
+            [(index, 2 * shot.head_frames)],
+            shot.frames - shot.head_frames - shot.tail_frames,
+        )
         if shot.tail_frames:
             start = shot.head_frames + shot.frames - shot.tail_frames
             yield [(index, start), (index + 1, 0)], 2 * shot.tail_frames
@@ -112,7 +136,9 @@ def _graph(inputs, count, fps):
     if len(inputs) == 2:
         progress = f"((N-1)/{count - 1})"
         weight = f"({progress}*{progress}*(3-2*{progress}))"
-        graph.append(f"[v0][v1]blend=all_expr='A*(1-{weight})+B*{weight}':shortest=1[out]")
+        graph.append(
+            f"[v0][v1]blend=all_expr='A*(1-{weight})+B*{weight}':shortest=1[out]"
+        )
     else:
         graph.append("[v0]null[out]")
     return ";".join(graph)
@@ -123,26 +149,66 @@ def _encode_segment(shots, inputs, count, fps, directory):
     for index, _ in inputs:
         command += ["-i", str(shots[index].path)]
     target = directory / "segment.mp4"
-    command += ["-filter_complex", _graph(inputs, count, fps), "-map", "[out]", "-an",
-                "-frames:v", str(count), "-c:v", "libx264", "-preset", "fast", "-crf", "17",
-                "-threads", "4", "-pix_fmt", "yuv420p", "-r", str(fps),
-                "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709",
-                "-color_trc", "bt709", "-video_track_timescale", str(fps * 512),
-                "-movflags", "+faststart", str(target)]
+    command += [
+        "-filter_complex",
+        _graph(inputs, count, fps),
+        "-map",
+        "[out]",
+        "-an",
+        "-frames:v",
+        str(count),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "17",
+        "-threads",
+        "4",
+        "-pix_fmt",
+        "yuv420p",
+        "-r",
+        str(fps),
+        "-color_range",
+        "tv",
+        "-colorspace",
+        "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-video_track_timescale",
+        str(fps * 512),
+        "-movflags",
+        "+faststart",
+        str(target),
+    ]
     subprocess.run(command, check=True)
     _verify_video(target, count, fps)
 
 
 def _cached_segments(shots, records, fps, cache_dir):
-    environment = {"code": _hash(Path(__file__)), "fps": fps,
-                   "ffmpeg": subprocess.check_output(["ffmpeg", "-version"], text=True).splitlines()[0]}
+    environment = {
+        "code": _hash(Path(__file__)),
+        "fps": fps,
+        "ffmpeg": subprocess.check_output(
+            ["ffmpeg", "-version"], text=True
+        ).splitlines()[0],
+    }
     parts, reused = [], 0
     for inputs, count in _segments(shots):
-        identity = {"environment": environment, "frames": count,
-                    "inputs": [{"sha256": records[index]["sha256"], "start_frame": start}
-                               for index, start in inputs]}
+        identity = {
+            "environment": environment,
+            "frames": count,
+            "inputs": [
+                {"sha256": records[index]["sha256"], "start_frame": start}
+                for index, start in inputs
+            ],
+        }
         directory, hit = _build_cached(
-            cache_dir, "picture", identity,
+            cache_dir,
+            "picture",
+            identity,
             lambda staging: _encode_segment(shots, inputs, count, fps, staging),
         )
         parts.append(directory / "segment.mp4")
@@ -158,11 +224,30 @@ def _concatenate(parts, target, staging):
         names.append(name)
     listing = staging / "segments.txt"
     listing.write_text("".join(f"file '{name}'\n" for name in names))
-    subprocess.run([
-        "ffmpeg", "-v", "error", "-xerror", "-y", "-f", "concat", "-safe", "1",
-        "-i", str(listing), "-map", "0:v:0", "-an", "-c:v", "copy",
-        "-movflags", "+faststart", str(target),
-    ], check=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-xerror",
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "1",
+            "-i",
+            str(listing),
+            "-map",
+            "0:v:0",
+            "-an",
+            "-c:v",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(target),
+        ],
+        check=True,
+    )
 
 
 def _assemble(shots, output, cache_dir, fps):
@@ -175,12 +260,23 @@ def _assemble(shots, output, cache_dir, fps):
         target = staging / "picture.mp4"
         _concatenate(parts, target, staging)
         _verify_video(target, frames, fps, size)
-        if any(_hash(shot.path) != record["sha256"] for shot, record in zip(shots, records, strict=True)):
-            raise ValueError("Shot changed during picture assembly; previous delivery retained")
+        if any(
+            _hash(shot.path) != record["sha256"]
+            for shot, record in zip(shots, records, strict=True)
+        ):
+            raise ValueError(
+                "Shot changed during picture assembly; previous delivery retained"
+            )
         target.replace(output)
-    return {"frames": frames, "fps": fps, "shots": records, "sha256": _hash(output),
-            "segments_reused": reused, "segments_rendered": len(parts) - reused,
-            "dissolves": sum(bool(shot.tail_frames) for shot in shots)}
+    return {
+        "frames": frames,
+        "fps": fps,
+        "shots": records,
+        "sha256": _hash(output),
+        "segments_reused": reused,
+        "segments_rendered": len(parts) - reused,
+        "dissolves": sum(bool(shot.tail_frames) for shot in shots),
+    }
 
 
 def assemble_picture(shots, output, *, cache_dir, fps=30):

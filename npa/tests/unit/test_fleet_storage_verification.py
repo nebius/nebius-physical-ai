@@ -16,36 +16,55 @@ from npa.fleet.storage_resources import StorageVerificationError, _node_token
 
 @pytest.fixture
 def fleet_spec():
-    return spec_from_mapping({
-        "apiVersion": "npa.fleet/v0.0.1", "name": "storage-unit",
-        "tenant_id": "tenant-test", "region": "us-central1",
-        "defaults": {
-            "cpu_nodes": {"count": 1, "platform": "cpu-d3", "preset": "4vcpu-16gb"},
-            "gpu_nodes": {"count": 1, "platform": "gpu-rtx6000",
-                          "preset": "1gpu-24vcpu-218gb"},
-            "enable_filestore": True, "filestore_disk_size_gibibytes": 1024,
-        },
-        "projects": [{"name": "unit-project", "clusters": [{"name": "unit-cluster"}]}],
-    })
+    return spec_from_mapping(
+        {
+            "apiVersion": "npa.fleet/v0.0.1",
+            "name": "storage-unit",
+            "tenant_id": "tenant-test",
+            "region": "us-central1",
+            "defaults": {
+                "cpu_nodes": {"count": 1, "platform": "cpu-d3", "preset": "4vcpu-16gb"},
+                "gpu_nodes": {
+                    "count": 1,
+                    "platform": "gpu-rtx6000",
+                    "preset": "1gpu-24vcpu-218gb",
+                },
+                "enable_filestore": True,
+                "filestore_disk_size_gibibytes": 1024,
+            },
+            "projects": [
+                {"name": "unit-project", "clusters": [{"name": "unit-cluster"}]}
+            ],
+        }
+    )
 
 
 def _node(name, platform, preset):
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=name, uid=name + "-uid", labels={
-            "node.kubernetes.io/instance-type": platform,
-            "nebius.com/resource-preset": preset,
-        }),
+        metadata=SimpleNamespace(
+            name=name,
+            uid=name + "-uid",
+            labels={
+                "node.kubernetes.io/instance-type": platform,
+                "nebius.com/resource-preset": preset,
+            },
+        ),
         status=SimpleNamespace(node_info=SimpleNamespace(boot_id=name + "-boot")),
     )
 
 
 def _host_evidence(cluster):
-    return {"source_matches": True, "nofail": True, "read_write": True,
-            "probe_deleted": True, "filesystem_type": "virtiofs",
-            "requested_bytes": cluster.filestore_disk_size_gibibytes * 1024**3,
-            "capacity_bytes": cluster.filestore_disk_size_gibibytes * 1024**3,
-            "fragment_size": 4096,
-            "checksum": hashlib.sha256(b"unit-host-probe").hexdigest()}
+    return {
+        "source_matches": True,
+        "nofail": True,
+        "read_write": True,
+        "probe_deleted": True,
+        "filesystem_type": "virtiofs",
+        "requested_bytes": cluster.filestore_disk_size_gibibytes * 1024**3,
+        "capacity_bytes": cluster.filestore_disk_size_gibibytes * 1024**3,
+        "fragment_size": 4096,
+        "checksum": hashlib.sha256(b"unit-host-probe").hexdigest(),
+    }
 
 
 class FakeStorageResources:
@@ -75,8 +94,10 @@ class FakeStorageResources:
 
     def create(self, kind, body):
         name = body["metadata"]["name"]
-        self.claim = SimpleNamespace(metadata=SimpleNamespace(name=name, uid="claim-unit"),
-                                     status=SimpleNamespace(phase="Bound"))
+        self.claim = SimpleNamespace(
+            metadata=SimpleNamespace(name=name, uid="claim-unit"),
+            status=SimpleNamespace(phase="Bound"),
+        )
         self.owned.append({"kind": kind, "name": name, "uid": "claim-unit"})
         return self.claim
 
@@ -84,8 +105,13 @@ class FakeStorageResources:
         action = configuration["action"]
         self.actions.append((action, configuration["root_path"], len(nodes), claim))
         for node in nodes:
-            self.owned.append({"kind": "pod", "name": str(len(self.owned)),
-                               "uid": node.metadata.uid + str(len(self.owned))})
+            self.owned.append(
+                {
+                    "kind": "pod",
+                    "name": str(len(self.owned)),
+                    "uid": node.metadata.uid + str(len(self.owned)),
+                }
+            )
         if action == self.fail_action:
             raise StorageVerificationError("workload_failed")
         if action == "host":
@@ -96,16 +122,32 @@ class FakeStorageResources:
         if action == "audit_backing":
             return [{"backing_directory_absent": self.backing_absent} for _ in nodes]
         if action == "write":
-            return [{"written": True, "backing_relative_path": backing,
-                     "checksum": hashlib.sha256(node.metadata.uid.encode()).hexdigest()}
-                    for node in nodes]
+            return [
+                {
+                    "written": True,
+                    "backing_relative_path": backing,
+                    "checksum": hashlib.sha256(node.metadata.uid.encode()).hexdigest(),
+                }
+                for node in nodes
+            ]
         if action == "read":
-            expected = {} if self.cross_node_mismatch else configuration["expected_checksums"]
-            return [{"verified_checksums": expected, "read_count": len(nodes),
-                     "backing_relative_path": backing} for _ in nodes]
+            expected = (
+                {} if self.cross_node_mismatch else configuration["expected_checksums"]
+            )
+            return [
+                {
+                    "verified_checksums": expected,
+                    "read_count": len(nodes),
+                    "backing_relative_path": backing,
+                }
+                for _ in nodes
+            ]
         if self.empty_cleanup_evidence:
             return []
-        return [{"run_directory_absent": True, "backing_relative_path": backing} for _ in nodes]
+        return [
+            {"run_directory_absent": True, "backing_relative_path": backing}
+            for _ in nodes
+        ]
 
     def cleanup(self, *, claims=True):
         self.actions.append(("resource_cleanup", "", 0, None))
@@ -122,16 +164,26 @@ class FakeStorageResources:
 @pytest.fixture
 def qualification(monkeypatch, fleet_spec):
     cluster = fleet_spec.projects[0].clusters[0]
-    nodes = [_node("cpu-test", "cpu-d3", "4vcpu-16gb"),
-             _node("gpu-test", "gpu-rtx6000", "1gpu-24vcpu-218gb")]
+    nodes = [
+        _node("cpu-test", "cpu-d3", "4vcpu-16gb"),
+        _node("gpu-test", "gpu-rtx6000", "1gpu-24vcpu-218gb"),
+    ]
     resources = FakeStorageResources(nodes, cluster)
     monkeypatch.setattr(verification, "storage_nodes", lambda *args: nodes)
-    monkeypatch.setattr(verification, "verify_storage_driver", lambda *args: "unit-driver")
-    monkeypatch.setattr(verification, "verify_bound_claim", lambda *args: {
-        "metadata": {"name": "unit-volume", "uid": "unit-volume-uid"},
-        "spec": {"csi": {"volumeHandle": "unit-volume-handle"}},
-    })
-    resources.api.sanitize_for_serialization = lambda value: value if isinstance(value, dict) else []
+    monkeypatch.setattr(
+        verification, "verify_storage_driver", lambda *args: "unit-driver"
+    )
+    monkeypatch.setattr(
+        verification,
+        "verify_bound_claim",
+        lambda *args: {
+            "metadata": {"name": "unit-volume", "uid": "unit-volume-uid"},
+            "spec": {"csi": {"volumeHandle": "unit-volume-handle"}},
+        },
+    )
+    resources.api.sanitize_for_serialization = lambda value: (
+        value if isinstance(value, dict) else []
+    )
     return resources, cluster, nodes
 
 
@@ -218,18 +270,21 @@ def test_empty_cleanup_evidence_cannot_prove_absence(qualification):
     assert report["failures"]
 
 
-@pytest.mark.parametrize(("field", "value", "category"), [
-    ("filesystem_type", "ext4", "host_mount_mismatch"),
-    ("source_matches", False, "partial_host_evidence"),
-    ("nofail", False, "partial_host_evidence"),
-    ("read_write", False, "partial_host_evidence"),
-    ("probe_deleted", False, "partial_host_evidence"),
-    ("capacity_bytes", None, "capacity_mismatch"),
-    ("capacity_bytes", "1099511627776", "capacity_mismatch"),
-    ("capacity_bytes", 1024 * 1000**3, "capacity_mismatch"),
-    ("requested_bytes", 1024 * 1000**3, "host_mount_mismatch"),
-    ("checksum", "unverified", "partial_host_evidence"),
-])
+@pytest.mark.parametrize(
+    ("field", "value", "category"),
+    [
+        ("filesystem_type", "ext4", "host_mount_mismatch"),
+        ("source_matches", False, "partial_host_evidence"),
+        ("nofail", False, "partial_host_evidence"),
+        ("read_write", False, "partial_host_evidence"),
+        ("probe_deleted", False, "partial_host_evidence"),
+        ("capacity_bytes", None, "capacity_mismatch"),
+        ("capacity_bytes", "1099511627776", "capacity_mismatch"),
+        ("capacity_bytes", 1024 * 1000**3, "capacity_mismatch"),
+        ("requested_bytes", 1024 * 1000**3, "host_mount_mismatch"),
+        ("checksum", "unverified", "partial_host_evidence"),
+    ],
+)
 def test_invalid_host_evidence_fails_closed(fleet_spec, field, value, category):
     cluster = fleet_spec.projects[0].clusters[0]
     evidence = _host_evidence(cluster)
@@ -241,7 +296,9 @@ def test_invalid_host_evidence_fails_closed(fleet_spec, field, value, category):
 def test_missing_worker_host_evidence_fails_closed(fleet_spec):
     cluster = fleet_spec.projects[0].clusters[0]
     with pytest.raises(StorageVerificationError, match="partial_host_evidence"):
-        verification._require_host_evidence([_host_evidence(cluster)], [object(), object()], cluster)
+        verification._require_host_evidence(
+            [_host_evidence(cluster)], [object(), object()], cluster
+        )
 
 
 def test_partial_shared_evidence_cannot_mark_nodes_successful(qualification):
@@ -250,10 +307,14 @@ def test_partial_shared_evidence_cannot_mark_nodes_successful(qualification):
         verification._node_reports(nodes, cluster, [], [{}])
 
 
-def test_disabled_filesystem_does_not_resolve_identity(fleet_spec, monkeypatch, tmp_path):
+def test_disabled_filesystem_does_not_resolve_identity(
+    fleet_spec, monkeypatch, tmp_path
+):
     cluster = fleet_spec.projects[0].clusters[0]
     cluster.enable_filestore = False
-    identity = Mock(side_effect=AssertionError("disabled filesystem accessed infrastructure"))
+    identity = Mock(
+        side_effect=AssertionError("disabled filesystem accessed infrastructure")
+    )
     monkeypatch.setattr(verification, "resolve_storage_identity", identity)
     evidence = tmp_path / "private"
     report = verification.verify_storage(fleet_spec, evidence_dir=evidence)
@@ -265,7 +326,9 @@ def test_disabled_filesystem_does_not_resolve_identity(fleet_spec, monkeypatch, 
 
 def test_target_failure_is_sanitized_and_receipted(fleet_spec, monkeypatch, tmp_path):
     failure = ApiException(status=403, reason="private-provider-message")
-    monkeypatch.setattr(verification, "resolve_storage_identity", Mock(side_effect=failure))
+    monkeypatch.setattr(
+        verification, "resolve_storage_identity", Mock(side_effect=failure)
+    )
     report = verification.verify_storage(fleet_spec, evidence_dir=tmp_path / "private")
     assert report["passed"] is False
     assert report["clusters"][0]["failures"] == ["verification_operation_failed"]
@@ -273,15 +336,24 @@ def test_target_failure_is_sanitized_and_receipted(fleet_spec, monkeypatch, tmp_
     receipts = list((tmp_path / "private").glob("*/*.json"))
     assert len(receipts) == 1
     assert receipts[0].stat().st_mode & 0o777 == 0o600
-    assert hashlib.sha256(receipts[0].read_bytes()).hexdigest() == report["clusters"][0]["evidence_sha256"]
+    assert (
+        hashlib.sha256(receipts[0].read_bytes()).hexdigest()
+        == report["clusters"][0]["evidence_sha256"]
+    )
 
 
-def test_target_timeout_is_structured_failure_with_cleanup(fleet_spec, qualification, monkeypatch, tmp_path):
+def test_target_timeout_is_structured_failure_with_cleanup(
+    fleet_spec, qualification, monkeypatch, tmp_path
+):
     resources, _, _ = qualification
     resources.run_phase = Mock(side_effect=TimeoutError("private-endpoint"))
     identity = SimpleNamespace(kubeconfig=Path("unit-config"), evidence_sha256="b" * 64)
-    monkeypatch.setattr(verification, "resolve_storage_identity", lambda *args, **kwargs: identity)
-    monkeypatch.setattr(verification, "storage_client", lambda identity: nullcontext(resources.api))
+    monkeypatch.setattr(
+        verification, "resolve_storage_identity", lambda *args, **kwargs: identity
+    )
+    monkeypatch.setattr(
+        verification, "storage_client", lambda identity: nullcontext(resources.api)
+    )
     monkeypatch.setattr(verification, "StorageResources", lambda *args: resources)
     report = verification.verify_storage(fleet_spec, evidence_dir=tmp_path / "private")
     assert report["passed"] is False
@@ -302,19 +374,30 @@ def test_evidence_directories_are_unique_and_owner_only(tmp_path):
 def test_shared_evidence_requires_every_writer(qualification):
     resources, cluster, nodes = qualification
     resources.run_phase = Mock(return_value=[{"written": True, "checksum": "a" * 64}])
-    claim = resources.create("persistent_volume_claim", {"metadata": {"name": "unit-claim"}})
+    claim = resources.create(
+        "persistent_volume_claim", {"metadata": {"name": "unit-claim"}}
+    )
     with pytest.raises((ValueError, StorageVerificationError)):
-        verification._shared_visibility(resources, nodes, cluster, claim, "unit-driver", {})
+        verification._shared_visibility(
+            resources, nodes, cluster, claim, "unit-driver", {}
+        )
 
 
 def test_cross_node_payloads_are_distinct(qualification):
     resources, cluster, nodes = qualification
-    written = {"written": True, "checksum": "a" * 64,
-               "backing_relative_path": "csi-mounted-fs-path-data/unit-volume-handle"}
+    written = {
+        "written": True,
+        "checksum": "a" * 64,
+        "backing_relative_path": "csi-mounted-fs-path-data/unit-volume-handle",
+    }
     resources.run_phase = Mock(return_value=[written] * 2)
-    claim = resources.create("persistent_volume_claim", {"metadata": {"name": "unit-claim"}})
+    claim = resources.create(
+        "persistent_volume_claim", {"metadata": {"name": "unit-claim"}}
+    )
     with pytest.raises(StorageVerificationError, match="non_unique_payload_evidence"):
-        verification._shared_visibility(resources, nodes, cluster, claim, "unit-driver", {})
+        verification._shared_visibility(
+            resources, nodes, cluster, claim, "unit-driver", {}
+        )
 
 
 def test_node_tokens_fit_the_probe_identity_contract(qualification):
@@ -328,11 +411,17 @@ def test_node_tokens_fit_the_probe_identity_contract(qualification):
 
 def test_unhealthy_csi_prevents_any_probe_mutation(qualification, monkeypatch):
     resources, cluster, _ = qualification
-    monkeypatch.setattr(verification, "verify_storage_driver", Mock(
-        side_effect=StorageVerificationError("csi_worker_registration_missing"),
-    ))
+    monkeypatch.setattr(
+        verification,
+        "verify_storage_driver",
+        Mock(
+            side_effect=StorageVerificationError("csi_worker_registration_missing"),
+        ),
+    )
     report = verification._target_report(0, cluster)
-    with pytest.raises(StorageVerificationError, match="csi_worker_registration_missing"):
+    with pytest.raises(
+        StorageVerificationError, match="csi_worker_registration_missing"
+    ):
         verification._qualify_cluster(resources, cluster, report, {})
     assert resources.actions == []
     assert resources.owned == []
@@ -342,9 +431,16 @@ def test_worker_reboot_after_probes_invalidates_evidence(qualification, monkeypa
     resources, cluster, nodes = qualification
     replacement = _node("gpu-test", "gpu-rtx6000", "1gpu-24vcpu-218gb")
     replacement.status.node_info.boot_id = "replacement-boot"
-    monkeypatch.setattr(verification, "storage_nodes", Mock(side_effect=[
-        nodes, [nodes[0], replacement],
-    ]))
+    monkeypatch.setattr(
+        verification,
+        "storage_nodes",
+        Mock(
+            side_effect=[
+                nodes,
+                [nodes[0], replacement],
+            ]
+        ),
+    )
     report = verification._target_report(0, cluster)
     with pytest.raises(StorageVerificationError, match="stale_worker_evidence"):
         verification._qualify_cluster(resources, cluster, report, {})
@@ -373,7 +469,9 @@ def test_backing_identity_mismatch_never_qualifies_shared_storage(qualification)
     resources, cluster, _ = qualification
     resources.backing_mismatch = True
     report = verification._target_report(0, cluster)
-    with pytest.raises(StorageVerificationError, match="shared_backing_identity_mismatch"):
+    with pytest.raises(
+        StorageVerificationError, match="shared_backing_identity_mismatch"
+    ):
         verification._qualify_cluster(resources, cluster, report, {})
     assert report["nodes"] == []
     assert resources.actions[-1][0] == "resource_cleanup"

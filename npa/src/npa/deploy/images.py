@@ -43,6 +43,7 @@ CONTAINER_IMAGE_NAMES = {
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
     "isaac-lab": "npa-isaac-lab",
+    "isaac-arena": "npa-isaac-arena",
     "openarm": "npa-openarm",
     "leisaac": "npa-leisaac",
     "cosmos": "npa-cosmos",
@@ -88,6 +89,13 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "paidf-anomalygen-sky",
+        "paidf-attribute-search-sky",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
@@ -99,6 +107,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "fiftyone",
         "groot",
         "isaac-lab",
+        "isaac-arena",
         "openarm",
         "rerun-viewer",
         "sim2real-control",
@@ -127,11 +136,20 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 
 
 # General public-registry refusal inventories. They intentionally describe the
-# redistribution decision, not a particular vendor payload. The Cosmos3-Super
-# benchmark wrapper inherits the exact upstream vLLM-Omni runtime and therefore
-# remains build-your-own in an operator-controlled registry.
+# redistribution decision, not a particular vendor payload. Operator-built
+# PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"cosmos3-super-benchmark", "cosmos3-nano-video"}
+    {
+        "cosmos3-nano-video",
+        "cosmos3-super-benchmark",
+        "paidf-detection-sky",
+        "paidf-captioning-sky",
+        "paidf-visual-qa-sky",
+        "paidf-attribute-search-sky",
+        "paidf-anomalygen-sky",
+        "paidf-image-edit-sky",
+        "paidf-event-video-sky",
+    }
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
 
@@ -151,9 +169,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
-UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore"}
-)
+UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset({"openpi", "curobo", "ncore"})
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"robocasa"})
 # Compatibility view used by publication callers and public imports. Derive it
 # from the two canonical validation-state inventories; never maintain it
@@ -178,6 +194,10 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "isaac-arena": {
+        "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5",
+        "oci_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+    },
     "alpamayo2-super": {
         "development_sha": "5b693476c113c833e9d9d4f8c7aa492492a27505",
         "oci_digest": "sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
@@ -248,6 +268,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "isaac-lab": "3.0.0b2.post1-sim2real-coherent-20260904",
+    "isaac-arena": "0.3.0-isaaclab3-20260917-r4",
     "openarm": "2.2.0-isaac0.1.0-rtfetch",
     "leisaac": "0.4.0-20260817T231825Z",
     "cosmos": "cu128-torch27-sm100-1.0.9-20260803T002017Z",
@@ -366,7 +387,9 @@ def content_agents_accepted_image_manifest() -> dict[str, Any]:
         .read_text(encoding="utf-8")
     )
     if not isinstance(payload, dict):
-        raise RuntimeError("Content Agents accepted image manifest must be a JSON object")
+        raise RuntimeError(
+            "Content Agents accepted image manifest must be a JSON object"
+        )
     if payload.get("format") != "npa_content_agents_accepted_image_manifest_v1":
         raise RuntimeError("Unsupported Content Agents accepted image manifest format")
     if payload.get("tag") != SUPPORTED_TOOL_VERSIONS["content-agents"]:
@@ -568,7 +591,9 @@ def public_release_manifest() -> dict[str, Any]:
     if payload.get("format") != "npa_public_release_manifest_v1":
         raise RuntimeError("Unsupported public release manifest format")
     if payload.get("registry") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
-        raise RuntimeError("Public release manifest registry drifted from official GHCR")
+        raise RuntimeError(
+            "Public release manifest registry drifted from official GHCR"
+        )
     releases = payload.get("releases")
     pending = payload.get("publication_pending")
     if not isinstance(releases, dict) or not isinstance(pending, dict):
@@ -580,12 +605,17 @@ def public_release_manifest() -> dict[str, Any]:
         )
     for tool, entry in releases.items():
         if not isinstance(entry, dict):
-            raise RuntimeError(f"Public release manifest entry {tool!r} must be an object")
+            raise RuntimeError(
+                f"Public release manifest entry {tool!r} must be an object"
+            )
         if entry.get("tag") != public_release_tag_for_tool(tool):
             raise RuntimeError(f"Public release tag drifted for {tool!r}")
-        if re.fullmatch(
-            r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
-        ) is None:
+        if (
+            re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or "")
+            )
+            is None
+        ):
             raise RuntimeError(f"Public release digest is invalid for {tool!r}")
         development_sha = entry.get("development_sha")
         if development_sha is not None:
@@ -712,7 +742,10 @@ def sonic_image_variant_for_gpu(
             token = _normalize_gpu_target(str(match))
             # The family name also occurs in datacenter GPU labels. Those must
             # reach their model-specific rule, never the workstation default.
-            if token == "blackwell" and classify_gpu_target(normalized) == DATACENTER_HEADLESS:
+            if (
+                token == "blackwell"
+                and classify_gpu_target(normalized) == DATACENTER_HEADLESS
+            ):
                 continue
             if token in normalized:
                 if not requested:

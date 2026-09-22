@@ -21,29 +21,34 @@ document.querySelector('#whole').addEventListener('click',()=>{stop=null;video.c
 
 
 def _cue_html(cue, judgment):
-    frames = "".join(f'<figure><img src="{html.escape(frame["file"], quote=True)}" '
-                     f'alt="Final frame at {frame["seconds"]:.3f} seconds">'
-                     f'<figcaption>{frame["seconds"]:.3f}s</figcaption></figure>' for frame in cue["frames"])
+    frames = "".join(
+        f'<figure><img src="{html.escape(frame["file"], quote=True)}" '
+        f'alt="Final frame at {frame["seconds"]:.3f} seconds">'
+        f"<figcaption>{frame['seconds']:.3f}s</figcaption></figure>"
+        for frame in cue["frames"]
+    )
     verdict = html.escape(judgment["verdict"])
-    return (f'<article><button data-start="{cue["start"]}" data-end="{cue["end"]}">'
-            f'Play {cue["start"]:.3f}–{cue["end"]:.3f}s with audio</button>'
-            f'<blockquote>{html.escape(cue["text"])}</blockquote>'
-            f'<p class="verdict {verdict}">{verdict}</p>'
-            f'<p>{html.escape(judgment["visible_content"])}</p>'
-            f'<p>{html.escape(judgment["reasoning"])}</p><div class="frames">{frames}</div></article>')
+    return (
+        f'<article><button data-start="{cue["start"]}" data-end="{cue["end"]}">'
+        f"Play {cue['start']:.3f}–{cue['end']:.3f}s with audio</button>"
+        f"<blockquote>{html.escape(cue['text'])}</blockquote>"
+        f'<p class="verdict {verdict}">{verdict}</p>'
+        f"<p>{html.escape(judgment['visible_content'])}</p>"
+        f'<p>{html.escape(judgment["reasoning"])}</p><div class="frames">{frames}</div></article>'
+    )
 
 
 def _write_review_page(packet, report, directory):
     judgments = {item["id"]: item for item in report["cues"]}
     rows = "".join(_cue_html(cue, judgments[cue["id"]]) for cue in packet["cues"])
-    page = f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
+    page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Workbench Studio · Narration and picture review</title><style>{_STYLE}</style></head>
 <body><main><h1>Narration and picture review</h1>
-<p>Status: <strong>{html.escape(report['status'])}</strong></p>
-<p class="scope">{html.escape(packet['scope'])} Timing overlap alone does not establish meaning.</p>
+<p>Status: <strong>{html.escape(report["status"])}</strong></p>
+<p class="scope">{html.escape(packet["scope"])} Timing overlap alone does not establish meaning.</p>
 <video src="film.mp4" controls playsinline preload="metadata"></video>
 <p><button id="whole">Play the complete film with audio</button> · <a href="assessment.json">Assessment JSON</a></p>
-{rows}<p class="scope">Reviewed film SHA-256: <code>{packet['video_sha256']}</code></p>
-</main><script>{_SCRIPT}</script></body></html>'''
+{rows}<p class="scope">Reviewed film SHA-256: <code>{packet["video_sha256"]}</code></p>
+</main><script>{_SCRIPT}</script></body></html>"""
     (directory / "review.html").write_text(page, encoding="utf-8")

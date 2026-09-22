@@ -86,7 +86,9 @@ def test_laundered_baseline_cannot_lower_the_policy_bar():
     current = run_suite()["scorecard"]
     laundered = {**current, "success_rate": 0.9}
 
-    with pytest.raises(AssertionError, match="baseline success_rate=0.9 is below policy=1.0"):
+    with pytest.raises(
+        AssertionError, match="baseline success_rate=0.9 is below policy=1.0"
+    ):
         assert_scorecard_not_regressed(current, laundered)
 
 
@@ -97,7 +99,9 @@ def test_scenario_identity_and_count_are_policy_pinned():
     assert scorecard["scenario_sha256"] == SCENARIO_SHA256
 
     dropped = run_suite(SCENARIOS[:-1])["scorecard"]
-    with pytest.raises(AssertionError, match="scenario_count|scenario_ids|scenario_sha256"):
+    with pytest.raises(
+        AssertionError, match="scenario_count|scenario_ids|scenario_sha256"
+    ):
         assert_scorecard_not_regressed(dropped, _baseline_scorecard())
 
 
@@ -155,7 +159,9 @@ def test_every_scenario_kind_is_exercised():
 
 def test_no_task_crashes():
     report = run_suite()
-    crashed = [r for r in report["results"] if str(r.get("detail", "")).startswith("error:")]
+    crashed = [
+        r for r in report["results"] if str(r.get("detail", "")).startswith("error:")
+    ]
     assert not crashed, crashed
 
 
@@ -193,7 +199,11 @@ def test_operate_eval_mocked_round_trip_is_grounded(
             ),
             encoding="utf-8",
         )
-        return {"status": "completed", "run_id": observed_run_id, "run_uri": str(fixture)}
+        return {
+            "status": "completed",
+            "run_id": observed_run_id,
+            "run_uri": str(fixture),
+        }
 
     def ingest(submission: dict, output_uri: str, observed_run_id: str) -> dict:
         response = ingest_run(
@@ -211,7 +221,11 @@ def test_operate_eval_mocked_round_trip_is_grounded(
     def ask(input_uri: str) -> dict:
         result = observe(input_uri)
         reply = summarize_observations([{"tool": "insights_query", "result": result}])
-        return {"reply": reply, "tools_used": ["insights_query"], "usage": {"total_tokens": 0}}
+        return {
+            "reply": reply,
+            "tools_used": ["insights_query"],
+            "usage": {"total_tokens": 0},
+        }
 
     report = run_operate_eval(
         run_id=run_id,
@@ -288,7 +302,11 @@ def test_agent_eval_live_operate_round_trip():  # pragma: no cover - opt-in live
         completed = subprocess.run(command, capture_output=True, text=True, check=False)
         if completed.returncode:
             raise AssertionError(completed.stderr or completed.stdout)
-        return {"status": "completed", "run_id": observed_run_id, "stdout": completed.stdout}
+        return {
+            "status": "completed",
+            "run_id": observed_run_id,
+            "stdout": completed.stdout,
+        }
 
     def ingest(submission: dict, output_uri: str, observed_run_id: str) -> dict:
         # The submitted workflow's first real state is insights ingest-run. Query

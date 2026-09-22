@@ -23,6 +23,9 @@ from rich.console import Console
 from rich.text import Text
 
 from npa.cli.workbench.trigger import app as trigger_app
+from npa.cli.workbench.workflow.controller_recovery import (
+    register as register_controller_recovery,
+)
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
@@ -130,6 +133,31 @@ def _fail(msg: str, code: int = 1) -> None:
     raise typer.Exit(code)
 
 
+def _submit_failure_code(error: BaseException) -> int:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        PendingGpuPlacementError,
+        TemporarilyUnavailableAcceleratorError,
+    )
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        # An ambiguous provider response must never become an automatic retry.
+        if isinstance(cause, SkyPilotSubmitError):
+            if cause.launch_attempted is not False:
+                return 1
+            if cause.transaction is not None and cause.transaction.launch_sequence != 0:
+                return 1
+        if isinstance(
+            cause, (TemporarilyUnavailableAcceleratorError, PendingGpuPlacementError)
+        ):
+            return 75
+        cause = cause.__cause__
+    return 1
+
+
 def _workflow_access_requirements(spec) -> tuple:  # noqa: ANN001
     from npa.workbench.access_approval import requirements_for_tool_refs
 
@@ -194,7 +222,7 @@ def _enforce_workflow_access(
         blocked,
         probe_requirements,
     )
-    from npa.workbench.nurec.nurec import check_ngc_image_access
+    from npa.workbench.model_access import check_ngc_artifact_access
 
     credentials = load_credentials() if hf_token is None or ngc_key is None else None
     resolved_hf = (
@@ -215,7 +243,7 @@ def _enforce_workflow_access(
         hf_token=resolved_hf,
         ngc_key=resolved_ngc,
         hf_validator=validate_hf_access,
-        ngc_validator=check_ngc_image_access,
+        ngc_validator=check_ngc_artifact_access,
         state_path=state_path,
     )
     plan = approval_plan(evidence, resume_command=resume_command)
@@ -301,7 +329,9 @@ def prepare_run_cmd(
             workflow_identity=spec.name,
             resume_run=requested,
         )
-        from npa.orchestration.npa_workflow.submission_state import record_submission_plan
+        from npa.orchestration.npa_workflow.submission_state import (
+            record_submission_plan,
+        )
 
         record_submission_plan(
             project or "default",
@@ -950,9 +980,7 @@ def submit_cmd(
         _fail("--plan-migration-reason requires --allow-terminal-plan-migration")
         return
     if adopt_absent_in_flight_outputs and not (resume_run or (resume and run_id)):
-        _fail(
-            "--adopt-absent-in-flight-outputs requires an explicit --resume-run ID"
-        )
+        _fail("--adopt-absent-in-flight-outputs requires an explicit --resume-run ID")
         return
     if not project:
         from npa.clients.config import default_project_name
@@ -1076,7 +1104,8 @@ def submit_cmd(
             requested=required_secret_env,
             workflow_env=(
                 _raw_workflow_environment(yaml_path, substitutions)
-                if not is_npa_spec and not materializer else None
+                if not is_npa_spec and not materializer
+                else None
             ),
         )
         secret_env[:] = list(dict.fromkeys(required_secret_env))
@@ -1099,9 +1128,7 @@ def submit_cmd(
     if resolved_access_key:
         extra_env.setdefault("AWS_ACCESS_KEY_ID", resolved_access_key)
     if resolved_secret_key:
-        extra_env.setdefault(
-            "AWS_SECRET_ACCESS_KEY", resolved_secret_key
-        )
+        extra_env.setdefault("AWS_SECRET_ACCESS_KEY", resolved_secret_key)
     missing_secrets = list(submit_credentials.missing)
     if checkpoint_access_required and "HF_TOKEN" in missing_secrets:
         missing_secrets.remove("HF_TOKEN")
@@ -1412,33 +1439,12 @@ def submit_cmd(
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
 
-        if not plan_only:
-            # Scope and denied output-prefix access must fail before image
-            # bootstrap or deployIfAbsent creates compute. This identity gate
-            # remains mandatory even when convenience preflights are skipped.
-            try:
-                execution_target, execution_preflight_report = _execution_target_preflight(
-                    merged_npa_spec, project=project, context=infra_context,
-                    region=region, run_id=resolved_run_id,
-                    assume_decision=assume_decision, credentials=submit_credentials,
-                    source_uri=planned_source_uri if stage_source_planned else "",
-                    verify_cluster=not deploy_if_absent,
-                    gpu_check=(lambda: _preflight_submit_gang_capacity(
-                        merged_npa_spec, context=infra_context, allowed_nodes=None,
-                        sky_bin=sky_bin, config_path=config_path,
-                        isolated_config_dir=isolated_config_dir,
-                    )) if infra_context and not deploy_if_absent and not runtime else None,
-                )
-            except (RuntimeError, ValueError) as exc:
-                _fail(str(exc))
-                return
-
-        # An existing target can prove that PAIDF has nowhere schedulable to run
-        # without any provider or model call.  Preserve that cheapest failure
-        # ordering, then verify the exact modality-specific checkpoint before
-        # image work, provisioning, or launch.  A deployIfAbsent target cannot
-        # be placement-checked until it exists, so its checkpoint fence remains
-        # ahead of provisioning below.
+        # For an existing PAIDF target, prove placement before the shared
+        # execution preflight writes its temporary storage probe or performs
+        # any provider/model/image work.  Static prerequisites deliberately
+        # remain first: they are local and give a cold-start user the complete
+        # actionable report without needing cluster access.  A deployIfAbsent
+        # target cannot be placement-checked until it exists.
         if (
             is_paidf_spec
             and not plan_only
@@ -1452,6 +1458,40 @@ def submit_cmd(
                 _fail_missing_prerequisites(yaml_path, placement_missing)
                 return
             paidf_placement_prechecked = True
+
+        if not plan_only:
+            # Scope and denied output-prefix access must fail before image
+            # bootstrap or deployIfAbsent creates compute. This identity gate
+            # remains mandatory even when convenience preflights are skipped.
+            try:
+                execution_target, execution_preflight_report = (
+                    _execution_target_preflight(
+                        merged_npa_spec,
+                        project=project,
+                        context=infra_context,
+                        region=region,
+                        run_id=resolved_run_id,
+                        assume_decision=assume_decision,
+                        credentials=submit_credentials,
+                        source_uri=planned_source_uri if stage_source_planned else "",
+                        verify_cluster=not deploy_if_absent,
+                        gpu_check=(
+                            lambda: _preflight_submit_gang_capacity(
+                                merged_npa_spec,
+                                context=infra_context,
+                                allowed_nodes=None,
+                                sky_bin=sky_bin,
+                                config_path=config_path,
+                                isolated_config_dir=isolated_config_dir,
+                            )
+                        )
+                        if infra_context and not deploy_if_absent and not runtime
+                        else None,
+                    )
+                )
+            except (RuntimeError, ValueError) as exc:
+                _fail(str(exc), code=_submit_failure_code(exc))
+                return
 
         if not plan_only:
             # Cosmos Transfer already has the stronger state-local pinned-file
@@ -1599,7 +1639,12 @@ def submit_cmd(
                     bind_controller=bind_controller is True,
                     isolated_config_dir=isolated_config_dir,
                 )
-            except (ClusterOwnerIdentityMismatchError, OSError, RuntimeError, ValueError) as exc:
+            except (
+                ClusterOwnerIdentityMismatchError,
+                OSError,
+                RuntimeError,
+                ValueError,
+            ) as exc:
                 _fail(str(exc))
                 return
 
@@ -1634,7 +1679,9 @@ def submit_cmd(
                     new_run_id="" if resume else resolved_run_id,
                     persist=True,
                 )
-                from npa.orchestration.npa_workflow.submission_state import record_submission_plan
+                from npa.orchestration.npa_workflow.submission_state import (
+                    record_submission_plan,
+                )
 
                 record_submission_plan(
                     project or "default",
@@ -1666,12 +1713,32 @@ def submit_cmd(
                 plan_paidf_input,
                 prepare_paidf_input,
             )
+            from npa.orchestration.npa_workflow.run_state import (
+                NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+                PAIDF_COSMOS3_WORKFLOW_NAME,
+            )
+
+            paidf_input_artifact_prefix = ""
+            paidf_conditioning_policy = ""
+            if workflow_identity == NVIDIA_PAIDF_VDA_WORKFLOW_NAME:
+                from npa.orchestration.npa_workflow.runtime import _resolved_config
+
+                assert merged_npa_spec is not None
+                paidf_input_artifact_prefix = str(
+                    _resolved_config(merged_npa_spec, resolved_run_id).get("prefix")
+                    or ""
+                ).strip("/")
+                paidf_conditioning_policy = _paidf_conditioning_policy(
+                    workflow_identity,
+                    _resolved_config(merged_npa_spec, resolved_run_id),
+                )
 
             try:
                 if plan_only:
                     prepared_input = plan_paidf_input(
                         run_id=resolved_run_id,
                         bucket=bucket_for_source,
+                        artifact_prefix=paidf_input_artifact_prefix,
                         input_video=input_video,
                         input_uri=input_uri,
                         lerobot_uri=lerobot_uri,
@@ -1682,11 +1749,13 @@ def submit_cmd(
                         ),
                         lerobot_episode_was_explicit=lerobot_episode is not None,
                         seed_fixture=fixture_requested,
+                        conditioning_policy=paidf_conditioning_policy,
                     )
                 else:
                     prepared_input = prepare_paidf_input(
                         run_id=resolved_run_id,
                         bucket=bucket_for_source,
+                        artifact_prefix=paidf_input_artifact_prefix,
                         input_video=input_video,
                         input_uri=input_uri,
                         lerobot_uri=lerobot_uri,
@@ -1703,14 +1772,12 @@ def submit_cmd(
                             "AWS_SECRET_ACCESS_KEY", ""
                         ),
                         reporter=lambda message: typer.echo(message, err=True),
+                        conditioning_policy=paidf_conditioning_policy,
                     )
             except PaidfInputError as exc:
                 _fail(str(exc))
                 return
             prepared_overrides = prepared_input.config_overrides()
-            from npa.orchestration.npa_workflow.run_state import (
-                PAIDF_COSMOS3_WORKFLOW_NAME,
-            )
 
             if workflow_identity == PAIDF_COSMOS3_WORKFLOW_NAME:
                 # The independent Cosmos3 spec owns its run-local provenance URI.
@@ -1795,16 +1862,20 @@ def submit_cmd(
         image_overrides.update(specific_image_overrides)
 
         render_endpoint = (
-            s3_endpoint or os.environ.get("AWS_ENDPOINT_URL")
+            s3_endpoint
+            or os.environ.get("AWS_ENDPOINT_URL")
             or os.environ.get("NEBIUS_S3_ENDPOINT")
             or "https://storage.eu-north1.nebius.cloud"
         )
         runtime_environment = (
             _runtime_submit_environment(
-                merged_npa_spec, run_id=resolved_run_id,
-                secret_env_values=extra_env, endpoint=render_endpoint,
+                merged_npa_spec,
+                run_id=resolved_run_id,
+                secret_env_values=extra_env,
+                endpoint=render_endpoint,
             )
-            if runtime and not plan_only else None
+            if runtime and not plan_only
+            else None
         )
         npa_render_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
@@ -1851,7 +1922,10 @@ def submit_cmd(
                     isolated_config_dir=isolated_config_dir,
                 )
             except Exception as exc:
-                _fail(f"multi-node GPU capacity preflight failed: {exc}")
+                _fail(
+                    f"multi-node GPU capacity preflight failed: {exc}",
+                    code=_submit_failure_code(exc),
+                )
                 return
 
         if runtime and not plan_only:
@@ -1869,9 +1943,15 @@ def submit_cmd(
 
                 if execution_target is not None:
                     import yaml
-                    from npa.execution_preflight import verify_execution_target, verify_worker_environment
+                    from npa.execution_preflight import (
+                        verify_execution_target,
+                        verify_worker_environment,
+                    )
 
-                    verify_worker_environment(execution_target, list(yaml.safe_load_all(_wave_yaml.read_text())))
+                    verify_worker_environment(
+                        execution_target,
+                        list(yaml.safe_load_all(_wave_yaml.read_text())),
+                    )
                     verify_execution_target(execution_target)
 
                 refreshed_pins = _preflight_submit_images(
@@ -1881,9 +1961,7 @@ def submit_cmd(
                     assume_decision=assume_decision,
                     enabled=preflight_images,
                     infra=infra,
-                    image_bootstrap_timeout_seconds=(
-                        image_bootstrap_timeout_seconds
-                    ),
+                    image_bootstrap_timeout_seconds=(image_bootstrap_timeout_seconds),
                 )
                 if preflight_images and refreshed_pins != image_digest_pins:
                     raise RuntimeError(
@@ -2157,9 +2235,16 @@ def submit_cmd(
 
         if not is_npa_spec and not plan_only:
             import yaml
-            from npa.execution_preflight import ExecutionPreflightError, skypilot_task_documents
+            from npa.execution_preflight import (
+                ExecutionPreflightError,
+                skypilot_task_documents,
+            )
 
-            actual_path = submitted_yaml_path if submitted_yaml_path.exists() else source_yaml_path
+            actual_path = (
+                submitted_yaml_path
+                if submitted_yaml_path.exists()
+                else source_yaml_path
+            )
             documents = list(yaml.safe_load_all(actual_path.read_text()))
             original_documents = json.dumps(documents, sort_keys=True)
             if s3_bucket:
@@ -2176,14 +2261,22 @@ def submit_cmd(
                         envs["S3_BUCKET"] = s3_bucket
                 if s3_prefix:
                     envs["NPA_S3_PREFIX"] = s3_prefix
-                    if "SONIC_OUTPUT_PREFIX" in envs and str(envs["SONIC_OUTPUT_PREFIX"]).strip("/") != s3_prefix.strip("/"):
+                    if "SONIC_OUTPUT_PREFIX" in envs and str(
+                        envs["SONIC_OUTPUT_PREFIX"]
+                    ).strip("/") != s3_prefix.strip("/"):
                         envs["SONIC_OUTPUT_PREFIX"] = s3_prefix
             try:
-                execution_target, execution_preflight_report, injected = _raw_execution_preflight(
-                    documents, project=project, infra=infra, extra_env=extra_env,
-                    sky_bin=sky_bin, config_path=config_path,
-                    isolated_config_dir=isolated_config_dir,
-                    controller_backend=controller_backend.value,
+                execution_target, execution_preflight_report, injected = (
+                    _raw_execution_preflight(
+                        documents,
+                        project=project,
+                        infra=infra,
+                        extra_env=extra_env,
+                        sky_bin=sky_bin,
+                        config_path=config_path,
+                        isolated_config_dir=isolated_config_dir,
+                        controller_backend=controller_backend.value,
+                    )
                 )
             except (ExecutionPreflightError, ValueError, RuntimeError) as exc:
                 _fail(str(exc))
@@ -2191,9 +2284,15 @@ def submit_cmd(
             extra_env.update(injected)
             if json.dumps(documents, sort_keys=True) != original_documents:
                 if submitted_yaml_context is None:
-                    submitted_yaml_context = tempfile.TemporaryDirectory(prefix="npa-workflow-")
-                    submitted_yaml_path = Path(submitted_yaml_context.name) / yaml_path.name
-                submitted_yaml_path.write_text(yaml.safe_dump_all(documents, sort_keys=False))
+                    submitted_yaml_context = tempfile.TemporaryDirectory(
+                        prefix="npa-workflow-"
+                    )
+                    submitted_yaml_path = (
+                        Path(submitted_yaml_context.name) / yaml_path.name
+                    )
+                submitted_yaml_path.write_text(
+                    yaml.safe_dump_all(documents, sort_keys=False)
+                )
                 submitted_yaml_path.chmod(0o600)
 
         if durable_s3:
@@ -2218,9 +2317,14 @@ def submit_cmd(
                 )
                 submitted_yaml_path.write_text(instrumented.yaml_text, encoding="utf-8")
                 if execution_target is not None:
-                    from npa.execution_preflight import replace_execution_outputs, verify_execution_target
+                    from npa.execution_preflight import (
+                        replace_execution_outputs,
+                        verify_execution_target,
+                    )
 
-                    execution_target = replace_execution_outputs(execution_target, {workflow_state.uri: "directory"})
+                    execution_target = replace_execution_outputs(
+                        execution_target, {workflow_state.uri: "directory"}
+                    )
                     verify_execution_target(execution_target)
                 write_manifest(instrumented.manifest, workflow_state)
                 extra_env.update(workflow_state.secret_env())
@@ -2320,16 +2424,20 @@ def submit_cmd(
                     alias,
                 ],
             )
-            with operation_context(operation):
-                operation.transition("mutating")
-                try:
-                    submitted = submit()
-                except BaseException as exc:
-                    _record_workflow_submit_failure(operation, exc)
-                    raise
-                operation.transition("state-durable")
-                operation.commit()
-                return submitted
+            try:
+                with operation_context(operation):
+                    operation.transition("mutating")
+                    try:
+                        submitted = submit()
+                    except BaseException as exc:
+                        _record_workflow_submit_failure(operation, exc)
+                        raise
+                    operation.transition("state-durable")
+                    operation.commit()
+                    return submitted
+            except BaseException as exc:
+                _record_unentered_workflow_submit_failure(operation, exc)
+                raise
 
         if prepared_npa is not None:
             from npa.orchestration.npa_workflow.submission_state import (
@@ -2418,8 +2526,8 @@ def submit_cmd(
                     sort_keys=True,
                 )
             )
-            raise typer.Exit(1) from exc
-        _fail(str(exc))
+            raise typer.Exit(_submit_failure_code(exc)) from exc
+        _fail(str(exc), code=_submit_failure_code(exc))
         return
     finally:
         if submitted_yaml_context is not None:
@@ -2534,11 +2642,17 @@ def _workflow_submission_receipt(spec, steps, run_id: str) -> dict[str, object]:
 
 
 def _runtime_submit_environment(
-    spec, *, run_id: str, secret_env_values: Mapping[str, str], endpoint: str,
+    spec,
+    *,
+    run_id: str,
+    secret_env_values: Mapping[str, str],
+    endpoint: str,
 ) -> dict[str, str]:
     """Resolve the same private environment before API readiness and runtime."""
     from npa.orchestration.npa_workflow.interpreter import _make_context
-    from npa.orchestration.npa_workflow.submit_credentials import STORAGE_ENDPOINT_ENV_NAMES
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
 
     environment = dict(secret_env_values)
     resolved_config = _make_context(spec, run_id=run_id).config
@@ -2677,14 +2791,17 @@ def _run_npa_workflow_runtime(
         pre_submit_hook=pre_submit_hook,
     )
     runtime_env = _runtime_submit_environment(
-        spec, run_id=run_id, secret_env_values=secret_env_values,
+        spec,
+        run_id=run_id,
+        secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
     )
     with _temporary_runtime_environment(runtime_env):
         # Record entry into the runtime before it can launch a wave. A runtime
         # receipt has multiple job identities in S3, so no single job ID belongs here.
         update_submission_state(
-            project or "default", run_id,
+            project or "default",
+            run_id,
             {"launch": {"status": "launching", "kind": "runtime"}},
         )
         try:
@@ -2701,10 +2818,15 @@ def _run_npa_workflow_runtime(
             _fail(str(exc))
             return
     artifact_load: dict[str, object] | None = None
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+
     if (
         report.status == "succeeded"
         and auto_load
-        and report.workflow == "physical-ai-data-factory"
+        and report.workflow
+        in {"physical-ai-data-factory", NVIDIA_PAIDF_VDA_WORKFLOW_NAME}
     ):
         artifact_load = _load_paidf_artifact(
             project=project,
@@ -2890,6 +3012,7 @@ def _plan_requires_npa_source(
     from npa.orchestration.npa_workflow.skypilot_render import (
         build_scheduler_task,
         resolve_task_image,
+        tool_requires_staged_npa_source,
     )
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
@@ -2901,6 +3024,8 @@ def _plan_requires_npa_source(
     plan = build_plan(spec, run_id=run_id, assume_decision=assume_decision)
     for step in plan.steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
+        if tool_requires_staged_npa_source(str(task.get("tool_ref") or "")):
+            return True
         if not resolve_task_image(
             str(task.get("tool_ref") or ""),
             task.get("resources") or {},
@@ -3152,10 +3277,7 @@ def _preflight_image_bootstrap_contracts(
         try:
             reference = parse_image_reference(image)
             image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
-            if (
-                image_tool
-                and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
-            ):
+            if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
                 # complete preflight for registered images outside that subset.
@@ -3410,7 +3532,10 @@ def _preflight_submit_gang_capacity(
         discover_kubernetes_gpu_inventory,
         preflight_kubernetes_gpu_gang,
     )
-    from npa.orchestration.skypilot.resource_quantities import kubernetes_gpu_quantities
+    from npa.orchestration.skypilot.resource_quantities import (
+        kubernetes_ephemeral_storage_quantity,
+        kubernetes_gpu_quantities,
+    )
 
     checks: list[dict[str, object]] = []
     resolved_allowed_nodes = allowed_nodes
@@ -3441,7 +3566,8 @@ def _preflight_submit_gang_capacity(
                 isolated_config_dir=isolated_config_dir,
             )
         effective = normalize_resources(
-            {**resolved, "cloud": "kubernetes"}, accelerator_overrides=accelerator_overrides,
+            {**resolved, "cloud": "kubernetes"},
+            accelerator_overrides=accelerator_overrides,
         )
         selected = str(effective["accelerators"])
         cpus, memory = kubernetes_gpu_quantities(effective, accelerator=selected)
@@ -3458,6 +3584,7 @@ def _preflight_submit_gang_capacity(
             node_count=nodes,
             cpus=cpus,
             memory=memory,
+            ephemeral_storage=kubernetes_ephemeral_storage_quantity(effective),
             allowed_nodes=resolved_allowed_nodes,
             pod_spec=pod_spec,
         )
@@ -3552,9 +3679,21 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
     project operations forever, even though no mutation occurred.
     """
 
+    # Execution preflight completes before SkyPilot's launch transaction exists.
+    # It is therefore just as certain as a transaction with launch_sequence=0:
+    # no managed job can have been created.  Keeping its lifecycle journal in
+    # recovery-required would block later, safe workflow submissions forever.
+    from npa.execution_preflight import ExecutionPreflightError
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
     transaction = getattr(exc, "transaction", None)
     launch_sequence = getattr(transaction, "launch_sequence", None)
-    if launch_sequence == 0:
+    preflight_failed = isinstance(exc, ExecutionPreflightError) or (
+        transaction is None
+        and isinstance(exc, SkyPilotSubmitError)
+        and exc.launch_attempted is False
+    )
+    if launch_sequence == 0 or preflight_failed:
         operation.record_rollback(
             attempted=False,
             completed=True,
@@ -3571,6 +3710,39 @@ def _record_workflow_submit_failure(operation, exc: BaseException) -> None:  # n
     operation.transition("recovery-required", error=str(exc))
 
 
+def _record_unentered_workflow_submit_failure(operation, exc: BaseException) -> None:  # noqa: ANN001
+    """Finalize a submit journal that never entered its mutation window.
+
+    ``operation_context`` can reject a new submit because another project
+    operation holds the lifecycle lease.  That happens before ``submit`` can
+    invoke SkyPilot, but the prepared operation journal already exists.  Leaving
+    that empty record nonterminal would turn one safe rejection into a chain of
+    future lease conflicts.
+    """
+
+    payload = operation.read()
+    if str(payload.get("phase") or "") != "prepared" or bool(
+        payload.get("resources") or []
+    ):
+        return
+    operation.record_rollback(
+        attempted=False,
+        completed=True,
+        removed=[],
+        preserved=[],
+        outcomes=[],
+    )
+    operation.transition(
+        "rolled-back",
+        error=str(exc),
+        details={
+            "error_type": type(exc).__name__,
+            "launch_attempted": False,
+            "context_acquired": False,
+        },
+    )
+
+
 def _parse_submit_vars(var: list[str]) -> dict[str, str]:
     substitutions: dict[str, str] = {}
     for item in var:
@@ -3581,6 +3753,26 @@ def _parse_submit_vars(var: list[str]) -> dict[str, str]:
             _fail("Invalid --var format. Use KEY=VALUE.")
         substitutions[key] = value
     return substitutions
+
+
+def _paidf_conditioning_policy(
+    workflow_identity: str, resolved_config: dict[str, object]
+) -> str:
+    """Select explicit v3 while preserving the historical VDA v2 default."""
+
+    from npa.orchestration.npa_workflow.run_state import (
+        NVIDIA_PAIDF_VDA_WORKFLOW_NAME,
+    )
+    from npa.workflows.data_factory_input import (
+        SOURCE_FIDELITY_CONDITIONING_POLICY_V2,
+    )
+
+    if workflow_identity != NVIDIA_PAIDF_VDA_WORKFLOW_NAME:
+        return ""
+    return str(
+        resolved_config.get("input_conditioning_policy")
+        or SOURCE_FIDELITY_CONDITIONING_POLICY_V2
+    ).strip()
 
 
 def _parse_image_overrides(items: list[str]) -> dict[str, str]:
@@ -4016,24 +4208,41 @@ def _submit_prerequisites(
 
 
 def _execution_target_preflight(
-    spec, *, project: str, context: str, region: str, run_id: str,
-    assume_decision: str, credentials, source_uri: str = "",
+    spec,
+    *,
+    project: str,
+    context: str,
+    region: str,
+    run_id: str,
+    assume_decision: str,
+    credentials,
+    source_uri: str = "",
     verify_cluster: bool = True,
     gpu_check: Callable[[], Any] | None = None,
 ):
     """Bind the actual resolved plan to the shared CLI/SDK execution gate."""
     from npa.execution_preflight import (
-        resolve_execution_target, verify_execution_target, workflow_output_destinations,
+        resolve_execution_target,
+        verify_execution_target,
+        workflow_output_destinations,
     )
 
-    destinations = workflow_output_destinations(spec, run_id=run_id, assume_decision=assume_decision)
+    destinations = workflow_output_destinations(
+        spec, run_id=run_id, assume_decision=assume_decision
+    )
     if source_uri:
         destinations[source_uri.rstrip("/") + "/"] = "directory"
     target = resolve_execution_target(
-        project=project, context=context, region=region, output_uris=list(destinations), output_kinds=destinations,
+        project=project,
+        context=context,
+        region=region,
+        output_uris=list(destinations),
+        output_kinds=destinations,
         credentials=credentials,
     )
-    report = verify_execution_target(target, verify_cluster=verify_cluster, gpu_check=gpu_check)
+    report = verify_execution_target(
+        target, verify_cluster=verify_cluster, gpu_check=gpu_check
+    )
     return target, report
 
 
@@ -4041,29 +4250,52 @@ def _raw_workflow_environment(yaml_path: Path, substitutions: Mapping[str, str])
     import yaml
     from npa.execution_preflight import skypilot_workflow_environment
 
-    content = _substitute_workflow_vars(yaml_path, substitutions) if substitutions else yaml_path.read_text()
+    content = (
+        _substitute_workflow_vars(yaml_path, substitutions)
+        if substitutions
+        else yaml_path.read_text()
+    )
     return skypilot_workflow_environment(list(yaml.safe_load_all(content)))
 
 
 def _raw_execution_preflight(
-    documents, *, sky_bin="", config_path=None, isolated_config_dir=None,
-    controller_backend="kubernetes", **kwargs,
+    documents,
+    *,
+    sky_bin="",
+    config_path=None,
+    isolated_config_dir=None,
+    controller_backend="kubernetes",
+    **kwargs,
 ):
     from npa.execution_preflight import preflight_skypilot_submission
     from npa.orchestration.skypilot._bin import resolve_config, ensure_skypilot_version
-    from npa.orchestration.skypilot.workflow import _load_base_config, _controller_config_for_execution, _stable_sky_cwd, sky_environment
+    from npa.orchestration.skypilot.workflow import (
+        _load_base_config,
+        _controller_config_for_execution,
+        _stable_sky_cwd,
+        sky_environment,
+    )
 
-    runtime = resolve_config(sky_bin=sky_bin or None, global_config_path=config_path,
-                             isolated_config_dir=isolated_config_dir)
+    runtime = resolve_config(
+        sky_bin=sky_bin or None,
+        global_config_path=config_path,
+        isolated_config_dir=isolated_config_dir,
+    )
     config = _controller_config_for_execution(
-        _load_base_config(runtime.global_config_path), controller_backend=controller_backend,
+        _load_base_config(runtime.global_config_path),
+        controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
     env = sky_environment(runtime.isolated_config_dir)
     env.update(kwargs.pop("extra_env", None) or {})
-    return preflight_skypilot_submission(documents, **kwargs, global_config=config,
-        extra_env=env, cwd=_stable_sky_cwd(runtime.isolated_config_dir),
-        sky_bin=str(ensure_skypilot_version(runtime.sky_bin)))
+    return preflight_skypilot_submission(
+        documents,
+        **kwargs,
+        global_config=config,
+        extra_env=env,
+        cwd=_stable_sky_cwd(runtime.isolated_config_dir),
+        sky_bin=str(ensure_skypilot_version(runtime.sky_bin)),
+    )
 
 
 def _fail_missing_prerequisites(
@@ -4227,31 +4459,44 @@ def _latest_runtime_wave_states(
 
 
 def _runtime_handoff_error(
-    payload: dict[str, object], runtime_state: dict[str, object], observations: dict,
+    payload: dict[str, object],
+    runtime_state: dict[str, object],
+    observations: dict,
 ) -> str:
     if any(not isinstance(wave, dict) for wave in runtime_state.get("waves") or []):
         return "Runtime ledger contains malformed wave evidence"
     for stage in (payload.get("stages") or {}).values():
         if stage.get("state") == "SUCCEEDED" and (
-            not stage.get("managed_job_id") or stage.get("job_attribution") == "ambiguous"
+            not stage.get("managed_job_id")
+            or stage.get("job_attribution") == "ambiguous"
         ):
             return "Recorded successful stage lacks an unambiguous managed-job identity"
         observation = observations.get(stage.get("managed_job_id")) or {}
         # Job and task queues are separate snapshots. A recognized nonterminal
         # job can precede stage success without invalidating the live query.
-        if stage.get("state") == "SUCCEEDED" and str(observation.get("status") or "").upper() not in {
-            "SUCCEEDED", "PENDING", "STARTING", "RUNNING", "RECOVERING", "CANCELLING",
+        if stage.get("state") == "SUCCEEDED" and str(
+            observation.get("status") or ""
+        ).upper() not in {
+            "SUCCEEDED",
+            "PENDING",
+            "STARTING",
+            "RUNNING",
+            "RECOVERING",
+            "CANCELLING",
         }:
             return "Recorded successful stage lacks a compatible live job observation"
     return ""
 
 
 def _reconcile_runtime_completion(
-    payload: dict[str, object], manifest: dict[str, object], runtime_state: dict[str, object],
+    payload: dict[str, object],
+    manifest: dict[str, object],
+    runtime_state: dict[str, object],
     observations: dict,
 ) -> str:
     from npa.orchestration.npa_workflow.run_state import (
-        RunManifest, runtime_workflow_lifecycle,
+        RunManifest,
+        runtime_workflow_lifecycle,
     )
 
     original_manifest = RunManifest.from_dict(manifest)
@@ -4274,7 +4519,11 @@ def _reconcile_runtime_completion(
         payload.setdefault("diagnostics", []).append(
             "Terminal workflow manifest and runtime ledger outcomes conflict."
         )
-    elif not lifecycle["completion_recorded"] and status in {"PLANNED", "SUBMITTED", "RUNNING"}:
+    elif not lifecycle["completion_recorded"] and status in {
+        "PLANNED",
+        "SUBMITTED",
+        "RUNNING",
+    }:
         payload.setdefault("diagnostics", []).append(
             "Recorded stages succeeded; workflow completion is not yet recorded. "
             "The durable lifecycle does not establish whether the submit driver is alive."
@@ -4624,7 +4873,9 @@ def _durable_workflow_status(
             if completion_error:
                 verification_errors.append(completion_error)
         try:
-            manifest_terminal = manifest_workflow_lifecycle_state(recorded_manifest_status)
+            manifest_terminal = manifest_workflow_lifecycle_state(
+                recorded_manifest_status
+            )
         except ValueError:
             manifest_terminal = ""
         runtime_terminal_states = _latest_runtime_wave_states(runtime_waves)
@@ -4741,9 +4992,8 @@ def _durable_workflow_status(
             target=", ".join(job_ids) or state.uri,
             last_known_state=last_known,
             last_known_at=last_known_at,
-            last_known_source=lifecycle_source or (
-                "live_scheduler" if job_ids else "authoritative_manifest"
-            ),
+            last_known_source=lifecycle_source
+            or ("live_scheduler" if job_ids else "authoritative_manifest"),
             retry_command=retry_command,
             attempted_at=attempted_at,
         )
@@ -4920,7 +5170,9 @@ def _manifest_pending_status(
                 )
             else:
                 live_status = live.status
-            task_rows = workflow_task_statuses(job_id, sky_bin=sky_bin or None, raise_on_error=True)
+            task_rows = workflow_task_statuses(
+                job_id, sky_bin=sky_bin or None, raise_on_error=True
+            )
         except Exception as exc:  # noqa: BLE001 - durable evidence still proves the run
             safe_error = sanitize_reason(f"{type(exc).__name__}: {exc}")
             verification_errors.append(safe_error)
@@ -5263,7 +5515,9 @@ def _emit_workflow_status(
             f"workflow completion recorded: {bool(lifecycle.get('completion_recorded'))}; "
             f"driver liveness: {lifecycle.get('driver_liveness') or 'unknown'}"
         )
-        typer.echo(f"durable lifecycle observed_at: {lifecycle.get('updated_at') or 'unknown'}")
+        typer.echo(
+            f"durable lifecycle observed_at: {lifecycle.get('updated_at') or 'unknown'}"
+        )
     if result.get("resolution_source"):
         typer.echo(f"resolution_source: {result.get('resolution_source')}")
     if result.get("manifest_state"):
@@ -6069,6 +6323,14 @@ def logs_cmd(
                     if sky_task_id is not None and str(sky_task_id) != ""
                     else selected_stage
                 )
+                if (
+                    len(steps) == 1
+                    and not runtime_stages
+                    and not resolution.runtime_state.get("waves")
+                ):
+                    # The one-shot renderer emits one task per planned step.
+                    # Job-level logs need neither its renamed task nor an assumed ID.
+                    live_stage = ""
                 live = tail_live_job_logs(
                     sky_bin=_resolve_sky_bin(sky_bin),
                     job_id=job_id,
@@ -7514,12 +7776,37 @@ def preflight_images_cmd(
 @app.command("gpus")
 @json_stdout_contract
 def gpus_cmd(
-    project: str = typer.Option("", "--project", help="Optional project alias checked against the selected context's local cluster identity."),
-    cluster: str = typer.Option("", "--cluster", "--cluster-name", help="NPA cluster name; selects its kubeconfig and context."),
-    context: str = typer.Option("", "--context", help="Exact context. Defaults to KUBECONTEXT or legacy all-context discovery."),
-    sky_bin: str = typer.Option("", "--sky-bin", help="SkyPilot executable; defaults to NPA_SKYPILOT_BIN or saved configuration."),
-    isolated_config_dir: Path | None = typer.Option(None, "--isolated-config-dir", help="Parent directory for owned targeted discovery sessions."),
-    spec: Path | None = typer.Option(None, "--spec", help="Workflow spec whose accelerators should be resolved against the cluster."),
+    project: str = typer.Option(
+        "",
+        "--project",
+        help="Optional project alias checked against the selected context's local cluster identity.",
+    ),
+    cluster: str = typer.Option(
+        "",
+        "--cluster",
+        "--cluster-name",
+        help="NPA cluster name; selects its kubeconfig and context.",
+    ),
+    context: str = typer.Option(
+        "",
+        "--context",
+        help="Exact context. Defaults to KUBECONTEXT or legacy all-context discovery.",
+    ),
+    sky_bin: str = typer.Option(
+        "",
+        "--sky-bin",
+        help="SkyPilot executable; defaults to NPA_SKYPILOT_BIN or saved configuration.",
+    ),
+    isolated_config_dir: Path | None = typer.Option(
+        None,
+        "--isolated-config-dir",
+        help="Parent directory for owned targeted discovery sessions.",
+    ),
+    spec: Path | None = typer.Option(
+        None,
+        "--spec",
+        help="Workflow spec whose accelerators should be resolved against the cluster.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
 ) -> None:
     """Print advertised GPU names using an owned API for a selected context.
@@ -7537,7 +7824,9 @@ def gpus_cmd(
     Raises:
         Exit: Target, discovery, or owned cleanup could not be verified.
     """
-    resolved_context = context.strip() or cluster.strip() or os.environ.get("KUBECONTEXT", "").strip()
+    resolved_context = (
+        context.strip() or cluster.strip() or os.environ.get("KUBECONTEXT", "").strip()
+    )
     inventory, catalog, sky_error = _inspect_workflow_gpus(
         project, cluster, resolved_context, sky_bin, isolated_config_dir
     )
@@ -7547,7 +7836,10 @@ def gpus_cmd(
 
 def _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir):
     from npa.orchestration.skypilot import _bin
-    from npa.orchestration.skypilot.cluster_validation import resolve_validation_project, resolve_validation_target
+    from npa.orchestration.skypilot.cluster_validation import (
+        resolve_validation_project,
+        resolve_validation_target,
+    )
 
     kubeconfig = None
     if cluster.strip():
@@ -7556,7 +7848,9 @@ def _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir):
         kubeconfig = kubeconfig_file(cluster.strip())
     selected, exact_context = resolve_validation_target(kubeconfig, context)
     alias = resolve_validation_project(project, exact_context)
-    config = _bin.resolve_config(sky_bin=sky_bin or None, isolated_config_dir=isolated_config_dir)
+    config = _bin.resolve_config(
+        sky_bin=sky_bin or None, isolated_config_dir=isolated_config_dir
+    )
     return selected, exact_context, alias, config
 
 
@@ -7570,16 +7864,29 @@ def _inspect_workflow_gpus(project, cluster, context, sky_bin, isolated_config_d
     try:
         selected, executable, boundary = None, sky_bin or None, nullcontext()
         if context:
-            selected, context, alias, config = _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir)
+            selected, context, alias, config = _owned_gpu_target(
+                project, cluster, context, sky_bin, isolated_config_dir
+            )
             executable = config.sky_bin
-            boundary = cluster_validation_session(selected, context, isolated_config_dir=config.isolated_config_dir,
-                                                  project_alias=alias, check_only=True)
+            boundary = cluster_validation_session(
+                selected,
+                context,
+                isolated_config_dir=config.isolated_config_dir,
+                project_alias=alias,
+                check_only=True,
+            )
         with boundary:
             if context:
                 _bin.ensure_skypilot_version(executable)
-                discovery.kubernetes_sky_environment(context=context, kubeconfig=selected, sky_executable=str(executable))
-            inventory = discovery.discover_kubernetes_gpu_inventory(context=context, kubeconfig=selected)
-            catalog = discovery.discover_kubernetes_gpu_catalog(context=context, kubeconfig=selected, sky_bin=executable)
+                discovery.kubernetes_sky_environment(
+                    context=context, kubeconfig=selected, sky_executable=str(executable)
+                )
+            inventory = discovery.discover_kubernetes_gpu_inventory(
+                context=context, kubeconfig=selected
+            )
+            catalog = discovery.discover_kubernetes_gpu_catalog(
+                context=context, kubeconfig=selected, sky_bin=executable
+            )
     except (OSError, RuntimeError, ValueError) as exc:
         from npa.orchestration.skypilot.workflow_state import redact_text
 
@@ -7589,7 +7896,9 @@ def _inspect_workflow_gpus(project, cluster, context, sky_bin, isolated_config_d
 
 def _gpu_spec_resolutions(spec, catalog):
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
-        UnsatisfiableAcceleratorError, resolve_kubernetes_accelerator, spec_accelerators,
+        UnsatisfiableAcceleratorError,
+        resolve_kubernetes_accelerator,
+        spec_accelerators,
     )
 
     resolutions: list[dict[str, object]] = []
@@ -7683,3 +7992,4 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 
 app.add_typer(trigger_app, name="trigger")
+register_controller_recovery(app)

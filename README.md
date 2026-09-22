@@ -144,7 +144,7 @@ includes a public source-video example and full submission commands.
 | A Franka training and evaluation exercise | [Franka + Genesis](docs/workbench/guides/franka-pick-and-place-genesis.md) | GPU; recorded run did not solve the task |
 | Quadruped reinforcement learning | [Isaac Lab](docs/workbench/guides/quadruped-isaac-lab.md) | RT-core GPU |
 | A G1 locomotion evaluation or training path | [G1 + SONIC](docs/workbench/guides/g1-humanoid-walk-sonic.md) | Runtime-specific GPU and checkpoints |
-| A browser workbench and artifact viewer | [Deploy the agent](docs/agent.md) | Terraform and S3 |
+| A browser workbench and artifact viewer | [Deploy the agent](docs/agent.md) | Terraform, S3, SSH key, Token Factory key |
 
 The [guide index](docs/workbench/guides/README.md) records validation scope.
 [Cookbooks](docs/workbench/cookbooks/README.md) cover longer training and data
@@ -251,6 +251,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment, required
 checks, and PR process. [The package README](npa/README.md#developing-and-testing-npa)
 has the shortest test commands. Update the relevant documentation and
 [root skill](skills/index.yaml) when changing behavior.
+Run `make precheck` for fast local CI checks. After committing, fetch main and run
+`make merge-precheck` to check the combined dependency inputs. The
+[merge-readiness guide](CONTRIBUTING.md#merge-readiness-and-queue-rejections)
+also explains the automatic PR comments for merge-queue rejections.
 Security disclosures: [SECURITY.md](SECURITY.md).
 
 ## License

@@ -23,11 +23,17 @@ def fail(message: str) -> None:
     raise typer.Exit(1)
 
 
-def emit(payload: dict[str, Any], *, output: OutputFormat, text: str | None = None) -> None:
+def emit(
+    payload: dict[str, Any], *, output: OutputFormat, text: str | None = None
+) -> None:
     if output == OutputFormat.json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
-        typer.echo(text if text is not None else "\n".join(f"{key}: {value}" for key, value in payload.items()))
+        typer.echo(
+            text
+            if text is not None
+            else "\n".join(f"{key}: {value}" for key, value in payload.items())
+        )
 
 
 def resolve_endpoint(endpoint: str) -> str:
@@ -64,7 +70,9 @@ def request_json(
         )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        fail(f"RoboCasa request failed ({exc.response.status_code}): {exc.response.text.strip()}")
+        fail(
+            f"RoboCasa request failed ({exc.response.status_code}): {exc.response.text.strip()}"
+        )
     except httpx.HTTPError as exc:
         fail(f"Cannot reach RoboCasa endpoint {endpoint}: {exc}")
     try:

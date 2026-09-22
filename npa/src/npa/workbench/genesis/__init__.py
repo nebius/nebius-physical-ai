@@ -17,10 +17,14 @@ eval_teacher = make_cli_wrapper(
 eval_student = make_cli_wrapper(
     "npa.cli.genesis", "eval_student_cmd", "Evaluate a student policy in Genesis."
 )
-diagnose = make_cli_wrapper("npa.cli.genesis", "diagnose_cmd", "Diagnose Genesis rollouts.")
+diagnose = make_cli_wrapper(
+    "npa.cli.genesis", "diagnose_cmd", "Diagnose Genesis rollouts."
+)
 tune = make_cli_wrapper("npa.cli.genesis", "tune_cmd", "Tune Genesis policy settings.")
 list = make_cli_wrapper("npa.cli.genesis", "list_cmd", "List Genesis workbenches.")
-deploy = make_cli_wrapper("npa.cli.genesis", "deploy_cmd", "Deploy a Genesis workbench.")
+deploy = make_cli_wrapper(
+    "npa.cli.genesis", "deploy_cmd", "Deploy a Genesis workbench."
+)
 status = make_cli_wrapper("npa.cli.genesis", "status_cmd", "Show Genesis status.")
 system_info = make_cli_wrapper(
     "npa.cli.genesis", "system_info_cmd", "Show Genesis system information."

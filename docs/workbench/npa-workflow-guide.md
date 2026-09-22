@@ -333,6 +333,22 @@ project's platform/preset offering and exact GPU count before creating a job.
 Provider-owned catalog products require a matching lookup through that same
 project, without treating shared catalog ownership as workload ownership.
 Catalog availability is separate from actual allocation or reservation evidence.
+For existing Kubernetes capacity, `workflow submit` exits with code **75** when
+GPU, CPU, memory, pod-slot or ephemeral-storage requests fit the nominal node
+shape but cannot currently fit alongside active pod reservations. `disk_size`
+in a Kubernetes workflow profile is rendered as an ephemeral-storage request;
+it is checked at both submission preflights. For example, two 500 GB jobs cannot
+share a node with 950 GB allocatable disk even when their GPUs fit.
+
+This also applies when
+the requested per-node shape is supported but occupied, fragmented, temporarily
+unschedulable, or waiting for another pending GPU pod to be placed. This code is
+emitted only before any provider launch. An external queue can wait and retry the
+same run identity. It must preserve the pinned inputs and still reconcile any
+other failed or interrupted submission. Invalid shapes, unreadable inventories,
+credential failures and ambiguous provider launches do not return this code.
+NPA does not reserve the observed capacity or introduce a queue; the scheduler
+still owns actual placement.
 Scope, destination access and GPU gates remain active with `--skip-preflight`.
 Generic `health preflight --offline` still proves only credential presence;
 generic online health/access checks do not themselves prove execution readiness.

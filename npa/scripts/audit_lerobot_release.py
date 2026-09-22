@@ -62,10 +62,26 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # ── The surface this repo binds to ──────────────────────────────────────────
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
-    ("lerobot.envs.configs", "PushtEnv", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
-    ("lerobot.envs.factory", "make_env_pre_post_processors", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
-    ("lerobot.scripts.lerobot_eval", "rollout", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
-    ("lerobot.utils.random_utils", "set_seed", ("npa/src/npa/workflows/lerobot_transfer_eval.py",)),
+    (
+        "lerobot.envs.configs",
+        "PushtEnv",
+        ("npa/src/npa/workflows/lerobot_transfer_eval.py",),
+    ),
+    (
+        "lerobot.envs.factory",
+        "make_env_pre_post_processors",
+        ("npa/src/npa/workflows/lerobot_transfer_eval.py",),
+    ),
+    (
+        "lerobot.scripts.lerobot_eval",
+        "rollout",
+        ("npa/src/npa/workflows/lerobot_transfer_eval.py",),
+    ),
+    (
+        "lerobot.utils.random_utils",
+        "set_seed",
+        ("npa/src/npa/workflows/lerobot_transfer_eval.py",),
+    ),
     (
         "lerobot.datasets.lerobot_dataset",
         "LeRobotDataset",
@@ -205,7 +221,12 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
 # Parameters this repo passes by keyword. Upstream may append parameters freely;
 # it may not remove one of these without breaking a call site.
 CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
-    ("lerobot/policies/factory.py", "make_policy", ("cfg", "env_cfg", "ds_meta"), "npa/server/app.py"),
+    (
+        "lerobot/policies/factory.py",
+        "make_policy",
+        ("cfg", "env_cfg", "ds_meta"),
+        "npa/server/app.py",
+    ),
     (
         "lerobot/policies/factory.py",
         "make_pre_post_processors",
@@ -224,7 +245,12 @@ CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
         ("repo_id", "root", "episodes", "revision"),
         "npa/workflows/lerobot_dataset.py",
     ),
-    ("lerobot/optim/factory.py", "make_optimizer_and_scheduler", ("cfg", "policy"), "profile_train.py"),
+    (
+        "lerobot/optim/factory.py",
+        "make_optimizer_and_scheduler",
+        ("cfg", "policy"),
+        "profile_train.py",
+    ),
 )
 
 # Console scripts this repo shells out to.
@@ -242,7 +268,11 @@ POLICY_MODULES: tuple[tuple[str, str, str], ...] = (
         "lerobot/policies/diffusion/modeling_diffusion.py",
         "npa/genesis/eval_student.py, golden evals",
     ),
-    ("smolvla", "lerobot/policies/smolvla/modeling_smolvla.py", "npa/genesis/eval_student.py"),
+    (
+        "smolvla",
+        "lerobot/policies/smolvla/modeling_smolvla.py",
+        "npa/genesis/eval_student.py",
+    ),
 )
 
 # Dataset layout version our adapters write; a bump here means every
@@ -298,12 +328,16 @@ def fetch_wheel(version: str, cache_dir: Path, *, offline: bool) -> Path:
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     try:
-        with urllib.request.urlopen(PYPI_JSON.format(version=version), timeout=60) as resp:
+        with urllib.request.urlopen(
+            PYPI_JSON.format(version=version), timeout=60
+        ) as resp:
             payload = json.load(resp)
     except (urllib.error.URLError, TimeoutError) as exc:
         raise SystemExit(f"Could not reach PyPI for lerobot {version}: {exc}") from exc
 
-    url = next((u["url"] for u in payload["urls"] if u["packagetype"] == "bdist_wheel"), None)
+    url = next(
+        (u["url"] for u in payload["urls"] if u["packagetype"] == "bdist_wheel"), None
+    )
     if url is None:
         raise SystemExit(f"lerobot {version} publishes no wheel")
 
@@ -442,11 +476,17 @@ def _function_params(root: Path, relpath: str, dotted: str) -> set[str] | None:
         for node in tree.body:
             if isinstance(node, ast.ClassDef) and node.name == cls_name:
                 for sub in node.body:
-                    if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)) and sub.name == method:
+                    if (
+                        isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and sub.name == method
+                    ):
                         return collect(sub)
         return None
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == dotted:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == dotted
+        ):
             return collect(node)
     return None
 
@@ -514,12 +554,16 @@ def _declared_bounds(root: Path, extras: Iterable[str]) -> dict[str, str]:
             continue
         collected.setdefault(package, []).append(str(req.specifier))
     return {
-        package: str(SpecifierSet(",".join(specifier for specifier in specifiers if specifier)))
+        package: str(
+            SpecifierSet(",".join(specifier for specifier in specifiers if specifier))
+        )
         for package, specifiers in collected.items()
     }
 
 
-def _extra_requirements(root: Path) -> tuple[dict[str, list[Requirement]], list[Requirement]]:
+def _extra_requirements(
+    root: Path,
+) -> tuple[dict[str, list[Requirement]], list[Requirement]]:
     """Split ``Requires-Dist`` into per-extra requirements and unconditional ones."""
 
     per_extra: dict[str, list[Requirement]] = {}
@@ -648,7 +692,9 @@ def check_imports(root: Path, report: Report) -> None:
                         f" <- {provenance_text}"
                     )
                 else:
-                    missing.append(f"{module}:{symbol} (symbol gone) <- {provenance_text}")
+                    missing.append(
+                        f"{module}:{symbol} (symbol gone) <- {provenance_text}"
+                    )
     total = len(IMPORT_SURFACE)
     resolved = total - len(missing) - len(lazy)
     detail = f"{resolved}/{total} bindings resolve statically"
@@ -679,7 +725,9 @@ def check_signatures(root: Path, report: Report) -> None:
     report.add(
         "callable-parameters",
         not problems,
-        "all keyword parameters still accepted" if not problems else "; ".join(problems),
+        "all keyword parameters still accepted"
+        if not problems
+        else "; ".join(problems),
     )
 
 
@@ -690,7 +738,8 @@ def check_entry_points(root: Path, report: Report) -> None:
     report.add(
         "console-entry-points",
         not missing,
-        f"required present ({', '.join(REQUIRED_ENTRY_POINTS)})" if not missing
+        f"required present ({', '.join(REQUIRED_ENTRY_POINTS)})"
+        if not missing
         else f"missing {missing}",
     )
     report.add("available-entry-points", True, ", ".join(extra) or "none")
@@ -706,7 +755,9 @@ def _manifest_extras(manifest_entry: dict[str, Any] | None) -> list[str]:
     ]
 
 
-def check_policy_extras(root: Path, report: Report, manifest_entry: dict[str, Any] | None) -> None:
+def check_policy_extras(
+    root: Path, report: Report, manifest_entry: dict[str, Any] | None
+) -> None:
     """Do the manifest's extras actually let every policy we use be constructed?"""
 
     if manifest_entry is None:
@@ -730,7 +781,9 @@ def check_policy_extras(root: Path, report: Report, manifest_entry: dict[str, An
             if canonicalize_name(pkg) not in provided
         ]
         if missing:
-            problems.append(f"--policy.type={policy} needs {', '.join(missing)} <- {provenance}")
+            problems.append(
+                f"--policy.type={policy} needs {', '.join(missing)} <- {provenance}"
+            )
         else:
             satisfied.append(policy)
 
@@ -751,7 +804,8 @@ def check_dataset_format(root: Path, report: Report) -> None:
     if path.exists():
         for node in _parse(path).body:
             if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == "CODEBASE_VERSION" for t in node.targets
+                isinstance(t, ast.Name) and t.id == "CODEBASE_VERSION"
+                for t in node.targets
             ):
                 if isinstance(node.value, ast.Constant):
                     found = str(node.value.value)
@@ -764,15 +818,23 @@ def check_dataset_format(root: Path, report: Report) -> None:
     )
 
 
-def check_cli_flags(root: Path, report: Report, manifest_entry: dict[str, Any] | None) -> None:
-    train_fields = _dataclass_fields(root, "lerobot/configs/train.py", "TrainPipelineConfig")
-    policy_fields = _dataclass_fields(root, "lerobot/configs/policies.py", "PreTrainedConfig")
+def check_cli_flags(
+    root: Path, report: Report, manifest_entry: dict[str, Any] | None
+) -> None:
+    train_fields = _dataclass_fields(
+        root, "lerobot/configs/train.py", "TrainPipelineConfig"
+    )
+    policy_fields = _dataclass_fields(
+        root, "lerobot/configs/policies.py", "PreTrainedConfig"
+    )
 
     present = sorted(f for f in ("eval_freq", "env_eval_freq") if f in train_fields)
     report.add(
         "train-env-eval-flag",
         bool(present),
-        f"TrainPipelineConfig exposes {present}" if present else "neither eval_freq nor env_eval_freq found",
+        f"TrainPipelineConfig exposes {present}"
+        if present
+        else "neither eval_freq nor env_eval_freq found",
     )
     report.add(
         "eval-checkpoint-flag",
@@ -783,11 +845,15 @@ def check_cli_flags(root: Path, report: Report, manifest_entry: dict[str, Any] |
     )
 
     parser = root / "lerobot" / "configs" / "parser.py"
-    has_path_key = parser.exists() and 'PATH_KEY = "path"' in parser.read_text(encoding="utf-8")
+    has_path_key = parser.exists() and 'PATH_KEY = "path"' in parser.read_text(
+        encoding="utf-8"
+    )
     report.add(
         "policy-path-alias",
         has_path_key,
-        'parser.PATH_KEY == "path" (--policy.path)' if has_path_key else "PATH_KEY alias changed",
+        'parser.PATH_KEY == "path" (--policy.path)'
+        if has_path_key
+        else "PATH_KEY alias changed",
     )
 
     if manifest_entry:
@@ -827,7 +893,9 @@ def check_dependency_bounds(
 ) -> None:
     bounds = _declared_bounds(root, _manifest_extras(manifest_entry))
     report.add("requires-python", True, _requires_python(root) or "unspecified")
-    report.add("declared-bounds", True, ", ".join(f"{k}{v}" for k, v in sorted(bounds.items())))
+    report.add(
+        "declared-bounds", True, ", ".join(f"{k}{v}" for k, v in sorted(bounds.items()))
+    )
 
     problems = _conflicts(B300_IMAGE_PINS, bounds)
     report.add(
@@ -872,14 +940,18 @@ def check_dependency_bounds(
     report.add(
         "manifest torch pins",
         not problems,
-        f"{pins} satisfy declared bounds" if not problems
-        else "; ".join(problems) + " -- these are force-installed after `pip install lerobot`,"
+        f"{pins} satisfy declared bounds"
+        if not problems
+        else "; ".join(problems)
+        + " -- these are force-installed after `pip install lerobot`,"
         " so pip does not re-resolve and the image ships broken",
     )
 
 
 def load_manifest_entry(version: str) -> dict[str, Any] | None:
-    path = REPO_ROOT / "npa" / "src" / "npa" / "deploy" / "lerobot_version_manifest.json"
+    path = (
+        REPO_ROOT / "npa" / "src" / "npa" / "deploy" / "lerobot_version_manifest.json"
+    )
     if not path.exists():
         return None
     versions = json.loads(path.read_text(encoding="utf-8")).get("versions", {})
@@ -922,7 +994,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline", help="also audit this version for comparison")
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
     parser.add_argument("--offline", action="store_true", help="use cached wheels only")
-    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="emit machine-readable JSON"
+    )
     args = parser.parse_args(argv)
 
     reports = [audit(args.version, args.cache_dir, offline=args.offline)]
@@ -930,7 +1004,11 @@ def main(argv: list[str] | None = None) -> int:
         reports.append(audit(args.baseline, args.cache_dir, offline=args.offline))
 
     if args.json:
-        print(json.dumps([{"version": r.version, "checks": r.checks} for r in reports], indent=2))
+        print(
+            json.dumps(
+                [{"version": r.version, "checks": r.checks} for r in reports], indent=2
+            )
+        )
     else:
         for report in reports:
             render(report)

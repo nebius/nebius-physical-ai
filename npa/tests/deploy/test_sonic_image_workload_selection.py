@@ -38,8 +38,12 @@ def test_every_active_variant_declares_its_workloads() -> None:
 
 
 @pytest.mark.parametrize("workload", [FINETUNE, TRAIN, ISAAC_RENDER])
-@pytest.mark.parametrize("target", ["gpu-b200", "NVIDIA B200 Blackwell", "blackwell-b200"])
-def test_datacenter_target_does_not_substitute_the_mujoco_variant(workload: str, target: str) -> None:
+@pytest.mark.parametrize(
+    "target", ["gpu-b200", "NVIDIA B200 Blackwell", "blackwell-b200"]
+)
+def test_datacenter_target_does_not_substitute_the_mujoco_variant(
+    workload: str, target: str
+) -> None:
     with pytest.raises(ValueError) as excinfo:
         sonic_image_variant_for_gpu(target, workload=workload)
 
@@ -52,7 +56,9 @@ def test_datacenter_target_does_not_substitute_the_mujoco_variant(workload: str,
     assert "sonic-mujoco-h100-mvp" not in message
 
 
-@pytest.mark.parametrize("target", ["gpu-b200", "NVIDIA B200 Blackwell", "blackwell-b200"])
+@pytest.mark.parametrize(
+    "target", ["gpu-b200", "NVIDIA B200 Blackwell", "blackwell-b200"]
+)
 def test_mujoco_eval_still_resolves_on_a_datacenter_target(target: str) -> None:
     assert (
         sonic_image_variant_for_gpu(target, workload=MUJOCO_EVAL)
@@ -61,7 +67,9 @@ def test_mujoco_eval_still_resolves_on_a_datacenter_target(target: str) -> None:
 
 
 @pytest.mark.parametrize("workload", [None, FINETUNE, TRAIN, ISAAC_RENDER, MUJOCO_EVAL])
-def test_b300_family_name_does_not_select_workstation_image(workload: str | None) -> None:
+def test_b300_family_name_does_not_select_workstation_image(
+    workload: str | None,
+) -> None:
     with pytest.raises(ValueError, match="Unsupported SONIC GPU target"):
         sonic_image_variant_for_gpu("blackwell-b300", workload=workload)
 
@@ -86,9 +94,7 @@ def test_explicit_variant_is_still_checked_against_the_workload() -> None:
     assert entry["name"] == "npa-sonic-mujoco"
 
     with pytest.raises(ValueError, match="cannot serve workload"):
-        sonic_image_entry(
-            image_variant="sonic-mujoco-runtime-fetch", workload=FINETUNE
-        )
+        sonic_image_entry(image_variant="sonic-mujoco-runtime-fetch", workload=FINETUNE)
 
 
 def test_container_image_for_tool_threads_the_workload() -> None:
@@ -111,6 +117,4 @@ def test_container_image_for_tool_threads_the_workload() -> None:
 
 def test_workload_selection_is_sonic_only() -> None:
     with pytest.raises(ValueError, match="only defined for SONIC"):
-        container_image_for_tool(
-            "lerobot", registry="registry.example", workload=TRAIN
-        )
+        container_image_for_tool("lerobot", registry="registry.example", workload=TRAIN)

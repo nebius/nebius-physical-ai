@@ -4,6 +4,7 @@
 Call in the same image RUN that installs scikit-image. The primary documentation,
 image loader and all other source stay intact; an unrecognized input fails.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,36 +26,54 @@ MODULE = "skimage/data/_fetchers.py"
 
 
 def sanitize_source(source: bytes, version: str) -> bytes:
-    if version != EXPECTED_VERSION or hashlib.sha256(source).hexdigest() != SOURCE_SHA256:
+    if (
+        version != EXPECTED_VERSION
+        or hashlib.sha256(source).hexdigest() != SOURCE_SHA256
+    ):
         raise ValueError("unexpected scikit-image version or source bytes")
     tree = ast.parse(source)
-    candidates = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "grass"]
+    candidates = [
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "grass"
+    ]
     if len(candidates) != 1 or len(candidates[0].body) != 3:
         raise ValueError("unexpected image loader body")
     function = candidates[0]
     recipe = function.body[1]
-    if not (isinstance(recipe, ast.Expr) and isinstance(recipe.value, ast.Constant)
-            and isinstance(recipe.value.value, str) and recipe.lineno == 511
-            and recipe.end_lineno == 535):
+    if not (
+        isinstance(recipe, ast.Expr)
+        and isinstance(recipe.value, ast.Constant)
+        and isinstance(recipe.value.value, str)
+        and recipe.lineno == 511
+        and recipe.end_lineno == 535
+    ):
         raise ValueError("unexpected inert recipe structure")
     primary_docstring = ast.get_docstring(function, clean=False)
     del function.body[1]
     lines = source.splitlines(keepends=True)
-    sanitized = b"".join(lines[:recipe.lineno - 1] + lines[recipe.end_lineno:])
+    sanitized = b"".join(lines[: recipe.lineno - 1] + lines[recipe.end_lineno :])
     transformed = ast.parse(sanitized)
-    new_function = next(n for n in transformed.body if isinstance(n, ast.FunctionDef)
-                        and n.name == "grass")
-    if (hashlib.sha256(sanitized).hexdigest() != SANITIZED_SHA256
-            or ast.dump(tree, include_attributes=False) != ast.dump(transformed, include_attributes=False)
-            or ast.get_docstring(new_function, clean=False) != primary_docstring):
+    new_function = next(
+        n
+        for n in transformed.body
+        if isinstance(n, ast.FunctionDef) and n.name == "grass"
+    )
+    if (
+        hashlib.sha256(sanitized).hexdigest() != SANITIZED_SHA256
+        or ast.dump(tree, include_attributes=False)
+        != ast.dump(transformed, include_attributes=False)
+        or ast.get_docstring(new_function, clean=False) != primary_docstring
+    ):
         raise ValueError("unexpected source behavior change")
     return sanitized
 
 
 def sanitize_installation(site_packages: Path) -> dict:
     site_packages = site_packages.resolve(strict=True)
-    distributions = [d for d in importlib.metadata.distributions(path=[str(site_packages)])
-                     if d.metadata.get("Name", "").lower().replace("_", "-") == "scikit-image"]
+    distributions = [
+        d
+        for d in importlib.metadata.distributions(path=[str(site_packages)])
+        if d.metadata.get("Name", "").lower().replace("_", "-") == "scikit-image"
+    ]
     if len(distributions) != 1:
         raise ValueError("expected one installed scikit-image distribution")
     distribution = distributions[0]
@@ -62,7 +81,9 @@ def sanitize_installation(site_packages: Path) -> dict:
     if source_path.resolve(strict=True) != source_path or not source_path.is_file():
         raise ValueError("unexpected image loader file")
     sanitized = sanitize_source(source_path.read_bytes(), distribution.version)
-    record_entries = [p for p in distribution.files or [] if str(p).endswith(".dist-info/RECORD")]
+    record_entries = [
+        p for p in distribution.files or [] if str(p).endswith(".dist-info/RECORD")
+    ]
     if len(record_entries) != 1:
         raise ValueError("expected installed package RECORD")
     record_path = Path(distribution.locate_file(record_entries[0]))
@@ -75,7 +96,9 @@ def sanitize_installation(site_packages: Path) -> dict:
         raise ValueError("unexpected package RECORD entries")
     cache = source_path.parent / "__pycache__"
     cache_paths = list(cache.glob("_fetchers.*.pyc")) if cache.is_dir() else []
-    if cache.is_symlink() or any(p.is_symlink() or not p.is_file() for p in cache_paths):
+    if cache.is_symlink() or any(
+        p.is_symlink() or not p.is_file() for p in cache_paths
+    ):
         raise ValueError("unexpected loader bytecode paths")
     source_path.write_bytes(sanitized)
     for path in cache_paths:
@@ -84,25 +107,38 @@ def sanitize_installation(site_packages: Path) -> dict:
     pyc = Path(importlib.util.cache_from_source(str(source_path)))
     if not pyc.is_file() or pyc.is_symlink():
         raise ValueError("missing regenerated loader bytecode")
-    source_digest = "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(sanitized).digest()).decode().rstrip("=")
+    source_digest = "sha256=" + base64.urlsafe_b64encode(
+        hashlib.sha256(sanitized).digest()
+    ).decode().rstrip("=")
     new_rows = []
     for row in rows:
         path = Path(row[0])
-        if path.parent == Path(MODULE).parent / "__pycache__" and path.name.startswith("_fetchers.") and path.suffix == ".pyc":
+        if (
+            path.parent == Path(MODULE).parent / "__pycache__"
+            and path.name.startswith("_fetchers.")
+            and path.suffix == ".pyc"
+        ):
             continue
-        new_rows.append([MODULE, source_digest, str(len(sanitized))] if row[0] == MODULE else row)
+        new_rows.append(
+            [MODULE, source_digest, str(len(sanitized))] if row[0] == MODULE else row
+        )
     new_rows.append([str(pyc.relative_to(site_packages)), "", ""])
     stream = io.StringIO()
     csv.writer(stream, lineterminator="\n").writerows(new_rows)
     record_path.write_text(stream.getvalue())
-    return {"schema_version": "npa.curobo.dependency-source-correction.v1",
-            "distribution": "scikit-image", "version": distribution.version,
-            "module": MODULE, "source_sha256": SOURCE_SHA256,
-            "sanitized_sha256": SANITIZED_SHA256,
-            "record_sha256_before": hashlib.sha256(old_record).hexdigest(),
-            "record_sha256_after": hashlib.sha256(record_path.read_bytes()).hexdigest(),
-            "bytecode_sha256": hashlib.sha256(pyc.read_bytes()).hexdigest(),
-            "executable_ast_preserved": True, "primary_docstring_preserved": True}
+    return {
+        "schema_version": "npa.curobo.dependency-source-correction.v1",
+        "distribution": "scikit-image",
+        "version": distribution.version,
+        "module": MODULE,
+        "source_sha256": SOURCE_SHA256,
+        "sanitized_sha256": SANITIZED_SHA256,
+        "record_sha256_before": hashlib.sha256(old_record).hexdigest(),
+        "record_sha256_after": hashlib.sha256(record_path.read_bytes()).hexdigest(),
+        "bytecode_sha256": hashlib.sha256(pyc.read_bytes()).hexdigest(),
+        "executable_ast_preserved": True,
+        "primary_docstring_preserved": True,
+    }
 
 
 def main() -> None:

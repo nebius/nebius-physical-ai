@@ -67,12 +67,14 @@ def resolve_trained_checkpoint(
     gpu_count = int(manifest.get("num_gpus") or 0)
     world_size = int(manifest.get("world_size") or 0)
     distinct_gpu_count = int(manifest.get("distinct_gpu_count") or 0)
-    if not (
-        gpu_count == world_size == distinct_gpu_count == int(expected_gpu_count)
-    ):
-        raise GrootVisualizationError("trainer did not use the required distinct GPU world")
+    if not (gpu_count == world_size == distinct_gpu_count == int(expected_gpu_count)):
+        raise GrootVisualizationError(
+            "trainer did not use the required distinct GPU world"
+        )
     expected_ranks = list(range(gpu_count))
-    observed_ranks = sorted(int(value) for value in manifest.get("observed_ranks") or [])
+    observed_ranks = sorted(
+        int(value) for value in manifest.get("observed_ranks") or []
+    )
     training_ranks = sorted(
         int(value) for value in manifest.get("training_observed_ranks") or []
     )
@@ -176,7 +178,9 @@ def resolve_trained_checkpoint(
             "loss_decreased": manifest.get("loss_decreased") is True,
             "training_examples": int(manifest.get("training_examples") or 0),
             "aggregate_train_loss": manifest.get("aggregate_train_loss"),
-            "final_step_loss": manifest.get("final_step_loss", manifest.get("final_loss")),
+            "final_step_loss": manifest.get(
+                "final_step_loss", manifest.get("final_loss")
+            ),
         },
     }
     _put_json(client, output_uri, result)
