@@ -1459,6 +1459,7 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
             python = tmp_path / "runtime" / "venv" / "bin" / "python"
             python.parent.mkdir(parents=True)
             python.write_text("#!/bin/sh\n", encoding="utf-8")
+            (python.parent.parent / "pyvenv.cfg").write_text("fixture\n")
 
     site_packages = tmp_path / "runtime" / "venv" / "lib" / "site-packages"
     site_packages.mkdir(parents=True)
@@ -1512,6 +1513,99 @@ def test_runtime_install_uses_only_hash_locked_no_dependency_commands(
     assert (
         source_path.read_text(encoding="utf-8") == str(published_root / "source") + "\n"
     )
+
+
+@pytest.mark.parametrize("bounded", [False, True])
+def test_real_fd_anchored_venv_install_survives_publication(
+    monkeypatch, tmp_path, bounded
+) -> None:
+    module = _load_module()
+    wheel = tmp_path / "fd_fixture-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("fd_fixture.py", "VALUE = 42\ndef main(): print(VALUE)\n")
+        archive.writestr(
+            "fd_fixture-1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: fd-fixture\nVersion: 1.0\n",
+        )
+        archive.writestr(
+            "fd_fixture-1.0.dist-info/WHEEL",
+            "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        archive.writestr(
+            "fd_fixture-1.0.dist-info/entry_points.txt",
+            "[console_scripts]\nfd-fixture = fd_fixture:main\n",
+        )
+        archive.writestr("fd_fixture-1.0.dist-info/RECORD", "")
+    payload = wheel.read_bytes()
+
+    def local_download(destination, **kwargs):
+        assert kwargs["sha256"] == _sha(payload)
+        assert kwargs["size"] == len(payload)
+        destination.write_bytes(payload)
+
+    monkeypatch.setattr(module, "_download_verified", local_download)
+    cache = tmp_path / "cache"
+    cache.mkdir(mode=0o700)
+    artifact = {
+        "name": "fd-fixture", "filename": wheel.name, "url": "fixture",
+        "sha256": _sha(payload), "size_bytes": len(payload),
+    }
+    with module._open_cache_root_descriptor(cache, create=False) as descriptor:
+        anchored = Path("/proc") / str(os.getpid()) / "fd" / str(descriptor)
+        partial = anchored / ".partial"
+        partial.mkdir(mode=0o700)
+        if bounded:
+            # A renamed cache root and replacement pathname cannot redirect the
+            # descendant installers away from the directory already held open.
+            held = tmp_path / "held-cache"
+            cache.rename(held)
+            cache.mkdir(mode=0o700)
+            published = held / "published"
+        else:
+            published = cache / "published"
+        module._install_runtime(
+            partial, [artifact], [f"fd-fixture==1.0 --hash=sha256:{_sha(payload)}"],
+            published_root=published,
+            deadline=datetime.now(timezone.utc) + timedelta(minutes=5) if bounded else None,
+        )
+        assert module._inventory_entries(partial)  # Blanket no-symlink check.
+        os.rename(".partial", "published", src_dir_fd=descriptor, dst_dir_fd=descriptor)
+        if bounded:
+            assert not list(cache.iterdir())
+    # The materialization descriptor is closed. Both the copied interpreter and
+    # the actual pip-generated entrypoint must work from the published prefix.
+    environment = module._runtime_materialization_environment(published)
+    command = (
+        "import fd_fixture,site,subprocess,sys; assert fd_fixture.VALUE == 42; "
+        "assert site.getsitepackages()[0].startswith(sys.prefix); "
+        "subprocess.run([sys.executable, '-c', 'import fd_fixture; print(fd_fixture.VALUE)'], check=True)"
+    )
+    assert subprocess.check_output(
+        [str(published / "venv/bin/python"), "-c", command], text=True, env=environment
+    ).strip() == "42"
+    assert subprocess.check_output(
+        [str(published / "venv/bin/fd-fixture")], text=True, env=environment
+    ).strip() == "42"
+    assert "pip " in subprocess.check_output(
+        [str(published / "venv/bin/pip"), "--version"], text=True, env=environment
+    )
+
+
+def test_venv_relocation_refuses_unexpected_links(tmp_path) -> None:
+    module = _load_module()
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("fixture\n")
+    (venv / "lib64").symlink_to("../outside")
+    with pytest.raises(module.BootstrapRefusal, match="alias is unexpected"):
+        module._prepare_published_venv(venv, tmp_path / "published")
+    (venv / "lib64").unlink()
+    outside = tmp_path / "outside"
+    outside.write_text(str(venv))
+    (venv / "bin" / "linked-script").symlink_to(outside)
+    with pytest.raises(module.BootstrapRefusal, match="not a regular file"):
+        module._prepare_published_venv(venv, tmp_path / "published")
+    assert outside.read_text() == str(venv)
 
 
 def test_source_archives_become_identity_checked_hash_locked_wheels(

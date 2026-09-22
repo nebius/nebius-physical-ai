@@ -2885,6 +2885,30 @@ def _build_source_wheels(
     ]
 
 
+def _prepare_published_venv(venv: Path, published_venv: Path) -> None:
+    """Remove venv's redundant alias and relocate generated text entrypoints."""
+
+    alias = venv / "lib64"
+    if alias.is_symlink():
+        if os.readlink(alias) != "lib":
+            raise BootstrapRefusal("runtime venv lib64 alias is unexpected")
+        alias.unlink()
+    old_prefix = str(venv).encode()
+    new_prefix = str(published_venv).encode()
+    for path in [venv / "pyvenv.cfg", *sorted((venv / "bin").iterdir())]:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise BootstrapRefusal("runtime venv entrypoint is not a regular file")
+        payload = path.read_bytes()
+        # Python executables remain byte-identical; only generated UTF-8 scripts
+        # and venv configuration embed the temporary installation prefix.
+        try:
+            payload.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if old_prefix in payload:
+            path.write_bytes(payload.replace(old_prefix, new_prefix))
+
+
 def _install_runtime(
     root: Path,
     artifacts: list[dict[str, Any]],
@@ -2984,14 +3008,15 @@ def _install_runtime(
         deadline=deadline,
     )
     _ensure_deadline(deadline)
-    site_packages = subprocess.check_output(
+    site_packages = _run_capture(
         [pip, "-c", "import site; print(site.getsitepackages()[0])"],
-        text=True,
-        env=materialization_environment,
+        environment=materialization_environment,
+        deadline=deadline,
     ).strip()
     Path(site_packages, "npa-libero-source.pth").write_text(
         str(published_root / "source") + "\n", encoding="utf-8"
     )
+    _prepare_published_venv(venv, published_root / "venv")
     os.chmod(wheelhouse, 0o700)
     shutil.rmtree(wheelhouse)
     if build_wheelhouse.exists():
@@ -3455,7 +3480,11 @@ def ensure(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 partial = Path(
                     tempfile.mkdtemp(
-                        prefix=f".{manifest_sha256}.partial-", dir=stable_cache_root
+                        prefix=f".{manifest_sha256}.partial-",
+                        # Keep the retained directory inode anchored across venv,
+                        # ensurepip and pip descendants that close inherited FDs.
+                        # The owning materializer holds root_fd until publication.
+                        dir=Path("/proc") / str(os.getpid()) / "fd" / str(root_fd),
                     )
                 )
                 os.chmod(partial, 0o700)
