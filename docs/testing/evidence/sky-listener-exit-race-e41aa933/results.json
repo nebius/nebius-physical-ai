@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-22T05:11:06.652882+00:00",
+  "status": "PASS_EXACT_SOURCE_VALIDATION",
+  "head": "e41aa93329ab2b60ef4b26bc7085b2ef23e9b1b6",
+  "tree": "2297e542f78e5a0bc460d04ab3c7914fe2ada48a",
+  "parent": "36605d46a7b67da6bb7f296bba556aa5111eee02",
+  "rehashed_packet_files": 188,
+  "git_blob_verified_native_input_counts": {
+    "base": 3326,
+    "candidate": 3326
+  },
+  "full_passed": 25650,
+  "full_skipped": 128,
+  "full_xpassed": 1,
+  "full_failures": 0,
+  "full_log_sha256": "ba627db9eb428a99f8559e1a9061e36c5bd856912c2e230c84c2cf6e77ee3dc3",
+  "prepr_passed": 10,
+  "native": {
+    "base": "36605d46a7b67da6bb7f296bba556aa5111eee02",
+    "head": "e41aa93329ab2b60ef4b26bc7085b2ef23e9b1b6",
+    "base_findings": 607,
+    "candidate_findings": 607,
+    "regressions": [],
+    "blocking_findings": []
+  },
+  "changed_files": [
+    "npa/src/npa/orchestration/skypilot/local_api.py",
+    "npa/tests/orchestration/skypilot/test_local_api.py"
+  ],
+  "actual_predecessor_process_exit_failed": true,
+  "no_gpu_applicability": true,
+  "regression": {
+    "real_child_process": true,
+    "namespace_observed_before_child_exit": true,
+    "original_outcome": "FileNotFoundError reading the exited process TCP table",
+    "fixed_outcome": "False: the exited process cannot establish readiness",
+    "exception_scope": [
+      "FileNotFoundError",
+      "ProcessLookupError"
+    ],
+    "permission_and_unrelated_errors": "Still propagated"
+  },
+  "limits": [
+    "CPU process-lifecycle correctness only; no GPU, container-image, visual-quality, or robot-policy claim.",
+    "Hosted CI and merge-queue integration are separate requirements.",
+    "Raw private logs stay access-controlled; hashes below bind retained evidence."
+  ]
+}
