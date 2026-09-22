@@ -460,6 +460,7 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
     for verb in sorted(cli_verbs):
         wrapper = getattr(sdk, verb)
         if verb in {
+            "acquire_source",
             "audit_colmap",
             "audit_qualification",
             "bundle_runtime",
@@ -468,6 +469,8 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
             "convert_colmap",
             "observe_runtime",
             "probe_storage",
+            "publish_evidence",
+            "readback_qualification",
             "stage_source",
         }:
             # Evidence capabilities use shared workbench modules directly; their

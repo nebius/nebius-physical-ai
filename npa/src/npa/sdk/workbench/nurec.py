@@ -350,6 +350,7 @@ status = make_cli_wrapper(
 )
 
 __all__ = [
+    "acquire_source",
     "audit_colmap",
     "audit_qualification",
     "bundle_runtime",
@@ -361,6 +362,8 @@ __all__ = [
     "finalize",
     "observe_runtime",
     "probe_storage",
+    "publish_evidence",
+    "readback_qualification",
     "reconstruct",
     "render",
     "stage_source",
