@@ -64,6 +64,10 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.molmoact.finetune": "public MolmoAct fine-tuning primitive (config validation only; execution not implemented)",
     "workbench.molmoact.serve": "public MolmoAct serving primitive (config validation only; execution not implemented)",
     "workbench.molmoact.eval": "public MolmoAct evaluation primitive (config validation only; execution not implemented)",
+    "workbench.openvla.serve": "public OpenVLA serving primitive (upstream argv planning; eval plan-only)",
+    "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
+    "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
 }
 
 
@@ -133,6 +137,8 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "npa.workflows.byof.openpi_full_droid",
 ]
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
+_OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
+_NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -1585,6 +1591,82 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.evaluation_uri}}",
         ],
         access_capabilities=("huggingface",),
+    ),
+    "workbench.openvla.train": ToolEntry(
+        name="workbench.openvla.train",
+        description="Fine-tune an OpenVLA policy with OpenVLA-OFT.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "train",
+            "--model-id",
+            "{{config.model_id}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-dir",
+            "{{config.training_uri}}",
+        ],
+    ),
+    "workbench.openvla.serve": ToolEntry(
+        name="workbench.openvla.serve",
+        description="Serve an OpenVLA checkpoint with the upstream deploy script.",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "serve",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+        ],
+    ),
+    "workbench.openvla.eval": ToolEntry(
+        name="workbench.openvla.eval",
+        description="Evaluate an OpenVLA policy (plan-only: rollout execution not implemented).",
+        argv_template=[
+            *_OPENVLA_PIPELINE,
+            "eval",
+            "--checkpoint",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.newton.train_teacher": ToolEntry(
+        name="workbench.newton.train_teacher",
+        description="Train a teacher policy in Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "train-teacher",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+        ],
+    ),
+    "workbench.newton.generate_demos": ToolEntry(
+        name="workbench.newton.generate_demos",
+        description="Generate demonstrations using Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "generate-demos",
+            "--output-uri",
+            "{{config.demos_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+        ],
+    ),
+    "workbench.newton.eval": ToolEntry(
+        name="workbench.newton.eval",
+        description="Evaluate a policy in Newton physics simulation.",
+        argv_template=[
+            *_NEWTON_PIPELINE,
+            "eval",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+        ],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
         name="workbench.isaac_lab.byof_repo",

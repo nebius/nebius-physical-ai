@@ -152,12 +152,79 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "download_assets": "boolean",
         "seed": "knob",
     },
+    "newton/train_teacher": {
+        "config_name": "knob",
+        "train_steps": "knob",
+        "seed": "knob",
+    },
+    "openvla/train": {
+        "dataset_name": "knob",
+        "batch_size": "knob",
+        "max_steps": "knob",
+        "learning_rate": "knob",
+        "lora_rank": "knob",
+        "lora_dropout": "knob",
+        "image_aug": "boolean",
+        "seed": "knob",
+        "dry_run": "boolean",
+    },
 }
 
 VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
+    CapabilityContract(
+        name="newton/train_teacher",
+        cli_module="npa.cli.workbench.newton",
+        cli_callback="train_teacher_cmd",
+        sdk_module="npa.sdk.workbench.newton",
+        sdk_attr="train_teacher",
+        spec_path=SPECS / "newton-train-teacher.yaml",
+        tool_ref="workbench.newton.train_teacher",
+        spec_gap=("config_name", "train_steps", "seed"),
+        params=(
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("config_name", "config_name", "--config-name"),
+            _p("train_steps", "train_steps", "--train-steps"),
+            _p("seed", "seed", "--seed"),
+        ),
+    ),
+    CapabilityContract(
+        name="openvla/train",
+        cli_module="npa.cli.workbench.openvla",
+        cli_callback="train_cmd",
+        sdk_module="npa.sdk.workbench.openvla",
+        sdk_attr="train",
+        spec_path=SPECS / "openvla-train.yaml",
+        tool_ref="workbench.openvla.train",
+        spec_gap=(
+            "dataset_name",
+            "batch_size",
+            "max_steps",
+            "learning_rate",
+            "lora_rank",
+            "lora_dropout",
+            "image_aug",
+            "seed",
+            "dry_run",
+        ),
+        params=(
+            _p("model_id", "model_id", "--model-id"),
+            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
+            _p("dataset_name", "dataset_name", "--dataset-name"),
+            _p("output_dir", "output_dir", "--output-dir"),
+            _p("batch_size", "batch_size", "--batch-size"),
+            _p("max_steps", "max_steps", "--max-steps"),
+            _p("learning_rate", "learning_rate", "--learning-rate"),
+            _p("lora_rank", "lora_rank", "--lora-rank"),
+            _p("lora_dropout", "lora_dropout", "--lora-dropout"),
+            _p("image_aug", "image_aug", "--image-aug"),
+            _p("seed", "seed", "--seed"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
     CapabilityContract(
         name="curobo/benchmark",
         cli_module="npa.cli.workbench.curobo",
@@ -776,11 +843,24 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # npa/tests/workbench/test_nurec_access.py::
         # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
         # argv flag against the real Typer options.
+<<<<<<< HEAD
         # MolmoAct toolRefs validate configs and return plan-only manifests
         # (finetune/serve/eval not implemented), so there is no service tier
         # to keep coherent with a YAML env block. CLI <-> catalog argv
         # coherence is enforced by test_module_toolref_argv.py instead.
         "molmoact",
+=======
+        # OpenVLA toolRefs emit upstream argv plans and raise (train/serve/eval
+        # not yet wired), so there is no service tier to keep coherent with a
+        # YAML env block. CLI <-> catalog argv coherence is enforced by
+        # test_module_toolref_argv.py instead.
+        "openvla",
+        # Newton toolRefs are config-validation / plan-only stubs: train and eval
+        # raise NewtonPipelineError (not implemented), so there is no service
+        # tier to keep coherent with a YAML env block. CLI <-> catalog argv
+        # coherence is enforced by test_module_toolref_argv.py instead.
+        "newton",
+>>>>>>> ebc6cddefe3c984a65fa2c62b4c608dd0a04254d
         "nurec",
         "scenario-gen",
         "sim2real",

@@ -19,6 +19,8 @@ __all__ = [
     "lerobot",
     "mjlab",
     "molmoact",
+    "openvla",
+    "newton",
     "retargeting",
     "robocasa",
     "scenario_gen",

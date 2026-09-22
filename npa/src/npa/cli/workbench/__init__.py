@@ -46,6 +46,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.cosmos import app as cosmos_app
     from npa.cli.fiftyone import app as fiftyone_app
     from npa.cli.genesis import app as genesis_app
+    from npa.cli.workbench.newton import app as newton_app
     from npa.cli.groot import app as groot_app
     from npa.cli.isaac_lab import app as isaac_lab_app
     from npa.cli.nurec import app as nurec_app
@@ -70,7 +71,8 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
-    from npa.cli.molmoact import app as molmoact_app
+    from npa.cli.workbench.molmoact import app as molmoact_app
+    from npa.cli.workbench.openvla import app as openvla_app
     from npa.cli.workbench.openarm import app as openarm_app
     from npa.cli.workbench.robocasa import app as robocasa_app
     from npa.cli.workbench.scenario_gen import app as scenario_gen_app
@@ -113,8 +115,10 @@ def _full_app() -> typer.Typer:
     full.add_typer(sonic_app, name="sonic")
     full.add_typer(mjlab_app, name="mjlab")
     full.add_typer(molmoact_app, name="molmoact")
+    full.add_typer(openvla_app, name="openvla")
     full.add_typer(openarm_app, name="openarm")
     full.add_typer(robocasa_app, name="robocasa")
+    full.add_typer(newton_app, name="newton")
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")

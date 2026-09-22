@@ -700,6 +700,26 @@ skills:
         path: skills/tools/nebius-infra/references/backup-verification.md
       - type: file_exists
         path: skills/tools/nebius-infra/references/maintenance-pauses.md
+  - name: newton
+    category: tools
+    when_to_use: "Newton physics engine workbench stages (teacher training, demo generation, evaluation), the Newton XPBD simulation pipeline, or the npa workbench newton CLI."
+    path: skills/tools/newton/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "newton", "train-teacher", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/newton/SKILL.md
+  - name: openvla
+    category: tools
+    when_to_use: "OpenVLA fine-tuning, serving, or evaluation workbench stages, the OpenVLA-OFT LoRA recipe, or the npa workbench openvla CLI."
+    path: skills/tools/openvla/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openvla", "train", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/openvla/SKILL.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
