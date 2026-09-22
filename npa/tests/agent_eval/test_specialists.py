@@ -195,6 +195,7 @@ def test_completed_tool_receipt_prevents_reexecution_after_checkpoint_gap(
 
 
 def test_uncertain_call_requires_operator_receipt(configuration):
+    _backup(configuration.profiles[0])
     model = configuration.profiles[0].model
     response = _response(model, tool="run_operation", arguments={"name": "check"})
     team = _team(configuration, [response, _response(model, text="Reconciled")])
@@ -595,3 +596,314 @@ def test_supervisor_startup_failure_propagates(configuration, tmp_path, monkeypa
     with pytest.raises(OSError, match="process creation failed"):
         with supervise(str(path)):
             pytest.fail("service reported ready without starting workers")
+
+
+def _backup(profile):
+    from npa.agent_backend.specialists.config import ModelEndpoint
+
+    endpoint = ModelEndpoint(
+        model="synthetic/backup",
+        base_url="http://localhost:8089/v1",
+        key_env="BACKUP_INFERENCE_KEY",
+        model_options={"temperature": 1, "top_p": 0.95},
+    )
+    profile.fallback_models = [endpoint]
+    return endpoint
+
+
+def _rejected_response(model, failure):
+    response = _response(
+        model, tool="run_operation", arguments={"name": "check"}, finish="length"
+    )
+    if failure == "arguments":
+        response["choices"][0]["finish_reason"] = "tool_calls"
+        response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"] = (
+            "{"
+        )
+    elif failure == "empty":
+        response = _response(model)
+    return response
+
+
+@pytest.mark.parametrize("failure", ["length", "arguments", "empty"])
+def test_rejected_generation_checkpoints_backup_and_preserves_tools(
+    configuration, failure
+):
+    profile = configuration.profiles[0]
+    backup = _backup(profile)
+    rejected = _rejected_response(profile.model, failure)
+    client = _Client(
+        [
+            rejected,
+            _response(
+                backup.model, tool="read_file", arguments={"path": "src/value.txt"}
+            ),
+            _response(backup.model, text="Source inspected"),
+        ]
+    )
+    team = SpecialistTeam(configuration, clients={"simulation": client})
+    team.submit("Inspect", specialist="simulation", task_id="recover")
+    assert team.work_once("simulation")["status"] == "running"
+    assert team.store._calls("recover") == []
+    restarted = SpecialistTeam(configuration, clients={"simulation": client})
+    for _ in range(3):
+        result = restarted.work_once("simulation")
+    assert result["status"] == "completed"
+    expected_models = [profile.model, backup.model, backup.model]
+    assert [call["model"] for call in client.calls] == expected_models
+    assert client.calls[1]["extra"]["temperature"] == 1
+    assert client.calls[0]["extra"]["tools"] == client.calls[1]["extra"]["tools"]
+    events = restarted.status("recover")["events"]
+    assert sum(e["usage"]["total_tokens"] for e in events if e["type"] == "model") == 75
+    handoff = next(e for e in events if e["type"] == "model_fallback")
+    assert (handoff["from_model"], handoff["to_model"]) == (profile.model, backup.model)
+    assert len(restarted.store._calls("recover")) == 1
+
+
+def test_exhausted_backups_preserve_all_rejected_usage(configuration):
+    profile = configuration.profiles[0]
+    backup = _backup(profile)
+    team = _team(
+        configuration,
+        [_response(model, finish="length") for model in (profile.model, backup.model)],
+    )
+    team.submit("Inspect", specialist="simulation", task_id="exhausted")
+    assert team.work_once("simulation")["status"] == "running"
+    assert team.work_once("simulation")["status"] == "needs_attention"
+    assert team.store._calls("exhausted") == []
+    events = [e for e in team.status("exhausted")["events"] if e["type"] == "model"]
+    assert len(events) == 2 and all(not e["accepted"] for e in events)
+    assert sum(e["usage"]["total_tokens"] for e in events) == 50
+
+
+@pytest.mark.parametrize(
+    "failure", ["identity", "content_filter", "refusal", "truncated_refusal"]
+)
+def test_integrity_and_refusal_failures_never_use_backup(configuration, failure):
+    profile = configuration.profiles[0]
+    _backup(profile)
+    response = _response(profile.model, text="No")
+    if failure == "identity":
+        response["model"] = "unexpected/model"
+    elif failure in {"refusal", "truncated_refusal"}:
+        response["choices"][0]["message"]["refusal"] = "No"
+        if failure == "truncated_refusal":
+            response["choices"][0]["finish_reason"] = "length"
+    else:
+        response["choices"][0]["finish_reason"] = failure
+    team = _team(configuration, [response])
+    team.submit("Inspect", specialist="simulation", task_id="terminal")
+    assert team.work_once("simulation")["status"] == "needs_attention"
+    assert not any(
+        e["type"] == "model_fallback" for e in team.status("terminal")["events"]
+    )
+
+
+def test_backup_uses_its_own_endpoint_and_credential(configuration, monkeypatch):
+    from npa.agent_backend.specialists import graph
+
+    profile = configuration.profiles[0]
+    backup = _backup(profile)
+    monkeypatch.setenv(profile.key_env, "synthetic-primary-secret")
+    monkeypatch.setenv(backup.key_env, "synthetic-backup-secret")
+    configs = []
+    responses = iter(
+        [
+            _response(profile.model, finish="length"),
+            _response(backup.model, text="Done"),
+        ]
+    )
+
+    def client(*, config):
+        configs.append(config)
+        return _Client([next(responses)])
+
+    monkeypatch.setattr(graph, "TokenFactoryClient", client)
+    team = SpecialistTeam(configuration)
+    team.submit("Inspect", specialist="simulation", task_id="endpoints")
+    team.work_once("simulation")
+    assert team.work_once("simulation")["status"] == "completed"
+    assert [c.base_url for c in configs] == [profile.base_url, backup.base_url]
+    assert [c.api_key for c in configs] == [
+        "synthetic-primary-secret",
+        "synthetic-backup-secret",
+    ]
+
+
+def test_completion_gate_hands_false_success_to_backup(configuration):
+    profile = configuration.profiles[0]
+    profile.required_operations = ["check"]
+    profile.workspace.joinpath("src/value.txt").write_text("fixed\n")
+    backup = _backup(profile)
+    team = _team(
+        configuration,
+        [
+            _response(profile.model, text="Checks passed"),
+            _response(backup.model, tool="run_operation", arguments={"name": "check"}),
+            _response(backup.model, text="Check actually passed"),
+        ],
+    )
+    team.submit("Verify", specialist="simulation", task_id="gate")
+    for _ in range(4):
+        result = team.work_once("simulation")
+    assert result["status"] == "completed"
+    events = team.status("gate")["events"]
+    assert next(e for e in events if e["type"] == "model")["accepted"] is False
+    assert "check" in next(e for e in events if e["type"] == "model_fallback")["reason"]
+
+
+def test_completion_gate_invalidates_old_and_failed_checks():
+    from npa.agent_backend.specialists.recovery import _require_operations
+
+    messages = []
+
+    def receipt(tool, arguments, result):
+        response = _response(
+            "synthetic", tool=tool, arguments=arguments, call_id=str(len(messages))
+        )
+        message = response["choices"][0]["message"]
+        messages.extend(
+            [
+                message,
+                {
+                    "role": "tool",
+                    "tool_call_id": message["tool_calls"][0]["id"],
+                    "content": json.dumps(result),
+                },
+            ]
+        )
+
+    receipt("run_operation", {"name": "check"}, {"ok": True, "returncode": 0})
+    _require_operations(messages, ["check"])
+    receipt("edit_file", {}, {"ok": True})
+    with pytest.raises(ValueError, match="check"):
+        _require_operations(messages, ["check"])
+    receipt("run_operation", {"name": "check"}, {"ok": True, "returncode": 0})
+    _require_operations(messages, ["check"])
+    receipt("run_operation", {"name": "check"}, {"ok": False, "returncode": 1})
+    with pytest.raises(ValueError, match="check"):
+        _require_operations(messages, ["check"])
+
+
+def test_legacy_fingerprint_and_new_recovery_policy_binding(configuration):
+    from npa.agent_backend.specialists.config import fingerprint
+
+    profile = configuration.profiles[0]
+    legacy = profile.model_dump(
+        mode="json", exclude={"fallback_models", "required_operations"}
+    )
+    expected = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode()).hexdigest()
+    assert fingerprint(profile) == expected
+    team = _team(configuration, [])
+    team.submit("Inspect", specialist="simulation", task_id="changed-recovery")
+    _backup(profile)
+    assert fingerprint(profile) != expected
+    assert team.work_once("simulation")["status"] == "needs_attention"
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"temperature": True},
+        {"temperature": -1},
+        {"temperature": float("nan")},
+        {"top_p": 1.1},
+        {"tools": []},
+    ],
+)
+def test_sampling_and_endpoint_policy_validation(configuration, options):
+    from npa.agent_backend.specialists.config import ModelEndpoint
+
+    with pytest.raises(ValueError):
+        ModelEndpoint(model="synthetic/model", model_options=options)
+    with pytest.raises(ValueError):
+        ModelEndpoint(model="synthetic/model", write_paths=["src"])
+    with pytest.raises(ValueError, match="required_operations"):
+        Profile.model_validate(
+            {
+                **configuration.profiles[0].model_dump(),
+                "required_operations": ["missing"],
+            }
+        )
+
+
+def test_completion_uses_recovered_receipt_when_event_was_not_written(
+    configuration, monkeypatch
+):
+    profile = configuration.profiles[0]
+    profile.required_operations = ["check"]
+    profile.workspace.joinpath("src/value.txt").write_text("fixed\n")
+    response = _response(
+        profile.model, tool="run_operation", arguments={"name": "check"}
+    )
+    team = _team(configuration, [response, _response(profile.model, text="Verified")])
+    team.submit("Check", specialist="simulation", task_id="receipt-gap")
+    team.work_once("simulation")
+    executor = WorkbenchTools(profile, team.store, "receipt-gap")
+    call = response["choices"][0]["message"]["tool_calls"][0]
+    executor.execute(call)
+    with team.store._connection() as connection:
+        connection.execute("DELETE FROM events WHERE task_id=?", ("receipt-gap",))
+    monkeypatch.setattr(
+        WorkbenchTools, "_run_operation", lambda *_: pytest.fail("effect repeated")
+    )
+    team.work_once("simulation")
+    assert team.work_once("simulation")["status"] == "completed"
+
+
+def test_cross_model_handoff_preserves_receipts_without_provider_reasoning(
+    configuration,
+):
+    profile = configuration.profiles[0]
+    backup = _backup(profile)
+    read = _response(
+        profile.model, tool="read_file", arguments={"path": "src/value.txt"}
+    )
+    read["choices"][0]["message"]["reasoning_content"] = (
+        "Provider-specific hidden state"
+    )
+    client = _Client(
+        [
+            read,
+            _response(profile.model, finish="length"),
+            _response(backup.model, text="Inspected"),
+        ]
+    )
+    team = SpecialistTeam(configuration, clients={"simulation": client})
+    team.submit("Inspect", specialist="simulation", task_id="handoff-history")
+    for _ in range(4):
+        result = team.work_once("simulation")
+    assert result["status"] == "completed"
+    messages = client.calls[-1]["messages"]
+    assert all("reasoning_content" not in message for message in messages)
+    receipt = next(message for message in messages if message["role"] == "tool")
+    assert json.loads(receipt["content"])["content"] == "broken\n"
+    assert receipt["tool_call_id"] == "call-one"
+    assert len(team.store._calls("handoff-history")) == 1
+
+
+def test_cached_old_operation_receipt_cannot_certify_a_later_edit():
+    from npa.agent_backend.specialists.recovery import _require_operations
+
+    check = _response(
+        "synthetic",
+        tool="run_operation",
+        arguments={"name": "check"},
+        call_id="old-check",
+    )["choices"][0]["message"]
+    edit = _response("synthetic", tool="edit_file", call_id="new-edit")["choices"][0][
+        "message"
+    ]
+    check_receipt = {
+        "role": "tool",
+        "tool_call_id": "old-check",
+        "content": json.dumps({"ok": True, "returncode": 0}),
+    }
+    edit_receipt = {
+        "role": "tool",
+        "tool_call_id": "new-edit",
+        "content": json.dumps({"ok": True}),
+    }
+    messages = [check, check_receipt, edit, edit_receipt, check, check_receipt]
+    with pytest.raises(ValueError, match="check"):
+        _require_operations(messages, ["check"])

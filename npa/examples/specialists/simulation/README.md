@@ -6,8 +6,12 @@ configurations from task instructions and execute actual MuJoCo Fetch
 pick-and-place sweeps. This is an opt-in paid experiment, not a CI benchmark.
 
 The [recorded experiment](../../../../docs/workbench/specialists-simulation-experiment.md)
-found a faster and cheaper complete specialist run, but lower completion across
-the full matrix. Keep failed trials when reproducing it.
+retains the original reliability failures and the subsequent recovery experiment.
+This harness now implements protocol v2: explicit reciprocal model backups,
+required successful validation/simulation receipts, vendor-recommended DeepSeek
+sampling, and clarified coordinate bounds shared by both arms. Keep every
+predeclared trial, including failures, when reproducing it. Original v1 results
+retain their original source hashes; running this version is a new measurement.
 
 ## Install and preflight
 
@@ -31,7 +35,7 @@ Store the Token Factory key through NPA's credential store or
 working MuJoCo OpenGL backend. The recorded rendering path was macOS; headless
 Linux was not validated. For a Linux adaptation, configure EGL/OSMesa and add
 the required `MUJOCO_GL`/`PYOPENGL_PLATFORM` names to each operation's `pass_env`
-in `_profile` before measuring. Workbench deliberately filters command
+in `_operations` before measuring. Workbench deliberately filters command
 environments, so exporting renderer variables alone does not forward them.
 
 Each run creates six workspaces and a private durable state directory outside
@@ -52,13 +56,21 @@ task processes concurrently. The specialist arm alternates GLM and DeepSeek;
 umask 077
 mkdir -p "$BENCHMARK_ROOT"
 cp npa/examples/specialists/simulation/prices.json "$BENCHMARK_ROOT/prices.json"
-npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live --output "$BENCHMARK_ROOT/round-1/specialists" --arm specialists --seed 11 --rotation 0
-npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live --output "$BENCHMARK_ROOT/round-1/astra-medium" --arm astra-medium --seed 11 --rotation 0
-npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live --output "$BENCHMARK_ROOT/round-2/astra-medium" --arm astra-medium --seed 23 --rotation 1
-npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live --output "$BENCHMARK_ROOT/round-2/specialists" --arm specialists --seed 23 --rotation 1
-npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live --output "$BENCHMARK_ROOT/round-3/specialists" --arm specialists --seed 37 --rotation 2
-npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live --output "$BENCHMARK_ROOT/round-3/astra-medium" --arm astra-medium --seed 37 --rotation 2
-npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live --output "$BENCHMARK_ROOT/round-2/astra-xhigh" --arm astra-xhigh --seed 23 --rotation 1
+round=0
+for seed in 11 23 37 53 71 89; do
+  round=$((round + 1))
+  rotation=$((round - 1))
+  if [ $((round % 2)) -eq 1 ]; then
+    arms=(specialists astra-medium)
+  else
+    arms=(astra-medium specialists)
+  fi
+  for arm in "${arms[@]}"; do
+    npa/.venv/bin/python npa/examples/specialists/simulation/experiment.py --live \
+      --output "$BENCHMARK_ROOT/round-$round/$arm" --arm "$arm" \
+      --seed "$seed" --rotation "$rotation"
+  done
+done
 npa/.venv/bin/python npa/examples/specialists/simulation/score.py --root "$BENCHMARK_ROOT"
 ```
 
@@ -69,10 +81,15 @@ API-equivalent token cost, not a subscription invoice or total deployment cost.
 The baseline receives an additional `run_operations` batch tool, so Astra can
 launch all six sweeps at once. Its native shell and model delegation are
 disabled to keep the Workbench tool interface matched. Medium reasoning is the
-primary comparison; xhigh is a separate sensitivity run. This is not a test of
+primary comparison; `astra-xhigh` is available for separately labeled sensitivity
+runs and was used in v1. This is not a test of
 unrestricted Codex coding or Astra with its own model workers.
 
-The timer covers agent calls, tools and worker startup after preparation.
+The timer covers agent calls, tools and worker startup after preparation,
+including every failed generation and automatic backup call. Backups use the
+other configured open-weight model, never Astra. Seeds are repeat trials on the
+same six tasks, not held-out task families. Record your source hashes, package
+versions and protocol before starting; dependency upgrades may change physics.
 Independent grading happens afterwards. `task-receipts.json` and
 `execution.json` are the end-of-trial snapshots; keep them immutable. The scorer
 requires a successful simulation receipt from that snapshot before accepting

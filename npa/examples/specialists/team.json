@@ -9,20 +9,65 @@
       "model": "zai-org/GLM-5.3",
       "base_url": "https://api.tokenfactory.nebius.com/v1",
       "key_env": "NEBIUS_TOKEN_FACTORY_KEY",
-      "model_options": {"chat_template_kwargs": {"reasoning_effort": "low"}},
+      "model_options": {
+        "chat_template_kwargs": {
+          "reasoning_effort": "low"
+        }
+      },
       "workspace": "~/repos/workbench-cosmos",
-      "read_paths": ["docs", "skills", "workflows", "npa/src/npa/workflows"],
-      "write_paths": ["workflows/main/paidf-cosmos3.yaml"],
+      "read_paths": [
+        "docs",
+        "skills",
+        "workflows",
+        "npa/src/npa/workflows"
+      ],
+      "write_paths": [
+        "workflows/main/paidf-cosmos3.yaml"
+      ],
       "operations": {
         "validate": {
           "description": "Validate the Cosmos3 workflow without submitting a workload",
-          "argv": ["{python}", "-m", "npa", "workbench", "workflow", "validate-spec", "workflows/main/paidf-cosmos3.yaml", "--json"]
+          "argv": [
+            "{python}",
+            "-m",
+            "npa",
+            "workbench",
+            "workflow",
+            "validate-spec",
+            "workflows/main/paidf-cosmos3.yaml",
+            "--json"
+          ]
         },
         "plan": {
           "description": "Render the Cosmos3 workflow plan without executing it",
-          "argv": ["{python}", "-m", "npa", "workbench", "workflow", "plan-spec", "workflows/main/paidf-cosmos3.yaml", "--json"]
+          "argv": [
+            "{python}",
+            "-m",
+            "npa",
+            "workbench",
+            "workflow",
+            "plan-spec",
+            "workflows/main/paidf-cosmos3.yaml",
+            "--json"
+          ]
         }
-      }
+      },
+      "fallback_models": [
+        {
+          "model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+          "base_url": "https://api.tokenfactory.nebius.com/v1",
+          "key_env": "NEBIUS_TOKEN_FACTORY_KEY",
+          "model_options": {
+            "reasoning_effort": "none",
+            "temperature": 1.0,
+            "top_p": 0.95
+          }
+        }
+      ],
+      "required_operations": [
+        "validate",
+        "plan"
+      ]
     },
     {
       "name": "sim2real",
@@ -30,20 +75,67 @@
       "model": "deepseek-ai/DeepSeek-V4-Pro-0813",
       "base_url": "https://api.tokenfactory.nebius.com/v1",
       "key_env": "NEBIUS_TOKEN_FACTORY_KEY",
-      "model_options": {"reasoning_effort": "none"},
+      "model_options": {
+        "reasoning_effort": "none",
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
       "workspace": "~/repos/workbench-sim2real",
-      "read_paths": ["docs", "skills", "workflows", "npa/src/npa/workflows/sim2real"],
-      "write_paths": ["workflows/main/sim2real.yaml"],
+      "read_paths": [
+        "docs",
+        "skills",
+        "workflows",
+        "npa/src/npa/workflows/sim2real"
+      ],
+      "write_paths": [
+        "workflows/main/sim2real.yaml"
+      ],
       "operations": {
         "validate": {
           "description": "Validate the Sim2Real workflow without submitting a workload",
-          "argv": ["{python}", "-m", "npa", "workbench", "workflow", "validate-spec", "workflows/main/sim2real.yaml", "--json"]
+          "argv": [
+            "{python}",
+            "-m",
+            "npa",
+            "workbench",
+            "workflow",
+            "validate-spec",
+            "workflows/main/sim2real.yaml",
+            "--json"
+          ]
         },
         "plan": {
           "description": "Render the Sim2Real workflow plan without executing it",
-          "argv": ["{python}", "-m", "npa", "workbench", "workflow", "plan-spec", "workflows/main/sim2real.yaml", "--assume-decision", "promote_checkpoint", "--json"]
+          "argv": [
+            "{python}",
+            "-m",
+            "npa",
+            "workbench",
+            "workflow",
+            "plan-spec",
+            "workflows/main/sim2real.yaml",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--json"
+          ]
         }
-      }
+      },
+      "fallback_models": [
+        {
+          "model": "zai-org/GLM-5.3",
+          "base_url": "https://api.tokenfactory.nebius.com/v1",
+          "key_env": "NEBIUS_TOKEN_FACTORY_KEY",
+          "model_options": {
+            "chat_template_kwargs": {
+              "reasoning_effort": "low"
+            }
+          }
+        }
+      ],
+      "required_operations": [
+        "validate",
+        "plan"
+      ]
     }
   ]
 }

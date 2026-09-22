@@ -88,6 +88,7 @@ function activity(events) {
       if (result.returncode !== undefined) label += ' · exit ' + result.returncode;
     }
     if (event.type === 'needs_attention') label = 'Needs attention · ' + event.error;
+    if (event.type === 'model_fallback') label = 'Model fallback · ' + event.from_model + ' → ' + event.to_model + ' · ' + event.reason;
     el('timeline').append(node('div', label, 'event'));
   }
   if (!events.length) el('timeline').append(node('p', 'No recorded activity yet.', 'muted'));

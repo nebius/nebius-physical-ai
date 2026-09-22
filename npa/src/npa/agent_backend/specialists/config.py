@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -51,13 +52,11 @@ class Operation(BaseModel):
         return values
 
 
-class Profile(BaseModel):
-    """Bind a specialist to one explicit endpoint, workspace and tool policy.
+class ModelEndpoint(BaseModel):
+    """Declare an inference endpoint without granting any workspace access.
 
     Args:
-        name, description, instructions: Specialist identity and role.
         model, base_url, key_env, model_options: Explicit inference configuration.
-        workspace, read_paths, write_paths, operations: Operator-owned grants.
     Returns:
         Validated profile without credential values.
     Raises:
@@ -65,19 +64,12 @@ class Profile(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
-    description: str = Field(min_length=1)
-    instructions: str = ""
     model: str = Field(min_length=1)
     base_url: str = "https://api.tokenfactory.nebius.com/v1"
     key_env: str = Field(
         default="NEBIUS_TOKEN_FACTORY_KEY", pattern=r"^[A-Z][A-Z0-9_]*$"
     )
     model_options: dict = Field(default_factory=dict)
-    workspace: Path
-    read_paths: list[str] = Field(default_factory=list)
-    write_paths: list[str] = Field(default_factory=list)
-    operations: dict[str, Operation] = Field(default_factory=dict)
 
     @field_validator("base_url")
     @classmethod
@@ -95,6 +87,56 @@ class Profile(BaseModel):
         if url.scheme != "https" and not (local and url.scheme == "http"):
             raise ValueError("endpoint requires HTTPS, except on loopback")
         return value.rstrip("/")
+
+    @field_validator("model_options")
+    @classmethod
+    def _options(cls, value):
+        allowed = {
+            "reasoning_effort",
+            "chat_template_kwargs",
+            "max_tokens",
+            "temperature",
+            "top_p",
+        }
+        if value.keys() - allowed:
+            raise ValueError("unsupported model_options field")
+        for name, maximum in (("temperature", 2), ("top_p", 1)):
+            if name not in value:
+                continue
+            number = value[name]
+            if (
+                type(number) not in (int, float)
+                or not math.isfinite(number)
+                or not 0 <= number <= maximum
+            ):
+                raise ValueError(f"{name} must be a finite number in [0, {maximum}]")
+        return value
+
+
+class Profile(ModelEndpoint):
+    """Bind explicit inference choices to one workspace and tool policy.
+
+    Args:
+        name, description, instructions: Specialist identity and role.
+        model, base_url, key_env, model_options: Primary inference configuration.
+        fallback_models: Ordered, opt-in endpoints for rejected generations.
+        required_operations: Commands that must succeed after the latest edit.
+        workspace, read_paths, write_paths, operations: Operator-owned grants.
+    Returns:
+        Validated profile without credential values.
+    Raises:
+        ValueError: Endpoint, scopes, identity or completion policy are invalid.
+    """
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    description: str = Field(min_length=1)
+    instructions: str = ""
+    fallback_models: list[ModelEndpoint] = Field(default_factory=list)
+    required_operations: list[str] = Field(default_factory=list)
+    workspace: Path
+    read_paths: list[str] = Field(default_factory=list)
+    write_paths: list[str] = Field(default_factory=list)
+    operations: dict[str, Operation] = Field(default_factory=dict)
 
     @field_validator("read_paths", "write_paths")
     @classmethod
@@ -114,15 +156,11 @@ class Profile(BaseModel):
                 )
         return values
 
-    @field_validator("model_options")
-    @classmethod
-    def _options(cls, value):
-        allowed = {"reasoning_effort", "chat_template_kwargs", "max_tokens"}
-        if value.keys() - allowed:
-            raise ValueError(
-                "model_options can set reasoning/template options or max_tokens"
-            )
-        return value
+    @model_validator(mode="after")
+    def _completion_policy(self):
+        if set(self.required_operations) - self.operations.keys():
+            raise ValueError("required_operations must name configured operations")
+        return self
 
 
 class TeamConfig(BaseModel):
@@ -203,7 +241,11 @@ def fingerprint(profile: Profile) -> str:
     Returns: SHA-256 of the canonical profile.
     Raises: None.
     """
-    body = json.dumps(profile.model_dump(mode="json"), sort_keys=True)
+    policy = profile.model_dump(mode="json")
+    for name in ("fallback_models", "required_operations"):
+        if not policy[name]:
+            del policy[name]
+    body = json.dumps(policy, sort_keys=True)
     return hashlib.sha256(body.encode()).hexdigest()
 
 

@@ -56,7 +56,7 @@ def _profile(tmp_path, name, model):
         source.replace(original, "next: " + transition + "-missing\n")
     )
     options = (
-        {"reasoning_effort": "none"}
+        {"reasoning_effort": "none", "temperature": 1.0, "top_p": 0.95}
         if name == "deepseek"
         else {"chat_template_kwargs": {"reasoning_effort": "low"}}
     )
@@ -69,6 +69,7 @@ def _profile(tmp_path, name, model):
         read_paths=["workflows"],
         write_paths=["workflows"],
         model_options=options,
+        required_operations=["validate", "plan"],
         operations=_operations(filename),
     )
 

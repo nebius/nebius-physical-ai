@@ -130,6 +130,8 @@ def _score_run(directory, prices):
         if execution["arm"] == "specialists"
         else _astra_usage(directory, prices)
     )
+    if execution.get("infrastructure_failure"):
+        usage["usage_complete"] = False
     tasks = [
         _task_outcome(directory / "workspaces" / name, name, receipts[name])
         for name in TASKS
@@ -140,6 +142,7 @@ def _score_run(directory, prices):
         "round": directory.parent.name,
         "arm": execution["arm"],
         "seed": execution["seed"],
+        "infrastructure_failure": execution.get("infrastructure_failure"),
         "agent_tool_seconds": execution["agent_tool_seconds"],
         "accepted": accepted,
         "total": 36,

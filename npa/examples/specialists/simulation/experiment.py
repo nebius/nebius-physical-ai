@@ -21,11 +21,8 @@ HERE = Path(__file__).resolve().parent
 MODELS = ["zai-org/GLM-5.3", "deepseek-ai/DeepSeek-V4-Pro-0813"]
 
 
-def _profile(root, name, index, seed):
-    workspace = root / "workspaces" / name
-    _prepare_workspace(workspace, name)
-    model = MODELS[index % len(MODELS)]
-    operations = {
+def _operations(name, seed):
+    return {
         verb: {
             "argv": [
                 "{python}",
@@ -42,18 +39,31 @@ def _profile(root, name, index, seed):
         }
         for verb in ("validate", "simulate")
     }
+
+
+def _endpoint(index):
+    return {
+        "model": MODELS[index % len(MODELS)],
+        "model_options": {"chat_template_kwargs": {"reasoning_effort": "low"}}
+        if index % 2 == 0
+        else {"reasoning_effort": "none", "temperature": 1.0, "top_p": 0.95},
+    }
+
+
+def _profile(root, name, index, seed):
+    workspace = root / "workspaces" / name
+    _prepare_workspace(workspace, name)
     return {
         "name": name,
         "description": TASKS[name]["instruction"],
         "instructions": _task_text(name),
-        "model": model,
+        **_endpoint(index),
+        "fallback_models": [_endpoint(index + 1)],
+        "required_operations": ["validate", "simulate"],
         "workspace": str(workspace),
         "read_paths": ["TASK.md", "plan.json"],
         "write_paths": ["plan.json"],
-        "operations": operations,
-        "model_options": {"chat_template_kwargs": {"reasoning_effort": "low"}}
-        if index % 2 == 0
-        else {"reasoning_effort": "none"},
+        "operations": _operations(name, seed),
     }
 
 
@@ -169,7 +179,12 @@ def _measure(root, arm, seed, rotation):
         if arm == "specialists"
         else _astra(path, arm.removeprefix("astra-"))
     )
-    result.update(arm=arm, agent_tool_seconds=time.perf_counter() - started, seed=seed)
+    result.update(
+        arm=arm,
+        agent_tool_seconds=time.perf_counter() - started,
+        seed=seed,
+        protocol="npa.specialists.simulation.reliability.v2",
+    )
     team = SpecialistTeam(load_config(path))
     receipts = {name: team.status(name) for name in TASKS}
     (root / "task-receipts.json").write_text(json.dumps(receipts, indent=2) + "\n")

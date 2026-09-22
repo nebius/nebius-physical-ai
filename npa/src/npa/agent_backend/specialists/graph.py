@@ -11,11 +11,15 @@ from npa.cli.agent_routing import usage_summary
 from npa.clients.credentials import load_credentials
 from npa.clients.token_factory import TokenFactoryClient, TokenFactoryConfig
 
+from .recovery import _handoff, _RejectedGeneration, _require_operations
+
 
 class _State(TypedDict, total=False):
     messages: list[dict]
     pending: list[dict]
     answer: str
+    model_index: int
+    recovering: bool
 
 
 def build_graph(profile, tools, checkpointer, *, client=None):
@@ -31,20 +35,25 @@ def build_graph(profile, tools, checkpointer, *, client=None):
     Raises:
         ImportError: The agent-specialists extra is not installed.
     """
-    from langgraph.graph import END, START, StateGraph
+    from langgraph.graph import START, StateGraph
 
-    active = client or _client(profile)
     builder = StateGraph(_State)
-    builder.add_node("model", lambda state: _model(state, profile, tools, active))
+    builder.add_node("model", lambda state: _model(state, profile, tools, client))
     builder.add_node("tool", lambda state: _tool(state, tools))
     builder.add_edge(START, "model")
-    builder.add_conditional_edges(
-        "model", lambda state: "tool" if state.get("pending") else END
-    )
+    builder.add_conditional_edges("model", _after_model)
     builder.add_conditional_edges(
         "tool", lambda state: "tool" if state.get("pending") else "model"
     )
     return builder.compile(checkpointer=checkpointer, interrupt_after=["model", "tool"])
+
+
+def _after_model(state):
+    from langgraph.graph import END
+
+    if state.get("recovering"):
+        return "model"
+    return "tool" if state.get("pending") else END
 
 
 def initial_state(profile, goal):
@@ -61,6 +70,7 @@ def initial_state(profile, goal):
         "read_paths": profile.read_paths,
         "write_paths": profile.write_paths,
         "operations": operations,
+        "required_operations": profile.required_operations,
     }
     system = (
         "You are a Workbench specialist. Complete the operator's goal using the provided tools. "
@@ -94,26 +104,33 @@ def _client(profile):
 
 
 def _model(state, profile, tools, client):
+    endpoint = [profile, *profile.fallback_models][state.get("model_index", 0)]
     extra = {
-        **profile.model_options,
+        **endpoint.model_options,
         "tools": tools.schemas(),
         "parallel_tool_calls": False,
     }
-    response = client.chat_completion(
-        model=profile.model, messages=state["messages"], extra=extra
+    response = (client or _client(endpoint)).chat_completion(
+        model=endpoint.model, messages=state["messages"], extra=extra
     )
-    message, pending = _recorded_response(response, profile.model, tools)
+    try:
+        message, pending = _recorded_response(response, endpoint.model, tools, state)
+    except _RejectedGeneration as error:
+        return _handoff(state, profile, tools, error)
     return {
         "messages": [*state["messages"], message],
         "pending": pending,
         "answer": "" if pending else redact(message["content"]),
+        "recovering": False,
     }
 
 
-def _recorded_response(response, model, tools):
+def _recorded_response(response, model, tools, state):
     pending, accepted = [], False
     try:
         message, pending = _validate_response(response, model)
+        if not pending and tools.profile.required_operations:
+            _require_operations(state["messages"], tools.profile.required_operations)
         accepted = True
         return message, pending
     finally:
@@ -141,12 +158,27 @@ def _record_model(response, tools, accepted, pending):
 
 
 def _validate_response(response, model):
+    if not isinstance(response, dict):
+        raise ValueError("provider returned an invalid response envelope")
     if response.get("model") != model:
         raise ValueError("provider returned a different model")
-    choice = response["choices"][0]
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise _RejectedGeneration("provider returned no usable choice")
+    choice = choices[0]
+    incoming = choice.get("message")
+    if isinstance(incoming, dict) and incoming.get("refusal"):
+        raise ValueError("model refused the request")
+    if choice.get("finish_reason") == "length":
+        raise _RejectedGeneration("model output was truncated")
     if choice.get("finish_reason") not in {"stop", "tool_calls"}:
         raise ValueError("incomplete model response; no tool was executed")
-    incoming = choice["message"]
+    if not isinstance(incoming, dict):
+        raise _RejectedGeneration("provider returned no usable message")
+    return _validated_message(incoming)
+
+
+def _validated_message(incoming):
     message = {
         key: incoming[key]
         for key in ("role", "content", "tool_calls", "reasoning_content", "reasoning")
@@ -155,9 +187,12 @@ def _validate_response(response, model):
     message["role"] = "assistant"
     calls = message.get("tool_calls") or []
     if calls:
-        _validate_calls(calls)
+        try:
+            _validate_calls(calls)
+        except ValueError as error:
+            raise _RejectedGeneration("invalid native tool call") from error
     elif not isinstance(message.get("content"), str) or not message["content"].strip():
-        raise ValueError("empty model answer")
+        raise _RejectedGeneration("empty model answer")
     return message, calls
 
 

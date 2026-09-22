@@ -262,3 +262,33 @@ def test_changed_state_fails_replay_even_with_matching_file_hash(benchmark, tmp_
     row["trace_sha256"] = workload._digest(path)
     with pytest.raises(ValueError, match="did not replay"):
         physics._replay(scene, path, row)
+
+
+def test_infrastructure_interruption_keeps_partial_usage_and_unknown_total(
+    benchmark, tmp_path
+):
+    execution = {
+        "arm": "specialists",
+        "seed": 53,
+        "agent_tool_seconds": None,
+        "infrastructure_failure": "Host storage was exhausted",
+    }
+    event = {
+        "type": "model",
+        "model": "synthetic",
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+    }
+    receipts = {name: {"events": [event]} for name in benchmark["workload"].TASKS}
+    (tmp_path / "execution.json").write_text(json.dumps(execution))
+    (tmp_path / "task-receipts.json").write_text(json.dumps(receipts))
+    prices = {
+        "synthetic": {
+            "input_price_per_million_tokens": 1,
+            "output_price_per_million_tokens": 2,
+        }
+    }
+    result = benchmark["score"]._score_run(tmp_path, prices)
+    assert result["recorded_cost_usd"] > 0
+    assert result["estimated_cost_usd"] is None
+    assert result["agent_tool_seconds"] is None
+    assert result["infrastructure_failure"] == execution["infrastructure_failure"]

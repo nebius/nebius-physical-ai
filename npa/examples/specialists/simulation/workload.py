@@ -72,8 +72,10 @@ def _task_text(name):
         TASKS[name]["instruction"]
         + "\nRepair plan.json to satisfy this instruction. Coordinates must be in meters. "
         "The scene keys are object_x, object_y, goal_x, goal_y, object_color, target_color, "
-        "lighting, and a nonempty reason. Each XY offset must be within [-0.12, 0.12]; "
-        "the cube must move at least 0.08 m. Colors must differ.\n"
+        "lighting, and a nonempty reason. Each object/goal XY coordinate relative to the "
+        "table origin must be within [-0.12, 0.12] meters. This bound is on individual "
+        "coordinates, not the displacement between object and goal. The cube must move "
+        "at least 0.08 m. Colors must differ.\n"
         "Fan out over cube mass multipliers 80%, 100%, 120% and sliding-friction "
         "multipliers 80%, 120%, taking their Cartesian product (six episodes). "
         "Use top-level keys scene, mass_scales, friction_scales. The simulator supplies "

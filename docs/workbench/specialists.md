@@ -90,9 +90,14 @@ Use `cancel <task-id>` or the monitor to stop a task at its next durable boundar
 Cancellation preserves existing edits and receipts and does not cancel external
 workloads; use the corresponding Workbench workload controls for those.
 
-`completed` means the agent returned its final answer. It is not an independent
-claim that a GPU workflow completed successfully. Use the recorded Workbench
-status, test and artifact receipts to assess that claim.
+By default, `completed` means the agent returned its final answer. A profile can
+set `required_operations`, for example `["validate", "plan"]`, to also require
+successful command receipts after its latest successful file edit. A later edit
+invalidates earlier checks, and a failed rerun invalidates that operation's
+success. These gates use checkpointed tool results, including journal receipts
+recovered after a restart. They certify the configured commands' exit status;
+use commands that inspect actual remote status/artifacts when workload completion
+is required. A submission receipt alone cannot establish that a GPU job finished.
 
 ## Tools and authorization
 
@@ -143,6 +148,33 @@ Provider failures with no tool effect can be retried through the same control.
 Rejected model responses retain their reported usage and finish reason in the
 activity log, while none of their proposed tools execute. This makes failed
 generation costs visible; missing usage counters still mean unknown cost.
+
+For automatic recovery, configure `fallback_models` as an ordered list of
+explicit endpoints. Each entry accepts only `model`, `base_url`, `key_env` and
+`model_options`, inheriting the endpoint defaults when omitted. It cannot change
+workspace or tool grants. Truncated generations, malformed native calls, empty
+answers or missing completion checks advance to the next configured model at a
+durable boundary. That model stays active for the rest of the task, including
+after restart. The monitor records the handoff, reason and all reported usage.
+Exhausted candidates leave the task in `needs_attention`. There are no implicit
+backup models. Identity mismatches, provider refusals, transport failures and
+uncertain tool effects do not trigger this handoff.
+
+Backups receive the authorized task's conversation and tool results; configure
+only providers permitted to receive that data. Provider-specific reasoning
+fields are removed on handoff, while tool calls and receipts remain intact.
+The rejected generation is excluded. Recovery does not undo existing edits or
+repeat a tool by itself. Model requests can still be repeated across a crash
+before their graph checkpoint, as with the primary endpoint.
+
+`model_options` supports `temperature` (0–2), `top_p` (0–1),
+`reasoning_effort`, `chat_template_kwargs` and optional `max_tokens`.
+The example uses DeepSeek's recommended agent sampling of temperature 1.0 and
+top-p 0.95 from its [model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813/blob/main/README.md).
+Use settings appropriate to each endpoint; sampling behavior differs by model.
+The example requires validation and planning; remove those completion gates for
+profiles whose tasks should finish without running those commands.
+
 Changed profile/model/tool policy blocks existing tasks until the original
 configuration is restored. File locks prevent two host-local workers from
 advancing the same specialist simultaneously.
