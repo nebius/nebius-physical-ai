@@ -293,6 +293,23 @@ This establishes loader and adapter repeatability. It does not run the
 simulator, measure task Q, or prove the official 24GB policy-GPU requirement.
 The next comparison uses the complete task panels described above.
 
+### Comet training-data qualification
+
+The CPU qualification at Workbench commit
+`a716c5c41370be9a6b9d18db5b1384b6c3668860` succeeded with the pinned Comet
+source and verified 217-distribution runtime. It imported the native training
+configuration, loader, and training module, then decoded a real 256-example
+batch from the 180 training episodes. The batch contains three 224×224 RGB
+views, 32×32 actions, and 200-token prompts. Source inventories, normalization,
+the held-out split, and terminal action padding passed their checks.
+
+The qualification receipt has SHA-256
+`9b82b9e26131b02ce3b9327a0d0dcccd84f41c5a9e17be93168222b04616b698`.
+All three original preparation, qualification, and log artifacts were downloaded
+and verified before controller cleanup. This check loaded no model, created no
+optimizer, and performed no training. A native B200 optimizer update and the
+future eight-worker data-loader throughput remain separate qualification gates.
+
 ### Sampled video observations
 
 Eight evenly spaced frames from each of two hash-verified original videos show
