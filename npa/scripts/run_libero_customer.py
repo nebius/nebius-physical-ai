@@ -371,7 +371,7 @@ def submit(args: argparse.Namespace) -> None:
         )
         binding = managed.LiberoRuntimeBinding(
             evidence={}, access_state=state, candidate_image=qualification["candidate_image"],
-            task_name=docs[1]["name"], customer_identity_sha256=authorization["customer_identity_sha256"], customer_run=True,
+            task_name=run_id, customer_identity_sha256=authorization["customer_identity_sha256"], customer_run=True,
         )
         launch_attempted = True
         result = submit_workflow(

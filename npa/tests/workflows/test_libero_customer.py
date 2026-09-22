@@ -138,6 +138,29 @@ def test_key_and_api_cleaned_when_preparation_fails_after_creation(monkeypatch, 
     assert json.loads((args.output / "cleanup.json").read_text())["ok"]
 
 
+def test_customer_observer_uses_pinned_single_task_dag_name(monkeypatch, tmp_path):
+    module, args, _ = _submit_fixture(monkeypatch, tmp_path)
+    observed = {}
+
+    def binding(**values):
+        observed.update(values)
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(module, "_module", lambda *_a: SimpleNamespace(
+        LiberoAccessState=SimpleNamespace, LiberoRuntimeBinding=binding,
+    ))
+
+    def submit(_path, run_id, **_kwargs):
+        # SkyPilot 0.12.2 assigns a single task the DAG name supplied by --name.
+        assert observed["task_name"] == run_id == "libero-synthetic-customer-test"
+        assert observed["task_name"] != "synthetic"
+        raise SkyPilotSubmitError("synthetic prelaunch stop", launch_attempted=False)
+
+    monkeypatch.setattr(module, "submit_workflow", submit)
+    with pytest.raises(SkyPilotSubmitError, match="synthetic prelaunch stop"):
+        module.submit(args)
+
+
 @pytest.mark.parametrize("attempted", [False, None, True])
 def test_submit_failure_preserves_ambiguous_launch_recovery(monkeypatch, tmp_path, attempted):
     module, args, calls = _submit_fixture(monkeypatch, tmp_path)
