@@ -1,0 +1,80 @@
+{
+  "schema": "npa.skypilot-absence-recovery.public.v1",
+  "source_commit": "6d0338661495eb521295db912c7e19b5de6ccf23",
+  "source_tree": "1ba6dde5bcc961e4ac7b790b35793a837e237909",
+  "dependency": {
+    "pull_request": 709,
+    "source_commit": "59f8829d23e16a553da310f26d7cc85f398a775f",
+    "scope": "Reviewed journal locks and generation CAS; no transfer of the separate MK8s producer evidence."
+  },
+  "operation": {
+    "scope": "Recover one original managed-workflow operation whose launch history was ambiguous, after proving current owned resources absent.",
+    "original_managed_ids_accounted": 3,
+    "pinned_skypilot": "0.12.2",
+    "preview": {
+      "provider_identity_reads": 1,
+      "named_resource_not_found_reads": 3,
+      "complete_pod_inventory_count": 41,
+      "complete_service_inventory_count": 21,
+      "journal_and_lease_unchanged": true
+    },
+    "apply": {
+      "fresh_provider_identity_reads": 1,
+      "fresh_named_resource_not_found_reads": 3,
+      "complete_pod_inventory_count": 41,
+      "complete_service_inventory_count": 21,
+      "original_generation_cas": true,
+      "original_errors_and_prior_events_preserved": true,
+      "absence_events_appended": 1,
+      "operation_and_lease_terminal": true,
+      "cloud_mutations": false,
+      "historical_workload_outcome": "UNKNOWN",
+      "root_review_sha256": "adad147e19eb0b3244d6a357184a43751f97dd939be2d2bbb4abca02ea0e0431"
+    }
+  },
+  "validation": {
+    "exact_head_affected_tests_passed": 170,
+    "exact_head_full": {
+      "passed": 25632,
+      "skipped": 155,
+      "xpassed": 1,
+      "pytest_seconds": 799.38,
+      "wrapper_seconds": 801.5077095720044,
+      "exit": 0,
+      "result_sha256": "e998697828acb88d08c879ef5ad3a832debb688ec2ab0acbc877cff57f7d469d"
+    },
+    "prepr_steps_passed": 10,
+    "native_security": {
+      "base": "59f8829d23e16a553da310f26d7cc85f398a775f",
+      "baseline_findings": 607,
+      "candidate_findings": 607,
+      "new_blocking_findings": 0
+    },
+    "guard_controls": {
+      "scope": "Three targeted guard-removal mutants plus one separate configuration-selector guard removal on retained predecessor source; each failed the intended assertion. These were not four whole-suite mutant runs.",
+      "detected": 4
+    },
+    "sdk_404_regression": "Actual loopback Kubernetes SDK 404 reproduced the initial bytes-conversion bug; corrected source preserves exact raw body bytes."
+  },
+  "history": [
+    "Initial read-only preview failed before journal mutation because the wrapper converted bytes to a Python representation. Original response and failed preview are retained.",
+    "The successful apply establishes present absence and releases the bound lease. It does not reconstruct a successful historical workload or retroactively invent resource UIDs."
+  ],
+  "limits": [
+    "Pinned non-pool SkyPilot Kubernetes naming contract only; incomplete or ambiguous original identity refuses.",
+    "Reads and metadata inventories are separately timed, not an atomic cloud snapshot.",
+    "Existing foreign resources were preserved; no provider deletion or provisioning occurred.",
+    "New workload functional/lifecycle acceptance is separate.",
+    "Source/full/native proof is bound to the PR709 stack; current-main integration and hosted CI remain separate gates."
+  ],
+  "receipts_sha256": {
+    "full_log": "a9fc99f9f8825339d82a3b7eb9b2b4fdc84dcfb3c208f6ac6fe4f17d97cc2974",
+    "full_result": "e998697828acb88d08c879ef5ad3a832debb688ec2ab0acbc877cff57f7d469d",
+    "prepr": "94e54a64e95b4f8894701afe63ae9c56f73c2959784bbc8e5a8d17cb9dee6b22",
+    "native_summary": "fe773fdb11d9de36ac39283d3e0966fc1f2c042bf8f8a199e3d3042045622a55",
+    "source_validation": "35f363316deefc77f52ca341889f1e74bfcda0c5c459d1c8fc786b119eef5721",
+    "preview_result": "b6a47b239b58c419d8fb08315b5ecd25284edf3de5b9a8dcb3a45b833dfb0eab",
+    "apply_result": "a2c06c4f188b3824d264b7039eb3375aba3e66cd26cb48fb8e199a8cddb59aad",
+    "root_apply_review": "adad147e19eb0b3244d6a357184a43751f97dd939be2d2bbb4abca02ea0e0431"
+  }
+}
