@@ -358,7 +358,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="0 checks once, positive values bound the wait, and -1 waits until terminal.",
     )
     parser.add_argument("--poll-interval", type=int, default=30)
-    parser.add_argument("--isolated-config-dir", default="")
+    parser.add_argument(
+        "--isolated-config-dir",
+        default=os.environ.get("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", ""),
+    )
     parser.add_argument("--render-only", action="store_true")
     parser.add_argument(
         "--direct-launch",

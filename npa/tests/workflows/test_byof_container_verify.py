@@ -35,6 +35,33 @@ def _load_module():
     return module
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_cleanup_uses_selected_isolated_state(monkeypatch, tmp_path, explicit) -> None:
+    module = _load_module()
+    selected = tmp_path / ("explicit-state" if explicit else "environment-state")
+    monkeypatch.setenv(
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path / "environment-state")
+    )
+    monkeypatch.delenv("SKYPILOT_API_SERVER_ENDPOINT", raising=False)
+    arguments = ["--isolated-config-dir", str(selected)] if explicit else []
+    args = module._parse_args(arguments)
+    observed = {}
+
+    def fake_run(command, **kwargs):
+        observed.update(kwargs["env"])
+        return subprocess.CompletedProcess(command, 0, "[]", "")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    guard = module.SignalTeardown(
+        run_id="isolated-cleanup", isolated_config_dir=args.isolated_config_dir
+    )
+    guard._run(["sky", "status"], timeout=1)
+
+    assert observed["HOME"] == str(selected / "home")
+    assert observed["NPA_SKYPILOT_ISOLATED_API_DIR"] == str(selected)
+    assert (selected / "local-api" / "daemon.json").is_file()
+
+
 def test_render_workflow_injects_solution_smoke_metadata(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.example")
